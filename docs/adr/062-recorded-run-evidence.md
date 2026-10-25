@@ -1063,3 +1063,26 @@ A code review already certifies the exact package head before publication. Showi
   - It blocks at a different head, with an open finding, after a pass is replaced by a failure, or when the review comes from a non-qualifying session.
   - Planning refuses `proves` on a `review` claim.
   - A confirmed receipt reads as proven in `run.get` while keeping its engine verdict.
+
+## Amendment 19: derived acceptance for PR completion, 2026-10-23
+
+**Status:** Proposed. Arthur requested this amendment; implementation requires lead approval.
+**Specification:** [PR-completion acceptance registration](../reference/recorded-run-evidence.md#pr-completion-acceptance-registration).
+
+### Decision
+
+A `pr-complete` run keeps the original PR's parent-run or ticket criteria by default. A first derive-acceptance subtask adds one criterion per unresolved actionable review comment, linked to its source, and one per extra operator instruction. Derivation is enabled only when the selected `pr-complete.md` or interactive template declares that subtask. Authenticated interactive steers can append obligations through the same registration owner.
+
+The engine registers proposals in the existing acceptance registry and ledger projection. Original IDs and order stay fixed; new IDs append. Retries are idempotent by source identity. Neither a template nor a worker can replace the original criteria or write authoritative verdicts. ADR-055 owns comment intake; task init freezes its authoritative completion snapshot for every entry point, including review bots. The retained worker classifies comments and instructions, and engine validation enforces snapshot coverage. ADR-060 owns the subtask lifecycle.
+
+Amendment 12 inheritance becomes per criterion: eligible original criteria may keep their approved parent proof, with its original provenance. Derived criteria require their own qualified proof. `requireFresh` still requires child proof. An added criterion never acquires a parent's verdict merely because the parent passed.
+
+PR completion supports `state`, `visual`, `mixed` and `review` through the requirements in the specification. Visual and mixed criteria enable the existing captured-output claim review decision after monitoring and before completion. Fresh review-mode criteria conditionally activate the existing REVIEW step at the pushed PR head. For PR completion, this extends Amendment 18's gate-only rule: a qualifying structured step result with recorded criterion coverage suffices, without a HUMAN_GATE or prepared publication package. Neither requirement authorizes publishing a new PR. Derivation alone adds no review for state-only completion or eligible inherited proof; the PR's existing review obligations remain. A needed re-review is warm and covers changed code or reviewed evidence only.
+
+The registration revision participates in completion and gate identity. New instructions cannot leave an earlier ready decision valid. Frozen task inputs, parent evidence and previous gate snapshots remain immutable. Command Center and Companion consume the same registered list, provenance and verdict projection.
+
+### Rationale and consequences
+
+Completion currently displays ticket criteria while review fixes and operator obligations remain outside the panel. It also stamps both review capabilities false for ordinary PR completion, making fresh visual, mixed and review-mode claims impossible to finish. Registration and the proof destination must agree before completion.
+
+Extend the shared protocol and existing registry, contract resolver, completion guard and client presentation. Do not add a second ledger, verdict writer or client-specific acceptance model. Existing runs keep their selected template and frozen contract until an explicit supported migration. This proposal authorizes no implementation or live-run operation before approval.
