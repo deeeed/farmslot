@@ -48,8 +48,12 @@ const reveal = async (id) => {
   for (let attempt = 0; attempt < 6; attempt++) {
     const value = await snapshot();
     const node = value.nodes.find((item) => item.identifier === id);
-    const screen = value.nodes[0]?.rect;
-    assert.ok(screen, 'Native snapshot must expose viewport dimensions');
+    const rectangles = value.nodes.flatMap((item) => (item.rect ? [item.rect] : []));
+    assert.ok(rectangles.length, 'Native snapshot must expose viewport dimensions');
+    const screen = {
+      width: Math.max(...rectangles.map((rect) => rect.x + rect.width)),
+      height: Math.max(...rectangles.map((rect) => rect.y + rect.height)),
+    };
     if (
       node?.rect &&
       node.rect.y > screen.height * 0.12 &&

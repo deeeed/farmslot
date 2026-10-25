@@ -178,6 +178,9 @@ test(
 
     const fixture = await createNativeProofFixture(t, root);
     fixtureOwnsRoot = true;
+    const { initServerGlobals, resetServerGlobalsForTests } = await import('../../server.js');
+    initServerGlobals();
+    t.after(resetServerGlobalsForTests);
     const connection = await fixture.client.connect();
     t.after(() => connection.close());
     connection.onEvent((event) => {
