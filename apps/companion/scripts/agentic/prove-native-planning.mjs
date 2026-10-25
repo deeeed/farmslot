@@ -83,6 +83,82 @@ export function retainedPlanningRows(result) {
   return rows;
 }
 
+function assertExpectedPlanningValues(plan, retained) {
+  assert(
+    retained.backlog.data.items.some(
+      (item) =>
+        item.id === plan.expected.backlog.id &&
+        item.title === plan.expected.backlog.after &&
+        item.status === 'candidate',
+    ),
+  );
+  assert(
+    retained.roadmap.data.items.some(
+      (item) => item.id === plan.expected.roadmap.id && item.title === plan.expected.roadmap.after,
+    ),
+  );
+  assert(retained.projects.data.projects.some((project) => project.name === plan.addedProject));
+  assert(
+    retained.queue.data.items.some(
+      (item) =>
+        item.id === plan.expected.queue.id && item.priority === plan.expected.queue.afterPriority,
+    ),
+  );
+  assert(
+    retained.graph.data.graphs.some(
+      ({ graph }) =>
+        graph.id === plan.expected.graph.id &&
+        graph.title === plan.expected.graph.title &&
+        graph.status === plan.expected.graph.afterStatus,
+    ),
+  );
+}
+
+/** Current reads may include server defaults absent from the earlier retained representation. */
+export function assertRecoveredPlanningRows(plan, warm, recovery, coldStartedAt, priorWire, wire) {
+  assert(coldStartedAt > warm.state.startedAt, 'Require an actual cold runtime');
+  assert.equal(recovery.state.startedAt, coldStartedAt, 'Recovery cannot relaunch the app');
+  assert.equal(recovery.state.connectionProfileId, warm.state.connectionProfileId);
+  assert.equal(recovery.state.workspaceKey, warm.state.workspaceKey);
+  assert.equal(recovery.state.online, true);
+  assert.equal(wire.startId, priorWire.startId, 'Recovery proxy changed');
+  const retained = retainedPlanningRows(warm.result);
+  const recovered = retainedPlanningRows(recovery.result);
+  assertPlanningReadsFromRuntime(
+    recovery.state,
+    wire,
+    Object.values(persistedQueries).map((id) => id.slice(0, id.indexOf(':'))),
+  );
+  const epochs = new Set();
+  for (const [kind, row] of Object.entries(recovered)) {
+    const method = row.id.slice(0, row.id.indexOf(':'));
+    const previous = priorWire.lastObservedReads?.[method];
+    const current = wire.lastObservedReads?.[method];
+    assert(typeof previous?.resourceState?.epoch === 'string' && previous.resourceState.epoch);
+    assert(typeof current?.resourceState?.epoch === 'string' && current.resourceState.epoch);
+    assert.notEqual(
+      current.resourceState.epoch,
+      previous.resourceState.epoch,
+      'Require a new gateway epoch',
+    );
+    assert((priorWire.successfulReads?.[method] ?? 0) > 0);
+    assert(
+      wire.successfulReads[method] > priorWire.successfulReads[method],
+      `Require an actual recovery read: ${method}`,
+    );
+    assert(row.observedAt >= retained[kind].observedAt && row.observedAt >= coldStartedAt);
+    assert.equal(
+      digest(JSON.stringify(row.data)),
+      current.payloadSha256,
+      `Recovered ${method} must match its actual current reply`,
+    );
+    epochs.add(current.resourceState.epoch);
+  }
+  assert.equal(epochs.size, 1, 'Recovered rows must belong to the same current gateway epoch');
+  assertExpectedPlanningValues(plan, recovered);
+  return recovered;
+}
+
 export async function waitForPlanningRecovery(
   observe,
   coldStartedAt,
@@ -501,35 +577,7 @@ async function prove() {
         `Stored ${method} must match the actual app's successful observed reply`,
       );
     }
-    assert(
-      retained.backlog.data.items.some(
-        (item) =>
-          item.id === plan.expected.backlog.id &&
-          item.title === plan.expected.backlog.after &&
-          item.status === 'candidate',
-      ),
-    );
-    assert(
-      retained.roadmap.data.items.some(
-        (item) =>
-          item.id === plan.expected.roadmap.id && item.title === plan.expected.roadmap.after,
-      ),
-    );
-    assert(retained.projects.data.projects.some((project) => project.name === plan.addedProject));
-    assert(
-      retained.queue.data.items.some(
-        (item) =>
-          item.id === plan.expected.queue.id && item.priority === plan.expected.queue.afterPriority,
-      ),
-    );
-    assert(
-      retained.graph.data.graphs.some(
-        ({ graph }) =>
-          graph.id === plan.expected.graph.id &&
-          graph.title === plan.expected.graph.title &&
-          graph.status === plan.expected.graph.afterStatus,
-      ),
-    );
+    assertExpectedPlanningValues(plan, retained);
     await save('d07-observed-methods.json', {
       methods: observedMemoryMethods,
       counts: warmCounts,
@@ -697,16 +745,8 @@ async function prove() {
       ['Saved backlog,'],
     );
     const recovery = await sqlite('d07-recovery');
-    assert.equal(recovery.state.startedAt, coldStartedAt, 'Recovery cannot relaunch the app');
-    assert.equal(recovery.state.connectionProfileId, warm.state.connectionProfileId);
-    assert.equal(recovery.state.workspaceKey, warm.state.workspaceKey);
-    assert.equal(recovery.state.online, true);
-    const recovered = retainedPlanningRows(recovery.result);
-    for (const key of Object.keys(retained)) {
-      assert.deepEqual(recovered[key].data, retained[key].data);
-      assert(recovered[key].observedAt >= retained[key].observedAt);
-    }
     const commandsAfter = await counts();
+    assertRecoveredPlanningRows(plan, warm, recovery, coldStartedAt, warmCounts, commandsAfter);
     unchangedCommands(warmCounts, commandsAfter);
     await delay(1500);
     unchangedCommands(commandsAfter, await counts());

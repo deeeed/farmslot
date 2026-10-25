@@ -40,12 +40,153 @@ import {
   assertMountedPlanningChange,
   assertObservedMemoryQueries,
   assertPlanningReadsFromRuntime,
+  assertRecoveredPlanningRows,
   assertRenderedPlanningAge,
   retainedPlanningRows,
   waitForPlanningRecovery,
 } from './prove-native-planning.mjs';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+
+function recoveryCase() {
+  const plan = {
+    addedProject: 'owned-added-project',
+    expected: {
+      backlog: { id: 'owned-backlog', after: 'Updated backlog' },
+      roadmap: { id: 'owned-roadmap', after: 'Updated roadmap' },
+      graph: { id: 'owned-graph', title: 'Owned graph', afterStatus: 'paused' },
+      queue: { id: 'owned-queue', afterPriority: 8 },
+    },
+  };
+  const data = {
+    backlog: { items: [{ id: 'owned-backlog', title: 'Updated backlog', status: 'candidate' }] },
+    roadmap: { items: [{ id: 'owned-roadmap', title: 'Updated roadmap' }] },
+    graph: { graphs: [{ graph: { id: 'owned-graph', title: 'Owned graph', status: 'paused' } }] },
+    queue: { items: [{ id: 'owned-queue', priority: 8 }] },
+    projects: { projects: [{ name: 'owned-added-project' }] },
+  };
+  const warm = {
+    state: { startedAt: 1000, connectionProfileId: 'owned-profile', workspaceKey: 'owned-scope' },
+    result: {
+      integrity: 'ok',
+      rows: Object.entries(persistedQueries).map(([kind, id]) => ({
+        id,
+        data: data[kind],
+        bytes: Buffer.byteLength(JSON.stringify(data[kind])),
+        observedAt: 1500,
+      })),
+    },
+  };
+  const recovery = structuredClone(warm);
+  recovery.state.startedAt = 2000;
+  recovery.state.online = true;
+  for (const row of recovery.result.rows) row.observedAt = 2500;
+  const graph = recovery.result.rows.find((row) => row.id === persistedQueries.graph);
+  graph.data.graphs[0].graph.tags = [];
+  graph.bytes = Buffer.byteLength(JSON.stringify(graph.data));
+  const wire = (snapshot, epoch, count) => ({
+    startId: 'same-proxy',
+    successfulReads: Object.fromEntries(
+      snapshot.result.rows.map((row) => [row.id.slice(0, row.id.indexOf(':')), count]),
+    ),
+    lastObservedReads: Object.fromEntries(
+      snapshot.result.rows.map((row) => [
+        row.id.slice(0, row.id.indexOf(':')),
+        {
+          completedAt: row.observedAt,
+          payloadSha256: digest(JSON.stringify(row.data)),
+          resourceState: { epoch },
+        },
+      ]),
+    ),
+  });
+  return {
+    plan,
+    warm,
+    recovery,
+    coldStartedAt: 2000,
+    priorWire: wire(warm, 'warm-epoch', 1),
+    wire: wire(recovery, 'recovered-epoch', 2),
+  };
+}
+
+const checkRecovery = (c) =>
+  assertRecoveredPlanningRows(c.plan, c.warm, c.recovery, c.coldStartedAt, c.priorWire, c.wire);
+
+test('recovery accepts source defaults only through fresh observed replies with expected values', () => {
+  const c = recoveryCase();
+  assert.notDeepEqual(
+    retainedPlanningRows(c.warm.result).graph.data,
+    retainedPlanningRows(c.recovery.result).graph.data,
+  );
+  assert.deepEqual(checkRecovery(c).graph.data.graphs[0].graph.tags, []);
+});
+
+test('recovery refuses stale, mismatched, foreign or missing current evidence', () => {
+  const mutations = [
+    (c) => {
+      c.wire.startId = 'replacement-proxy';
+    },
+    (c) => {
+      c.recovery.state.startedAt++;
+    },
+    (c) => {
+      c.warm.state.startedAt = c.coldStartedAt;
+    },
+    (c) => {
+      c.recovery.state.connectionProfileId = 'foreign-profile';
+    },
+    (c) => {
+      c.recovery.state.workspaceKey = 'foreign-owner';
+    },
+    (c) => {
+      c.recovery.state.online = false;
+    },
+    (c) => {
+      c.wire.lastObservedReads['workGraph.list'].resourceState.epoch = 'warm-epoch';
+    },
+    (c) => {
+      c.wire.lastObservedReads['workGraph.list'].resourceState.epoch = 'another-new-epoch';
+    },
+    (c) => {
+      c.wire.lastObservedReads['workGraph.list'].completedAt = 1000;
+    },
+    (c) => {
+      c.wire.successfulReads['workGraph.list'] = 1;
+    },
+    (c) => {
+      delete c.wire.lastObservedReads['workGraph.list'];
+    },
+    (c) => {
+      delete c.priorWire.lastObservedReads['workGraph.list'];
+    },
+    (c) => {
+      c.recovery.result.rows.find((row) => row.id === persistedQueries.graph).observedAt = 500;
+    },
+    (c) => {
+      c.recovery.result.rows.find(
+        (row) => row.id === persistedQueries.graph,
+      ).data.graphs[0].graph.tags = ['invented'];
+    },
+    (c) => {
+      const row = c.recovery.result.rows.find((row) => row.id === persistedQueries.queue);
+      row.data.items[0].priority = 99;
+      c.wire.lastObservedReads['dispatch.queue.list'].payloadSha256 = digest(
+        JSON.stringify(row.data),
+      );
+    },
+    (c) => {
+      c.recovery.result.rows = c.recovery.result.rows.filter(
+        (row) => row.id !== persistedQueries.graph,
+      );
+    },
+  ];
+  for (const mutate of mutations) {
+    const c = recoveryCase();
+    mutate(c);
+    assert.throws(() => checkRecovery(c));
+  }
+});
 
 test('saved-age evidence requires the selected caption and its age in rendered OCR', () => {
   assert.doesNotThrow(() =>
