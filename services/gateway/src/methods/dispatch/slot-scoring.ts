@@ -26,6 +26,7 @@ import {
   type SlotCapabilityCatalogs,
 } from '../../run-engine/slot-capability-requirements.js';
 
+import type { AutomaticSlotLoad } from './pressure-admission.js';
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
 // ─── Slot Scoring ───
@@ -333,6 +334,7 @@ export interface SlotSelectionOptions {
   requiredPrepareProfile?: string | null;
   projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
   pressureRejectedMachines?: ReadonlySet<string>;
+  automaticLoads?: ReadonlyMap<string, AutomaticSlotLoad>;
   parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
   skipPrepare?: boolean;
   plans?: SlotSelectionPlans;
@@ -385,6 +387,29 @@ export function branchContainsJiraKey(branch: string, jiraKey: string): boolean 
   return new RegExp(`(^|[^a-z0-9])${escapeRegExp(ticketSlug)}($|[^a-z0-9])`, 'i').test(branch);
 }
 
+/** Preserve red-headroom priority, then compare fresh loads; existing scores settle ties. */
+export function compareSlotLoads(
+  a: Pick<SlotStatus, 'machine' | 'hostLoad'>,
+  b: Pick<SlotStatus, 'machine' | 'hostLoad'>,
+  options?: Pick<SlotSelectionOptions, 'automaticLoads'>,
+): number {
+  if (!options?.automaticLoads?.size) return 0;
+  const redHeadroom =
+    Number(a.hostLoad?.headroom === 'red') - Number(b.hostLoad?.headroom === 'red');
+  if (redHeadroom) return redHeadroom;
+  const before = options.automaticLoads.get(a.machine)?.load1 ?? Infinity;
+  const after = options?.automaticLoads?.get(b.machine)?.load1 ?? Infinity;
+  return before === after ? 0 : before < after ? -1 : 1;
+}
+
+export function automaticSlotLoadBlocker(
+  slot: Pick<SlotStatus, 'machine'>,
+  options?: Pick<SlotSelectionOptions, 'automaticLoads'>,
+): string | null {
+  const load = options?.automaticLoads?.get(slot.machine);
+  return load?.skipped ? load.reason : null;
+}
+
 export function findBestSlot(
   slots: SlotStatus[],
   project: string,
@@ -396,7 +421,7 @@ export function findBestSlot(
       if (!selected) return false;
       const allow = selected.allowedSlots?.length ? new Set(selected.allowedSlots) : null;
       if (s.project !== project || !isFreeSlot(s) || (allow && !allow.has(s.slot))) return false;
-      if (slotRepoBlocker(s, selected)) return false;
+      if (slotRepoBlocker(s, selected) || automaticSlotLoadBlocker(s, selected)) return false;
       if (slotCapabilityBlocker(s.slot, selected.requiredCapabilities, selected.capabilityCatalogs))
         return false;
       if (selected.pressureRejectedMachines?.has(s.machine)) return false;
@@ -440,12 +465,16 @@ export function findBestSlot(
       const before = slotSelectionOptionsFor(a, options)!;
       const after = slotSelectionOptionsFor(b, options)!;
       return (
+        compareSlotLoads(a, b, options) ||
         slotScore(a, before.targetBranch ?? undefined, before) -
-        slotScore(b, after.targetBranch ?? undefined, after)
+          slotScore(b, after.targetBranch ?? undefined, after)
       );
     });
   if (candidates.length === 0) return null;
-  const cdpCandidates = candidates.filter((s) => isCdpLive(s.health.cdp));
+  // CDP preference must not move work back onto a more loaded machine.
+  const cdpCandidates = candidates.filter(
+    (s) => compareSlotLoads(s, candidates[0], options) === 0 && isCdpLive(s.health.cdp),
+  );
   return cdpCandidates.length > 0 ? cdpCandidates[0] : candidates[0];
 }
 
@@ -498,9 +527,11 @@ export function validateSlotForDispatch(
     skipPrepare?: boolean;
     requiredCapabilities?: readonly string[];
     capabilityCatalogs?: SlotCapabilityCatalogs;
+    automaticLoads?: ReadonlyMap<string, AutomaticSlotLoad>;
   },
 ): string | null {
   return (
+    automaticSlotLoadBlocker(slot, options) ??
     validateSlotForTargetBranch(slot, slots, options?.targetBranch, {
       allowWorking: options?.allowWorking,
       releasableBranchHolderIds: options?.releasableBranchHolderIds,

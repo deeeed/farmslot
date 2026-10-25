@@ -685,6 +685,44 @@ export function capturePressureAdmissionDecisionsLightweight(
   return captureInMemoryPressureAdmissionDecisions(machines, options);
 }
 
+/** Current load used for automatic placement, independent of opt-in dispatch refusal. */
+export interface AutomaticSlotLoad {
+  load1: number | null;
+  sampledAt: string | null;
+  threshold: number;
+  skipped: boolean;
+  reason: string;
+}
+
+export function automaticSlotLoads(
+  decisions: ReadonlyMap<string, PressureAdmissionDecision>,
+  config: Pick<PressureAdmissionConfig, 'load1Critical'> = resolvePressureAdmissionConfig(),
+): ReadonlyMap<string, AutomaticSlotLoad> {
+  return new Map(
+    [...decisions].map(([machine, decision]) => {
+      const sample = decision.evidence.samples.at(-1);
+      const code = decision.outcome === 'rejected' ? decision.code : decision.advisory?.code;
+      // Restored/offline/stale history remains charts-only even when refusal is disabled.
+      const usable = code !== 'PRESSURE_EVIDENCE_UNAVAILABLE' && code !== 'PRESSURE_EVIDENCE_STALE';
+      const load1 = usable && sample?.load1 !== undefined ? sample.load1 : null;
+      const skipped = load1 !== null && load1 >= config.load1Critical;
+      return [
+        machine,
+        {
+          load1,
+          sampledAt: load1 !== null ? sample!.collectedAt : null,
+          threshold: config.load1Critical,
+          skipped,
+          reason:
+            load1 === null
+              ? `Machine ${machine} has no current load-per-core sample; use existing slot ranking.`
+              : `Machine ${machine} load/core ${load1.toFixed(2)} ${skipped ? '>=' : '<'} ${config.load1Critical.toFixed(2)}${skipped ? '; skipped for automatic selection' : '; eligible, prefer lower load'}.`,
+        },
+      ];
+    }),
+  );
+}
+
 /** Error code carried by pressure-rejected dispatch attempts. */
 export const PRESSURE_ADMISSION_REJECTED_CODE = 'PRESSURE_ADMISSION_REJECTED';
 
