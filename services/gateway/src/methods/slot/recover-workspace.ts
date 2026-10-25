@@ -282,7 +282,10 @@ export async function recoverSlotWorkspace(
         );
         if (!released.released) throw new Error(released.reason ?? 'Cleanup did not finish');
         keepWarm = false;
-        await save('cleanup');
+        // Completed teardown must stay cold even if cancellation arrived during release.
+        if (!(await updateSlotStatusIf(params.slotId, ownsFence, { warm: false })))
+          throw new Error('Recovery fence changed');
+        if (signal?.aborted) throw new Error('Recovery cancelled; retry to finish verification');
         // The existing release clears its own ownership fields and resets Git.
         await advanceIdentity();
         await save('fixtures', 'cleanup');

@@ -16,6 +16,7 @@ import { createNativeProofFixture } from '../../runtime/native-proof-fixture.liv
 const uiProof = process.env.FARMSLOT_WORKSPACE_UI_PROOF === '1';
 const layoutProof = process.env.FARMSLOT_WORKSPACE_LAYOUT_PROOF === '1';
 const coldFailureOnly = process.env.FARMSLOT_WORKSPACE_COLD_FAILURE_PROOF === '1';
+const cancellationOnly = process.env.FARMSLOT_WORKSPACE_CANCEL_FAILURE_PROOF === '1';
 const source = fileURLToPath(new URL('../../../../../', import.meta.url));
 
 test(
@@ -56,6 +57,21 @@ test(
       await symlink(path.join(source, name), path.join(root, name));
     await writeFile(path.join(root, 'bin/tmux'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     process.env.PATH = path.join(root, 'bin') + ':' + process.env.PATH;
+    await writeFile(
+      path.join(root, 'bin/recycle-proof'),
+      `#!/bin/sh
+set -eu
+if [ -f "$FARMSLOT_ROOT/cancel-recycle" ]; then
+  touch "$FARMSLOT_ROOT/recycle-entered"
+  attempts=0
+  while [ ! -f "$FARMSLOT_ROOT/release-recycle" ]; do
+    attempts=$((attempts + 1))
+    [ "$attempts" -lt 200 ] || exit 1
+    sleep 0.05
+  done
+fi
+`,
+    );
     const seed = path.join(root, 'seed'),
       repo = path.join(root, 'checkout'),
       remote = path.join(root, 'remote.git');
@@ -87,7 +103,7 @@ test(
       JSON.stringify({
         name: 'proof',
         default_branch: 'main',
-        hooks: {},
+        hooks: { recycle: 'sh "$FARMSLOT_ROOT/bin/recycle-proof"' },
         scripted: { commands: { proof: { command: 'true', timeout_ms: 5000 } } },
         fixtures: { templates: [{ src: 'fixture.txt', dst: 'fixture.txt' }] },
       }),
@@ -246,7 +262,16 @@ test(
     }
     const connection = await fixture.client.connect();
     t.after(() => connection.close());
+    const bulkSummaries = new Map<string, object>();
     connection.onEvent((event) => {
+      if (
+        event.event === 'fleet.refresh.summary' &&
+        typeof event.payload === 'object' &&
+        event.payload !== null &&
+        'requestId' in event.payload &&
+        typeof event.payload.requestId === 'string'
+      )
+        bulkSummaries.set(event.payload.requestId, event.payload);
       if (event.event === 'slot.refresh.step')
         console.log('RECOVERY_STEP', JSON.stringify(event.payload));
     });
@@ -473,6 +498,77 @@ test(
       return;
     }
 
+    git(repo, 'checkout', 'previous');
+    await core.updateSlotStatus('proof-slot', {
+      branch: 'previous',
+      head_sha: git(repo, 'rev-parse', 'HEAD'),
+      warm: true,
+    });
+    await writeFile(path.join(root, 'cancel-recycle'), 'cancel during actual teardown');
+    const cancelWork = await inspectSlotWorkspace('proof-slot');
+    const bulk = await call<{ requestId: string }>('fleet.refreshSlots', {
+      requestId: 'cold-cancel-proof',
+      slots: [{ slotId: 'proof-slot', release: true, mode: 'safe', expectedWorkspace: cancelWork }],
+    });
+    const waitFor = async (check: () => Promise<boolean> | boolean) => {
+      const deadline = Date.now() + 30_000;
+      while (!(await check())) {
+        assert.ok(Date.now() < deadline, 'Cancellation proof boundary did not arrive');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    };
+    await waitFor(async () => {
+      try {
+        await readFile(path.join(root, 'recycle-entered'));
+        return true;
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+        throw error;
+      }
+    });
+    const cancellation = await call<{ cancelled: boolean }>('fleet.refreshSlots.cancel', {
+      requestId: bulk.requestId,
+    });
+    assert.equal(cancellation.cancelled, true);
+    await writeFile(path.join(root, 'release-recycle'), 'finish the owned teardown');
+    await waitFor(() => bulkSummaries.has(bulk.requestId));
+    const cancelledSummary = bulkSummaries.get(bulk.requestId);
+    assert.ok(cancelledSummary && 'cancelled' in cancelledSummary);
+    assert.equal(cancelledSummary.cancelled, 1);
+    const cancelledHeld = await core.readSlotRow('proof-slot');
+    assert.equal(cancelledHeld?.lifecycle, 'held');
+    assert.equal(
+      cancelledHeld?.warm,
+      false,
+      'Completed teardown is cold when cancellation arrives during recycle',
+    );
+    const cancelledWork = await inspectSlotWorkspace('proof-slot');
+    const cancelledRetry = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: cancelledWork,
+    });
+    assert.equal(cancelledRetry.refreshed, true, cancelledRetry.detail);
+    assert.equal((await core.readSlotRow('proof-slot'))?.warm, false);
+    if (cancellationOnly) {
+      await writeFile(
+        path.join(output, 'cancel-retry.json'),
+        JSON.stringify(
+          {
+            pass: true,
+            cancellation,
+            cancelledSummary,
+            cancelledHeld,
+            cancelledRetry,
+            coldOnRetry: true,
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
     await writeFile(path.join(repo, 'file.txt'), 'first local change\n');
     const dirty = await inspectSlotWorkspace('proof-slot');
     await writeFile(path.join(repo, 'file.txt'), 'changed after confirmation\n');
@@ -645,6 +741,8 @@ test(
     assert.equal((await core.readSlotRow('proof-empty'))?.fixtures, 'not-required');
     const result = {
       postReleaseFailure,
+      cancelledHeld,
+      cancelledRetry,
       coldOnPostReleaseProbeFailure: coldHeld?.warm === false,
       pass: true,
       recovered,

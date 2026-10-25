@@ -9,7 +9,7 @@
     },
     {
       "id": "recovery-safety",
-      "claim": "Recovery verifies default HEAD and fixtures, binds discard to actual content, preserves retained evidence, and holds failed work until a guarded retry succeeds."
+      "claim": "Recovery verifies default HEAD and fixtures, binds discard to actual content, preserves retained evidence, and holds failed work until a guarded retry succeeds, and keeps completed teardown cold after cancellation."
     },
     {
       "id": "native-recovery",
