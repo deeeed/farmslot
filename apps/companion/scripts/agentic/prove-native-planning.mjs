@@ -9,6 +9,7 @@ import {
   forbiddenPlanningMethods,
   observedMemoryMethods,
   persistedQueries,
+  planningSourceMutation,
   resolveNativePlanningInputs,
   verifyNativePlanningSource,
   writePlanningSource,
@@ -106,6 +107,79 @@ export function assertPlanningReadsFromRuntime(snapshot, wire, methods) {
       wire.lastObservedReads?.[method]?.completedAt >= snapshot.startedAt,
       `A pre-app reply cannot prove current ${method}`,
     );
+  }
+}
+
+/** A mounted change needs its owning revision, actual app read and persisted payload. */
+export function assertMountedPlanningChange(plan, kind, before, after, writer, priorWire, wire) {
+  assert(['graph', 'queue'].includes(kind));
+  const queryId = persistedQueries[kind];
+  const method = queryId.slice(0, queryId.indexOf(':'));
+  const collection = kind === 'graph' ? 'work-graphs' : 'dispatch-queue';
+  const rows = (snapshot) => snapshot.result.rows.filter((row) => row.id === queryId);
+  assert.equal(before.result.integrity, 'ok');
+  assert.equal(after.result.integrity, 'ok');
+  assert.equal(rows(before).length, 1);
+  assert.equal(rows(after).length, 1);
+  assert(
+    Number.isFinite(before.state.startedAt) && Number.isFinite(before.state.connectionGeneration),
+  );
+  assert(typeof before.state.workspaceKey === 'string' && before.state.workspaceKey.length);
+  assert(
+    typeof before.state.connectionProfileId === 'string' && before.state.connectionProfileId.length,
+  );
+  for (const key of ['startedAt', 'connectionGeneration', 'workspaceKey', 'connectionProfileId'])
+    assert.equal(
+      after.state[key],
+      before.state[key],
+      `Mounted writer changed app identity: ${key}`,
+    );
+  assert.equal(before.state.online, true);
+  assert.equal(after.state.online, true);
+  assert.equal(wire.startId, priorWire.startId);
+  assert.equal(writer.kind, kind);
+  assert.equal(writer.method, planningSourceMutation(plan, kind).method);
+  assert.equal(writer.sourceHead, plan.sourceHead);
+  assert.equal(writer.path, plan.files[kind].path);
+  assert.equal(writer.before, plan.files[kind].sha256);
+  assert(Number.isFinite(writer.requestedAt) && writer.requestedAt > 0);
+  assert((wire.successfulReads[method] ?? 0) > (priorWire.successfulReads[method] ?? 0));
+  const previous = priorWire.lastObservedReads[method];
+  const current = wire.lastObservedReads[method];
+  assert(previous?.completedAt >= before.state.startedAt, 'Before row requires an actual app read');
+  assert(
+    current?.completedAt >= writer.requestedAt,
+    'Mounted mutation requires a post-request read',
+  );
+  assert(typeof previous.resourceState.epoch === 'string' && previous.resourceState.epoch.length);
+  assert.equal(current.resourceState.epoch, previous.resourceState.epoch);
+  const revision = (read) =>
+    read.resourceState.dependencies.find(
+      ({ key }) => key.family === 'planning' && key.collection === collection,
+    )?.revision;
+  assert(
+    Number.isSafeInteger(revision(previous)) && revision(current) > revision(previous),
+    'The owning planning revision must advance',
+  );
+  assert.equal(digest(JSON.stringify(rows(before)[0].data)), previous.payloadSha256);
+  assert.equal(digest(JSON.stringify(rows(after)[0].data)), current.payloadSha256);
+  const expected = plan.expected[kind];
+  if (kind === 'graph') {
+    const original = rows(before)[0].data.graphs.find(
+      ({ graph }) => graph.id === expected.id,
+    )?.graph;
+    const updated = rows(after)[0].data.graphs.find(({ graph }) => graph.id === expected.id)?.graph;
+    assert.equal(original?.status, expected.beforeStatus);
+    assert.equal(updated?.status, expected.afterStatus);
+    assert.equal(updated?.title, expected.title);
+    assert.equal(updated?.project, plan.project);
+  } else {
+    const original = rows(before)[0].data.items.find((row) => row.id === expected.id);
+    const updated = rows(after)[0].data.items.find((row) => row.id === expected.id);
+    assert.equal(original?.priority, expected.priority);
+    assert.equal(updated?.priority, expected.afterPriority);
+    assert.equal(updated?.status, 'queued');
+    assert.equal(updated?.project, plan.project);
   }
 }
 
@@ -288,6 +362,36 @@ async function prove() {
           `No command/replay: ${method}`,
         );
     };
+    const mountedWriter = async (kind, beforeLabels, afterLabels) => {
+      await view(`${kind}-writer-before`, beforeLabels);
+      const before = await sqlite(`d07-${kind}-writer-before`);
+      const priorWire = await counts();
+      const writer = await writePlanningSource(plan, kind, artifacts);
+      await view(`${kind}-writer-after`, afterLabels);
+      const queryId = persistedQueries[kind];
+      const method = queryId.slice(0, queryId.indexOf(':'));
+      for (let i = 0; i < 10; i++) {
+        const after = await sqlite(`d07-${kind}-writer-after-${i}`);
+        const wire = await counts();
+        const data = after.result.rows.find((row) => row.id === queryId)?.data;
+        const updated =
+          kind === 'graph'
+            ? data?.graphs?.find(({ graph }) => graph.id === plan.expected.graph.id)?.graph
+                .status === plan.expected.graph.afterStatus
+            : data?.items?.find((row) => row.id === plan.expected.queue.id)?.priority ===
+              plan.expected.queue.afterPriority;
+        if (
+          updated &&
+          wire.lastObservedReads?.[method]?.payloadSha256 === digest(JSON.stringify(data))
+        ) {
+          assertMountedPlanningChange(plan, kind, before, after, writer, priorWire, wire);
+          await save(`d07-${kind}-mounted-writer.json`, { before, after, writer, priorWire, wire });
+          return;
+        }
+        await delay(80);
+      }
+      assert.fail(`Mounted ${kind} change was not persisted from its observed reply`);
+    };
     await waitForSimulatorRecipeBridge({ platform: 'ios', simulator });
     const initial = await counts();
     for (const method of forbiddenPlanningMethods)
@@ -312,12 +416,17 @@ async function prove() {
     await writePlanningSource(plan, 'newProject', artifacts);
     await view('projects-after', [plan.addedProject]);
     await open('work-graphs');
-    await view('work-graphs-warm', [plan.expected.graph.title]);
+    await mountedWriter(
+      'graph',
+      [plan.expected.graph.title, plan.expected.graph.beforeStatus],
+      [plan.expected.graph.title, plan.expected.graph.afterStatus],
+    );
     await open('dispatch-queue');
-    await view('dispatch-queue-warm', [
-      plan.expected.queue.label,
-      `Priority ${plan.expected.queue.priority}`,
-    ]);
+    await mountedWriter(
+      'queue',
+      [plan.expected.queue.label, `Priority ${plan.expected.queue.priority}`],
+      [plan.expected.queue.label, `Priority ${plan.expected.queue.afterPriority}`],
+    );
     await open('pr-automation');
     const prScreen = await view(
       'pr-read-only',
@@ -371,11 +480,18 @@ async function prove() {
       ),
     );
     assert(retained.projects.data.projects.some((project) => project.name === plan.addedProject));
-    assert(retained.queue.data.items.some((item) => item.id === plan.expected.queue.id));
+    assert(
+      retained.queue.data.items.some(
+        (item) =>
+          item.id === plan.expected.queue.id && item.priority === plan.expected.queue.afterPriority,
+      ),
+    );
     assert(
       retained.graph.data.graphs.some(
         ({ graph }) =>
-          graph.id === plan.expected.graph.id && graph.title === plan.expected.graph.title,
+          graph.id === plan.expected.graph.id &&
+          graph.title === plan.expected.graph.title &&
+          graph.status === plan.expected.graph.afterStatus,
       ),
     );
     await save('d07-observed-methods.json', {
@@ -494,11 +610,15 @@ async function prove() {
       }
       assert(ageVisible, 'Current product must visibly render saved projects age');
       await open('work-graphs');
-      await view('work-graphs-cold', [plan.expected.graph.title, 'Saved work graphs,']);
+      await view('work-graphs-cold', [
+        plan.expected.graph.title,
+        plan.expected.graph.afterStatus,
+        'Saved work graphs,',
+      ]);
       await open('dispatch-queue');
       await view('dispatch-queue-cold', [
         plan.expected.queue.label,
-        `Priority ${plan.expected.queue.priority}`,
+        `Priority ${plan.expected.queue.afterPriority}`,
         'Saved dispatch queue,',
       ]);
       const finalCold = await sqlite('d07-cold-final');

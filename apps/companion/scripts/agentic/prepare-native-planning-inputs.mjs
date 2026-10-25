@@ -58,6 +58,8 @@ assert.equal(backlog.project, specification.project);
 assert.equal(roadmap.project, specification.project);
 assert.equal(queue.project, specification.project);
 assert.equal(graph.project, specification.project);
+assert.equal(graph.status, 'planning');
+assert(Number.isSafeInteger(queue.priority) && Number.isSafeInteger(queue.priority + 1));
 assert.equal(backlog.title, specification.labels.backlogBefore);
 assert.equal(roadmap.title, specification.labels.roadmapBefore);
 const projectsDir = await realpath(specification.projectsDir);
@@ -128,7 +130,12 @@ await exclusiveJson(outputFile, {
       status: 'candidate',
     },
     roadmap: { id: roadmap.id, before: roadmap.title, after: specification.labels.roadmapAfter },
-    queue: { id: queue.id, label: queue.label || queue.ticketOrPr, priority: queue.priority },
-    graph: { id: graph.id, title: graph.title },
+    queue: {
+      id: queue.id,
+      label: queue.label || queue.ticketOrPr,
+      priority: queue.priority,
+      afterPriority: queue.priority + 1,
+    },
+    graph: { id: graph.id, title: graph.title, beforeStatus: graph.status, afterStatus: 'paused' },
   },
 });

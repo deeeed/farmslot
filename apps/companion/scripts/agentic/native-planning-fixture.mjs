@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 export const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -205,6 +206,8 @@ export async function resolveNativePlanningInputs(env, sourceRoot) {
       entry.sha256,
       `Original ${name} input drift; preserve consumed source`,
     );
+    if (name === 'graph' || name === 'queue')
+      assertPlanningSourceBefore(f, name, JSON.parse(bytes));
     inputs.push({ label: `d07-${name}-original`, path: file, sha256: digest(bytes) });
   }
   assert.equal(f.files.newProject.path, path.join(f.projectsDir, f.addedProject, 'project.json'));
@@ -248,7 +251,11 @@ export async function resolveNativePlanningInputs(env, sourceRoot) {
     f.expected.backlog.id && f.expected.roadmap.id && f.expected.queue.id && f.expected.graph.id,
   );
   assert(f.expected.graph.title && f.expected.queue.label);
-  assert(Number.isFinite(f.expected.queue.priority));
+  assert.equal(f.expected.graph.beforeStatus, 'planning');
+  assert.equal(f.expected.graph.afterStatus, 'paused');
+  assert(Number.isSafeInteger(f.expected.queue.priority));
+  assert.equal(f.expected.queue.afterPriority, f.expected.queue.priority + 1);
+  assert(Number.isSafeInteger(f.expected.queue.afterPriority));
   assert(f.expected.backlog.before !== f.expected.backlog.after);
   assert(f.expected.roadmap.before !== f.expected.roadmap.after);
   assert(
@@ -273,7 +280,68 @@ export async function resolveNativePlanningInputs(env, sourceRoot) {
   return { ...f, fixtureFile, inputs, inputHash: digest(JSON.stringify(inputs)), persistedQueries };
 }
 
-async function updateOwnedBacklog(plan) {
+/** Only these non-dispatching source mutations belong to the prepared case. */
+export function planningSourceMutation(plan, kind) {
+  if (kind === 'backlog')
+    return {
+      method: 'backlog.update',
+      params: { itemId: plan.expected.backlog.id, title: plan.expected.backlog.after },
+    };
+  if (kind === 'graph') {
+    assert.equal(plan.expected.graph.beforeStatus, 'planning');
+    assert.equal(plan.expected.graph.afterStatus, 'paused');
+    return { method: 'workGraph.pause', params: { graphId: plan.expected.graph.id } };
+  }
+  assert.equal(kind, 'queue', 'Only prepared planning mutations are allowed');
+  const { id, priority, afterPriority } = plan.expected.queue;
+  assert(Number.isSafeInteger(priority) && Number.isSafeInteger(afterPriority));
+  assert.equal(afterPriority, priority + 1);
+  return { method: 'dispatch.queue.update', params: { itemId: id, priority: afterPriority } };
+}
+
+function assertPlanningSourceBefore(plan, kind, before) {
+  assert(['graph', 'queue'].includes(kind));
+  const expected = plan.expected[kind];
+  const original = kind === 'graph' ? before.graph : before.find((row) => row.id === expected.id);
+  assert.equal(original?.id, expected.id);
+  assert.equal(original?.project, plan.project);
+  if (kind === 'graph') {
+    assert.equal(original.status, expected.beforeStatus);
+    assert.equal(original.title, expected.title);
+  } else {
+    assert.equal(original.status, 'queued');
+    assert.equal(original.priority, expected.priority);
+  }
+  return original;
+}
+
+export function assertPlanningSourceTransition(plan, kind, before, after) {
+  const original = assertPlanningSourceBefore(plan, kind, before);
+  if (kind === 'graph') {
+    const expected = plan.expected.graph;
+    assert.equal(after.graph.id, expected.id);
+    assert.equal(after.graph.project, plan.project);
+    assert.equal(after.graph.title, expected.title);
+    assert.equal(after.graph.status, expected.afterStatus);
+    for (const field of ['nodes', 'edges', 'gates', 'ledger'])
+      assert.deepEqual(after[field], before[field], `Graph pause changed ${field}`);
+  } else {
+    const expected = plan.expected.queue;
+    const updated = after.find((row) => row.id === expected.id);
+    assert.equal(updated?.project, plan.project);
+    assert.equal(updated?.status, 'queued');
+    assert.equal(updated?.priority, expected.afterPriority);
+    assert.equal(updated?.label, original?.label);
+    assert.deepEqual(
+      after.filter((row) => row.id !== expected.id),
+      before.filter((row) => row.id !== expected.id),
+      'Queue priority write changed another row',
+    );
+  }
+}
+
+async function updateOwnedPlanning(plan, kind) {
+  const mutation = planningSourceMutation(plan, kind);
   const credentialBytes = await readFile(plan.sourceWriter.credentialFile);
   assert.equal(digest(credentialBytes), plan.sourceWriter.credentialSha256);
   const credential = JSON.parse(credentialBytes);
@@ -295,8 +363,8 @@ async function updateOwnedBacklog(plan) {
       if (error) reject(error);
       else resolve(result);
     };
-    const timer = setTimeout(() => finish(new Error('Owning backlog writer deadline')), 5000);
-    socket.once('error', () => finish(new Error('Owning backlog writer transport failed')));
+    const timer = setTimeout(() => finish(new Error('Owning planning writer deadline')), 5000);
+    socket.once('error', () => finish(new Error('Owning planning writer transport failed')));
     socket.once('open', () =>
       socket.send(
         JSON.stringify({
@@ -331,7 +399,7 @@ async function updateOwnedBacklog(plan) {
           !Array.isArray(principal.roles) ||
           !principal.roles.some((binding) => binding.role === 'admin')
         ) {
-          finish(new Error('Owning backlog writer authority refused'));
+          finish(new Error('Owning planning writer authority refused'));
           return;
         }
         authorized = true;
@@ -339,12 +407,11 @@ async function updateOwnedBacklog(plan) {
           JSON.stringify({
             type: 'req',
             id: 'writer-update',
-            method: 'backlog.update',
-            params: { itemId: plan.expected.backlog.id, title: plan.expected.backlog.after },
+            ...mutation,
           }),
         );
       } else if (frame.id === 'writer-update') {
-        if (!frame.ok) finish(new Error('Owning backlog update refused'));
+        if (!frame.ok) finish(new Error('Owning planning update refused'));
         else finish(undefined, frame.payload);
       }
     });
@@ -358,7 +425,7 @@ export async function writePlanningSource(plan, kind, artifacts) {
     /^[a-f0-9]{40}$/,
     'Source writer requires the verified source commit',
   );
-  assert(['backlog', 'roadmap', 'newProject'].includes(kind));
+  assert(['backlog', 'roadmap', 'newProject', 'graph', 'queue'].includes(kind));
   const receipt = path.join(artifacts, `d07-writer-${kind}.json`);
   try {
     await stat(receipt);
@@ -372,6 +439,7 @@ export async function writePlanningSource(plan, kind, artifacts) {
   if (kind !== 'newProject') assert.equal(await realpath(file), file);
   let before;
   let after;
+  let requestedAt;
   if (kind === 'newProject') {
     // Exclusively create only the declared new project; no wildcard replacement/deletion.
     await mkdir(path.dirname(file), { mode: 0o700 });
@@ -391,7 +459,8 @@ export async function writePlanningSource(plan, kind, artifacts) {
       const row = rows.find((entry) => entry.id === plan.expected.backlog.id);
       assert.equal(row.title, plan.expected.backlog.before);
       assert.equal(row.status, 'candidate');
-      const committed = await updateOwnedBacklog(plan);
+      requestedAt = Date.now();
+      const committed = await updateOwnedPlanning(plan, kind);
       assert.equal(committed.item.id, row.id);
       assert.equal(committed.item.title, plan.expected.backlog.after);
       assert.equal(committed.item.status, 'candidate');
@@ -402,6 +471,31 @@ export async function writePlanningSource(plan, kind, artifacts) {
         current.filter((entry) => entry.id !== row.id),
         rows.filter((entry) => entry.id !== row.id),
       );
+    } else if (kind === 'graph' || kind === 'queue') {
+      const original = JSON.parse(before);
+      assertPlanningSourceBefore(plan, kind, original);
+      requestedAt = Date.now();
+      const committed = await updateOwnedPlanning(plan, kind);
+      const expected = plan.expected[kind];
+      if (kind === 'graph') {
+        assert.equal(committed.graph.graph.id, expected.id);
+        assert.equal(committed.graph.graph.status, expected.afterStatus);
+      } else {
+        assert.equal(committed.item.id, expected.id);
+        assert.equal(committed.item.status, 'queued');
+        assert.equal(committed.item.priority, expected.afterPriority);
+      }
+      // Queue priority updates publish readable memory before their queued disk write.
+      // Wait only while the exact original bytes remain; foreign/new wrong bytes fail.
+      const deadline = Date.now() + 5000;
+      do {
+        after = await readFile(file);
+        if (after.equals(before)) {
+          assert(Date.now() < deadline, 'Owning source did not persist its mutation');
+          await delay(20);
+        }
+      } while (after.equals(before));
+      assertPlanningSourceTransition(plan, kind, original, JSON.parse(after));
     } else {
       const raw = before.toString('utf8');
       assert.equal(
@@ -411,7 +505,7 @@ export async function writePlanningSource(plan, kind, artifacts) {
       );
       after = Buffer.from(raw.replace(plan.expected.roadmap.before, plan.expected.roadmap.after));
     }
-    if (kind !== 'backlog') {
+    if (kind === 'roadmap') {
       const temporary = `${file}.d07-proof-tmp`;
       await writeFile(temporary, after, { flag: 'wx', mode: 0o600 });
       // Recheck before commit. The fixture is exclusively owned; this is not a cross-process lock.
@@ -429,13 +523,18 @@ export async function writePlanningSource(plan, kind, artifacts) {
     flag: 'wx',
     mode: 0o600,
   });
-  await exclusiveJson(receipt, {
+  const result = {
     kind,
-    method: kind === 'backlog' ? 'backlog.update' : 'owned-file-write',
+    method: ['backlog', 'graph', 'queue'].includes(kind)
+      ? planningSourceMutation(plan, kind).method
+      : 'owned-file-write',
     path: file,
     before: before ? digest(before) : null,
     after: digest(after),
-    committedAt: Date.now(),
+    recordedAt: Date.now(),
+    ...(requestedAt !== undefined ? { requestedAt } : {}),
     sourceHead: plan.sourceHead,
-  });
+  };
+  await exclusiveJson(receipt, result);
+  return result;
 }

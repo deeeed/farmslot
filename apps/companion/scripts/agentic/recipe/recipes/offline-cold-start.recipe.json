@@ -5,7 +5,7 @@
   "proofTargets": [
     {
       "id": "d07-mounted-sources",
-      "claim": "The owning backlog API and roadmap/project file writers update mounted current Companion views without Refresh."
+      "claim": "Owning backlog, graph and queue APIs plus roadmap/project file writers update mounted current Companion views without Refresh."
     },
     {
       "id": "d07-cold-data",

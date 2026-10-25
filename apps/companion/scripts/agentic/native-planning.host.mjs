@@ -24,7 +24,10 @@ import { promisify } from 'node:util';
 import WebSocket, { WebSocketServer } from 'ws';
 
 import {
+  assertPlanningSourceTransition,
   digest,
+  persistedQueries,
+  planningSourceMutation,
   verifyNativePlanningSource,
   writePlanningSource,
 } from './native-planning-fixture.mjs';
@@ -33,12 +36,199 @@ import {
   renderedNativeDisabledTarget,
 } from './native-store-fixture.mjs';
 import {
+  assertMountedPlanningChange,
   assertObservedMemoryQueries,
   assertPlanningReadsFromRuntime,
   retainedPlanningRows,
 } from './prove-native-planning.mjs';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+
+function writerCase(kind) {
+  const plan = {
+    sourceHead: 'a'.repeat(40),
+    project: 'owned-project',
+    expected: {
+      graph: {
+        id: 'owned-graph',
+        title: 'Owned plan',
+        beforeStatus: 'planning',
+        afterStatus: 'paused',
+      },
+      queue: { id: 'owned-queue', priority: 7, afterPriority: 8 },
+    },
+    files: { [kind]: { path: `/owned/${kind}.json`, sha256: 'b'.repeat(64) } },
+  };
+  const before =
+    kind === 'graph'
+      ? {
+          graph: {
+            id: 'owned-graph',
+            project: plan.project,
+            title: 'Owned plan',
+            status: 'planning',
+          },
+          nodes: [{ id: 'node' }],
+          edges: [],
+          gates: [],
+          ledger: [],
+        }
+      : [
+          {
+            id: 'owned-queue',
+            project: plan.project,
+            status: 'queued',
+            priority: 7,
+            label: 'Owned row',
+          },
+          { id: 'retained-queue', project: 'other', status: 'queued', priority: 1 },
+        ];
+  const after = structuredClone(before);
+  if (kind === 'graph') after.graph.status = 'paused';
+  else after[0].priority = 8;
+  return { plan, before, after };
+}
+
+test('source writers pause only the selected planning graph and update only queue priority', () => {
+  const graph = writerCase('graph');
+  assert.deepEqual(planningSourceMutation(graph.plan, 'graph'), {
+    method: 'workGraph.pause',
+    params: { graphId: 'owned-graph' },
+  });
+  const queue = writerCase('queue');
+  assert.deepEqual(planningSourceMutation(queue.plan, 'queue'), {
+    method: 'dispatch.queue.update',
+    params: { itemId: 'owned-queue', priority: 8 },
+  });
+  assert.throws(() => planningSourceMutation(graph.plan, 'activate'));
+  for (const kind of ['graph', 'queue']) {
+    const { plan, before, after } = writerCase(kind);
+    assert.doesNotThrow(() => assertPlanningSourceTransition(plan, kind, before, after));
+    const wrong = structuredClone(after);
+    if (kind === 'graph') wrong.nodes.push({ id: 'unrequested-node' });
+    else wrong[1].priority++;
+    assert.throws(() => assertPlanningSourceTransition(plan, kind, before, wrong));
+    const foreign = structuredClone(before);
+    if (kind === 'graph') foreign.graph.project = 'foreign';
+    else foreign[0].project = 'foreign';
+    assert.throws(() => assertPlanningSourceTransition(plan, kind, foreign, after));
+  }
+});
+
+for (const kind of ['graph', 'queue']) {
+  test(`mounted ${kind} proof refuses unrelated reads, old revisions and mismatched saved data`, () => {
+    const { plan, before: sourceBefore, after: sourceAfter } = writerCase(kind);
+    const queryId = persistedQueries[kind];
+    const method = queryId.slice(0, queryId.indexOf(':'));
+    const collection = kind === 'graph' ? 'work-graphs' : 'dispatch-queue';
+    const data = (source) => (kind === 'graph' ? { graphs: [source] } : { items: source });
+    const before = {
+      state: {
+        startedAt: 100,
+        connectionGeneration: 1,
+        workspaceKey: 'current-owner',
+        connectionProfileId: 'private-profile',
+        online: true,
+      },
+      result: { integrity: 'ok', rows: [{ id: queryId, data: data(sourceBefore) }] },
+    };
+    const after = {
+      state: { ...before.state },
+      result: { integrity: 'ok', rows: [{ id: queryId, data: data(sourceAfter) }] },
+    };
+    const read = (payload, revision, completedAt) => ({
+      payloadSha256: digest(JSON.stringify(payload)),
+      completedAt,
+      resourceState: {
+        epoch: 'live-epoch',
+        dependencies: [{ key: { family: 'planning', collection }, revision }],
+      },
+    });
+    const priorWire = {
+      startId: 'owned-proxy',
+      successfulReads: { [method]: 1 },
+      lastObservedReads: { [method]: read(before.result.rows[0].data, 1, 150) },
+    };
+    const wire = {
+      startId: 'owned-proxy',
+      successfulReads: { [method]: 2 },
+      lastObservedReads: { [method]: read(after.result.rows[0].data, 2, 250) },
+    };
+    // The app may finish its legitimate read before the writer's disk receipt is recorded.
+    const writer = {
+      kind,
+      method: planningSourceMutation(plan, kind).method,
+      sourceHead: plan.sourceHead,
+      path: plan.files[kind].path,
+      before: plan.files[kind].sha256,
+      requestedAt: 200,
+      recordedAt: 300,
+    };
+    const input = { plan, kind, before, after, writer, priorWire, wire };
+    const check = (value) =>
+      assertMountedPlanningChange(
+        value.plan,
+        value.kind,
+        value.before,
+        value.after,
+        value.writer,
+        value.priorWire,
+        value.wire,
+      );
+    assert.doesNotThrow(() => check(input));
+    for (const change of [
+      (v) => {
+        v.wire.successfulReads[method] = 1;
+      },
+      (v) => {
+        v.wire.lastObservedReads[method].resourceState.dependencies[0].revision = 1;
+      },
+      (v) => {
+        v.wire.lastObservedReads[method].resourceState.epoch = 'other-epoch';
+      },
+      (v) => {
+        v.wire.lastObservedReads[method].resourceState.dependencies[0].key.collection = 'unrelated';
+      },
+      (v) => {
+        v.wire.lastObservedReads[method].completedAt = 199;
+      },
+      (v) => {
+        v.priorWire.lastObservedReads[method].completedAt = 50;
+      },
+      (v) => {
+        v.wire.lastObservedReads[method].payloadSha256 = 'wrong-payload';
+      },
+      (v) => {
+        v.writer.sourceHead = 'b'.repeat(40);
+      },
+      (v) => {
+        v.after.state.startedAt++;
+      },
+      (v) => {
+        v.after.state.connectionGeneration++;
+      },
+      (v) => {
+        v.after.state.workspaceKey = 'other-owner';
+      },
+      (v) => {
+        v.after.state.online = false;
+      },
+      (v) => {
+        v.wire.startId = 'other-proxy';
+      },
+      (v) => {
+        v.after.result.rows[0].data = structuredClone(before.result.rows[0].data);
+        v.wire.lastObservedReads[method].payloadSha256 = digest(
+          JSON.stringify(v.after.result.rows[0].data),
+        );
+      },
+    ]) {
+      const invalid = structuredClone(input);
+      change(invalid);
+      assert.throws(() => check(invalid));
+    }
+  });
+}
 
 test('source pins verify actual committed bytes and modes before any native preparation', async (t) => {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), 'd07-source-pin-')));
@@ -412,6 +602,138 @@ test(
     await assert.rejects(writePlanningSource(plan, 'backlog', artifacts), /already consumed/);
   },
 );
+
+for (const kind of ['graph', 'queue']) {
+  test(
+    `the ${kind} writer records actual RPC and disk bytes without rewriting server fields`,
+    { timeout: 4000 },
+    async (t) => {
+      const directory = await realpath(
+        await mkdtemp(path.join(os.tmpdir(), 'd07-planning-writer-')),
+      );
+      const artifacts = path.join(directory, 'artifacts');
+      await mkdir(artifacts);
+      const file = path.join(directory, kind + '.json');
+      const credentialFile = path.join(directory, 'source.json');
+      const fixture = writerCase(kind);
+      const stamp = { kind: 'principal', principalId: 'source-admin' };
+      if (kind === 'graph') {
+        fixture.before.originator = stamp;
+        fixture.after.originator = stamp;
+      } else {
+        fixture.before[0].originator = stamp;
+        fixture.after[0].originator = stamp;
+      }
+      const publicResult = structuredClone(kind === 'graph' ? fixture.after : fixture.after[0]);
+      delete publicResult.originator;
+      const credential = Buffer.from(JSON.stringify({ secret: 'PRIVATE_SOURCE_TEST_CREDENTIAL' }));
+      const before = Buffer.from(JSON.stringify(fixture.before));
+      const after = Buffer.from(JSON.stringify(fixture.after));
+      await writeFile(file, before);
+      await writeFile(credentialFile, credential, { mode: 0o600 });
+      const plan = {
+        ...fixture.plan,
+        farmRoot: directory,
+        projectsDir: directory,
+        files: { [kind]: { path: file, sha256: digest(before) } },
+        sourceWriter: {
+          url: 'ws://127.0.0.1:7914',
+          credentialFile,
+          credentialSha256: digest(credential),
+          principalId: 'source-admin',
+        },
+      };
+      const server = createServer();
+      const sockets = new WebSocketServer({ server });
+      const peers = new Set();
+      const methods = [];
+      let persisted;
+      t.after(async () => {
+        await persisted;
+        for (const peer of peers) peer.terminate();
+        await new Promise((resolve) => sockets.close(resolve));
+        if (server.listening) await new Promise((resolve) => server.close(resolve));
+        await rm(directory, { recursive: true, force: true });
+      });
+      sockets.on('connection', (peer) => {
+        peers.add(peer);
+        peer.on('close', () => peers.delete(peer));
+        peer.on('message', async (bytes) => {
+          const request = JSON.parse(String(bytes));
+          methods.push(request.method);
+          if (request.method === 'auth.connect') {
+            peer.send(
+              JSON.stringify({
+                type: 'res',
+                id: request.id,
+                ok: true,
+                payload: {
+                  principal: {
+                    id: 'source-admin',
+                    roles: [{ role: 'admin', scope: { kind: 'global' } }],
+                  },
+                },
+              }),
+            );
+            return;
+          }
+          assert.deepEqual(
+            { method: request.method, params: request.params },
+            planningSourceMutation(plan, kind),
+          );
+          if (kind === 'graph') {
+            await writeFile(file, after);
+            peer.send(
+              JSON.stringify({
+                type: 'res',
+                id: request.id,
+                ok: true,
+                payload: { graph: publicResult },
+              }),
+            );
+          } else {
+            // The real priority handler acknowledges readable memory before queued persistence.
+            persisted = delay(40).then(() => writeFile(file, after));
+            peer.send(
+              JSON.stringify({
+                type: 'res',
+                id: request.id,
+                ok: true,
+                payload: { item: publicResult },
+              }),
+            );
+          }
+        });
+      });
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(7914, '127.0.0.1', resolve);
+      });
+      const foreign = structuredClone(fixture.before);
+      if (kind === 'graph') foreign.graph.project = 'foreign';
+      else foreign[0].project = 'foreign';
+      const foreignBytes = Buffer.from(JSON.stringify(foreign));
+      await writeFile(file, foreignBytes);
+      plan.files[kind].sha256 = digest(foreignBytes);
+      await assert.rejects(
+        () => writePlanningSource(plan, kind, artifacts),
+        (error) => error.code === 'ERR_ASSERTION',
+      );
+      assert.deepEqual(methods, [], 'A foreign source must be refused before authentication');
+      await writeFile(file, before);
+      plan.files[kind].sha256 = digest(before);
+      const receipt = await writePlanningSource(plan, kind, artifacts);
+      assert.deepEqual(methods, ['auth.connect', planningSourceMutation(plan, kind).method]);
+      assert.deepEqual(await readFile(file), after);
+      assert.equal(receipt.before, digest(before));
+      assert.equal(receipt.after, digest(after));
+      assert(receipt.requestedAt > 0 && receipt.recordedAt >= receipt.requestedAt);
+      const raw = await readFile(path.join(artifacts, `d07-writer-${kind}.json`), 'utf8');
+      assert(!raw.includes('PRIVATE_SOURCE_TEST_CREDENTIAL'));
+      await assert.rejects(() => writePlanningSource(plan, kind, artifacts), /already consumed/);
+    },
+  );
+}
 
 test(
   'the passive proxy counts only successful negotiated observed replies and retains no private bytes',
