@@ -1,7 +1,12 @@
 import path from 'node:path';
 
 import type { NativeWorkerLaunch } from '@farmslot/agent-runtime/native';
-import type { AgentRole, NativeProfileReference, SafetyTier } from '@farmslot/protocol';
+import type {
+  AgentRole,
+  NativeProfileReference,
+  ReviewValidationDepth,
+  SafetyTier,
+} from '@farmslot/protocol';
 import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import { runnerRuntimeDir } from '../../../../../scripts/lib/runner-runtime.cjs';
@@ -37,6 +42,7 @@ export async function prepareNativeWorkerLaunch(input: {
   effort?: string;
   safetyTier: SafetyTier;
   role: AgentRole;
+  reviewValidationDepth?: ReviewValidationDepth;
   domain?: string;
   taskDir: string;
   leaseId: string;
@@ -65,9 +71,13 @@ export async function prepareNativeWorkerLaunch(input: {
     expandDomainValue: (value) =>
       expandTemplate(value, vars, input.projectVars, { domain: input.domain ?? '' }),
   });
-  // Match terminal launches: pool values override project command_env, while
-  // the task trust and runner account settings below remain runtime-owned.
-  const machineEnv = machineShellEnv(vars);
+  // Static reviewers use pinned sources and explicit command_env. Unrelated
+  // pool tool selections must not change a retained reviewer's launch identity.
+  const machineEnv = machineShellEnv(
+    input.role === 'review' && input.reviewValidationDepth === 'static-code'
+      ? { machine: vars.machine, host: vars.host }
+      : vars,
+  );
   environment.set = { ...environment.set, ...machineEnv };
   environment.unset = environment.unset.filter((name) => !Object.hasOwn(machineEnv, name));
   const sources = currentProjectSources();

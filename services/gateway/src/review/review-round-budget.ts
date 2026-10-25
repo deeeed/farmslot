@@ -378,6 +378,7 @@ export async function settleReviewRoundNoVerdict(
   runId: string,
   attemptId: string,
   reason: string,
+  kind?: ReviewRoundSettlement['kind'],
 ): Promise<void> {
   // A deleted run has no budget scope left to record into.
   if (!getRun(runId)) return;
@@ -385,17 +386,30 @@ export async function settleReviewRoundNoVerdict(
     const admissions = admissionsFor(scope);
     const settlements = settlementsFor(scope);
     if (!admissions.includes(attemptId) || settlements[attemptId]) return;
-    settlements[attemptId] = { reason, at: new Date().toISOString() };
+    settlements[attemptId] = { reason, at: new Date().toISOString(), ...(kind ? { kind } : {}) };
     await persistScopedRounds(scope, admissions, settlements);
   });
 }
 
 /** A settled attempt whose pass or issues verdict recovery later ingested counts again. */
-export async function clearReviewRoundSettlement(runId: string, attemptId: string): Promise<void> {
+export async function clearReviewRoundSettlement(
+  runId: string,
+  attemptId: string,
+  review?: Pick<AgentContext, 'reviewFallback'>,
+): Promise<void> {
   if (!getRun(runId)) return;
   return withBudget(runId, async (_run, scope) => {
     const { [attemptId]: settled, ...settlements } = settlementsFor(scope);
-    if (settled) await persistScopedRounds(scope, admissionsFor(scope), settlements);
+    // A farm replacement shares the failed WARM launch's admission. Its valid
+    // verdict cannot turn that explicitly free replacement back into a paid round.
+    if (
+      settled &&
+      !(
+        settled.kind === 'infrastructure-fallback' &&
+        review?.reviewFallback?.reason === 'session-unavailable'
+      )
+    )
+      await persistScopedRounds(scope, admissionsFor(scope), settlements);
   });
 }
 

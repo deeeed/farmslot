@@ -596,6 +596,7 @@ export async function dispatchNativeWorker(input: {
   }
   const prepared = await prepareNativeWorkerLaunch({
     ...input,
+    reviewValidationDepth: context.reviewValidationDepth,
     vars,
     taskDir: path.posix.dirname(input.taskFile),
     leaseId: binding.leaseId,
@@ -757,6 +758,7 @@ export async function dispatchNativeWorker(input: {
         await resumeNativeWorker(run.id, {
           purpose: 'handoff',
           contextId,
+          launch: prepared.launch,
           assertCurrent: () => {
             checkRun();
           },

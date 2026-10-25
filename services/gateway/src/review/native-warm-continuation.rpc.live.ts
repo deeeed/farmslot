@@ -1,16 +1,27 @@
 // Opt-in real-provider proof for ADR-063 Amendment 5. All state and sessions are isolated.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { access, chmod, mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { NATIVE_WORKER_RESUME, NATIVE_WORKER_TRANSFER } from '@farmslot/agent-runtime/native';
 import {
   Methods,
   type NativeSessionReadResult,
   type NativeWorkerControlTarget,
+  type RunGetResult,
 } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
@@ -68,6 +79,7 @@ test(
         host: 'localhost',
         ssh_user: os.userInfo().username,
         codex_path: binary,
+        env: { REVIEW_UNUSED_PROVIDER_ROOT: '/fixture/providers/old' },
         slots: [{ id: slotId, enabled: true, repo, session: 'unused-native-proof', resources: {} }],
       }),
     );
@@ -106,6 +118,52 @@ test(
       '# Verify the greeting text\n\nmessage.txt contains hello. Local fixture only, no publication.\n',
     );
 
+    process.env.FARMSLOT_ROOT = root;
+    process.env.NODE_TEST_CONTEXT = '1';
+    process.env.FARMSLOT_TEST_STATUS_FILE = path.join(root, '.farm-status.json');
+    process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
+    process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
+    process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
+    process.env.FARMSLOT_NATIVE_STATE_DIR = path.join(root, 'native');
+    process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+    const nativeRouting = await import('../runners/native/node.js');
+    const { NodeRpcTimeoutError } = await import('../fleet/node-rpc.js');
+    let loseHandoffResumeReply = false;
+    let handoffResumeCalls = 0;
+    let refuseHandoffTransfers = 0;
+    mock.module('../runners/native/node.js', {
+      namedExports: {
+        ...nativeRouting,
+        routeNativeExecution: async (
+          ...args: Parameters<typeof nativeRouting.routeNativeExecution>
+        ) => {
+          if (args[1] === NATIVE_WORKER_TRANSFER && refuseHandoffTransfers > 0) {
+            refuseHandoffTransfers--;
+            throw new NodeRpcTimeoutError('owned-proof', 1);
+          }
+          const result = await nativeRouting.routeNativeExecution(...args);
+          if (args[1] === NATIVE_WORKER_RESUME && loseHandoffResumeReply) {
+            handoffResumeCalls++;
+            loseHandoffResumeReply = false;
+            throw new NodeRpcTimeoutError('owned-proof', 1);
+          }
+          return result;
+        },
+      },
+    });
+
+    t.after(async () => {
+      if (!process.env.FARMSLOT_WARM_PROOF_RECEIPT) return;
+      const log = `${process.env.FARMSLOT_WARM_PROOF_RECEIPT}.host.log`;
+      try {
+        await mkdir(path.dirname(log), { recursive: true });
+        await copyFile(path.join(root, 'native/host.log'), log);
+        await chmod(log, 0o600);
+      } catch (error) {
+        // An import/admission failure can end before this owned fixture starts a host.
+        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
+      }
+    });
     const fixture = await createNativeProofFixture(t, root);
     const { client, person, trackSession } = fixture;
     const { shellQuote } = await import('../core/tmux.js');
@@ -209,14 +267,29 @@ test(
 
     await write('repo/message.txt', 'hello\nsecond revision\n');
     commit('test: revise native review fixture');
+    // Refresh the pool between the original launch and handoff. The static
+    // reviewer does not consume this tool selector; its launch must stay stable.
+    const poolPath = path.join(root, 'pool/local.json');
+    const pool = JSON.parse(await readFile(poolPath, 'utf8'));
+    pool.env.REVIEW_UNUSED_PROVIDER_ROOT = '/fixture/providers/new';
+    await writeFile(poolPath, JSON.stringify(pool));
+    const updatedVars = await loadSlotVars(slotId);
+    loseHandoffResumeReply = true;
     const warmMode = reReviewMode({ ...first, issues: first.issues ?? [] }, 'cold');
     const warmContinuation = reReviewContinuation(first);
     assert.ok(warmMode === 'warm' && warmContinuation);
-    const second = await review({ mode: warmMode, loopNumber: 2, rereview: warmContinuation });
+    const second = await review({
+      vars: updatedVars,
+      mode: warmMode,
+      loopNumber: 2,
+      rereview: warmContinuation,
+    });
     assert.equal(second.verdict, 'pass');
     assert.equal(second.mode, 'warm');
     assert.equal(second.session?.sessionId, first.session.sessionId);
     assert.equal(second.reviewId, first.reviewId);
+    assert.equal(handoffResumeCalls, 1, 'Lost resume reply reconciled without a second resume');
+    assert.equal(second.session?.fallback, undefined);
     assert.equal(second.reviewSnapshot?.baseSha, first.reviewSnapshot.headSha);
     assert.ok(second.reviewSnapshot?.headSha);
     const secondTarget = target();
@@ -248,7 +321,39 @@ test(
     const thirdTarget = target();
     assert.notEqual(thirdTarget.sessionId, secondTarget.sessionId);
     await client.call<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, thirdTarget);
+    const { runReviewRoundBudget } = await import('./review-round-budget.js');
+    const paidBudget = await runReviewRoundBudget(getRun(run.id)!);
+    assert.equal(paidBudget.used, 3, 'Ordinary and explicitly incompatible reviews remain paid');
+    let farmFallback: Record<string, unknown> | undefined;
+    if (process.env.FARMSLOT_WARM_PROOF_INFRA === '1') {
+      await write('repo/message.txt', 'hello\nfourth revision\n');
+      commit('test: revise native review fixture for farm fallback');
+      refuseHandoffTransfers = 2;
+      const continuation = reReviewContinuation(third);
+      assert.ok(continuation);
+      const result = await review({
+        vars: updatedVars,
+        mode: 'warm',
+        effort: 'medium',
+        loopNumber: 4,
+        rereview: continuation,
+      });
+      assert.equal(result.verdict, 'pass');
+      assert.equal(result.mode, 'cold');
+      assert.match(result.session?.fallback?.detail ?? '', /retained reviewer could not resume/);
+      const readback = await client.call<RunGetResult>(Methods.RUN_GET, { runId: run.id });
+      const budget = await runReviewRoundBudget(getRun(run.id)!);
+      assert.deepEqual([budget.used, budget.noVerdict], [paidBudget.used, 1]);
+      const free = Object.values(readback.run.reviewRoundSettlements ?? {});
+      assert.deepEqual(
+        free.map((entry) => entry.kind),
+        ['infrastructure-fallback'],
+      );
+      assert.equal(readback.run.reviewRoundAdmissions?.length, 4);
+      farmFallback = { session: result.session, budget, ...target() };
+    }
     if (process.env.FARMSLOT_WARM_PROOF_RECEIPT) {
+      await mkdir(path.dirname(process.env.FARMSLOT_WARM_PROOF_RECEIPT), { recursive: true });
       await writeFile(
         process.env.FARMSLOT_WARM_PROOF_RECEIPT,
         JSON.stringify(
@@ -257,6 +362,9 @@ test(
             runId: run.id,
             familyId: run.familyId,
             prNumber: run.prNumber,
+            unusedPoolChangePreservedWarm: true,
+            lostHandoffResumeReplyReconciled: true,
+            ...(farmFallback ? { farmFallback, farmFallbackBudgetPreserved: true } : {}),
             first: { session: first.session, snapshot: first.reviewSnapshot, ...firstTarget },
             warm: { session: second.session, snapshot: second.reviewSnapshot, ...secondTarget },
             fallback: { session: third.session, snapshot: third.reviewSnapshot, ...thirdTarget },

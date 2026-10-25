@@ -359,8 +359,8 @@ test('the gate shows, publishes and records the current render while approval ke
 
 /**
  * A local `gh` first on PATH: it copies every posted PR body to `capture`,
- * logs each call, answers `gh api` with a 404 and refuses anything but
- * `pr edit`. The test asserts it is the `gh` the gateway resolves, so no call
+ * logs each call, answers `gh api` with a 404 and `pr view` with an open fixture.
+ * Only `pr edit` writes are allowed. The test asserts this is the resolved `gh`, so no call
  * can reach GitHub.
  */
 async function installGhCapture(t: import('node:test').TestContext) {
@@ -374,6 +374,7 @@ async function installGhCapture(t: import('node:test').TestContext) {
       '#!/bin/sh',
       `echo "$*" >> '${calls}'`,
       `if [ "$1" = api ]; then printf 'HTTP/2.0 404 Not Found\\r\\n\\r\\n{}'; exit 0; fi`,
+      `if [ "$1" = pr ] && [ "$2" = view ]; then printf '%s' '{"number":4242,"state":"OPEN","headRefOid":"abc123"}'; exit 0; fi`,
       'if [ "$1" != pr ] || [ "$2" != edit ]; then exit 97; fi',
       'while [ "$#" -gt 0 ]; do',
       `  if [ "$1" = --body-file ]; then cp "$2" '${capture}'; exit $?; fi`,
