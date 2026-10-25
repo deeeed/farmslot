@@ -268,10 +268,16 @@ export function transcriptQuestion(transcriptPath) {
               .filter((item) => ['input_text', 'text'].includes(item.type))
               .map((item) => item.text)
               .join('\n');
-      if (text) {
-        const ids = questionReplyIds(text);
-        if (!ids) break;
+      // Native context refreshes are user-role metadata, not a submitted prompt.
+      if (/^<environment_context>[\s\S]*<\/environment_context>$/.test(text.trim())) continue;
+      const ids = questionReplyIds(text);
+      if (ids) {
         for (const id of ids) answered.add(id);
+      } else if (
+        typeof content === 'string' ||
+        (content || []).some((item) => item.type !== 'tool_result')
+      ) {
+        break;
       }
     }
     const items =

@@ -93,6 +93,29 @@ test('a new ordinary prompt and a completed turn expire old async questions', (t
   }
 });
 
+test('an image-only user prompt expires old async questions', (t) => {
+  const image = {
+    type: 'response_item',
+    payload: {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_image', image_url: 'data:image/png;base64,fixture' }],
+    },
+  };
+  const file = log(t, [user('Work'), ask(), accepted(), image]);
+  assert.equal(transcriptQuestion(file), null);
+});
+
+test('native context refreshes preserve pending async questions', (t) => {
+  const file = log(t, [
+    user('Work'),
+    ask(),
+    accepted(),
+    user('<environment_context>\nCurrent date: 2026-10-26\n</environment_context>'),
+  ]);
+  assert.equal(transcriptQuestion(file).call_id, 'q1');
+});
+
 test('questions outside the recent log window remain visible while work continues', (t) => {
   const file = log(t, [
     user('Work'),
