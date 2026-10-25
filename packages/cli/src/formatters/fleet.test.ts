@@ -58,6 +58,20 @@ test('fresh status suggests prepare for live cold slots', () => {
   assert.doesNotMatch(output, /STALE STATUS/u);
 });
 
+test('slots without declared fixtures are not counted as stale', () => {
+  const output = formatFleetStatus(
+    resultFixture({
+      slots: [
+        slotFixture({
+          slot: 'no-fixtures',
+          health: { ssh: 'LOCAL', device: '-', devserver: '-', cdp: '-', fixtures: 'not-required' },
+        }),
+      ],
+    }),
+  );
+  assert.match(output.replace(/\u001b\[[0-9;]*m/g, ''), /Fixtures stale: 0/);
+});
+
 test('stale status shows a banner and suppresses every prepare/dispatch hint', () => {
   const output = formatFleetStatus(
     resultFixture({

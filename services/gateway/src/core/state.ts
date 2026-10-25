@@ -139,7 +139,7 @@ export async function claimSlotStatusIf(
       slot = { slot: slotId, slot_epoch: 0 };
       slots.push(slot);
     }
-    if (!predicate(slot)) return;
+    if (slot.workspace_recovery || !predicate(slot)) return;
     const nextEpoch = (Number(slot.slot_epoch) || 0) + 1;
     for (const [key, value] of Object.entries(fields)) {
       slot[key] = value;
@@ -305,8 +305,26 @@ export async function resetSlotIf(
   slotId: string,
   predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
   warm = false,
+  verifiedRecoveryId?: string,
 ): Promise<boolean> {
-  const applied = await updateSlotStatusIf(slotId, predicate, slotResetFields(warm));
+  const applied = await updateSlotStatusIf(
+    slotId,
+    (row) => {
+      if (row.workspace_recovery) {
+        const recovery = row.workspace_recovery;
+        if (
+          !verifiedRecoveryId ||
+          typeof recovery !== 'object' ||
+          recovery === null ||
+          !('id' in recovery) ||
+          recovery.id !== verifiedRecoveryId
+        )
+          return false;
+      }
+      return predicate(row);
+    },
+    { ...slotResetFields(warm), ...(verifiedRecoveryId ? { workspace_recovery: null } : {}) },
+  );
   if (applied) {
     for (const listener of slotResetListeners) listener(slotId);
   }

@@ -1,5 +1,4 @@
 // methods/fleet.ts — fleet.status, fleet.refresh (native TS)
-
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
@@ -40,6 +39,7 @@ import {
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { isOptionalFixtureAbsence } from '../fleet/fixture-absence.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { fixtureCheckVars } from '../node-support/ensure.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
@@ -53,6 +53,7 @@ import {
   slotPinIsRequestOnly,
 } from './dispatch/slot-scoring.js';
 import { isLinkedGitWorktreeMarker, probeDefaultBranch } from './slot/slot-tracking.js';
+import { enrichFleetWorkspaces } from './slot/workspace.js';
 
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
@@ -89,7 +90,8 @@ export async function fleetStatus(
   // forceRefresh means a real machine re-probe, never just a re-read of the
   // cached status file — that re-read is what produced ghost prepare hints.
   // Ghost marking happens inside loadFleetStatus, so both branches are honest.
-  const fleet = params?.forceRefresh ? (await deps.refresh()).fleet : await deps.load();
+  const loaded = params?.forceRefresh ? (await deps.refresh()).fleet : await deps.load();
+  const fleet = deps === defaultFleetStatusDeps ? await enrichFleetWorkspaces(loaded) : loaded;
   if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
   // Still stale: serve it honestly (stale flag, nothing dispatchable). Kick a
   // background re-probe only when this call did not just refresh AND probeable
@@ -137,6 +139,7 @@ interface SlotCheckResult {
 }
 
 interface PreviousSlotStatus {
+  workspace_recovery?: unknown;
   lifecycle?: string | null;
   phase?: string | null;
   warm?: boolean | null;
@@ -429,7 +432,7 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
     return { checked_at: checkedAt, slots: [...slots, ...preserved] };
   });
 
-  const fleet = await loadFleetStatus(true);
+  const fleet = await enrichFleetWorkspaces(await loadFleetStatus(true));
   return { fleet };
 }
 
@@ -536,6 +539,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     // Ownership epoch is a lifecycle-protocol token: dropping it on refresh
     // would let a stale teardown's epoch guard pass again.
     slot_epoch: Number(prev.slot_epoch) || 0,
+    ...(prev.workspace_recovery ? { workspace_recovery: prev.workspace_recovery } : {}),
     handoff_run_id: prev.handoff_run_id ?? null,
     task_id: prev.task_id ?? null,
     task_file: prev.task_file ?? null,
@@ -1082,12 +1086,12 @@ async function checkCDP(vars: SlotVars, pj: RawProjectJson, pv?: ProjectVars): P
   }
 }
 
-async function checkFixtures(
+export async function checkFixtures(
   vars: SlotVars,
   pv: ProjectVars | undefined,
   pj: RawProjectJson,
 ): Promise<string> {
-  if (!pv || !pj.fixtures) return '-';
+  if (!pv || !pj.fixtures) return 'not-required';
 
   const templates = pj.fixtures.templates ?? [];
   let total = 0;
@@ -1097,7 +1101,10 @@ async function checkFixtures(
   for (const tpl of templates) {
     if (!tpl.src) continue; // compose entries have no src — skip for fixture check
     const localPath = path.join(pv.projectFixturesDir, tpl.src);
-    if (!existsSync(localPath)) continue;
+    if (!existsSync(localPath)) {
+      if (!isOptionalFixtureAbsence(tpl, localPath)) total++;
+      continue;
+    }
     total++;
     try {
       const rendered = await renderFixtureTemplate(localPath, vars, pv, extraVars);
@@ -1139,7 +1146,7 @@ async function checkFixtures(
     }
   }
 
-  if (total === 0) return '-';
+  if (total === 0) return 'not-required';
   if (ok === total) return 'OK';
   return `${ok}/${total}`;
 }

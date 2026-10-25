@@ -10,6 +10,8 @@ export interface SlotIdleResetResult {
 export interface ResetSlotRepoToIdleOptions {
   /** When known by the caller, skip a second linked-worktree probe. */
   linkedWorktree?: boolean;
+  /** Internal caller has verified and explicitly authorized discarding staged work. */
+  discardLocalWork?: boolean;
 }
 
 export function remoteBranchRefspec(name: string): string {

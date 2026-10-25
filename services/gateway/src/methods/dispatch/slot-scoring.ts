@@ -307,7 +307,7 @@ export function slotScore(
   // Device and CDP are tiebreakers — prepare rebuilds these anyway
   if (!isCdpLive(slot.health.cdp)) score += CDP_MISSING_PENALTY;
   if (!slot.health.device.endsWith(':OK')) score += DEVICE_MISSING_PENALTY;
-  if (slot.health.fixtures !== 'OK') score += FIXTURE_STALE_PENALTY;
+  if (!['OK', 'not-required'].includes(slot.health.fixtures)) score += FIXTURE_STALE_PENALTY;
   return score;
 }
 

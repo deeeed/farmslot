@@ -144,6 +144,13 @@ export interface SlotReleaseOptions {
   expectedSlotEpoch?: number;
   prepareStopTimeoutMs?: number;
   prepareStopHeartbeatMs?: number;
+  /** Internal continuation of a fleet recovery's existing fence, never public force authority. */
+  workspaceRecovery?: {
+    id: string;
+    epoch: number;
+    verifyWork: () => Promise<void>;
+    discardLocalWork: boolean;
+  };
 }
 
 class BoundReleaseClaimLostError extends Error {}
@@ -163,6 +170,7 @@ function releaseCoalesceKey(params: SlotReleaseParams, options?: SlotReleaseOpti
     restartRunId: options?.restartRunId ?? null,
     machineTransitionHeld: options?.machineTransitionHeld ?? false,
     expectedSlotEpoch: options?.expectedSlotEpoch ?? null,
+    workspaceRecovery: options?.workspaceRecovery?.id ?? null,
   });
 }
 
@@ -253,7 +261,20 @@ async function releasePreflight(
   // already mid-release belongs to that teardown — a bound release joining at
   // the same epoch would run a second destructive pass.
   const row = await readSlotRow(params.slotId);
-  if (row?.phase === SLOT_PHASE_RELEASING) {
+  const recovery = options?.workspaceRecovery;
+  if (row?.workspace_recovery && !recovery)
+    throw new Error('Slot recovery must be retried through slot.refresh');
+  if (
+    recovery &&
+    ((Number(row?.slot_epoch) || 0) !== recovery.epoch ||
+      !row ||
+      typeof row.workspace_recovery !== 'object' ||
+      row.workspace_recovery === null ||
+      !('id' in row.workspace_recovery) ||
+      row.workspace_recovery.id !== recovery.id)
+  )
+    throw new Error('Workspace recovery identity changed');
+  if (row?.phase === SLOT_PHASE_RELEASING && !recovery) {
     const skipped = `Slot ${params.slotId} is already being released`;
     console.log(`[release] ${skipped}; leaving it untouched`);
     return { skipped };
@@ -291,7 +312,7 @@ async function releasePreflight(
 
   const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
   const unmergedWork =
-    params.keepWork || forceReset
+    params.keepWork || forceReset || options?.workspaceRecovery
       ? null
       : await findReleaseUnmergedWork(vars, projectJson, projectVars, defaultBranch);
   return { vars, boundOwner, ownerTerminal, projectVars, projectJson, defaultBranch, unmergedWork };
@@ -437,57 +458,61 @@ async function slotReleaseImpl(
   // the teardown is refused unless that exact run still holds the claim.
   // The owner the releasing fence actually lands on: an unbound release takes
   // whoever holds the slot then, which may be a claim made after the preflight.
-  let releasedOwner: string | null = null;
+  let releasedOwner: string | null = options?.workspaceRecovery ? boundOwner : null;
   let releaseRefusal: string | null = null;
   let claimSkip = `Slot ${params.slotId} could not be claimed for release`;
   let priorFence: Record<string, unknown> = {};
-  const mark = await markSlotStatusIf(
-    params.slotId,
-    (slot: Readonly<Record<string, unknown>>) => {
-      // A pending handoff reservation means an incoming run's delivery is in
-      // flight on this worker — no teardown (bound or not) may start under it.
-      if (typeof slot.handoff_run_id === 'string' && slot.handoff_run_id) {
-        claimSkip = `Slot ${params.slotId} has a pending handoff to run ${slot.handoff_run_id}`;
-        return false;
-      }
-      // A slot already mid-release belongs to that teardown — a bound release
-      // joining at the same epoch would run a second destructive pass and keep
-      // going after the first publishes `ready`, clobbering whatever claims
-      // the slot next. Applies to bound AND unbound entries.
-      if (slot.phase === SLOT_PHASE_RELEASING) {
-        claimSkip = `Slot ${params.slotId} is already being released`;
-        return false;
-      }
-      if (
-        options?.expectedSlotEpoch !== undefined &&
-        (Number(slot.slot_epoch) || 0) !== options.expectedSlotEpoch
-      ) {
-        claimSkip = `Slot ${params.slotId} moved past epoch ${options.expectedSlotEpoch}`;
-        return false;
-      }
-      const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
-      if (params.expectedRunId && !ownsRunSlotCleanup(slot, params.expectedRunId)) {
-        claimSkip = `Slot ${params.slotId} is held by ${owner ? `run ${owner}` : 'no run'}, not run ${params.expectedRunId}`;
-        return false;
-      }
-      releaseRefusal = releaseOwnerRefusal(
-        owner,
-        owner === boundOwner && ownerTerminal,
-        params,
-        options,
+  const mark = options?.workspaceRecovery
+    ? { applied: true, epoch: options.workspaceRecovery.epoch }
+    : await markSlotStatusIf(
+        params.slotId,
+        (slot: Readonly<Record<string, unknown>>) => {
+          // A pending handoff reservation means an incoming run's delivery is in
+          // flight on this worker — no teardown (bound or not) may start under it.
+          if (typeof slot.handoff_run_id === 'string' && slot.handoff_run_id) {
+            claimSkip = `Slot ${params.slotId} has a pending handoff to run ${slot.handoff_run_id}`;
+            return false;
+          }
+          // A slot already mid-release belongs to that teardown — a bound release
+          // joining at the same epoch would run a second destructive pass and keep
+          // going after the first publishes `ready`, clobbering whatever claims
+          // the slot next. Applies to bound AND unbound entries.
+          if (slot.phase === SLOT_PHASE_RELEASING) {
+            claimSkip = `Slot ${params.slotId} is already being released`;
+            return false;
+          }
+          if (
+            options?.expectedSlotEpoch !== undefined &&
+            (Number(slot.slot_epoch) || 0) !== options.expectedSlotEpoch
+          ) {
+            claimSkip = `Slot ${params.slotId} moved past epoch ${options.expectedSlotEpoch}`;
+            return false;
+          }
+          const owner = ((slot.current_run_id as string | null | undefined) ?? null) as
+            | string
+            | null;
+          if (params.expectedRunId && !ownsRunSlotCleanup(slot, params.expectedRunId)) {
+            claimSkip = `Slot ${params.slotId} is held by ${owner ? `run ${owner}` : 'no run'}, not run ${params.expectedRunId}`;
+            return false;
+          }
+          releaseRefusal = releaseOwnerRefusal(
+            owner,
+            owner === boundOwner && ownerTerminal,
+            params,
+            options,
+          );
+          if (releaseRefusal) return false;
+          releasedOwner = owner;
+          priorFence = {
+            lifecycle: slot.lifecycle,
+            phase: slot.phase,
+            [SLOT_RELEASING_SINCE]: slot[SLOT_RELEASING_SINCE] ?? null,
+          };
+          // Unbound release may take only an unowned or terminal workspace.
+          return true;
+        },
+        slotReleasingFenceFields(),
       );
-      if (releaseRefusal) return false;
-      releasedOwner = owner;
-      priorFence = {
-        lifecycle: slot.lifecycle,
-        phase: slot.phase,
-        [SLOT_RELEASING_SINCE]: slot[SLOT_RELEASING_SINCE] ?? null,
-      };
-      // Unbound release may take only an unowned or terminal workspace.
-      return true;
-    },
-    slotReleasingFenceFields(),
-  );
   if (!mark.applied) {
     if (releaseRefusal) throw new Error(releaseRefusal);
     step('claim', `${claimSkip}; leaving it alone`);
@@ -747,7 +772,8 @@ async function slotReleaseImpl(
 
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
   await assertReleaseClaim();
-  if (!keepWork && !forceReset) {
+  if (options?.workspaceRecovery) await options.workspaceRecovery.verifyWork();
+  if (!keepWork && !forceReset && !options?.workspaceRecovery) {
     const unmergedWork = await findReleaseUnmergedWork(
       vars,
       projectJson,
@@ -897,7 +923,10 @@ async function slotReleaseImpl(
 
     step('git', `Returning slot to idle baseline...`);
     await assertReleaseClaim();
-    const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+    if (options?.workspaceRecovery) await options.workspaceRecovery.verifyWork();
+    const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch, {
+      discardLocalWork: options?.workspaceRecovery?.discardLocalWork,
+    });
     idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
 
@@ -979,7 +1008,9 @@ async function slotReleaseImpl(
     complete(0);
     return { released: false, reason };
   };
-  if (keepWarm) {
+  if (options?.workspaceRecovery) {
+    // Caller retains this exact fence through fixture sync and verification.
+  } else if (keepWarm) {
     step('reprepare', 'Re-preparing slot...');
     try {
       await slotPrepare({ slotId: params.slotId }, emit, undefined, { duringRelease: true });

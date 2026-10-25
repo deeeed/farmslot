@@ -28,6 +28,7 @@ import {
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
 } from './git-cleanup-commands.js';
+import { recoverSlotWorkspace } from './recover-workspace.js';
 import { activePrepareSlots, type EventEmitter } from './shared.js';
 import {
   assertSlotNotOperatorRoot,
@@ -69,6 +70,7 @@ export function refreshSyncUsesIdleReset(mode: 'safe' | 'force', linkedWorktree:
 
 export function slotRefreshBlockedReason(slot: SlotStatus | undefined): string | null {
   if (!slot) return null;
+  if (slot.workspace?.recovery) return `Slot ${slot.slot} requires verified recovery`;
   const lc = slot.lifecycle;
   if (lc !== 'busy' && lc !== 'held' && !slot.currentRunId) return null;
   const runRef = slot.currentRunId ? ` (run ${slot.currentRunId.slice(0, 8)})` : '';
@@ -78,7 +80,9 @@ export function slotRefreshBlockedReason(slot: SlotStatus | undefined): string |
 export async function slotRefresh(
   params: SlotRefreshParams,
   emit: EventEmitter,
+  signal?: AbortSignal,
 ): Promise<SlotRefreshResult> {
+  if (params.release) return recoverSlotWorkspace(params, emit, signal);
   // Honour a client-supplied requestId so the UI can set its event-filter
   // BEFORE issuing the request. This closes the cross-action bleed window
   // where a panel running in parallel would absorb our script.output frames

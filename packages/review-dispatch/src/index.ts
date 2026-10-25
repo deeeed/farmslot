@@ -4,6 +4,7 @@ export * from './catalog.js';
 export * from './checklist-progress.js';
 export * from './ci-watch-status.js';
 export * from './execution.js';
+export * from './fleet-refresh.js';
 export * from './native-worker-target.js';
 export * from './operator-message.js';
 export * from './provenance.js';

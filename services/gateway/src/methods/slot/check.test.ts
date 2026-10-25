@@ -7,6 +7,7 @@ import path from 'node:path';
 import test, { describe } from 'node:test';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../../core/config.js';
+import { isOptionalFixtureAbsence } from '../../fleet/fixture-absence.js';
 await import('../../runtime/mock-pty.test-support.js');
 const { assertSlotHealthForRecipeRerun } = await import('../recipe.js');
 
@@ -15,7 +16,6 @@ const {
   checkDefaultBranch,
   checkHealth,
   checkRunnerLaunch,
-  isOptionalFixtureAbsence,
   runHealthCheck,
   runUnlockHook,
 } = await import('./check.js');

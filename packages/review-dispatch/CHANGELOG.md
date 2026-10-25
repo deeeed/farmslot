@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share fleet workspace rows, safe bulk release, discard confirmation and recovery progress between both operator apps.
+
 - Share plain CI-watch check counts, failing names, next poll and timeout countdown between both clients.
 
 - Show completed checklist durations and live current-step elapsed time in both operator apps.
@@ -13,6 +15,10 @@
 - Show original and derived acceptance, source links, inherited proof, pending instructions and exclusions consistently in both clients.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.20.0 - 2026-10-26
+
+- Share fleet workspace rows, safe bulk release, discard confirmation and recovery progress between both operator apps.
 
 ## 0.19.0 - 2026-10-25
 
