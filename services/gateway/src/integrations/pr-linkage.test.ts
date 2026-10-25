@@ -16,6 +16,7 @@ let candidate: Candidate;
 let cached: number | null;
 let bound: number[];
 let requests: string[][];
+let metadataFailure: Error | undefined;
 mock.module('./github-bindings-cache.js', {
   namedExports: {
     getBinding: () => cached,
@@ -31,8 +32,10 @@ mock.module('./github-client.js', {
   namedExports: {
     ghRequest: async (args: string[]) => {
       requests.push(args);
-      if (args[0] === 'pr' && args[1] === 'view')
+      if (args[0] === 'pr' && args[1] === 'view') {
+        if (metadataFailure) throw metadataFailure;
         return { stdout: JSON.stringify(candidate), stderr: '' };
+      }
       if (args[0] === 'api')
         return { stdout: JSON.stringify({ state: 'closed', head: 'fix/reused' }), stderr: '' };
       assert.deepEqual(args.slice(0, 2), ['pr', 'list']);
@@ -50,6 +53,7 @@ beforeEach(() => {
   cached = null;
   bound = [];
   requests = [];
+  metadataFailure = undefined;
 });
 
 test('branch fallback ignores an unrelated closed PR after the open lookup misses', async () => {
@@ -73,6 +77,37 @@ test('a previously persisted unrelated closed PR is revalidated before publicati
   assert.ok(requests.some((args) => args[1] === 'view'));
 });
 
+test('an inherited dispatch baseline cannot claim an unrelated closed PR', async () => {
+  const run = makeRun({
+    branch: 'fix/reused',
+    prNumber: candidate.number,
+    worktreeHeadAtDispatch: candidate.headRefOid,
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'review',
+            mode: 'cold',
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            reviewedHeadSha: head,
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), null);
+});
+
+test('saved PR metadata failure refuses before any discovery or duplicate creation', async () => {
+  metadataFailure = new Error('GitHub query budget exhausted');
+  const run = makeRun({ branch: 'fix/reused', prNumber: candidate.number });
+  await assert.rejects(findPRNumber(run, 'owner/repo', { noRetry: true }), metadataFailure);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].slice(0, 2), ['pr', 'view']);
+});
+
 for (const state of ['OPEN', 'MERGED'] as const) {
   test(`${state} discovery and persisted bindings retain their behavior`, async () => {
     candidate.state = state;
@@ -87,7 +122,7 @@ test('closed PRs published by this run remain linked regardless of head changes'
   const run = makeRun({ branch: 'fix/reused', prNumber: candidate.number });
   run.prPublications = [
     {
-      pr: { host: 'github.com', repo: 'Owner/Repo', number: candidate.number },
+      pr: { host: 'GITHUB.COM', repo: 'Owner/Repo', number: candidate.number },
       publishedAt: run.createdAt,
     },
   ];
@@ -179,6 +214,68 @@ test('a closed PR at the approved publication head stays linked without a review
         },
       },
     ],
+  });
+  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
+});
+
+test('a closed PR at the recorded gate head remains linked', async () => {
+  const run = makeRun({ branch: 'fix/reused', prNumber: candidate.number });
+  const prepared = makeReadyGatePackage();
+  run.decisions = [
+    {
+      id: 'gate',
+      type: 'engine_human_gate',
+      title: 'Publish',
+      description: '',
+      actions: [],
+      createdAt: '2026-10-26T00:00:00Z',
+      payload: {
+        kind: 'ready',
+        prNumber: null,
+        repo: 'owner/repo',
+        branch: 'fix/reused',
+        workerReport: '',
+        diffStat: prepared.diffStat,
+        headSha: candidate.headRefOid,
+      },
+    },
+  ];
+  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
+});
+
+test('a closed PR at a recorded review-result head remains linked', async () => {
+  const run = makeRun({ branch: 'fix/reused', prNumber: candidate.number });
+  run.reviewResult = {
+    recommendation: 'APPROVE',
+    reviewMd: '',
+    lineComments: [],
+    reviewSnapshot: {
+      headSha: candidate.headRefOid,
+      source: 'local-git',
+      capturedAt: '2026-10-26T00:00:00Z',
+    },
+  };
+  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
+});
+
+test('a closed PR at a retained reviewed head remains linked', async () => {
+  const run = makeRun({
+    branch: 'fix/reused',
+    prNumber: candidate.number,
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'review',
+            mode: 'warm',
+            loopNumber: 2,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            reviewedHeadSha: candidate.headRefOid,
+          },
+        ],
+      },
+    },
   });
   assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
 });

@@ -41,18 +41,11 @@ interface DiscoveredPR {
 
 function canBindPR(run: Run, ciRepo: string, pr: DiscoveredPR): boolean {
   if (pr.state !== 'CLOSED') return true;
-  if (
-    run.prPublications?.some(
-      ({ pr: published }) =>
-        published.host === 'github.com' &&
-        published.repo.toLowerCase() === ciRepo.toLowerCase() &&
-        published.number === pr.number,
-    )
-  )
+  const key = monitoredPRKey({ host: 'github.com', repo: ciRepo, number: pr.number });
+  if (run.prPublications?.some(({ pr: published }) => monitoredPRKey(published) === key))
     return true;
   if (!pr.headRefOid) return false;
   if (
-    pr.headRefOid === run.worktreeHeadAtDispatch ||
     pr.headRefOid === run.reviewResult?.reviewSnapshot?.headSha ||
     run.decisions.some(
       ({ payload }) =>
@@ -118,6 +111,7 @@ export async function findPRNumber(
   // Discovery can have persisted a historical same-branch PR before this check
   // existed. Revalidate it too, so a finalize retry can create the run's own PR.
   if (run.prNumber && run.prNumber > 0) {
+    // An unavailable saved-PR read must stop publication, never create a duplicate.
     const { stdout } = await ghRequest(
       ['pr', 'view', String(run.prNumber), '--repo', ciRepo, '--json', 'number,state,headRefOid'],
       { force: true },
@@ -188,7 +182,7 @@ export async function findPRNumber(
       continue;
     }
     try {
-      const prs = JSON.parse(stdout || '[]') as Array<{ number: number }>;
+      const prs = JSON.parse(stdout || '[]') as DiscoveredPR[];
       if (prs.length > 0) {
         setBinding(run.branch, ciRepo, prs[0].number);
         return prs[0].number;
@@ -205,8 +199,8 @@ export async function findPRNumber(
   try {
     const { stdout } = await ghRequest([...listArgs, '--state', 'all'], { force: true });
     const prs = JSON.parse(stdout || '[]') as DiscoveredPR[];
-    const pr = prs.find((candidate) => canBindPR(run, ciRepo, candidate));
-    if (pr) {
+    const pr = prs[0];
+    if (pr && canBindPR(run, ciRepo, pr)) {
       setBinding(run.branch, ciRepo, pr.number);
       return pr.number;
     }
