@@ -178,6 +178,38 @@ test(
       namedExports: { ...tmux, resolveTmuxSession: async () => 'workspace-proof' },
     });
 
+    if (uiProof) {
+      const taskSteps = await import('../../run-engine/task-steps.js');
+      mock.module('../../run-engine/task-steps.js', {
+        namedExports: {
+          ...taskSteps,
+          executeWriteTaskStep: async (
+            ...args: Parameters<typeof taskSteps.executeWriteTaskStep>
+          ) => {
+            // Keep the real claim visible long enough for the browser to observe it.
+            // Then delegate to the normal missing-catalog failure; no worker launches.
+            if (args[1].ticketOrPr === 'PROOF-2') {
+              const deadline = Date.now() + 120_000;
+              for (;;) {
+                try {
+                  const observed = JSON.parse(
+                    await readFile(path.join(output, 'owner-card-observed.json'), 'utf8'),
+                  );
+                  if (observed.runId === args[0]) break;
+                } catch (error) {
+                  if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT')
+                    throw error;
+                }
+                assert.ok(Date.now() < deadline, 'Browser did not observe the real slot owner');
+                await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+            }
+            return taskSteps.executeWriteTaskStep(...args);
+          },
+        },
+      });
+    }
+
     const fixture = await createNativeProofFixture(t, root);
     fixtureOwnsRoot = true;
     const { initServerGlobals, resetServerGlobalsForTests } = await import('../../server.js');

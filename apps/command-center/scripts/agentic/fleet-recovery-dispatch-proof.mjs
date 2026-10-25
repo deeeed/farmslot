@@ -192,6 +192,10 @@ try {
     'actual owner on the fleet card',
   );
   browser('screenshot', route, path.join(output, 'cc-claimed-slot.png'));
+  fs.writeFileSync(
+    path.join(output, 'owner-card-observed.json'),
+    JSON.stringify({ runId: afterId }),
+  );
   fs.writeFileSync(path.join(output, 'scoring-after.json'), JSON.stringify(after, null, 2));
   fs.writeFileSync(
     path.join(output, 'cc-scored-selection.json'),
