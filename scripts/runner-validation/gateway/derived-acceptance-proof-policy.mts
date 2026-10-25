@@ -418,17 +418,20 @@ try {
           },
         };
       let settled = false;
+      let reviewFailure: unknown;
       const review = executeReviewStep(run.id, context);
       void review.then(
         () => {
           settled = true;
         },
-        () => {
+        (error) => {
+          reviewFailure = error;
           settled = true;
         },
       );
       for (let index = 0; index < issueCalls.size; index++) {
         await wait(async () => {
+          if (reviewFailure) throw reviewFailure;
           assert(!settled, 'Reviewer findings returned without an operator decision');
           const current = (await client!.call('run.get', { runId: run.id })).run;
           const decision = current.decisions.find(
