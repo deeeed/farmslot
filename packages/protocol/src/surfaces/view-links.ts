@@ -87,6 +87,7 @@ export interface CompanionViewLocation {
   projects?: readonly string[];
   machines?: readonly string[];
   runFilters?: SharedRunViewSelection;
+  runsTab?: 'active' | 'all';
   artifactSelection?: SharedRunArtifactSelection;
   unavailableMessage?: string;
   workerSelection?: TmuxWorkerRef;
@@ -181,8 +182,8 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
   const route = (name: string, values: Readonly<Record<string, string>> = {}): string => {
     const params = new URLSearchParams();
     if (name !== 'native') {
-      if (location.projects?.length) params.set('projects', location.projects.join(','));
-      if (location.machines?.length) params.set('machines', location.machines.join(','));
+      if (location.projects !== undefined) params.set('projects', location.projects.join(','));
+      if (location.machines !== undefined) params.set('machines', location.machines.join(','));
     }
     for (const [key, value] of Object.entries(values)) if (value) params.set(key, value);
     return `#${name}${params.toString() ? `?${params}` : ''}`;
@@ -281,13 +282,16 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
   const slot =
     entity(/^\/slot\/([^/]+)$/, 'slot', 'id') ??
     entity(/^\/workspace\/slot\/([^/]+)\/slot$/, 'slot', 'slotId');
-  if (slot) return route(slot);
+  if (slot) return location.params.runId ? null : route(slot);
   const terminal =
     entity(/^\/terminal\/([^/]+)$/, 'terminal', 'slotId') ??
     entity(/^\/workspace\/slot\/([^/]+)\/terminal$/, 'terminal', 'slotId');
   if (terminal && terminal !== 'terminal/worker') {
+    if (location.params.runId && !one('runId')) return null;
     if (one('contextId') && !one('runId')) return null;
-    return route(terminal, { run: one('runId'), contextId: one('contextId') });
+    return one('runId')
+      ? route('terminal', { run: one('runId'), contextId: one('contextId') })
+      : route(terminal);
   }
   const runTerminal = entity(/^\/run-terminal\/([^/]+)$/, 'run', 'runId');
   if (runTerminal)
@@ -316,6 +320,7 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
   if (path === '/runs') {
     const selection = location.runFilters;
     return route('runs', {
+      runsTab: location.runsTab ?? '',
       flow: selection?.flow ?? '',
       lane: selection?.lane ?? '',
       sort: selection?.sort === 'newest' ? '' : (selection?.sort ?? ''),
@@ -399,25 +404,31 @@ export function resolveSharedViewLink(
   }
   if (!candidate) {
     const path = 'companion' in location ? location.companion.pathname : '';
-    const view = path.includes('diff')
-      ? 'this diff selection'
-      : path.includes('/files') || path.includes('/artifacts')
-        ? 'this files view'
-        : path === '/terminal/worker'
-          ? 'this worker terminal'
-          : path === '/settings' || path === '/connection'
-            ? 'these device connection settings'
-            : path === '/prs'
-              ? 'this PR filter'
-              : path === '/roadmap'
-                ? 'this roadmap filter'
-                : path === '/copilot'
-                  ? 'this Co-Pilot screen'
-                  : path === '/pr-automation'
-                    ? 'this PR automation screen'
-                    : path === '/unmapped-overlay'
-                      ? 'this dialog'
-                      : 'this screen';
+    const pinnedSlot =
+      'companion' in location &&
+      /^(?:\/slot\/[^/]+|\/workspace\/slot\/[^/]+\/slot)$/.test(path) &&
+      location.companion.params.runId;
+    const view = pinnedSlot
+      ? 'this pinned slot view'
+      : path.includes('diff')
+        ? 'this diff selection'
+        : path.includes('/files') || path.includes('/artifacts')
+          ? 'this files view'
+          : path === '/terminal/worker'
+            ? 'this worker terminal'
+            : path === '/settings' || path === '/connection'
+              ? 'these device connection settings'
+              : path === '/prs'
+                ? 'this PR filter'
+                : path === '/roadmap'
+                  ? 'this roadmap filter'
+                  : path === '/copilot'
+                    ? 'this Co-Pilot screen'
+                    : path === '/pr-automation'
+                      ? 'this PR automation screen'
+                      : path === '/unmapped-overlay'
+                        ? 'this dialog'
+                        : 'this screen';
     return unavailable(`Web link unavailable: ${view} has no exact Command Center view.`);
   }
   if (!validViewRoute(candidate))

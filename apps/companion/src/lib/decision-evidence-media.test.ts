@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { decisionEvidenceMediaItems } from './decision-evidence-media';
+import { decisionDocumentSelection, decisionEvidenceMediaItems } from './decision-evidence-media';
 
 test('decision media keeps task artifacts and recipe artifacts in their separate source identities', () => {
   const [task, before, after] = decisionEvidenceMediaItems({
@@ -51,5 +51,24 @@ test('decision media keeps task artifacts and recipe artifacts in their separate
       recipeFallbackPairs: [],
     }),
     [],
+  );
+});
+
+test('decision documents preserve recipe ownership and keep current artifacts in run storage', () => {
+  assert.deepEqual(
+    decisionDocumentSelection('run-A', 'slot-A', {
+      path: 'report.md',
+      purpose: 'evidence',
+      recipeRunId: 'recipe-A',
+    }),
+    { runId: 'run-A', slotId: 'slot-A', path: 'report.md', recipeRunId: 'recipe-A' },
+  );
+  assert.equal(
+    decisionDocumentSelection('run-A', 'slot-A', {
+      path: 'current.md',
+      purpose: 'evidence',
+      recipeRunId: 'current-artifacts',
+    }).recipeRunId,
+    undefined,
   );
 });

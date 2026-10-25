@@ -19,6 +19,7 @@ import {
   mobileGatewayProfileUrlError,
   normalizeGatewayProfileUrl,
 } from './gateway-profile-validation';
+import { commandCenterUrlForProfile } from './gateway-profile-web-url';
 
 export type { GatewayProfileKind } from './gateway-profile-kind';
 export type GatewayProfileAuthMode = 'none' | 'token' | 'password';
@@ -286,10 +287,7 @@ export function mergeGatewayProfiles(saved: GatewayProfile[]): GatewayProfile[] 
     byId.set(profile.id, {
       ...defaultProfile,
       ...profile,
-      commandCenterUrl:
-        typeof profile.commandCenterUrl === 'string'
-          ? profile.commandCenterUrl.trim()
-          : defaultProfile?.commandCenterUrl,
+      commandCenterUrl: commandCenterUrlForProfile(profile, defaultProfile),
       kind:
         profile.kind === 'remote' || profile.kind === 'tailnet'
           ? profile.kind

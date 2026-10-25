@@ -85,7 +85,8 @@ if (mode === 'check-import') {
       let previous = '',
         unchanged = 0,
         found = false;
-      for (let i = 0; i < 12; i++) {
+      let towardsEnd = true;
+      for (let i = 0; i < 16; i++) {
         const screen = await snapshot();
         const field = screen.nodes.find(
           (n) => n.identifier === 'companion-command-center-url-configured-gateway',
@@ -114,11 +115,19 @@ if (mode === 'check-import') {
         );
         unchanged = digest === previous ? unchanged + 1 : 0;
         previous = digest;
+        if (!field && screen.nodes.some((n) => n.identifier === 'companion-screen-settings-end')) {
+          towardsEnd = false;
+          unchanged = 0;
+        }
         assert(unchanged < 2, 'Settings did not move after two observed swipes');
-        const from = { x: rect.x + rect.width * 0.5, y: rect.y + rect.height * 0.8 };
-        const to = { x: from.x, y: rect.y + rect.height * 0.2 };
+        const from = {
+          x: rect.x + rect.width * 0.5,
+          y: rect.y + rect.height * (towardsEnd ? 0.65 : 0.35),
+        };
+        const to = { x: from.x, y: rect.y + rect.height * (towardsEnd ? 0.35 : 0.65) };
         gestures.push({ rect, from, to });
         await device.interactions.swipe({ ...selection, from, to, durationMs: 250 });
+        await new Promise((resolve) => setTimeout(resolve, 250));
       }
       assert(found, 'The actual URL editor was not reached');
       await save(mode, { gestures, found });

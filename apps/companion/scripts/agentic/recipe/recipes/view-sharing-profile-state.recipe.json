@@ -73,7 +73,7 @@
         "action": "ui.press",
         "intent": "Validate the destination through the existing profile form.",
         "test_id": "companion-save-command-center-url-configured-gateway",
-        "next": "invalid-state"
+        "next": "hud-invalid-state"
       },
       "invalid-state": {
         "action": "command",
@@ -102,7 +102,7 @@
         "action": "ui.press",
         "intent": "Save only this profile\u2019s web destination.",
         "test_id": "companion-save-command-center-url-configured-gateway",
-        "next": "saved-state"
+        "next": "hud-saved-state"
       },
       "saved-state": {
         "action": "command",
@@ -139,6 +139,18 @@
         "stream": "stdout",
         "contains": "\"status\":\"PASS\",\"mode\":\"enter-valid\"",
         "next": "save-good"
+      },
+      "hud-invalid-state": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observe the actual profile editor and its result.",
+        "next": "invalid-state"
+      },
+      "hud-saved-state": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observe the actual profile editor and its result.",
+        "next": "saved-state"
       }
     }
   }

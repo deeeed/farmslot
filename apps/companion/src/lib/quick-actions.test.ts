@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { quickVoiceInstruction, quickVoiceMayStart, quickVoiceWorkerKey } from './quick-actions';
+import {
+  quickVoiceInstruction,
+  quickVoiceLocation,
+  quickVoiceMayStart,
+  quickVoiceWorkerKey,
+} from './quick-actions';
 
 test('dictation retains the source run context until explicit Send', () => {
   assert.equal(
@@ -48,5 +53,39 @@ test('a pending gesture cannot start a retained old worker after the route targe
       currentWorkerKey: 'worker-a',
     }),
     false,
+  );
+});
+
+test('observed selections update Voice context without dropping route metadata', () => {
+  assert.deepEqual(
+    quickVoiceLocation(
+      {
+        pathname: '/family/F',
+        params: {
+          familyId: 'F',
+          runId: 'old',
+          recipeRun: 'recipe-X',
+          artifact: 'clip.mp4',
+          workspace: 'evidence',
+          decisionKind: 'gate',
+        },
+      },
+      { pathname: '/family/F', params: { runId: 'selected-B' } },
+    ).params,
+    {
+      familyId: 'F',
+      runId: 'selected-B',
+      recipeRun: 'recipe-X',
+      artifact: 'clip.mp4',
+      workspace: 'evidence',
+      decisionKind: 'gate',
+    },
+  );
+  assert.equal(
+    quickVoiceLocation(
+      { pathname: '/prs', params: { pr: '42', repo: 'owner/repo' } },
+      { pathname: '/prs', params: { pr: '43' } },
+    ).params.repo,
+    'owner/repo',
   );
 });

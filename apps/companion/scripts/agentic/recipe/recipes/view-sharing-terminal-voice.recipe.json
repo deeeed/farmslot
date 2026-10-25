@@ -71,7 +71,7 @@
         "test_id": "worker-voice-record-widget",
         "expected": "visible",
         "timeout_ms": 20000,
-        "next": "recorder-image"
+        "next": "hud-recorder-image"
       },
       "recorder-image": {
         "action": "ui.screenshot",
@@ -97,7 +97,7 @@
         "intent": "Review an instruction for only this current terminal.",
         "test_id": "worker-voice-instruction",
         "value": "Explain only this terminal.",
-        "next": "review"
+        "next": "hud-review"
       },
       "review": {
         "action": "command",
@@ -137,6 +137,18 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "hud-recorder-image": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Retain the current terminal\u2019s listening recorder.",
+        "next": "recorder-image"
+      },
+      "hud-review": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observe the current worker and explicit gesture boundary.",
+        "next": "review"
       }
     }
   }

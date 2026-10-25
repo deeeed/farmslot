@@ -10,6 +10,7 @@ import {
   resolveSharedViewLink,
 } from '@farmslot/protocol/surfaces/view-links';
 
+import { quickVoiceLocation } from '../../lib/quick-actions';
 import { colors } from '../../lib/theme';
 import { buildWorkspaceCopilotDraftForRoute } from '../../lib/workspace-copilot';
 import { useConnectionStore } from '../../store/connection';
@@ -61,7 +62,10 @@ export function FloatingQuickActions({
       ? actions.viewSelection.location
       : { pathname, params };
   const source = selection ?? currentView;
-  const voiceSource = selection?.pathname === '/unmapped-overlay' ? currentView : source;
+  const voiceSource = quickVoiceLocation(
+    { pathname, params },
+    selection?.pathname === '/unmapped-overlay' ? currentView : source,
+  );
   const selected = useMemo(
     () => ({ ...source, projects: filters.projects, machines: filters.machines, runFilters }),
     [source, filters, runFilters],

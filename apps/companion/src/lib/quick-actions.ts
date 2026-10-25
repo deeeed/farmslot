@@ -1,4 +1,5 @@
 import type { TmuxWorkerRef } from '@farmslot/protocol';
+import type { CompanionViewLocation } from '@farmslot/protocol/surfaces/view-links';
 
 export function quickVoiceWorkerKey(worker: TmuxWorkerRef): string {
   return JSON.stringify([worker.nodeId, worker.session, worker.target, worker.paneId ?? null]);
@@ -38,4 +39,12 @@ export function quickVoiceMayStart({
     intent.key === target.key &&
     intent.key === currentWorkerKey,
   );
+}
+
+/** Sharing overrides selection fields; Voice also retains the source route's context. */
+export function quickVoiceLocation(
+  route: CompanionViewLocation,
+  displayed: CompanionViewLocation,
+): CompanionViewLocation {
+  return { ...displayed, params: { ...route.params, ...displayed.params } };
 }

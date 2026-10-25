@@ -146,6 +146,14 @@ export class NativeSessionView extends LitElement {
 
   protected updated(changed: PropertyValues) {
     if (
+      changed.has('initialSessionId') &&
+      changed.get('initialSessionId') &&
+      !this.initialSessionId &&
+      this.connected &&
+      !this.worker
+    )
+      this.select('');
+    if (
       (changed.has('initialSessionId') || changed.has('initialExecutionNodeId')) &&
       this.initialSessionId &&
       this.initialExecutionNodeId &&
@@ -359,11 +367,13 @@ export class NativeSessionView extends LitElement {
             session.executionNodeId === this.selectedNodeId,
         )
       ) {
+        this.select('');
         if (this.initialSessionId) {
+          this.unavailableNodes = result.unavailableExecutionNodes ?? [];
+          this.executionPicker.setCatalog(catalogForNativeRunners(catalog.runners));
           this.error = 'Open this task conversation from its run.';
           return;
         }
-        this.select('');
       }
       this.unavailableNodes = result.unavailableExecutionNodes ?? [];
       this.executionPicker.setCatalog(catalogForNativeRunners(catalog.runners));

@@ -53,6 +53,7 @@ import {
   parseGatewayProfilesFromStorage,
   sanitizeGatewayProfilesForStorage,
 } from '../lib/gateway-profile-storage';
+import { commandCenterUrlForProfile } from '../lib/gateway-profile-web-url';
 import {
   DEFAULT_GATEWAY_PROFILES,
   DEFAULT_GATEWAY_URL,
@@ -577,6 +578,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   ) => {
     const normalizedProfile: GatewayProfile = {
       ...profile,
+      commandCenterUrl: commandCenterUrlForProfile(
+        profile,
+        get().profiles.find((p) => p.id === profile.id),
+      ),
       authMode: profile.authMode ?? 'none',
       secretStorageKey:
         profile.authMode && profile.authMode !== 'none'

@@ -75,7 +75,10 @@ import {
 } from '../../lib/artifact-url';
 import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
 import { currentFarmConnection } from '../../lib/connection-authority';
-import { decisionEvidenceMediaItems } from '../../lib/decision-evidence-media';
+import {
+  decisionDocumentSelection,
+  decisionEvidenceMediaItems,
+} from '../../lib/decision-evidence-media';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
 import { decisionResolveRequest, gateActionReasons } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
@@ -238,6 +241,7 @@ export default function DecisionDetailScreen({
     title: string;
     body: string;
     path?: string;
+    sharedArtifact?: ReturnType<typeof decisionDocumentSelection>;
   } | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
   useEffect(() => {
@@ -862,6 +866,11 @@ export default function DecisionDetailScreen({
   const openDocumentArtifact = useCallback(
     (artifact: ArtifactManifestEntry) => {
       if (!presentation?.runId) return;
+      const sharedArtifact = decisionDocumentSelection(
+        presentation.runId,
+        sourceRun?.slotId ?? undefined,
+        artifact,
+      );
       const url = recordedEvidenceArtifactUrl(
         gatewayUrl,
         presentation.runId,
@@ -878,7 +887,12 @@ export default function DecisionDetailScreen({
           return res.text();
         })
         .then((body) =>
-          setDocumentViewer({ title: documentTitle(artifact.path), body, path: artifact.path }),
+          setDocumentViewer({
+            title: documentTitle(artifact.path),
+            body,
+            path: artifact.path,
+            sharedArtifact,
+          }),
         )
         .catch((err: Error) => {
           // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
@@ -889,7 +903,7 @@ export default function DecisionDetailScreen({
           if (!controller.signal.aborted) setLoadingDocument(null);
         });
     },
-    [artifactAuthHeaders, checkedEvidenceModel, gatewayUrl, presentation?.runId],
+    [artifactAuthHeaders, checkedEvidenceModel, gatewayUrl, presentation?.runId, sourceRun?.slotId],
   );
 
   const outputReport = useRunOutputReport({
@@ -2051,11 +2065,7 @@ export default function DecisionDetailScreen({
         />
         <DocumentViewer
           visible={isFocused && !!documentViewer}
-          sharedArtifact={
-            documentViewer?.path && presentation.runId
-              ? { runId: presentation.runId, path: documentViewer.path }
-              : undefined
-          }
+          sharedArtifact={documentViewer?.sharedArtifact}
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
           onClose={() => setDocumentViewer(null)}

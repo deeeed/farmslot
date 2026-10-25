@@ -28,7 +28,7 @@
         "action": "ui.press",
         "intent": "Describe the current retained run without refreshing it.",
         "test_id": "companion-quick-actions",
-        "next": "image"
+        "next": "hud-image"
       },
       "image": {
         "action": "ui.screenshot",
@@ -82,6 +82,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "hud-image": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Retain the offline view and its available Copy action.",
+        "next": "image"
       }
     }
   }

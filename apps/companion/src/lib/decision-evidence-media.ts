@@ -1,4 +1,5 @@
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
 import type { MediaViewerItem } from '../components/MediaViewer';
 
@@ -6,6 +7,7 @@ import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
   classifyArtifact,
+  CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   type VisualArtifactPair,
 } from './artifact-url';
 import { evidenceMediaItems, recordedEvidenceArtifactUrl } from './evidence-media-items';
@@ -58,4 +60,21 @@ export function decisionEvidenceMediaItems(input: DecisionEvidenceMediaInput): M
     seen.add(item.uri);
     return true;
   });
+}
+
+/** Capture the same owner used by the document request, before its async read. */
+export function decisionDocumentSelection(
+  runId: string,
+  slotId: string | undefined,
+  artifact: ArtifactManifestEntry,
+): SharedRunArtifactSelection {
+  return {
+    runId,
+    slotId,
+    path: artifact.path,
+    recipeRunId:
+      artifact.recipeRunId === CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
+        ? undefined
+        : artifact.recipeRunId,
+  };
 }

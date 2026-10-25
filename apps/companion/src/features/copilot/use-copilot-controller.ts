@@ -20,7 +20,11 @@ export function useCopilotController() {
   const revision = useRef(0);
   const refresh = useCallback(async () => {
     const attempt = ++revision.current;
-    if (!client || connectionStatus !== 'connected') return;
+    if (!client || connectionStatus !== 'connected') {
+      setLoading(false);
+      setSettled(true);
+      return;
+    }
     setLoading(true);
     setSettled(false);
     setError('');
@@ -52,7 +56,13 @@ export function useCopilotController() {
     });
   }, [client]);
   return {
-    viewModel: { runtime, loading, settled, error, connected: connectionStatus === 'connected' },
+    viewModel: {
+      runtime,
+      loading,
+      settled,
+      error,
+      connected: Boolean(client && connectionStatus === 'connected'),
+    },
     actions: { refresh },
   };
 }

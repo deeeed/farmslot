@@ -16,7 +16,7 @@
         "intent": "The same run is visible after normal reconnect.",
         "text_contains": ["Shared run target"],
         "expected": "visible",
-        "next": "image"
+        "next": "hud-image"
       },
       "image": {
         "action": "ui.screenshot",
@@ -43,6 +43,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "hud-image": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Retain the recovered run without a user refresh.",
+        "next": "image"
       }
     }
   }

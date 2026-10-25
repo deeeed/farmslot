@@ -62,7 +62,7 @@
         "intent": "Show the existing Co-Pilot status and pending instruction.",
         "test_id": "companion-screen-copilot",
         "expected": "visible",
-        "next": "proof"
+        "next": "hud-proof"
       },
       "proof": {
         "action": "command",
@@ -82,6 +82,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "hud-proof": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the unavailable Co-Pilot context without starting a recorder.",
+        "next": "proof"
       }
     }
   }

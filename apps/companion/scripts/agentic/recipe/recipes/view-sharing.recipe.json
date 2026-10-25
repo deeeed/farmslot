@@ -61,7 +61,7 @@
         "action": "ui.press",
         "intent": "Open quick actions without starting voice.",
         "test_id": "companion-quick-actions",
-        "next": "menu-image"
+        "next": "hud-menu-image"
       },
       "menu-image": {
         "action": "ui.screenshot",
@@ -172,7 +172,7 @@
         "action": "ui.set_input",
         "intent": "Review and edit the worker instruction explicitly.",
         "test_id": "worker-voice-instruction",
-        "next": "review-send",
+        "next": "hud-review-send",
         "value": "Report current status."
       },
       "send-instruction": {
@@ -294,7 +294,7 @@
         "stream": "stdout",
         "contains": "\"status\":\"PASS\",\"mode\":\"web-identity\"",
         "proves": ["same-run-link"],
-        "next": "share"
+        "next": "hud-share"
       },
       "share-sheet-observed": {
         "action": "assert_output",
@@ -321,7 +321,7 @@
         "stream": "stdout",
         "contains": "\"status\":\"PASS\",\"mode\":\"voice-context\"",
         "proves": ["long-press-voice"],
-        "next": "recorder-image"
+        "next": "hud-recorder-image"
       },
       "verify-send-observed": {
         "action": "assert_output",
@@ -339,7 +339,7 @@
         "stream": "stdout",
         "contains": "\"status\":\"PASS\",\"mode\":\"voice-context-menu\"",
         "proves": ["menu-voice"],
-        "next": "menu-recorder-image"
+        "next": "hud-menu-recorder-image"
       },
       "final-counts-observed": {
         "action": "assert_output",
@@ -363,6 +363,36 @@
         "stream": "stdout",
         "contains": "\"status\":\"PASS\",\"mode\":\"review-send\"",
         "next": "send-instruction"
+      },
+      "hud-menu-image": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Let the operator check the current-view options in their visible order.",
+        "next": "menu-image"
+      },
+      "hud-share": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Share the same current run link through Android.",
+        "next": "share"
+      },
+      "hud-recorder-image": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Let the operator verify the listening worker and source run context.",
+        "next": "recorder-image"
+      },
+      "hud-menu-recorder-image": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Let the operator verify menu Voice reaches the same listening worker.",
+        "next": "menu-recorder-image"
+      },
+      "hud-review-send": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Verify the reviewed text and unobscured Send before pressing.",
+        "next": "review-send"
       }
     }
   }

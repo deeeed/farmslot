@@ -220,7 +220,12 @@ console.log('Private view-sharing terminal ready');
     encoding: 'utf8',
   }).trim();
   assert(serverBirth, 'Retain the actual private tmux server birth');
+  const paneBirth = execFileSync('ps', ['-p', pane[1], '-o', 'lstart='], {
+    encoding: 'utf8',
+  }).trim();
+  assert(paneBirth, 'Retain the actual private receiver birth');
   const receipt = {
+    paneBirth,
     socketRoot,
     session: COPILOT_TMUX_SESSION,
     target: COPILOT_TMUX_TARGET,

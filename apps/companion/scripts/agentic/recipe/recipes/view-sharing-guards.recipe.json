@@ -137,14 +137,14 @@
           "Use a reachable HTTPS Command Center URL without credentials, query or fragment."
         ],
         "expected": "visible",
-        "next": "invalid-image",
+        "next": "hud-invalid-image",
         "proves": ["invalid-url"]
       },
       "invalid-image": {
         "action": "ui.screenshot",
         "intent": "Retain the actual validation error.",
         "path": "invalid-url.png",
-        "next": "invalid-state",
+        "next": "hud-invalid-state",
         "covers": ["invalid-url"]
       },
       "unset-input": {
@@ -226,7 +226,7 @@
         "intent": "Check the resulting visible state.",
         "text_contains": ["Command Center URL saved"],
         "expected": "visible",
-        "next": "restored-state",
+        "next": "hud-restored-state",
         "proves": ["profile-url-writer"]
       },
       "no-new-commands": {
@@ -292,6 +292,24 @@
         "contains": "\"status\":\"PASS\",\"mode\":\"restored-url\"",
         "proves": ["profile-url-writer"],
         "next": "no-new-commands"
+      },
+      "hud-invalid-image": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Retain the actual validation error.",
+        "next": "invalid-image"
+      },
+      "hud-invalid-state": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observe the actual profile editor value and exact result message.",
+        "next": "invalid-state"
+      },
+      "hud-restored-state": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observe the actual profile editor value and exact result message.",
+        "next": "restored-state"
       }
     }
   },

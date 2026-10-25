@@ -11,6 +11,8 @@ Use explicit private Gateway, passive proxy, Metro, Android and authenticated Ag
 Validate recipes through the actual source `runAdapterRnCli` wrapper before execution. `validate` is action-free. `run --dry-run` still executes commands and recording and must not be used as an import check. Run native recipes with `--record-video=full-run` in exclusive artifact directories:
 
 - `view-sharing`: actual run clipboard, mounted web identity, native Share and both Voice gestures with explicit Send/discard.
+- `view-sharing-selections`: a retained document opened through its actual modal, followed by the native History toggle and a browser with previously saved filters.
+- `prove-view-sharing-receipts.mjs`: real same-route Decisions navigation and an explicitly unavailable native session/node. This does not prove a loaded native conversation or launch a provider.
 - `view-sharing-guards`: unsupported view, invalid/unset profile URL, Settings and restoration. Visual criteria require review; do not rename their verdicts.
 - `view-sharing-profile-state`: explicit observations of the profile editor and result.
 - `view-sharing-offline` then `view-sharing-recovery`: the existing app retains its run, copies offline and reconnects without replay.
@@ -19,3 +21,5 @@ Validate recipes through the actual source `runAdapterRnCli` wrapper before exec
 The external owner must prove service PID/birth ownership. Bind the outage marker to the actual proxy PID/start ID before stopping Gateway. Retain it until actual readiness and native recovery. Preserve original failures. Stop on failure, close only owned resources, revoke only the fixture credential and verify ports independently. An SDK automation lease closes after each recipe; this does not imply an app restart.
 
 Keep original traces, full videos and screenshots. Audit the actual target at press, clipboard nonce, mounted identity and correlated RPCs. Never inject component, cache or SQLite values, silently reset consumed counters, or treat an engine pass as visual acceptance.
+
+Keep proof limits with each attempt. A fixture without historical slot pins or retained video occurrences cannot prove their device behavior. The independent mapping/selection tests cover those guards; never label them native proof. In-app HUD can be covered by a native menu or the OS share sheet. Preserve these original images and use actual mounted-view/protocol observations alongside them.

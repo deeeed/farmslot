@@ -1,5 +1,9 @@
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
-import type { SharedRunArtifactOwner } from '@farmslot/protocol/surfaces/view-links';
+import type {
+  CompanionViewLocation,
+  SharedRunArtifactOwner,
+  SharedRunArtifactSelection,
+} from '@farmslot/protocol/surfaces/view-links';
 
 import type { MediaViewerItem } from '../components/MediaViewer';
 
@@ -117,4 +121,25 @@ export function evidenceViewerSelection(
   if (uri && comparison?.some((item) => item.uri === uri))
     return { items: comparison, index: comparison.findIndex((item) => item.uri === uri) };
   return { items: artifacts, index: uri ? artifacts.findIndex((item) => item.uri === uri) : -1 };
+}
+
+/** The opening artifact cannot stand in for a subsequently chosen recording or occurrence. */
+export function mediaShareView(
+  artifact: SharedRunArtifactSelection | undefined,
+  selectionChanged: boolean,
+): CompanionViewLocation | undefined {
+  if (selectionChanged)
+    return {
+      pathname: '/unmapped-overlay',
+      params: {},
+      unavailableMessage:
+        'Web link unavailable: this selected recording or occurrence has no exact Command Center view.',
+    };
+  return artifact
+    ? {
+        pathname: '/artifacts',
+        params: { runId: artifact.runId, artifact: artifact.path, recipeRun: artifact.recipeRunId },
+        artifactSelection: artifact,
+      }
+    : undefined;
 }

@@ -36,7 +36,7 @@ import {
   artifactSource,
   classifyArtifact,
 } from '../lib/artifact-url';
-import { evidenceRecordingForPath } from '../lib/evidence-media-items';
+import { evidenceRecordingForPath, mediaShareView } from '../lib/evidence-media-items';
 import { gatewayFetch } from '../lib/gateway-http-auth';
 import {
   TEXT_PREVIEW_MAX_BYTES,
@@ -113,6 +113,10 @@ export function MediaViewer({
   );
   const [currentIndex, setCurrentIndex] = useState(clampedInitialIndex);
   const [zoomedUri, setZoomedUri] = useState<string | null>(null);
+  const [changedVideoItems, setChangedVideoItems] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    if (!visible) setChangedVideoItems(new Set());
+  }, [visible]);
 
   useEffect(() => {
     if (!visible || viewerItems.length === 0) return;
@@ -141,19 +145,10 @@ export function MediaViewer({
       transparent
       animationType="fade"
       onRequestClose={onClose}
-      sharedView={
-        current?.sharedArtifact
-          ? {
-              pathname: '/artifacts',
-              params: {
-                runId: current.sharedArtifact.runId,
-                artifact: current.sharedArtifact.path,
-                recipeRun: current.sharedArtifact.recipeRunId,
-              },
-              artifactSelection: current.sharedArtifact,
-            }
-          : undefined
-      }
+      sharedView={mediaShareView(
+        current?.sharedArtifact,
+        Boolean(current && changedVideoItems.has(current.uri)),
+      )}
     >
       <GestureHandlerRootView style={styles.modalRoot}>
         <SafeAreaView style={styles.backdrop} testID={testID}>
@@ -177,6 +172,11 @@ export function MediaViewer({
                   height={mediaHeight}
                   panEnabled={zoomedUri === item.uri}
                   onZoomChange={(zoomed) => setZoomedUri(zoomed ? item.uri : null)}
+                  onViewSelectionChange={() =>
+                    setChangedVideoItems((previous) =>
+                      previous.has(item.uri) ? previous : new Set(previous).add(item.uri),
+                    )
+                  }
                 />
               </View>
             ))}
@@ -243,6 +243,7 @@ function MediaSlide({
   height,
   panEnabled,
   onZoomChange,
+  onViewSelectionChange,
 }: {
   isActive: boolean;
   item: MediaViewerItem;
@@ -250,6 +251,7 @@ function MediaSlide({
   height: number;
   panEnabled?: boolean;
   onZoomChange?: (zoomed: boolean) => void;
+  onViewSelectionChange: () => void;
 }) {
   const mediaType = item.mediaType ?? classifyArtifact(item.title ?? item.uri);
   if (mediaType === 'document') {
@@ -265,7 +267,14 @@ function MediaSlide({
   }
   if (mediaType === 'video') {
     if (!isActive) return <View style={[styles.media, { width, height }]} />;
-    return <FullscreenVideo item={item} width={width} height={height} />;
+    return (
+      <FullscreenVideo
+        item={item}
+        width={width}
+        height={height}
+        onViewSelectionChange={onViewSelectionChange}
+      />
+    );
   }
   return (
     <ZoomableImage
@@ -409,10 +418,12 @@ function FullscreenVideo({
   item,
   width,
   height,
+  onViewSelectionChange,
 }: {
   item: MediaViewerItem;
   width: number;
   height: number;
+  onViewSelectionChange: () => void;
 }) {
   const [model, setModel] = useState<EvidenceReviewModel | null>(item.evidenceModel ?? null);
   const [openGroups, setOpenGroups] = useState<ReadonlyMap<string, boolean>>(() => new Map());
@@ -492,6 +503,7 @@ function FullscreenVideo({
   const applyPlayback = useCallback(
     (effect: EvidenceReviewPlaybackEffect) => {
       if (effect.sourceChanged && effect.clip && effect.clip.videoPath !== videoPath) {
+        onViewSelectionChange();
         if (!item.resolveArtifactUrl || !model) {
           setError('The recording source has no artifact URL resolver.');
           player.pause();
@@ -509,7 +521,7 @@ function FullscreenVideo({
       if (effect.seekMs !== null && player.status === 'readyToPlay')
         player.currentTime = effect.seekMs / 1000;
     },
-    [item.resolveArtifactUrl, model, player, videoPath],
+    [item.resolveArtifactUrl, model, onViewSelectionChange, player, videoPath],
   );
 
   useEffect(() => {
@@ -593,6 +605,7 @@ function FullscreenVideo({
                       if (!model) return;
                       const effect = model.selectTimelineGroup(videoPath, group.id, durationMs);
                       if (effect.seekMs === null) return;
+                      onViewSelectionChange();
                       resumePlayback.current = true;
                       applyPlayback(effect);
                       updateSelection((value) => value + 1);
@@ -656,6 +669,7 @@ function FullscreenVideo({
                                   })
                                 )
                                   return;
+                                onViewSelectionChange();
                                 resumePlayback.current = true;
                                 applyPlayback(model.cueClip(0));
                                 updateSelection((value) => value + 1);

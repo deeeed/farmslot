@@ -328,3 +328,50 @@ test('local-only selections refuse sharing without a parent fallback', () => {
     message: 'Web link unavailable: this family section has no exact Command Center view.',
   });
 });
+
+test('a retained slot run never resolves through the slot current run', () => {
+  const slot = resolveSharedViewLink(
+    {
+      companion: { pathname: '/workspace/slot/reused-slot/slot', params: { runId: 'retained-A' } },
+    },
+    base,
+  );
+  assert.equal(slot.status, 'unavailable');
+  if (slot.status === 'unavailable') assert.match(slot.message, /pinned slot view/);
+  const terminal = resolveSharedViewLink(
+    {
+      companion: {
+        pathname: '/workspace/slot/reused-slot/terminal',
+        params: { runId: 'retained-A', contextId: 'context-A' },
+      },
+    },
+    base,
+  );
+  assert.equal(
+    terminal.status === 'available' ? terminal.route : null,
+    '#terminal?run=retained-A&contextId=context-A',
+  );
+  assert.equal(
+    resolveSharedViewLink(
+      {
+        companion: {
+          pathname: '/terminal/reused-slot',
+          params: { runId: ['retained-A', 'current-B'] },
+        },
+      },
+      base,
+    ).status,
+    'unavailable',
+  );
+});
+
+test('unfiltered collections explicitly replace saved browser filters and preserve History scope', () => {
+  const result = resolveSharedViewLink(
+    { companion: { pathname: '/runs', params: {}, projects: [], machines: [], runsTab: 'all' } },
+    base,
+  );
+  assert.equal(
+    result.status === 'available' ? result.route : null,
+    '#runs?projects=&machines=&runsTab=all',
+  );
+});
