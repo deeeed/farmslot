@@ -745,6 +745,8 @@ export interface VisualRepairRecord {
 
 export interface ReviewStatus {
   acceptanceReviewCoverage?: AcceptanceReviewCriterion[];
+  /** Completion reviews bind the evidence fingerprint captured before their launch. */
+  reviewedInputsFingerprint?: string;
   id: string;
   source?: 'dispatch' | 'human-gate' | 'pipeline';
   runner?: string | null;

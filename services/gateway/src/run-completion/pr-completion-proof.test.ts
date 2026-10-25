@@ -69,13 +69,13 @@ const { visualReviewSnapshotIdentity } = await import('../run-engine/recorded-ev
 const { writeAcceptanceVisualPackage } =
   await import('../run-engine/acceptance-package.test-support.js');
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, captureHead?: string) {
   readHead = async () => head;
   const root = await mkdtemp(path.join(home, 'projects/generic-project/tasks/completion-proof-'));
   const directory = path.join(root, 'artifacts/recipe-runs/qa-attempt');
   await mkdir(directory, { recursive: true });
   await mkdir(path.join(root, 'inputs'));
-  const { claims } = await writeAcceptanceVisualPackage(directory);
+  const { claims } = await writeAcceptanceVisualPackage(directory, captureHead);
   await writeFile(
     path.join(directory, 'evidence-manifest.json'),
     JSON.stringify({
@@ -405,3 +405,36 @@ for (const change of ['head', 'revision', 'pause', 'cancel'] as const) {
     );
   });
 }
+
+test('fresh after-captures from an earlier head cannot qualify a new completion hold', async (t) => {
+  const f = await fixture(t, head);
+  await f.review('confirmed');
+  assert.equal((await f.readiness()).state, 'ready');
+  const nextHead = 'b'.repeat(40);
+  const current = getRun(f.run.id)!;
+  updateRun(f.run.id, {
+    acceptanceProofHold: {
+      ...current.acceptanceProofHold!,
+      headSha: nextHead,
+      state: 'held',
+      decisionId: undefined,
+    },
+  });
+  await captureRunOutput(f.run.id, false, true);
+  const latest = getRun(f.run.id)!;
+  const decision = latest.decisions.find(
+    ({ resolvedAt, payload }) =>
+      !resolvedAt &&
+      payload?.kind === 'output-review' &&
+      payload.completionProof?.headSha === nextHead,
+  )!;
+  updateRun(f.run.id, {
+    acceptanceProofHold: { ...latest.acceptanceProofHold!, decisionId: decision.id },
+  });
+  const blocked = await f.readiness({ prCompletionHead: async () => nextHead });
+  assert.equal(blocked.state, 'not-ready');
+  assert.ok(
+    blocked.reasons.some(({ message }) => message.includes('comparison-source-mismatch')),
+    JSON.stringify(blocked),
+  );
+});

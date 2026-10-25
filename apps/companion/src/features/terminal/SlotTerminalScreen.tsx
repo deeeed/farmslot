@@ -95,6 +95,7 @@ import {
   matchesCompanionTerminalTarget,
   shouldUseBareTerminalSessionForRun,
 } from '../../lib/terminal-target';
+import { terminalTextRequest } from '../../lib/terminal-text-request';
 import { baseStyles, colors, spacing } from '../../lib/theme';
 import {
   downloadVoiceAsrModel,
@@ -834,10 +835,8 @@ export default function TerminalScreen() {
         pendingOperatorMessage.current = message;
         const target = terminalTargetParamsRef.current;
         if (target) {
-          await client.request('terminal.send', {
-            ...target,
-            ...message,
-          });
+          const request = terminalTextRequest(target, message);
+          await client.request(request.method, request.params);
           pendingOperatorMessage.current = null;
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           setError(null);
@@ -856,11 +855,8 @@ export default function TerminalScreen() {
           setError('Run no longer has an active slot. Terminal send blocked.');
           return false;
         }
-        await client.request('terminal.send', {
-          slotId,
-          runId: run.id,
-          ...message,
-        });
+        const request = terminalTextRequest({ slotId, runId: run.id }, message);
+        await client.request(request.method, request.params);
         pendingOperatorMessage.current = null;
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setError(null);

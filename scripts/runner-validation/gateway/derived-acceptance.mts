@@ -4,24 +4,24 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import type { NativeWorkerSessionBinding, Run } from '@farmslot/protocol';
+import { Events, isRecord, type NativeWorkerSessionBinding, type Run } from '@farmslot/protocol';
 import { createServer as createViteServer, type ViteDevServer } from 'vite';
 
 import { testGatewayProfile } from '../../lib/test-gateway-identity-source.mts';
 
 if (!process.argv.includes('--live-haiku'))
-  throw new Error('Explicit --live-haiku is required for the two cheap model turns');
+  throw new Error('Explicit --live-haiku is required for controlled cheap model turns');
 const withUi = process.argv.includes('--ui');
 if (withUi && !process.env.FARMSLOT_CDP_PORT)
   throw new Error('UI proof requires the existing owned browser CDP port');
 const source = fileURLToPath(new URL('../../../', import.meta.url));
-const root = await mkdtemp(path.join(os.tmpdir(), 'derived-acceptance-proof-'));
+const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'derived-acceptance-proof-')));
 const output = path.resolve(process.env.FARMSLOT_PROOF_OUTPUT_DIR ?? 'temp/derived-acceptance');
 const project = 'acceptance-proof';
 const slotId = 'derived-acceptance-private';
@@ -72,6 +72,13 @@ const store = await load('services/gateway/src/runs/store.ts');
 const { initializeAcceptanceRegistration, acceptanceDerivationInstructions } = await load(
   'services/gateway/src/tasks/acceptance-registration.ts',
 );
+const { watchSlot, stopAllWatches, onTaskProgress } = await load(
+  'services/gateway/src/tasks/watcher.ts',
+);
+const { loadFleetStatus } = await load('services/gateway/src/fleet/state.ts');
+const { withRunTransition } = await load(
+  'services/gateway/src/run-lifecycle/transition-coordinator.ts',
+);
 const { syncAcceptanceRegistration } = await load(
   'services/gateway/src/tasks/acceptance-registration-sync.ts',
 );
@@ -84,9 +91,14 @@ const { resolveWorkerTerminalContract } = await load(
   'services/gateway/src/tasks/worker-terminal-contract.ts',
 );
 const { NativeSessionClient } = await import('@farmslot/agent-runtime/native');
+const { nativeWorkerLaunchDigest } = await import('@farmslot/agent-runtime/native/worker-launch');
+const { prepareNativeWorkerLaunch } = await load(
+  'services/gateway/src/runners/native/worker-launch.ts',
+);
+const { loadSlotVars, loadProjectVars } = await load('services/gateway/src/core/config.ts');
 const { matchesProcess } = await load('packages/agent-runtime/src/native/storage.ts');
 const native = new NativeSessionClient(nativeRoot);
-const { createWebSocketServer } = await load('services/gateway/src/server.ts');
+const { createWebSocketServer, broadcastEvent } = await load('services/gateway/src/server.ts');
 const { GatewayClient } = await load('packages/cli/src/gateway-client.ts');
 const server = createServer();
 const wss = createWebSocketServer(server, auth);
@@ -96,6 +108,28 @@ let route: string | undefined;
 let browserEnv: NodeJS.ProcessEnv | undefined;
 let binding: NativeWorkerSessionBinding | undefined;
 let runId: string | undefined;
+let progressEvents = 0;
+let progressSyncError: string | undefined;
+let releaseProofLock: (() => void) | undefined;
+let proofLock: Promise<void> | undefined;
+onTaskProgress(
+  (
+    slotId: string,
+    progress: unknown,
+    role: unknown,
+    contextId: unknown,
+    runId: unknown,
+    parentChecklist: unknown,
+  ) =>
+    broadcastEvent(Events.TASK_PROGRESS_UPDATED, {
+      slotId,
+      progress,
+      role,
+      contextId,
+      runId,
+      parentChecklist,
+    }),
+);
 const checks: string[] = [];
 const browser = async (...args: string[]) => {
   const result = await exec(
@@ -139,6 +173,19 @@ try {
     { createdByPrincipalId: person.id, nativeOwnerPrincipalId: person.id },
   );
   runId = run.id;
+  client.onEvent((event: import('@farmslot/protocol').EventFrame) => {
+    if (
+      event.event !== Events.TASK_PROGRESS_UPDATED ||
+      !isRecord(event.payload) ||
+      event.payload.runId !== run.id ||
+      !isRecord(event.payload.progress)
+    )
+      return;
+    progressEvents++;
+    const error = event.payload.progress.acceptanceStatusError;
+    progressSyncError =
+      typeof error === 'string' && error.includes('Acceptance registration:') ? error : undefined;
+  });
   const taskDir = path.join(repo, 'tasks/pr-complete', run.id);
   const initial = initializeAcceptanceRegistration(
     run.id,
@@ -258,10 +305,26 @@ try {
     `Disposable native host ready before model admission in ${Date.now() - hostStarted}ms`,
   );
   const leaseId = randomUUID();
+  const sessionId = randomUUID();
+  const vars = await loadSlotVars(slotId);
+  const projectVars = await loadProjectVars(project);
+  const prepared = await prepareNativeWorkerLaunch({
+    vars,
+    project: projectVars.projectJson,
+    projectVars,
+    runner: 'claude',
+    model: 'haiku',
+    safetyTier: 'full-auto',
+    role: 'primary',
+    taskDir,
+    leaseId,
+    sessionId,
+    prepareAccount: false,
+  });
   const session = await native.ensureWorker(
     person.id,
-    { sessionId: randomUUID(), runner: 'claude', model: 'haiku', cwd: taskDir },
-    { leaseId, safetyTier: 'full-auto', environment: { set: {}, unset: [] } },
+    { sessionId, runner: 'claude', model: 'haiku', cwd: repo },
+    prepared.launch,
   );
   binding = {
     sessionId: session.id,
@@ -270,7 +333,10 @@ try {
     generation: session.generation,
     leaseId,
     commandId: randomUUID(),
-    safetyTier: 'full-auto',
+    safetyTier: prepared.launch.safetyTier,
+    effort: prepared.launch.effort,
+    launchDigest: nativeWorkerLaunchDigest(prepared.launch),
+    accountLabel: prepared.accountLabel,
   };
   const target = { sessionId: session.id, generation: session.generation, leaseId };
   store.updateRun(run.id, {
@@ -289,15 +355,86 @@ try {
       },
     ],
   });
+  // The real writer confirms the initial contract before DISPATCH. Mirror that
+  // producer boundary once; subsequent child acknowledgements come from the watch.
+  await syncAcceptanceRegistration(run.id, slotId, ORCHESTRATOR_LOCALITY, taskDir);
+  await loadFleetStatus(true);
+  await watchSlot(slotId, run.id);
+  const selectedContract = store.getRun(run.id)!.acceptanceExecutionContract!;
+  const frozenFile = path.join(
+    taskDir,
+    `inputs/acceptance-contracts/${selectedContract.revision}.json`,
+  );
+  const frozenBytes = await readFile(frozenFile);
+  const checklistFile = path.join(taskDir, 'CHECKLIST.md');
+  const checklistBytes = await readFile(checklistFile);
+  await chmod(frozenFile, 0o644);
+  await writeFile(frozenFile, '{}');
+  await writeFile(checklistFile, Buffer.concat([checklistBytes, Buffer.from('\n')]));
+  await waitFor(
+    async () => Boolean(progressSyncError?.includes('immutable revision differs')),
+    'sync error remains visible through real progress events',
+    15_000,
+  );
+  await writeFile(frozenFile, frozenBytes);
+  await chmod(frozenFile, 0o444);
+  const beforeRecovery = progressEvents;
+  await writeFile(checklistFile, checklistBytes);
+  await waitFor(
+    async () => progressEvents > beforeRecovery && progressSyncError === undefined,
+    'registration sync recovers without losing progress',
+    15_000,
+  );
+  checks.push(
+    'registration failure is visible in authenticated progress events and recovery clears it',
+  );
+
+  let locked!: () => void;
+  const readyLock = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+  const release = new Promise<void>((resolve) => {
+    releaseProofLock = resolve;
+  });
+  proofLock = withRunTransition(run.id, async () => {
+    locked();
+    await release;
+  });
+  await readyLock;
+  const beforeProgress = progressEvents;
+  await exec(
+    process.execPath,
+    [
+      path.join(source, 'packages/agent-runtime/scripts/mark-checklist-step.cjs'),
+      taskDir,
+      'sub',
+      'start',
+      'derive-acceptance',
+      '--step',
+      '1',
+      '--from',
+      'inline:# Derive acceptance\n- [ ] Classify every frozen source\n- [ ] Submit the typed result',
+    ],
+    { cwd: taskDir, timeout: 30_000 },
+  );
+  await waitFor(
+    async () => progressEvents > beforeProgress,
+    'progress remains independent of held acceptance sync',
+    30_000,
+  );
+  await client.call('task.progress', { slotId, runId: run.id });
+  assert.equal(store.getRun(run.id)!.acceptanceRegistration!.units[0].result, undefined);
+  releaseProofLock!();
+  await proofLock;
+  releaseProofLock = undefined;
+  checks.push('real task-watch progress is emitted while the registration transition is held');
   await native.sendWorker(
     person.id,
     target,
     binding.commandId,
-    'Read TASK.md. Execute only the initial derive-acceptance child using the frozen sources, then stop your turn. Do not complete the root checklist.',
+    `Read ${path.join(taskDir, 'TASK.md')}. Work only in that task directory, and run its mark shim from there. The initial derive-acceptance child is already registered. Classify every frozen source and submit its typed result in that child, then stop your turn. Do not complete the root checklist.`,
   );
-  const pump = () => syncAcceptanceRegistration(run.id, slotId, ORCHESTRATOR_LOCALITY, taskDir);
   await waitFor(async () => {
-    await pump();
     const snap = await native.readWorker(person.id, session.id, leaseId);
     assert.notEqual(snap.session.state, 'failed', snap.session.error);
     return (
@@ -305,6 +442,15 @@ try {
       snap.session.state === 'idle'
     );
   }, 'real initial derivation');
+  const acceptedSnapshot = await native.readWorker(person.id, session.id, leaseId);
+  binding = { ...binding, acceptedAt: new Date().toISOString() };
+  store.updateRun(run.id, {
+    agentContexts: store.getRun(run.id)!.agentContexts!.map((context) => ({
+      ...context,
+      nativeSession: binding,
+      runnerSessionId: acceptedSnapshot.session.nativeSessionId,
+    })),
+  });
   const first = (await client.call('run.get', { runId: run.id })).run as Run;
   assert.equal(first.acceptanceRegistration?.original.length, 1);
   assert.equal(first.acceptanceRegistration?.derived.length, 1);
@@ -332,7 +478,6 @@ try {
     checks.push('An uncertain native acknowledgement remains pending for observation');
   }
   await waitFor(async () => {
-    await pump();
     return (
       store.getRun(run.id)!.acceptanceRegistration!.units.at(-1)?.delivery?.status === 'confirmed'
     );
@@ -347,7 +492,6 @@ try {
   );
   checks.push('authenticated semantic steering is idempotent and changed-content reuse refuses');
   await waitFor(async () => {
-    await pump();
     const snap = await native.readWorker(person.id, session.id, leaseId);
     assert.notEqual(snap.session.state, 'failed', snap.session.error);
     return (
@@ -406,10 +550,66 @@ try {
       'Command Center loads all registered acceptance rows through the authenticated gateway',
     );
   }
+  const beforeResume = await native.readWorker(person.id, session.id, leaseId);
+  await native.closeWorker(person.id, target);
+  const closed = store.getRun(run.id)!;
+  store.updateRun(run.id, {
+    agentContexts: closed.agentContexts!.map((context) => ({
+      ...context,
+      nativeSession: { ...context.nativeSession!, closedAt: new Date().toISOString() },
+    })),
+  });
+  try {
+    await client.call('terminal.send', {
+      ...message,
+      operatorMessageId: 'proof-retained-resume',
+      text: 'Also preserve a third fixture marker. Derive one new state criterion in the new child, retain every earlier criterion, then stop your turn without completing the root task.',
+    });
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('delivery is unconfirmed'))
+      throw error;
+  }
+  binding = store.getRun(run.id)!.agentContexts![0].nativeSession;
+  await waitFor(async () => {
+    const snapshot = await native.readWorker(person.id, session.id, leaseId);
+    return (
+      store.getRun(run.id)!.acceptanceRegistration!.units.every(({ result }) => result) &&
+      snapshot.session.state === 'idle'
+    );
+  }, 'stopped conversation resumes and derives the appended criterion');
+  const resumed = (await client.call('run.get', { runId: run.id })).run as Run;
+  const afterResume = await native.readWorker(person.id, session.id, leaseId);
+  assert.equal(resumed.acceptanceRegistration!.derived.length, 3);
+  assert.equal(resumed.agentContexts![0].nativeSession!.sessionId, session.id);
+  assert.notEqual(resumed.agentContexts![0].nativeSession!.generation, session.generation);
+  assert.equal(afterResume.session.nativeSessionId, beforeResume.session.nativeSessionId);
+  assert.deepEqual(
+    resumed.acceptanceRegistration!.derived.slice(0, 2),
+    final.acceptanceRegistration!.derived,
+  );
+  await writeFile(
+    path.join(output, 'retained-resume-readback.json'),
+    JSON.stringify(
+      {
+        runId: run.id,
+        originalConversation: beforeResume.session.nativeSessionId,
+        resumedConversation: afterResume.session.nativeSessionId,
+        oldGeneration: session.generation,
+        newGeneration: resumed.agentContexts![0].nativeSession!.generation,
+        registration: resumed.acceptanceRegistration,
+      },
+      null,
+      2,
+    ),
+  );
+  checks.push(
+    'supported stopped-worker steering resumes the exact conversation with a new process generation and appends AC-4',
+  );
   await writeFile(
     path.join(output, 'readback.json'),
     JSON.stringify(
       {
+        stage: 'before-retained-resume',
         runId: run.id,
         sessionId: session.id,
         generation: session.generation,
@@ -424,6 +624,15 @@ try {
   failure = error;
 } finally {
   const cleanup: unknown[] = [];
+  releaseProofLock?.();
+  if (proofLock) {
+    try {
+      await proofLock;
+    } catch (error) {
+      cleanup.push(error);
+    }
+  }
+  await stopAllWatches();
   for (const stop of [
     () => (route ? browser('close', route) : Promise.resolve()),
     () => ui?.close(),
@@ -490,7 +699,7 @@ try {
     error: failure instanceof Error ? failure.message : failure,
     cleanupErrors: cleanup.map(String),
     scope:
-      'Private authenticated gateway, real child CJS and retained native Haiku transport. Production sync cycle is pumped manually; no product run, dispatch or selected configuration.',
+      'Private authenticated gateway, real child CJS and retained native Haiku transport. Production task watcher drives classification acknowledgements; no product run, dispatch or selected configuration.',
     retainedFixture: failure || cleanup.length ? root : undefined,
   };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');

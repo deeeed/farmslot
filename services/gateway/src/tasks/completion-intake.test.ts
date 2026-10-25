@@ -6,6 +6,9 @@ import { makeRun } from '../run-engine/test-fixtures.js';
 
 import { fetchPRCompletionIntake, originalPRCompletionCriteria } from './completion-intake.js';
 
+await import('../runtime/mock-pty.test-support.js');
+const { completionCommentRows, renderCommentSummary } = await import('./writer.js');
+
 function threadPage(commentsComplete = true): string {
   return JSON.stringify({
     headRefOid: 'a'.repeat(40),
@@ -142,4 +145,59 @@ test('resolved threads and deleted authors keep comment IDs and file context', a
       resolved: true,
     },
   );
+});
+
+test('pending unsubmitted reviews are excluded before requiring a submission timestamp', async () => {
+  const intake = await fetchPRCompletionIntake('example/repo', 7, async (args) => ({
+    stdout: args.includes('graphql')
+      ? threadPage()
+      : args.some((arg) => arg.includes('/reviews'))
+        ? JSON.stringify({
+            id: 19,
+            body: 'Private draft',
+            state: 'PENDING',
+            updatedAt: null,
+            author: 'person',
+            url: 'https://example.test/review/19',
+          })
+        : '',
+    stderr: '',
+  }));
+  assert.equal(intake.sources.length, 1);
+  assert.equal(intake.sources[0].providerKind, 'thread');
+  assert.ok(!intake.sources.some(({ body }) => body === 'Private draft'));
+});
+
+test('completion comment previews keep conversation and review-summary reply identities separate', async () => {
+  const { initializeAcceptanceRegistration } = await import('./acceptance-registration.js');
+  const { completionCommentSource } = await import('./completion-intake.js');
+  const row = {
+    id: 1,
+    body: 'Fix this',
+    updatedAt: '2026-10-25T00:00:00Z',
+    author: 'person',
+    url: 'https://example.test/comment/1',
+  };
+  const registration = initializeAcceptanceRegistration(
+    'run',
+    [],
+    [
+      completionCommentSource('example/repo', 7, 'issue', row),
+      completionCommentSource('example/repo', 7, 'review', { ...row, id: 2 }),
+    ],
+    {
+      provider: 'github',
+      repository: 'example/repo',
+      prNumber: 7,
+      headSha: 'a'.repeat(40),
+      capturedAt: row.updatedAt,
+    },
+  );
+  const rows = completionCommentRows(registration);
+  assert.equal(rows[0].source, 'issue');
+  assert.equal(rows[0].id, 1);
+  assert.equal(rows[1].source, 'review-summary');
+  assert.equal(rows[1].id, undefined);
+  assert.equal(rows[1].reviewId, '2');
+  assert.match(renderCommentSummary(rows), /review-summary.*review 2/);
 });

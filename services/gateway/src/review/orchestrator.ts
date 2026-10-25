@@ -138,6 +138,7 @@ export { handleReviewFsChanged } from './progress.js';
 
 export interface ReviewResult {
   acceptanceReviewCoverage?: import('@farmslot/protocol').AcceptanceReviewCriterion[];
+  reviewedInputsFingerprint?: string;
   reviewId?: string;
   mode?: ReviewMode;
   session?: ReviewSessionTrace;
@@ -297,7 +298,8 @@ export async function executeReview(
     if (run.flowType !== 'pr-complete' || run.acceptanceContractVersion !== 1) return result;
     const current = getRun(runId)!;
     const coverage = structuredClone(current.engineState?.reviewAcceptanceAtLaunch ?? []);
-    const bound = { ...result, acceptanceReviewCoverage: coverage };
+    const reviewedInputsFingerprint = current.engineState?.reviewInputsAtLaunch;
+    const bound = { ...result, acceptanceReviewCoverage: coverage, reviewedInputsFingerprint };
     if (result.reviewId) {
       const { buildPublishGateReviewStatus } = await import('../run-engine/gate-policy.js');
       const reviews = current.engineState?.publishGate?.reviews ?? [];
@@ -310,6 +312,7 @@ export async function executeReview(
       });
       status.source = 'pipeline';
       status.acceptanceReviewCoverage = coverage;
+      status.reviewedInputsFingerprint = reviewedInputsFingerprint;
       updateRun(runId, {
         engineState: {
           ...current.engineState,

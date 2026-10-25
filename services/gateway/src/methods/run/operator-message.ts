@@ -15,7 +15,10 @@ import { readSlotField } from '../../core/state.js';
 import { resolveWorkerTaskDir } from '../../review/templates.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { readNativeWorkerSnapshot } from '../../runners/native/worker-control.js';
-import { deliverOperatorInstruction } from '../../runners/operator-instruction.js';
+import {
+  deliverOperatorInstruction,
+  OperatorInstructionNotAttemptedError,
+} from '../../runners/operator-instruction.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { currentSessionPrincipal } from '../../security/work-originator.js';
 import {
@@ -157,14 +160,47 @@ export async function operatorMessage(
   });
   if (!intent) return { operatorMessageId: id, delivery: 'confirmed' };
   const { startedAt } = intent;
-  const delivery = await deliverOperatorInstruction(
-    getRun(run.id)!,
-    unitId,
-    acceptanceInstructionPrompt(intent.unit),
-    intent.unit.delivery?.startedAt,
-    intent.unit.delivery?.contextId,
-    id,
-  );
+  const clearUntouchedIntent = () =>
+    withRunTransition(run.id, async () => {
+      const current = getRun(run.id);
+      if (!current?.acceptanceRegistration || (current.engineState?.generation ?? 0) !== generation)
+        return;
+      await persistRunNow(
+        updateRun(run.id, {
+          acceptanceRegistration: {
+            ...current.acceptanceRegistration,
+            units: current.acceptanceRegistration.units.map((unit) => {
+              if (unit.id !== unitId || !unit.delivery || unit.delivery.startedAt !== startedAt)
+                return unit;
+              const delivery = { ...unit.delivery };
+              delete delivery.startedAt;
+              return { ...unit, delivery };
+            }),
+          },
+        }),
+        'untouched operator instruction can retry',
+      );
+    });
+  let delivery: Awaited<ReturnType<typeof deliverOperatorInstruction>>;
+  try {
+    delivery = await deliverOperatorInstruction(
+      getRun(run.id)!,
+      unitId,
+      acceptanceInstructionPrompt(intent.unit),
+      intent.unit.delivery?.startedAt,
+      intent.unit.delivery?.contextId,
+      id,
+    );
+  } catch (error) {
+    if (error instanceof OperatorInstructionNotAttemptedError) await clearUntouchedIntent();
+    throw error;
+  }
+  if (delivery === 'not-attempted') {
+    await clearUntouchedIntent();
+    throw new Error(
+      `Operator instruction was not sent. Retry with operatorMessageId ${id} when the retained worker is ready.`,
+    );
+  }
   if (delivery === 'unconfirmed') {
     emit(Events.RUN_UPDATED, { run: getRun(run.id) });
     throw new Error(

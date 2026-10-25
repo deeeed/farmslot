@@ -33,7 +33,9 @@ export interface AcceptanceDerivationSource {
   /** Frozen provider resolution state; resolved comments must be excluded. */
   resolved?: boolean;
   author?: string;
+  providerKind?: 'issue' | 'review' | 'thread';
   commentId?: string;
+  reviewId?: string;
   threadId?: string;
   databaseId?: number;
   path?: string;

@@ -957,12 +957,12 @@ export async function runReplayStep(
 /** Internal proof continuation keeps validation, acknowledgement and replay serialized. */
 export async function continuePRCompletionStep(
   runId: string,
-  stepName: 'monitor' | 'complete',
+  stepName: 'monitor' | 'review' | 'complete',
   emit: Emit,
   acknowledge: () => Promise<boolean>,
-): Promise<RunReplayStepResult> {
+): Promise<RunReplayStepResult & { continued: boolean }> {
   return withRunTransition(runId, async () => {
-    if (!(await acknowledge())) return { run: getRun(runId)! };
+    if (!(await acknowledge())) return { run: getRun(runId)!, continued: false };
     const result = await replayRunStepCoalesced(
       { runId, stepName, triggeredBy: 'operator' },
       emit,
@@ -977,7 +977,7 @@ export async function continuePRCompletionStep(
           resumedGeneration: run.engineState?.generation ?? 0,
         },
       });
-    return { run: getRun(runId) ?? result.run };
+    return { run: getRun(runId) ?? result.run, continued: true };
   });
 }
 

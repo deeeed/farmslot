@@ -15,6 +15,7 @@ import {
 } from '@farmslot/agent-runtime';
 import {
   ACCEPTANCE_REGISTRATION_INPUT,
+  type AcceptanceRegistration,
   type ArtifactRef,
   checklistStepName,
   DEFAULT_BRANCH,
@@ -311,7 +312,8 @@ export class TaskCollisionError extends Error {
 
 export interface CommentRow {
   threadId?: string;
-  source: 'issue' | 'review';
+  source: 'issue' | 'review' | 'review-summary';
+  reviewId?: string;
   id?: number;
   author: string;
   userType?: string;
@@ -320,6 +322,28 @@ export interface CommentRow {
   line?: number;
   url?: string;
   createdAt?: string;
+}
+
+export function completionCommentRows(registration: AcceptanceRegistration): CommentRow[] {
+  return registration.units[0].sources
+    .filter(({ kind }) => kind === 'review-comment')
+    .map((source) => ({
+      source:
+        source.providerKind === 'issue'
+          ? 'issue'
+          : source.providerKind === 'review'
+            ? 'review-summary'
+            : 'review',
+      ...(source.providerKind === 'review'
+        ? { reviewId: source.reviewId }
+        : { id: source.databaseId }),
+      threadId: source.threadId,
+      author: source.author ?? 'unknown',
+      body: source.body,
+      url: source.url,
+      path: source.path,
+      line: source.line,
+    }));
 }
 
 export const COMMENT_SUMMARY_MAX_ROWS = 40;
@@ -339,7 +363,7 @@ export function renderCommentSummary(rows: CommentRow[]): string {
   // Bots flood issue comments with build links / CLA / sonarcloud noise — drop them
   // from the preview but keep them in inputs/pr-comments.json for the worker's full triage.
   // Inline review-source bots (cursor[bot], etc.) flag real findings — keep all of those.
-  const filtered = rows.filter((r) => r.source === 'review' || !isBotAuthor(r));
+  const filtered = rows.filter((r) => r.source !== 'issue' || !isBotAuthor(r));
   if (filtered.length === 0) {
     return rows.length > 0
       ? `_All ${rows.length} fetched comment(s) were bot-issue noise. Worker MUST still re-fetch in step 4 — \`inputs/pr-comments.json\` has the full unfiltered set._`
@@ -349,7 +373,12 @@ export function renderCommentSummary(rows: CommentRow[]): string {
   const header = '| Source | Author | Where | Body |\n|---|---|---|---|';
   const body = capped
     .map((r) => {
-      const where = r.source === 'review' ? `${r.path ?? '?'}:${r.line ?? '?'}` : 'conversation';
+      const where =
+        r.source === 'review'
+          ? `${r.path ?? '?'}:${r.line ?? '?'}`
+          : r.source === 'review-summary'
+            ? `review ${r.reviewId ?? ''}`.trim()
+            : 'conversation';
       const oneLine = (r.body ?? '').replace(/\s+/g, ' ').trim();
       return `| ${r.source} | ${r.author} | ${where} | ${oneLine} |`;
     })
@@ -1111,18 +1140,7 @@ export async function writeTaskFile(
       }
       const registration = run.acceptanceRegistration;
       if (!registration) throw new Error('PR completion: acceptance registration was not retained');
-      const rows: CommentRow[] = registration.units[0].sources
-        .filter(({ kind }) => kind === 'review-comment')
-        .map((source) => ({
-          source: 'review',
-          id: source.databaseId,
-          threadId: source.threadId,
-          author: source.author ?? 'unknown',
-          body: source.body,
-          url: source.url,
-          path: source.path,
-          line: source.line,
-        }));
+      const rows = completionCommentRows(registration);
       vars.COMMENT_SUMMARY = renderCommentSummary(rows);
       await writeFile(
         path.join(taskAbsDir, ACCEPTANCE_REGISTRATION_INPUT),
@@ -1380,6 +1398,7 @@ export async function writeTaskFile(
       async () =>
         Boolean(opts?.initializeTask) ||
         (await readSlotField(run.slotId!, 'current_run_id')) === run.id,
+      [],
     );
   }
 

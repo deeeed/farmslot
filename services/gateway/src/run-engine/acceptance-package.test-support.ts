@@ -7,7 +7,11 @@ import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence'
 import { digestRecipeDocument, isRecord } from '@farmslot/protocol';
 
 /** Canonical simulated media fixture, renamed to positional task AC IDs. Not live visual evidence. */
-export async function writeAcceptanceVisualPackage(directory: string) {
+export async function writeAcceptanceVisualPackage(
+  directory: string,
+  captureHead?: string,
+  reviewOriginal = false,
+) {
   const fixture: unknown = JSON.parse(
     await readFile(
       new URL(
@@ -26,8 +30,28 @@ export async function writeAcceptanceVisualPackage(directory: string) {
   const replace = (value: unknown): unknown => {
     if (typeof value === 'string') return replacements.get(value) ?? value;
     if (Array.isArray(value)) return value.map(replace);
-    if (isRecord(value))
-      return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, replace(entry)]));
+    if (isRecord(value)) {
+      const result = Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [key, replace(entry)]),
+      );
+      if (reviewOriginal && result.id === 'AC-1') {
+        result.kind = 'acceptance';
+        result.proofMode = 'review';
+        if ('verdict' in result) {
+          result.verdict = 'awaiting-review';
+          for (const field of ['recipeNodes', 'assertionIndices', 'moments', 'evidence'])
+            result[field] = [];
+          delete result.timing;
+        }
+      }
+      if (reviewOriginal && result.id === 'AC-2') {
+        result.kind = 'acceptance';
+        delete result.parentId;
+      }
+      if (reviewOriginal && Array.isArray(result.proves))
+        result.proves = result.proves.filter((id) => id !== 'AC-1');
+      return result;
+    }
     return value;
   };
   const document = (name: string): Record<string, unknown> => {
@@ -50,9 +74,27 @@ export async function writeAcceptanceVisualPackage(directory: string) {
   for (const [name, value] of Object.entries(files)) {
     assert.equal(typeof value, 'string');
     await mkdir(path.dirname(path.join(directory, name)), { recursive: true });
+    let content = name.endsWith('.json') ? replace(JSON.parse(String(value))) : String(value);
+    if (captureHead && name === 'artifact-manifest.json') {
+      assert.ok(isRecord(content) && Array.isArray(content.artifacts));
+      const summary = document('summary.json');
+      const screenshot = content.artifacts.find(
+        (entry) => isRecord(entry) && entry.path === 'stills/1.png',
+      );
+      assert.ok(isRecord(screenshot));
+      screenshot.capture = {
+        ac: 'AC-2',
+        role: 'after',
+        recipeRunId: summary.recipeRunId,
+        nodeId: 'assert-1',
+        traceIndex: 1,
+        sourceCommit: captureHead,
+        sourceDirty: false,
+      };
+    }
     await writeFile(
       path.join(directory, name),
-      name.endsWith('.json') ? JSON.stringify(replace(JSON.parse(String(value)))) : String(value),
+      typeof content === 'string' ? content : JSON.stringify(content),
     );
   }
   const read = await readRecordedEvidencePackage(directory);

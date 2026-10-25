@@ -21,6 +21,7 @@ import {
   renderAcceptanceCoverage,
   validateAcceptanceStatusLedger,
 } from '@farmslot/protocol';
+import { registeredAcceptanceCriteria as projectCriteria } from '@farmslot/protocol/scripts/acceptance.mjs';
 
 import { isLocal } from '../core/exec.js';
 import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
@@ -156,8 +157,6 @@ export async function readHandoffAcceptanceCriteria(
     );
   // The portable validator checks the original list and every append. Gate
   // readers independently compare this transport with the owning run record.
-  const { registeredAcceptanceCriteria: projectCriteria } =
-    await import('@farmslot/protocol/scripts/acceptance.mjs');
   return projectCriteria(criteria, projection.registration);
 }
 

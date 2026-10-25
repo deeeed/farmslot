@@ -2478,6 +2478,10 @@ function completionReviewFixture(t: import('node:test').TestContext) {
   const context: PostDispatchStepContext = {
     ...restartReplayContext(),
     prCompletionHead: async () => 'a'.repeat(40),
+    prCompletionInputs: async () => ({
+      fingerprint: 'f'.repeat(64),
+      legacyFingerprint: 'f'.repeat(64),
+    }),
     executeReviewForRun: async (id, _slot, options) => {
       assert.ok(options);
       calls.push(options);
@@ -2493,6 +2497,7 @@ function completionReviewFixture(t: import('node:test').TestContext) {
         reviewerSessionId: `independent-${options.reviewId}`,
         reviewedHeadSha: 'a'.repeat(40),
         acceptanceReviewCoverage: coverage,
+        reviewedInputsFingerprint: (await context.prCompletionInputs!(current))?.fingerprint,
       };
       updateRun(id, {
         engineState: {
@@ -2513,6 +2518,7 @@ function completionReviewFixture(t: import('node:test').TestContext) {
         retryCount: 0,
         reviewId: review.id,
         acceptanceReviewCoverage: coverage,
+        reviewedInputsFingerprint: review.reviewedInputsFingerprint,
       };
     },
   };
@@ -2591,4 +2597,86 @@ test('completion state-only contracts never launch a review', async (t) => {
   const result = await executeReviewStep(id, context);
   assert.equal(result.outputs?.reason, 'no-fresh-review-criteria');
   assert.equal(calls.length, 0);
+});
+
+test('changed review evidence at the same head reuses both retained reviewers WARM', async (t) => {
+  const { id, calls, context } = completionReviewFixture(t);
+  await executeReviewStep(id, context);
+  const identities = calls.map(({ reviewId }) => reviewId);
+  context.prCompletionInputs = async () => ({
+    fingerprint: 'e'.repeat(64),
+    legacyFingerprint: 'e'.repeat(64),
+  });
+  await executeReviewStep(id, context);
+  assert.deepEqual(
+    calls.slice(2).map(({ reviewId }) => reviewId),
+    identities,
+  );
+  assert.ok(calls.slice(2).every(({ mode }) => mode === 'warm'));
+});
+
+test('an interactive completion feedback pass still requires the second independent review', async (t) => {
+  const { id, calls, context } = completionReviewFixture(t);
+  updateRun(id, { mode: 'interactive' });
+  context.createEngineDecision = async () => 'send_feedback';
+  const passing = context.executeReviewForRun!;
+  let first = true;
+  context.executeReviewForRun = async (runId, slotId, options) => {
+    if (first) {
+      first = false;
+      assert.ok(options);
+      calls.push(options);
+      assert.ok(options.reviewId);
+      return {
+        verdict: 'issues',
+        retryCount: 0,
+        reviewId: options.reviewId,
+        mode: 'cold',
+        issues: [{ file: 'source.ts', line: 1, description: 'Fix the invariant' }],
+        reviewSnapshot: {
+          headSha: 'a'.repeat(40),
+          capturedAt: '2026-10-25T00:00:00Z',
+          source: 'local-git',
+        },
+      };
+    }
+    return passing(runId, slotId, options);
+  };
+  const result = await executeReviewStep(id, context);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].mode, 'warm');
+  assert.equal(calls[1].publicationReview, true);
+  assert.equal(calls[0].reviewId, calls[1].reviewId);
+  assert.notEqual(calls[1].reviewId, calls[2].reviewId);
+  assert.equal(result.outputs?.interactiveRetry, true);
+  assert.equal(result.outputs?.verdict, 'pass');
+});
+
+test('unavailable completion evidence refuses before launching a review', async (t) => {
+  const { id, calls, context } = completionReviewFixture(t);
+  context.prCompletionInputs = async () => null;
+  await assert.rejects(executeReviewStep(id, context), /fingerprint is unavailable/);
+  assert.equal(calls.length, 0);
+});
+
+test('a fresh first review is reused when only the second reviewer has stale evidence', async (t) => {
+  const { id, calls, context } = completionReviewFixture(t);
+  await executeReviewStep(id, context);
+  const current = getRun(id)!;
+  const rows = current.engineState!.publishGate!.reviews!;
+  updateRun(id, {
+    engineState: {
+      ...current.engineState,
+      publishGate: {
+        ...current.engineState!.publishGate,
+        reviews: rows.map((review, index) =>
+          index === 1 ? { ...review, reviewedInputsFingerprint: 'e'.repeat(64) } : review,
+        ),
+      },
+    },
+  });
+  await executeReviewStep(id, context);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].reviewId, rows[1].id);
+  assert.equal(calls[2].mode, 'warm');
 });

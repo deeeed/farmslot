@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Support acknowledged acceptance derivation and revision-bound proof destinations for PR completion.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.39.0 - 2026-10-25

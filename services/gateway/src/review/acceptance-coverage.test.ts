@@ -11,6 +11,7 @@ import {
 } from './acceptance-coverage.js';
 
 const head = 'a'.repeat(40);
+const fingerprint = 'f'.repeat(64);
 function fixture(): Run {
   return {
     ...makeRun({ flowType: 'pr-complete' }),
@@ -39,6 +40,7 @@ function pass(run: Run, session = 'independent-session'): ReviewStatus {
     reviewerSessionId: session,
     reviewedHeadSha: head,
     acceptanceReviewCoverage: reviewAcceptanceCriteria(run),
+    reviewedInputsFingerprint: fingerprint,
   };
 }
 function reviews(run: Run, rows: ReviewStatus[]): void {
@@ -48,12 +50,12 @@ function reviews(run: Run, rows: ReviewStatus[]): void {
 test('a qualifying current-head review certifies only criteria included in its request', () => {
   const run = fixture();
   reviews(run, [pass(run)]);
-  assert.equal(codeReviewCertifiesPRCompletion(run, head), true);
-  assert.equal(codeReviewCertifiesPRCompletion(run, 'c'.repeat(40)), false);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), true);
+  assert.equal(codeReviewCertifiesPRCompletion(run, 'c'.repeat(40), fingerprint), false);
   reviews(run, [{ ...pass(run), acceptanceReviewCoverage: undefined }]);
-  assert.equal(codeReviewCertifiesPRCompletion(run, head), false);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), false);
   reviews(run, [{ ...pass(run), reviewerSessionId: null }]);
-  assert.equal(codeReviewCertifiesPRCompletion(run, head), false);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), false);
 });
 
 test('new review obligations invalidate an unchanged-head pass; state-only appends do not', () => {
@@ -65,31 +67,49 @@ test('new review obligations invalidate an unchanged-head pass; state-only appen
     text: 'Additional state proof',
     proofMode: 'state',
   });
-  assert.equal(codeReviewCertifiesPRCompletion(run, head), true);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), true);
   run.acceptanceExecutionContract!.proofModes.push({
     id: 'AC-3',
     text: 'Check another invariant',
     proofMode: 'review',
   });
-  assert.equal(codeReviewCertifiesPRCompletion(run, head), false);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), false);
   reviews(run, [pass(run)]);
-  assert.equal(codeReviewCertifiesPRCompletion(run, head), true);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), true);
 });
 
 test('a later failing verdict and the configured independent-review count still apply', () => {
   const run = fixture();
   const first = pass(run);
   reviews(run, [first, { ...first, id: 'later', verdict: 'issues', unresolvedCount: 1 }]);
-  assert.equal(codeReviewCertifiesPRCompletion(run, head), false);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), false);
   reviews(run, [first]);
   run.engineState!.publishGate!.reviewPolicy = { minimumReviews: 2, requestedBy: 'dispatch' };
-  assert.equal(codeReviewCertifiesPRCompletion(run, head), false);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), false);
   run.engineState!.publishGate!.reviews!.push(pass(run, 'second-independent-session'));
-  assert.equal(codeReviewCertifiesPRCompletion(run, head), true);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), true);
 });
 
 test('inherited review criteria add no fresh review obligation', () => {
   const run = fixture();
   run.acceptanceExecutionContract!.inheritedCriterionIds = ['AC-1'];
   assert.deepEqual(reviewAcceptanceCriteria(run), []);
+});
+
+test('every independent review must cover the current evidence fingerprint', () => {
+  const run = fixture();
+  run.engineState = {
+    publishGate: {
+      reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+      reviews: [
+        pass(run, 'one'),
+        { ...pass(run, 'two'), reviewedInputsFingerprint: 'e'.repeat(64) },
+      ],
+    },
+  };
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), false);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head), false);
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, 'e'.repeat(64)), false);
+  run.engineState.publishGate!.reviews![1].reviewedInputsFingerprint = fingerprint;
+  assert.equal(codeReviewCertifiesPRCompletion(run, head, fingerprint), true);
 });

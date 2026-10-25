@@ -18,7 +18,6 @@ import {
   slotReadFile,
   slotWriteFiles,
 } from '../core/slot-io.js';
-import { readInheritedAcceptanceSource } from '../run-completion/inherited-acceptance.js';
 import { persistRunNow, updateRun } from '../runs/store.js';
 
 import { acceptanceProofDestinations } from './acceptance-registration.js';
@@ -31,6 +30,7 @@ export async function syncAcceptanceExecutionContract(
   taskDir: string,
   mirrorDir: string,
   owns: () => Promise<boolean>,
+  inheritedIds: readonly string[] = run.acceptanceExecutionContract?.inheritedCriterionIds ?? [],
 ): Promise<void> {
   if (run.acceptanceContractVersion !== 1) return;
   if (!(await owns())) throw new Error('Acceptance execution contract lost its task owner');
@@ -61,8 +61,9 @@ export async function syncAcceptanceExecutionContract(
     registrationRevision: run.acceptanceRegistration?.revision ?? 0,
     baseContractHash: createHash('sha256').update(baseBytes).digest('hex'),
     proofModes,
-    inheritedCriterionIds:
-      (await readInheritedAcceptanceSource(run))?.acceptance.criteria.map(({ id }) => id) ?? [],
+    // Only the validated inheritance producer supplies this selection. Progress
+    // retains the engine-owned IDs; completion independently requalifies the parent.
+    inheritedCriterionIds: [...inheritedIds],
   };
   const destinations = acceptanceProofDestinations(
     proofModes

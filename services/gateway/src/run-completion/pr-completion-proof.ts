@@ -7,7 +7,11 @@ import {
 } from '@farmslot/protocol';
 
 import { readSlotField } from '../core/state.js';
-import { readPRCompletionHead } from '../review/acceptance-coverage.js';
+import {
+  codeReviewCertifiesPRCompletion,
+  readPRCompletionHead,
+} from '../review/acceptance-coverage.js';
+import { readReviewedInputs } from '../review/reviewed-inputs.js';
 import { collectRunGateReadiness, RunGateNotReadyError } from '../run-engine/gate-prerequisites.js';
 import { reconcileRunPosture } from '../run-engine/resource-posture.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
@@ -19,6 +23,7 @@ type Emit = (event: string, payload: unknown) => void;
 
 export interface PRCompletionTransactionIdentity extends PRCompletionProofIdentity {
   generation: number;
+  reviewedInputsFingerprint?: string;
 }
 
 export function completionProofMatches(run: Run, proof: PRCompletionProofIdentity): boolean {
@@ -42,6 +47,13 @@ export async function assertPRCompletionIdentity(
     (run.engineState?.generation ?? 0) !== expected.generation ||
     !completionProofMatches(run, expected) ||
     run.acceptanceRegistration?.units.some(({ result }) => !result) ||
+    (run.acceptanceExecutionContract?.publicationReview &&
+      (!codeReviewCertifiesPRCompletion(
+        run,
+        expected.headSha,
+        expected.reviewedInputsFingerprint,
+      ) ||
+        (await readReviewedInputs(run))?.fingerprint !== expected.reviewedInputsFingerprint)) ||
     (await readPRCompletionHead(run)) !== expected.headSha ||
     !getRun(runId) ||
     isTerminalRunStatus(getRun(runId)!.status) ||

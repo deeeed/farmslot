@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Use the shared acceptance source and proof presentation, including pending instructions and exclusions, and preserve steering identities across retries.
+- Use the shared acceptance source and proof presentation, including pending instructions and exclusions, and preserve steering identities across retries. Text composers use guarded semantic delivery for both run-bound and bare-session targets.
 
 - Show shared CI-watch status and live poll/timeout countdowns as plain text on run cards and pipelines.
 

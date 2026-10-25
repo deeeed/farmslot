@@ -77,7 +77,8 @@ export function completionCommentSource(
     ...(row.author === null || row.author === undefined
       ? {}
       : { author: text(row.author, 'comment.author') }),
-    commentId: String(id),
+    providerKind: kind,
+    ...(kind === 'review' ? { reviewId: String(id) } : { commentId: String(id) }),
     updatedAt,
     ...(typeof row.threadId === 'string' ? { threadId: row.threadId } : {}),
     ...(typeof row.databaseId === 'number'
@@ -136,7 +137,7 @@ export async function fetchPRCompletionIntake(
         '--jq',
         '.[] | {id,body,updatedAt:.updated_at,url:.html_url,author:.user.login} | @json',
       ],
-      { force: true },
+      { force: true, caller: 'pr-complete:acceptance-intake' },
     ),
     request(
       [
@@ -144,9 +145,9 @@ export async function fetchPRCompletionIntake(
         '--paginate',
         `repos/${repository}/pulls/${prNumber}/reviews`,
         '--jq',
-        '.[] | {id,body,updatedAt:.submitted_at,url:.html_url,author:.user.login} | @json',
+        '.[] | {id,body,state,updatedAt:.submitted_at,url:.html_url,author:.user.login} | @json',
       ],
-      { force: true },
+      { force: true, caller: 'pr-complete:acceptance-intake' },
     ),
   ]);
   const sources: AcceptanceDerivationSource[] = [];
@@ -199,8 +200,11 @@ export async function fetchPRCompletionIntake(
     ['issue', issues],
     ['review', reviews],
   ] as const)
-    for (const row of records(response.stdout))
+    for (const row of records(response.stdout)) {
+      // An unsubmitted draft is not a published obligation and has no submitted_at.
+      if (kind === 'review' && row.state === 'PENDING') continue;
       sources.push(completionCommentSource(repository, prNumber, kind, row));
+    }
   if (!headSha) throw new Error('PR completion intake: missing captured head');
   return {
     identity: {

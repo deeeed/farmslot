@@ -22,6 +22,60 @@ process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
 const store = await import('../runs/store.js');
 const controls = await import('./native/worker-control.js');
 const recovery = await import('./native/worker-recovery.js');
+const registry = await import('./registry.js');
+const lifecycle = await import('./session-lifecycle.js');
+const config = await import('../core/config.js');
+const { makeVars } = await import('./test-fixtures.js');
+let tmuxOutcome: import('./registry.js').RunnerInstructionOutcome = 'sent';
+let inspectionError = false;
+let tmuxStopped = false;
+let reloadAttempts = 0;
+const tmuxCalls: Parameters<typeof registry.sendRunnerInstructionWithOutcome>[] = [];
+mock.module('../core/config.js', {
+  namedExports: {
+    ...config,
+    loadSlotVars: async () => makeVars({ slotId: 'proof', remoteRepo: root }),
+    resolveProjectRuntimeDir: async () => root,
+  },
+});
+mock.module('./session-lifecycle.js', {
+  namedExports: {
+    ...lifecycle,
+    inspectRunnerRecovery: async () => {
+      if (inspectionError) throw new Error('Pane inspection unavailable');
+      return {
+        supported: true,
+        liveTarget: { valid: true, state: tmuxStopped ? 'stopped' : 'live', paneTarget: '%999999' },
+      } satisfies Pick<
+        import('./session-lifecycle.js').RunnerRecoveryInspection,
+        'supported' | 'liveTarget'
+      >;
+    },
+    reloadRunnerForPark: async () => {
+      reloadAttempts++;
+      return {
+        ok: false,
+        status: 'acceptance-failed',
+        runnerId: 'claude',
+        target: '%999999',
+        sessionId: 'retained',
+        error: 'Reload acknowledgement unavailable',
+      } satisfies Awaited<ReturnType<typeof lifecycle.reloadRunnerForPark>>;
+    },
+  },
+});
+mock.module('./registry.js', {
+  namedExports: {
+    ...registry,
+    sendRunnerInstructionWithOutcome: async (
+      ...args: Parameters<typeof registry.sendRunnerInstructionWithOutcome>
+    ) => {
+      tmuxCalls.push(args);
+      return tmuxOutcome;
+    },
+  },
+});
+
 let stopped = false;
 let sendResult: Awaited<ReturnType<typeof controls.sendNativeWorkerInstruction>> = 'confirmed';
 let reads: (() => void) | undefined;
@@ -58,11 +112,17 @@ mock.module('./native/worker-recovery.js', {
   },
 });
 const adapterModule: string = './operator-instruction.js?operator-transport-test';
-const { deliverOperatorInstruction }: typeof import('./operator-instruction.js') = await import(
-  adapterModule
-);
+const {
+  deliverOperatorInstruction,
+  OperatorInstructionNotAttemptedError,
+}: typeof import('./operator-instruction.js') = await import(adapterModule);
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, native = true) {
+  tmuxCalls.length = 0;
+  tmuxOutcome = 'sent';
+  inspectionError = false;
+  tmuxStopped = false;
+  reloadAttempts = 0;
   stopped = false;
   reads = undefined;
   sends.length = 0;
@@ -73,7 +133,7 @@ async function fixture(t: TestContext) {
       project: 'proof',
       flowType: 'pr-complete',
       ticketOrPr: 'example/repo#1',
-      transport: 'native',
+      transport: native ? 'native' : 'tmux',
       runner: 'claude',
       slotId: 'proof',
     },
@@ -90,14 +150,21 @@ async function fixture(t: TestContext) {
         runId: run.id,
         slotId: 'proof',
         runner: 'claude',
-        nativeSession: {
-          sessionId: randomUUID(),
-          generation: randomUUID(),
-          leaseId: randomUUID(),
-          ownerPrincipalId: owner.id,
-          executionNodeId: 'local',
-          commandId: 'initial',
-        },
+        runnerSessionId: randomUUID(),
+        runnerSessionPath: path.join(root, 'retained.jsonl'),
+        target: native
+          ? undefined
+          : { session: 'proof', window: 'worker', target: '%999999', paneId: '%999999' },
+        nativeSession: native
+          ? {
+              sessionId: randomUUID(),
+              generation: randomUUID(),
+              leaseId: randomUUID(),
+              ownerPrincipalId: owner.id,
+              executionNodeId: 'local',
+              commandId: 'initial',
+            }
+          : undefined,
       },
     ],
   });
@@ -107,7 +174,9 @@ async function fixture(t: TestContext) {
       status: 'done',
       agentContexts: current.agentContexts?.map((context) => ({
         ...context,
-        nativeSession: { ...context.nativeSession!, closedAt: new Date().toISOString() },
+        ...(context.nativeSession
+          ? { nativeSession: { ...context.nativeSession, closedAt: new Date().toISOString() } }
+          : {}),
       })),
     });
     await store.persistRunNow(closed, 'operator delivery fixture teardown');
@@ -167,4 +236,50 @@ test('a generation replacement during native inspection refuses before send or r
   );
   assert.equal(sends.length, 0);
   assert.equal(resumes.length, 0);
+});
+
+test('an untouched tmux hold can retry and a typed uncertain send stays observe-only', async (t) => {
+  const run = await fixture(t, false);
+  tmuxOutcome = 'held-untouched';
+  assert.equal(await deliverOperatorInstruction(run, 'unit', 'Instruction'), 'not-attempted');
+  tmuxOutcome = 'sent';
+  assert.equal(await deliverOperatorInstruction(run, 'unit', 'Instruction'), 'confirmed');
+  assert.equal(tmuxCalls.filter((args) => !args[6]?.observeOnly).length, 2);
+  tmuxOutcome = 'typed-unconfirmed';
+  assert.equal(await deliverOperatorInstruction(run, 'second', 'Other instruction'), 'unconfirmed');
+  const attempts = tmuxCalls.filter((args) => !args[6]?.observeOnly).length;
+  tmuxOutcome = 'held-untouched';
+  assert.equal(
+    await deliverOperatorInstruction(run, 'second', 'Other instruction', 100),
+    'unconfirmed',
+  );
+  assert.equal(tmuxCalls.filter((args) => !args[6]?.observeOnly).length, attempts);
+  assert.equal(tmuxCalls.at(-1)?.[6]?.acceptanceSinceMs, 100);
+});
+
+test('tmux pre-typing inspection failure reports safe retry without a send', async (t) => {
+  const run = await fixture(t, false);
+  inspectionError = true;
+  await assert.rejects(deliverOperatorInstruction(run, 'unit', 'Instruction'), {
+    name: 'Error',
+    message: 'Pane inspection unavailable',
+  });
+  assert.equal(tmuxCalls.length, 0);
+});
+
+test('an uncertain stopped tmux reload never clears the delivery attempt', async (t) => {
+  const run = await fixture(t, false);
+  tmuxStopped = true;
+  await assert.rejects(deliverOperatorInstruction(run, 'unit', 'Instruction'), (error) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error instanceof OperatorInstructionNotAttemptedError, false);
+    assert.match(error.message, /Reload acknowledgement unavailable/);
+    return true;
+  });
+  assert.equal(tmuxCalls.length, 0);
+  assert.equal(reloadAttempts, 1);
+  tmuxOutcome = 'held-untouched';
+  assert.equal(await deliverOperatorInstruction(run, 'unit', 'Instruction', 100), 'unconfirmed');
+  assert.equal(reloadAttempts, 1);
+  assert.equal(tmuxCalls.at(-1)?.[6]?.observeOnly, true);
 });

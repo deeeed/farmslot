@@ -54,9 +54,13 @@ export function reviewAcceptanceCriteria(run: Run): AcceptanceReviewCriterion[] 
 }
 
 /** The existing qualifying-session policy, plus explicit frozen criterion coverage. */
-export function codeReviewCertifiesPRCompletion(run: Run, pushedHead: string | undefined): boolean {
+export function codeReviewCertifiesPRCompletion(
+  run: Run,
+  pushedHead: string | undefined,
+  fingerprint?: string,
+): boolean {
   const criteria = reviewAcceptanceCriteria(run);
-  if (!pushedHead || !criteria.length) return false;
+  if (!pushedHead || !criteria.length || !fingerprint) return false;
   const reviews = run.engineState?.publishGate?.reviews ?? [];
   if (
     reviews.some(
@@ -68,7 +72,7 @@ export function codeReviewCertifiesPRCompletion(run: Run, pushedHead: string | u
   )
     return false;
   const passing = qualifyingPassingReviews(reviews).filter((review) =>
-    reviewCoversPRCompletionCriteria(run, review, pushedHead),
+    reviewCoversPRCompletionCriteria(run, review, pushedHead, fingerprint),
   );
   return (
     passing.length >= Math.max(1, run.engineState?.publishGate?.reviewPolicy?.minimumReviews ?? 1)
@@ -79,11 +83,14 @@ export function reviewCoversPRCompletionCriteria(
   run: Run,
   review: ReviewStatus,
   head: string,
+  fingerprint?: string,
 ): boolean {
   return (
     qualifyingPassingReviews([review]).length === 1 &&
     review.source === 'pipeline' &&
     !review.stale &&
+    Boolean(fingerprint) &&
+    review.reviewedInputsFingerprint === fingerprint &&
     (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha) === head &&
     reviewAcceptanceCriteria(run).every((criterion) =>
       review.acceptanceReviewCoverage?.some(

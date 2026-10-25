@@ -260,13 +260,24 @@ async function attachAcceptanceStatus(
       run.acceptanceRegistration,
     );
     if (run.parentRunId) {
-      const { readInheritedAcceptanceSource } =
-        await import('../run-completion/inherited-acceptance.js');
-      const inherited = await readInheritedAcceptanceSource(run);
-      if (inherited) {
-        const { inheritedAcceptanceView } =
-          await import('../run-completion/inherited-acceptance-view.js');
-        read.ledger = inheritedAcceptanceView(inherited, read.ledger);
+      try {
+        const { readInheritedAcceptanceSource } =
+          await import('../run-completion/inherited-acceptance.js');
+        const inherited = await readInheritedAcceptanceSource(run);
+        if (inherited) {
+          const { inheritedAcceptanceView } =
+            await import('../run-completion/inherited-acceptance-view.js');
+          read.ledger = inheritedAcceptanceView(inherited, read.ledger);
+        }
+      } catch (error) {
+        // This display read must preserve ordinary progress. No inherited
+        // verdict is added, and completion still performs full qualification.
+        read.error = [
+          read.error,
+          `Inherited acceptance: ${error instanceof Error ? error.message : String(error)}`,
+        ]
+          .filter(Boolean)
+          .join('\n');
       }
     }
   }

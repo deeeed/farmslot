@@ -196,6 +196,7 @@ export async function stageInheritedAcceptance(run: Run, vars: SlotVars): Promis
       path.posix.join(vars.remoteRepo, resolveProjectTaskDirName(project.projectJson), relative),
       path.dirname(run.taskFile),
       async () => (await readSlotField(vars.slotId, 'current_run_id')) === run.id,
+      source.acceptance.criteria.map(({ id }) => id),
     );
   }
   return true;
