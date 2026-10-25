@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Keep static re-reviews warm across unrelated pool tool updates and reconcile retained handoff recovery before starting a fallback.
+- Keep static re-reviews warm across unrelated pool tool updates and reconcile retained handoff recovery before fallback, and keep farm-caused replacements free under the same admission.
 
 - Exclude ineligible slots from the human slot picker while preserving stale-branch decisions and explicit node-load overrides.
 

@@ -370,6 +370,51 @@ test('a no-verdict settlement frees its round once and ignores receipts never ad
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 5);
 });
 
+test('a farm fallback keeps its refund after a verdict, persisted recovery and reattach', async (t) => {
+  const run = fixture(t);
+  await admitReviewRound(run.id, 'original-code');
+  await admitReviewRound(run.id, 'failed-warm');
+  const replacement = {
+    reviewFallback: {
+      reason: 'session-unavailable' as const,
+      detail: 'the retained reviewer could not resume',
+      comparedRanges: [],
+    },
+  };
+  await settleReviewRoundNoVerdict(
+    run.id,
+    'failed-warm',
+    'resume never started',
+    'infrastructure-fallback',
+  );
+  await clearReviewRoundSettlement(run.id, 'failed-warm', replacement);
+  await admitReviewRound(run.id, 'failed-warm');
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([budget.used, budget.noVerdict], [1, 1]);
+  const persisted = JSON.parse(
+    await readFile(path.join(runsDirectory(), `${run.id}.json`), 'utf8'),
+  );
+  assert.equal(persisted.reviewRoundSettlements['failed-warm'].kind, 'infrastructure-fallback');
+  const successor = fixture(t, run.ticketOrPr);
+  await clearReviewRoundSettlement(successor.id, 'failed-warm', replacement);
+  assert.equal((await runReviewRoundBudget(getRun(successor.id)!)).used, 1);
+  await settleReviewRoundNoVerdict(run.id, 'original-code', 'ordinary late result');
+  await clearReviewRoundSettlement(run.id, 'original-code');
+  await admitReviewRound(run.id, 'next-genuine-review');
+  assert.deepEqual(
+    [
+      (await runReviewRoundBudget(getRun(run.id)!)).used,
+      (await runReviewRoundBudget(getRun(run.id)!)).noVerdict,
+    ],
+    [2, 1],
+  );
+  // A genuine WARM retry of the original failed context has no COLD fallback
+  // provenance and counts normally if it eventually supplies a valid verdict.
+  await clearReviewRoundSettlement(run.id, 'failed-warm');
+  const resumed = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([resumed.used, resumed.noVerdict], [3, 0]);
+});
+
 test('settlements reach every run and open gate in the PR scope and survive retiring a run', async (t) => {
   const first = fixture(t);
   const second = fixture(t, first.ticketOrPr);

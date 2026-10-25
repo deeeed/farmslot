@@ -591,7 +591,12 @@ test('a resume that remains unavailable after reconciliation falls back under th
   assert.equal(dispatches[1]!.contextId, dispatches[2]!.contextId);
   assert.equal(dispatches[3]!.retainedFrom, undefined);
   assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, admittedBefore + 1);
-  assert.equal(getRun(run.id)!.reviewRoundSettlements, undefined);
+  assert.deepEqual(
+    Object.values(getRun(run.id)!.reviewRoundSettlements ?? {}).map((entry) => entry.kind),
+    ['infrastructure-fallback'],
+  );
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, admittedBefore);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).noVerdict, 1);
   assert.deepEqual(
     reviewers(run.id).map((context) => context.status),
     ['complete', 'failed', 'complete'],
@@ -618,6 +623,8 @@ test('a resume that remains unavailable after reconciliation falls back under th
   assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, admitted.length);
   assert.equal(reattached.mode, 'cold');
   assert.deepEqual(reattached.session?.fallback, result.session?.fallback);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, admittedBefore);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).noVerdict, 1);
 });
 
 test('a delivery that may have reached the retained reviewer never starts a second reviewer', async (t) => {

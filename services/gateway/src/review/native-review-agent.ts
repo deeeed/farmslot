@@ -195,7 +195,14 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       )
     )
       throw error;
-    // ADR-063 Amendment 5: the same attempt runs the delta-scoped COLD under its receipt.
+    // The farm failed before this retained reviewer accepted its initial command.
+    // Its replacement keeps this failed launch's receipt and bounded failure count.
+    await settleReviewRoundNoVerdict(
+      input.runId,
+      error.roundId,
+      error.refusal.message,
+      'infrastructure-fallback',
+    );
     return runNativeReviewAttempt(input, error);
   }
 }
@@ -870,7 +877,7 @@ async function runNativeReviewAttempt(
     );
     await persistRunNow(getRun(runId)!, 'native reviewer result validated');
     if (feedback.incomplete) await settleReviewRoundNoVerdict(runId, roundId, 'no-feedback-file');
-    else await clearReviewRoundSettlement(runId, roundId);
+    else await clearReviewRoundSettlement(runId, roundId, context);
     await stopSettledReviewer(runId, contextId);
 
     if (retained && context.runnerSessionId !== retained.runnerSessionId)
