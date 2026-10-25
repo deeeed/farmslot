@@ -69,6 +69,9 @@ const slots: SlotStatus[] = [
 let run: Run;
 let nudgeCandidates: import('../methods/dispatch/preview.js').BranchAffinityNudgeCandidate[] = [];
 let pickedSlot: string | undefined;
+let expectedTarget: string | undefined = branch;
+let pickerPayload: import('@farmslot/protocol').RunDecisionPayload | undefined;
+const liveRows = new Map<string, Record<string, unknown>>();
 let pressureDecisions = new Map<string, PressureAdmissionDecision>();
 let expectedSlot = 'macpro-mmt-1';
 const refreshedSlots: string[] = [];
@@ -124,6 +127,7 @@ mock.module('../core/index.js', {
             current_run_id: slot.currentRunId ?? null,
             lifecycle: slot.lifecycle,
             phase: slot.phase,
+            ...liveRows.get(id),
           }
         : null;
     },
@@ -189,7 +193,7 @@ mock.module('../methods/dispatch.js', {
       params: import('@farmslot/protocol').DispatchPreviewParams,
       _options: object,
     ) => {
-      if (!run.slotId) assert.equal(params.targetBranch, branch);
+      if (!run.slotId) assert.equal(params.targetBranch, expectedTarget);
       const selected = run.slotId
         ? slots.find((slot) => slot.slot === run.slotId)
         : scoring.findBestSlot(slots, project, {
@@ -260,6 +264,9 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   refreshedSlots.length = 0;
   nudgeCandidates = [];
   pickedSlot = undefined;
+  expectedTarget = branch;
+  pickerPayload = undefined;
+  liveRows.clear();
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -267,7 +274,10 @@ const context: Parameters<typeof executeFindSlotStep>[3] = {
   setRunFlags: () => {},
   requiresCollisionPrecheck: () => false,
   handleCollisionDecision: async () => 'create-new',
-  createEngineDecision: async (_id, reason) => {
+  createEngineDecision: async (_id, reason, _description, _actions, payload) => {
+    pickerPayload = payload;
+    assert.deepEqual(claims, [], 'the human decision must precede the slot claim');
+    assert.deepEqual(finishedReclaims, [], 'stale checkout cleanup must wait for the human pick');
     if (!pickedSlot) throw new Error('unexpected all_stale slot picker');
     run.decisions.push({
       id: 'load-pick',
@@ -458,3 +468,103 @@ test('an operator affinity-card pick retains explicit pressure policy on an over
   assert.equal(result.outputs?.selectionMethod, 'human-override');
   assert.deepEqual(claims, [hot.slot]);
 });
+
+test('the stale-slot picker offers only eligible slots and waits for a human pick', async () => {
+  reset('dev', 'TAT-9000');
+  expectedTarget = undefined;
+  const selectable = candidate('selectable', 'macpro', 'fix/old');
+  slots.splice(
+    0,
+    slots.length,
+    selectable,
+    { ...candidate('manual', 'macpro', 'HEAD'), lifecycle: 'manual' },
+    { ...candidate('held', 'macpro', 'fix/held'), lifecycle: 'held' },
+    { ...candidate('busy', 'macpro', 'fix/busy'), lifecycle: 'busy', agent: 'working' },
+    { ...candidate('disabled', 'macpro', 'fix/disabled'), enabled: false },
+    { ...candidate('ghost', 'macpro', 'fix/ghost'), missingFromPool: true },
+    { ...candidate('repo-blocked', 'macpro', 'fix/blocked'), repoBlocker: 'operator root' },
+    candidate('releasing', 'macpro', 'fix/releasing'),
+    candidate('handoff', 'macpro', 'fix/handoff'),
+    candidate('live-manual', 'macpro', 'fix/live-manual'),
+    candidate('owned', 'macpro', 'fix/owned'),
+  );
+  liveRows.set('releasing', { phase: 'releasing' });
+  liveRows.set('handoff', { handoff_run_id: 'other' });
+  liveRows.set('live-manual', { lifecycle: 'manual' });
+  liveRows.set('owned', { current_run_id: 'active-owner' });
+  cancelledHolder = makeRun({ id: 'active-owner', slotId: 'owned', status: 'reviewing' });
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.2));
+  expectedSlot = pickedSlot = selectable.slot;
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(pickerPayload?.kind, 'slot_picker');
+  if (pickerPayload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+  assert.equal(pickerPayload.reason, 'all_stale');
+  assert.deepEqual(
+    pickerPayload.candidates.map((slot) => slot.slotId),
+    [selectable.slot],
+  );
+  assert.equal(selectable.branch, 'fix/old', 'selection does not auto-reset the stale branch');
+});
+
+test('the stale-slot picker still permits an explicit node-load override', async () => {
+  reset('dev', 'TAT-9000');
+  expectedTarget = undefined;
+  const cold = candidate('cold', 'mini', 'fix/cold');
+  const hot = candidate('hot', 'macpro', 'fix/hot');
+  slots.splice(0, slots.length, cold, hot);
+  pressureDecisions.set('mini', loadDecision('mini', 0.2));
+  pressureDecisions.set('macpro', loadDecision('macpro', 6));
+  expectedSlot = pickedSlot = hot.slot;
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(pickerPayload?.kind, 'slot_picker');
+  if (pickerPayload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+  assert.deepEqual(
+    pickerPayload.candidates.map((slot) => slot.slotId),
+    [cold.slot, hot.slot],
+  );
+  assert.equal(hot.branch, 'fix/hot');
+});
+
+test('the picker keeps released legacy rows without a phase eligible', async () => {
+  reset('dev', 'TAT-9000');
+  expectedTarget = undefined;
+  const legacy = candidate('legacy', 'macpro', 'fix/legacy');
+  slots.splice(0, slots.length, legacy);
+  liveRows.set(legacy.slot, { lifecycle: 'released', phase: undefined });
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.2));
+  expectedSlot = pickedSlot = legacy.slot;
+  await executeFindSlotStep(run.id, run, 0, context);
+  if (pickerPayload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+  assert.deepEqual(
+    pickerPayload.candidates.map((s) => s.slotId),
+    [legacy.slot],
+  );
+});
+
+for (const reason of ['no_free_slots', 'missing_required_resources'] as const) {
+  test(`the empty ${reason} picker gives an actionable message`, async () => {
+    reset('dev', 'TAT-9000');
+    expectedTarget = undefined;
+    const slot = candidate('waiting', 'macpro', 'fix/old');
+    if (reason === 'no_free_slots') slot.lifecycle = 'manual';
+    else run.prepareProfile = 'companion-full';
+    slots.splice(0, slots.length, slot);
+    await assert.rejects(
+      executeFindSlotStep(run.id, run, 0, {
+        ...context,
+        createEngineDecision: async (_id, _reason, description, _actions, payload) => {
+          assert.equal(payload?.kind, 'slot_picker');
+          if (payload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+          assert.equal(payload.reason, reason);
+          assert.deepEqual(payload.candidates, []);
+          assert.match(description, /Abort and dispatch again/);
+          assert.doesNotMatch(description, /listed/);
+          assert.deepEqual(claims, []);
+          assert.deepEqual(finishedReclaims, []);
+          return 'abort';
+        },
+      }),
+      /Aborted: no suitable slot/,
+    );
+  });
+}
