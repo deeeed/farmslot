@@ -45,6 +45,7 @@ import { useDecisionStore } from '../store/decisions';
 import { useFleetStore } from '../store/fleet';
 import { useRunStore } from '../store/runs';
 
+import { readBacklogReadyTouches } from './backlog-ready-touch-proof';
 import type { FarmslotRecipeUiObserver } from './RecipeBridgeProvider';
 
 const startedAt = Date.now();
@@ -285,6 +286,7 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
       runCollections: {
         platform: Platform.OS,
         startedAt,
+        backlogReadyTouches: readBacklogReadyTouches(),
         online: useConnectionStore.getState().client?.connectionState === 'connected',
         connectionGeneration: useConnectionStore.getState().client?.connectionGeneration,
         connectionProfileId: useConnectionStore.getState().activeProfileId,

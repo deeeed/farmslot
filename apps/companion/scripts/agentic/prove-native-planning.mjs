@@ -195,6 +195,43 @@ export function assertRenderedPlanningAge(ocr, label) {
   );
 }
 
+/** Bind the gesture to the native touch actually delivered to the rendered disabled control. */
+export function assertNativeBacklogReadyTouch(before, after, press) {
+  assert(Number.isFinite(press.runtimeStartedAt) && press.runtimeStartedAt > 0);
+  for (const key of ['connectionProfileId', 'workspaceKey'])
+    assert(typeof before[key] === 'string' && before[key].length > 0 && before[key] === press[key]);
+  for (const key of ['startedAt', 'connectionProfileId', 'workspaceKey'])
+    assert.equal(after[key], before[key], `Native touch changed app identity: ${key}`);
+  assert.equal(after.startedAt, press.runtimeStartedAt);
+  assert.equal(before.online, false);
+  assert.equal(after.online, false);
+  const baseline = Math.max(
+    0,
+    ...(before.backlogReadyTouches ?? []).map((touch) => touch.sequence),
+  );
+  const touches = (after.backlogReadyTouches ?? []).filter((touch) => touch.sequence > baseline);
+  assert.equal(
+    touches.length,
+    1,
+    'Require one fresh native touch on the actual Mark ready control',
+  );
+  const touch = touches[0];
+  assert(Number.isSafeInteger(touch.sequence) && touch.sequence > 0);
+  assert.equal(touch.kind, 'native-touch-start');
+  assert.equal(touch.testId, press.selector);
+  assert.equal(touch.itemId, press.itemId);
+  assert.equal(touch.disabled, true, 'The rendered action must be disabled when touched');
+  assert(Number.isFinite(touch.nativeTimestamp) && touch.nativeTimestamp > 0);
+  assert(Number.isFinite(touch.receivedAt));
+  assert(touch.receivedAt >= press.startedAt && touch.receivedAt <= press.completedAt);
+  assert(Number.isFinite(touch.pageX) && Number.isFinite(touch.pageY));
+  assert(Math.abs(touch.pageX - press.point.x) <= 1 && Math.abs(touch.pageY - press.point.y) <= 1);
+  const r = press.targetRect;
+  assert(touch.pageX >= r.x && touch.pageX <= r.x + r.width);
+  assert(touch.pageY >= r.y && touch.pageY <= r.y + r.height);
+  return touch;
+}
+
 export function assertObservedMemoryQueries(snapshot, wire, methods) {
   for (const method of methods) {
     const state = snapshot.domainObservations?.[method];
@@ -653,19 +690,29 @@ async function prove() {
       );
       const point = renderedNativeDisabledTarget(screen, ocr, selector, 'Mark ready');
       assert(has(screen, 'Saved backlog,'));
+      const pairedTarget = screen.nodes.find((node) => node.identifier === selector);
       const press = {
         inputHash: plan.inputHash,
         screenshotSha256: digest(await readFile(imageFile)),
         point,
         selector,
+        itemId: plan.expected.backlog.id,
+        runtimeStartedAt: coldStartedAt,
+        connectionProfileId: cold.state.connectionProfileId,
+        workspaceKey: cold.state.workspaceKey,
+        targetRect: pairedTarget.rect,
         ocr,
-        startedAt: Date.now(),
         videoAuditRequired: true,
       };
       const beforeTap = await counts();
-      await device.interactions.press({ ...selection, ...point });
+      const beforeInput = await observe();
+      press.startedAt = Date.now();
+      press.sdkResult = await device.interactions.press({ ...selection, ...point });
       press.completedAt = Date.now();
       await save('d07-disabled-target-press.json', press);
+      const afterInput = await observe();
+      const nativeTouch = assertNativeBacklogReadyTouch(beforeInput, afterInput, press);
+      await save('d07-disabled-native-touch.json', { inputHash: plan.inputHash, nativeTouch });
       await view('backlog-after-disabled-tap', [plan.expected.backlog.after, 'Saved backlog,']);
       unchangedCommands(beforeTap, await counts());
       await open('roadmap');

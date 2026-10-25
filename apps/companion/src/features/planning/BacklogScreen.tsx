@@ -13,6 +13,10 @@ import {
 import type { BacklogItem, BacklogStatus } from '@farmslot/protocol';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
+import {
+  isBacklogReadyTouchProofEnabled,
+  recordBacklogReadyTouch,
+} from '../../farmslot/backlog-ready-touch-proof';
 import { colors, floatingCopilotGutter, fonts, radii, spacing } from '../../lib/theme';
 
 import type { useBacklogController } from './use-backlog-controller';
@@ -104,6 +108,8 @@ function BacklogRow({
 }) {
   const action = item.status === 'candidate' ? 'ready' : item.status === 'ready' ? 'enqueue' : null;
   const graphManaged = Boolean(item.workGraphId);
+  const readyTestId = `companion-backlog-${item.id}-ready`;
+  const readyDisabled = busy || !ready;
 
   return (
     <Pressable style={styles.card} onPress={onOpen}>
@@ -123,9 +129,19 @@ function BacklogRow({
       <View style={styles.actions}>
         {action === 'ready' ? (
           <Pressable
-            testID={`companion-backlog-${item.id}-ready`}
+            testID={readyTestId}
             style={styles.secondaryButton}
-            disabled={busy || !ready}
+            disabled={readyDisabled}
+            onTouchStart={
+              isBacklogReadyTouchProofEnabled()
+                ? ({ nativeEvent }) =>
+                    recordBacklogReadyTouch(nativeEvent, {
+                      itemId: item.id,
+                      testId: readyTestId,
+                      disabled: readyDisabled,
+                    })
+                : undefined
+            }
             onPress={(event) => {
               event.stopPropagation();
               onMarkReady();

@@ -38,6 +38,7 @@ import {
 } from './native-store-fixture.mjs';
 import {
   assertMountedPlanningChange,
+  assertNativeBacklogReadyTouch,
   assertObservedMemoryQueries,
   assertPlanningReadsFromRuntime,
   assertRecoveredPlanningRows,
@@ -47,6 +48,115 @@ import {
 } from './prove-native-planning.mjs';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+
+function nativeTouchCase() {
+  const before = {
+    startedAt: 1000,
+    connectionProfileId: 'owned-profile',
+    workspaceKey: 'owned-scope',
+    online: false,
+    backlogReadyTouches: [{ sequence: 7 }],
+  };
+  const touch = {
+    kind: 'native-touch-start',
+    sequence: 8,
+    itemId: 'owned-item',
+    testId: 'companion-backlog-owned-item-ready',
+    disabled: true,
+    nativeTimestamp: 12345,
+    receivedAt: 2250,
+    pageX: 65,
+    pageY: 336,
+  };
+  const after = { ...before, backlogReadyTouches: [...before.backlogReadyTouches, touch] };
+  const press = {
+    selector: touch.testId,
+    itemId: touch.itemId,
+    runtimeStartedAt: 1000,
+    connectionProfileId: before.connectionProfileId,
+    workspaceKey: before.workspaceKey,
+    startedAt: 2000,
+    completedAt: 2500,
+    point: { x: 64.833, y: 335.667 },
+    targetRect: { x: 25, y: 325, width: 80, height: 22 },
+  };
+  return { before, after, press, touch };
+}
+
+test('the disabled action proof binds one real native event to the current paired control', () => {
+  const c = nativeTouchCase();
+  assert.equal(assertNativeBacklogReadyTouch(c.before, c.after, c.press), c.touch);
+});
+
+test('native input proof refuses missing, stale, enabled, foreign or displaced touch evidence', () => {
+  const mutations = [
+    (c) => {
+      c.after.backlogReadyTouches = c.before.backlogReadyTouches;
+    },
+    (c) => {
+      c.after.backlogReadyTouches.push({ ...c.touch, sequence: 9 });
+    },
+    (c) => {
+      c.touch.sequence = 7;
+    },
+    (c) => {
+      c.touch.kind = 'synthetic-label';
+    },
+    (c) => {
+      c.touch.testId = 'another-control';
+    },
+    (c) => {
+      c.touch.itemId = 'another-item';
+    },
+    (c) => {
+      c.touch.disabled = false;
+    },
+    (c) => {
+      c.touch.nativeTimestamp = 0;
+    },
+    (c) => {
+      c.touch.receivedAt = 1999;
+    },
+    (c) => {
+      c.touch.receivedAt = 2501;
+    },
+    (c) => {
+      c.touch.pageX += 10;
+    },
+    (c) => {
+      c.press.targetRect.y = 400;
+    },
+    (c) => {
+      c.after.startedAt++;
+    },
+    (c) => {
+      c.after.connectionProfileId = 'another-profile';
+    },
+    (c) => {
+      c.after.workspaceKey = 'another-owner';
+    },
+    (c) => {
+      c.after.online = true;
+    },
+    (c) => {
+      c.before.workspaceKey = c.after.workspaceKey = undefined;
+    },
+    (c) => {
+      c.before.connectionProfileId = c.after.connectionProfileId = 'another-profile';
+    },
+    (c) => {
+      c.before.workspaceKey = c.after.workspaceKey = 'another-owner';
+    },
+    (c) => {
+      c.press.runtimeStartedAt = NaN;
+    },
+  ];
+  for (const mutate of mutations) {
+    const c = nativeTouchCase();
+    mutate(c);
+    assert.throws(() => assertNativeBacklogReadyTouch(c.before, c.after, c.press));
+  }
+});
 
 function recoveryCase() {
   const plan = {

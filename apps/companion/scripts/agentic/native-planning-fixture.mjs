@@ -19,6 +19,8 @@ export const persistedQueries = {
   graph: 'workGraph.list:{"includeArchived":true}',
 };
 export const nativePlanningConsumerPaths = [
+  'apps/companion/src/features/planning/BacklogScreen.tsx',
+  'apps/companion/src/farmslot/backlog-ready-touch-proof.ts',
   'apps/companion/src/app/work-graphs.tsx',
   'apps/companion/src/app/dispatch-queue.tsx',
   'apps/companion/src/features/planning/WorkGraphsScreen.tsx',

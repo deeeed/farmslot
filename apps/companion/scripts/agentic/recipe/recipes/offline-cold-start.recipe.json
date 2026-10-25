@@ -17,7 +17,7 @@
     },
     {
       "id": "d07-disabled-no-replay",
-      "claim": "The actual fully visible disabled Mark ready control receives one paired AX/OCR-guarded press and sends no command on outage or recovery; independent press-video audit remains required."
+      "claim": "The actual fully visible disabled Mark ready control receives one paired AX/OCR-guarded press, records the real native touch on that control, and sends no command on outage or recovery; independent press-video audit remains required."
     },
     {
       "id": "d07-observed-memory",
