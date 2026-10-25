@@ -211,7 +211,9 @@ return {mounted:true,principalId:gateway.authenticatedPrincipalId,workspaceAcces
 `,
   ]);
 async function warmPR() {
-  await navigate('prs?prSection=automation&prTab=rules');
+  await navigate(
+    `prs?prSection=automation&prTab=rules&projects=${encodeURIComponent(fixture.project)}`,
+  );
   const view = await until(
     inspectPR,
     (value) =>
