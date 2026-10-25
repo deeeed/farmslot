@@ -56,11 +56,11 @@ export async function startPlanningRaceProxy({
     'intelligence.triage.feedback': 0,
     'run.resolveDecision': 0,
     'analytics.backfill': 0,
-    'prWatch.scan': 0,
+    'prWatch.refresh': 0,
     'prWatch.repair': 0,
     'prRules.scan': 0,
     'prRules.preview': 0,
-    'prReview.request': 0,
+    'prReview.submit': 0,
   };
   let persistence = Promise.resolve();
   const status = () => ({
