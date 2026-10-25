@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Warm review continuity and farm fallback budget",
+  "description": "Isolated native providers and authenticated gateway reads prove retained review continuity across pool changes and a lost handoff reply, a free farm-caused delta fallback, and normal accounting for an explicit effort change. No product slot or run is touched.",
+  "workflow": {
+    "entry": "warm-continuity",
+    "nodes": {
+      "warm-continuity": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_WARM_PROOF_INFRA=1 FARMSLOT_WARM_PROOF_RECEIPT=temp/warm-review-continuity/receipt.json node --import tsx --experimental-test-module-mocks services/gateway/src/review/native-warm-continuation.rpc.live.ts",
+        "timeout_ms": 660000,
+        "intent": "Retain the conversation through pool drift and lost resume acknowledgement; a farm fallback preserves its admission and paid round count.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

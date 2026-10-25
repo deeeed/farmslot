@@ -16,6 +16,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.71.1 - 2026-10-26
+
+- Retain reviewer launch policy and distinguish farm-caused fallback settlements so recovery preserves the review budget.
+
 ## 0.71.0 - 2026-10-25
 
 - Register source-linked PR-completion criteria without replacing original obligations, and bind readiness to acceptance and proof-contract revisions.
