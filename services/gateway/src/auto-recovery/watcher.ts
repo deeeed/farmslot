@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import {
   Events,
   type FailureCategory,
-  FLOW_STEPS,
   type IntelligenceAction,
   type IntelligenceActionGuard,
   type IntelligenceActionOutcomeReason,
@@ -14,6 +13,7 @@ import {
   type MonitorViolation,
   type PipelineStep,
   PipelineSteps,
+  pipelineStepsForRun,
   RECOVERABLE_FAILURE_CATEGORIES,
   type Run,
 } from '@farmslot/protocol';
@@ -176,7 +176,7 @@ function isRecoveredToHumanGate(run: Run): boolean {
   if (run.status !== 'blocked') return false;
   if (!run.recoveryAttempts?.some((attempt) => !attempt.completedAt)) return false;
 
-  const flowSteps = FLOW_STEPS[run.flowType] ?? [];
+  const flowSteps = pipelineStepsForRun(run) ?? [];
   const humanGateIdx = flowSteps.indexOf(PipelineSteps.HUMAN_GATE);
   if (humanGateIdx < 0) return false;
 
@@ -517,7 +517,7 @@ function effectiveReplayStep(
 }
 
 function isReplayStepAllowed(run: Run, cfg: AutoRecoveryConfig, stepName: string): boolean {
-  const flowAllowsStep = (FLOW_STEPS[run.flowType] ?? []).includes(stepName as PipelineStep);
+  const flowAllowsStep = (pipelineStepsForRun(run) ?? []).includes(stepName as PipelineStep);
   const projectAllowsStep = isConfiguredStepAllowed(cfg, stepName);
   return flowAllowsStep && projectAllowsStep;
 }

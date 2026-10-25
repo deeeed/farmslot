@@ -48,6 +48,13 @@ export async function resumeNativeWorker(
     | { purpose: 'handoff'; contextId: string; assertCurrent: () => void }
     | { purpose: 'review-fix'; assertCurrent?: () => void }
     | {
+        purpose: 'operator-message';
+        contextId: string;
+        commandId: string;
+        text: string;
+        assertCurrent: () => void;
+      }
+    | {
         purpose: 'review';
         contextId: string;
         text: string;
@@ -98,7 +105,8 @@ async function resumeNativeWorkerExclusive(
     run,
     options?.purpose === 'review' ||
       options?.purpose === 'handoff' ||
-      options?.purpose === 'parking'
+      options?.purpose === 'parking' ||
+      options?.purpose === 'operator-message'
       ? { contextId: options.contextId }
       : { role: primaryRoleForFlow(run.flowType) },
   );
@@ -239,12 +247,14 @@ async function resumeNativeWorkerExclusive(
     heldSignal.ok &&
     ['blocked', 'failed'].includes(heldSignal.signal.status);
   const continueLive =
-    (continueHeld || Boolean(completion)) &&
+    (continueHeld || Boolean(completion) || options?.purpose === 'operator-message') &&
     snapshot.session.state === 'idle' &&
     !snapshot.session.processStopped;
   const explicitCommandId =
     completion?.commandId ??
-    (options?.purpose === 'blocked-worker' || options?.purpose === 'parking'
+    (options?.purpose === 'blocked-worker' ||
+    options?.purpose === 'parking' ||
+    options?.purpose === 'operator-message'
       ? options.commandId
       : undefined);
   if (explicitCommandId) {
@@ -322,7 +332,9 @@ async function resumeNativeWorkerExclusive(
                 ]),
               )
               .digest('hex')
-          : options?.purpose === 'blocked-worker' || options?.purpose === 'parking'
+          : options?.purpose === 'blocked-worker' ||
+              options?.purpose === 'parking' ||
+              options?.purpose === 'operator-message'
             ? options.commandId
             : options?.purpose === 'handoff'
               ? binding.commandId
@@ -333,7 +345,9 @@ async function resumeNativeWorkerExclusive(
               text: `First run ${shellQuote(path.posix.join(path.posix.dirname(context.taskFile), 'mark'))} start to begin a fresh signal attempt. Continue the current task in ${context.taskFile}. Preserve completed work and do not repeat completed steps.`,
             }
           : {}),
-        ...(options?.purpose === 'review' || options?.purpose === 'parking'
+        ...(options?.purpose === 'review' ||
+        options?.purpose === 'parking' ||
+        options?.purpose === 'operator-message'
           ? { text: options.text }
           : activeFix
             ? {

@@ -12,7 +12,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Add shared linked-ticket lookup and operator ticket metadata on runs without changing frozen task inputs.
 
+- Register source-linked PR-completion criteria without replacing original obligations, and bind readiness to acceptance and proof-contract revisions.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.71.0 - 2026-10-25
+
+- Register source-linked PR-completion criteria without replacing original obligations, and bind readiness to acceptance and proof-contract revisions.
 
 ## 0.70.2 - 2026-10-24
 

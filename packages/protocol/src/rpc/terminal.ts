@@ -23,6 +23,8 @@ export interface TerminalSubscribeParams extends SlotAgentTargetParams {
 }
 
 export interface TerminalSendParams extends SlotAgentTargetParams {
+  /** Retry-stable identity for an authenticated PR-completion instruction. */
+  operatorMessageId?: string;
   text: string;
   enter?: boolean;
 }

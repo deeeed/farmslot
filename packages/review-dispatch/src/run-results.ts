@@ -8,6 +8,7 @@
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type AcceptanceCriterionRef,
+  type AcceptanceRegistration,
   type AcceptanceStatusLedger,
   isHeldForResultDecision,
   type OutputReviewPayload,
@@ -30,7 +31,15 @@ export function pendingOutputReview(
   return run?.decisions.find(isPendingOutputReview);
 }
 
+export interface AcceptanceRegistrationPresentation {
+  revision: number;
+  pending: string[];
+  exclusions: Array<{ sourceId: string; label: string; reason: string; url?: string }>;
+}
+
 export interface AcceptancePanelPresentation {
+  registration?: AcceptanceRegistrationPresentation;
+  unassessed: number;
   /** Assessment progress stays distinct from how many criteria are proven. */
   counts: string;
   /** Long-form tally for the header tooltip or accessibility label, including the zero buckets. */
@@ -44,15 +53,49 @@ export function acceptancePanelPresentation(
   ledger: AcceptanceStatusLedger,
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
   model?: EvidenceReviewModel,
+  registration?: AcceptanceRegistration,
 ): AcceptancePanelPresentation {
-  const summary = model?.summary ?? summarizeAcceptanceStatus(ledger, criteria);
+  const summary = registration
+    ? summarizeAcceptanceStatus(ledger, [...registration.original, ...registration.derived])
+    : (model?.summary ?? summarizeAcceptanceStatus(ledger, criteria));
   const assessed = summary.total - summary.unrecorded;
+  const pending = registration?.units.filter(({ result }) => !result) ?? [];
   return {
-    counts: `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}`,
+    unassessed: summary.unrecorded,
+    counts: `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}${pending.length ? ' · acceptance update pending' : ''}`,
     countsTooltip:
       `proven ${summary.proven} · weak ${summary.weak} · missing ${summary.missing} · ` +
       `untestable ${summary.untestable} · not assessed ${summary.unrecorded}`,
-    defaultOpen: assessed > 0 && summary.proven + summary.untestable < summary.total,
+    defaultOpen:
+      pending.length > 0 || (assessed > 0 && summary.proven + summary.untestable < summary.total),
+    ...(registration
+      ? {
+          registration: {
+            revision: registration.revision,
+            pending: pending.map(
+              (unit) =>
+                unit.error ??
+                (unit.delivery?.status === 'pending'
+                  ? 'Instruction delivery is not confirmed.'
+                  : 'Sources are awaiting acceptance criteria.'),
+            ),
+            exclusions: registration.units.flatMap((unit) =>
+              (unit.result?.classifications ?? [])
+                .filter(({ exclusion }) => Boolean(exclusion))
+                .map((row) => {
+                  const source = unit.sources.find(({ id }) => id === row.sourceId);
+                  return {
+                    sourceId: row.sourceId,
+                    label:
+                      source?.kind === 'review-comment' ? 'Review comment' : 'Operator instruction',
+                    reason: row.exclusion!,
+                    ...(source?.url && /^https?:\/\//.test(source.url) ? { url: source.url } : {}),
+                  };
+                }),
+            ),
+          },
+        }
+      : {}),
   };
 }
 

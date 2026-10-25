@@ -523,7 +523,12 @@ function parseManifest() {
 let terminalContract;
 if (contractPath && terminalCommand && existsSync(contractPath)) {
   try {
-    terminalContract = JSON.parse(readFileSync(contractPath, 'utf8'));
+    const baseBytes = readFileSync(contractPath, 'utf8');
+    terminalContract = require('./acceptance-contract.cjs').effectiveAcceptanceContract(
+      taskDir,
+      JSON.parse(baseBytes),
+      baseBytes,
+    );
   } catch (error) {
     issues.push(`${contractPath}: invalid worker terminal contract JSON (${error.message})`);
   }
@@ -636,7 +641,10 @@ if (
   // ADR-062 Amendment 18: only the run's publication code review checks a `review` claim.
   if (terminalCommand === 'complete' && terminalContract?.publicationReview !== true) {
     for (const row of Array.isArray(ledger?.criteria) ? ledger.criteria : []) {
-      if (row?.proofMode === 'review')
+      if (
+        row?.proofMode === 'review' &&
+        !terminalContract?.inheritedAcceptanceCriteria?.includes(row.id)
+      )
         issues.push(
           `${row.id} uses proof mode review, but this run has no code review to check it. Prove it with state, visual or mixed.`,
         );
@@ -653,6 +661,10 @@ if (
     deferClaimVerdicts = integrityIssues.length === 0;
   }
   for (const issue of acceptanceContractIssues(taskDir, {
+    deferReviewCriteria:
+      terminalContract?.publicationReview === true
+        ? terminalContract.acceptanceReviewCriteria
+        : undefined,
     allowWeak: terminalContract?.acceptance?.allowWeak === true,
     requireFresh: terminalContract?.acceptance?.requireFresh === true,
     deferClaimVerdicts,

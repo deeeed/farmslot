@@ -12,6 +12,7 @@ import {
   isReviewValidationDepth,
   PipelineSteps,
   type ReadyGatePrPackage,
+  reviewFindingsSatisfied,
   reviewPolicySatisfied,
   type ReviewSelection,
   type ReviewValidationDepth,
@@ -38,9 +39,21 @@ import {
 import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
-import { executeReview, reReviewMode } from '../review/orchestrator.js';
+import {
+  codeReviewCertifiesPRCompletion,
+  readPRCompletionHead,
+  reviewAcceptanceCriteria,
+  reviewCoversPRCompletionCriteria,
+} from '../review/acceptance-coverage.js';
+import {
+  executeReview,
+  reReviewMode,
+  type ReviewOptions,
+  type ReviewResult,
+} from '../review/orchestrator.js';
 import {
   markReviewedInputsRerun,
+  readReviewedInputs,
   reviewedInputsAwaitingReview,
 } from '../review/reviewed-inputs.js';
 import {
@@ -55,6 +68,7 @@ import {
   runCompletionPipeline,
 } from '../run-completion/orchestrator.js';
 import { captureRunOutput, failRunOutputCapture } from '../run-completion/output.js';
+import { preparePRCompletionProofHold } from '../run-completion/pr-completion-proof.js';
 import {
   computeReadyGateReviewSubjectHash,
   readReadyGatePreparedPackage,
@@ -165,17 +179,14 @@ type MonitorTerminalErrorArgs = {
 };
 
 export interface PostDispatchStepContext {
+  prCompletionHead?: typeof readPRCompletionHead;
+  prCompletionInputs?: typeof readReviewedInputs;
   assertGatePrerequisites?: typeof assertRunGateReady;
   waitForCompletionProgress?: () => Promise<void>;
   activeMonitors: Map<string, AbortController>;
   blockedRunError: (message: string, reason: string) => Error;
   broadcastFn: BroadcastFn;
-  createEngineDecision: (
-    runId: string,
-    reason: string,
-    description: string,
-    actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }>,
-  ) => Promise<string>;
+  createEngineDecision: typeof import('./engine-decisions.js').createEngineDecision;
   executeNoChangeGate: (runId: string) => Promise<void>;
   executePublishGateReviewPlan: (
     runId: string,
@@ -667,7 +678,10 @@ export async function executeReviewStep(
 ): Promise<StepIO> {
   const { createEngineDecision, interactiveLightweightSkipOutputs, stepPartialIO } = context;
   const current = getRun(runId)!;
+  const completionReview =
+    current.flowType === 'pr-complete' && current.acceptanceContractVersion === 1;
   if (!current.slotId) throw new Error('No slot assigned');
+  const slotId = current.slotId;
   // ADR-063 Amendment 3: the dispatch's first review row also selects the pipeline
   // reviewer, while the stored sequence is still the dispatch's own plan (a gate,
   // request or recovery that rewrites it stamps requestedAt). Recorded on the step,
@@ -683,6 +697,26 @@ export async function executeReviewStep(
     enabled: true,
     ...(reviewSelection ? { reviewSelection } : {}),
   };
+  if (
+    current.flowType === 'pr-complete' &&
+    current.acceptanceContractVersion === 1 &&
+    !current.acceptanceExecutionContract?.publicationReview
+  )
+    return {
+      inputs: { ...inputs, enabled: false },
+      outputs: { skipped: true, reason: 'no-fresh-review-criteria' },
+    };
+  let completionFingerprint: string | undefined;
+  let completionHead: string | undefined;
+  if (completionReview) {
+    const fingerprint = (await (context.prCompletionInputs ?? readReviewedInputs)(current))
+      ?.fingerprint;
+    if (!fingerprint) throw new Error('Completion review evidence fingerprint is unavailable');
+    completionFingerprint = fingerprint;
+    completionHead = await (context.prCompletionHead ?? readPRCompletionHead)(current);
+    if (codeReviewCertifiesPRCompletion(current, completionHead, fingerprint))
+      return { inputs, outputs: { skipped: true, reason: 'review-criteria-already-qualified' } };
+  }
 
   const reviewSkip = await evalReviewAxisSkip(current);
   if (reviewSkip.skipped) {
@@ -775,69 +809,200 @@ export async function executeReviewStep(
   const reviewer = execution
     ? { reviewRunner: execution.runner, model: execution.model, effort: execution.effort }
     : {};
-  const mode = current.reviewMode;
+  const savedCompletionReview = completionReview
+    ? current.engineState?.publishGate?.reviews?.find(
+        (review) =>
+          review.source === 'pipeline' &&
+          review.id === PIPELINE_REVIEW_SOURCE.artifactRefs(1, runId).id,
+      )
+    : undefined;
+  const mode = savedCompletionReview ? 'warm' : current.reviewMode;
   const primaryContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;
   const reviewId =
-    mode === 'warm'
+    savedCompletionReview?.id ??
+    (mode === 'warm'
       ? primaryContext?.reviewLineages[0]?.reviewId
-      : mode === 'cold'
+      : mode === 'cold' || completionReview
         ? PIPELINE_REVIEW_SOURCE.artifactRefs(1, runId).id
-        : undefined;
+        : undefined);
   // A result decision's Send back continues from its recorded findings: the
   // worker gets them first, as Continue Fixing does, instead of a fresh review.
   const sendBack = takeSendBackReview(runId);
-  const result = await executeReviewForRun(
-    runId,
-    current.slotId,
-    sendBack
-      ? {
-          ...reviewer,
-          validationDepth: sendBack.validationDepth ?? validationDepth,
-          // ADR-063 Amendment 5: the fix's re-review continues this review's lineage WARM.
-          mode: reReviewMode(sendBack, mode),
-          reviewId: sendBack.reviewId ?? reviewId,
-          resumeFromResult: sendBack,
-        }
-      : { ...reviewer, validationDepth, mode, reviewId },
-  );
-  const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
+  const requestedCriteria = completionReview ? reviewAcceptanceCriteria(current) : [];
+  const requestedHead = completionHead;
+  const requestedFingerprint = completionFingerprint;
+  const reusablePrimary =
+    !sendBack && completionReview && requestedHead && requestedFingerprint
+      ? current.engineState?.publishGate?.reviews?.find(
+          (review) =>
+            review.id === reviewId &&
+            reviewCoversPRCompletionCriteria(current, review, requestedHead, requestedFingerprint),
+        )
+      : undefined;
+  if (reusablePrimary) inputs.reusedReviewId = reusablePrimary.id;
 
-  // Interactive mode: present review results as a decision before proceeding
-  // In autonomous mode, executeReview already handles feedback + retry internally
-  if (current.mode === 'interactive' && !result.skipped && result.verdict === 'issues') {
-    const issueCount = result.issues?.length ?? 0;
+  let result: ReviewResult = reusablePrimary
+    ? {
+        verdict: 'pass',
+        retryCount: Math.max(0, (reusablePrimary.attempts?.length ?? 1) - 1),
+        reviewId: reusablePrimary.id,
+        acceptanceReviewCoverage: reusablePrimary.acceptanceReviewCoverage,
+        reviewedInputsFingerprint: reusablePrimary.reviewedInputsFingerprint,
+        reviewSnapshot: reusablePrimary.reviewSnapshot,
+      }
+    : await executeReviewForRun(
+        runId,
+        current.slotId,
+        sendBack
+          ? {
+              ...reviewer,
+              ...(completionReview ? { publicationReview: true } : {}),
+              validationDepth: sendBack.validationDepth ?? validationDepth,
+              // ADR-063 Amendment 5: the fix's re-review continues this review's lineage WARM.
+              mode: reReviewMode(sendBack, mode),
+              reviewId: sendBack.reviewId ?? reviewId,
+              resumeFromResult: sendBack,
+            }
+          : {
+              ...reviewer,
+              validationDepth,
+              mode,
+              reviewId,
+              ...(completionReview
+                ? { publicationReview: true, rereview: reReviewOfStatus(savedCompletionReview) }
+                : {}),
+            },
+      );
+  const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
+  let interactiveRetry = false;
+
+  // Every independent reviewer can produce findings that need an operator choice.
+  const interactiveFeedback = async (
+    reviewed: ReviewResult,
+    selected: Pick<ReviewOptions, 'reviewRunner' | 'model' | 'effort'> = reviewer,
+  ): Promise<ReviewResult> => {
+    if (current.mode !== 'interactive' || reviewed.skipped || reviewed.verdict !== 'issues')
+      return reviewed;
+    const issueCount = reviewed.issues?.length ?? 0;
     const issueList =
-      result.issues
-        ?.map((i) => `- **${i.file}${i.line ? ':' + i.line : ''}**: ${i.description}`)
+      reviewed.issues
+        ?.map(
+          (issue) =>
+            `- **${issue.file}${issue.line ? ':' + issue.line : ''}**: ${issue.description}`,
+        )
         .join('\n') ?? '';
     const desc = `Review found ${issueCount} issue${issueCount !== 1 ? 's' : ''}.\n\n${issueList}`;
-    const actionId = await createEngineDecision(runId, 'review_complete', desc, [
-      { id: 'send_feedback', label: 'Send feedback to worker', style: 'primary' },
-      { id: 'skip', label: 'Skip — proceed to human gate', style: 'secondary' },
-    ]);
-    // Continue from the findings the operator just accepted. Starting the
-    // top-level review again would spend another review pass before the worker
-    // ever sees the requested feedback.
-    if (actionId === 'send_feedback') {
-      const retryResult = await executeReviewForRun(runId, current.slotId, {
-        ...reviewer,
-        validationDepth,
-        mode: reReviewMode(result, 'cold'),
-        reviewId: result.reviewId,
-        resumeFromResult: result,
-      });
-      return {
-        inputs: { ...inputs, enabled: true },
-        outputs: {
-          ...retryResult,
-          cliCommand,
-          interactiveRetry: true,
-        },
-      };
-    }
-    // "skip" — proceed with original results
-  }
+    const actionId = await createEngineDecision(
+      runId,
+      'review_complete',
+      desc,
+      [
+        { id: 'send_feedback', label: 'Send feedback to worker', style: 'primary' },
+        { id: 'skip', label: 'Skip — proceed to human gate', style: 'secondary' },
+      ],
+      undefined,
+      completionReview ? { canReplay: () => false } : undefined,
+    );
+    if (actionId !== 'send_feedback') return reviewed;
+    interactiveRetry = true;
+    return executeReviewForRun(runId, slotId, {
+      ...selected,
+      ...(completionReview ? { publicationReview: true } : {}),
+      validationDepth,
+      mode: reReviewMode(reviewed, 'cold'),
+      reviewId: reviewed.reviewId,
+      resumeFromResult: reviewed,
+    });
+  };
+  result = await interactiveFeedback(result);
+  if (!completionReview && interactiveRetry)
+    return {
+      inputs: { ...inputs, enabled: true },
+      outputs: { ...result, cliCommand, interactiveRetry: true },
+    };
 
+  if (completionReview && result.verdict === 'pass' && !result.skipped) {
+    if (!result.reviewId) throw new Error('Completion review has no recorded reviewer identity');
+    if (
+      !requestedCriteria.every((criterion) =>
+        result.acceptanceReviewCoverage?.some(
+          ({ id, definitionHash }) =>
+            id === criterion.id && definitionHash === criterion.definitionHash,
+        ),
+      )
+    )
+      throw new Error('Completion review result did not bind its frozen acceptance request');
+    if (!result.reviewedInputsFingerprint)
+      throw new Error('Completion review result did not bind its frozen evidence inputs');
+    const firstId = result.reviewId;
+    const minimum = Math.max(
+      1,
+      current.engineState?.publishGate?.reviewPolicy?.minimumReviews ?? 1,
+    );
+    for (;;) {
+      const latest = getRun(runId)!;
+      const head = await (context.prCompletionHead ?? readPRCompletionHead)(latest);
+      const fingerprint = (await (context.prCompletionInputs ?? readReviewedInputs)(latest))
+        ?.fingerprint;
+      if (!fingerprint) throw new Error('Completion review evidence fingerprint is unavailable');
+      if (codeReviewCertifiesPRCompletion(latest, head, fingerprint)) break;
+      let launched = false;
+      for (let index = 0; index < minimum; index++) {
+        const id =
+          index === 0
+            ? firstId
+            : PIPELINE_REVIEW_SOURCE.artifactRefs(1, `${runId}-completion-${index + 1}`).id;
+        const previous = getRun(runId)?.engineState?.publishGate?.reviews?.find(
+          (review) => review.id === id,
+        );
+        const actualHead = await (context.prCompletionHead ?? readPRCompletionHead)(getRun(runId)!);
+        if (
+          previous &&
+          reviewCoversPRCompletionCriteria(getRun(runId)!, previous, actualHead, fingerprint)
+        )
+          continue;
+        const selection = current.engineState?.publishGate?.reviewSequence?.[index];
+        const model = selection ? executionModelFromSelection(selection) : null;
+        const requested = reviewAcceptanceCriteria(getRun(runId)!);
+        const selectedReviewer = {
+          ...reviewer,
+          ...(model
+            ? { reviewRunner: model.runner, model: model.model, effort: model.effort }
+            : {}),
+        };
+        result = await interactiveFeedback(
+          await executeReviewForRun(runId, slotId, {
+            ...selectedReviewer,
+            publicationReview: true,
+            validationDepth,
+            reviewId: id,
+            mode: previous ? 'warm' : (selection?.mode ?? 'cold'),
+            rereview: reReviewOfStatus(previous),
+          }),
+          selectedReviewer,
+        );
+        launched = true;
+        if (
+          result.verdict === 'pass' &&
+          !requested.every((criterion) =>
+            result.acceptanceReviewCoverage?.some(
+              ({ id, definitionHash }) =>
+                id === criterion.id && definitionHash === criterion.definitionHash,
+            ),
+          )
+        )
+          throw new Error('Completion review result did not bind its frozen acceptance request');
+        if (result.verdict === 'pass' && !result.reviewedInputsFingerprint)
+          throw new Error('Completion review result did not bind its frozen evidence inputs');
+        if (result.verdict !== 'pass' || result.skipped) break;
+      }
+      if (result.verdict !== 'pass' || result.skipped) break;
+      if (!launched)
+        throw new Error(
+          'Completion review policy remains blocked by recorded findings or duplicate reviewer sessions',
+        );
+    }
+  }
   if (current.mode !== 'interactive') {
     const benignSkipReasons = new Set([
       'disabled',
@@ -894,7 +1059,7 @@ export async function executeReviewStep(
 
   return {
     inputs: { ...inputs, enabled: !result.skipped },
-    outputs: { ...result, cliCommand },
+    outputs: { ...result, cliCommand, ...(interactiveRetry ? { interactiveRetry: true } : {}) },
   };
 }
 
@@ -1482,6 +1647,9 @@ export async function executeCompleteStep(
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
   let current = getRun(runId)!;
   let inheritedAcceptance: InheritedAcceptanceProvenance | undefined;
+  let acceptanceIdentity:
+    | import('../run-completion/pr-completion-proof.js').PRCompletionTransactionIdentity
+    | undefined;
   const generation = current.engineState?.generation ?? 0;
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
@@ -1497,11 +1665,77 @@ export async function executeCompleteStep(
   }
   if (!current.slotId) throw new Error('No slot assigned');
   // Record the verified Git result independently of acceptance/publication approval.
+  if (current.acceptanceRegistration?.units.some(({ result }) => !result)) {
+    const { continuePRCompletionStep } = await import('../methods/run/replay-step.js');
+    const continuation = await continuePRCompletionStep(
+      runId,
+      'monitor',
+      broadcastFn,
+      async () =>
+        (getRun(runId)?.engineState?.generation ?? 0) === generation &&
+        Boolean(getRun(runId)?.acceptanceRegistration?.units.some(({ result }) => !result)),
+    );
+    if (continuation.continued)
+      return {
+        inputs: { flowType: current.flowType },
+        outputs: { acceptanceDerivationPending: true },
+      };
+    current = continuation.run;
+  }
   // A refused completion must not strand a successful push behind stale ownership.
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   if (noCodeDisposition || ['blocked', 'failed'].includes(current.metrics.disposition ?? ''))
     await abandonBranchMaintenance(current);
   else await completeBranchMaintenance(current);
+  if (
+    current.flowType === 'pr-complete' &&
+    current.acceptanceContractVersion === 1 &&
+    current.acceptanceExecutionContract?.publicationReview
+  ) {
+    const head = await (context.prCompletionHead ?? readPRCompletionHead)(current);
+    const fingerprint = (await (context.prCompletionInputs ?? readReviewedInputs)(current))
+      ?.fingerprint;
+    if (!fingerprint) throw new Error('Completion review evidence fingerprint is unavailable');
+    const evidenceChanged = current.engineState?.publishGate?.reviews?.some(
+      (review) =>
+        review.reviewedInputsFingerprint !== fingerprint &&
+        reviewCoversPRCompletionCriteria(current, review, head, review.reviewedInputsFingerprint),
+    );
+    const findingsRemain = current.engineState?.publishGate?.reviews?.some(
+      (review) =>
+        (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha) === head &&
+        review.verdict === 'issues' &&
+        !reviewFindingsSatisfied(review),
+    );
+    if (
+      evidenceChanged &&
+      !findingsRemain &&
+      !codeReviewCertifiesPRCompletion(current, head, fingerprint)
+    ) {
+      const { continuePRCompletionStep } = await import('../methods/run/replay-step.js');
+      const continuation = await continuePRCompletionStep(
+        runId,
+        'review',
+        broadcastFn,
+        async () => {
+          const latest = getRun(runId);
+          return (
+            latest?.status === 'completing' &&
+            (latest.engineState?.generation ?? 0) === generation &&
+            !codeReviewCertifiesPRCompletion(latest, head, fingerprint)
+          );
+        },
+      );
+      if (continuation.continued)
+        return {
+          inputs: { flowType: current.flowType },
+          outputs: { reviewQualificationPending: true },
+        };
+      current = continuation.run;
+    }
+  }
+  if (await preparePRCompletionProofHold(runId, broadcastFn, generation))
+    return { inputs: { flowType: current.flowType }, outputs: { proofHeld: true } };
   if (!shouldPrepareLocalFirstPackage(current)) {
     // SIGNAL.json can precede the worker's final native turn completion. Keep
     // this engine attempt alive while that is the only unmet prerequisite.
@@ -1511,7 +1745,28 @@ export async function executeCompleteStep(
         throw new Error('Completion was superseded while waiting for worker idle');
       current = latest!;
       try {
-        await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
+        const readiness = await (context.assertGatePrerequisites ?? assertRunGateReady)(
+          current,
+          null,
+          'complete',
+        );
+        if (current.flowType === 'pr-complete' && current.acceptanceContractVersion === 1) {
+          acceptanceIdentity = {
+            generation: readiness.identity.generation,
+            registrationRevision: readiness.identity.acceptanceRevision ?? 0,
+            contractRevision: readiness.identity.acceptanceContractRevision ?? 0,
+            headSha:
+              readiness.identity.headSha ??
+              (await (context.prCompletionHead ?? readPRCompletionHead)(current)),
+            ...(current.acceptanceExecutionContract?.publicationReview
+              ? {
+                  reviewedInputsFingerprint: (
+                    await (context.prCompletionInputs ?? readReviewedInputs)(current)
+                  )?.fingerprint,
+                }
+              : {}),
+          };
+        }
         if (current.parentRunId) {
           const { readInheritedAcceptanceSource } =
             await import('../run-completion/inherited-acceptance.js');
@@ -1588,6 +1843,7 @@ export async function executeCompleteStep(
     };
   }
   const completion = await runCompletionPipeline(runId, {
+    acceptanceIdentity,
     skipRetrospective,
     suppressPrMutation: noCodeDisposition || artifactOnly,
     inheritedAcceptance,

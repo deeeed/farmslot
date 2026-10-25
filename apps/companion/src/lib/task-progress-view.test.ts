@@ -226,3 +226,43 @@ test('a missing run falls back to one shared key', () => {
   assert.equal(subtaskBlockKey(undefined, 'ci-parity'), 'no-run:ci-parity');
   assert.equal(subtaskBlockKey('  ', 'ci-parity'), 'no-run:ci-parity');
 });
+
+test('registered criteria remain blocking while their evidence model has not caught up', () => {
+  const registration: import('@farmslot/protocol').AcceptanceRegistration = {
+    schemaVersion: 1,
+    runId: 'child',
+    revision: 2,
+    intake: {
+      provider: 'github',
+      repository: 'example/repo',
+      prNumber: 1,
+      headSha: 'a'.repeat(40),
+      capturedAt: '2026-10-25T00:00:00Z',
+    },
+    original: [{ id: 'AC-1', text: 'Original criterion' }],
+    derived: [
+      {
+        id: 'AC-2',
+        text: 'Derived criterion',
+        proofMode: 'state',
+        source: {
+          kind: 'review-comment',
+          sourceId: 'comment:1',
+          sourceVersion: 'v1',
+          obligationIndex: 0,
+        },
+      },
+    ],
+    units: [],
+  };
+  const view = acceptanceLedgerView(
+    { schemaVersion: 1, criteria: [] },
+    [],
+    [],
+    undefined,
+    registration,
+  );
+  assert.equal(view.counts, '0/2 assessed');
+  assert.equal(view.unassessed, 2);
+  assert.equal(view.countsColor, colors.statusFail);
+});

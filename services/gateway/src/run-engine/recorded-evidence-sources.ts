@@ -9,6 +9,7 @@ import {
   type ReadyGatePrPackage,
   type RecordedEvidencePackageInput,
   RecordedEvidenceReadError,
+  type ReviewDiffSnapshot,
   type Run,
   type RunArtifactBundleRef,
   sanitizeLatestValidRecipeRunPointer,
@@ -30,6 +31,22 @@ import {
 export interface RecordedEvidenceSource {
   input: RecordedEvidencePackageInput;
   artifactPrefix: string;
+}
+
+/** Canonical capture qualification, including retained repair-head exceptions. */
+export function assertRecordedEvidenceRevision(
+  sources: readonly RecordedEvidenceSource[],
+  snapshot?: Pick<ReviewDiffSnapshot, 'baseSha' | 'headSha'>,
+): void {
+  for (const source of sources) {
+    const mismatch = validateRecordedEvidencePackage(source.input, snapshot).findings.find(
+      (finding) => finding.code === 'comparison-source-mismatch',
+    );
+    if (mismatch)
+      throw new Error(
+        `comparison-source-mismatch: ${mismatch.path}: ${mismatch.message}. Refresh the gate package or select another capture.`,
+      );
+  }
 }
 
 export interface RecordedVisualReviewSource {
@@ -123,7 +140,17 @@ export async function readVisualReviewSource(
         Object.values(result.packages).some((root) => file.path.startsWith(`artifacts/${root}/`)),
       );
     }
-    sources = await readFrozenRecordedEvidenceSources(run, inventory, [], output.artifactBundle);
+    sources = run.acceptanceProofHold
+      ? await readFrozenPublicationRecipeSources(
+          run,
+          inventory,
+          [],
+          output.artifactBundle,
+          run.acceptanceProofHold.headSha,
+        )
+      : await readFrozenRecordedEvidenceSources(run, inventory, [], output.artifactBundle);
+    if (run.acceptanceProofHold)
+      assertRecordedEvidenceRevision(sources, { headSha: run.acceptanceProofHold.headSha });
   }
   if (snapshotIdentity !== visualReviewSnapshotIdentity(run, decisionId))
     throw new Error('Captured visual review changed while its evidence was read.');
@@ -182,16 +209,7 @@ export async function readGateRecordedEvidenceSources(
     preparedPackage.headSha ?? null,
   );
   if (!sources.length) throw new Error('The gate package has no retained recipe evidence closure.');
-  for (const source of sources) {
-    const mismatch = validateRecordedEvidencePackage(
-      source.input,
-      preparedPackage.reviewSnapshot,
-    ).findings.find((finding) => finding.code === 'comparison-source-mismatch');
-    if (mismatch)
-      throw new Error(
-        `comparison-source-mismatch: ${mismatch.path}: ${mismatch.message}. Refresh the gate package or select another capture.`,
-      );
-  }
+  assertRecordedEvidenceRevision(sources, preparedPackage.reviewSnapshot);
   return sources;
 }
 

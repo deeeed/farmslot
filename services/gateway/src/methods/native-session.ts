@@ -20,6 +20,7 @@ export async function nativeSessionRoute(
   method: string,
   value: unknown,
   actingPrincipal: Principal,
+  emit: (event: string, payload: unknown) => void = () => {},
 ): Promise<unknown> {
   const originator = currentSessionOriginator();
   if (originator.kind !== 'principal')
@@ -49,7 +50,7 @@ export async function nativeSessionRoute(
       );
     // Pinned worker routes validate the stored owner and the caller's supervision authority.
     if (params.worker !== undefined && NATIVE_WORKER_INPUT_METHODS.includes(method))
-      return await routeNativeWorkerInput(method, params);
+      return await routeNativeWorkerInput(method, params, emit);
     if (params.worker !== undefined && NATIVE_WORKER_READ_METHODS.includes(method))
       return await routeNativeWorkerRead(method, params);
     const principal = requireNativeSessionOwner();

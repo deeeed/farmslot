@@ -42,17 +42,24 @@ function workerTarget(value: unknown): NativeWorkerControlTarget {
 }
 
 /** Network controls are checked against durable run ownership before the host's lease CAS. */
-export async function routeNativeWorkerInput(method: string, params: Record<string, unknown>) {
+export async function routeNativeWorkerInput(
+  method: string,
+  params: Record<string, unknown>,
+  emit: (event: string, payload: unknown) => void = () => {},
+) {
   const target = workerTarget(params.worker);
   if (method === Methods.NATIVE_SESSION_CLOSE)
-    return withRunTransition(target.runId, () => routePinnedWorkerInput(method, params, target));
-  return routePinnedWorkerInput(method, params, target);
+    return withRunTransition(target.runId, () =>
+      routePinnedWorkerInput(method, params, target, emit),
+    );
+  return routePinnedWorkerInput(method, params, target, emit);
 }
 
 async function routePinnedWorkerInput(
   method: string,
   params: Record<string, unknown>,
   target: NativeWorkerControlTarget,
+  emit: (event: string, payload: unknown) => void,
 ) {
   const current = () => {
     const run = getRun(target.runId);
@@ -71,7 +78,12 @@ async function routePinnedWorkerInput(
       binding.executionNodeId !== (params.executionNodeId ?? 'local') ||
       binding.generation !== target.generation ||
       binding.leaseId !== target.leaseId ||
-      binding.closedAt ||
+      (binding.closedAt &&
+        !(
+          method === Methods.NATIVE_SESSION_SEND &&
+          run.acceptanceRegistration &&
+          context.role !== 'review'
+        )) ||
       binding.releasedAt ||
       isTerminalRunStatus(run.status)
     )
@@ -102,6 +114,36 @@ async function routePinnedWorkerInput(
     generation: target.generation,
     leaseId: target.leaseId,
   };
+  if (
+    method === Methods.NATIVE_SESSION_SEND &&
+    run.acceptanceRegistration &&
+    context.role !== 'review' &&
+    slotId
+  ) {
+    if (typeof params.commandId !== 'string' || typeof params.text !== 'string')
+      throw new GatewayMethodError('INVALID_PARAMS', 'Worker message requires commandId and text');
+    const { operatorMessage } = await import('../../methods/run/operator-message.js');
+    const message = await operatorMessage(
+      {
+        slotId,
+        runId: run.id,
+        contextId: context.id,
+        operatorMessageId: params.commandId,
+        text: params.text,
+        enter: true,
+      },
+      emit,
+    );
+    if (!message)
+      throw new GatewayMethodError('INVALID_PARAMS', 'Worker acceptance steering is unavailable');
+    return {
+      commandId: params.commandId,
+      submitted: message.delivery === 'confirmed',
+      accepted: message.delivery === 'confirmed',
+      queued: message.delivery === 'queued',
+      state: message.delivery === 'confirmed' ? 'accepted' : 'pending',
+    };
+  }
   if (method === Methods.NATIVE_SESSION_SEND)
     return routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_SEND, {
       ...nativeTarget,

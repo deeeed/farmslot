@@ -186,6 +186,19 @@ export async function stageInheritedAcceptance(run: Run, vars: SlotVars): Promis
     path.posix.join(vars.remoteRepo, resolveProjectTaskDirName(project.projectJson), relative),
     [{ path: INHERITED_ACCEPTANCE_INPUT, content: Buffer.from(text).toString('base64') }],
   );
+  if (run.acceptanceContractVersion === 1) {
+    const { syncAcceptanceExecutionContract } =
+      await import('../tasks/acceptance-execution-contract.js');
+    const { readSlotField } = await import('../core/state.js');
+    await syncAcceptanceExecutionContract(
+      run,
+      vars,
+      path.posix.join(vars.remoteRepo, resolveProjectTaskDirName(project.projectJson), relative),
+      path.dirname(run.taskFile),
+      async () => (await readSlotField(vars.slotId, 'current_run_id')) === run.id,
+      source.acceptance.criteria.map(({ id }) => id),
+    );
+  }
   return true;
 }
 

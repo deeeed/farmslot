@@ -1,5 +1,14 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Pressable, Text, useColorScheme, View } from 'react-native';
+import {
+  AccessibilityInfo,
+  Alert,
+  Animated,
+  Linking,
+  Pressable,
+  Text,
+  useColorScheme,
+  View,
+} from 'react-native';
 
 import { type AcceptanceClaimRow } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
@@ -191,6 +200,26 @@ export function AcceptanceClaimList({
             <View style={{ width: '100%', gap: 8 }}>
               {claim.detail ? (
                 <Text style={{ color: palette.secondary }}>{claim.detail}</Text>
+              ) : null}
+              {claim.origin ? (
+                <View testID="companion-acceptance-origin">
+                  <Pressable
+                    style={{ minHeight: 44, justifyContent: 'center' }}
+                    disabled={!claim.origin.url}
+                    accessibilityRole="link"
+                    onPress={() => {
+                      if (claim.origin?.url)
+                        void Linking.openURL(claim.origin.url).catch((error: Error) =>
+                          Alert.alert('Cannot open source', error.message),
+                        );
+                    }}
+                  >
+                    <Text style={{ color: palette.secondary }}>{claim.origin.label}</Text>
+                  </Pressable>
+                  <Text style={{ color: palette.secondary }}>
+                    {claim.origin.body ?? claim.origin.reference}
+                  </Text>
+                </View>
               ) : null}
               {hasDetails?.(claim.id) === false ? null : renderDetails?.(claim.id)}
             </View>

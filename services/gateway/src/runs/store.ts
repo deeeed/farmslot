@@ -38,6 +38,7 @@ import {
   normalizeFlowType,
   normalizeRunTags,
   parseNativeProfileReference,
+  pipelineStepsForRun,
   primaryRoleForFlow,
   prNumberFromRunInput,
   RECORDED_EVIDENCE_RUN_CONTRACT_VERSION,
@@ -176,8 +177,9 @@ export function normalizeRunClassification(
   return { lane, variant };
 }
 
-function stepsForFlow(flowType: FlowType): RunStep[] {
-  const steps = FLOW_STEPS[flowType] ?? FLOW_STEPS['fix-bug'];
+function stepsForFlow(flowType: FlowType, acceptanceContractVersion?: 1): RunStep[] {
+  const steps =
+    pipelineStepsForRun({ flowType, acceptanceContractVersion }) ?? FLOW_STEPS['fix-bug'];
   return steps.map((name) => ({ name, status: 'pending' as RunStepStatus }));
 }
 
@@ -1004,6 +1006,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
         }
       : params.engineState;
   const run: Run = {
+    ...(params.flowType === 'pr-complete' ? { acceptanceContractVersion: 1 as const } : {}),
     id,
     recordedEvidenceContractVersion: RECORDED_EVIDENCE_RUN_CONTRACT_VERSION,
     ...(options?.qaAfterReview ? { qaAfterReview: structuredClone(options.qaAfterReview) } : {}),
@@ -1073,7 +1076,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
     launchSlotPolicy: params.launchSlotPolicy,
     launchAttempt: params.launchAttempt,
     taskFile: params.taskFile ?? null,
-    steps: stepsForFlow(params.flowType),
+    steps: stepsForFlow(params.flowType, params.flowType === 'pr-complete' ? 1 : undefined),
     decisions: [],
     metrics: {
       nudgeCount: 0,

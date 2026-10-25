@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 
 import {
   type EvidenceAttestationApprover,
-  FLOW_STEPS,
   githubPullUrl,
   type HumanPublicationAdoptionReceipt,
   parseGitHubPullUrl,
   PipelineSteps,
+  pipelineStepsForRun,
   PUBLICATION_ADOPTION_ACTION,
   type Run,
   type RunAdoptPublishedPrParams,
@@ -326,7 +326,7 @@ export async function runAdoptPublishedPr(
     // to wake. Skipped finalization/CI are settled work, not steps to replay.
     if (
       ['reconciling', 'blocked', 'human-gating'].includes(afterReadiness.status) &&
-      FLOW_STEPS[afterReadiness.flowType].every((name) =>
+      pipelineStepsForRun(afterReadiness).every((name) =>
         afterReadiness.steps.some(
           (step) =>
             step.name === name &&

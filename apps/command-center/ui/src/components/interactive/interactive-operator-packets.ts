@@ -7,6 +7,7 @@ import {
   Methods,
   validateInteractiveOperatorPacket,
 } from '@farmslot/protocol';
+import { operatorMessageInput } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -268,8 +269,7 @@ export class InteractiveOperatorPackets extends LitElement {
         await gateway.request(Methods.TERMINAL_SEND, {
           slotId: this.slotId,
           runId: this.runId,
-          text: request.text,
-          enter: true,
+          ...operatorMessageInput(request.text),
         });
       } else if (request.kind === 'decision.resolve') {
         const decision = this.decisions.find((candidate) => candidate.id === request.decisionId);

@@ -47,6 +47,14 @@ export interface WorkerTerminalProjectConfig {
 }
 
 export interface WorkerTerminalContractDocument {
+  /** Capability-checked at task init; revisions leave this base document immutable. */
+  acceptanceContractVersion?: 1;
+  claimReviewSupported?: boolean;
+  /** Role checklists inherit policy from the immutable root contract. */
+  acceptanceParentContract?: 'inputs/worker-terminal-contract.json';
+  /** Effective revision projection only; IDs whose qualified review is scheduled after MONITOR. */
+  acceptanceReviewCriteria?: string[];
+  inheritedAcceptanceCriteria?: string[];
   /** Gateway-derived completion destination; never a project/worker waiver. */
   claimReviewGate?: boolean;
   /** Gateway-derived: the run's gate has a publication code review that can check `review` claims. */
