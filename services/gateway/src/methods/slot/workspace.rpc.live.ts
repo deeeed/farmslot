@@ -249,6 +249,7 @@ test(
         await writeFile(path.join(root, 'pool/local.json'), JSON.stringify(pool));
       }
       await writeFile(path.join(root, 'status.json'), JSON.stringify(status));
+      await (await import('../../fleet/state.js')).loadFleetStatus(true);
       await writeFile(
         path.join(root, 'home/gateways.json'),
         JSON.stringify({
