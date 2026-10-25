@@ -30,3 +30,11 @@ For the retained-selection proof, run `view-sharing-identity-fixture.mjs` once a
 The floating button only proves attachment. Before destination navigation, the identity recipe opens Settings and requires the actual active connected profile, healthy response, exact Gateway endpoint and exact Command Center URL. It observes visible destination content instead of relying on ancestor View identifiers omitted from Android accessibility snapshots. A transient foreground disconnection or an unrelated Review screen cannot satisfy these checks.
 
 The continuity check changes the reserved Android viewport width and restores its exact prior override. It requires the actual player width to change before reading the first visible position, with the same app PID and the existing no-rewind/catch-up guards. Terminal views can leave a portrait lock, so this check makes no rotation claim.
+
+The evidence-model integration checks load the real retained-package model and take more than five seconds with source-loader startup. Keep them outside the default suite and run them manually at release and rollout acceptance, from the source root:
+
+```sh
+node scripts/quality/run-tsx-tests.mjs --cwd apps/companion --tsconfig tsconfig.json test-manual/evidence-media-items.test.ts
+```
+
+All eight checks remain, including selected-recording refusal and bundle/occurrence identity. This regression suite does not replace the actual Android proof.

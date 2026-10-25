@@ -16,12 +16,12 @@ import {
   mediaShareView,
   recordedEvidenceArtifactUrl,
   selectedEvidenceMediaItem,
-} from './evidence-media-items';
+} from '../src/lib/evidence-media-items';
 
 const fixture: { input: RecordedEvidencePackageInput } = JSON.parse(
   readFileSync(
     new URL(
-      '../../../../packages/recipe-runner/test/fixtures/visual-review-package.json',
+      '../../../packages/recipe-runner/test/fixtures/visual-review-package.json',
       import.meta.url,
     ),
     'utf8',
