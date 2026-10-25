@@ -372,7 +372,7 @@ async function updateOwnedPlanning(plan, kind) {
           id: 'writer-auth',
           method: 'auth.connect',
           params: {
-            clientKind: 'cli',
+            clientKind: 'ui',
             clientName: 'd07-owning-source-writer',
             token: credential.secret,
           },

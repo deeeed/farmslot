@@ -548,6 +548,17 @@ test(
       peer.on('message', async (bytes) => {
         const request = JSON.parse(String(bytes));
         methods.push(request.method);
+        if (request.method === 'auth.connect' && request.params.clientKind !== 'ui') {
+          peer.send(
+            JSON.stringify({
+              type: 'res',
+              id: request.id,
+              ok: false,
+              error: { code: 'AUTH_INVALID_CLIENT' },
+            }),
+          );
+          return;
+        }
         if (request.method === 'auth.connect')
           peer.send(
             JSON.stringify({
@@ -661,6 +672,17 @@ for (const kind of ['graph', 'queue']) {
         peer.on('message', async (bytes) => {
           const request = JSON.parse(String(bytes));
           methods.push(request.method);
+          if (request.method === 'auth.connect' && request.params.clientKind !== 'ui') {
+            peer.send(
+              JSON.stringify({
+                type: 'res',
+                id: request.id,
+                ok: false,
+                error: { code: 'AUTH_INVALID_CLIENT' },
+              }),
+            );
+            return;
+          }
           if (request.method === 'auth.connect') {
             peer.send(
               JSON.stringify({
