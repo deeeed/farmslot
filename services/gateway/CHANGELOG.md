@@ -8,7 +8,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Publish readable PR automation, assessment, analytics and copilot changes after their owning commits. Reload external PR-rule configuration with source-error refusal and recovery, and observe assessment policies plus their bounded, policy-selected triage evaluation receipts. Refuse current observed reads after observation loss while retaining exact receipt admission and command-time validation. Invalidate retained assessment history at its expiry deadline without panel polling or source rewrites.
 
+- Stop owned workers before terminal runs leave the live store while preserving finished checkouts, and verify published commits against the actual remote when tracking refs are stale.
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
+- Transfer prepare scripts through the file API so large task inputs do not exceed shell argument limits, including orchestrator-local preparation for remote slots.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
 - Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
 - Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.
