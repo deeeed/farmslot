@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { resourceDependenciesForRead, resourceQuery } from '../../src/client-cache/index.js';
+import { Methods } from '../../src/rpc/registry.js';
 
 const methods = [
   'prWatch.list',
@@ -68,10 +69,11 @@ test('private detail selectors never become notification keys, filtered analytic
 });
 
 test('commands, owner injection, raw packets and unsafe selectors never enter observation IDs', () => {
+  const registered = new Set<string>(Object.values(Methods));
   for (const method of [
     'prWatch.refresh',
     'prWatch.repair',
-    'prReview.request',
+    Methods.PR_REVIEW_REQUEST,
     'prRules.scan',
     'analytics.backfill',
     'assessment.evaluate',
@@ -82,8 +84,10 @@ test('commands, owner injection, raw packets and unsafe selectors never enter ob
     'copilot.stop',
     'decision.advice.analyze',
     'intelligence.triage.analyze',
-  ])
+  ]) {
+    assert(registered.has(method), `The refusal must cover an actual command: ${method}`);
     assert.equal(resourceDependenciesForRead(method, {}), undefined, method);
+  }
   assert.throws(() => resourceQuery('assessment.report'), /id/);
   assert.throws(
     () => resourceQuery('assessment.report', { assessmentId: 'new-artifact' }),

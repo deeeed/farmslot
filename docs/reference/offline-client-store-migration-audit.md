@@ -382,7 +382,8 @@ excerpts; missing optional files remain valid absence. Internal credential
 resolution keeps its existing fallback behavior. Other lifecycle variants
 remain unaccepted.
 
-The browser planning recipe covers external writers, real read failure with draft
+The [browser planning recipe](../examples/recipes/farmslot/command-center-offline-planning.recipe.json)
+covers external writers, real read failure with draft
 retention, five cold collections with original SQLite times and age, disabled
 writes, and actual project collections on both sides of the aggregate bound.
 Cache regressions cover revocation while each persisted collection has a reply

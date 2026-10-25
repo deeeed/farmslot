@@ -86,7 +86,12 @@ test('actual admitted file edits, replacements and removal invalidate without un
   await mkdir(receipts, { recursive: true });
   await policy(home, receipts);
   const revisions = new GatewayResourceRevisions();
-  const source = new TriagePilotObservation(home, revisions);
+  const removed = new Set<string>();
+  const source = new TriagePilotObservation(home, revisions, (roots, options) => {
+    const watcher = watch(roots, options);
+    watcher.on('unlink', (file) => removed.add(file));
+    return watcher;
+  });
   t.after(async () => {
     await source.close();
     revisions.dispose();
@@ -105,8 +110,15 @@ test('actual admitted file edits, replacements and removal invalidate without un
     await until(() => revisions.revision(key) > before, `Missing actual ${name} replacement`);
   }
   let before = revisions.revision(key);
-  await unlink(path.join(receipts, 'evaluation.json'));
-  await until(() => revisions.revision(key) > before, 'Missing receipt removal');
+  const evaluation = path.join(receipts, 'evaluation.json');
+  removed.delete(evaluation);
+  await unlink(evaluation);
+  // A raw invalidation can precede Chokidar's delayed normalized unlink. Drain that
+  // admitted event before attributing any later publication to unrelated paths.
+  await until(
+    () => removed.has(evaluation) && revisions.revision(key) > before,
+    'Missing normalized receipt removal',
+  );
   await quiet(revisions);
   before = revisions.revision(key);
   await mkdir(path.join(receipts, 'unrelated'));

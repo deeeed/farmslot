@@ -65,7 +65,7 @@ export const forbiddenPlanningMethods = [
   'prWatch.configure',
   'prWatch.refresh',
   'prWatch.repair',
-  'prReview.request',
+  'prReview.submit',
   'prRules.scan',
   'prPush.register',
   'prPush.unregister',
