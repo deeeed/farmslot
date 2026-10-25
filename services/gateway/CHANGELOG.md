@@ -9,6 +9,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Exclude ineligible slots from the human slot picker while preserving stale-branch decisions and explicit node-load overrides.
 
+- Release and update idle workspaces through the existing refresh RPCs, retaining ownership fences until checkout and fixtures verify and keeping failed recovery held for retry.
+
 - Keep original PR-completion criteria and append source-linked review and instruction obligations, with current-head code review and captured visual proof before completion.
 
 - Prefer lightly loaded allowed nodes for automatic slot placement, skip nodes at the load-per-core threshold, and record the selection reasons before writing the task.

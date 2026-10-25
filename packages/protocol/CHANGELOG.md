@@ -6,6 +6,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
 
+- Expose slot workspace publication, ownership and recovery identity with shared eligibility for guarded fleet release and update.
+
 - Expose current CI-watch progress and total deadlines so clients use the monitor’s configured windows.
 
 - Expose checklist timing in task progress and per-step worker durations in monthly analytics.

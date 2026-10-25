@@ -1,19 +1,21 @@
 # Recipe Runtime Capability Contract v1
 
 > This document is capability/manifest guidance for Recipe Protocol v1 runners. The canonical protocol source of truth is [Recipe Protocol v1](recipe-protocol-v1.md).
+> It also specifies fleet slot recovery and its release/readiness boundary under ADR-042/054.
 > This document defines the runtime seam between Farmslot, project runners, and
 > skills. It is the contract that keeps the base harness portable while still
 > allowing projects such as Example App to expose high-leverage custom actions.
 
 ## Boundary summary
 
-| Layer                     | Owns                                                                                                | Must not own                                                                     |
-| ------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Farmslot protocol         | Recipe schema, action manifest schema, official action names, trace/summary/artifact package shape. | Product concepts such as wallets, Perps, app routes, fixture secrets, selectors. |
-| `@farmslot/recipe-runner` | Graph execution, core adapters, official `ui.*` adapter host, generic runtime capability helpers.   | Project-specific target discovery, account setup, domain assertions.             |
-| Base runtime helpers      | CDP sessions, web page UI driver, browser-extension target helpers, React Native bridge contract.   | Example App extension IDs, Example App profile seeding, Perps controller calls.  |
-| Project runner            | Composes base helpers with app-specific target providers and custom actions.                        | A second recipe schema or graph executor.                                        |
-| Skill                     | Resolves/installs/runs the runner and reads manifests.                                              | Harness runtime implementation.                                                  |
+| Layer                     | Owns                                                                                                | Must not own                                                                                |
+| ------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Farmslot protocol         | Recipe schema, action manifest schema, official action names, trace/summary/artifact package shape. | Product concepts such as wallets, Perps, app routes, fixture secrets, selectors.            |
+| `@farmslot/recipe-runner` | Graph execution, core adapters, official `ui.*` adapter host, generic runtime capability helpers.   | Project-specific target discovery, account setup, domain assertions.                        |
+| Base runtime helpers      | CDP sessions, web page UI driver, browser-extension target helpers, React Native bridge contract.   | Example App extension IDs, Example App profile seeding, Perps controller calls.             |
+| Project runner            | Composes base helpers with app-specific target providers and custom actions.                        | A second recipe schema or graph executor.                                                   |
+| Skill                     | Resolves/installs/runs the runner and reads manifests.                                              | Harness runtime implementation.                                                             |
+| Fleet lifecycle           | Slot ownership, idle checkout, fixture synchronization and recovery outcomes.                       | Product fixture values, resource-policy overrides, or independent client eligibility rules. |
 
 ## Capability families
 
@@ -646,3 +648,49 @@ historical commits. Injection does not change ownership boundaries:
 - Farmslot runtime helpers remain Farmslot-owned;
 - project runners remain project-owned;
 - skills remain resolver/install/run UX.
+
+## Fleet slot recovery
+
+Status: Accepted under [ADR-042 Amendment 1](../adr/042-slot-tracking-branches.md#amendment-1-fleet-release-and-update-to-main-2026-10-25), lead approval on 2026-10-25 of proposal `4951004d`. Implementation pending.
+
+### Workspace evidence and shared model
+
+Add optional gateway-owned `SlotStatus.workspace`, persisted in the existing slot row where recovery state is needed. Workspace evidence names observation time, epoch, branch/HEAD, local default-ref SHA/fetch time, observed remote-default SHA/time, publication state, dirty/unpublished counts and a dirty-work fingerprint. Count behind local `origin/<default>` and label its fetch time; show remote-advanced when the observed remote SHA differs or is absent locally. An unavailable local reference or count is unknown, never zero. Include verified PR identity/state when used to establish publication. Expose current run, cleanup owner, handoff reservation and typed hold kind/reason separately; the latest historical run is never the owner. Missing, unreadable or expired evidence is unknown.
+
+Publication states are `baseline`, `merged`, `pushed`, `unpushed`, `unknown`. Baseline equals the observed remote default; merged work is fully contained, patch-equivalent, or covered by a verified merged PR into that default. Pushed means the actual HEAD is reachable from a verified publication ref, including a fork. Unpushed requires positive evidence of local unpublished commits. Dirty work is a separate warning. Neither deleted upstreams nor stale local refs prove publication. Even the default/tracking branch must be inspected for local commits and dirt.
+
+Fleet status reads never fetch or write refs, index, checkout, task inputs or fixture selection. Use local evidence plus cached read-only network evidence; network probes run only for idle candidates, use existing request caching and a five-second probe timeout, with at most one in-flight inspection per slot and one default-ref query per repository per refresh. Cache results by HEAD and observed default SHA, with timestamps; no browser/GitHub poller per client. A cache miss or failed probe stays unknown. The destructive path fetches and verifies publication inside its fence before cleanup. The stricter release-mode inspector is authoritative; existing non-release teardown callers retain their current policy, including their deleted-upstream shortcut.
+
+`@farmslot/protocol` provides one pure recovery eligibility predicate for the gateway's fresh recheck and `FleetRefreshViewModel` in `@farmslot/review-dispatch`. The model owns both clients' labels, logical filters, target set/count, confirmations, RPC parameters and progress. Move browser fleet-refresh logic into it and remove duplicate eligibility/substring-based force decisions for this action. `fleet.prSummary` becomes a thin projection of the same workspace evidence, not a second lookup or release authority.
+
+### Recovery ownership and confirmation
+
+Bulk targets only enabled, online, non-manual `ready` slots with no worker, current/cleanup owner, handoff, occupancy or protected hold and clean baseline/merged/pushed work. Recheck before each start. Held/occupied rows are excluded from bulk. A single-slot action may release an ordinary terminal owner only through existing owner guards. Active workers/runs, publication gates, park records, retained-result or refused-completion holds, deferred cleanup, occupancy and manual slots refuse with their required existing action. Cancelled replay holds reuse the existing owner-bound cancelled-hold release UI; this action does not discard them implicitly.
+
+Extend `SlotRefreshParams` and each `FleetRefreshSlotsParams.slots` entry with optional `release: true` and `expectedWorkspace`. Identity includes epoch, explicit current/cleanup/handoff owners or null, branch, HEAD, dirty-work fingerprint and recovery ID or null. The gateway fingerprint covers staged, unstaged and relevant untracked paths/content, using existing scaffolding exclusions. Expose only hashes/counts, never file contents. Check identity atomically when acquiring the release fence and again before destructive work. Owned phase writes advance the recorded verified identity; foreign changes refuse.
+
+A single dirty/unpushed row offers **Discard local work and update** with branch and affected counts. Only confirmation sends `mode: force` with that evidence. Changed dirt/untracked content requires renewed confirmation even at unchanged HEAD/epoch. Unknown offers re-inspection only. In release mode, force skips only the unpublished-work refusal: do not translate it into broad `slot.release.forceReset` authority or the `forceReset` + `expectedRunId` protected-owner exemption. The expected workspace epoch is an ordinary CAS guard, not replay-rollback authority from `SlotReleaseOptions.expectedSlotEpoch`. Existing artifact collection/discard logging remains enabled.
+
+### One operation through existing RPCs
+
+Release mode composes existing `slot.release` cleanup, shared idle reset and project fixture sync, retaining one release fence/epoch through verification. Acquire the status-row releasing fence and persist the recovery marker in the same CAS, blocking dispatch even on an unowned baseline checkout. No unguarded client-side release-then-refresh chain or intermediate ready state. The baseline path uses existing refresh reset plus fixture sync and skips only worker/browser/recycle teardown. Non-release RPC requests retain their defaults and safety policy.
+
+The new fleet action replaces stale-row force groups and the dangerous override in the current refresh UI. Bulk release entries accept only safe mode; `recoverableViaForce` is false there. Legacy non-release RPC entry semantics remain unchanged but are not an alternate bulk discard path in the new UI. Reuse the existing bulk scheduler, per-machine serialization, global cap, cancellation and `fleet.refresh.*`/request-scoped script events. Add typed refusal codes to refresh results/events for dirty, stale, unpushed, unknown, identity change, protected guard and failed phase; do not infer permissions from output text. Companion adds a thin progress renderer for the shared state.
+
+Freeze logical displayed slot-ID membership after all current filters, including project, machine and text search. Use that exact set for the scope/count and request targets. Virtualization does not narrow logical membership; later matching or hidden slots never expand the batch. Skip newly unsafe rows with a reason. Failure/cancellation reports actual per-slot outcomes and does not claim fleet-wide success.
+
+### Completion, failure and retry
+
+Before publishing ready, verify fetched `origin/<default>`, configured default/tracking branch, HEAD equality, no user dirt, released ownership and project fixtures. Fixtures must be `OK` when declared; none declared is typed `not-required`, contributing no fixture-stale penalty rather than pretending files were synced. Persist branch, headSha and fixture comparison result before ready. Branch/fixture stale penalties become zero through canonical scoring; unrelated load/device/CDP/profile/source gates remain.
+
+Persist a per-slot recovery ID, epoch/owners, verified completed phases and failed/interrupted phase. On failure use existing `held`/`occupied` plus `held_reason` and that typed marker. Fleet refresh, orphan reconciliation and restart must preserve the non-dispatchable hold. An interrupted releasing fence may be reclaimed into this failed hold, never directly into ready; legacy fences without a recovery marker keep their existing policy. Other release/refresh paths cannot clear a recovery hold without verification.
+
+The same `slot.refresh` release mode, bound to the held recovery ID and a fresh expected workspace, retries from the last verified phase. Recheck owners and work, renew changed-content discard confirmation, and do not blindly repeat verified destructive cleanup. Clear the hold only after all completion checks pass. Preserve evidence and show the failed phase. No new RPC, retry daemon, scheduler or job store.
+
+### Acceptance proof
+
+1. Both real fleet renderers show branch, actual owners/holds, publication state and behind-default count, including unknown/error states. Real presses drive actions against the authenticated gateway; screenshots are rendering proof, not a substitute for RPC/slot-row effects.
+2. In a healthy multi-slot fixture, every eligible free slot starts stale. Prove `all_stale` before recovery. Recover one through the fleet UI, then `run.create` without `slotId` or a single-slot `allowedSlots` restriction must select it with `selectionMethod: scored` and no `engine_no_suitable_slot` decision. Assert remote HEAD, fixtures, free ownership and zero stale penalties through real reads.
+3. Bulk includes every safe target in its displayed scope, including search, and excludes hidden/unsafe/held rows. Single-slot cancel leaves work intact. Alter a dirty/untracked file at unchanged HEAD to prove confirmation invalidation; change ownership/epoch to prove successor protection.
+4. Cover primary clones, linked worktrees, squash merges/deleted refs, dirty idle branches, unknown publication, absent fixtures and per-slot progress. Fail fixture sync, age/restart the gateway and prove the slot stays held; retry through the same RPC and verify before ready. Real Git/fixtures and a command/scripted engineering runner suffice; no occupied product slot, model turn or `#dev` bypass.
+5. Source-breaking controls must fail the recovery-to-dispatch and failed-recovery guards, followed by exact restoration. Retain one shared model/predicate; do not weaken stale-slot selection or pressure admission to pass.

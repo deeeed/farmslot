@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 
 import type { Run, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
+import { fleetWorkspaceRow } from '@farmslot/review-dispatch';
 
 import '../shared/cancelled-run-slot-release.js';
 import '../shared/status-badge.js';
@@ -124,6 +125,22 @@ export class SlotCard extends LitElement {
       font-size: ${unsafeCSS(fonts.sizeXs)};
       color: ${unsafeCSS(colors.textSecondary)};
       line-height: 1.5;
+    }
+    .recovery-action {
+      min-height: 44px;
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      border-radius: 6px;
+      background: ${unsafeCSS(colors.bgSurface)};
+      color: ${unsafeCSS(colors.textPrimary)};
+      font: inherit;
+      cursor: pointer;
+      width: 100%;
+    }
+    .recovery-action:disabled {
+      opacity: 0.5;
+      cursor: default;
     }
     .meta .branch {
       color: ${unsafeCSS(colors.accent)};
@@ -377,7 +394,11 @@ export class SlotCard extends LitElement {
     const hasActiveRun = !!this.linkedRun && s.lifecycle === 'busy';
     const hasExpandableRun = hasActiveRun;
     const legacyIdentity = !!s.currentRunId && !s.currentFamilyId;
-    const branch = slotBranchDisplay(s, getProjectSlotTrackingConfigs());
+    const recoveryRow = fleetWorkspaceRow(s);
+    const branch = slotBranchDisplay(
+      { ...s, branch: recoveryRow.branch },
+      getProjectSlotTrackingConfigs(),
+    );
     const branchLabel = branch.label;
     const branchClass =
       branch.tone === 'baseline'
@@ -498,6 +519,30 @@ export class SlotCard extends LitElement {
                   ></cancelled-run-slot-release>`
                 : ''}
               ${branchLabel ? html`<div class="${branchClass}">${branchLabel}</div>` : ''}
+              <div title=${recoveryRow.referenceTime}>
+                ${recoveryRow.publication} · ${recoveryRow.owner} · ${recoveryRow.behind}
+              </div>
+              <button
+                class="recovery-action"
+                title=${recoveryRow.warning}
+                ?disabled=${!recoveryRow.eligibility.allowed &&
+                recoveryRow.eligibility.reason !== 'unknown'}
+                @click=${(event: Event) => {
+                  event.stopPropagation();
+                  this.dispatchEvent(
+                    new CustomEvent('fleet-slot-recovery', {
+                      detail: {
+                        slotId: s.slot,
+                        inspectOnly: recoveryRow.action === 'Inspect workspace',
+                      },
+                      bubbles: true,
+                      composed: true,
+                    }),
+                  );
+                }}
+              >
+                ${recoveryRow.action}
+              </button>
               ${s.taskId ? html`<div class="task">${this._formatTaskId(s.taskId)}</div>` : ''}
               ${s.currentLane
                 ? html`<div class="runner">

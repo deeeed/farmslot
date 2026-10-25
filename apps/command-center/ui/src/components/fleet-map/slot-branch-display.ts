@@ -1,6 +1,6 @@
+import type { ProjectConfig } from '@farmslot/protocol';
 import { DEFAULT_BRANCH, isSlotRefreshStaleBranch, type SlotStatus } from '@farmslot/protocol';
-
-import type { FleetRefreshProjectConfig } from '../slot-actions/fleet-refresh-modal-model.js';
+type FleetRefreshProjectConfig = Pick<ProjectConfig, 'defaultBranch' | 'slotTrackingBranch'>;
 
 export type SlotBranchDisplayTone = 'baseline' | 'tracking' | 'stale';
 

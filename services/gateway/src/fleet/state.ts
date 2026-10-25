@@ -311,6 +311,11 @@ export function clearPrHealthOverlay(slotId: string): void {
 // ─── Branch overlay (enriched by branch-watcher, not persisted to disk) ───
 
 const branchOverlayCache = new Map<string, string>();
+const workspaceOverlayCache = new Map<string, NonNullable<SlotStatus['workspace']>>();
+export function setWorkspaceOverlay(slotId: string, workspace: SlotStatus['workspace']): void {
+  if (workspace) workspaceOverlayCache.set(slotId, workspace);
+  else workspaceOverlayCache.delete(slotId);
+}
 
 export function setBranchOverlay(slotId: string, branch: string): void {
   branchOverlayCache.set(slotId, branch);
@@ -328,6 +333,12 @@ export function clearBranchOverlay(slotId: string): void {
 // newer fields. Optionality here reflects that honestly so transformSlot's
 // defaults are compiler-enforced instead of hidden behind casts.
 interface RawSlot {
+  workspace?: SlotStatus['workspace'];
+  workspace_error?: string | null;
+  slot_epoch?: number;
+  cleanup_run_id?: string | null;
+  handoff_run_id?: string | null;
+  workspace_recovery?: { id: string } | null;
   slot: string;
   machine?: string;
   platform?: string;
@@ -448,6 +459,8 @@ function transformSlot(raw: RawSlot): SlotStatus {
   }
   return {
     slot: raw.slot,
+    ...(raw.workspace ? { workspace: raw.workspace } : {}),
+    ...(raw.workspace_error ? { workspaceError: raw.workspace_error } : {}),
     machine: raw.machine ?? '',
     platform: raw.platform ?? '',
     project: raw.project ?? '',
@@ -468,6 +481,9 @@ function transformSlot(raw: RawSlot): SlotStatus {
     taskId: raw.task_id ?? null,
     taskFile: raw.task_file ?? null,
     currentRunId: raw.current_run_id ?? null,
+    slotEpoch: Number(raw.slot_epoch) || 0,
+    cleanupRunId: raw.cleanup_run_id ?? null,
+    handoffRunId: raw.handoff_run_id ?? null,
     ...(raw.held_reason ? { heldReason: raw.held_reason } : {}),
     currentFlowType: raw.current_flow_type ?? null,
     currentTicketOrPr: raw.current_ticket_or_pr ?? null,
@@ -559,6 +575,22 @@ function computeResourceRollup(slot: SlotStatus): ResourceRollup {
 function transformFleet(raw: RawStatus): FleetStatus {
   const slots = raw.slots.map((s) => {
     const slot = transformSlot(s);
+    const workspace = workspaceOverlayCache.get(slot.slot);
+    if (
+      workspace &&
+      (!slot.workspace ||
+        Date.parse(workspace.observedAt) > Date.parse(slot.workspace.observedAt)) &&
+      Date.now() - Date.parse(workspace.observedAt) < 30_000 &&
+      workspace.branch === slot.branch &&
+      workspace.epoch === (Number(s.slot_epoch) || 0) &&
+      workspace.currentRunId === (s.current_run_id ?? null) &&
+      workspace.cleanupRunId === (s.cleanup_run_id ?? null) &&
+      workspace.handoffRunId === (s.handoff_run_id ?? null) &&
+      workspace.recoveryId === (s.workspace_recovery?.id ?? null) &&
+      (!s.head_sha || s.head_sha === workspace.headSha)
+    )
+      slot.workspace = workspace;
+
     const overlay = taskProgressCache.get(slot.slot);
     if (overlay) {
       slot.taskPhase = overlay.taskPhase;

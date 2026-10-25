@@ -2777,3 +2777,33 @@ for (const action of ['approve-publish', 'approve-publish-unresolved']) {
     });
   }
 }
+
+test('restart keeps failed recovery held and turns its interrupted fence into a failed hold', async () => {
+  for (const phase of ['releasing', 'occupied'] as const) {
+    const row: Record<string, unknown> = {
+      lifecycle: phase === 'releasing' ? 'busy' : 'held',
+      phase,
+      workspace_recovery: { id: 'recovery-1', phase: 'fixtures' },
+      releasing_since: '2020-01-01T00:00:00Z',
+    };
+    const deps = orphanCollaborators({
+      listRuns: () => ({ runs: [] }),
+      loadFleetStatus: async () => ({
+        slots: [
+          { slot: 'recovery-slot', lifecycle: phase === 'releasing' ? 'busy' : 'held', phase },
+        ],
+      }),
+      readSlotField: async (_slotId, field) => row[field],
+      updateSlotStatusIf: async (_slotId, predicate, fields) => {
+        if (!predicate(row)) return false;
+        Object.assign(row, fields);
+        return true;
+      },
+    });
+    await reconcileOrphanedSlots(deps);
+    assert.equal(row.lifecycle, 'held');
+    assert.equal(row.phase, 'occupied');
+    assert.deepEqual(row.workspace_recovery, { id: 'recovery-1', phase: 'fixtures' });
+    // reset/occupied-cleanup dependencies deliberately throw if called.
+  }
+});

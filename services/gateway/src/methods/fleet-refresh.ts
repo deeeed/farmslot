@@ -10,28 +10,26 @@
 //
 // No timer, no auto-trigger. Operator-initiated only.
 
-import { execFile as execFileCb } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { promisify } from 'node:util';
 
 import {
   Events,
   type FleetPrSummaryEntry,
   type FleetPrSummaryParams,
   type FleetPrSummaryResult,
+  type FleetRefreshSlotRequest,
   type FleetRefreshSlotsCancelParams,
   type FleetRefreshSlotsCancelResult,
   type FleetRefreshSlotsParams,
   type FleetRefreshSlotsResult,
   type FleetRefreshSlotStatus,
+  slotRecoveryEligibility,
 } from '@farmslot/protocol';
 
 import { loadFleetStatus } from '../fleet/state.js';
 
-import { prForSlot } from './pr.js';
+import { inspectSlotWorkspace, observeSlotWorkspaces } from './slot/workspace.js';
 import { slotRefresh, slotRefreshBlockedReason } from './slot.js';
-
-const execFile = promisify(execFileCb);
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
@@ -58,12 +56,14 @@ export async function fleetRefreshSlots(
     throw new Error('fleet.refreshSlots: at least one slot required');
   }
   // De-dup by slotId (last mode wins) to avoid scheduling the same slot twice.
-  const dedupedMap = new Map<string, 'safe' | 'force'>();
+  const dedupedMap = new Map<string, FleetRefreshSlotRequest>();
   for (const entry of params.slots) {
     if (!entry.slotId) continue;
-    dedupedMap.set(entry.slotId, entry.mode);
+    if (entry.release && entry.mode !== 'safe')
+      throw new Error('Bulk release never discards local work');
+    dedupedMap.set(entry.slotId, { ...entry });
   }
-  const requested = Array.from(dedupedMap, ([slotId, mode]) => ({ slotId, mode }));
+  const requested = Array.from(dedupedMap.values());
   if (requested.length === 0) throw new Error('fleet.refreshSlots: no valid slotIds after de-dup');
 
   const requestId = params.requestId ?? `fleet-refresh-${randomUUID()}`;
@@ -126,65 +126,26 @@ export function fleetRefreshSlotsCancel(
 // or auth failure on any single slot does not block the rest.
 
 export async function fleetPrSummary(params: FleetPrSummaryParams): Promise<FleetPrSummaryResult> {
-  const slotIds = Array.isArray(params.slotIds) ? params.slotIds : [];
-  const settled = await Promise.allSettled(
-    slotIds.map(async (slotId): Promise<[string, FleetPrSummaryEntry]> => {
-      try {
-        const lookup = await prForSlot({ slotId });
-        if (!lookup.pr || !lookup.repo) {
-          return [slotId, { prNumber: null, state: null, repo: null }];
-        }
-        const state = await fetchPrState(lookup.repo, lookup.pr);
-        return [slotId, { prNumber: lookup.pr, state, repo: lookup.repo }];
-      } catch {
-        // Recoverable: gh unavailable / auth failed / repo missing / network.
-        // The annotation is strictly cosmetic — the bulk method tolerates a
-        // null entry, the modal classifies the slot as "PR state unknown"
-        // (treated as dangerous, hard-blocked behind the override toggle),
-        // so degrading silently here is the correct behavior.
-        return [slotId, { prNumber: null, state: null, repo: null }];
-      }
-    }),
-  );
+  const ids = Array.isArray(params.slotIds) ? params.slotIds : [];
+  const fleet = await loadFleetStatus();
+  const selected = new Set(ids);
+  const slots = await observeSlotWorkspaces(fleet.slots.filter((slot) => selected.has(slot.slot)));
+  const work = new Map(slots.map((slot) => [slot.slot, slot.workspace]));
   const entries: Record<string, FleetPrSummaryEntry> = {};
-  for (const result of settled) {
-    if (result.status === 'fulfilled') {
-      const [slotId, entry] = result.value;
-      entries[slotId] = entry;
-    }
+  for (const slotId of ids) {
+    const pr = work.get(slotId)?.pullRequest;
+    entries[slotId] = pr
+      ? { prNumber: pr.number, state: pr.state, repo: pr.repo }
+      : { prNumber: null, state: null, repo: null };
   }
   return { entries };
-}
-
-async function fetchPrState(repo: string, pr: number): Promise<FleetPrSummaryEntry['state']> {
-  // Single round-trip after prForSlot resolves the (repo, pr) pair. We
-  // ask for both `state` and `mergedAt` because gh reports `closed` for
-  // both merged and closed-without-merge — `mergedAt` distinguishes.
-  try {
-    const { stdout } = await execFile(
-      'gh',
-      ['api', `repos/${repo}/pulls/${pr}`, '--jq', '{state, mergedAt: .merged_at}'],
-      { timeout: 8000 },
-    );
-    const parsed = JSON.parse(stdout || '{}') as { state?: string; mergedAt?: string | null };
-    if (parsed.mergedAt) return 'merged';
-    if (parsed.state === 'open') return 'open';
-    if (parsed.state === 'closed') return 'closed';
-    return null;
-  } catch {
-    // Recoverable: gh exec timeout / auth / network / unparseable output.
-    // Returning null surfaces as "PR state unknown" upstream → row classified
-    // as dangerous → hard-blocked unless operator explicitly overrides.
-    // Conservative by design.
-    return null;
-  }
 }
 
 // ─── Scheduler internals ───
 
 async function runScheduler(
   requestId: string,
-  requested: Array<{ slotId: string; mode: 'safe' | 'force' }>,
+  requested: FleetRefreshSlotRequest[],
   bulk: BulkRun,
   emit: EventEmitter,
 ): Promise<void> {
@@ -212,7 +173,7 @@ async function runScheduler(
     return;
   }
 
-  const slotsByMachine = new Map<string, Array<{ slotId: string; mode: 'safe' | 'force' }>>();
+  const slotsByMachine = new Map<string, FleetRefreshSlotRequest[]>();
   for (const item of requested) {
     const slot = fleet.slots.find((s) => s.slot === item.slotId);
     const machine = slot?.machine ?? '__unknown__';
@@ -285,7 +246,7 @@ async function runScheduler(
 
 async function runSlot(
   requestId: string,
-  item: { slotId: string; mode: 'safe' | 'force' },
+  item: FleetRefreshSlotRequest,
   bulk: BulkRun,
   emit: EventEmitter,
   summary: { refreshed: number; skipped: number; failed: number; cancelled: number },
@@ -315,13 +276,24 @@ async function runSlot(
   try {
     const fleet = await loadFleetStatus();
     const slot = fleet.slots.find((s) => s.slot === slotId);
-    const blocked = slotRefreshBlockedReason(slot);
+    const work = item.release ? await inspectSlotWorkspace(slotId) : undefined;
+    const eligibility = work
+      ? slotRecoveryEligibility(slot ? { ...slot, workspace: work } : undefined)
+      : undefined;
+    const blocked = item.release
+      ? eligibility?.bulkAllowed
+        ? null
+        : (eligibility?.detail ?? 'Slot is no longer safe for bulk release')
+      : slotRefreshBlockedReason(slot);
     if (blocked) {
       emit(Events.FLEET_REFRESH_SLOT_UPDATE, {
         requestId,
         slotId,
         status: 'skipped' as FleetRefreshSlotStatus,
         detail: blocked,
+        ...(item.release
+          ? { reason: eligibility?.reason ?? 'protected', recoverableViaForce: false }
+          : {}),
       });
       summary.skipped++;
       return;
@@ -352,7 +324,23 @@ async function runSlot(
   });
 
   try {
-    const result = await slotRefresh({ slotId, mode, requestId: perSlotRequestId }, emit);
+    const result = await slotRefresh(
+      { ...item, requestId: perSlotRequestId },
+      emit,
+      slotAbort.signal,
+    );
+    if (!result.refreshed && slotAbort.signal.aborted) {
+      emit(Events.FLEET_REFRESH_SLOT_UPDATE, {
+        requestId,
+        slotId,
+        status: 'cancelled',
+        detail: result.detail ?? 'Cancelled; workspace remains held for verification',
+        reason: result.reason,
+        recoverableViaForce: false,
+      });
+      summary.cancelled++;
+      return;
+    }
     if (result.refreshed) {
       emit(Events.FLEET_REFRESH_SLOT_UPDATE, {
         requestId,
@@ -370,9 +358,10 @@ async function runSlot(
         requestId,
         slotId,
         status: 'failed' as FleetRefreshSlotStatus,
-        detail: reason ?? 'safe mode aborted',
+        detail: result.detail ?? reason ?? 'safe mode aborted',
+        reason,
         mode,
-        recoverableViaForce: reason === 'dirty' || reason === 'stale',
+        recoverableViaForce: !item.release && (reason === 'dirty' || reason === 'stale'),
       });
       summary.failed++;
     }

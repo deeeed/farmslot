@@ -29,12 +29,17 @@ export interface MergedPreparePullRequest {
 type ReadMergedPreparePullRequests = (
   repo: string,
   headSha: string,
+  timeoutMs?: number,
 ) => Promise<readonly MergedPreparePullRequest[]>;
 
-const readMergedPreparePullRequests: ReadMergedPreparePullRequests = async (repo, headSha) => {
+export const readMergedPreparePullRequests: ReadMergedPreparePullRequests = async (
+  repo,
+  headSha,
+  timeoutMs = 15_000,
+) => {
   const { stdout } = await ghRequest(
     ['api', `repos/${repo}/commits/${headSha}/pulls?per_page=100`],
-    { force: true, caller: 'slot.prepare-publication', signal: AbortSignal.timeout(15_000) },
+    { force: true, caller: 'slot.prepare-publication', signal: AbortSignal.timeout(timeoutMs) },
   );
   const data: unknown = JSON.parse(stdout);
   if (!Array.isArray(data))
@@ -65,32 +70,91 @@ const readMergedPreparePullRequests: ReadMergedPreparePullRequests = async (repo
   return merged;
 };
 
-async function refIncludedInMergedPullRequest(
+type PublishedAncestryReader = (
+  repo: string,
+  base: string,
+  head: string,
+  timeoutMs: number,
+) => Promise<boolean>;
+interface MergedPullRequestReadOptions {
+  allowFetch?: boolean;
+  timeoutMs?: number;
+  defaultSha?: string;
+  readAncestry?: PublishedAncestryReader;
+}
+
+const readPublishedAncestry: PublishedAncestryReader = async (repo, base, head, timeoutMs) => {
+  const compared = await ghRequest(
+    [
+      'api',
+      `repos/${repo}/compare/${base}...${head}`,
+      '--jq',
+      '{status,base_commit:{sha:.base_commit.sha},merge_base_commit:{sha:.merge_base_commit.sha}}',
+    ],
+    { caller: 'slot.publication-coverage', signal: AbortSignal.timeout(timeoutMs) },
+  );
+  const data: unknown = JSON.parse(compared.stdout);
+  if (!isRecord(data) || !isRecord(data.base_commit) || !isRecord(data.merge_base_commit))
+    throw new Error('Cannot verify published ancestry');
+  return (
+    (data.status === 'ahead' || data.status === 'identical') &&
+    data.base_commit.sha === base &&
+    data.merge_base_commit.sha === base
+  );
+};
+
+export async function refIncludedInMergedPullRequest(
   vars: SlotVars,
   ref: string,
   defaultBranch: string,
   repo: string,
   exec: typeof execOnSlot,
   readMerged: ReadMergedPreparePullRequests,
+  options: MergedPullRequestReadOptions = {},
 ): Promise<boolean> {
+  const read = (command: string) =>
+    exec(vars, command, options.timeoutMs ? { timeout: options.timeoutMs } : undefined);
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
-  const head = await exec(vars, `${git} rev-parse --verify ${shellQuote(`${ref}^{commit}`)}`);
+  const head = await read(`${git} rev-parse --verify ${shellQuote(`${ref}^{commit}`)}`);
   if (head.exitCode !== 0) throw new Error(`Cannot verify ${ref}: ${head.stderr || head.stdout}`);
   for (const pr of await readMerged(repo, head.stdout.trim())) {
     if (pr.baseBranch !== defaultBranch) continue;
-    const contained = await exec(
-      vars,
-      `${git} merge-base --is-ancestor ${shellQuote(pr.mergeSha)} ${shellQuote(`origin/${defaultBranch}`)}`,
+    const contained = await read(
+      `${git} merge-base --is-ancestor ${shellQuote(pr.mergeSha)} ${shellQuote(options.defaultSha ?? `origin/${defaultBranch}`)}`,
     );
-    if (contained.exitCode === 1) continue;
-    if (contained.exitCode !== 0)
-      throw new Error(
-        `Cannot verify merged PR #${pr.number}: ${contained.stderr || contained.stdout}`,
-      );
-    const knownHead = await exec(
-      vars,
-      `${git} cat-file -e ${shellQuote(`${pr.headSha}^{commit}`)}`,
-    );
+    if (contained.exitCode !== 0 && options.defaultSha) {
+      if (
+        !(await (options.readAncestry ?? readPublishedAncestry)(
+          repo,
+          pr.mergeSha,
+          options.defaultSha,
+          options.timeoutMs ?? 5000,
+        ))
+      )
+        continue;
+    } else {
+      if (contained.exitCode === 1) continue;
+      if (contained.exitCode !== 0)
+        throw new Error(
+          `Cannot verify merged PR #${pr.number}: ${contained.stderr || contained.stdout}`,
+        );
+    }
+    if (pr.headSha === head.stdout.trim()) return true;
+    const knownHead = await read(`${git} cat-file -e ${shellQuote(`${pr.headSha}^{commit}`)}`);
+    if (knownHead.exitCode !== 0 && options.allowFetch === false) {
+      // Status reads cannot fetch a later PR head. Compare the two published
+      // identities on GitHub while retaining the local merged-default check.
+      if (
+        await (options.readAncestry ?? readPublishedAncestry)(
+          repo,
+          head.stdout.trim(),
+          pr.headSha,
+          options.timeoutMs ?? 5000,
+        )
+      )
+        return true;
+      continue;
+    }
     if (knownHead.exitCode !== 0) {
       // A later PR fix may have been pushed from another checkout before branch deletion.
       const fetched = await exec(
@@ -105,8 +169,7 @@ async function refIncludedInMergedPullRequest(
       if (fetchedHead.exitCode !== 0 || fetchedHead.stdout.trim() !== pr.headSha)
         throw new Error(`Cannot verify the retained head of merged PR #${pr.number}`);
     }
-    const included = await exec(
-      vars,
+    const included = await read(
       `${git} merge-base --is-ancestor ${shellQuote(ref)} ${shellQuote(pr.headSha)}`,
     );
     if (included.exitCode === 0) return true;

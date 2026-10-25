@@ -2,7 +2,9 @@ import type {
   ExecResult,
   RuntimeCapabilityTarget,
   SlotActionPlacement,
+  SlotRecoveryRefusal,
   SlotStatus,
+  SlotWorkspaceIdentity,
 } from '../contracts/index.js';
 import type { RecipeValidationResult } from '../recipe/index.js';
 
@@ -192,6 +194,9 @@ export interface SlotRecycleParams {
 
 export interface SlotRefreshParams {
   slotId: string;
+  /** Opt-in, fenced release + idle reset + fixture verification. */
+  release?: boolean;
+  expectedWorkspace?: SlotWorkspaceIdentity;
   /** safe (default) aborts on dirty tree or stale branch; force hard-resets through dirt. */
   mode?: 'safe' | 'force';
   /**
@@ -207,7 +212,8 @@ export interface SlotRefreshResult {
   requestId: string;
   refreshed: boolean;
   /** When refreshed=false, why we aborted. */
-  reason?: 'dirty' | 'stale';
+  reason?: SlotRecoveryRefusal;
+  detail?: string;
   branch: string;
   /** True when origin/<branch> moved past the slot's prior HEAD. */
   advanced: boolean;

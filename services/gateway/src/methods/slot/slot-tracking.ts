@@ -30,7 +30,10 @@ import { shellQuote } from '../../core/tmux.js';
 import { farmslotRoot } from '../../projects/repo-root.js';
 import type { StartRefResolution } from '../../projects/start-ref-resolution.js';
 
-import { REFRESH_INDEX_AND_UNLOCK_COMMAND } from './git-cleanup-commands.js';
+import {
+  CLEAR_INDEX_FLAGS_COMMAND,
+  REFRESH_INDEX_AND_UNLOCK_COMMAND,
+} from './git-cleanup-commands.js';
 
 export type MergeMainStrategy = 'merge' | 'rebase';
 
@@ -214,6 +217,14 @@ export async function resetSlotRepoToIdle(
     await execOnSlot(vars, `git -C ${repo} rev-parse --abbrev-ref HEAD 2>/dev/null`)
   ).stdout.trim();
 
+  if (options?.discardLocalWork) {
+    const discard = await execOnSlot(
+      vars,
+      `cd ${repo} && { ${CLEAR_INDEX_FLAGS_COMMAND}; } && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
+      { noRetry: true },
+    );
+    if (discard.exitCode !== 0) throw new Error('Confirmed local work could not be reset');
+  }
   await execOnSlot(vars, `cd ${repo} && git checkout -- . 2>/dev/null; git clean -fd 2>/dev/null`);
 
   const fetchR = await execOnSlot(

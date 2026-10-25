@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import { workspaceProbeCommand } from './workspace-probe.js';
+
+test('read-only probe binds staged, unstaged and untracked content at unchanged HEAD', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'workspace-probe-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.invalid');
+  git('config', 'commit.gpgsign', 'false');
+  git('config', 'core.hooksPath', '/dev/null');
+  await writeFile(path.join(repo, 'file.txt'), 'base\n');
+  git('add', '.');
+  git('commit', '-qm', 'test: baseline');
+  git('remote', 'add', 'origin', repo);
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const command = workspaceProbeCommand({ remoteRepo: repo }, {}, 'main');
+  const probe = () => JSON.parse(execFileSync('bash', ['-c', command], { encoding: 'utf8' }));
+  const clean = probe();
+  assert.equal(clean.dirtyCount, 0);
+  assert.equal(clean.behind, 0);
+  await writeFile(path.join(repo, 'file.txt'), 'first\n');
+  const first = probe();
+  await writeFile(path.join(repo, 'file.txt'), 'second\n');
+  const second = probe();
+  assert.equal(first.headSha, second.headSha);
+  assert.notEqual(first.dirtyFingerprint, second.dirtyFingerprint);
+  git('add', '.');
+  await writeFile(path.join(repo, 'file.txt'), 'first\n');
+  const staged = probe();
+  assert.notEqual(first.dirtyFingerprint, staged.dirtyFingerprint);
+  await writeFile(path.join(repo, 'untracked.txt'), 'one');
+  const untracked = probe();
+  await writeFile(path.join(repo, 'untracked.txt'), 'two');
+  assert.notEqual(untracked.dirtyFingerprint, probe().dirtyFingerprint);
+  const index = await readFile(path.join(repo, '.git/index'));
+  const refs = git('show-ref');
+  await probe();
+  assert.deepEqual(await readFile(path.join(repo, '.git/index')), index);
+  assert.equal(git('show-ref'), refs);
+  assert.ok((await stat(path.join(repo, '.git/index'))).isFile());
+});
