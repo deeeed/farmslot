@@ -49,7 +49,14 @@ export async function proveCompanionAcceptance(input: {
     JSON.parse(await command('idb', ['ui', 'describe-all', '--udid', simulator!, '--json']));
   const tap = async (node: UiNode) => {
     const point = centerOfRect(node.frame);
-    await command('idb', ['ui', 'tap', String(point.x), String(point.y), '--udid', simulator!]);
+    await command('idb', [
+      'ui',
+      'tap',
+      String(Math.round(point.x)),
+      String(Math.round(point.y)),
+      '--udid',
+      simulator!,
+    ]);
   };
   const dismiss = async (nodes: UiNode[]) => {
     const open = nodes.find(({ AXLabel }) => AXLabel === 'Open');
@@ -57,7 +64,12 @@ export async function proveCompanionAcceptance(input: {
       await tap(open);
       return true;
     }
-    const onboarding = nodes.find(({ AXLabel }) => AXLabel === 'Got it');
+    const onboarding = nodes.find(
+      ({ AXLabel }) =>
+        AXLabel === 'Got it' ||
+        (AXLabel === 'Continue' &&
+          nodes.some((node) => node.AXLabel?.includes('This is the developer menu'))),
+    );
     if (onboarding) {
       await tap(onboarding);
       return true;
