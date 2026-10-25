@@ -1,0 +1,395 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion retained selection refusals and playback continuity",
+  "description": "Uses startup-owned historical slot data and a real retained recording; no component or cache writes.",
+  "proofTargets": [
+    {
+      "id": "pinned-slot-refusal",
+      "claim": "Retained run A cannot share a slot view that would select current run B."
+    },
+    {
+      "id": "pinned-terminal-refusal",
+      "claim": "An ordinary pinned slot terminal is explicitly unavailable rather than opening a different or missing worktree."
+    },
+    {
+      "id": "run-terminal-refusal",
+      "claim": "The sibling run terminal does not offer a web worktree pane without an observed exact target."
+    },
+    {
+      "id": "changed-recording-refusal",
+      "claim": "Choosing an actual recording timeline span invalidates the opening artifact link."
+    },
+    {
+      "id": "playback-continuity",
+      "claim": "A real viewport size change after playback advances does not rewind the selected span."
+    },
+    {
+      "id": "navigation-only",
+      "claim": "All navigation and recording selection issue zero semantic commands."
+    }
+  ],
+  "workflow": {
+    "entry": "attach",
+    "nodes": {
+      "attach": {
+        "action": "ui.wait_for",
+        "intent": "Attach the running app; this does not assert session readiness.",
+        "test_id": "companion-quick-actions",
+        "expected": "visible",
+        "next": "open-settings"
+      },
+      "begin": {
+        "action": "command",
+        "intent": "Confirm the active connected gateway and its exact web destination.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs begin",
+        "timeout_ms": 25000,
+        "next": "begin-observed"
+      },
+      "begin-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "begin",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"begin\"",
+        "next": "slot-hud"
+      },
+      "slot-hud": {
+        "action": "app.hud",
+        "intent": "Retained run A must not share its slot current run B.",
+        "status": "running",
+        "next": "open-slot"
+      },
+      "open-slot": {
+        "action": "command",
+        "intent": "Open the real slot view pinned to retained run A.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs open-slot",
+        "timeout_ms": 25000,
+        "next": "open-slot-observed"
+      },
+      "open-slot-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "open-slot",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-slot\"",
+        "next": "open-slot-mounted"
+      },
+      "slot-menu": {
+        "action": "ui.press",
+        "intent": "Use the current visible control.",
+        "test_id": "companion-quick-actions",
+        "next": "slot-refusal"
+      },
+      "slot-refusal": {
+        "action": "command",
+        "intent": "Observe disabled sharing with the exact historical-slot reason.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs pinned-slot",
+        "timeout_ms": 25000,
+        "next": "slot-refusal-observed"
+      },
+      "slot-refusal-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "slot-refusal",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"pinned-slot\"",
+        "proves": ["pinned-slot-refusal"],
+        "next": "close-slot-menu"
+      },
+      "close-slot-menu": {
+        "action": "ui.press",
+        "intent": "Use the current visible control.",
+        "text": "Close quick actions",
+        "next": "terminal-hud"
+      },
+      "terminal-hud": {
+        "action": "app.hud",
+        "intent": "A pinned ordinary slot terminal has no exact web destination.",
+        "status": "running",
+        "next": "open-terminal"
+      },
+      "open-terminal": {
+        "action": "command",
+        "intent": "Open the ordinary slot terminal with its retained run pin.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs open-terminal",
+        "timeout_ms": 25000,
+        "next": "open-terminal-observed"
+      },
+      "open-terminal-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "open-terminal",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-terminal\"",
+        "next": "open-terminal-mounted"
+      },
+      "terminal-menu": {
+        "action": "ui.press",
+        "intent": "Use the current visible control.",
+        "test_id": "companion-quick-actions",
+        "next": "terminal-refusal"
+      },
+      "terminal-refusal": {
+        "action": "command",
+        "intent": "Refuse the pinned terminal without replacing it with current run B.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs pinned-terminal",
+        "timeout_ms": 25000,
+        "next": "terminal-refusal-observed"
+      },
+      "terminal-refusal-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "terminal-refusal",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"pinned-terminal\"",
+        "proves": ["pinned-terminal-refusal"],
+        "next": "close-terminal-menu"
+      },
+      "close-terminal-menu": {
+        "action": "ui.press",
+        "intent": "Use the current visible control.",
+        "text": "Close quick actions",
+        "next": "open-run-terminal"
+      },
+      "video-hud": {
+        "action": "app.hud",
+        "intent": "Open the actual retained recording through its normal file link.",
+        "status": "running",
+        "next": "open-video"
+      },
+      "open-video": {
+        "action": "command",
+        "intent": "Navigate to the real retained file in the existing viewer.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs open-video",
+        "timeout_ms": 25000,
+        "next": "open-video-observed"
+      },
+      "open-video-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "open-video",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-video\"",
+        "next": "video-files-mounted"
+      },
+      "video-ready": {
+        "action": "ui.wait_for",
+        "intent": "The actual native video is mounted.",
+        "test_id": "companion-evidence-video",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "next": "known-video-menu"
+      },
+      "known-video-menu": {
+        "action": "ui.press",
+        "intent": "Use the current visible control.",
+        "test_id": "companion-quick-actions",
+        "next": "known-video"
+      },
+      "known-video": {
+        "action": "command",
+        "intent": "The opening known file has enabled Copy and Share controls.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs known-video",
+        "timeout_ms": 25000,
+        "next": "known-video-observed"
+      },
+      "known-video-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "known-video",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"known-video\"",
+        "next": "close-known-menu"
+      },
+      "close-known-menu": {
+        "action": "ui.press",
+        "intent": "Use the current visible control.",
+        "text": "Close quick actions",
+        "next": "group-hud"
+      },
+      "group-hud": {
+        "action": "app.hud",
+        "intent": "Choose a real measured timeline span in this recording.",
+        "status": "running",
+        "next": "select-group"
+      },
+      "select-group": {
+        "action": "command",
+        "intent": "Press the current enabled timeline group, with paired media.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs select-group",
+        "timeout_ms": 25000,
+        "next": "select-group-observed"
+      },
+      "select-group-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "select-group",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"select-group\"",
+        "next": "changed-menu"
+      },
+      "changed-menu": {
+        "action": "ui.press",
+        "intent": "Use the current visible control.",
+        "test_id": "companion-quick-actions",
+        "next": "changed-refusal"
+      },
+      "changed-refusal": {
+        "action": "command",
+        "intent": "The new recording selection must not share the opening file.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs changed-video",
+        "timeout_ms": 25000,
+        "next": "changed-refusal-observed"
+      },
+      "changed-refusal-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "changed-refusal",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"changed-video\"",
+        "proves": ["changed-recording-refusal"],
+        "next": "close-changed-menu"
+      },
+      "close-changed-menu": {
+        "action": "ui.press",
+        "intent": "Use the current visible control.",
+        "text": "Close quick actions",
+        "next": "viewport-hud"
+      },
+      "viewport-hud": {
+        "action": "app.hud",
+        "intent": "Resize the viewport after playback advances and verify it does not rewind.",
+        "status": "running",
+        "next": "viewport-resize"
+      },
+      "viewport-resize": {
+        "action": "command",
+        "intent": "Read actual native player progress before and after the viewport changes.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs playback-continuity",
+        "timeout_ms": 45000,
+        "next": "viewport-observed"
+      },
+      "viewport-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "viewport-resize",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"playback-continuity\"",
+        "proves": ["playback-continuity"],
+        "next": "no-commands"
+      },
+      "no-commands": {
+        "action": "command",
+        "intent": "Navigation and selection have not issued any commands.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs no-commands",
+        "timeout_ms": 25000,
+        "next": "no-commands-observed"
+      },
+      "no-commands-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observed selection.",
+        "source": "no-commands",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"no-commands\"",
+        "proves": ["navigation-only"],
+        "next": "complete"
+      },
+      "complete": {
+        "action": "end",
+        "status": "pass"
+      },
+      "open-slot-mounted": {
+        "action": "command",
+        "intent": "Historical run A remains selected while its slot holds run B.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs mounted-slot",
+        "timeout_ms": 25000,
+        "next": "slot-menu"
+      },
+      "open-terminal-mounted": {
+        "action": "command",
+        "intent": "The historical terminal stays selected without substituting current run B.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs mounted-terminal",
+        "timeout_ms": 25000,
+        "next": "terminal-menu"
+      },
+      "open-run-terminal": {
+        "action": "command",
+        "intent": "Open the sibling run terminal without a worktree assumption.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs open-run-terminal",
+        "timeout_ms": 25000,
+        "next": "open-run-terminal-observed"
+      },
+      "open-run-terminal-observed": {
+        "action": "assert_output",
+        "intent": "Require real navigation without app restart.",
+        "source": "open-run-terminal",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-run-terminal\"",
+        "next": "run-terminal-mounted"
+      },
+      "run-terminal-mounted": {
+        "action": "command",
+        "intent": "The ordinary retained run has no observed web worktree target.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs mounted-run-terminal",
+        "timeout_ms": 25000,
+        "next": "run-terminal-menu"
+      },
+      "run-terminal-menu": {
+        "action": "ui.press",
+        "intent": "Inspect sharing on this real run terminal.",
+        "test_id": "companion-quick-actions",
+        "next": "run-terminal-refusal"
+      },
+      "run-terminal-refusal": {
+        "action": "command",
+        "intent": "Observe a precise refusal for the ordinary run terminal.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs run-terminal",
+        "timeout_ms": 25000,
+        "next": "run-terminal-refusal-observed"
+      },
+      "run-terminal-refusal-observed": {
+        "action": "assert_output",
+        "intent": "No missing worktree destination is offered.",
+        "source": "run-terminal-refusal",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"run-terminal\"",
+        "proves": ["run-terminal-refusal"],
+        "next": "close-run-terminal-menu"
+      },
+      "close-run-terminal-menu": {
+        "action": "ui.press",
+        "intent": "Close the inspected menu without tapping disabled actions.",
+        "text": "Close quick actions",
+        "next": "video-hud"
+      },
+      "open-settings": {
+        "action": "command",
+        "intent": "Open Settings in the same app before verifying the selected profile.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs open-settings",
+        "timeout_ms": 25000,
+        "next": "settings-mounted"
+      },
+      "settings-mounted": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the selected gateway and its web URL before sharing.",
+        "test_id": "companion-screen-settings",
+        "expected": "visible",
+        "timeout_ms": 12000,
+        "next": "begin"
+      },
+      "preview-video": {
+        "action": "ui.press",
+        "intent": "Inspect the exact retained recording in its full viewer.",
+        "text": "Preview",
+        "next": "video-ready"
+      },
+      "video-files-mounted": {
+        "action": "command",
+        "intent": "The exact retained file is focused and its Preview control is ready.",
+        "cmd": "node --import tsx scripts/agentic/view-sharing-identity-proof.mjs mounted-video-files",
+        "timeout_ms": 40000,
+        "next": "preview-video"
+      }
+    }
+  }
+}

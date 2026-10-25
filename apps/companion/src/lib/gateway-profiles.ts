@@ -19,6 +19,7 @@ import {
   mobileGatewayProfileUrlError,
   normalizeGatewayProfileUrl,
 } from './gateway-profile-validation';
+import { commandCenterUrlForProfile } from './gateway-profile-web-url';
 
 export type { GatewayProfileKind } from './gateway-profile-kind';
 export type GatewayProfileAuthMode = 'none' | 'token' | 'password';
@@ -27,6 +28,7 @@ export type GatewayProfile = {
   id: string;
   name: string;
   url: string;
+  commandCenterUrl?: string;
   kind: GatewayProfileKind;
   readonly?: boolean;
   authMode?: GatewayProfileAuthMode;
@@ -36,6 +38,7 @@ export type GatewayProfile = {
 
 const CONFIGURED_GATEWAY_URL = Constants.expoConfig?.extra?.gatewayUrl;
 const CONFIGURED_GATEWAY_AUTH_TOKEN = Constants.expoConfig?.extra?.gatewayAuthToken;
+const CONFIGURED_COMMAND_CENTER_URL = Constants.expoConfig?.extra?.commandCenterUrl;
 function isUsableConfiguredGatewayUrl(value: unknown): value is string {
   // Loopback URLs are valid for launcher, saved-profile, and USB adb-reverse flows.
   return typeof value === 'string' && value.length > 0 && isValidGatewayUrl(value);
@@ -56,6 +59,9 @@ export const DEFAULT_GATEWAY_PROFILES: GatewayProfile[] = DEFAULT_GATEWAY_URL
         id: 'configured-gateway',
         name: 'Configured Gateway',
         url: DEFAULT_GATEWAY_URL,
+        ...(typeof CONFIGURED_COMMAND_CENTER_URL === 'string'
+          ? { commandCenterUrl: CONFIGURED_COMMAND_CENTER_URL }
+          : {}),
         kind: DEFAULT_GATEWAY_URL.startsWith('wss://') ? 'remote' : 'custom',
         readonly: true,
         authMode: DEFAULT_PROFILE_SECRET ? 'token' : 'none',
@@ -281,6 +287,7 @@ export function mergeGatewayProfiles(saved: GatewayProfile[]): GatewayProfile[] 
     byId.set(profile.id, {
       ...defaultProfile,
       ...profile,
+      commandCenterUrl: commandCenterUrlForProfile(profile, defaultProfile),
       kind:
         profile.kind === 'remote' || profile.kind === 'tailnet'
           ? profile.kind

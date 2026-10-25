@@ -22,6 +22,7 @@ import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { RunLinkedTickets } from '../../components/RunLinkedTickets';
 import { RunElapsedTime, RunPipelineMini } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
+import { useSharedViewSelection } from '../../features/quick-actions/QuickActionsProvider';
 import {
   type ArtifactHttpHeaders,
   artifactUrlForEntry,
@@ -668,6 +669,11 @@ export default function RunsScreen() {
   const runFilterCount = useRunFilterStore((s) => s.activeCount)();
   const initRunFilters = useRunFilterStore((s) => s.init);
   const [showAllRuns, setShowAllRuns] = useState(false);
+  useSharedViewSelection({
+    pathname: '/runs',
+    params: {},
+    runsTab: showAllRuns ? 'all' : 'active',
+  });
   const hasFilters = filters.projects.length > 0 || filters.machines.length > 0;
 
   useEffect(() => {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
+
 - Expose current CI-watch progress and total deadlines so clients use the monitor’s configured windows.
 
 - Expose checklist timing in task progress and per-step worker durations in monthly analytics.
@@ -15,6 +17,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Register source-linked PR-completion criteria without replacing original obligations, and bind readiness to acceptance and proof-contract revisions.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.72.0 - 2026-10-25
+
+- Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
 
 ## 0.71.1 - 2026-10-26
 

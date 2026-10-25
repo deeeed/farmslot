@@ -2,7 +2,6 @@ import React, { useContext, useMemo } from 'react';
 import {
   Alert,
   Linking,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -15,8 +14,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WebView from 'react-native-webview';
 
+import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
+
 import { RecipeHudContext } from '../farmslot/RecipeBridgeProvider';
 import { RecipeHud } from '../farmslot/RecipeHud';
+import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
 import { formatDocument } from '../lib/document-format';
 import { isolatedReportHtml, REPORT_DOCUMENT_BASE, reportNavigation } from '../lib/document-html';
 import { colors, fonts, radii, spacing } from '../lib/theme';
@@ -34,8 +36,10 @@ export function DocumentViewer({
   html,
   onClose,
   children,
+  sharedArtifact,
 }: {
   children?: React.ReactNode;
+  sharedArtifact?: SharedRunArtifactSelection;
   visible: boolean;
   title: string;
   body: string;
@@ -58,6 +62,19 @@ export function DocumentViewer({
   if (!visible) return null;
   return (
     <Modal
+      sharedView={
+        sharedArtifact
+          ? {
+              pathname: '/artifacts',
+              params: {
+                runId: sharedArtifact.runId,
+                artifact: sharedArtifact.path,
+                recipeRun: sharedArtifact.recipeRunId,
+              },
+              artifactSelection: sharedArtifact,
+            }
+          : undefined
+      }
       visible={visible}
       animationType="slide"
       presentationStyle="fullScreen"

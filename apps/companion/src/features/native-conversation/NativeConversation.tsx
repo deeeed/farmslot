@@ -1,5 +1,8 @@
 import { Stack, useRouter } from 'expo-router';
+import { useMemo } from 'react';
 import { Pressable, Text } from 'react-native';
+
+import { useSharedViewSelection } from '../quick-actions/QuickActionsProvider';
 
 import { NativeConversationScreen } from './NativeConversationScreen';
 import {
@@ -16,6 +19,21 @@ export function NativeConversation({
 }) {
   const router = useRouter();
   const screen = useNativeConversationController(params);
+  const selected = screen.viewModel.session;
+  useSharedViewSelection(
+    useMemo(
+      () => ({
+        pathname: '/native',
+        params: {
+          sessionId: selected?.id,
+          executionNodeId: selected?.executionNodeId,
+          sessionObserved: selected ? '1' : '0',
+          workerManaged: selected?.workerManaged ? '1' : '0',
+        },
+      }),
+      [selected?.id, selected?.executionNodeId, selected?.workerManaged],
+    ),
+  );
   return (
     <>
       {!embedded ? (

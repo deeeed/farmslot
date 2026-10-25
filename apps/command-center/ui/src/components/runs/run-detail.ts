@@ -66,6 +66,7 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
+import { hashParams } from '../../utils/url-state.js';
 import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
@@ -187,6 +188,7 @@ export class RunDetail extends RunDetailState {
   private _visualReviewScope = '';
   private _evidenceGroupId: string | null = null;
   private _evidenceTaskRelative = true;
+  private _sharedPanelFocusKey = '';
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (
@@ -304,6 +306,20 @@ export class RunDetail extends RunDetailState {
       changed.has('_taskProgressLoading')
     )
       this._applyEvidenceArtifactFromHash(true);
+    this._focusSharedPanel();
+  }
+
+  private _focusSharedPanel() {
+    if (!this.run || !isRunDetailHashForRun(this.run.id)) return;
+    const panel = hashParams().get('panel');
+    if (panel !== 'timeline' && panel !== 'evidence') return;
+    const key = `${this.run.id}:${panel}`;
+    if (key === this._sharedPanelFocusKey) return;
+    const target = this.renderRoot.querySelector(`[data-shared-run-panel="${panel}"]`);
+    if (!(target instanceof HTMLElement) || !target.getBoundingClientRect().height) return;
+    this._sharedPanelFocusKey = key;
+    target.scrollIntoView({ block: 'start' });
+    target.focus({ preventScroll: true });
   }
 
   private _maybeRefreshTaskProgress(): void {
@@ -1018,6 +1034,8 @@ export class RunDetail extends RunDetailState {
     if (isRunDetailHashForRun(this.runId)) {
       this._applySelectedStepFromHash();
       this._applyEvidenceArtifactFromHash();
+      this._sharedPanelFocusKey = '';
+      this.requestUpdate();
     }
   };
 
@@ -1722,6 +1740,7 @@ export class RunDetail extends RunDetailState {
 
   private _renderRunEvidence(run: Run) {
     return renderRunEvidence(run, {
+      selectedSharedEvidence: hashParams().get('panel') === 'evidence',
       taskProgress: this.taskProgress,
       evidenceLightboxItems: this._evidenceLightboxItems,
       evidenceLightboxOpen: this._evidenceLightboxOpen,

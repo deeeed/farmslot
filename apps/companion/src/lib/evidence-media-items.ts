@@ -1,4 +1,5 @@
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import type { SharedRunArtifactOwner } from '@farmslot/protocol/surfaces/view-links';
 
 import type { MediaViewerItem } from '../components/MediaViewer';
 
@@ -40,6 +41,7 @@ export function evidenceMediaItems(
   urlFor: (artifact: ArtifactManifestEntry) => string,
   authHeaders: ArtifactHttpHeaders,
   evidenceModel?: EvidenceReviewModel | null,
+  sharedOwner?: SharedRunArtifactOwner,
 ): MediaViewerItem[] {
   const seen = new Set<string>();
   return artifacts.flatMap((artifact) => {
@@ -59,6 +61,19 @@ export function evidenceMediaItems(
         timelinePath: artifact.timelinePath,
         resolveArtifactUrl: (path) => urlFor({ ...artifact, path }),
         evidenceModel: evidenceModel ?? undefined,
+        ...(sharedOwner
+          ? {
+              sharedArtifact: {
+                ...sharedOwner,
+                path: artifact.path,
+                recipeRunId:
+                  artifact.recipeRunId &&
+                  artifact.recipeRunId !== CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
+                    ? artifact.recipeRunId
+                    : sharedOwner.recipeRunId,
+              },
+            }
+          : {}),
       },
     ];
   });
@@ -74,6 +89,7 @@ export function selectedEvidenceMediaItem(
   path: string,
   resolveArtifactUrl: (path: string) => string,
   authHeaders: ArtifactHttpHeaders,
+  sharedOwner?: SharedRunArtifactOwner,
 ): MediaViewerItem {
   return {
     uri: resolveArtifactUrl(path),
@@ -84,6 +100,9 @@ export function selectedEvidenceMediaItem(
       classifyArtifact(path),
     evidenceModel: model,
     initialTraceIndex: model.playback.clip?.traceIndex,
+    ...(sharedOwner
+      ? { sharedArtifact: { ...sharedOwner, path, traceIndex: model.playback.clip?.traceIndex } }
+      : {}),
     authHeaders,
     resolveArtifactUrl,
   };
@@ -99,3 +118,5 @@ export function evidenceViewerSelection(
     return { items: comparison, index: comparison.findIndex((item) => item.uri === uri) };
   return { items: artifacts, index: uri ? artifacts.findIndex((item) => item.uri === uri) : -1 };
 }
+
+export { mediaShareView } from './media-share-view';

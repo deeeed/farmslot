@@ -47,6 +47,7 @@ interface AppConfigEnv {
   EAS_PROJECT_ID: string;
   GOOGLE_SERVICES_FILE: string;
   EXPO_PUBLIC_GATEWAY_URL: string;
+  EXPO_PUBLIC_COMMAND_CENTER_URL: string;
   FARMSLOT_REMOTE_GATEWAY_URL: string;
   FARMSLOT_REMOTE_GATEWAY_TOKEN: string;
   EXPO_PUBLIC_SHERPA_ASR_MODEL_DIR: string;
@@ -62,6 +63,7 @@ const envSchema = Joi.object({
   EAS_PROJECT_ID: Joi.string().uuid().default('5673e87d-de68-4685-9d17-03533e7d63de'),
   GOOGLE_SERVICES_FILE: Joi.string().allow('').default(''),
   EXPO_PUBLIC_GATEWAY_URL: Joi.string().allow('').default(''),
+  EXPO_PUBLIC_COMMAND_CENTER_URL: Joi.string().allow('').default(''),
   FARMSLOT_REMOTE_GATEWAY_URL: Joi.string().allow('').default(''),
   FARMSLOT_REMOTE_GATEWAY_TOKEN: Joi.string().allow('').default(''),
   EXPO_PUBLIC_SHERPA_ASR_MODEL_DIR: Joi.string().allow('').default(''),
@@ -240,6 +242,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         projectId: env.EAS_PROJECT_ID,
       },
       gatewayUrl: env.EXPO_PUBLIC_GATEWAY_URL,
+      commandCenterUrl: env.EXPO_PUBLIC_COMMAND_CENTER_URL,
       remoteGatewayUrl: env.FARMSLOT_REMOTE_GATEWAY_URL,
       gatewayAuthToken: !isProduction ? remoteGatewayToken : '',
       sherpaAsrModelDir: env.EXPO_PUBLIC_SHERPA_ASR_MODEL_DIR,

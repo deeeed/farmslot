@@ -75,12 +75,16 @@ import {
 } from '../../lib/artifact-url';
 import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
 import { currentFarmConnection } from '../../lib/connection-authority';
+import {
+  type DecisionDocumentContent,
+  decisionDocumentSelection,
+  decisionEvidenceMediaItems,
+} from '../../lib/decision-evidence-media';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
 import { decisionResolveRequest, gateActionReasons } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
 import {
-  evidenceMediaItems,
   evidenceViewerSelection,
   recordedEvidenceArtifactUrl,
   selectedEvidenceMediaItem,
@@ -234,10 +238,7 @@ export default function DecisionDetailScreen({
   const attestationReason =
     evidenceReason && evidenceReason.decisionId === decision?.id ? evidenceReason.text : '';
   const [viewerUri, setViewerUri] = useState<string | null>(null);
-  const [documentViewer, setDocumentViewer] = useState<{
-    title: string;
-    body: string;
-  } | null>(null);
+  const [documentViewer, setDocumentViewer] = useState<DecisionDocumentContent | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
   useEffect(() => {
     // ADR-063 Amendment 5: a gate lists its lineages; rows preselect their runner's latest
@@ -861,6 +862,11 @@ export default function DecisionDetailScreen({
   const openDocumentArtifact = useCallback(
     (artifact: ArtifactManifestEntry) => {
       if (!presentation?.runId) return;
+      const sharedArtifact = decisionDocumentSelection(
+        presentation.runId,
+        sourceRun?.slotId ?? undefined,
+        artifact,
+      );
       const url = recordedEvidenceArtifactUrl(
         gatewayUrl,
         presentation.runId,
@@ -876,7 +882,13 @@ export default function DecisionDetailScreen({
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();
         })
-        .then((body) => setDocumentViewer({ title: documentTitle(artifact.path), body }))
+        .then((body) =>
+          setDocumentViewer({
+            title: documentTitle(artifact.path),
+            body,
+            sharedArtifact,
+          }),
+        )
         .catch((err: Error) => {
           // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
           if (err.name === 'AbortError') return;
@@ -886,7 +898,7 @@ export default function DecisionDetailScreen({
           if (!controller.signal.aborted) setLoadingDocument(null);
         });
     },
-    [artifactAuthHeaders, checkedEvidenceModel, gatewayUrl, presentation?.runId],
+    [artifactAuthHeaders, checkedEvidenceModel, gatewayUrl, presentation?.runId, sourceRun?.slotId],
   );
 
   const outputReport = useRunOutputReport({
@@ -1010,41 +1022,30 @@ export default function DecisionDetailScreen({
     setComparisonViewerItems(null);
     setViewerUri(uri);
   };
-  const visualViewerItems = useMemo(() => {
-    if (!presentation?.runId) return [];
-    const runId = presentation.runId;
-    const items = evidenceMediaItems(
-      presentation.artifactManifest,
-      (artifact) => recordedEvidenceArtifactUrl(gatewayUrl, runId, checkedEvidenceModel, artifact),
+  const visualViewerItems = useMemo(
+    () =>
+      decisionEvidenceMediaItems({
+        runId: presentation?.runId,
+        slotId: sourceRun?.slotId ?? undefined,
+        artifacts: presentation?.artifactManifest ?? [],
+        gatewayUrl,
+        authHeaders: artifactAuthHeaders,
+        recordedModel: checkedEvidenceModel,
+        evidenceModel: humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel,
+        recipeFallbackPairs,
+      }),
+    [
       artifactAuthHeaders,
-      humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel,
-    );
-
-    for (const pair of recipeFallbackPairs) {
-      for (const artifact of [pair.before, pair.after]) {
-        items.push({
-          uri: artifact.url,
-          title: artifact.label ?? artifact.path,
-          mediaType: classifyArtifact(artifact),
-          authHeaders: artifactAuthHeaders,
-        });
-      }
-    }
-
-    const seen = new Set<string>();
-    return items.filter((item) => {
-      if (seen.has(item.uri)) return false;
-      seen.add(item.uri);
-      return true;
-    });
-  }, [
-    artifactAuthHeaders,
-    gatewayUrl,
-    presentation?.artifactManifest,
-    presentation?.runId,
-    recipeFallbackPairs,
-    checkedEvidenceModel,
-  ]);
+      gatewayUrl,
+      presentation?.artifactManifest,
+      presentation?.runId,
+      recipeFallbackPairs,
+      checkedEvidenceModel,
+      sourceRun?.slotId,
+      humanGate?.acceptance.evidenceModel,
+      outputAcceptance.evidenceModel,
+    ],
+  );
 
   if (!decision || !presentation) {
     return (
@@ -1642,6 +1643,7 @@ export default function DecisionDetailScreen({
                   (path) =>
                     recordedEvidenceArtifactUrl(gatewayUrl, presentation.runId!, model, path),
                   artifactAuthHeaders,
+                  { runId: presentation.runId!, slotId: sourceRun?.slotId ?? undefined },
                 );
                 setComparisonViewerItems([item]);
                 setViewerUri(item.uri);
@@ -2058,6 +2060,7 @@ export default function DecisionDetailScreen({
         />
         <DocumentViewer
           visible={isFocused && !!documentViewer}
+          sharedArtifact={documentViewer?.sharedArtifact}
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
           onClose={() => setDocumentViewer(null)}

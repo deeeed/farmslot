@@ -291,8 +291,8 @@ export function buildTmuxWorkerRows(
   }
   return rows;
 }
-export function firstRouteParam(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
+export function firstRouteParam(value: string | readonly string[] | undefined): string | undefined {
+  return typeof value === 'string' ? value : value?.[0];
 }
 
 function parseWorkerRefParam(value: string | undefined): TmuxWorkerRef | null {
@@ -328,7 +328,7 @@ function parseWorkerRefParam(value: string | undefined): TmuxWorkerRef | null {
 }
 
 export function tmuxWorkerRefFromRouteParams(
-  params: Record<string, string | string[] | undefined>,
+  params: Readonly<Record<string, string | readonly string[] | undefined>>,
 ): TmuxWorkerRef | null {
   const encodedRef = parseWorkerRefParam(firstRouteParam(params.workerRef));
   if (encodedRef) return encodedRef;

@@ -1,0 +1,281 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion exact file and History links",
+  "description": "Uses real retained source files and existing mounted views; no component/cache state injection.",
+  "proofTargets": [
+    {
+      "id": "modal-link",
+      "claim": "The single native document modal action copies a real file URL that renders that same retained file in web."
+    },
+    {
+      "id": "history-link",
+      "claim": "The actual native History toggle generates an explicitly unfiltered web History view with the independent control run visible."
+    }
+  ],
+  "workflow": {
+    "entry": "attach",
+    "nodes": {
+      "attach": {
+        "action": "ui.wait_for",
+        "intent": "The existing app is ready to open its retained files.",
+        "test_id": "companion-quick-actions",
+        "expected": "visible",
+        "next": "files"
+      },
+      "files": {
+        "action": "command",
+        "intent": "Observe the actual current view and its link.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs open-files",
+        "timeout_ms": 25000,
+        "next": "files-observed"
+      },
+      "files-observed": {
+        "action": "assert_output",
+        "intent": "Require the measured current selection.",
+        "source": "files",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-files\"",
+        "next": "files-visible"
+      },
+      "files-visible": {
+        "action": "ui.wait_for",
+        "intent": "The retained report is listed in the source run.",
+        "text_contains": ["view-sharing-report.md"],
+        "expected": "visible",
+        "next": "open-document"
+      },
+      "open-document": {
+        "action": "ui.press",
+        "intent": "Read the real retained document through its existing card.",
+        "text": "Tap to read",
+        "next": "body"
+      },
+      "body": {
+        "action": "ui.wait_for",
+        "intent": "The displayed text belongs to the requested retained file.",
+        "text_contains": ["The displayed document belongs to the retained source run."],
+        "expected": "visible",
+        "next": "hud-document"
+      },
+      "hud-document": {
+        "action": "app.hud",
+        "intent": "Record the current document and its shared link.",
+        "status": "running",
+        "next": "document-image"
+      },
+      "document-image": {
+        "action": "ui.screenshot",
+        "intent": "The native modal shows the actual retained document.",
+        "path": "native-document.png",
+        "covers": ["modal-link"],
+        "next": "document-menu"
+      },
+      "document-menu": {
+        "action": "ui.press",
+        "intent": "Use the single quick action inside the document modal.",
+        "test_id": "companion-quick-actions",
+        "next": "document-copy"
+      },
+      "document-copy": {
+        "action": "ui.press",
+        "intent": "Copy this displayed file rather than its parent list.",
+        "test_id": "companion-copy-view-link",
+        "next": "document-clipboard"
+      },
+      "document-clipboard": {
+        "action": "command",
+        "intent": "Observe the actual current view and its link.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs document-clipboard",
+        "timeout_ms": 25000,
+        "next": "document-clipboard-observed"
+      },
+      "document-clipboard-observed": {
+        "action": "assert_output",
+        "intent": "Require the measured current selection.",
+        "source": "document-clipboard",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"document-clipboard\"",
+        "next": "open-document-web",
+        "proves": ["modal-link"]
+      },
+      "open-document-web": {
+        "action": "command",
+        "intent": "Observe the actual current view and its link.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs open-document-web",
+        "timeout_ms": 25000,
+        "next": "open-document-web-observed"
+      },
+      "open-document-web-observed": {
+        "action": "assert_output",
+        "intent": "Require the measured current selection.",
+        "source": "open-document-web",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-document-web\"",
+        "next": "document-web"
+      },
+      "document-web": {
+        "action": "command",
+        "intent": "Observe the actual current view and its link.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs document-web",
+        "timeout_ms": 25000,
+        "next": "document-web-observed"
+      },
+      "document-web-observed": {
+        "action": "assert_output",
+        "intent": "Require the measured current selection.",
+        "source": "document-web",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"document-web\"",
+        "next": "close-menu",
+        "proves": ["modal-link"]
+      },
+      "close-menu": {
+        "action": "ui.key_press",
+        "intent": "Close the current quick-action menu.",
+        "key": "Back",
+        "next": "close-document"
+      },
+      "close-document": {
+        "action": "ui.press",
+        "intent": "Return from the observed document to its file list.",
+        "text": "Close document",
+        "next": "runs"
+      },
+      "runs": {
+        "action": "command",
+        "intent": "Observe the actual current view and its link.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs open-runs",
+        "timeout_ms": 25000,
+        "next": "runs-observed"
+      },
+      "runs-observed": {
+        "action": "assert_output",
+        "intent": "Require the measured current selection.",
+        "source": "runs",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-runs\"",
+        "next": "queue"
+      },
+      "queue": {
+        "action": "ui.wait_for",
+        "intent": "The actual review collection is mounted.",
+        "text_contains": ["Review queue"],
+        "expected": "visible",
+        "next": "history"
+      },
+      "history": {
+        "action": "command",
+        "intent": "Select History only when the current collection is still Active.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs ensure-history",
+        "timeout_ms": 20000,
+        "next": "history-observed"
+      },
+      "history-visible": {
+        "action": "ui.wait_for",
+        "intent": "The collection now includes retained history.",
+        "text_contains": ["Review history"],
+        "expected": "visible",
+        "next": "hud-history"
+      },
+      "hud-history": {
+        "action": "app.hud",
+        "intent": "Record the displayed History scope and empty filters.",
+        "status": "running",
+        "next": "history-image"
+      },
+      "history-image": {
+        "action": "ui.screenshot",
+        "intent": "The real History toggle selects this collection.",
+        "path": "native-history.png",
+        "covers": ["history-link"],
+        "next": "history-menu"
+      },
+      "history-menu": {
+        "action": "ui.press",
+        "intent": "Share the exact displayed History collection.",
+        "test_id": "companion-quick-actions",
+        "next": "history-copy"
+      },
+      "history-copy": {
+        "action": "ui.press",
+        "intent": "Copy History without inheriting a browser filter.",
+        "test_id": "companion-copy-view-link",
+        "next": "history-clipboard"
+      },
+      "history-clipboard": {
+        "action": "command",
+        "intent": "Observe the actual current view and its link.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs history-clipboard",
+        "timeout_ms": 25000,
+        "next": "history-clipboard-observed"
+      },
+      "history-clipboard-observed": {
+        "action": "assert_output",
+        "intent": "Require the measured current selection.",
+        "source": "history-clipboard",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"history-clipboard\"",
+        "next": "saved-browser-filter",
+        "proves": ["history-link"]
+      },
+      "open-history-web": {
+        "action": "command",
+        "intent": "Observe the actual current view and its link.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs open-history-web",
+        "timeout_ms": 25000,
+        "next": "open-history-web-observed"
+      },
+      "open-history-web-observed": {
+        "action": "assert_output",
+        "intent": "Require the measured current selection.",
+        "source": "open-history-web",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-history-web\"",
+        "next": "history-web"
+      },
+      "history-web": {
+        "action": "command",
+        "intent": "Observe the actual current view and its link.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs history-web",
+        "timeout_ms": 25000,
+        "next": "history-web-observed"
+      },
+      "history-web-observed": {
+        "action": "assert_output",
+        "intent": "Require the measured current selection.",
+        "source": "history-web",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"history-web\"",
+        "next": "done",
+        "proves": ["history-link"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "saved-browser-filter": {
+        "action": "command",
+        "intent": "Retain nonempty browser filters through normal navigation before opening the shared view.",
+        "cmd": "node scripts/agentic/view-sharing-selection-proof.mjs stage-browser-filters",
+        "timeout_ms": 45000,
+        "next": "saved-browser-filter-observed"
+      },
+      "saved-browser-filter-observed": {
+        "action": "assert_output",
+        "intent": "The browser has an independently observed prior filter.",
+        "source": "saved-browser-filter",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"stage-browser-filters\"",
+        "next": "open-history-web"
+      },
+      "history-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual displayed History scope before copying.",
+        "source": "history",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"ensure-history\"",
+        "next": "history-visible"
+      }
+    }
+  }
+}

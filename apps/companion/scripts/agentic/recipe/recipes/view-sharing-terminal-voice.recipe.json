@@ -1,0 +1,155 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion current-terminal Voice",
+  "description": "Uses only the prepared private Node receiver and existing client paths; no provider or worker launch.",
+  "proofTargets": [
+    {
+      "id": "current-terminal-voice",
+      "claim": "Voice on an existing terminal uses its own recorder and delivers exactly one reviewed instruction to the exact owned receiver without an old run context."
+    }
+  ],
+  "workflow": {
+    "entry": "attach",
+    "nodes": {
+      "attach": {
+        "action": "ui.wait_for",
+        "intent": "The existing Companion is ready for this explicit gesture.",
+        "test_id": "companion-quick-actions",
+        "expected": "visible",
+        "next": "begin"
+      },
+      "begin": {
+        "action": "command",
+        "intent": "Observe the current worker and explicit gesture boundary.",
+        "cmd": "node scripts/agentic/view-sharing-voice-guards.mjs begin",
+        "next": "begin-observed"
+      },
+      "begin-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual worker observation.",
+        "source": "begin",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"begin\"",
+        "next": "worker"
+      },
+      "worker": {
+        "action": "command",
+        "intent": "Observe the current worker and explicit gesture boundary.",
+        "cmd": "node scripts/agentic/view-sharing-voice-guards.mjs open-worker",
+        "next": "worker-observed"
+      },
+      "worker-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual worker observation.",
+        "source": "worker",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-worker\"",
+        "next": "worker-mounted"
+      },
+      "worker-mounted": {
+        "action": "ui.wait_for",
+        "intent": "The exact existing worker terminal is visible.",
+        "test_id": "companion-screen-worker-terminal",
+        "expected": "visible",
+        "next": "menu"
+      },
+      "menu": {
+        "action": "ui.press",
+        "intent": "Use the same quick actions on the current terminal.",
+        "test_id": "companion-quick-actions",
+        "next": "voice"
+      },
+      "voice": {
+        "action": "ui.press",
+        "intent": "Start this terminal\u2019s existing foreground recorder.",
+        "test_id": "companion-quick-voice",
+        "next": "recorder"
+      },
+      "recorder": {
+        "action": "ui.wait_for",
+        "intent": "The current terminal recorder is actually listening.",
+        "test_id": "worker-voice-record-widget",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "next": "hud-recorder-image"
+      },
+      "recorder-image": {
+        "action": "ui.screenshot",
+        "intent": "Retain the current terminal\u2019s listening recorder.",
+        "path": "direct-recorder.png",
+        "next": "stop"
+      },
+      "stop": {
+        "action": "ui.press",
+        "intent": "Stop the real microphone capture before editing.",
+        "test_id": "worker-voice-record-widget-primary",
+        "next": "editor"
+      },
+      "editor": {
+        "action": "command",
+        "intent": "The current recorder must settle before the instruction can be edited.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs wait-editor",
+        "timeout_ms": 35000,
+        "next": "edit"
+      },
+      "edit": {
+        "action": "ui.set_input",
+        "intent": "Review an instruction for only this current terminal.",
+        "test_id": "worker-voice-instruction",
+        "value": "Explain only this terminal.",
+        "next": "hud-review"
+      },
+      "review": {
+        "action": "command",
+        "intent": "Observe the current worker and explicit gesture boundary.",
+        "cmd": "node scripts/agentic/view-sharing-voice-guards.mjs review",
+        "next": "review-observed"
+      },
+      "review-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual worker observation.",
+        "source": "review",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"review\"",
+        "next": "send"
+      },
+      "send": {
+        "action": "ui.press",
+        "intent": "Send the reviewed instruction to the current target.",
+        "test_id": "worker-voice-send",
+        "next": "proof"
+      },
+      "proof": {
+        "action": "command",
+        "intent": "Observe the current worker and explicit gesture boundary.",
+        "cmd": "node scripts/agentic/view-sharing-voice-guards.mjs sent",
+        "next": "proof-observed"
+      },
+      "proof-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual worker observation.",
+        "source": "proof",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"sent\"",
+        "next": "done",
+        "proves": ["current-terminal-voice"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "hud-recorder-image": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Retain the current terminal\u2019s listening recorder.",
+        "next": "recorder-image"
+      },
+      "hud-review": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observe the current worker and explicit gesture boundary.",
+        "next": "review"
+      }
+    }
+  }
+}

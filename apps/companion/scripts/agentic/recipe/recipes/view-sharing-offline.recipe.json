@@ -1,0 +1,94 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion offline current-view copy",
+  "description": "Requires the explicit private Gateway/proxy receipts and a warm mounted run; never injects client or cache state.",
+  "proofTargets": [
+    {
+      "id": "offline-copy",
+      "claim": "The actual offline Android clipboard preserves the displayed run URL without a worker command."
+    }
+  ],
+  "workflow": {
+    "entry": "begin",
+    "nodes": {
+      "begin": {
+        "action": "command",
+        "intent": "Record the actual owned outage and current instruction history.",
+        "cmd": "node scripts/agentic/view-sharing-offline-proof.mjs begin",
+        "next": "visible"
+      },
+      "visible": {
+        "action": "ui.wait_for",
+        "intent": "The retained source run is still displayed while offline.",
+        "text_contains": ["Shared run target"],
+        "expected": "visible",
+        "next": "menu"
+      },
+      "menu": {
+        "action": "ui.press",
+        "intent": "Describe the current retained run without refreshing it.",
+        "test_id": "companion-quick-actions",
+        "next": "hud-image"
+      },
+      "image": {
+        "action": "ui.screenshot",
+        "intent": "Retain the offline view and its available Copy action.",
+        "path": "offline-menu.png",
+        "next": "copy",
+        "covers": ["offline-copy"]
+      },
+      "copy": {
+        "action": "ui.press",
+        "intent": "Copy the displayed run even while its Gateway is unavailable.",
+        "test_id": "companion-copy-view-link",
+        "next": "clipboard"
+      },
+      "clipboard": {
+        "action": "command",
+        "intent": "Measure the actual OS clipboard without restarting Companion.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs clipboard",
+        "next": "clipboard-proved"
+      },
+      "clipboard-proved": {
+        "action": "assert_output",
+        "intent": "The native clipboard must preserve the exact run selection.",
+        "source": "clipboard",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"clipboard\"",
+        "proves": ["offline-copy"],
+        "next": "proof"
+      },
+      "proof": {
+        "action": "command",
+        "intent": "Compare the offline clipboard and instruction counters.",
+        "cmd": "node scripts/agentic/view-sharing-offline-proof.mjs copied",
+        "next": "proved"
+      },
+      "proved": {
+        "action": "assert_output",
+        "intent": "Offline sharing must keep the same URL and send no instruction.",
+        "source": "proof",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"copied\"",
+        "proves": ["offline-copy"],
+        "next": "close-menu"
+      },
+      "close-menu": {
+        "action": "ui.key_press",
+        "intent": "Return to the retained run after copying.",
+        "key": "Back",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "hud-image": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Retain the offline view and its available Copy action.",
+        "next": "image"
+      }
+    }
+  }
+}

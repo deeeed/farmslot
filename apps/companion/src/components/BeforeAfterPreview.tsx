@@ -4,7 +4,6 @@ import {
   Image,
   type ImageStyle,
   type LayoutChangeEvent,
-  Modal,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
@@ -21,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 
+import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,

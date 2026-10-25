@@ -1,0 +1,157 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion web-profile state",
+  "description": "Complements the original guard recording with direct observations of the actual profile editor and validation result.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["webBase"],
+    "properties": {
+      "webBase": {
+        "type": "string"
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "invalid-url",
+      "claim": "The real profile form rejects a credential-bearing web URL with its exact validation error."
+    },
+    {
+      "id": "profile-url-writer",
+      "claim": "The real profile form saves the explicit Command Center URL and shows that exact value after completion."
+    }
+  ],
+  "workflow": {
+    "entry": "attach",
+    "nodes": {
+      "attach": {
+        "action": "ui.wait_for",
+        "intent": "The existing Companion is ready to edit its profile.",
+        "test_id": "companion-quick-actions",
+        "expected": "visible",
+        "next": "settings"
+      },
+      "settings": {
+        "action": "command",
+        "intent": "Observe the actual profile editor and its result.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs open-settings",
+        "timeout_ms": 45000,
+        "next": "settings-observed"
+      },
+      "settings-observed": {
+        "action": "assert_output",
+        "intent": "Require the exact native editor state.",
+        "source": "settings",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-settings\"",
+        "next": "editor"
+      },
+      "editor": {
+        "action": "command",
+        "intent": "Observe the actual profile editor and its result.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs find-url-editor",
+        "timeout_ms": 45000,
+        "next": "editor-observed"
+      },
+      "editor-observed": {
+        "action": "assert_output",
+        "intent": "Require the exact native editor state.",
+        "source": "editor",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"find-url-editor\"",
+        "next": "bad-url"
+      },
+      "bad-url": {
+        "action": "command",
+        "intent": "Type the web destination through the native input provider.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs enter-invalid",
+        "timeout_ms": 45000,
+        "next": "bad-url-observed"
+      },
+      "save-bad": {
+        "action": "ui.press",
+        "intent": "Validate the destination through the existing profile form.",
+        "test_id": "companion-save-command-center-url-configured-gateway",
+        "next": "hud-invalid-state"
+      },
+      "invalid-state": {
+        "action": "command",
+        "intent": "Observe the actual profile editor and its result.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs invalid-url",
+        "timeout_ms": 45000,
+        "next": "invalid-state-observed"
+      },
+      "invalid-state-observed": {
+        "action": "assert_output",
+        "intent": "Require the exact native editor state.",
+        "source": "invalid-state",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"invalid-url\"",
+        "next": "good-url",
+        "proves": ["invalid-url"]
+      },
+      "good-url": {
+        "action": "command",
+        "intent": "Type the web destination through the native input provider.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs enter-valid",
+        "timeout_ms": 45000,
+        "next": "good-url-observed"
+      },
+      "save-good": {
+        "action": "ui.press",
+        "intent": "Save only this profile\u2019s web destination.",
+        "test_id": "companion-save-command-center-url-configured-gateway",
+        "next": "hud-saved-state"
+      },
+      "saved-state": {
+        "action": "command",
+        "intent": "Observe the actual profile editor and its result.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs restored-url",
+        "timeout_ms": 45000,
+        "next": "saved-state-observed"
+      },
+      "saved-state-observed": {
+        "action": "assert_output",
+        "intent": "Require the exact native editor state.",
+        "source": "saved-state",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"restored-url\"",
+        "next": "done",
+        "proves": ["profile-url-writer"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "bad-url-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual native field to match the typed destination.",
+        "source": "bad-url",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"enter-invalid\"",
+        "next": "save-bad"
+      },
+      "good-url-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual native field to match the typed destination.",
+        "source": "good-url",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"enter-valid\"",
+        "next": "save-good"
+      },
+      "hud-invalid-state": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observe the actual profile editor and its result.",
+        "next": "invalid-state"
+      },
+      "hud-saved-state": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observe the actual profile editor and its result.",
+        "next": "saved-state"
+      }
+    }
+  }
+}

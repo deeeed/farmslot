@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Prove shared-link deployment binding and exact run, retained file and collection receipt through the existing browser tools.
+
 - Add read-only CI-watch card proof for check counts and live poll/timeout text.
 
 - Add a read-only browser probe for completed checklist durations and live step timing.

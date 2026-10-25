@@ -20,6 +20,7 @@ import {
   type RunRecipeRunsForRunResult,
   type RunRefreshMirrorResult,
 } from '@farmslot/protocol';
+import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
 import { ArtifactCard } from '../../components/ArtifactCard';
 import { DocumentViewer } from '../../components/DocumentViewer';
@@ -128,9 +129,11 @@ export default function ArtifactViewerScreen() {
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
-  const [documentViewer, setDocumentViewer] = useState<{ title: string; body: string } | null>(
-    null,
-  );
+  const [documentViewer, setDocumentViewer] = useState<{
+    title: string;
+    body: string;
+    sharedArtifact: SharedRunArtifactSelection;
+  } | null>(null);
   const [artifactFilter, setArtifactFilter] = useState<ArtifactWorkspaceFilter>('all');
   const [artifactQuery, setArtifactQuery] = useState('');
   const [filterLayout, setFilterLayout] = useState<ArtifactStickyChromeLayout | null>(null);
@@ -506,13 +509,30 @@ export default function ArtifactViewerScreen() {
     [evidenceModel],
   );
   const visualViewerItems = useMemo(
-    () => evidenceMediaItems(manifest, artifactUrlFor, artifactAuthHeaders, evidenceModel),
-    [artifactAuthHeaders, artifactUrlFor, evidenceModel, manifest],
+    () =>
+      evidenceMediaItems(manifest, artifactUrlFor, artifactAuthHeaders, evidenceModel, {
+        runId,
+        slotId: run?.slotId ?? undefined,
+        recipeRunId:
+          selectedRecipeRun?.groupKind === CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
+            ? undefined
+            : selectedRecipeRun?.id,
+      }),
+    [
+      artifactAuthHeaders,
+      artifactUrlFor,
+      evidenceModel,
+      manifest,
+      runId,
+      run?.slotId,
+      selectedRecipeRun,
+    ],
   );
   const viewerIndex = viewerUri ? visualViewerItems.findIndex((item) => item.uri === viewerUri) : 0;
 
   const openDocument = useCallback(
-    (url: string, path: string) => {
+    (url: string, path: string, recipeRunId?: string) => {
+      const sharedArtifact = { runId, path, slotId: run?.slotId ?? undefined, recipeRunId };
       documentAbortRef.current?.abort();
       const controller = new AbortController();
       documentAbortRef.current = controller;
@@ -521,19 +541,25 @@ export default function ArtifactViewerScreen() {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();
         })
-        .then((body) => setDocumentViewer({ title: path.split('/').pop() ?? path, body }))
+        .then((body) =>
+          setDocumentViewer({ title: path.split('/').pop() ?? path, body, sharedArtifact }),
+        )
         .catch((err: Error) => {
           // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
           if (err.name === 'AbortError') return;
           setError(`Failed to load ${path}: ${err.message}`);
         });
     },
-    [artifactAuthHeaders],
+    [artifactAuthHeaders, runId, run?.slotId],
   );
   const openReviewDocument = useCallback(
     (entry: ArtifactManifestEntry) => {
       if (!runId) return;
-      openDocument(artifactUrlForEntry(gatewayUrl, runId, entry, artifactMirrorEpoch), entry.path);
+      openDocument(
+        artifactUrlForEntry(gatewayUrl, runId, entry, artifactMirrorEpoch),
+        entry.path,
+        entry.recipeRunId,
+      );
     },
     [artifactMirrorEpoch, gatewayUrl, openDocument, runId],
   );
@@ -620,7 +646,7 @@ export default function ArtifactViewerScreen() {
               mediaType === 'document'
                 ? isDiffArtifact
                   ? () => openDiffPath(item.path)
-                  : () => openDocument(url, item.path)
+                  : () => openDocument(url, item.path, item.recipeRunId)
                 : undefined
             }
             documentLabel={isDiffArtifact ? 'DIFF' : undefined}
@@ -785,6 +811,7 @@ export default function ArtifactViewerScreen() {
       />
       <DocumentViewer
         visible={isFocused && !!documentViewer}
+        sharedArtifact={documentViewer?.sharedArtifact}
         title={documentViewer?.title ?? ''}
         body={documentViewer?.body ?? ''}
         onClose={() => setDocumentViewer(null)}

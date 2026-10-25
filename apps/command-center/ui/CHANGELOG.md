@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Open shared Companion links in Command Center after checking the configured gateway binding, with an exact supported selection or an unavailable reason.
+
 - Show derived acceptance sources, inherited proof and pending instructions, and retain message identities across steering retries.
 
 - Keep expected inherited modes from triggering a baseline warning on CI-watch follow-ups.
