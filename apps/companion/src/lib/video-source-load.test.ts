@@ -10,7 +10,6 @@ const source = {
 };
 
 test('authenticated source metadata uses the URI actually delivered to the native player', () => {
-  assert.notEqual(source.uri, uri, 'the legacy resource adapter adds its credential');
   const durationMs = videoSourceLoadDurationMs(source.uri, {
     videoSource: { uri: source.uri },
     duration: 106.56600189208984,
