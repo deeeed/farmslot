@@ -191,6 +191,11 @@ try {
     (value) => value.owner === afterId && value.text.includes('Run ' + afterId.slice(0, 8)),
     'actual owner on the fleet card',
   );
+  browser(
+    'eval',
+    route,
+    'await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return true;',
+  );
   browser('screenshot', route, path.join(output, 'cc-claimed-slot.png'));
   fs.writeFileSync(
     path.join(output, 'owner-card-observed.json'),

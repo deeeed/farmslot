@@ -163,26 +163,18 @@ test(
       }),
     );
     await import('../../runtime/mock-pty.test-support.js');
-    const execution = await import('../../core/exec.js');
-    const executeOnSlot: typeof execution.execOnSlot = async (...args) =>
-      /\btmux\b/.test(args[1])
-        ? { exitCode: 1, stdout: '', stderr: '' }
-        : execution.execOnSlot(...args);
-    mock.module('../../core/exec.js', {
-      namedExports: { ...execution, execOnSlot: executeOnSlot },
-    });
-    const core = await import('../../core/index.js');
-    mock.module('../../core/index.js', { namedExports: { ...core, execOnSlot: executeOnSlot } });
-    const tmux = await import('../../core/tmux.js');
-    mock.module('../../core/tmux.js', {
-      namedExports: { ...tmux, resolveTmuxSession: async () => 'workspace-proof' },
-    });
-
+    let taskSteps: typeof import('../../run-engine/task-steps.js');
     if (uiProof) {
-      const taskSteps = await import('../../run-engine/task-steps.js');
       mock.module('../../run-engine/task-steps.js', {
         namedExports: {
-          ...taskSteps,
+          mergeInitialContextIntoTicketData: (
+            ...args: Parameters<typeof taskSteps.mergeInitialContextIntoTicketData>
+          ) => taskSteps.mergeInitialContextIntoTicketData(...args),
+          prepareProfileDecisionLabel: (
+            ...args: Parameters<typeof taskSteps.prepareProfileDecisionLabel>
+          ) => taskSteps.prepareProfileDecisionLabel(...args),
+          executeGradeStep: (...args: Parameters<typeof taskSteps.executeGradeStep>) =>
+            taskSteps.executeGradeStep(...args),
           executeWriteTaskStep: async (
             ...args: Parameters<typeof taskSteps.executeWriteTaskStep>
           ) => {
@@ -208,6 +200,27 @@ test(
           },
         },
       });
+    }
+
+    const execution = await import('../../core/exec.js');
+    const executeOnSlot: typeof execution.execOnSlot = async (...args) =>
+      /\btmux\b/.test(args[1])
+        ? { exitCode: 1, stdout: '', stderr: '' }
+        : execution.execOnSlot(...args);
+    mock.module('../../core/exec.js', {
+      namedExports: { ...execution, execOnSlot: executeOnSlot },
+    });
+    const core = await import('../../core/index.js');
+    mock.module('../../core/index.js', { namedExports: { ...core, execOnSlot: executeOnSlot } });
+    const tmux = await import('../../core/tmux.js');
+    mock.module('../../core/tmux.js', {
+      namedExports: { ...tmux, resolveTmuxSession: async () => 'workspace-proof' },
+    });
+
+    if (uiProof) {
+      taskSteps = await import(
+        new URL('../../run-engine/task-steps.js?fleet-proof-original', import.meta.url).href
+      );
     }
 
     const fixture = await createNativeProofFixture(t, root);
