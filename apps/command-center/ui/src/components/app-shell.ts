@@ -1778,7 +1778,10 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       case 'onboarding':
         return this.renderOnboardingScreen();
       case 'native':
-        return html`<native-session-view></native-session-view>`;
+        return html`<native-session-view
+          .initialSessionId=${hashParams().get('sessionId') ?? ''}
+          .initialExecutionNodeId=${hashParams().get('executionNodeId') ?? ''}
+        ></native-session-view>`;
       case 'fleet':
         return html`<fleet-canvas></fleet-canvas>`;
       case 'terminal':
@@ -1799,7 +1802,9 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       case 'prs':
         return html`<pr-board></pr-board>`;
       case 'decisions':
-        return html`<decision-inbox></decision-inbox>`;
+        return html`<decision-inbox
+          .selectedDecisionId=${hashParams().get('gate') ?? ''}
+        ></decision-inbox>`;
       case 'runs':
         return html`<run-list></run-list>`;
       case 'run':

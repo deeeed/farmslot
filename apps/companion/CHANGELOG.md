@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Copy or share the current view’s Command Center link from one floating quick-action menu, with menu and long-press access to the existing voice recorder. Configure the web URL per gateway profile; Android builds now include Clipboard.
+
 - Show shared CI-watch status and live poll/timeout countdowns as plain text on run cards and pipelines.
 
 - Show completed checklist durations and live current-step elapsed time in Worker progress.

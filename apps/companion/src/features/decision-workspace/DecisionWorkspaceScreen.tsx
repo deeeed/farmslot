@@ -75,12 +75,12 @@ import {
 } from '../../lib/artifact-url';
 import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
 import { currentFarmConnection } from '../../lib/connection-authority';
+import { decisionEvidenceMediaItems } from '../../lib/decision-evidence-media';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
 import { decisionResolveRequest, gateActionReasons } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
 import {
-  evidenceMediaItems,
   evidenceViewerSelection,
   recordedEvidenceArtifactUrl,
   selectedEvidenceMediaItem,
@@ -237,6 +237,7 @@ export default function DecisionDetailScreen({
   const [documentViewer, setDocumentViewer] = useState<{
     title: string;
     body: string;
+    path?: string;
   } | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
   useEffect(() => {
@@ -876,7 +877,9 @@ export default function DecisionDetailScreen({
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();
         })
-        .then((body) => setDocumentViewer({ title: documentTitle(artifact.path), body }))
+        .then((body) =>
+          setDocumentViewer({ title: documentTitle(artifact.path), body, path: artifact.path }),
+        )
         .catch((err: Error) => {
           // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
           if (err.name === 'AbortError') return;
@@ -1010,41 +1013,30 @@ export default function DecisionDetailScreen({
     setComparisonViewerItems(null);
     setViewerUri(uri);
   };
-  const visualViewerItems = useMemo(() => {
-    if (!presentation?.runId) return [];
-    const runId = presentation.runId;
-    const items = evidenceMediaItems(
-      presentation.artifactManifest,
-      (artifact) => recordedEvidenceArtifactUrl(gatewayUrl, runId, checkedEvidenceModel, artifact),
+  const visualViewerItems = useMemo(
+    () =>
+      decisionEvidenceMediaItems({
+        runId: presentation?.runId,
+        slotId: sourceRun?.slotId ?? undefined,
+        artifacts: presentation?.artifactManifest ?? [],
+        gatewayUrl,
+        authHeaders: artifactAuthHeaders,
+        recordedModel: checkedEvidenceModel,
+        evidenceModel: humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel,
+        recipeFallbackPairs,
+      }),
+    [
       artifactAuthHeaders,
-      humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel,
-    );
-
-    for (const pair of recipeFallbackPairs) {
-      for (const artifact of [pair.before, pair.after]) {
-        items.push({
-          uri: artifact.url,
-          title: artifact.label ?? artifact.path,
-          mediaType: classifyArtifact(artifact),
-          authHeaders: artifactAuthHeaders,
-        });
-      }
-    }
-
-    const seen = new Set<string>();
-    return items.filter((item) => {
-      if (seen.has(item.uri)) return false;
-      seen.add(item.uri);
-      return true;
-    });
-  }, [
-    artifactAuthHeaders,
-    gatewayUrl,
-    presentation?.artifactManifest,
-    presentation?.runId,
-    recipeFallbackPairs,
-    checkedEvidenceModel,
-  ]);
+      gatewayUrl,
+      presentation?.artifactManifest,
+      presentation?.runId,
+      recipeFallbackPairs,
+      checkedEvidenceModel,
+      sourceRun?.slotId,
+      humanGate?.acceptance.evidenceModel,
+      outputAcceptance.evidenceModel,
+    ],
+  );
 
   if (!decision || !presentation) {
     return (
@@ -1642,6 +1634,7 @@ export default function DecisionDetailScreen({
                   (path) =>
                     recordedEvidenceArtifactUrl(gatewayUrl, presentation.runId!, model, path),
                   artifactAuthHeaders,
+                  { runId: presentation.runId!, slotId: sourceRun?.slotId ?? undefined },
                 );
                 setComparisonViewerItems([item]);
                 setViewerUri(item.uri);
@@ -2058,6 +2051,11 @@ export default function DecisionDetailScreen({
         />
         <DocumentViewer
           visible={isFocused && !!documentViewer}
+          sharedArtifact={
+            documentViewer?.path && presentation.runId
+              ? { runId: presentation.runId, path: documentViewer.path }
+              : undefined
+          }
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
           onClose={() => setDocumentViewer(null)}

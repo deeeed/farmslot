@@ -1,0 +1,88 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion unavailable Co-Pilot Voice",
+  "description": "Uses only the prepared private Node receiver and existing client paths; no provider or worker launch.",
+  "proofTargets": [
+    {
+      "id": "unavailable-context",
+      "claim": "Voice preserves the source run context on the existing Co-Pilot status screen without launching or recording."
+    }
+  ],
+  "workflow": {
+    "entry": "attach",
+    "nodes": {
+      "attach": {
+        "action": "ui.wait_for",
+        "intent": "The existing Companion is ready for this explicit gesture.",
+        "test_id": "companion-quick-actions",
+        "expected": "visible",
+        "next": "begin"
+      },
+      "begin": {
+        "action": "command",
+        "intent": "Observe the current worker and explicit gesture boundary.",
+        "cmd": "node scripts/agentic/view-sharing-voice-guards.mjs unavailable-begin",
+        "next": "begin-observed"
+      },
+      "begin-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual worker observation.",
+        "source": "begin",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"unavailable-begin\"",
+        "next": "open-run"
+      },
+      "open-run": {
+        "action": "command",
+        "intent": "Describe the same source run before the unavailable handoff.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs open-run",
+        "next": "run"
+      },
+      "run": {
+        "action": "ui.wait_for",
+        "intent": "The prepared run is the source of the pending instruction.",
+        "text_contains": ["Shared run target"],
+        "expected": "visible",
+        "next": "menu"
+      },
+      "menu": {
+        "action": "ui.press",
+        "intent": "Offer Voice without starting or configuring a worker.",
+        "test_id": "companion-quick-actions",
+        "next": "voice"
+      },
+      "voice": {
+        "action": "ui.press",
+        "intent": "Keep the source context when Co-Pilot is stopped.",
+        "test_id": "companion-quick-voice",
+        "next": "unavailable-screen"
+      },
+      "unavailable-screen": {
+        "action": "ui.wait_for",
+        "intent": "Show the existing Co-Pilot status and pending instruction.",
+        "test_id": "companion-screen-copilot",
+        "expected": "visible",
+        "next": "proof"
+      },
+      "proof": {
+        "action": "command",
+        "intent": "Observe the current worker and explicit gesture boundary.",
+        "cmd": "node scripts/agentic/view-sharing-voice-guards.mjs unavailable",
+        "next": "proof-observed"
+      },
+      "proof-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual worker observation.",
+        "source": "proof",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"unavailable\"",
+        "next": "done",
+        "proves": ["unavailable-context"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

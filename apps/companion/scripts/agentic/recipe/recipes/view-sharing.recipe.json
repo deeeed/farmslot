@@ -1,0 +1,369 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion current-view sharing",
+  "description": "Copies a real run URL from Android into the mounted Command Center run, opens the native share sheet and starts the existing foreground Voice recorder without sending.",
+  "proofTargets": [
+    {
+      "id": "same-run-link",
+      "claim": "The actual Android clipboard URL opens the same run and timeline in authenticated Command Center web."
+    },
+    {
+      "id": "native-share-sheet",
+      "claim": "The native Android share sheet receives the identical copied run URL."
+    },
+    {
+      "id": "sharing-is-navigation",
+      "claim": "Copying and sharing execute no terminal or runner command."
+    },
+    {
+      "id": "long-press-voice",
+      "claim": "Long press reaches the existing worker recorder with the source run context."
+    },
+    {
+      "id": "explicit-voice-send",
+      "claim": "The source run context and reviewed instruction reach only the exact owned worker after explicit Send."
+    },
+    {
+      "id": "menu-voice",
+      "claim": "Menu Voice reaches the existing recorder with the same context and a discarded draft causes no command."
+    }
+  ],
+  "workflow": {
+    "entry": "begin",
+    "nodes": {
+      "begin": {
+        "action": "command",
+        "intent": "Record clean command counters before sharing.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs begin",
+        "next": "wait-quick-actions"
+      },
+      "wait-quick-actions": {
+        "action": "ui.wait_for",
+        "intent": "Attach to the already running Companion.",
+        "test_id": "companion-quick-actions",
+        "expected": "visible",
+        "next": "open-run"
+      },
+      "open-run": {
+        "action": "command",
+        "intent": "Navigate normally to the prepared target run.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs open-run",
+        "next": "wait-run"
+      },
+      "wait-run": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the actual target run is visible.",
+        "text_contains": ["Shared run target"],
+        "expected": "visible",
+        "next": "open-menu"
+      },
+      "open-menu": {
+        "action": "ui.press",
+        "intent": "Open quick actions without starting voice.",
+        "test_id": "companion-quick-actions",
+        "next": "menu-image"
+      },
+      "menu-image": {
+        "action": "ui.screenshot",
+        "intent": "Let the operator check the current-view options in their visible order.",
+        "path": "quick-actions-menu.png",
+        "next": "copy-link"
+      },
+      "copy-link": {
+        "action": "ui.press",
+        "intent": "Copy the current run link to the native clipboard.",
+        "test_id": "companion-copy-view-link",
+        "next": "read-clipboard"
+      },
+      "read-clipboard": {
+        "action": "command",
+        "intent": "Read the actual Android clipboard and exact run selector.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs clipboard",
+        "next": "read-clipboard-observed"
+      },
+      "open-web": {
+        "action": "command",
+        "intent": "Open that exact native clipboard URL in Command Center.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs open-web",
+        "next": "web-identity"
+      },
+      "web-identity": {
+        "action": "command",
+        "intent": "Verify the mounted web run and timeline match the clipboard.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs web-identity",
+        "next": "web-identity-observed"
+      },
+      "share": {
+        "action": "ui.press",
+        "intent": "Share the same current run link through Android.",
+        "test_id": "companion-share-view-link",
+        "next": "share-sheet"
+      },
+      "share-sheet": {
+        "action": "command",
+        "intent": "Retain the identical URL in the real native share sheet.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs share-sheet",
+        "next": "share-sheet-observed"
+      },
+      "dismiss-share": {
+        "action": "ui.key_press",
+        "intent": "Return from the native share sheet.",
+        "key": "Back",
+        "next": "dismiss-menu"
+      },
+      "dismiss-menu": {
+        "action": "ui.key_press",
+        "intent": "Close the quick-action menu.",
+        "key": "Back",
+        "next": "no-commands"
+      },
+      "no-commands": {
+        "action": "command",
+        "intent": "Prove sharing executed no terminal or runner command.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs no-commands",
+        "next": "no-commands-observed"
+      },
+      "long-press-voice": {
+        "action": "ui.long_press",
+        "intent": "Start foreground Voice directly from the run.",
+        "target": "companion-quick-actions",
+        "hold_ms": 700,
+        "next": "wait-recorder"
+      },
+      "wait-recorder": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the existing worker recorder is listening.",
+        "test_id": "worker-voice-record-widget",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "next": "voice-context"
+      },
+      "voice-context": {
+        "action": "command",
+        "intent": "Verify the original run context beside the recorder.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs voice-context",
+        "next": "voice-context-observed"
+      },
+      "recorder-image": {
+        "action": "ui.screenshot",
+        "intent": "Let the operator verify the listening worker and source run context.",
+        "path": "long-press-recorder.png",
+        "next": "stop-recording",
+        "covers": ["long-press-voice"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "stop-recording": {
+        "action": "ui.press",
+        "intent": "Stop the actual foreground recording.",
+        "test_id": "worker-voice-record-widget-primary",
+        "next": "wait-instruction"
+      },
+      "wait-instruction": {
+        "action": "command",
+        "intent": "Keep editing blocked until foreground transcription has settled.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs wait-editor",
+        "timeout_ms": 35000,
+        "next": "edit-instruction"
+      },
+      "edit-instruction": {
+        "action": "ui.set_input",
+        "intent": "Review and edit the worker instruction explicitly.",
+        "test_id": "worker-voice-instruction",
+        "next": "review-send",
+        "value": "Report current status."
+      },
+      "send-instruction": {
+        "action": "ui.press",
+        "intent": "Send only after the operator reviews the instruction.",
+        "test_id": "worker-voice-send",
+        "next": "verify-send"
+      },
+      "verify-send": {
+        "action": "command",
+        "intent": "Read the exact owned shell input and single command count.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs voice-sent",
+        "next": "verify-send-observed"
+      },
+      "return-run": {
+        "action": "command",
+        "intent": "Return normally to the same run without an app restart.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs open-run",
+        "next": "wait-run-again"
+      },
+      "wait-run-again": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the source run is mounted again.",
+        "text_contains": ["Shared run target"],
+        "expected": "visible",
+        "next": "menu-for-voice"
+      },
+      "menu-for-voice": {
+        "action": "ui.press",
+        "intent": "Open the quick-action menu without recording.",
+        "test_id": "companion-quick-actions",
+        "next": "menu-voice"
+      },
+      "menu-voice": {
+        "action": "ui.press",
+        "intent": "Reach the existing recorder through the menu Voice action.",
+        "test_id": "companion-quick-voice",
+        "next": "wait-menu-recorder"
+      },
+      "wait-menu-recorder": {
+        "action": "ui.wait_for",
+        "intent": "Confirm menu Voice reaches the actual recorder.",
+        "test_id": "worker-voice-record-widget",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "next": "menu-context"
+      },
+      "menu-context": {
+        "action": "command",
+        "intent": "Check that menu Voice preserves the same run context.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs voice-context-menu",
+        "next": "menu-context-observed"
+      },
+      "menu-recorder-image": {
+        "action": "ui.screenshot",
+        "intent": "Let the operator verify menu Voice reaches the same listening worker.",
+        "path": "menu-voice-recorder.png",
+        "next": "stop-menu-recording",
+        "covers": ["menu-voice"]
+      },
+      "stop-menu-recording": {
+        "action": "ui.press",
+        "intent": "Stop menu Voice before leaving the terminal.",
+        "test_id": "worker-voice-record-widget-primary",
+        "next": "wait-edit-discard"
+      },
+      "wait-edit-discard": {
+        "action": "command",
+        "intent": "Keep editing blocked until foreground transcription has settled.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs wait-editor-menu",
+        "timeout_ms": 35000,
+        "next": "edit-discard"
+      },
+      "edit-discard": {
+        "action": "ui.set_input",
+        "intent": "Enter a draft which will be explicitly discarded.",
+        "test_id": "worker-voice-instruction",
+        "next": "discard",
+        "value": "Do not send this."
+      },
+      "discard": {
+        "action": "ui.press",
+        "intent": "Discard this voice draft without sending.",
+        "test_id": "worker-voice-discard",
+        "next": "final-counts"
+      },
+      "final-counts": {
+        "action": "command",
+        "intent": "Prove the second gesture and discard added no command.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs final-counts",
+        "next": "final-counts-observed"
+      },
+      "return-original-run": {
+        "action": "command",
+        "intent": "Leave the original run visible after the two voice gestures.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs open-run",
+        "next": "original-run-visible"
+      },
+      "original-run-visible": {
+        "action": "ui.wait_for",
+        "intent": "The operator is back on the same run after discarding the draft.",
+        "text_contains": ["Shared run target"],
+        "expected": "visible",
+        "next": "done"
+      },
+      "read-clipboard-observed": {
+        "action": "assert_output",
+        "intent": "The measured observation must confirm this view and action.",
+        "source": "read-clipboard",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"clipboard\"",
+        "proves": ["same-run-link"],
+        "next": "open-web"
+      },
+      "web-identity-observed": {
+        "action": "assert_output",
+        "intent": "The measured observation must confirm this view and action.",
+        "source": "web-identity",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"web-identity\"",
+        "proves": ["same-run-link"],
+        "next": "share"
+      },
+      "share-sheet-observed": {
+        "action": "assert_output",
+        "intent": "The measured observation must confirm this view and action.",
+        "source": "share-sheet",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"share-sheet\"",
+        "proves": ["native-share-sheet"],
+        "next": "dismiss-share"
+      },
+      "no-commands-observed": {
+        "action": "assert_output",
+        "intent": "The measured observation must confirm this view and action.",
+        "source": "no-commands",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"no-commands\"",
+        "proves": ["sharing-is-navigation"],
+        "next": "long-press-voice"
+      },
+      "voice-context-observed": {
+        "action": "assert_output",
+        "intent": "The measured observation must confirm this view and action.",
+        "source": "voice-context",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"voice-context\"",
+        "proves": ["long-press-voice"],
+        "next": "recorder-image"
+      },
+      "verify-send-observed": {
+        "action": "assert_output",
+        "intent": "The measured observation must confirm this view and action.",
+        "source": "verify-send",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"voice-sent\"",
+        "proves": ["explicit-voice-send"],
+        "next": "return-run"
+      },
+      "menu-context-observed": {
+        "action": "assert_output",
+        "intent": "The measured observation must confirm this view and action.",
+        "source": "menu-context",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"voice-context-menu\"",
+        "proves": ["menu-voice"],
+        "next": "menu-recorder-image"
+      },
+      "final-counts-observed": {
+        "action": "assert_output",
+        "intent": "The measured observation must confirm this view and action.",
+        "source": "final-counts",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"final-counts\"",
+        "proves": ["menu-voice", "explicit-voice-send"],
+        "next": "return-original-run"
+      },
+      "review-send": {
+        "action": "command",
+        "intent": "Verify the reviewed text and unobscured Send before pressing.",
+        "cmd": "node scripts/agentic/view-sharing-proof.mjs review-send",
+        "next": "review-send-observed"
+      },
+      "review-send-observed": {
+        "action": "assert_output",
+        "intent": "The floating action must leave the actual Send target visible.",
+        "source": "review-send",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"review-send\"",
+        "next": "send-instruction"
+      }
+    }
+  }
+}

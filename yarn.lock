@@ -5021,6 +5021,7 @@ __metadata:
     expo: "npm:^57.0.10"
     expo-asset: "npm:~57.0.8"
     expo-camera: "npm:~57.0.3"
+    expo-clipboard: "npm:~57.0.2"
     expo-constants: "npm:~57.0.9"
     expo-dev-client: "npm:~57.0.10"
     expo-file-system: "npm:~57.0.1"
@@ -12857,6 +12858,17 @@ __metadata:
     react-native-web:
       optional: true
   checksum: 10c0/ffc509614b4b3d27d4f49746e92129729f15099304472cb59078bd61b652e010496a3fdee3b673713c42b947493b631bb4df6322f639b3fe139a5f90000d20e4
+  languageName: node
+  linkType: hard
+
+"expo-clipboard@npm:~57.0.2":
+  version: 57.0.2
+  resolution: "expo-clipboard@npm:57.0.2"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/3cc041aeb53d09214f6eb70bb861737c6858323e621cb349ef07eaa5b2fca71432094e748db557f8bf47f318ac3c63fc1ccb9c66732f1026b923fb7e309eef73
   languageName: node
   linkType: hard
 

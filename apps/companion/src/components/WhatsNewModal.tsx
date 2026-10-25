@@ -1,6 +1,7 @@
 import React from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
 import type { ReleaseNotesPayload } from '../lib/release-notes';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 

@@ -1,0 +1,308 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion view-link configuration guards",
+  "description": "Uses real native Settings and unsupported-view actions without sending an instruction.",
+  "proofTargets": [
+    {
+      "id": "unsupported-exact-view",
+      "claim": "An unsupported exact view disables Copy and Share without falling back to a parent."
+    },
+    {
+      "id": "invalid-url",
+      "claim": "Settings refuses a credential-bearing Command Center URL."
+    },
+    {
+      "id": "unset-url",
+      "claim": "An unset profile URL disables Copy and Share and offers Settings."
+    },
+    {
+      "id": "profile-url-writer",
+      "claim": "The existing profile writer saves the explicit deployment URL."
+    },
+    {
+      "id": "no-command",
+      "claim": "Configuration and refusal paths add no worker instruction or runner command."
+    }
+  ],
+  "workflow": {
+    "entry": "begin",
+    "nodes": {
+      "begin": {
+        "action": "command",
+        "intent": "begin.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs begin",
+        "next": "begin-observed"
+      },
+      "begin-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observation.",
+        "source": "begin",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"begin\"",
+        "next": "attach-ui"
+      },
+      "open-unsupported": {
+        "action": "command",
+        "intent": "open unsupported.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs open-unsupported",
+        "next": "open-unsupported-observed"
+      },
+      "open-unsupported-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observation.",
+        "source": "open-unsupported",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-unsupported\"",
+        "next": "wait-unsupported"
+      },
+      "wait-unsupported": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the worker catalog is ready for its sharing refusal.",
+        "test_id": "companion-screen-terminals",
+        "expected": "visible",
+        "next": "unsupported-menu"
+      },
+      "unsupported-menu": {
+        "action": "ui.press",
+        "intent": "Use the actual visible control.",
+        "test_id": "companion-quick-actions",
+        "next": "unsupported"
+      },
+      "unsupported": {
+        "action": "command",
+        "intent": "unsupported.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs unsupported",
+        "next": "unsupported-observed"
+      },
+      "unsupported-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observation.",
+        "source": "unsupported",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"unsupported\"",
+        "next": "close-unsupported",
+        "proves": ["unsupported-exact-view"]
+      },
+      "close-unsupported": {
+        "action": "ui.key_press",
+        "intent": "Return from the menu.",
+        "key": "Back",
+        "next": "open-settings"
+      },
+      "open-settings": {
+        "action": "command",
+        "intent": "open settings.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs open-settings",
+        "next": "open-settings-observed"
+      },
+      "open-settings-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observation.",
+        "source": "open-settings",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"open-settings\"",
+        "next": "find-editor"
+      },
+      "find-editor": {
+        "action": "command",
+        "intent": "find url editor.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs find-url-editor",
+        "next": "find-editor-observed"
+      },
+      "find-editor-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observation.",
+        "source": "find-editor",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"find-url-editor\"",
+        "next": "invalid-input"
+      },
+      "invalid-input": {
+        "action": "ui.set_input",
+        "intent": "Reject a credential-bearing web URL.",
+        "test_id": "companion-command-center-url-configured-gateway",
+        "value": "https://user:pass@invalid.example/",
+        "next": "save-invalid"
+      },
+      "save-invalid": {
+        "action": "ui.press",
+        "intent": "Use the actual visible control.",
+        "test_id": "companion-save-command-center-url-configured-gateway",
+        "next": "invalid-reason"
+      },
+      "invalid-reason": {
+        "action": "ui.wait_for",
+        "intent": "Check the resulting visible state.",
+        "text_contains": [
+          "Use a reachable HTTPS Command Center URL without credentials, query or fragment."
+        ],
+        "expected": "visible",
+        "next": "invalid-image",
+        "proves": ["invalid-url"]
+      },
+      "invalid-image": {
+        "action": "ui.screenshot",
+        "intent": "Retain the actual validation error.",
+        "path": "invalid-url.png",
+        "next": "invalid-state",
+        "covers": ["invalid-url"]
+      },
+      "unset-input": {
+        "action": "command",
+        "intent": "Clear the saved URL editor with actual focused Backspace keys.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs clear-url",
+        "next": "unset-input-observed",
+        "timeout_ms": 60000
+      },
+      "save-unset": {
+        "action": "ui.press",
+        "intent": "Use the actual visible control.",
+        "test_id": "companion-save-command-center-url-configured-gateway",
+        "next": "saved-unset"
+      },
+      "saved-unset": {
+        "action": "ui.wait_for",
+        "intent": "Check the resulting visible state.",
+        "text_contains": ["Command Center URL saved"],
+        "expected": "visible",
+        "next": "unset-menu"
+      },
+      "unset-menu": {
+        "action": "ui.press",
+        "intent": "Use the actual visible control.",
+        "test_id": "companion-quick-actions",
+        "next": "unset"
+      },
+      "unset": {
+        "action": "command",
+        "intent": "unset.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs unset",
+        "next": "unset-observed"
+      },
+      "unset-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observation.",
+        "source": "unset",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"unset\"",
+        "next": "settings-action",
+        "proves": ["unset-url"]
+      },
+      "settings-action": {
+        "action": "ui.press",
+        "intent": "Use the actual visible control.",
+        "test_id": "companion-share-settings",
+        "next": "find-editor-restore"
+      },
+      "find-editor-restore": {
+        "action": "command",
+        "intent": "find url editor restore.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs find-url-editor-restore",
+        "next": "find-editor-restore-observed"
+      },
+      "find-editor-restore-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observation.",
+        "source": "find-editor-restore",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"find-url-editor-restore\"",
+        "next": "restore-input"
+      },
+      "restore-input": {
+        "action": "ui.set_input",
+        "intent": "Restore the exact verified deployment URL.",
+        "test_id": "companion-command-center-url-configured-gateway",
+        "value": "{{params.webBase}}",
+        "next": "save-restored"
+      },
+      "save-restored": {
+        "action": "ui.press",
+        "intent": "Use the actual visible control.",
+        "test_id": "companion-save-command-center-url-configured-gateway",
+        "next": "saved-restored"
+      },
+      "saved-restored": {
+        "action": "ui.wait_for",
+        "intent": "Check the resulting visible state.",
+        "text_contains": ["Command Center URL saved"],
+        "expected": "visible",
+        "next": "restored-state",
+        "proves": ["profile-url-writer"]
+      },
+      "no-new-commands": {
+        "action": "command",
+        "intent": "no new commands.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs no-new-commands",
+        "next": "no-new-commands-observed"
+      },
+      "no-new-commands-observed": {
+        "action": "assert_output",
+        "intent": "Require the actual observation.",
+        "source": "no-new-commands",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"no-new-commands\"",
+        "next": "done",
+        "proves": ["no-command"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "attach-ui": {
+        "action": "ui.wait_for",
+        "intent": "Attach to the current Companion before reading its recipe lease.",
+        "test_id": "companion-quick-actions",
+        "expected": "visible",
+        "next": "open-unsupported"
+      },
+      "unset-input-observed": {
+        "action": "assert_output",
+        "intent": "The deleted editor shows its placeholder; the next Save must prove unset state.",
+        "source": "unset-input",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"clear-url\"",
+        "next": "save-unset"
+      },
+      "invalid-state": {
+        "action": "command",
+        "intent": "Observe the actual profile editor value and exact result message.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs invalid-url",
+        "next": "invalid-state-observed"
+      },
+      "invalid-state-observed": {
+        "action": "assert_output",
+        "intent": "Require the observed profile state to match the expected setting.",
+        "source": "invalid-state",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"invalid-url\"",
+        "proves": ["invalid-url"],
+        "next": "unset-input"
+      },
+      "restored-state": {
+        "action": "command",
+        "intent": "Observe the actual profile editor value and exact result message.",
+        "cmd": "node scripts/agentic/view-sharing-native-guards.mjs restored-url",
+        "next": "restored-state-observed"
+      },
+      "restored-state-observed": {
+        "action": "assert_output",
+        "intent": "Require the observed profile state to match the expected setting.",
+        "source": "restored-state",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"restored-url\"",
+        "proves": ["profile-url-writer"],
+        "next": "no-new-commands"
+      }
+    }
+  },
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["webBase"],
+    "properties": {
+      "webBase": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -17,7 +17,9 @@ import {
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
+import type { MediaViewerItem } from '../../components/MediaViewer';
 import {
   artifactsForRecipeRun,
   artifactUrlForEntry,
@@ -66,6 +68,7 @@ import {
   workspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
+import { useSharedViewSelection } from '../quick-actions/QuickActionsProvider';
 import { routeParamString } from '../workspace-shared/route-params';
 
 import {
@@ -113,6 +116,7 @@ export function useFamilyWorkspaceController() {
   const [documentViewer, setDocumentViewer] = useState<{
     title: string;
     body: string;
+    sharedArtifact: SharedRunArtifactSelection;
   } | null>(null);
   const [evidenceFilter, setEvidenceFilter] = useState<FamilyEvidenceFilter>('all');
   const [selectedRecipeArtifactCount, setSelectedRecipeArtifactCount] = useState<number | null>(
@@ -214,6 +218,22 @@ export function useFamilyWorkspaceController() {
     snapshot?.runs.find((run) => run.runId === snapshot.latestRunId) ??
     snapshot?.runs[0] ??
     null;
+
+  useSharedViewSelection(
+    useMemo(
+      () => ({
+        pathname: `/family/${familyId}`,
+        params: { runId: selectedRun?.runId, evidence: evidenceFilter },
+        ...(requestedSection && requestedSection !== 'focus'
+          ? {
+              unavailableMessage:
+                'Web link unavailable: this family section has no exact Command Center view.',
+            }
+          : {}),
+      }),
+      [familyId, selectedRun?.runId, evidenceFilter, requestedSection],
+    ),
+  );
 
   const refreshSelectedRecipeRuns = useCallback(
     async (
@@ -526,13 +546,14 @@ export function useFamilyWorkspaceController() {
     ).pairs;
   }, [gatewayUrl, selectedRecipeRuns, selectedRun?.runId, visualPairs.length]);
   const visualViewerItems = useMemo(() => {
-    const items = (snapshot?.evidence ?? [])
+    const items: MediaViewerItem[] = (snapshot?.evidence ?? [])
       .filter((artifact) => ['image', 'video'].includes(classifyArtifact(artifact)))
       .map((artifact) => ({
         uri: familyArtifactUrl(gatewayUrl, artifact),
         title: artifact.path,
         mediaType: classifyArtifact(artifact),
         authHeaders: artifactAuthHeaders,
+        sharedArtifact: { runId: artifact.runId, path: artifact.path },
       }));
     for (const pair of selectedRecipeVisualPairs) {
       for (const artifact of [pair.before, pair.after]) {
@@ -541,6 +562,14 @@ export function useFamilyWorkspaceController() {
           title: artifact.path,
           mediaType: classifyArtifact(artifact),
           authHeaders: artifactAuthHeaders,
+          sharedArtifact: selectedRun
+            ? {
+                runId: selectedRun.runId,
+                slotId: selectedRun.slotId ?? undefined,
+                recipeRunId: artifact.recipeRunId,
+                path: artifact.path,
+              }
+            : undefined,
         });
       }
     }
@@ -551,7 +580,7 @@ export function useFamilyWorkspaceController() {
       seen.add(item.uri);
       return true;
     });
-  }, [artifactAuthHeaders, gatewayUrl, selectedRecipeVisualPairs, snapshot?.evidence]);
+  }, [artifactAuthHeaders, gatewayUrl, selectedRecipeVisualPairs, selectedRun, snapshot?.evidence]);
   const viewerIndex = viewerUri
     ? Math.max(
         0,
@@ -574,6 +603,7 @@ export function useFamilyWorkspaceController() {
           setDocumentViewer({
             title: artifact.path.split('/').pop() ?? artifact.path,
             body,
+            sharedArtifact: { runId: artifact.runId, path: artifact.path },
           }),
         )
         .catch((err: Error) => {

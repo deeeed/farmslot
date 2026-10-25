@@ -14,8 +14,6 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  Animated,
-  Easing,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -128,6 +126,8 @@ import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
 import { useTerminalPrefsStore } from '../../store/terminal-prefs';
 import { useSlotNativeSession } from '../native-conversation/use-slot-native-session';
+import { useQuickActionVoiceTarget } from '../quick-actions/QuickActionsProvider';
+import { useQuickActionComposerInset } from '../quick-actions/use-quick-action-composer-inset';
 import { useSlotWorkspaceTabs } from '../workspace-shared/slot-workspace-tabs';
 
 import {
@@ -332,7 +332,6 @@ export default function TerminalScreen() {
   const voiceDraftSlotRef = useRef<string | null>(null);
   const voiceDraftStateRef = useRef({ transcript: '', draft: '' });
   const targetRecipeRunsRequestRef = useRef(0);
-  const voicePulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     lineCountRef.current = lineCount;
@@ -950,49 +949,10 @@ export default function TerminalScreen() {
       voiceStatus === 'transcribing' ||
       isFormattingVoice ||
       isDownloadingVoiceModel);
-  const animateVoiceButton =
-    voiceStatus === 'recording' ||
-    voiceStatus === 'transcribing' ||
-    isPreparingVoiceRecorder ||
-    isFormattingVoice;
-  const voiceButtonPulseStyle = {
-    opacity: voicePulse.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.48] }),
-    transform: [
-      {
-        scale: voicePulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.45] }),
-      },
-    ],
-  };
-  const floatingVoiceBottom = spacing.lg + insets.bottom;
+  const onVoiceComposerLayout = useQuickActionComposerInset(
+    !native.target && !terminalInputDisabledReason && showVoiceComposer,
+  );
   const voiceWidgetWidth = Math.max(1, voicePanelWidth - spacing.md * 2);
-
-  useEffect(() => {
-    if (!animateVoiceButton) {
-      voicePulse.stopAnimation();
-      voicePulse.setValue(0);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(voicePulse, {
-          toValue: 1,
-          duration: 650,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(voicePulse, {
-          toValue: 0,
-          duration: 650,
-          easing: Easing.in(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => {
-      loop.stop();
-    };
-  }, [animateVoiceButton, voicePulse]);
 
   useEffect(() => {
     voiceDraftStateRef.current = { transcript: voiceTranscript, draft: voiceDraft };
@@ -1524,6 +1484,13 @@ export default function TerminalScreen() {
     voiceStatus,
   ]);
 
+  useQuickActionVoiceTarget(
+    JSON.stringify(['slot', slotId, targetRun?.id ?? null, contextId ?? null]),
+    handleFloatingVoicePress,
+    !voiceRecorderBusy && !voiceRuntimePending,
+    !native.target && !native.unavailable && !terminalInputDisabledReason,
+  );
+
   const openVoiceSettings = useCallback(() => {
     router.push('/settings');
   }, [router]);
@@ -1577,14 +1544,6 @@ export default function TerminalScreen() {
     setTerminalFullscreen((current) => !current);
   }, []);
 
-  const showFloatingVoiceButton =
-    !native.target &&
-    !native.unavailable &&
-    !terminalInputDisabledReason &&
-    !showInputBar &&
-    !showVoiceComposer &&
-    !hasVoiceEditableInstruction &&
-    !voiceRecorderBusy;
   const primaryDecision = selectPrimaryWorkspaceDecision(targetRun);
   const readyDecision = selectReadyWorkspaceDecision(targetRun);
   const reviewGateDecision = selectReviewGateWorkspaceDecision(targetRun);
@@ -1899,7 +1858,10 @@ export default function TerminalScreen() {
             styles.voicePanel,
             !showInputBar && { paddingBottom: spacing.sm + insets.bottom },
           ]}
-          onLayout={(event) => setVoicePanelWidth(event.nativeEvent.layout.width)}
+          onLayout={(event) => {
+            setVoicePanelWidth(event.nativeEvent.layout.width);
+            onVoiceComposerLayout(event);
+          }}
         >
           {showVoiceWaveformSurface ? (
             <ChatRecordWidget
@@ -2032,24 +1994,6 @@ export default function TerminalScreen() {
           ) : null}
           {voiceWarning && <Text style={styles.voiceWarningText}>{voiceWarning}</Text>}
         </View>
-      )}
-
-      {showFloatingVoiceButton && (
-        <Animated.View style={[styles.floatingVoiceShell, { bottom: floatingVoiceBottom }]}>
-          {animateVoiceButton && (
-            <Animated.View style={[styles.floatingVoicePulse, voiceButtonPulseStyle]} />
-          )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Dictate instruction"
-            accessibilityHint={voiceMessage || undefined}
-            style={styles.floatingVoiceButton}
-            onPress={handleFloatingVoicePress}
-            disabled={false}
-          >
-            <Ionicons name="mic-outline" size={30} color="#fff" />
-          </Pressable>
-        </Animated.View>
       )}
 
       {showInputBar && (

@@ -3,7 +3,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   FlatList,
   Image,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -28,7 +27,9 @@ import {
   formatEvidenceReviewVideoTime,
   loadRecordingEvidenceReview,
 } from '@farmslot/adapter-sdk/evidence';
+import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
+import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
 import {
   type ArtifactHttpHeaders,
   type ArtifactMediaType,
@@ -59,6 +60,7 @@ export interface MediaViewerItem {
   resolveArtifactUrl?: (path: string) => string;
   evidenceModel?: EvidenceReviewModel;
   initialTraceIndex?: number;
+  sharedArtifact?: SharedRunArtifactSelection;
 }
 
 interface MediaViewerProps {
@@ -134,7 +136,25 @@ export function MediaViewer({
   const mediaHeight = Math.max(180, height - topInset - bottomInset - 140);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      sharedView={
+        current?.sharedArtifact
+          ? {
+              pathname: '/artifacts',
+              params: {
+                runId: current.sharedArtifact.runId,
+                artifact: current.sharedArtifact.path,
+                recipeRun: current.sharedArtifact.recipeRunId,
+              },
+              artifactSelection: current.sharedArtifact,
+            }
+          : undefined
+      }
+    >
       <GestureHandlerRootView style={styles.modalRoot}>
         <SafeAreaView style={styles.backdrop} testID={testID}>
           <ScrollView

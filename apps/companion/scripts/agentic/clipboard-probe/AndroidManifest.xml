@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="net.siteed.farmslot.viewlinkprobe.development" android:versionCode="1" android:versionName="1">
+  <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
+  <application android:label="View link clipboard probe" android:debuggable="true" android:allowBackup="false">
+    <activity android:name=".ClipboardProbeActivity" android:exported="true" android:excludeFromRecents="true" />
+  </application>
+</manifest>

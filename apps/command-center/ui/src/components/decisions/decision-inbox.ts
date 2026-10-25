@@ -1,6 +1,6 @@
 import { createTwoFilesPatch } from 'diff';
 import { html, LitElement, nothing } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
   DecisionAction,
@@ -146,6 +146,7 @@ function slotMachine(slotId: string): string {
 
 @customElement('decision-inbox')
 export class DecisionInbox extends LitElement {
+  @property() selectedDecisionId = '';
   @state() private _decisions: PendingDecision[] = [];
   @state() private _filterProjects: string[] = [];
   @state() private _filterMachines: string[] = [];
@@ -233,7 +234,10 @@ export class DecisionInbox extends LitElement {
   private get _filtered(): PendingDecision[] {
     // A held run's output review is the evidence under its result decision, not an item.
     const evidenceOnly = evidenceOnlyDecisionIds(this._decisions);
-    let result = this._decisions.filter((d) => !evidenceOnly.has(d.id));
+    let result = this._decisions.filter(
+      (d) =>
+        !evidenceOnly.has(d.id) && (!this.selectedDecisionId || d.id === this.selectedDecisionId),
+    );
     if (this._filterProjects.length > 0) {
       result = result.filter((d) => {
         if (!d.slotId) return true;
@@ -760,9 +764,11 @@ export class DecisionInbox extends LitElement {
                 <div class="empty-state">
                   <div class="empty-check">&#10003;</div>
                   <div class="empty-text">
-                    ${this._decisions.length === 0
-                      ? 'No pending decisions'
-                      : 'No decisions match current filters'}
+                    ${this.selectedDecisionId
+                      ? 'This decision is no longer available in the current inbox.'
+                      : this._decisions.length === 0
+                        ? 'No pending decisions'
+                        : 'No decisions match current filters'}
                   </div>
                 </div>
               `

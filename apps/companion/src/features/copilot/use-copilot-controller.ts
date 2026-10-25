@@ -15,12 +15,14 @@ export function useCopilotController() {
   const connectionStatus = useConnectionStore((state) => state.status);
   const [runtime, setRuntime] = useState<CopilotRuntimeSession | null>(null);
   const [loading, setLoading] = useState(false);
+  const [settled, setSettled] = useState(false);
   const [error, setError] = useState('');
   const revision = useRef(0);
   const refresh = useCallback(async () => {
     const attempt = ++revision.current;
     if (!client || connectionStatus !== 'connected') return;
     setLoading(true);
+    setSettled(false);
     setError('');
     try {
       const result = await client.request<CopilotStatusResult>(Methods.COPILOT_STATUS, {}, 10_000);
@@ -29,11 +31,15 @@ export function useCopilotController() {
       if (attempt === revision.current)
         setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      if (attempt === revision.current) setLoading(false);
+      if (attempt === revision.current) {
+        setLoading(false);
+        setSettled(true);
+      }
     }
   }, [client, connectionStatus]);
   useEffect(() => {
     setRuntime(null);
+    setSettled(false);
     void refresh();
     return () => {
       revision.current++;
@@ -46,7 +52,7 @@ export function useCopilotController() {
     });
   }, [client]);
   return {
-    viewModel: { runtime, loading, error, connected: connectionStatus === 'connected' },
+    viewModel: { runtime, loading, settled, error, connected: connectionStatus === 'connected' },
     actions: { refresh },
   };
 }

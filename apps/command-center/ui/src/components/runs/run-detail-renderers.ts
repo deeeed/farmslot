@@ -225,6 +225,7 @@ export function renderInteractiveDevGate(run: Run, ctx: InteractiveDevGateRender
 }
 
 export interface RunEvidenceRenderContext {
+  selectedSharedEvidence?: boolean;
   taskProgress?: TaskProgressStructured | null;
   evidenceLightboxItems: LightboxItem[];
   evidenceLightboxOpen: boolean;
@@ -257,13 +258,22 @@ export interface RunEvidenceRenderContext {
 }
 
 export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unknown {
+  return html`<section data-shared-run-panel="evidence" tabindex="-1">
+    ${renderRunEvidenceContent(run, ctx)}
+  </section>`;
+}
+
+function renderRunEvidenceContent(run: Run, ctx: RunEvidenceRenderContext): unknown {
   if (run.reviewWorkspaceTarget)
     return html`${renderReviewProcess(run, ctx)}${renderEvidenceLightbox(ctx)}`;
   const artifacts = collectRunEvidenceArtifacts(run);
   const evidence = runResultsSummary(run, artifacts.length);
   // A worker command log link opens here while the run is still active and has
   // no results card yet, so the lightbox renders either way.
-  if (!evidence.shouldRender) return renderEvidenceLightbox(ctx);
+  if (!evidence.shouldRender)
+    return html`${ctx.selectedSharedEvidence
+      ? html`<p>No saved evidence for this run.</p>`
+      : nothing}${renderEvidenceLightbox(ctx)}`;
   const review = [...run.decisions]
     .reverse()
     .find(
@@ -1245,7 +1255,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           ])}
         ></failure-triage-panel>`
       : nothing}
-    <div class="pipeline-section">
+    <div class="pipeline-section" data-shared-run-panel="timeline" tabindex="-1">
       <run-pipeline
         reason-in-header
         .run=${r}

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Open shared Companion links on the exact run, artifact, decision or conversation after checking the deployment’s configured gateway binding.
+
 - Show check counts, failures, next poll and time left on CI-watch run cards and pipelines.
 
 - Show muted step durations and live elapsed time in Worker progress.

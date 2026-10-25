@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -15,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { ReviewedFindingContext } from '@farmslot/protocol';
 
+import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
 import type { ArtifactHttpHeaders } from '../lib/artifact-url';
 import {
   type DiffFileEntry,

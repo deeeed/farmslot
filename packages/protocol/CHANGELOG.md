@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
+
 - Expose current CI-watch progress and total deadlines so clients use the monitor’s configured windows.
 
 - Expose checklist timing in task progress and per-step worker durations in monthly analytics.

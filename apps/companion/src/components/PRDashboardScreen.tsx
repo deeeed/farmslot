@@ -13,6 +13,7 @@ import {
   type SourceSelection,
 } from '@farmslot/protocol';
 
+import { useSharedViewSelection } from '../features/quick-actions/QuickActionsProvider';
 import { SourceStatusSection } from '../features/sources/SourceStatusSection';
 import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
@@ -341,6 +342,20 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
   const [sourceSelectionRefusal, setSourceSelectionRefusal] = useState<string | undefined>();
   const focusedPRNumber = parseRoutePR(focusedPRParam);
   const focusedRepo = routeParamString(focusedRepoParam).trim();
+  useSharedViewSelection(
+    useMemo(
+      () => ({
+        pathname: '/prs',
+        params: {
+          pr: routeParamString(focusedPRParam),
+          repo: focusedRepo,
+          nativeFilter: filter,
+          prSort: sortMode,
+        },
+      }),
+      [focusedPRParam, focusedRepo, filter, sortMode],
+    ),
+  );
   const prWorkspaceRouteContext = useMemo(
     () =>
       workspaceRouteContextParams(

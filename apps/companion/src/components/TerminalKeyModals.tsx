@@ -1,17 +1,9 @@
 import React, { useState } from 'react';
-import {
-  Keyboard,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { RUNNER_MOBILE_KEY_PROFILES, type RunnerMobileKeyProfile } from '@farmslot/protocol';
 
+import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
 import {
   MAX_TERMINAL_CUSTOM_KEY_LABEL_LENGTH,
   MAX_TERMINAL_CUSTOM_KEYS,

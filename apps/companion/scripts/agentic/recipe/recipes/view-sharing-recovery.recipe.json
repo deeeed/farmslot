@@ -1,0 +1,49 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion shared-link recovery",
+  "description": "Requires the explicit private Gateway/proxy receipts and a warm mounted run; never injects client or cache state.",
+  "proofTargets": [
+    {
+      "id": "no-replay",
+      "claim": "Normal recovery reads the same mounted run without executing or replaying a command."
+    }
+  ],
+  "workflow": {
+    "entry": "visible",
+    "nodes": {
+      "visible": {
+        "action": "ui.wait_for",
+        "intent": "The same run is visible after normal reconnect.",
+        "text_contains": ["Shared run target"],
+        "expected": "visible",
+        "next": "image"
+      },
+      "image": {
+        "action": "ui.screenshot",
+        "intent": "Retain the recovered run without a user refresh.",
+        "path": "recovered-run.png",
+        "next": "proof",
+        "covers": ["no-replay"]
+      },
+      "proof": {
+        "action": "command",
+        "intent": "Correlate a fresh source read and unchanged instruction history.",
+        "cmd": "node scripts/agentic/view-sharing-offline-proof.mjs recovered",
+        "next": "proved"
+      },
+      "proved": {
+        "action": "assert_output",
+        "intent": "Recovery must not replay a worker instruction.",
+        "source": "proof",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\",\"mode\":\"recovered\"",
+        "proves": ["no-replay"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
