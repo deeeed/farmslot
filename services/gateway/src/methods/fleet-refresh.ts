@@ -120,10 +120,7 @@ export function fleetRefreshSlotsCancel(
 }
 
 // ─── fleet.prSummary ───
-// Best-effort PR-state annotation for stale-branch slots in the modal.
-// Failures degrade silently — every slot gets an entry, slots without
-// data have all-null fields. Calls run in parallel; gh unavailability
-// or auth failure on any single slot does not block the rest.
+// Project PR annotations from the same cached workspace evidence as fleet.status.
 
 export async function fleetPrSummary(params: FleetPrSummaryParams): Promise<FleetPrSummaryResult> {
   const ids = Array.isArray(params.slotIds) ? params.slotIds : [];

@@ -134,7 +134,7 @@ function buildSummary(slots: SlotStatus[]): string {
   const manual = slots.filter((s) => s.lifecycle === 'manual').length;
   const active = slots.filter((s) => s.lifecycle !== 'disabled');
   const stale = active.filter(
-    (s) => s.health.fixtures !== 'OK' && s.health.fixtures !== '-',
+    (s) => !['OK', '-', 'not-required'].includes(s.health.fixtures),
   ).length;
   const unreachable = active.filter(
     (s) => s.health.ssh !== 'OK' && s.health.ssh !== 'LOCAL',

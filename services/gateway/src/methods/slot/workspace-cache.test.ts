@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
+
+import type { SlotVars } from '../../core/index.js';
 
 import type { WorkspaceProbe } from './workspace-probe.js';
 
@@ -71,6 +73,11 @@ await writeFile(
 );
 await import('../../runtime/mock-pty.test-support.js');
 let probes = 0;
+interface ProbePause {
+  gate: Promise<void>;
+  started(): void;
+}
+let pausedProbe: ProbePause | undefined;
 const probe: WorkspaceProbe = {
   branch: 'main',
   headSha: 'a'.repeat(40),
@@ -83,25 +90,40 @@ const probe: WorkspaceProbe = {
   publicationRemote: 'origin',
   publicationRef: 'refs/heads/main',
 };
+const probeReads: Array<{ scope: string; timeout: number }> = [];
+mock.module('../../core/read-probes.js', {
+  namedExports: {
+    readSlotProbe: async (_vars: SlotVars, _command: string, scope: string, timeout: number) => {
+      probeReads.push({ scope, timeout });
+      return {
+        exitCode: 0,
+        stdout:
+          scope === 'workspace' || scope === 'workspace-recovery'
+            ? JSON.stringify(probe)
+            : `${'a'.repeat(40)}\trefs/heads/main\n`,
+        stderr: '',
+      };
+    },
+  },
+});
+const actualProbe = await import('./workspace-probe.js');
 mock.module('./workspace-probe.js', {
   namedExports: {
     probeWorkspace: async () => {
       probes++;
-      return { ...probe };
+      const captured = { ...probe };
+      const pause = pausedProbe;
+      pausedProbe = undefined;
+      if (pause) {
+        pause.started();
+        await pause.gate;
+      }
+      return captured;
     },
   },
 });
-mock.module('../../core/read-probes.js', {
-  namedExports: {
-    readSlotProbe: async () => ({
-      exitCode: 0,
-      stdout: `${'a'.repeat(40)}\trefs/heads/main\n`,
-      stderr: '',
-    }),
-  },
-});
 const { loadFleetStatus } = await import('../../fleet/state.js');
-const { enrichFleetWorkspaces, invalidateSlotWorkspaceObservations } =
+const { enrichFleetWorkspaces, inspectSlotWorkspace, invalidateSlotWorkspaceObservations } =
   await import('./workspace.js');
 
 test('observation timestamps do not turn unchanged status reads into repeated Git inspections', async () => {
@@ -118,4 +140,62 @@ test('a verified mutation invalidates cached dirt before its TTL expires', async
   const fresh = await enrichFleetWorkspaces(await loadFleetStatus(true));
   assert.equal(fresh.slots[0]?.workspace?.dirtyCount, 0);
   assert.equal(probes, 2);
+});
+
+test('a pending inspection from an old identity settles before a new single-flight inspection', async () => {
+  let resume: () => void = () => assert.fail('Probe gate missing');
+  let notify: () => void = () => assert.fail('Probe start missing');
+  const started = new Promise<void>((resolve) => {
+    notify = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  invalidateSlotWorkspaceObservations('cache-slot');
+  pausedProbe = { gate, started: notify };
+  const older = enrichFleetWorkspaces(await loadFleetStatus(true));
+  await started;
+  const status = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
+  status.slots[0].branch = 'feature';
+  status.slots[0].slot_epoch++;
+  await writeFile(path.join(root, 'status.json'), JSON.stringify(status));
+  probe.branch = 'feature';
+  const freshFleet = await loadFleetStatus(true);
+  const fresh = enrichFleetWorkspaces(freshFleet);
+  resume();
+  await older;
+  const result = await fresh;
+  assert.equal(result.slots[0]?.workspace?.branch, 'feature');
+  assert.equal(result.slots[0]?.workspace?.epoch, status.slots[0].slot_epoch);
+});
+
+test('an unenriched broadcast after a claim cannot expose a previous saved workspace owner', async () => {
+  const old = await inspectSlotWorkspace('cache-slot');
+  const status = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
+  status.slots[0].workspace = old;
+  await writeFile(path.join(root, 'status.json'), JSON.stringify(status));
+  const { claimSlotStatusIf } = await import('../../core/state.js');
+  const claimed = await claimSlotStatusIf('cache-slot', () => true, {
+    current_run_id: 'next-owner',
+    branch: 'next-branch',
+    lifecycle: 'busy',
+    phase: 'dispatching',
+  });
+  assert.equal(claimed.claimed, true);
+  const fleet = await loadFleetStatus(true);
+  assert.equal(fleet.slots[0]?.currentRunId, 'next-owner');
+  assert.equal(fleet.slots[0]?.branch, 'next-branch');
+  assert.equal(fleet.slots[0]?.workspace, undefined);
+});
+
+test('owned recovery probes have their own operation budget instead of a passive status deadline', async () => {
+  const { loadSlotVars } = await import('../../core/config.js');
+  const vars = await loadSlotVars('cache-slot');
+  const before = probeReads.length;
+  await actualProbe.probeWorkspace(vars, {}, 'main');
+  await actualProbe.probeWorkspace(vars, {}, 'main', 120_000);
+  assert.deepEqual(probeReads.slice(before), [
+    { scope: 'workspace', timeout: 5000 },
+    { scope: 'workspace-recovery', timeout: 120_000 },
+  ]);
 });

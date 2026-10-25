@@ -1,80 +1,24 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { SlotVars } from '../../core/index.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
 
 import {
   assertPrepareCommitsPublished,
   assertPublishedPrepareBranchContained,
   findUnmergedSlotWork,
-  type MergedPreparePullRequest,
-  refIncludedInMergedPullRequest,
 } from './unmerged-work.js';
-
-const BRANCH = 'TAT-4091-feat-fix-terminal-unit-tests';
-
-async function bash(_vars: SlotVars, cmd: string) {
-  const result = spawnSync('bash', ['-c', cmd], { encoding: 'utf8' });
-  return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
-}
-
-function git(cwd: string, ...args: string[]): string {
-  // Isolate from machine/global core.hooksPath (farmslot pre-commit breaks temp repos).
-  const result = spawnSync('git', ['-c', 'core.hooksPath=.git/hooks', ...args], {
-    cwd,
-    encoding: 'utf8',
-  });
-  assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
-  return result.stdout.trim();
-}
-
-function commit(repo: string, file: string): void {
-  writeFileSync(path.join(repo, file), `${file}\n`);
-  git(repo, 'add', file);
-  git(repo, 'commit', '-qm', file);
-}
-
-/** A slot repo on a work branch, plus bare repos standing in for its remotes. */
-function slotRepo(t: test.TestContext, remotes: string[]) {
-  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-unmerged-work-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const repo = path.join(root, 'slot');
-  git(root, 'init', '-q', '-b', 'main', repo);
-  git(repo, 'config', 'user.email', 'test@example.com');
-  git(repo, 'config', 'user.name', 'Test');
-  git(repo, 'config', 'commit.gpgsign', 'false');
-  git(repo, 'config', 'tag.gpgsign', 'false');
-  commit(repo, 'base.txt');
-  for (const remote of remotes) {
-    const bare = path.join(root, `${remote}.git`);
-    git(root, 'init', '-q', '--bare', bare);
-    git(repo, 'remote', 'add', remote, bare);
-    git(repo, 'push', '-q', remote, 'main');
-  }
-  git(repo, 'checkout', '-q', '-b', BRANCH);
-  commit(repo, 'fix.txt');
-  return { repo, vars: { slotId: 'macwork-mmt-3', remoteRepo: repo } as SlotVars };
-}
-
-function squashAndPrune(repo: string, baseBranch = 'main'): MergedPreparePullRequest {
-  git(repo, 'push', '-q', '-u', 'origin', BRANCH);
-  const headSha = git(repo, 'rev-parse', 'HEAD');
-  git(repo, 'checkout', '-q', baseBranch);
-  git(repo, 'merge', '--squash', BRANCH);
-  git(repo, 'commit', '-qm', 'squash merged work');
-  const mergeSha = git(repo, 'rev-parse', 'HEAD');
-  git(repo, 'push', '-q', 'origin', baseBranch);
-  const origin = git(repo, 'remote', 'get-url', 'origin');
-  git(origin, 'update-ref', '-d', `refs/heads/${BRANCH}`);
-  git(repo, 'fetch', '-q', '--prune', 'origin');
-  git(repo, 'checkout', '-q', BRANCH);
-  return { number: 241, headSha, mergeSha, baseBranch };
-}
+import {
+  bash,
+  BRANCH,
+  commit,
+  git,
+  slotRepo,
+  squashAndPrune,
+} from './unmerged-work.test-support.js';
 
 test('a HEAD that publication pushed to origin is not unpushed work', async (t) => {
   const { repo, vars } = slotRepo(t, ['origin']);
@@ -620,61 +564,4 @@ test('a published branch contained in default or recorded start ref may be repla
     assertPublishedPrepareBranchContained(vars, BRANCH, ['missing-base'], bash),
     /Cannot verify published branch/,
   );
-});
-
-test('read-only publication accepts an earlier slot head covered by a later squash-merged PR', async (t) => {
-  const { repo, vars } = slotRepo(t, ['origin']);
-  const earlier = git(repo, 'rev-parse', 'HEAD');
-  commit(repo, 'later-fix.txt');
-  const merged = squashAndPrune(repo);
-  git(repo, 'reset', '--hard', earlier);
-  const beforeRefs = git(repo, 'show-ref');
-  assert.equal(
-    await refIncludedInMergedPullRequest(
-      vars,
-      'HEAD',
-      'main',
-      'example/app',
-      bash,
-      async () => [merged],
-      { allowFetch: false, timeoutMs: 5000 },
-    ),
-    true,
-  );
-  assert.equal(git(repo, 'rev-parse', 'HEAD'), earlier);
-  assert.equal(git(repo, 'show-ref'), beforeRefs);
-});
-
-test('read-only publication can verify a recent merged default without fetching it into the slot', async (t) => {
-  const { repo, vars } = slotRepo(t, ['origin']);
-  const head = git(repo, 'rev-parse', 'HEAD');
-  const beforeRefs = git(repo, 'show-ref');
-  const mergeSha = '1'.repeat(40),
-    remoteDefault = '2'.repeat(40);
-  const compared: Array<{ base: string; head: string }> = [];
-  const readAncestry = async (_repo: string, base: string, tip: string) => {
-    compared.push({ base, head: tip });
-    return base === mergeSha && tip === remoteDefault;
-  };
-  const merged: MergedPreparePullRequest = {
-    number: 242,
-    baseBranch: 'main',
-    headSha: head,
-    mergeSha,
-  };
-  assert.equal(
-    await refIncludedInMergedPullRequest(
-      vars,
-      'HEAD',
-      'main',
-      'example/app',
-      bash,
-      async () => [merged],
-      { allowFetch: false, timeoutMs: 5000, defaultSha: remoteDefault, readAncestry },
-    ),
-    true,
-  );
-  assert.deepEqual(compared, [{ base: mergeSha, head: remoteDefault }]);
-  assert.equal(git(repo, 'show-ref'), beforeRefs);
-  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
 });

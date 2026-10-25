@@ -29,7 +29,7 @@
       },
       "rpc-safety": {
         "action": "command",
-        "cmd": "FARMSLOT_WORKSPACE_UI_PROOF=0 FARMSLOT_WORKSPACE_PROOF_OUT=\"${FARMSLOT_WORKSPACE_UI_PROOF_OUT:?Set the UI fixture output}/rpc\" TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx --test services/gateway/src/methods/slot/workspace.rpc.live.ts",
+        "cmd": "FARMSLOT_WORKSPACE_UI_PROOF=0 FARMSLOT_WORKSPACE_PROOF_OUT=\"${FARMSLOT_WORKSPACE_UI_PROOF_OUT:?Set the UI fixture output}/rpc\" TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx --test services/gateway/src/methods/slot/workspace.rpc.live.ts services/gateway/src/methods/slot/workspace-probe.live.ts services/gateway/src/methods/slot/workspace-publication.live.ts",
         "timeout_ms": 1260000,
         "intent": "Exercise authenticated gateway refresh requests and assert independent real Git, fixture and persisted-ownership effects.",
         "proves": ["recovery-safety"],

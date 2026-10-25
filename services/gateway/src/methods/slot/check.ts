@@ -23,7 +23,9 @@ import {
   withProjectMachineEnv,
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { isOptionalFixtureAbsence } from '../../fleet/fixture-absence.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+export { isOptionalFixtureAbsence } from '../../fleet/fixture-absence.js';
 import { fixtureCheckVars } from '../../node-support/ensure.js';
 import {
   resolveClaudeBinary,
@@ -397,20 +399,6 @@ async function probeBinary(
     status: 'fail',
     detail: `${binary} cannot start in ${vars.remoteRepo} (exit ${result.exitCode})${head ? `: ${head}` : ''}${pin ? `; ${pin}` : ''}. Fix: ${fix}`,
   };
-}
-
-/**
- * A missing fixture src is not a problem when the entry is marked optional or
- * its path still carries unresolved placeholders (e.g. a dispatch-scoped
- * `{{domain}}` the slot cannot expand) — those entries only materialize for
- * deployments that provide them.
- */
-export function isOptionalFixtureAbsence(
-  tpl: { src?: string; optional?: boolean },
-  expandedSrc: string,
-): boolean {
-  if (tpl.optional) return true;
-  return /\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(expandedSrc);
 }
 
 async function checkFixtures(

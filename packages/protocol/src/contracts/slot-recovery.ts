@@ -33,6 +33,7 @@ export interface SlotRecovery {
 
 export interface SlotWorkspace extends SlotWorkspaceIdentity {
   observedAt: string;
+  defaultBranch?: string;
   localDefaultSha: string | null;
   defaultFetchedAt: string | null;
   remoteDefaultSha: string | null;

@@ -71,12 +71,13 @@ export async function probeWorkspace(
   vars: SlotVars,
   project: RawProjectJson,
   defaultBranch: string,
+  timeoutMs = 5000,
 ): Promise<WorkspaceProbe> {
   const result = await readSlotProbe(
     vars,
     workspaceProbeCommand(vars, project, defaultBranch),
-    'workspace',
-    5000,
+    timeoutMs > 5000 ? 'workspace-recovery' : 'workspace',
+    timeoutMs,
   );
   const data: unknown = JSON.parse(result.stdout);
   if (

@@ -44,6 +44,8 @@ const wait = async (predicate, label) => {
   }
 };
 const has = (value, label) => value.nodes.some((node) => node.label === label);
+const hasReadyMetadata = (value) =>
+  value.nodes.some((node) => node.label?.startsWith('main · baseline · Unowned'));
 const hasButton = (value, label) =>
   value.nodes.some(
     (node) => node.label === label && /button/i.test(node.type) && node.enabled !== false,
@@ -108,7 +110,9 @@ try {
   await capture('native-bulk-review');
   await press('label="Release idle slots (2)"');
   await wait(
-    (value) => value.nodes.filter((n) => n.label?.startsWith('refreshed')).length >= 2,
+    (value) =>
+      value.nodes.filter((n) => n.label?.startsWith('refreshed')).length >= 2 &&
+      hasReadyMetadata(value),
     'bulk recovery completion',
   );
   assertReady('proof-slot', context.repo);
@@ -151,7 +155,10 @@ try {
   await press('role="button" label="Release and update to main"');
   await wait((value) => has(value, 'Discard local work and update'), 'fresh discard warning');
   await press('label="Discard local work and update"');
-  await wait((value) => value.nodes.some((n) => n.label?.startsWith('refreshed')), 'discard');
+  await wait(
+    (value) => value.nodes.some((n) => n.label?.startsWith('refreshed')) && hasReadyMetadata(value),
+    'discard',
+  );
   assertReady('proof-unpublished', context.localRepo);
   assert.equal(fs.existsSync(localFile), false);
   await capture('native-discard-complete');

@@ -14,6 +14,7 @@ import type { FleetStatusResult, SlotRefreshResult } from '@farmslot/protocol';
 import { createNativeProofFixture } from '../../runtime/native-proof-fixture.live-support.js';
 
 const uiProof = process.env.FARMSLOT_WORKSPACE_UI_PROOF === '1';
+const layoutProof = process.env.FARMSLOT_WORKSPACE_LAYOUT_PROOF === '1';
 const source = fileURLToPath(new URL('../../../../../', import.meta.url));
 
 test(
@@ -144,6 +145,7 @@ test(
       phase: null,
       slot_epoch: 4,
       current_run_id: null,
+      warm: !uiProof,
     };
     await writeFile(
       path.join(root, 'status.json'),
@@ -179,8 +181,10 @@ test(
     const fixture = await createNativeProofFixture(t, root);
     fixtureOwnsRoot = true;
     const { initServerGlobals, resetServerGlobalsForTests } = await import('../../server.js');
-    initServerGlobals();
-    t.after(resetServerGlobalsForTests);
+    if (uiProof) {
+      initServerGlobals();
+      t.after(resetServerGlobalsForTests);
+    }
     const connection = await fixture.client.connect();
     t.after(() => connection.close());
     connection.onEvent((event) => {
@@ -229,6 +233,21 @@ test(
         branch: 'local-only',
         head_sha: git(localRepo, 'rev-parse', 'HEAD'),
       });
+      if (layoutProof) {
+        for (let index = 0; index < 24; index++) {
+          const id = `proof-layout-${String(index).padStart(2, '0')}`;
+          pool.slots.push({ id, repo: path.join(root, id), session: id, enabled: false });
+          status.slots.push({
+            ...initial,
+            slot: id,
+            branch: 'main',
+            enabled: false,
+            lifecycle: 'disabled',
+            dispatchable: false,
+          });
+        }
+        await writeFile(path.join(root, 'pool/local.json'), JSON.stringify(pool));
+      }
       await writeFile(path.join(root, 'status.json'), JSON.stringify(status));
       await writeFile(
         path.join(root, 'home/gateways.json'),
@@ -254,6 +273,7 @@ test(
           secondRepo,
           localRepo,
           output,
+          layoutSlots: layoutProof ? 24 : 0,
         }),
         { mode: 0o600 },
       );
@@ -352,6 +372,12 @@ test(
       expectedWorkspace: work,
     });
     assert.equal(recovered.refreshed, true, recovered.detail);
+    const immediate = (await call<FleetStatusResult>('fleet.status')).fleet.slots.find(
+      (slot) => slot.slot === 'proof-slot',
+    );
+    assert.equal(immediate?.branch, 'main');
+    assert.equal(immediate?.lifecycle, 'ready');
+    assert.equal(immediate?.workspace?.publication, 'baseline');
     assert.equal(git(repo, 'branch', '--show-current'), 'main');
     assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
     assert.equal(await readFile(path.join(repo, 'fixture.txt'), 'utf8'), 'synced fixture\n');
@@ -360,6 +386,8 @@ test(
     assert.equal(row.current_run_id, null);
     assert.equal(row.workspace_recovery, null);
     assert.equal(row.fixtures, 'OK');
+    assert.equal(row.warm, false, 'Full release tears down warm resources');
+    assert.equal(row.workspace, null, 'Ready observations are not persisted across later claims');
     await writeFile(path.join(repo, 'file.txt'), 'first local change\n');
     const dirty = await inspectSlotWorkspace('proof-slot');
     await writeFile(path.join(repo, 'file.txt'), 'changed after confirmation\n');
@@ -399,6 +427,12 @@ test(
     assert.equal(held.lifecycle, 'held');
     assert.equal(held.phase, 'occupied');
     assert.equal(held.workspace_recovery.phase, 'fixtures');
+    assert.ok(held.workspace_recovery.completed.includes('reset'));
+    await writeFile(path.join(seed, 'main-advanced.txt'), 'main moved while recovery was held\n');
+    git(seed, 'add', 'main-advanced.txt');
+    git(seed, 'commit', '-qm', 'test: advance main during held recovery');
+    git(seed, 'push', '-q', remote, 'main');
+    const advancedMain = git(seed, 'rev-parse', 'HEAD');
     await core.updateSlotStatus('proof-slot', {
       lifecycle: 'busy',
       phase: 'releasing',
@@ -432,11 +466,14 @@ test(
       expectedWorkspace: retryWork,
     });
     assert.equal(retried.refreshed, true, retried.detail);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), advancedMain);
+    assert.equal((await core.readSlotRow('proof-slot'))?.warm, false);
     const exclude = git(repo, 'rev-parse', '--git-path', 'info/exclude');
     await writeFile(path.isAbsolute(exclude) ? exclude : path.join(repo, exclude), '');
     const retained = path.join(repo, '.task/retained/artifacts/report.md');
     await mkdir(path.dirname(retained), { recursive: true });
     await writeFile(retained, 'Retained evidence\n');
+    await core.updateSlotStatus('proof-slot', { warm: true });
     const baseline = await inspectSlotWorkspace('proof-slot');
     assert.equal(baseline.dirtyCount, 0);
     const baselineRefresh = await call<SlotRefreshResult>('slot.refresh', {
@@ -447,6 +484,11 @@ test(
     });
     assert.equal(baselineRefresh.refreshed, true, baselineRefresh.detail);
     assert.equal(await readFile(retained, 'utf8'), 'Retained evidence\n');
+    assert.equal(
+      (await core.readSlotRow('proof-slot'))?.warm,
+      true,
+      'Baseline refresh preserves warm resources',
+    );
     const owner = store.createRun(
       {
         project: 'proof',
@@ -476,6 +518,7 @@ test(
     });
     assert.equal(ownedRelease.refreshed, true, ownedRelease.detail);
     assert.equal((await core.readSlotRow('proof-slot'))?.current_run_id, null);
+    assert.equal((await core.readSlotRow('proof-slot'))?.warm, false);
     const linkedWork = await inspectSlotWorkspace('proof-linked');
     const linkedRelease = await call<SlotRefreshResult>('slot.refresh', {
       slotId: 'proof-linked',
@@ -522,6 +565,7 @@ test(
       confirmed,
       failed,
       restart: { held: true, freshProcess: true },
+      retryAdvancedTo: advancedMain,
       retried,
       baselineRefresh,
       ownedRelease,

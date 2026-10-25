@@ -228,7 +228,7 @@ Two related-but-distinct strategy surfaces now coexist and keep separate names:
 
 ## Amendment 1: fleet release and update to main (2026-10-25)
 
-**Status:** Accepted by the lead on 2026-10-25, reviewed proposal `4951004d`. Implementation pending.
+**Status:** Accepted by the lead on 2026-10-25, reviewed proposal `4951004d`. Implementation: PR #1490.
 **Specification:** [Fleet slot recovery](../reference/recipe-runtime-capability-contract.md#fleet-slot-recovery).
 **Related:** [ADR-004](004-fleet-map.md), [ADR-022](022-slot-lifecycle-simplification.md), [ADR-054](054-run-resource-posture.md).
 

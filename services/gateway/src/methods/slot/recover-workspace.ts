@@ -51,6 +51,7 @@ import {
 
 const owner = (row: Readonly<Record<string, unknown>>, field: string): string | null =>
   typeof row[field] === 'string' && row[field] ? String(row[field]) : null;
+const RECOVERY_PROBE_TIMEOUT_MS = 120_000;
 function identityOwnsRow(
   row: Readonly<Record<string, unknown>>,
   expected: SlotWorkspaceIdentity,
@@ -106,7 +107,9 @@ export async function recoverSlotWorkspace(
     await assertSlotNotOperatorRoot(vars, 'refresh');
     const project = await loadProjectVars(vars.projectName);
     const defaultBranch = getProjectField(project.projectJson, 'default_branch') || DEFAULT_BRANCH;
-    let workspace = await inspectSlotWorkspace(params.slotId);
+    let workspace = await inspectSlotWorkspace(params.slotId, {
+      timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+    });
     if (!sameSlotWorkspace(workspace, params.expectedWorkspace))
       return refuse(
         'identity-changed',
@@ -115,6 +118,7 @@ export async function recoverSlotWorkspace(
       );
     const fleet = await loadFleetStatus(true);
     const status = fleet.slots.find((slot) => slot.slot === params.slotId);
+    let keepWarm = status?.warm ?? false;
     const eligibility = slotRecoveryEligibility(status ? { ...status, workspace } : undefined);
     if (!eligibility.allowed)
       return refuse(
@@ -200,13 +204,19 @@ export async function recoverSlotWorkspace(
         marker.completed = [...marker.completed, complete];
       marker.identity = authorized;
       if (
-        !(await updateSlotStatusIf(params.slotId, ownsFence, { workspace_recovery: { ...marker } }))
+        !(await updateSlotStatusIf(params.slotId, ownsFence, {
+          workspace_recovery: { ...marker },
+          warm: keepWarm,
+        }))
       )
         throw new Error('Recovery fence changed');
       output(phase, complete ? `${complete} verified` : phase);
     };
     const advanceIdentity = async () => {
-      const current = await inspectSlotWorkspace(params.slotId, { network: false });
+      const current = await inspectSlotWorkspace(params.slotId, {
+        network: false,
+        timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+      });
       if (
         current.epoch !== entryEpoch ||
         current.recoveryId !== marker.id ||
@@ -219,16 +229,26 @@ export async function recoverSlotWorkspace(
     };
     const verifyWork = async () => {
       await assertFence();
-      const current = await inspectSlotWorkspace(params.slotId, { network: false });
+      const current = await inspectSlotWorkspace(params.slotId, {
+        network: false,
+        timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+      });
       if (!sameSlotWorkspace(current, authorized))
         throw new Error('Workspace changed; renew discard confirmation');
     };
     await save('inspect');
-    workspace = await inspectSlotWorkspace(params.slotId, { fetch: true });
+    workspace = await inspectSlotWorkspace(params.slotId, {
+      fetch: true,
+      timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+    });
     if (!sameSlotWorkspace(workspace, authorized))
       throw new Error('Workspace changed during publication verification');
     if (workspace.publication === 'unknown')
       throw new Error(workspace.error ?? 'Publication is unknown');
+    if (marker.completed.includes('reset') && workspace.headSha !== workspace.remoteDefaultSha)
+      marker.completed = marker.completed.filter(
+        (phase) => phase === 'cleanup' || phase === 'inspect',
+      );
     if (
       (workspace.dirtyCount > 0 || workspace.publication === 'unpushed') &&
       params.mode !== 'force'
@@ -261,6 +281,7 @@ export async function recoverSlotWorkspace(
           },
         );
         if (!released.released) throw new Error(released.reason ?? 'Cleanup did not finish');
+        keepWarm = false;
         // The existing release clears its own ownership fields and resets Git.
         await advanceIdentity();
         await save('fixtures', 'cleanup');
@@ -291,7 +312,10 @@ export async function recoverSlotWorkspace(
     await advanceIdentity();
     await save('verify', 'fixtures');
     await assertFence();
-    const verified = await inspectSlotWorkspace(params.slotId, { fetch: true });
+    const verified = await inspectSlotWorkspace(params.slotId, {
+      fetch: true,
+      timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+    });
     const fixtures = await checkFixtures(vars, project, project.projectJson);
     const linked = await detectLinkedWorktree(vars);
     const tracking = resolveSlotTrackingBranchFromProject(
@@ -311,21 +335,21 @@ export async function recoverSlotWorkspace(
     )
       throw new Error('Checkout, free ownership or fixtures did not verify');
     await save('verify', 'verify');
-    const readyWorkspace = { ...verified, recovery: undefined, recoveryId: null };
     if (
       !(await updateSlotStatusIf(params.slotId, ownsFence, {
         branch: verified.branch,
         head_sha: verified.headSha,
         fixtures,
-        workspace: readyWorkspace,
+        workspace: null,
         workspace_error: null,
         last_error_at: null,
         last_error_msg: null,
       }))
     )
       throw new Error('Recovery fence changed');
-    if (!(await resetSlotIf(params.slotId, ownsFence, status?.warm ?? false, marker.id)))
+    if (!(await resetSlotIf(params.slotId, ownsFence, keepWarm, marker.id)))
       throw new Error('Recovery ready transition refused');
+    await loadFleetStatus(true);
     output('done', `${verified.branch} is ready at origin/${defaultBranch}`);
     return finish({
       requestId,

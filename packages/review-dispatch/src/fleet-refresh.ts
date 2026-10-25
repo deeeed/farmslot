@@ -37,6 +37,7 @@ export interface FleetWorkspaceRow {
 /** Used by both fleet cards and both progress renderers. */
 export function fleetWorkspaceRow(slot: SlotStatus): FleetWorkspaceRow {
   const work = slot.workspace;
+  const defaultBranch = work?.defaultBranch ?? 'main';
   const currentRun = work ? work.currentRunId : slot.currentRunId;
   const eligibility = slotRecoveryEligibility(slot);
   const owners = [
@@ -55,8 +56,8 @@ export function fleetWorkspaceRow(slot: SlotStatus): FleetWorkspaceRow {
     publication: eligibility.reason === 'unknown' ? 'unknown' : (work?.publication ?? 'unknown'),
     behind:
       eligibility.reason === 'unknown' || work?.behind == null
-        ? 'Behind main unknown'
-        : `${work.behind} behind main${work.remoteAdvanced ? ' · remote advanced' : ''}`,
+        ? `Behind ${defaultBranch} unknown`
+        : `${work.behind} behind ${defaultBranch}${work.remoteAdvanced ? ' · remote advanced' : ''}`,
     referenceTime:
       work?.defaultFetchedAt && Number.isFinite(Date.parse(work.defaultFetchedAt))
         ? `Fetched ${new Date(work.defaultFetchedAt).toISOString().slice(0, 16).replace('T', ' ')}Z`
@@ -253,7 +254,25 @@ export class FleetRefreshViewModel {
         const event = payload as FleetRefreshSummaryEvent;
         if (event.requestId !== requestId || !this.sameContext()) return;
         this.summary = event;
-        this.phase = 'done';
+        this.bulkRunning = false;
+        void this.refreshRows()
+          .then(() => {
+            if (event.requestId !== this.requestId || !this.sameContext()) return;
+            this.phase = 'done';
+            this.detach();
+            this.changed();
+          })
+          .catch((error: unknown) => {
+            if (event.requestId !== this.requestId || !this.sameContext()) return;
+            this.error = error instanceof Error ? error.message : String(error);
+            this.rows = this.rows.map((row) => {
+              const slot = { ...row.slot, workspace: undefined, workspaceError: this.error };
+              return { ...row, ...fleetWorkspaceRow(slot), slot };
+            });
+            this.phase = 'error';
+            this.detach();
+            this.changed();
+          });
         this.changed();
       }),
     );

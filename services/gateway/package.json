@@ -15,7 +15,8 @@
     "test:decision-advice-live": "node --import tsx src/methods/decision-advice.rpc.live.ts",
     "test:claude-hookless-progress": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/runners/claude-hookless-progress.live.ts",
     "test:publish-package-refresh-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/run-engine/publish-package-refresh.live.ts",
-    "test:finished-slot-reclaim-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/run-lifecycle/finished-slot-reclaim.live.ts"
+    "test:finished-slot-reclaim-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/run-lifecycle/finished-slot-reclaim.live.ts",
+    "test:workspace-recovery-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/methods/slot/workspace.rpc.live.ts src/methods/slot/workspace-probe.live.ts src/methods/slot/workspace-publication.live.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1",

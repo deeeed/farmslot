@@ -1258,6 +1258,7 @@ export class FleetCanvas extends LitElement {
   render() {
     return html`
       <div
+        style="display: contents"
         @fleet-slot-recovery=${(event: CustomEvent<{ slotId: string; inspectOnly: boolean }>) => {
           this.recoverySlotId = event.detail.slotId;
           this.recoveryInspectOnly = event.detail.inspectOnly;

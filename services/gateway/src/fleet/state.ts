@@ -459,7 +459,6 @@ function transformSlot(raw: RawSlot): SlotStatus {
   }
   return {
     slot: raw.slot,
-    ...(raw.workspace ? { workspace: raw.workspace } : {}),
     ...(raw.workspace_error ? { workspaceError: raw.workspace_error } : {}),
     machine: raw.machine ?? '',
     platform: raw.platform ?? '',

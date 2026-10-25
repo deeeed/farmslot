@@ -39,6 +39,7 @@ import {
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { isOptionalFixtureAbsence } from '../fleet/fixture-absence.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { fixtureCheckVars } from '../node-support/ensure.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
@@ -540,7 +541,6 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     // would let a stale teardown's epoch guard pass again.
     slot_epoch: Number(prev.slot_epoch) || 0,
     ...(prev.workspace_recovery ? { workspace_recovery: prev.workspace_recovery } : {}),
-    ...(prev.workspace ? { workspace: prev.workspace } : {}),
     handoff_run_id: prev.handoff_run_id ?? null,
     task_id: prev.task_id ?? null,
     task_file: prev.task_file ?? null,
@@ -1103,7 +1103,7 @@ export async function checkFixtures(
     if (!tpl.src) continue; // compose entries have no src — skip for fixture check
     const localPath = path.join(pv.projectFixturesDir, tpl.src);
     if (!existsSync(localPath)) {
-      if (!tpl.optional) total++;
+      if (!isOptionalFixtureAbsence(tpl, localPath)) total++;
       continue;
     }
     total++;

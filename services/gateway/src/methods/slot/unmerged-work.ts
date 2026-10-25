@@ -30,16 +30,18 @@ type ReadMergedPreparePullRequests = (
   repo: string,
   headSha: string,
   timeoutMs?: number,
+  force?: boolean,
 ) => Promise<readonly MergedPreparePullRequest[]>;
 
 export const readMergedPreparePullRequests: ReadMergedPreparePullRequests = async (
   repo,
   headSha,
   timeoutMs = 15_000,
+  force = true,
 ) => {
   const { stdout } = await ghRequest(
     ['api', `repos/${repo}/commits/${headSha}/pulls?per_page=100`],
-    { force: true, caller: 'slot.prepare-publication', signal: AbortSignal.timeout(timeoutMs) },
+    { force, caller: 'slot.prepare-publication', signal: AbortSignal.timeout(timeoutMs) },
   );
   const data: unknown = JSON.parse(stdout);
   if (!Array.isArray(data))

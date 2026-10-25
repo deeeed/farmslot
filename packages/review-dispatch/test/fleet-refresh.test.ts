@@ -11,6 +11,7 @@ import {
   type SlotRefreshResult,
   type SlotStatus,
   type SlotWorkspace,
+  slotWorkspaceIdentity,
 } from '@farmslot/protocol';
 
 import {
@@ -146,6 +147,7 @@ function setup(slots: SlotStatus[]) {
     failNextRead: () => {
       failRead = true;
     },
+    setSlots: (values: SlotStatus[]) => slots.splice(0, slots.length, ...values),
     emit: (event: string, payload: unknown) => events.get(event)?.(payload),
   };
 }
@@ -184,6 +186,94 @@ test('bulk freezes visible membership and never includes held, dirty, unpublishe
     ],
   });
   model.dispose();
+});
+
+test('bulk completion refreshes metadata and later identities without expanding scope or losing outcomes', async () => {
+  const { model, calls, emit, setSlots } = setup([slot('shown'), slot('hidden')]);
+  await model.load(['shown']);
+  await model.releaseIdle();
+  emit(Events.SCRIPT_OUTPUT, { requestId: 'server-owned-row-id', data: 'verified\n' });
+  emit(Events.FLEET_REFRESH_SLOT_UPDATE, {
+    requestId: 'proof-1',
+    slotId: 'shown',
+    status: 'refreshed',
+  });
+  setSlots([
+    slot(
+      'shown',
+      { branch: 'main', headSha: 'd'.repeat(40), publication: 'baseline', behind: 0 },
+      { branch: 'main' },
+    ),
+    slot('hidden'),
+  ]);
+  emit(Events.FLEET_REFRESH_SUMMARY, {
+    requestId: 'proof-1',
+    refreshed: 1,
+    skipped: 0,
+    failed: 0,
+    cancelled: 0,
+    durationMs: 1,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(model.phase, 'done');
+  assert.equal(model.rows.length, 1);
+  assert.equal(model.rows[0].branch, 'main');
+  assert.equal(model.rows[0].publication, 'baseline');
+  assert.equal(model.rows[0].behind, '0 behind main');
+  assert.equal(model.rows[0].status, 'refreshed');
+  assert.deepEqual(model.rows[0].log, ['verified']);
+  await model.releaseIdle();
+  const request = calls.filter((call) => call.method === Methods.FLEET_REFRESH_SLOTS).at(-1);
+  assert.deepEqual(request?.params, {
+    requestId: 'proof-3',
+    slots: [
+      {
+        slotId: 'shown',
+        mode: 'safe',
+        release: true,
+        expectedWorkspace: slotWorkspaceIdentity({
+          ...workspace,
+          branch: 'main',
+          headSha: 'd'.repeat(40),
+        }),
+      },
+    ],
+  });
+  model.dispose();
+});
+
+test('a failed bulk completion read preserves outcomes but removes stale release authority', async () => {
+  const { model, emit, failNextRead } = setup([slot('shown')]);
+  await model.load(['shown']);
+  await model.releaseIdle();
+  emit(Events.FLEET_REFRESH_SLOT_UPDATE, {
+    requestId: 'proof-1',
+    slotId: 'shown',
+    status: 'refreshed',
+  });
+  failNextRead();
+  emit(Events.FLEET_REFRESH_SUMMARY, {
+    requestId: 'proof-1',
+    refreshed: 1,
+    skipped: 0,
+    failed: 0,
+    cancelled: 0,
+    durationMs: 1,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(model.phase, 'error');
+  assert.equal(model.rows[0].status, 'refreshed');
+  assert.equal(model.rows[0].eligibility.reason, 'unknown');
+  assert.equal(model.bulkCount, 0);
+  assert.match(model.error, /Read failed/);
+  model.dispose();
+});
+
+test('behind counts name the actual project default branch', () => {
+  assert.equal(
+    fleetWorkspaceRow(slot('release', { defaultBranch: 'develop' })).behind,
+    '3 behind develop',
+  );
 });
 
 test('discard requires an explicit confirmation and sends the exact observed content identity', async () => {

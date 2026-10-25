@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 import { GatewayClient } from '../../../../packages/cli/src/gateway-client.ts';
 
+import { proveFleetScrolling } from './fleet-scroll-proof.mjs';
+
 const output = process.env.FARMSLOT_WORKSPACE_UI_PROOF_OUT;
 assert.ok(output, 'Set the disposable UI fixture output');
 const context = JSON.parse(fs.readFileSync(path.join(output, 'ui-context.json'), 'utf8'));
@@ -31,6 +33,11 @@ const client = new GatewayClient({
   credential: { token: grant.accessToken },
 });
 const connection = await client.connect();
+const fleetEvents = [];
+connection.onEvent((event) => {
+  if (event.event === 'fleet.updated' && event.payload?.fleet)
+    fleetEvents.push(event.payload.fleet);
+});
 const created = [];
 const cdp = fileURLToPath(new URL('../cdp.mjs', import.meta.url));
 const route = process.env.FARMSLOT_WORKSPACE_PROOF_ROUTE ?? 'fleet?proof=fleet1490';
@@ -90,6 +97,15 @@ try {
   );
   fs.writeFileSync(path.join(output, 'scoring-before.json'), JSON.stringify(before, null, 2));
   await cleanupRun(beforeId);
+  if (context.layoutSlots) {
+    browser(
+      'eval',
+      route,
+      `const deep=(s,r=document)=>[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].flatMap(e=>e.shadowRoot?deep(s,e.shadowRoot):[])]; const b=deep('button').find(e=>e.textContent.trim()==='Got it'); if(b)b.click(); return true;`,
+    );
+    const scrolling = await proveFleetScrolling(output, route);
+    fs.writeFileSync(scrolling.output, JSON.stringify(scrolling, null, 2));
+  }
   browser(
     'eval',
     route,
@@ -115,6 +131,23 @@ try {
       ),
     'CC recovery readback',
   );
+  await poll(
+    async () =>
+      JSON.parse(
+        browser(
+          'eval',
+          route,
+          `
+      const canvas=document.querySelector('fleet-canvas');
+      const modal=canvas?.shadowRoot.querySelector('fleet-refresh-modal');
+      return {text:modal?.shadowRoot.querySelector('article[data-slot="proof-slot"]')?.textContent ?? ''};
+    `,
+        ),
+      ),
+    (value) =>
+      value.text.includes('main · baseline · Unowned') && !value.text.includes('Slot is working'),
+    'fresh completed modal metadata',
+  );
   browser('screenshot', route, path.join(output, 'cc-recovery-complete.png'));
   const afterId = await run('AFTER');
   const after = await poll(
@@ -131,6 +164,34 @@ try {
     after.decisions.some((decision) => decision.type === 'engine_no_suitable_slot'),
     false,
   );
+  const claimed = await poll(
+    async () => fleetEvents.flatMap((fleet) => fleet.slots),
+    (slots) => slots.some((slot) => slot.slot === 'proof-slot' && slot.currentRunId === afterId),
+    'claimed slot broadcast',
+  );
+  const ownerRows = claimed.filter(
+    (slot) => slot.slot === 'proof-slot' && slot.currentRunId === afterId,
+  );
+  assert.ok(ownerRows.length);
+  assert.ok(ownerRows.every((slot) => !slot.workspace || slot.workspace.currentRunId === afterId));
+  browser('click', route, 'fleet-refresh-modal >>> button[aria-label="Close"]');
+  await poll(
+    async () =>
+      JSON.parse(
+        browser(
+          'eval',
+          route,
+          `
+    const deep=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?deep(selector,e.shadowRoot):[])];
+    const card=deep('slot-card').find(e=>e.slotData?.slot==='proof-slot');
+    return {owner:card?.slotData?.currentRunId,text:card?.shadowRoot.querySelector('.card-content')?.textContent ?? ''};
+  `,
+        ),
+      ),
+    (value) => value.owner === afterId && value.text.includes('Run ' + afterId.slice(0, 8)),
+    'actual owner on the fleet card',
+  );
+  browser('screenshot', route, path.join(output, 'cc-claimed-slot.png'));
   fs.writeFileSync(path.join(output, 'scoring-after.json'), JSON.stringify(after, null, 2));
   fs.writeFileSync(
     path.join(output, 'cc-scored-selection.json'),
@@ -143,6 +204,7 @@ try {
         selection,
         unrestricted: true,
         recovered: ready.fleet.slots.find((slot) => slot.slot === 'proof-slot'),
+        claimedOwnerCorrect: true,
         claim:
           'CC recovery followed by unrestricted scored selection. No model execution or full product-run claim.',
       },

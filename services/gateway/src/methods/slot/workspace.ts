@@ -106,6 +106,7 @@ async function remoteDefault(
   key: string,
   branch: string,
   fresh: boolean,
+  timeoutMs: number,
 ): Promise<RemoteObservation> {
   const cacheKey = `${key}:${branch}`;
   const cached = remoteDefaults.get(cacheKey);
@@ -113,24 +114,33 @@ async function remoteDefault(
   const promise = readSlotProbe(
     vars,
     `git -C ${shellQuote(vars.remoteRepo)} ls-remote --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
-    'workspace-default',
-    5000,
+    fresh ? 'workspace-recovery-default' : 'workspace-default',
+    timeoutMs,
   ).then((result) => ({
     sha: result.stdout.trim().split(/\s+/)[0] || null,
     observedAt: new Date().toISOString(),
   }));
+  if (fresh) {
+    const observation = await promise;
+    remoteDefaults.set(cacheKey, {
+      until: Date.now() + 15_000,
+      promise: Promise.resolve(observation),
+    });
+    return observation;
+  }
   remoteDefaults.set(cacheKey, { until: Date.now() + 15_000, promise });
   return promise;
 }
 
 export async function inspectSlotWorkspace(
   slotId: string,
-  options: { fetch?: boolean; network?: boolean } = {},
+  options: { fetch?: boolean; network?: boolean; timeoutMs?: number } = {},
 ): Promise<SlotWorkspace> {
   const vars = await loadSlotVars(slotId);
   const pv = await loadProjectVars(vars.projectName);
   const project: RawProjectJson = pv.projectJson;
   const branch = getProjectField(project, 'default_branch') || DEFAULT_BRANCH;
+  const timeoutMs = options.timeoutMs ?? (options.fetch ? 120_000 : 5000);
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   if (options.fetch) {
     const fetched = await execOnSlot(
@@ -141,7 +151,7 @@ export async function inspectSlotWorkspace(
     if (fetched.exitCode !== 0) throw new Error('Cannot fetch the default branch');
   }
   const [probe, row] = await Promise.all([
-    probeWorkspace(vars, project, branch),
+    probeWorkspace(vars, project, branch, timeoutMs),
     readSlotRow(slotId),
   ]);
   if (!row) throw new Error('Slot status is missing');
@@ -156,6 +166,7 @@ export async function inspectSlotWorkspace(
     dirtyFingerprint: probe.dirtyFingerprint,
     recoveryId: recovery?.id ?? null,
     observedAt: new Date().toISOString(),
+    defaultBranch: branch,
     localDefaultSha: probe.localDefaultSha,
     defaultFetchedAt: probe.defaultFetchedAt,
     remoteDefaultSha: null,
@@ -181,7 +192,13 @@ export async function inspectSlotWorkspace(
   if (protectedWorkspace) return work;
   if (options.network === false) return work;
   try {
-    const remote = await remoteDefault(vars, probe.originKey, branch, options.fetch === true);
+    const remote = await remoteDefault(
+      vars,
+      probe.originKey,
+      branch,
+      options.fetch === true,
+      timeoutMs,
+    );
     work.remoteDefaultSha = remote.sha;
     work.remoteObservedAt = remote.observedAt;
     work.remoteAdvanced = remote.sha !== probe.localDefaultSha;
@@ -193,11 +210,11 @@ export async function inspectSlotWorkspace(
       const contains = await execOnSlot(
         vars,
         `${git} merge-base --is-ancestor HEAD ${shellQuote(base)}`,
-        { timeout: 5000 },
+        { timeout: timeoutMs },
       );
       if (contains.exitCode === 0) return { ...work, publication: 'merged' };
       const cherry = await execOnSlot(vars, `${git} cherry ${shellQuote(base)} HEAD`, {
-        timeout: 5000,
+        timeout: timeoutMs,
       });
       if (cherry.exitCode === 0 && cherry.stdout.trim()) {
         const patches = new Set(
@@ -207,7 +224,7 @@ export async function inspectSlotWorkspace(
             .map((line) => line.slice(2).trim()),
         );
         const commits = await execOnSlot(vars, `${git} rev-list ${shellQuote(`${base}..HEAD`)}`, {
-          timeout: 5000,
+          timeout: timeoutMs,
         });
         // git cherry omits merge commits; an unverified merge resolution is not a merged patch.
         if (
@@ -226,7 +243,7 @@ export async function inspectSlotWorkspace(
         vars,
         `${git} ls-remote --heads ${shellQuote(probe.publicationRemote)} ${shellQuote(probe.publicationRef)}`,
         'workspace-publication',
-        5000,
+        timeoutMs,
       );
       const sha = published.stdout.trim().split(/\s+/)[0];
       if (sha === probe.headSha) return { ...work, publication: 'pushed' };
@@ -243,7 +260,7 @@ export async function inspectSlotWorkspace(
         const contains = await execOnSlot(
           vars,
           `${git} merge-base --is-ancestor HEAD ${shellQuote(sha)}`,
-          { timeout: 5000 },
+          { timeout: timeoutMs },
         );
         if (contains.exitCode === 0) return { ...work, publication: 'pushed' };
         if (contains.exitCode !== 1)
@@ -252,18 +269,21 @@ export async function inspectSlotWorkspace(
     }
     const repo = getProjectField(project, 'ci.repo');
     if (repo) {
-      const merged = await readMergedPreparePullRequests(repo, probe.headSha, 5000).catch(
-        (error: unknown) => {
-          // An unpublished local commit has no GitHub PR association.
-          if (
-            error instanceof GitHubHttpError &&
-            error.status === 422 &&
-            error.message.includes('No commit found for SHA')
-          )
-            return [];
-          throw error;
-        },
-      );
+      const merged = await readMergedPreparePullRequests(
+        repo,
+        probe.headSha,
+        timeoutMs,
+        options.fetch === true,
+      ).catch((error: unknown) => {
+        // An unpublished local commit has no GitHub PR association.
+        if (
+          error instanceof GitHubHttpError &&
+          error.status === 422 &&
+          error.message.includes('No commit found for SHA')
+        )
+          return [];
+        throw error;
+      });
       for (const pr of merged) {
         if (
           await refIncludedInMergedPullRequest(
@@ -275,7 +295,7 @@ export async function inspectSlotWorkspace(
             async () => [pr],
             {
               allowFetch: options.fetch === true,
-              timeoutMs: 5000,
+              timeoutMs,
               defaultSha: work.remoteDefaultSha ?? undefined,
             },
           )
@@ -292,7 +312,7 @@ export async function inspectSlotWorkspace(
     const commits = await execOnSlot(
       vars,
       `${git} rev-list --count ${shellQuote(`origin/${branch}..HEAD`)}`,
-      { timeout: 5000 },
+      { timeout: timeoutMs },
     );
     if (commits.exitCode !== 0)
       return { ...work, error: 'Unpublished commits could not be inspected' };
@@ -340,6 +360,18 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
         slot.heldReason,
       ]);
       let cached = inspections.get(slot.slot);
+      while (cached?.pending && cached.key !== key) {
+        try {
+          await cached.promise;
+        } catch (error) {
+          return {
+            ...slot,
+            workspace: undefined,
+            workspaceError: error instanceof Error ? error.message : String(error),
+          };
+        }
+        cached = inspections.get(slot.slot);
+      }
       if (!cached || (!cached.pending && (cached.key !== key || cached.until < Date.now()))) {
         const promise = inspectSlotWorkspace(slot.slot, {
           network: slot.lifecycle !== 'busy' && slot.agent !== 'working',
