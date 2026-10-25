@@ -385,7 +385,7 @@ test('runModeLabel and runModeDiffersFromDefault surface mode for all flows', ()
     runChainedModeDrift(
       makeRun({ flowType: 'pr-complete', mode: 'interactive', parentRunId: 'parent-1' }),
     ),
-    true,
+    false,
   );
   assert.equal(
     runChainedModeDrift(makeRun({ flowType: 'dev', mode: 'autonomous', parentRunId: null })),
@@ -413,6 +413,18 @@ test('runModeLabel and runModeDiffersFromDefault surface mode for all flows', ()
     runDisplayTitle(makeRun({ flowType: 'pr-complete', mode: 'autonomous' })),
     'pr-complete · autonomous',
   );
+});
+
+test('CI-watch follow-ups do not warn about an inherited execution mode', () => {
+  for (const flowType of ['pr-complete', 'update-branch'] as const) {
+    for (const mode of ['autonomous', 'interactive', 'validation'] as const) {
+      assert.equal(
+        runChainedModeDrift(makeRun({ flowType, mode, parentRunId: 'parent-1' })),
+        false,
+        `${flowType} inherits ${mode} rather than its standalone default`,
+      );
+    }
+  }
 });
 
 test('runTemplateFileName reads write-task outputs', () => {

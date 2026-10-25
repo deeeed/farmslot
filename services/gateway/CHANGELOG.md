@@ -6,10 +6,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Reject malformed ticket data at run creation with the exact field that needs correction.
 
+- Show unanswered structured worker questions as operator decisions, and resume monitoring when the worker records the answer.
 - Stop owned workers before terminal runs leave the live store while preserving finished checkouts, and verify published commits against the actual remote when tracking refs are stale.
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
 - Transfer prepare scripts through the file API so large task inputs do not exceed shell argument limits, including orchestrator-local preparation for remote slots.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
+- Preserve the parent run's autonomous or interactive mode when CI watch creates a follow-up, including decision and recovery paths.
 - Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
 - Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.
 - Include evidence-manifest field errors when publication refuses invalid declarations or selected recipe evidence.
