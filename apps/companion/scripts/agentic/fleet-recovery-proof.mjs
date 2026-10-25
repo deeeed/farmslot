@@ -23,8 +23,13 @@ const selection = { session: device.session, platform: 'ios', udid: device.udid 
 const git = (repo, ...args) =>
   execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 const snapshot = () =>
-  client.capture.snapshot({ ...selection, interactiveOnly: false, forceFull: true });
-const press = (selector) => client.interactions.press({ ...selection, selector, settle: true });
+  client.capture.snapshot({
+    ...selection,
+    interactiveOnly: false,
+    forceFull: true,
+    timeoutMs: 20_000,
+  });
+const press = (selector) => client.interactions.press({ ...selection, selector });
 const wait = async (predicate, label) => {
   const deadline = Date.now() + 300_000;
   for (;;) {
@@ -59,10 +64,14 @@ const unchanged = () => {
 };
 
 try {
-  execFileSync('xcrun', ['simctl', 'openurl', device.udid, 'farmslot-development://fleet']);
+  console.log('Inspecting the authenticated native Fleet screen');
+  const initial = await snapshot();
+  if (initial.nodes.some((node) => node.identifier === 'fleet-recovery-close'))
+    await press('id="fleet-recovery-close"');
   await wait((value) => value.nodes.some((n) => n.identifier === 'fleet-release-idle'), 'Fleet');
   await press('id="fleet-release-idle"');
   await wait((value) => has(value, 'Release idle slots (2)'), 'two safe bulk targets');
+  console.log('Verified two safe bulk targets');
   await capture('native-bulk-review');
   await press('label="Release idle slots (2)"');
   await wait(
@@ -72,6 +81,7 @@ try {
   assertReady('proof-slot', context.repo);
   assertReady('proof-slot-two', context.secondRepo);
   unchanged();
+  console.log('Verified native bulk results and preserved unpublished work');
   await capture('native-bulk-complete');
   await press('id="fleet-recovery-close"');
 
