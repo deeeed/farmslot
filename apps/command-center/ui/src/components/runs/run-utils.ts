@@ -280,7 +280,12 @@ export function runModeDiffersFromDefault(run: Partial<Pick<Run, 'flowType' | 'm
 export function runChainedModeDrift(
   run: Partial<Pick<Run, 'flowType' | 'mode' | 'parentRunId' | 'lane'>>,
 ): boolean {
-  if (run.lane === 'comparison') return false;
+  if (
+    run.lane === 'comparison' ||
+    run.flowType === 'pr-complete' ||
+    run.flowType === 'update-branch'
+  )
+    return false;
   return Boolean(run.parentRunId && runModeDiffersFromDefault(run));
 }
 
