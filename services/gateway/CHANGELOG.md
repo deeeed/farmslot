@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Prefer lightly loaded allowed nodes for automatic slot placement, skip nodes at the load-per-core threshold, and record the selection reasons before writing the task.
+
 - Fetch an unfetched PR branch before the inherited-commit signature check, preserving the dispatch checkout and unsigned-work refusal.
 - Release a selected finished checkout before writing the next task, while refusing unpublished work and changed ownership.
 - Reject malformed ticket data at run creation with the exact field that needs correction.
