@@ -57,6 +57,7 @@ const nodes = [
   { machine: 'load-hot', slot: 'hot-slot', load: 83, cores: 16 },
   { machine: 'load-medium', slot: 'medium-slot', load: 6, cores: 16 },
   { machine: 'load-light', slot: 'light-slot', load: 1.4, cores: 8 },
+  { machine: 'load-manual', slot: 'manual-slot', load: 6, cores: 16 },
 ];
 const rows = [];
 for (const node of nodes) {
@@ -91,7 +92,7 @@ for (const node of nodes) {
     machine: node.machine,
     project: 'proof',
     platform: 'cli',
-    lifecycle: 'ready',
+    lifecycle: node.slot === 'manual-slot' ? 'manual' : 'ready',
     phase: null,
     agent: 'idle',
     enabled: true,
@@ -285,7 +286,7 @@ try {
     'eligible held affinity prevents an overload-only queue hold',
   );
   // Exercise the real operator slot-picker route on stale free checkouts.
-  for (const row of rows) row.lifecycle = 'ready';
+  for (const row of rows) row.lifecycle = row.slot === 'manual-slot' ? 'manual' : 'ready';
   execFileSync('git', ['-C', path.join(root, 'medium-slot'), 'checkout', '-qb', 'previous-task']);
   rows[1]!.branch = 'previous-task';
   await writeFile(path.join(root, 'status.json'), JSON.stringify({ slots: rows }));
@@ -294,7 +295,7 @@ try {
   const picker = await client.call<RunCreateResult>('run.create', {
     ...params,
     ticketOrPr: 'example/proof#141',
-    allowedSlots: ['hot-slot', 'medium-slot'],
+    allowedSlots: ['hot-slot', 'medium-slot', 'manual-slot'],
   });
   const { createEngineDecision } =
     await import('../../../services/gateway/src/run-engine/engine-decisions.js');
@@ -311,6 +312,20 @@ try {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
       const decision = store.getRun(runId)!.decisions.find((d) => !d.resolvedAt)!;
+      const pending = await client!.call<RunGetResult>('run.get', { runId });
+      const card = pending.run.decisions.find((d) => d.id === decision.id);
+      assert.equal(card?.payload?.kind, 'slot_picker');
+      if (card?.payload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+      assert.equal(
+        card.payload.reason,
+        'all_stale',
+        'Stale branch selection remains a human decision',
+      );
+      assert.deepEqual(card.payload.candidates.map((s) => s.slotId).sort(), [
+        'hot-slot',
+        'medium-slot',
+      ]);
+
       await client!.call('run.resolveDecision', {
         runId,
         decisionId: decision.id,
@@ -334,6 +349,8 @@ try {
     redHeadroomPreserved: red.preview.slotId,
     heldQueueSelection: queueSelection,
     operatorPickerSelection: pickedReadback.run.slotId,
+    manualSlotExcludedFromPicker: true,
+    staleBranchHumanDecisionPreserved: true,
     lowestLoadPreview: preview.preview.slotId,
     allowlistSelection: readback.run.slotId,
     storedSelection: step,

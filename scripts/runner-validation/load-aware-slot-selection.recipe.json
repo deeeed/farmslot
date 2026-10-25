@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Automatic slot selection follows current node load",
-  "description": "Authenticated preview and FIND_SLOT over disposable pools, including allowlists and persisted overload reasons. No worker or device starts.",
+  "description": "Authenticated preview and FIND_SLOT over disposable pools, including allowlists and persisted overload reasons. Includes the human stale-slot picker with a manual slot excluded. No worker or device starts.",
   "workflow": {
     "entry": "select",
     "nodes": {

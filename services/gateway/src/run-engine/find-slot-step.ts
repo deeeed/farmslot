@@ -1424,15 +1424,32 @@ export async function executeFindSlotStep(
         : eligibleFreeSlots.length === 0 && freeSlotsMissingCompanionResource
           ? 'missing_required_resources'
           : 'all_stale';
-    const allProjectSlots = projectSlots.map((s) => ({
+    const pickerSlots: typeof projectSlots = [];
+    const pickerActiveOwners = activeRunIds(getAllRuns(), runId);
+    for (const slot of projectSlots) {
+      const selected = optionsFor(slot);
+      if (
+        !isFreeSlot(slot) ||
+        pickedSlotIneligibility(slot, run.project) ||
+        !selected ||
+        validateSlotForDispatch(slot, fleet.slots, { ...selected, automaticLoads: undefined })
+      )
+        continue;
+      // Match the claim fences against the live row before offering the choice.
+      const row = await readSlotRow(slot.slot);
+      if (
+        !row ||
+        row.lifecycle !== 'ready' ||
+        row.agent === 'working' ||
+        slotClaimBlocker(row, runId, getRun) ||
+        (typeof row.current_run_id === 'string' && pickerActiveOwners.has(row.current_run_id))
+      )
+        continue;
+      pickerSlots.push(slot);
+    }
+    const allProjectSlots = pickerSlots.map((s) => ({
       slotId: s.slot,
-      score:
-        isFreeSlot(s) && isEligibleFreeSlot(s)
-          ? scoreCandidate(s)
-          : reason === 'missing_required_resources' &&
-              !companionResourceBlocker(s, requiredPrepareProfile)
-            ? scoreCandidate(s)
-            : -1,
+      score: scoreCandidate(s),
       branch: s.branch || '',
       lifecycle: s.lifecycle,
       health: s.health,
