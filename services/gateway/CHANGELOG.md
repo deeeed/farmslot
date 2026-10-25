@@ -4,14 +4,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Publish configuration changes from owning stores and existing file watchers, including rapid replacements and optional registration directories created later. Observe roadmap deletion after atomic replacement across supported hosts. Report malformed project and provider-registration sources as client read errors and omit declared webhook secrets while retaining internal webhook verification.
-
-- Publish readable PR automation, assessment, analytics and copilot changes after their owning commits. Reload external PR-rule configuration with source-error refusal and recovery, and observe assessment policies plus their bounded, policy-selected triage evaluation receipts. Refuse current observed reads after observation loss while retaining exact receipt admission and command-time validation. Invalidate retained assessment history at its expiry deadline without panel polling or source rewrites.
-
+- Show unanswered structured worker questions as operator decisions, and resume monitoring when the worker records the answer.
 - Stop owned workers before terminal runs leave the live store while preserving finished checkouts, and verify published commits against the actual remote when tracking refs are stale.
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
 - Transfer prepare scripts through the file API so large task inputs do not exceed shell argument limits, including orchestrator-local preparation for remote slots.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.
+- Preserve the parent run's autonomous or interactive mode when CI watch creates a follow-up, including decision and recovery paths.
 - Recover completed fallback reviews after gateway restarts and reattach accepted native reviewers with their original launch configuration.
 - Keep reviewer recipe replay output outside worker task evidence so a passing review does not request another round.
 - Include evidence-manifest field errors when publication refuses invalid declarations or selected recipe evidence.
@@ -110,6 +108,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add experimental per-resource change notifications and read revision stamps for Sources, runs and slot facts, and keep decision inboxes current as artifacts arrive, feedback changes or completed entries expire. Slot facts, overlays, node-health, resource status and snapshot age invalidate their fleet and scoped readers without refetching unchanged run bindings. Failed fleet reads report source errors instead of caching an empty fleet. Node registration, replacement and disconnect advance inventory and per-node revisions. Capability catalog and committed lease changes update their shared readers. Worker checklist and review-workspace observations notify shared progress readers, including source failures and recovery. Node file observations retain watch-request ownership, report disappearance and read failures, and refresh progress when the owning connection or watch changes. Run-bound progress refuses missing runs, fences binding changes during reads, and keeps retired worker, reviewer and selected-step history separate from a reused slot's new task. Static review workspaces read only their declared selected-step artifacts, confined to the live task or retained view. Backlog, roadmap, work-graph and dispatch-queue stores publish planning changes through their owning writers, retaining each collection's existing read permissions. Raw roadmap file creation, edits, atomic replacements and deletions also update open planning lists; source observation failures refuse fresh reads until restart.
 - Resolve file-backed decisions by their declared IDs, report source failures, and identify missing runs so clients can drop stored details.
+
+- Publish configuration changes from owning stores and existing file watchers, including rapid replacements and optional registration directories created later. Observe roadmap deletion after atomic replacement across supported hosts. Report malformed project and provider-registration sources as client read errors and omit declared webhook secrets while retaining internal webhook verification.
+
+- Publish readable PR automation, assessment, analytics and copilot changes after their owning commits. Reload external PR-rule configuration with source-error refusal and recovery, and observe assessment policies plus their bounded, policy-selected triage evaluation receipts. Refuse current observed reads after observation loss while retaining exact receipt admission and command-time validation. Invalidate retained assessment history at its expiry deadline without panel polling or source rewrites.
 
 ## 0.30.0 - 2026-10-21
 

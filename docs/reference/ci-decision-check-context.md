@@ -34,6 +34,15 @@ late responses from another decision or connection cannot replace it. Loading
 and failure keep the frozen snapshot visible and expose a retry. Refresh does
 not resolve, rerun, publish or modify the gate's actions.
 
+## Follow-up execution mode
+
+Under [ADR-018 Amendment 1](../adr/018-dev-flow-interactive-autonomous.md#amendment-1-ci-watch-follow-ups-inherit-run-mode-2026-10-25),
+CI-watch follow-up creation MUST preserve the parent's `Run.mode` for
+`pr-complete` and `update-branch`, including validation mode. Automatic chaining, a resolved CI decision and
+restart recovery MUST use the same rule. The child MUST NOT substitute its flow's
+standalone default for the parent's mode. Standalone dispatch defaults and explicit
+operator choices remain authoritative for new initial runs.
+
 ## Public surface
 
 ### CI-watch run cards

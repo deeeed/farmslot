@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "CI-watch follow-ups inherit parent mode",
+  "description": "Manual authenticated gateway and real Command Center proof on disposable state. Set FARMSLOT_CDP_PORT for the owned browser. No model or product slot starts.",
+  "workflow": {
+    "entry": "follow-up-mode",
+    "nodes": {
+      "follow-up-mode": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --import ./services/gateway/src/runtime/mock-pty.test-support.ts scripts/runner-validation/gateway/ci-follow-up-mode.mts --ui",
+        "timeout_ms": 120000,
+        "intent": "Resolve each follow-up decision for autonomous, interactive and validation parents; read back mode/lineage and verify that real run metadata shows the inherited mode without a baseline warning.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

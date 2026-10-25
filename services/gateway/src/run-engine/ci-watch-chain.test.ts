@@ -165,31 +165,22 @@ test('buildCIWatchChainedRunParams forwards allowedSlots so the filter follows t
   assert.equal(emptyAllowed.createParams.allowedSlots, undefined);
 });
 
-test('buildCIWatchChainedRunParams uses flow baseline mode for chained pr-complete even when parent is interactive', () => {
-  const current = makeRun({
-    id: 'interactive-dev-parent',
-    flowType: 'dev',
-    mode: 'interactive',
-    prNumber: 44002,
-    ticketOrPr: 'TAT-3461',
-  });
-  const chain = buildCIWatchChainedRunParams(current, 'dispatch-pr-complete', 'owner/repo');
-  assert(chain);
-  assert.equal(chain.createParams.mode, 'autonomous');
-});
-
-test('buildCIWatchChainedRunParams uses flow baseline mode for chained update-branch', () => {
-  const current = makeRun({
-    id: 'autonomous-parent',
-    flowType: 'pr-complete',
-    mode: 'autonomous',
-    prNumber: 500,
-    ticketOrPr: 'owner/repo#500',
-  });
-  const chain = buildCIWatchChainedRunParams(current, 'dispatch-update-branch', 'owner/repo');
-  assert(chain);
-  assert.equal(chain.createParams.mode, 'interactive');
-});
+for (const mode of ['autonomous', 'interactive', 'validation'] as const) {
+  for (const action of ['dispatch-pr-complete', 'dispatch-update-branch'] as const) {
+    test(`CI-watch ${action} inherits ${mode} parent mode`, () => {
+      const current = makeRun({
+        id: 'mode-parent',
+        flowType: 'pr-complete',
+        mode,
+        prNumber: 500,
+        ticketOrPr: 'owner/repo#500',
+      });
+      const chain = buildCIWatchChainedRunParams(current, action, 'owner/repo');
+      assert(chain);
+      assert.equal(chain.createParams.mode, mode);
+    });
+  }
+}
 
 test('buildCIWatchChainedRunParams treats prNumber 0 as the invalid sentinel and falls back to ticketOrPr', () => {
   const current = makeRun({

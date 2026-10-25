@@ -4,8 +4,6 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls. Restore both workspace types offline and keep conversation controls visible beside a scrolling transcript.
-
 - Show check counts, failures, next poll and time left on CI-watch run cards and pipelines.
 
 - Show muted step durations and live elapsed time in Worker progress.
@@ -43,6 +41,9 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback and verified identity handling. Sources, fleet, node inventories, runtime capabilities, worker checklist progress, run lists, load-run dialogs, slot history and workspace run context, publication and review gates, saved reviews, full run details, comparisons and baseline pickers, family views and decision inboxes retain saved observations offline with their age, disable stale actions and follow live change notifications. Review curation survives metadata refreshes; command failures remain visible and interrupted replies keep their original owner. Recipe output stays with its run and invocation; a disconnect reports uncertain delivery before another replay. Missing run details evict their saved copy, and recipe inventories update when mirrored artifacts arrive. Slot workspaces follow fleet lifecycle changes and drop copied facts when a slot or authority disappears. A reconnect clears saved run data before reads when the account lost its role while the client was closed.
+
+- Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls. Restore both workspace types offline and keep conversation controls visible beside a scrolling transcript.
+- Keep expected inherited modes from triggering a baseline warning on CI-watch follow-ups.
 
 ## 0.29.0 - 2026-10-21
 
