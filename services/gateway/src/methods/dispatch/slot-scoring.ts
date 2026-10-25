@@ -387,13 +387,17 @@ export function branchContainsJiraKey(branch: string, jiraKey: string): boolean 
   return new RegExp(`(^|[^a-z0-9])${escapeRegExp(ticketSlug)}($|[^a-z0-9])`, 'i').test(branch);
 }
 
-/** Fresh known loads rank before unknown loads; existing scores settle ties. */
+/** Preserve red-headroom priority, then compare fresh loads; existing scores settle ties. */
 export function compareSlotLoads(
-  a: Pick<SlotStatus, 'machine'>,
-  b: Pick<SlotStatus, 'machine'>,
+  a: Pick<SlotStatus, 'machine' | 'hostLoad'>,
+  b: Pick<SlotStatus, 'machine' | 'hostLoad'>,
   options?: Pick<SlotSelectionOptions, 'automaticLoads'>,
 ): number {
-  const before = options?.automaticLoads?.get(a.machine)?.load1 ?? Infinity;
+  if (!options?.automaticLoads?.size) return 0;
+  const redHeadroom =
+    Number(a.hostLoad?.headroom === 'red') - Number(b.hostLoad?.headroom === 'red');
+  if (redHeadroom) return redHeadroom;
+  const before = options.automaticLoads.get(a.machine)?.load1 ?? Infinity;
   const after = options?.automaticLoads?.get(b.machine)?.load1 ?? Infinity;
   return before === after ? 0 : before < after ? -1 : 1;
 }

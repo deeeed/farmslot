@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import {
   assertPRExecutionProfile,
+  type DispatchPreviewParams,
   type DispatchQueueUpdateParams,
   isPRWorkspaceExecutionChoice,
   isTerminalRunStatus,
@@ -44,11 +45,13 @@ import {
 import { farmslotRoot, loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import {
   capturePressureAdmissionDecisionsLightweight,
+  findAffinitySlot,
   isFreeSlot,
   parkPreservedSlotIds,
   resolveDispatchPreviewFromFleet,
 } from '../methods/dispatch.js';
 import { automaticSlotLoads } from '../methods/dispatch/pressure-admission.js';
+import { validateSlotForDispatch } from '../methods/dispatch/slot-scoring.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import {
@@ -1127,13 +1130,29 @@ export function queueItemHeldByPressure(
   project: string,
   pressureDecisions: ReadonlyMap<string, PressureAdmissionDecision>,
   allowedSlots?: readonly string[] | null,
+  previewParams?: DispatchPreviewParams,
 ): boolean {
   // Scope to the exact allow list the resolver will see (item allowlist or
   // spread-policy subset). An admitted free slot outside it must not defeat
   // the hold while every allowed slot still resolves to a rejected machine.
   const allow = allowedSlots && allowedSlots.length > 0 ? new Set(allowedSlots) : null;
+  const affinityOptions = previewParams
+    ? {
+        ...previewParams,
+        allowedSlots: allowedSlots ? [...allowedSlots] : null,
+        requiredPrepareProfile: previewParams.prepareProfile,
+      }
+    : undefined;
+  const prAffinity =
+    previewParams?.flowType === 'pr-complete' || previewParams?.flowType === 'review-pr';
   const freeProjectSlots = slots.filter(
-    (slot) => slot.project === project && isFreeSlot(slot) && (!allow || allow.has(slot.slot)),
+    (slot) =>
+      slot.project === project &&
+      (!allow || allow.has(slot.slot)) &&
+      (isFreeSlot(slot) ||
+        (prAffinity &&
+          findAffinitySlot([slot], project, previewParams!.ticketOrPr, affinityOptions))) &&
+      !validateSlotForDispatch(slot, slots, affinityOptions),
   );
   if (freeProjectSlots.length === 0) return false;
   const loads = automaticSlotLoads(pressureDecisions);
@@ -1177,7 +1196,13 @@ export async function selectQueueDispatchSlot(
   ]);
   if (
     !item.slotId &&
-    queueItemHeldByPressure(slots, item.project, pressureDecisions, item.allowedSlots)
+    queueItemHeldByPressure(
+      slots,
+      item.project,
+      pressureDecisions,
+      item.allowedSlots,
+      buildQueuePreviewParams(item),
+    )
   ) {
     console.log(
       `[dispatch-queue] holding ${item.id} (${item.project}/${item.ticketOrPr}): every allowed free machine is pressure-rejected or above the automatic load threshold`,
@@ -1203,7 +1228,15 @@ export async function selectQueueDispatchSlot(
         (slotId) => !activeSiblingSlots.has(slotId),
       );
       if (allowed.length > 0) {
-        if (queueItemHeldByPressure(slots, item.project, pressureDecisions, allowed)) {
+        if (
+          queueItemHeldByPressure(
+            slots,
+            item.project,
+            pressureDecisions,
+            allowed,
+            buildQueuePreviewParams(item),
+          )
+        ) {
           console.log(
             `[dispatch-queue] holding ${item.id} (${item.project}/${item.ticketOrPr}): every spread-allowed free machine is pressure-rejected or above the automatic load threshold`,
           );

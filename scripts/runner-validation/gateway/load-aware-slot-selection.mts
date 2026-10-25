@@ -12,6 +12,7 @@ import type {
   RunCreateParams,
   RunCreateResult,
   RunGetResult,
+  QueueItem,
 } from '@farmslot/protocol';
 import type { GatewayConnection } from '../../../packages/cli/src/gateway-client.js';
 
@@ -111,13 +112,13 @@ mock.module('../../../services/gateway/src/external/github.js', {
 });
 const store = await import('../../../services/gateway/src/runs/store.js');
 const { updateMachineMetrics } = await import('../../../services/gateway/src/fleet/node-health.js');
-function sample(machine: string, loadAvg1: number, cpuCores: number) {
+function sample(machine: string, loadAvg1: number, cpuCores: number, diskPercent = 40) {
   updateMachineMetrics(machine, {
     cpuPercent: 20,
     memoryPercent: 40,
     memoryUsedGb: 4,
     memoryTotalGb: 10,
-    diskPercent: 40,
+    diskPercent,
     loadAvg1,
     loadAvg5: loadAvg1,
     cpuCores,
@@ -251,8 +252,88 @@ try {
     'medium-slot',
     'lighter node wins over held branch affinity',
   );
+  // A quiet red-disk host must still lose to a healthy allowed host.
+  sample('load-light', 0.8, 8, 97);
+  const red = await client.call<DispatchPreviewResult>('dispatch.preview', params);
+  assert.equal(red.preview.slotId, 'medium-slot');
+  const { selectQueueDispatchSlot } =
+    await import('../../../services/gateway/src/backlog/dispatch-queue.js');
+  const { capturePressureAdmissionDecisionsLightweight } =
+    await import('../../../services/gateway/src/methods/dispatch/pressure-admission.js');
+  sample('load-hot', 4, 16);
+  sample('load-medium', 83, 16);
+  const item: QueueItem = {
+    id: 'held-queue-proof',
+    flowType: 'pr-complete',
+    project: 'proof',
+    ticketOrPr: 'example/proof#139',
+    allowedSlots: ['hot-slot', 'medium-slot'],
+    branch: 'example-proof-139',
+    priority: 1,
+    status: 'queued',
+    createdAt: new Date().toISOString(),
+  };
+  const fleet = await import('../../../services/gateway/src/fleet/state.js');
+  const queueSelection = await selectQueueDispatchSlot(
+    (await fleet.loadFleetStatus(true)).slots,
+    item,
+    { capturePressure: async (machines) => capturePressureAdmissionDecisionsLightweight(machines) },
+  );
+  assert.equal(
+    queueSelection,
+    'hot-slot',
+    'eligible held affinity prevents an overload-only queue hold',
+  );
+  // Exercise the real operator slot-picker route on stale free checkouts.
+  for (const row of rows) row.lifecycle = 'ready';
+  execFileSync('git', ['-C', path.join(root, 'medium-slot'), 'checkout', '-qb', 'previous-task']);
+  rows[1]!.branch = 'previous-task';
+  await writeFile(path.join(root, 'status.json'), JSON.stringify({ slots: rows }));
+  sample('load-hot', 83, 16);
+  sample('load-medium', 6, 16);
+  const picker = await client.call<RunCreateResult>('run.create', {
+    ...params,
+    ticketOrPr: 'example/proof#141',
+    allowedSlots: ['hot-slot', 'medium-slot'],
+  });
+  const { createEngineDecision } =
+    await import('../../../services/gateway/src/run-engine/engine-decisions.js');
+  const picked = await executeFindSlotStep(picker.run.id, store.getRun(picker.run.id)!, 0, {
+    ...context,
+    createEngineDecision: async (runId, reason, description, actions, payload, options) => {
+      const waiting = createEngineDecision(runId, reason, description, actions, payload, {
+        ...options,
+        readProgress: async () => ({ kind: 'idle' }),
+      });
+      const until = Date.now() + 3000;
+      while (!store.getRun(runId)!.decisions.some((d) => !d.resolvedAt)) {
+        assert.ok(Date.now() < until, 'operator decision did not open');
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const decision = store.getRun(runId)!.decisions.find((d) => !d.resolvedAt)!;
+      await client!.call('run.resolveDecision', {
+        runId,
+        decisionId: decision.id,
+        actionId: 'pick',
+        selectionData: { slotId: 'hot-slot' },
+      });
+      return waiting;
+    },
+  });
+  assert.equal(picked.outputs?.selectedSlot, 'hot-slot');
+  assert.equal(picked.outputs?.selectionMethod, 'human-override');
+  const pickedReadback = await client.call<RunGetResult>('run.get', { runId: picker.run.id });
+  assert.equal(pickedReadback.run.slotId, 'hot-slot');
+  assert.ok(
+    pickedReadback.run.decisions.some(
+      (d) => d.resolvedAction === 'pick' && d.selectionData?.slotId === 'hot-slot',
+    ),
+  );
   const result = {
     status: 'PASS',
+    redHeadroomPreserved: red.preview.slotId,
+    heldQueueSelection: queueSelection,
+    operatorPickerSelection: pickedReadback.run.slotId,
     lowestLoadPreview: preview.preview.slotId,
     allowlistSelection: readback.run.slotId,
     storedSelection: step,

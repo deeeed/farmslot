@@ -5,11 +5,15 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import type { PressureAdmissionDecision, SlotStatus } from '@farmslot/protocol';
+import type { PressureAdmissionDecision, QueueItem, SlotStatus } from '@farmslot/protocol';
 
 import '../../runtime/mock-pty.test-support.js';
 
-import { queueItemHeldByPressure, selectQueueDispatchSlot } from '../../backlog/dispatch-queue.js';
+import {
+  buildQueuePreviewParams,
+  queueItemHeldByPressure,
+  selectQueueDispatchSlot,
+} from '../../backlog/dispatch-queue.js';
 import { runWithSessionOriginator } from '../../security/work-originator.js';
 
 import {
@@ -573,5 +577,96 @@ after(() => {
       null,
       2,
     ),
+  );
+});
+
+test('automatic placement preserves red headroom ahead of lower load', () => {
+  const light = slot({
+    slot: 'light-red',
+    machine: 'light',
+    hostLoad: { cpuPercent: 20, memoryPercent: 40, diskPercent: 97, headroom: 'red' },
+  });
+  const healthy = slot({ slot: 'healthy', machine: 'healthy' });
+  const pressureDecisions = new Map([
+    ['light', loadDecision('light', 0.1)],
+    ['healthy', loadDecision('healthy', 0.4)],
+  ]);
+  const params = { project: 'demo-farm', flowType: 'dev' as const, ticketOrPr: 'TASK-1' };
+  assert.equal(
+    resolveDispatchPreviewFromFleet(params, [light, healthy], undefined, { pressureDecisions })
+      .preview.slotId,
+    'healthy',
+  );
+  assert.equal(
+    resolveDispatchPreviewFromFleet(
+      { ...params, flowType: 'pr-complete', ticketOrPr: 'owner/repo#42' },
+      [{ ...light, lifecycle: 'held', branch: 'owner-repo-42' }, healthy],
+      undefined,
+      { pressureDecisions },
+    ).preview.slotId,
+    'healthy',
+  );
+});
+
+test('queue load hold includes held PR affinity, including a spread subset', async () => {
+  const slots = [
+    slot({ slot: 'hot', machine: 'hot' }),
+    slot({ slot: 'held', machine: 'light', lifecycle: 'held', branch: 'owner-repo-42' }),
+  ];
+  const pressureDecisions = new Map([
+    ['hot', loadDecision('hot', 83 / 16)],
+    ['light', loadDecision('light', 0.2)],
+  ]);
+  const item: QueueItem = {
+    id: 'load-held',
+    project: 'demo-farm',
+    flowType: 'pr-complete',
+    ticketOrPr: 'owner/repo#42',
+    priority: 1,
+    status: 'queued',
+    createdAt: new Date().toISOString(),
+    allowedSlots: ['hot', 'held'],
+  };
+  const capturePressure = () => pressureDecisions;
+  assert.equal(await selectQueueDispatchSlot(slots, item, { capturePressure }), 'held');
+  const store = await import('../../runs/store.js');
+  const sibling = store.createRun({ flowType: 'dev', project: item.project, ticketOrPr: 'TASK-2' });
+  store.updateRun(sibling.id, {
+    status: 'monitoring',
+    slotId: 'sibling-slot',
+    launchGroupId: 'load-group',
+  });
+  try {
+    assert.equal(
+      await selectQueueDispatchSlot(
+        slots,
+        {
+          ...item,
+          allowedSlots: [...item.allowedSlots!, 'sibling-slot'],
+          launchSlotPolicy: 'spread',
+          launchGroupId: 'load-group',
+        },
+        { capturePressure },
+      ),
+      'held',
+    );
+  } finally {
+    store.updateRun(sibling.id, { status: 'done' });
+    await store.deleteRun(sibling.id);
+  }
+  assert.equal(
+    queueItemHeldByPressure(
+      slots,
+      item.project,
+      pressureDecisions,
+      ['hot'],
+      buildQueuePreviewParams(item),
+    ),
+    true,
+  );
+  pressureDecisions.set('light', loadDecision('light', 4));
+  assert.equal(
+    await selectQueueDispatchSlot(slots, { ...item, allowedSlots: ['held'] }, { capturePressure }),
+    null,
   );
 });

@@ -67,6 +67,8 @@ const slots: SlotStatus[] = [
   },
 ];
 let run: Run;
+let nudgeCandidates: import('../methods/dispatch/preview.js').BranchAffinityNudgeCandidate[] = [];
+let pickedSlot: string | undefined;
 let pressureDecisions = new Map<string, PressureAdmissionDecision>();
 let expectedSlot = 'macpro-mmt-1';
 const refreshedSlots: string[] = [];
@@ -165,15 +167,16 @@ mock.module('../methods/dispatch.js', {
     refreshBranches: async (rows: SlotStatus[]) => {
       refreshedSlots.push(...rows.map((row) => row.slot));
     },
-    collectBranchAffinityNudgeCandidates: async () => [],
+    collectBranchAffinityNudgeCandidates: async () => nudgeCandidates,
     findAffinitySlot: () => null,
     selectBranchAffinityRefreshSlots: () => [],
     capturePressureAdmissionDecisionsLightweight: () => pressureDecisions,
     consumedPressureAdmissionRef: () => {
       throw new Error('unexpected pressure override');
     },
-    resolveExecutePressureOutcome: () => {
-      throw new Error('unexpected pressure override');
+    resolveExecutePressureOutcome: ({ decision }: { decision?: PressureAdmissionDecision }) => {
+      assert.equal(decision?.state, 'disabled');
+      return {};
     },
     prepareSlotForFreshReuse: () => {
       throw new Error('unexpected worker teardown');
@@ -255,6 +258,8 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   pressureDecisions = new Map();
   expectedSlot = 'macpro-mmt-1';
   refreshedSlots.length = 0;
+  nudgeCandidates = [];
+  pickedSlot = undefined;
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -262,8 +267,20 @@ const context: Parameters<typeof executeFindSlotStep>[3] = {
   setRunFlags: () => {},
   requiresCollisionPrecheck: () => false,
   handleCollisionDecision: async () => 'create-new',
-  createEngineDecision: async () => {
-    throw new Error('unexpected all_stale slot picker');
+  createEngineDecision: async (_id, reason) => {
+    if (!pickedSlot) throw new Error('unexpected all_stale slot picker');
+    run.decisions.push({
+      id: 'load-pick',
+      type: `engine_${reason}`,
+      title: 'Pick a slot',
+      description: '',
+      actions: [{ id: 'pick', label: 'Pick', style: 'primary' }],
+      createdAt: new Date().toISOString(),
+      resolvedAt: new Date().toISOString(),
+      resolvedAction: 'pick',
+      selectionData: { slotId: pickedSlot },
+    });
+    return 'pick';
   },
 };
 for (const [flow, ticket] of [
@@ -408,4 +425,36 @@ test('find-slot records why an all-overloaded allowlist cannot be selected', asy
   );
   assert.deepEqual(claims, []);
   assert.deepEqual(refreshedSlots, []);
+});
+
+test('an operator affinity-card pick retains explicit pressure policy on an overloaded alternative', async () => {
+  reset('pr-complete', 'example-org/terminal#210');
+  const warm = slots[2]!;
+  warm.lifecycle = 'busy';
+  warm.agent = 'working';
+  warm.branch = branch;
+  const hot = slots[0]!;
+  hot.branch = 'main';
+  pressureDecisions = new Map([
+    ['macpro', loadDecision('macpro', 83 / 16)],
+    ['macwork', loadDecision('macwork', 0.4)],
+  ]);
+  pickedSlot = hot.slot;
+  run.allowedSlots = [hot.slot, warm.slot];
+  nudgeCandidates = [
+    {
+      slot: warm,
+      uncommittedCount: 0,
+      uncommittedFiles: [],
+      nudgeCount: 0,
+      ctxPct: null,
+      prMatchKind: 'branch-slug',
+      riskFlags: [],
+      canNudge: false,
+    },
+  ];
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, hot.slot);
+  assert.equal(result.outputs?.selectionMethod, 'human-override');
+  assert.deepEqual(claims, [hot.slot]);
 });

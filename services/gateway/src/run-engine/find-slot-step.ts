@@ -1372,7 +1372,10 @@ export async function executeFindSlotStep(
             const selected = optionsFor(picked);
             if (!selected)
               throw new SourceAdmissionRefusal('Picked slot has no usable source plan');
-            const err = validateSlotForDispatch(picked, freshFleet.slots, selected);
+            const err = validateSlotForDispatch(picked, freshFleet.slots, {
+              ...selected,
+              automaticLoads: undefined,
+            });
             if (err) throw new Error(`Selected slot ${pickedSlotId}: ${err}`);
             // A human pick is not a pressure override. The same admission gate
             // as every other fresh binding, before updateRun/claim.
@@ -1497,7 +1500,10 @@ export async function executeFindSlotStep(
         });
       const selected = optionsFor(picked);
       if (!selected) throw new SourceAdmissionRefusal('Picked slot has no usable source plan');
-      const pickedSlotError = validateSlotForDispatch(picked, freshFleet.slots, selected);
+      const pickedSlotError = validateSlotForDispatch(picked, freshFleet.slots, {
+        ...selected,
+        automaticLoads: undefined,
+      });
       if (pickedSlotError) throw new Error(`Selected slot ${pickedSlotId}: ${pickedSlotError}`);
       // "Use Selected Slot" is not a pressure override. The same admission gate
       // as every other fresh binding, before updateRun/claim/reset.
