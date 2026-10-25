@@ -72,6 +72,8 @@ const originalSlots = structuredClone(slots);
 const reclaims: string[] = [];
 let prHead = branch;
 const claims: string[] = [];
+const finishedReclaims: string[] = [];
+let finishedRefusal: string | undefined;
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
@@ -191,12 +193,25 @@ mock.module('../run-lifecycle/cancelled-slot-reclaim.js', {
     },
   },
 });
+const finished = await import('../run-lifecycle/finished-slot-reclaim.js');
+mock.module('../run-lifecycle/finished-slot-reclaim.js', {
+  namedExports: {
+    ...finished,
+    reclaimFinishedSlot: async (slotId: string) => {
+      assert.deepEqual(claims, [], 'cleanup must finish before the incoming claim');
+      finishedReclaims.push(slotId);
+      if (finishedRefusal) throw new Error(finishedRefusal);
+    },
+  },
+});
 const { executeFindSlotStep } = await import('./find-slot-step.js');
 
 function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   slots.splice(0, slots.length, ...structuredClone(originalSlots));
   cancelledHolder = undefined;
   reclaims.length = 0;
+  finishedReclaims.length = 0;
+  finishedRefusal = undefined;
   run = makeRun({
     id: 'branch-match-fixture',
     project,
@@ -274,3 +289,31 @@ for (const pinned of [true, false]) {
     assert.deepEqual(claims, [slot.slot], 'claim uses the post-cleanup fleet');
   });
 }
+
+test('a selected finished checkout is released before claim and write-task', async () => {
+  reset('fix-bug', 'TAT-4137');
+  run.slotId = slots[0]!.slot;
+  slots[0]!.branch = 'fix/previous-finished-task';
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(finishedReclaims, [run.slotId]);
+  assert.deepEqual(claims, [run.slotId]);
+  assert.equal(run.taskFile, null, 'FIND_SLOT has not written the incoming task');
+});
+
+test('a refused finished checkout cleanup never claims the incoming run', async () => {
+  reset('fix-bug', 'TAT-4137');
+  run.slotId = slots[0]!.slot;
+  finishedRefusal = 'UNMERGED_WORK:fix/previous:unpushed commit';
+  await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /UNMERGED_WORK/);
+  assert.deepEqual(claims, []);
+  assert.equal(run.taskFile, null);
+});
+
+test('skip-prepare retains its selected checkout without finished-run release', async () => {
+  reset('fix-bug', 'TAT-4137');
+  run.slotId = slots[0]!.slot;
+  run.engineState = { generation: 0, flags: { skipPrepare: true } };
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(finishedReclaims, []);
+  assert.deepEqual(claims, [run.slotId]);
+});
