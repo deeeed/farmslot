@@ -214,6 +214,7 @@ import { runCancel } from './run/lifecycle-control.js';
 import { triggerImprovementAnalysis } from './run/propose-improvement.js';
 import { blockedRunResumableSignal, runReplayStep } from './run/replay-step.js';
 import {
+  assertValidTicketData,
   buildLocalDevRef,
   isInternalArtifactOnlyEvalTicket,
   isManualBacklogRef,
@@ -417,6 +418,7 @@ export async function runCreate(
   emit: Emit,
   options: RunCreateInternalOptions = {},
 ): Promise<RunCreateResult> {
+  assertValidTicketData(params.ticketData);
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
   return withTaskAdmission(params.taskFile, () =>
     withSourceCreationPlan(params, options, (plan, seal, runId) =>
