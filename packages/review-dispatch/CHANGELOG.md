@@ -10,9 +10,9 @@
 
 - Share current-checklist counts, item labels and attempt identity for run progress in both clients.
 
-- Active-development baseline; add user-facing changes here before release or package publication.
-
 - Show original and derived acceptance, source links, inherited proof, pending instructions and exclusions consistently in both clients.
+
+- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.19.0 - 2026-10-25
 

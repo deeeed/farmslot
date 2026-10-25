@@ -2615,42 +2615,43 @@ test('changed review evidence at the same head reuses both retained reviewers WA
   assert.ok(calls.slice(2).every(({ mode }) => mode === 'warm'));
 });
 
-test('an interactive completion feedback pass still requires the second independent review', async (t) => {
-  const { id, calls, context } = completionReviewFixture(t);
-  updateRun(id, { mode: 'interactive' });
-  context.createEngineDecision = async () => 'send_feedback';
-  const passing = context.executeReviewForRun!;
-  let first = true;
-  context.executeReviewForRun = async (runId, slotId, options) => {
-    if (first) {
-      first = false;
-      assert.ok(options);
-      calls.push(options);
-      assert.ok(options.reviewId);
-      return {
-        verdict: 'issues',
-        retryCount: 0,
-        reviewId: options.reviewId,
-        mode: 'cold',
-        issues: [{ file: 'source.ts', line: 1, description: 'Fix the invariant' }],
-        reviewSnapshot: {
-          headSha: 'a'.repeat(40),
-          capturedAt: '2026-10-25T00:00:00Z',
-          source: 'local-git',
-        },
-      };
-    }
-    return passing(runId, slotId, options);
-  };
-  const result = await executeReviewStep(id, context);
-  assert.equal(calls.length, 3);
-  assert.equal(calls[1].mode, 'warm');
-  assert.equal(calls[1].publicationReview, true);
-  assert.equal(calls[0].reviewId, calls[1].reviewId);
-  assert.notEqual(calls[1].reviewId, calls[2].reviewId);
-  assert.equal(result.outputs?.interactiveRetry, true);
-  assert.equal(result.outputs?.verdict, 'pass');
-});
+for (const issueAt of [1, 2]) {
+  test(`interactive completion reviewer ${issueAt} feedback still satisfies the independent pair`, async (t) => {
+    const { id, calls, context } = completionReviewFixture(t);
+    updateRun(id, { mode: 'interactive' });
+    context.createEngineDecision = async () => 'send_feedback';
+    const passing = context.executeReviewForRun!;
+    let reviewCount = 0;
+    context.executeReviewForRun = async (runId, slotId, options) => {
+      if (++reviewCount === issueAt) {
+        assert.ok(options);
+        calls.push(options);
+        assert.ok(options.reviewId);
+        return {
+          verdict: 'issues',
+          retryCount: 0,
+          reviewId: options.reviewId,
+          mode: 'cold',
+          issues: [{ file: 'source.ts', line: 1, description: 'Fix the invariant' }],
+          reviewSnapshot: {
+            headSha: 'a'.repeat(40),
+            capturedAt: '2026-10-25T00:00:00Z',
+            source: 'local-git',
+          },
+        };
+      }
+      return passing(runId, slotId, options);
+    };
+    const result = await executeReviewStep(id, context);
+    assert.equal(calls.length, 3);
+    assert.equal(calls[issueAt].mode, 'warm');
+    assert.equal(calls[issueAt].publicationReview, true);
+    assert.equal(calls[issueAt - 1].reviewId, calls[issueAt].reviewId);
+    assert.notEqual(calls[issueAt].reviewId, calls[issueAt === 1 ? 2 : 0].reviewId);
+    assert.equal(result.outputs?.interactiveRetry, true);
+    assert.equal(result.outputs?.verdict, 'pass');
+  });
+}
 
 test('unavailable completion evidence refuses before launching a review', async (t) => {
   const { id, calls, context } = completionReviewFixture(t);

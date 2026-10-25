@@ -45,7 +45,12 @@ import {
   reviewAcceptanceCriteria,
   reviewCoversPRCompletionCriteria,
 } from '../review/acceptance-coverage.js';
-import { executeReview, reReviewMode } from '../review/orchestrator.js';
+import {
+  executeReview,
+  reReviewMode,
+  type ReviewOptions,
+  type ReviewResult,
+} from '../review/orchestrator.js';
 import {
   markReviewedInputsRerun,
   readReviewedInputs,
@@ -181,12 +186,7 @@ export interface PostDispatchStepContext {
   activeMonitors: Map<string, AbortController>;
   blockedRunError: (message: string, reason: string) => Error;
   broadcastFn: BroadcastFn;
-  createEngineDecision: (
-    runId: string,
-    reason: string,
-    description: string,
-    actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }>,
-  ) => Promise<string>;
+  createEngineDecision: typeof import('./engine-decisions.js').createEngineDecision;
   executeNoChangeGate: (runId: string) => Promise<void>;
   executePublishGateReviewPlan: (
     runId: string,
@@ -681,6 +681,7 @@ export async function executeReviewStep(
   const completionReview =
     current.flowType === 'pr-complete' && current.acceptanceContractVersion === 1;
   if (!current.slotId) throw new Error('No slot assigned');
+  const slotId = current.slotId;
   // ADR-063 Amendment 3: the dispatch's first review row also selects the pipeline
   // reviewer, while the stored sequence is still the dispatch's own plan (a gate,
   // request or recovery that rewrites it stamps requestedAt). Recorded on the step,
@@ -840,7 +841,7 @@ export async function executeReviewStep(
       : undefined;
   if (reusablePrimary) inputs.reusedReviewId = reusablePrimary.id;
 
-  let result: import('../review/orchestrator.js').ReviewResult = reusablePrimary
+  let result: ReviewResult = reusablePrimary
     ? {
         verdict: 'pass',
         retryCount: Math.max(0, (reusablePrimary.attempts?.length ?? 1) - 1),
@@ -875,45 +876,50 @@ export async function executeReviewStep(
   const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
   let interactiveRetry = false;
 
-  // Interactive mode: present review results as a decision before proceeding
-  // In autonomous mode, executeReview already handles feedback + retry internally
-  if (current.mode === 'interactive' && !result.skipped && result.verdict === 'issues') {
-    const issueCount = result.issues?.length ?? 0;
+  // Every independent reviewer can produce findings that need an operator choice.
+  const interactiveFeedback = async (
+    reviewed: ReviewResult,
+    selected: Pick<ReviewOptions, 'reviewRunner' | 'model' | 'effort'> = reviewer,
+  ): Promise<ReviewResult> => {
+    if (current.mode !== 'interactive' || reviewed.skipped || reviewed.verdict !== 'issues')
+      return reviewed;
+    const issueCount = reviewed.issues?.length ?? 0;
     const issueList =
-      result.issues
-        ?.map((i) => `- **${i.file}${i.line ? ':' + i.line : ''}**: ${i.description}`)
+      reviewed.issues
+        ?.map(
+          (issue) =>
+            `- **${issue.file}${issue.line ? ':' + issue.line : ''}**: ${issue.description}`,
+        )
         .join('\n') ?? '';
     const desc = `Review found ${issueCount} issue${issueCount !== 1 ? 's' : ''}.\n\n${issueList}`;
-    const actionId = await createEngineDecision(runId, 'review_complete', desc, [
-      { id: 'send_feedback', label: 'Send feedback to worker', style: 'primary' },
-      { id: 'skip', label: 'Skip — proceed to human gate', style: 'secondary' },
-    ]);
-    // Continue from the findings the operator just accepted. Starting the
-    // top-level review again would spend another review pass before the worker
-    // ever sees the requested feedback.
-    if (actionId === 'send_feedback') {
-      const retryResult = await executeReviewForRun(runId, current.slotId, {
-        ...reviewer,
-        ...(completionReview ? { publicationReview: true } : {}),
-        validationDepth,
-        mode: reReviewMode(result, 'cold'),
-        reviewId: result.reviewId,
-        resumeFromResult: result,
-      });
-      if (!completionReview)
-        return {
-          inputs: { ...inputs, enabled: true },
-          outputs: {
-            ...retryResult,
-            cliCommand,
-            interactiveRetry: true,
-          },
-        };
-      result = retryResult;
-      interactiveRetry = true;
-    }
-    // "skip" — proceed with original results
-  }
+    const actionId = await createEngineDecision(
+      runId,
+      'review_complete',
+      desc,
+      [
+        { id: 'send_feedback', label: 'Send feedback to worker', style: 'primary' },
+        { id: 'skip', label: 'Skip — proceed to human gate', style: 'secondary' },
+      ],
+      undefined,
+      completionReview ? { canReplay: () => false } : undefined,
+    );
+    if (actionId !== 'send_feedback') return reviewed;
+    interactiveRetry = true;
+    return executeReviewForRun(runId, slotId, {
+      ...selected,
+      ...(completionReview ? { publicationReview: true } : {}),
+      validationDepth,
+      mode: reReviewMode(reviewed, 'cold'),
+      reviewId: reviewed.reviewId,
+      resumeFromResult: reviewed,
+    });
+  };
+  result = await interactiveFeedback(result);
+  if (!completionReview && interactiveRetry)
+    return {
+      inputs: { ...inputs, enabled: true },
+      outputs: { ...result, cliCommand, interactiveRetry: true },
+    };
 
   if (completionReview && result.verdict === 'pass' && !result.skipped) {
     if (!result.reviewId) throw new Error('Completion review has no recorded reviewer identity');
@@ -958,17 +964,23 @@ export async function executeReviewStep(
         const selection = current.engineState?.publishGate?.reviewSequence?.[index];
         const model = selection ? executionModelFromSelection(selection) : null;
         const requested = reviewAcceptanceCriteria(getRun(runId)!);
-        result = await executeReviewForRun(runId, current.slotId!, {
+        const selectedReviewer = {
           ...reviewer,
           ...(model
             ? { reviewRunner: model.runner, model: model.model, effort: model.effort }
             : {}),
-          publicationReview: true,
-          validationDepth,
-          reviewId: id,
-          mode: previous ? 'warm' : (selection?.mode ?? 'cold'),
-          rereview: reReviewOfStatus(previous),
-        });
+        };
+        result = await interactiveFeedback(
+          await executeReviewForRun(runId, slotId, {
+            ...selectedReviewer,
+            publicationReview: true,
+            validationDepth,
+            reviewId: id,
+            mode: previous ? 'warm' : (selection?.mode ?? 'cold'),
+            rereview: reReviewOfStatus(previous),
+          }),
+          selectedReviewer,
+        );
         launched = true;
         if (
           result.verdict === 'pass' &&

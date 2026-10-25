@@ -131,6 +131,8 @@ try {
     'changed-evidence',
     'minimum-two-one',
     'minimum-two-two',
+    'interactive-second-feedback',
+    'interactive-both-feedback',
   ] as const;
   const requestedCase = process.argv.find((arg) => arg.startsWith('--case='))?.slice(7);
   assert(!requestedCase || kinds.some((kind) => kind === requestedCase), 'Unknown policy case');
@@ -139,7 +141,7 @@ try {
       {
         project: 'policy',
         flowType: 'pr-complete',
-        mode: 'autonomous',
+        mode: kind.startsWith('interactive-') ? 'interactive' : 'autonomous',
         ticketOrPr: 'deeeed/farmslot#1483',
         slotId: 'completion-policy',
         transport: 'native',
@@ -204,7 +206,7 @@ try {
       }),
     );
     const base = {
-      ...resolveWorkerTerminalContract(null, 'pr-complete', { mode: 'autonomous' }),
+      ...resolveWorkerTerminalContract(null, 'pr-complete', { mode: run.mode }),
       recordedEvidenceContractVersion: run.recordedEvidenceContractVersion,
       acceptanceContractVersion: 1,
       claimReviewSupported: true,
@@ -309,6 +311,163 @@ try {
     );
     const fingerprint = await readReviewedInputs(store.getRun(run.id)!);
     assert(fingerprint);
+    if (kind.startsWith('interactive-')) {
+      const { executeReviewStep } = await load(
+        'services/gateway/src/run-engine/post-dispatch-steps.ts',
+      );
+      const { createEngineDecision } = await load(
+        'services/gateway/src/run-engine/engine-decisions.ts',
+      );
+      const { codeReviewCertifiesPRCompletion } = await load(
+        'services/gateway/src/review/acceptance-coverage.ts',
+      );
+      const calls: import('../../../services/gateway/src/review/orchestrator.js').ReviewOptions[] =
+        [];
+      const decisions: string[] = [];
+      const issueCalls = new Set(kind === 'interactive-both-feedback' ? [1, 3] : [2]);
+      store.updateRun(run.id, {
+        status: 'reviewing',
+        steps: [{ name: 'review', status: 'running' }],
+        engineState: {
+          publishGate: {
+            reviews: [],
+            reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+            reviewSequence: [
+              { runner: 'claude', model: 'opus', effort: null, mode: 'cold' },
+              { runner: 'codex', model: 'gpt-6.1-sol', effort: null, mode: 'cold' },
+            ],
+          },
+        },
+      });
+      const unexpected = (): never => {
+        throw new Error('Unexpected fixture engine path');
+      };
+      const unexpectedAsync = async (): Promise<never> => unexpected();
+      const context: import('../../../services/gateway/src/run-engine/post-dispatch-steps.js').PostDispatchStepContext =
+        {
+          activeMonitors: new Map(),
+          blockedRunError: unexpected,
+          broadcastFn: () => undefined,
+          createEngineDecision: (id, reason, description, actions, payload, options) =>
+            createEngineDecision(id, reason, description, actions, payload, {
+              ...options,
+              readProgress: async () => ({ kind: 'idle' }),
+            }),
+          executeNoChangeGate: unexpectedAsync,
+          executePublishGateReviewPlan: unexpectedAsync,
+          executeReadyGate: unexpectedAsync,
+          executeReviewGate: unexpectedAsync,
+          getDiffStat: unexpectedAsync,
+          interactiveLightweightSkipOutputs: unexpected,
+          isHumanGateEnabled: unexpectedAsync,
+          monitorTerminalError: unexpected,
+          refreshRunLinks: unexpectedAsync,
+          stepPartialIO: new Map(),
+          deferTerminalSlotRelease: unexpected,
+          executeReviewForRun: async (id, _slot, options) => {
+            assert(options?.reviewId);
+            calls.push(options);
+            const current = store.getRun(id)!;
+            const verdict = issueCalls.has(calls.length) ? 'issues' : 'pass';
+            const row: import('@farmslot/protocol').ReviewStatus = {
+              id: options.reviewId,
+              source: 'pipeline',
+              mode: options.mode ?? 'cold',
+              loopNumber: calls.length,
+              verdict,
+              unresolvedCount: verdict === 'issues' ? 1 : 0,
+              reviewerSessionId: `simulated-${options.reviewId}`,
+              reviewedHeadSha: head,
+              acceptanceReviewCoverage: reviewAcceptanceCriteria(current),
+              reviewedInputsFingerprint: fingerprint.fingerprint,
+            };
+            store.updateRun(id, {
+              engineState: {
+                ...current.engineState,
+                publishGate: {
+                  ...current.engineState?.publishGate,
+                  reviews: [
+                    ...(current.engineState?.publishGate?.reviews ?? []).filter(
+                      (review: import('@farmslot/protocol').ReviewStatus) => review.id !== row.id,
+                    ),
+                    row,
+                  ],
+                },
+              },
+            });
+            return {
+              verdict,
+              retryCount: 0,
+              reviewId: row.id,
+              mode: row.mode,
+              acceptanceReviewCoverage: row.acceptanceReviewCoverage,
+              reviewedInputsFingerprint: row.reviewedInputsFingerprint,
+              reviewSnapshot: {
+                headSha: head,
+                capturedAt: new Date().toISOString(),
+                source: 'local-git',
+              },
+              ...(verdict === 'issues'
+                ? {
+                    issues: [
+                      { file: 'source.ts', line: 1, description: 'Simulated review finding' },
+                    ],
+                  }
+                : {}),
+            };
+          },
+        };
+      let settled = false;
+      const review = executeReviewStep(run.id, context);
+      void review.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      for (let index = 0; index < issueCalls.size; index++) {
+        await wait(async () => {
+          assert(!settled, 'Reviewer findings returned without an operator decision');
+          const current = (await client!.call('run.get', { runId: run.id })).run;
+          const decision = current.decisions.find(
+            (entry: import('@farmslot/protocol').RunDecision) =>
+              !entry.resolvedAt && entry.type === 'engine_review_complete',
+          );
+          if (!decision) return false;
+          assert(!decisions.includes(decision.id));
+          decisions.push(decision.id);
+          await client!.call(
+            'run.resolveDecision',
+            buildRunResolveDecisionParams({ runId: run.id, decision, actionId: 'send_feedback' }),
+          );
+          return true;
+        }, 'interactive reviewer feedback decision');
+      }
+      const result = await review;
+      assert.equal(result.outputs?.verdict, 'pass');
+      assert.equal(result.outputs?.interactiveRetry, true);
+      assert.equal(calls.length, issueCalls.size + 2);
+      assert.equal(decisions.length, issueCalls.size);
+      for (const [index, call] of calls.entries()) {
+        if (!call.resumeFromResult) continue;
+        assert.equal(call.reviewId, calls[index - 1].reviewId);
+        assert.equal(call.reviewRunner, calls[index - 1].reviewRunner);
+        assert.equal(call.model, calls[index - 1].model);
+        assert.equal(call.mode, 'warm');
+        assert.equal(call.publicationReview, true);
+      }
+      assert(codeReviewCertifiesPRCompletion(store.getRun(run.id)!, head, fingerprint.fingerprint));
+      checks.push({
+        kind,
+        head,
+        reviewCalls: calls.length,
+        distinctFeedbackDecisions: decisions.length,
+        allowed: true,
+      });
+      continue;
+    }
     const minimum = kind.startsWith('minimum-two') ? 2 : 1,
       count = kind === 'minimum-two-two' ? 2 : 1;
     const reviews = Array.from({ length: count }, (_, index) => ({
