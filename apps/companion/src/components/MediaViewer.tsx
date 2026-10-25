@@ -45,6 +45,7 @@ import {
   textPreviewTotalBytes,
 } from '../lib/text-preview';
 import { colors, fonts } from '../lib/theme';
+import { videoSourceLoadDurationMs } from '../lib/video-source-load';
 
 export interface MediaViewerItem {
   uri: string;
@@ -114,6 +115,9 @@ export function MediaViewer({
   const [currentIndex, setCurrentIndex] = useState(clampedInitialIndex);
   const [zoomedUri, setZoomedUri] = useState<string | null>(null);
   const [changedVideoItems, setChangedVideoItems] = useState<ReadonlySet<string>>(() => new Set());
+  const markVideoSelectionChanged = useCallback((uri: string) => {
+    setChangedVideoItems((previous) => (previous.has(uri) ? previous : new Set(previous).add(uri)));
+  }, []);
   useEffect(() => {
     if (!visible) setChangedVideoItems(new Set());
   }, [visible]);
@@ -172,11 +176,7 @@ export function MediaViewer({
                   height={mediaHeight}
                   panEnabled={zoomedUri === item.uri}
                   onZoomChange={(zoomed) => setZoomedUri(zoomed ? item.uri : null)}
-                  onViewSelectionChange={() =>
-                    setChangedVideoItems((previous) =>
-                      previous.has(item.uri) ? previous : new Set(previous).add(item.uri),
-                    )
-                  }
+                  onViewSelectionChange={markVideoSelectionChanged}
                 />
               </View>
             ))}
@@ -251,7 +251,7 @@ function MediaSlide({
   height: number;
   panEnabled?: boolean;
   onZoomChange?: (zoomed: boolean) => void;
-  onViewSelectionChange: () => void;
+  onViewSelectionChange: (uri: string) => void;
 }) {
   const mediaType = item.mediaType ?? classifyArtifact(item.title ?? item.uri);
   if (mediaType === 'document') {
@@ -423,7 +423,7 @@ function FullscreenVideo({
   item: MediaViewerItem;
   width: number;
   height: number;
-  onViewSelectionChange: () => void;
+  onViewSelectionChange: (uri: string) => void;
 }) {
   const [model, setModel] = useState<EvidenceReviewModel | null>(item.evidenceModel ?? null);
   const [openGroups, setOpenGroups] = useState<ReadonlyMap<string, boolean>>(() => new Map());
@@ -503,7 +503,7 @@ function FullscreenVideo({
   const applyPlayback = useCallback(
     (effect: EvidenceReviewPlaybackEffect) => {
       if (effect.sourceChanged && effect.clip && effect.clip.videoPath !== videoPath) {
-        onViewSelectionChange();
+        onViewSelectionChange(item.uri);
         if (!item.resolveArtifactUrl || !model) {
           setError('The recording source has no artifact URL resolver.');
           player.pause();
@@ -521,7 +521,7 @@ function FullscreenVideo({
       if (effect.seekMs !== null && player.status === 'readyToPlay')
         player.currentTime = effect.seekMs / 1000;
     },
-    [item.resolveArtifactUrl, model, onViewSelectionChange, player, videoPath],
+    [item.resolveArtifactUrl, item.uri, model, onViewSelectionChange, player, videoPath],
   );
 
   useEffect(() => {
@@ -543,16 +543,24 @@ function FullscreenVideo({
         player.play();
       }
     };
-    if (player.status === 'readyToPlay') {
+    let sourceReady = false;
+    const syncReady = () => {
+      if (!active || player.status !== 'readyToPlay') return;
       setDurationMs(player.duration * 1000);
+      // Buffering can return to ready without restarting the selected clip.
+      if (sourceReady) return;
+      sourceReady = true;
       cue();
-    }
-    const ready = player.addListener('sourceLoad', ({ videoSource }) => {
-      if (typeof videoSource === 'object' && videoSource?.uri === uri) {
-        setDurationMs(player.duration * 1000);
-        cue();
+    };
+    syncReady();
+    const ready = player.addListener('sourceLoad', (event) => {
+      const loadedDurationMs = videoSourceLoadDurationMs(source.uri, event);
+      if (active && loadedDurationMs !== null) {
+        setDurationMs(loadedDurationMs);
+        syncReady();
       }
     });
+    const status = player.addListener('statusChange', syncReady);
     const ended = player.addListener('playToEnd', () => {
       if (!active || !model || !videoPath) return;
       const effect = model.playbackAt(videoPath, player.currentTime * 1000, player.duration * 1000);
@@ -566,19 +574,22 @@ function FullscreenVideo({
     return () => {
       active = false;
       ready.remove();
+      status.remove();
       ended.remove();
       updates.remove();
     };
-  }, [applyPlayback, model, player, uri, videoPath]);
+  }, [applyPlayback, model, player, source.uri, uri, videoPath]);
 
   const timeline = model?.recordings.find((recording) => recording.videoPath === videoPath);
   const groups = model?.timelineGroups(videoPath, undefined, durationMs) ?? [];
   return (
     <View style={[styles.media, { width, height }]}>
       <VideoView
+        testID="companion-evidence-video"
         player={player}
         style={[styles.media, { width, height }]}
         nativeControls
+        surfaceType={Platform.OS === 'android' ? 'textureView' : undefined}
         fullscreenOptions={{ enable: true }}
         allowsPictureInPicture={false}
         contentFit="contain"
@@ -592,7 +603,11 @@ function FullscreenVideo({
           <Text style={styles.detailText}>{model.selection.message}</Text>
         ) : null}
         {timeline ? (
-          <ScrollView horizontal contentContainerStyle={{ gap: 8, alignItems: 'flex-start' }}>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            contentContainerStyle={{ gap: 8, alignItems: 'flex-start' }}
+          >
             {groups.map((group) => {
               const expanded = openGroups.get(group.id) ?? group.defaultOpen;
               return (
@@ -605,7 +620,7 @@ function FullscreenVideo({
                       if (!model) return;
                       const effect = model.selectTimelineGroup(videoPath, group.id, durationMs);
                       if (effect.seekMs === null) return;
-                      onViewSelectionChange();
+                      onViewSelectionChange(item.uri);
                       resumePlayback.current = true;
                       applyPlayback(effect);
                       updateSelection((value) => value + 1);
@@ -669,7 +684,7 @@ function FullscreenVideo({
                                   })
                                 )
                                   return;
-                                onViewSelectionChange();
+                                onViewSelectionChange(item.uri);
                                 resumePlayback.current = true;
                                 applyPlayback(model.cueClip(0));
                                 updateSelection((value) => value + 1);

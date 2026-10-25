@@ -268,12 +268,12 @@ test('worker terminals share only the explicit observed target fields, with no v
   );
 });
 
-test('displayed filters and historical terminal context survive without current-command fields', () => {
+test('displayed filters survive an unpinned slot terminal without current-command fields', () => {
   const result = resolveSharedViewLink(
     {
       companion: {
-        pathname: '/run-terminal/retained-run',
-        params: { contextId: 'review-2', leaseId: 'private' },
+        pathname: '/terminal/current-slot',
+        params: { leaseId: 'private' },
         projects: ['project-a'],
         machines: ['node-3'],
       },
@@ -283,8 +283,9 @@ test('displayed filters and historical terminal context survive without current-
   assert.equal(result.status, 'available');
   if (result.status !== 'available') return;
   const params = new URLSearchParams(new URL(result.url).hash.split('?')[1]);
-  assert.equal(params.get('run'), 'retained-run');
-  assert.equal(params.get('contextId'), 'review-2');
+  assert.equal(new URL(result.url).hash.split('?')[0], '#terminal/current-slot');
+  assert.equal(params.has('run'), false);
+  assert.equal(params.has('contextId'), false);
   assert.equal(params.get('projects'), 'project-a');
   assert.equal(params.get('machines'), 'node-3');
   assert.equal(params.has('leaseId'), false);
@@ -347,10 +348,8 @@ test('a retained slot run never resolves through the slot current run', () => {
     },
     base,
   );
-  assert.equal(
-    terminal.status === 'available' ? terminal.route : null,
-    '#terminal?run=retained-A&contextId=context-A',
-  );
+  assert.equal(terminal.status, 'unavailable');
+  if (terminal.status === 'unavailable') assert.match(terminal.message, /pinned slot terminal/);
   assert.equal(
     resolveSharedViewLink(
       {
@@ -374,4 +373,18 @@ test('unfiltered collections explicitly replace saved browser filters and preser
     result.status === 'available' ? result.route : null,
     '#runs?projects=&machines=&runsTab=all',
   );
+});
+
+test('a run terminal without an observed worktree never promises a missing web pane', () => {
+  const result = resolveSharedViewLink(
+    {
+      companion: {
+        pathname: '/run-terminal/ordinary-slot-run',
+        params: { contextId: 'retained-context' },
+      },
+    },
+    base,
+  );
+  assert.equal(result.status, 'unavailable');
+  if (result.status === 'unavailable') assert.match(result.message, /this run terminal/);
 });

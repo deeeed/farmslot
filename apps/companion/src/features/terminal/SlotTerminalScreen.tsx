@@ -1571,6 +1571,7 @@ export default function TerminalScreen() {
 
   return (
     <KeyboardAvoidingView
+      testID="companion-screen-slot-terminal"
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
       style={[

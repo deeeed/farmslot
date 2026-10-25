@@ -287,18 +287,11 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
     entity(/^\/terminal\/([^/]+)$/, 'terminal', 'slotId') ??
     entity(/^\/workspace\/slot\/([^/]+)\/terminal$/, 'terminal', 'slotId');
   if (terminal && terminal !== 'terminal/worker') {
-    if (location.params.runId && !one('runId')) return null;
-    if (one('contextId') && !one('runId')) return null;
-    return one('runId')
-      ? route('terminal', { run: one('runId'), contextId: one('contextId') })
-      : route(terminal);
+    if (location.params.runId || one('contextId')) return null;
+    return route(terminal);
   }
   const runTerminal = entity(/^\/run-terminal\/([^/]+)$/, 'run', 'runId');
-  if (runTerminal)
-    return route('terminal', {
-      run: runTerminal.slice('run/'.length),
-      contextId: one('contextId'),
-    });
+  if (runTerminal) return null;
   const decision = entity(/^\/(?:decision|gate-review)\/([^/]+)$/, 'decision', 'id');
   if (decision) return route('decisions', { gate: decision.slice('decision/'.length) });
   const backlog = entity(/^\/backlog\/([^/]+)$/, 'backlog', 'id');
@@ -408,27 +401,35 @@ export function resolveSharedViewLink(
       'companion' in location &&
       /^(?:\/slot\/[^/]+|\/workspace\/slot\/[^/]+\/slot)$/.test(path) &&
       location.companion.params.runId;
+    const pinnedTerminal =
+      'companion' in location &&
+      /^(?:\/terminal\/[^/]+|\/workspace\/slot\/[^/]+\/terminal)$/.test(path) &&
+      location.companion.params.runId;
     const view = pinnedSlot
       ? 'this pinned slot view'
-      : path.includes('diff')
-        ? 'this diff selection'
-        : path.includes('/files') || path.includes('/artifacts')
-          ? 'this files view'
-          : path === '/terminal/worker'
-            ? 'this worker terminal'
-            : path === '/settings' || path === '/connection'
-              ? 'these device connection settings'
-              : path === '/prs'
-                ? 'this PR filter'
-                : path === '/roadmap'
-                  ? 'this roadmap filter'
-                  : path === '/copilot'
-                    ? 'this Co-Pilot screen'
-                    : path === '/pr-automation'
-                      ? 'this PR automation screen'
-                      : path === '/unmapped-overlay'
-                        ? 'this dialog'
-                        : 'this screen';
+      : pinnedTerminal
+        ? 'this pinned slot terminal'
+        : path.startsWith('/run-terminal/')
+          ? 'this run terminal'
+          : path.includes('diff')
+            ? 'this diff selection'
+            : path.includes('/files') || path.includes('/artifacts')
+              ? 'this files view'
+              : path === '/terminal/worker'
+                ? 'this worker terminal'
+                : path === '/settings' || path === '/connection'
+                  ? 'these device connection settings'
+                  : path === '/prs'
+                    ? 'this PR filter'
+                    : path === '/roadmap'
+                      ? 'this roadmap filter'
+                      : path === '/copilot'
+                        ? 'this Co-Pilot screen'
+                        : path === '/pr-automation'
+                          ? 'this PR automation screen'
+                          : path === '/unmapped-overlay'
+                            ? 'this dialog'
+                            : 'this screen';
     return unavailable(`Web link unavailable: ${view} has no exact Command Center view.`);
   }
   if (!validViewRoute(candidate))
