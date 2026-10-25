@@ -250,6 +250,8 @@ test('Retry preserves a cached acceptance read and its error until the refresh a
 });
 
 test('Retry shares an in-flight read and an invalidation schedules one current follow-up', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  t.mock.method(performance, 'now', () => Date.now());
   let reads = 0;
   let finish: (result: unknown) => void = () => assert.fail('first request did not start');
   const old = new Promise<unknown>((resolve) => {
@@ -270,9 +272,16 @@ test('Retry shares an in-flight read and an invalidation schedules one current f
   mounted.invalidateProgress();
   finish(progress);
   await settle();
+  assert.equal(reads, 1, 'The follow-up respects the declared progress interval');
+  t.mock.timers.tick(199);
+  await settle();
+  assert.equal(reads, 1, 'The stale response cannot cause an early automatic read');
+  t.mock.timers.tick(1);
+  await settle();
   assert.equal(reads, 2, 'An invalidated response needs one follow-up read');
   assert.match(String(mounted.render().error), /current read failure/);
   assert.equal(mounted.render().commandsReady, false);
+  t.mock.timers.tick(600);
   await settle();
   assert.equal(reads, 2, 'The failed follow-up must not enter a retry loop');
 });
@@ -406,14 +415,20 @@ test('a failed evidence refresh preserves the retained selection until a success
 });
 
 test('retained visual action rejects evidence invalidated after render before any command', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  t.mock.method(performance, 'now', () => Date.now());
   let commands = 0;
+  let progressReads = 0;
   let holdEvidence = false;
   let release: (value: unknown) => void = () => assert.fail('held read missing');
   const held = new Promise<unknown>((resolve) => {
     release = resolve;
   });
   const mounted = mount(async (method) => {
-    if (method === Methods.TASK_PROGRESS) return progress;
+    if (method === Methods.TASK_PROGRESS) {
+      progressReads++;
+      return progress;
+    }
     if (method === Methods.RUN_RECIPE_RUNS_FOR_RUN)
       return holdEvidence ? held : { recipeRuns: [], selectedRecipeRunId: null };
     commands++;
@@ -426,8 +441,20 @@ test('retained visual action rejects evidence invalidated after render before an
   assert.equal(ready.commandsReady, true);
   holdEvidence = true;
   mounted.invalidateEvidence();
-  // Progress shares the artifact dependency and must finish its current read first.
+  // Progress shares the artifact dependency; its automatic reread waits 200ms.
   await settle();
+  await assert.rejects(
+    (ready.recordVisualReview as (claim: string, verdict: string) => Promise<void>)(
+      'claim',
+      'confirmed',
+    ),
+    /current acceptance data/,
+  );
+  assert.equal(progressReads, 1);
+  assert.equal(commands, 0);
+  t.mock.timers.tick(200);
+  await settle();
+  assert.equal(progressReads, 2, 'Current progress must precede the separate evidence guard');
   assert.equal(typeof ready.recordVisualReview, 'function');
   await assert.rejects(
     (ready.recordVisualReview as (claim: string, verdict: string) => Promise<void>)(
