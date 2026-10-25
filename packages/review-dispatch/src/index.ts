@@ -5,6 +5,7 @@ export * from './checklist-progress.js';
 export * from './ci-watch-status.js';
 export * from './execution.js';
 export * from './native-worker-target.js';
+export * from './operator-message.js';
 export * from './provenance.js';
 export * from './publication-gate.js';
 export * from './result-decision.js';

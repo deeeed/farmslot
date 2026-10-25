@@ -1,4 +1,6 @@
 export const ACCEPTANCE_STATUS_ARTIFACT: 'artifacts/acceptance-status.json';
+export const ACCEPTANCE_REGISTRATION_INPUT: 'inputs/acceptance-registration.json';
+export const ACCEPTANCE_CONTRACT_INPUT: 'inputs/acceptance-contract.json';
 export const INHERITED_ACCEPTANCE_INPUT: 'inputs/inherited-acceptance.json';
 export const ACCEPTANCE_VERDICTS: readonly [
   'proven',
@@ -13,6 +15,7 @@ export const ACCEPTANCE_CRITERION_ID_PATTERN: RegExp;
 export function acceptanceCriterionId(index: number): string;
 export function registeredAcceptanceCriteria(
   criteria: readonly unknown[],
+  registration?: unknown,
 ): Array<{ id: string; text: string }>;
 export function acceptanceCriteriaMatch(
   expected: readonly unknown[],

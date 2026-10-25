@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type {
   EvidenceReviewArtifact,
@@ -9,6 +9,7 @@ import type {
 import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
+  AcceptanceRegistration,
   AcceptanceStatusLedger,
 } from '@farmslot/protocol';
 import { acceptanceClaimRows, untestableOverrideView } from '@farmslot/review-dispatch';
@@ -21,6 +22,7 @@ import { ReasonSheet } from './ReasonSheet';
 import { Skeleton, SkeletonError } from './Skeleton';
 
 interface TaskAcceptancePanelProps {
+  acceptanceRegistration?: AcceptanceRegistration;
   loading?: boolean;
   expectedRows?: number;
   onRetry?: () => void;
@@ -65,6 +67,7 @@ export function TaskAcceptancePanel({
 }
 
 function TaskAcceptanceContent({
+  acceptanceRegistration,
   acceptanceStatus,
   acceptanceCriteria,
   acceptanceEvidenceLinks,
@@ -84,8 +87,10 @@ function TaskAcceptanceContent({
     acceptanceCriteria ?? ledger.criteria,
     acceptanceEvidenceLinks ?? [],
     evidenceModel ?? undefined,
+    acceptanceRegistration,
   );
   const [showDetails, setShowDetails] = React.useState(false);
+  const [showExclusions, setShowExclusions] = React.useState(false);
   const [showWarnings, setShowWarnings] = React.useState(false);
   const [overrideClaim, setOverrideClaim] = React.useState<string | null>(null);
   const [overrideReason, setOverrideReason] = React.useState('');
@@ -133,7 +138,13 @@ function TaskAcceptanceContent({
   React.useEffect(() => {
     if (view.defaultOpen) setExpanded(true);
   }, [view.defaultOpen]);
-  if (view.rows.length === 0 && !error && !packageStatus && !evidenceModel?.occurrences.length)
+  if (
+    view.rows.length === 0 &&
+    !acceptanceRegistration &&
+    !error &&
+    !packageStatus &&
+    !evidenceModel?.occurrences.length
+  )
     return null;
   return (
     <View style={styles.panel} testID="companion-ac-panel">
@@ -155,6 +166,50 @@ function TaskAcceptanceContent({
         </Text>
       </Pressable>
       {expanded && error ? <SkeletonError message={error} retry={onRetry} /> : null}
+      {expanded
+        ? view.registration?.pending.map((message, index) => (
+            <Text
+              key={index}
+              testID="companion-acceptance-registration-pending"
+              style={baseStyles.textMuted}
+            >
+              {message}
+            </Text>
+          ))
+        : null}
+      {expanded && view.registration?.exclusions.length ? (
+        <View>
+          <Pressable
+            onPress={() => setShowExclusions((shown) => !shown)}
+            accessibilityRole="button"
+            style={styles.row}
+          >
+            <Text style={baseStyles.textMuted}>
+              Excluded sources ({view.registration.exclusions.length})
+            </Text>
+          </Pressable>
+          {showExclusions
+            ? view.registration.exclusions.map((source) => (
+                <View key={source.sourceId}>
+                  <Pressable
+                    style={{ minHeight: 44, justifyContent: 'center' }}
+                    disabled={!source.url}
+                    accessibilityRole="link"
+                    onPress={() => {
+                      if (source.url)
+                        void Linking.openURL(source.url).catch((error: Error) =>
+                          Alert.alert('Cannot open source', error.message),
+                        );
+                    }}
+                  >
+                    <Text style={styles.evidence}>{source.label}</Text>
+                  </Pressable>
+                  <Text style={baseStyles.textMuted}>{source.reason}</Text>
+                </View>
+              ))
+            : null}
+        </View>
+      ) : null}
       {expanded && packageStatus ? (
         <View testID="companion-evidence-package-status" style={styles.row}>
           <View style={styles.rowHeader}>
@@ -227,6 +282,9 @@ function TaskAcceptanceContent({
       {expanded ? (
         <AcceptanceClaimList
           rows={acceptanceClaimRows({
+            criteria: acceptanceCriteria ?? undefined,
+            ledger,
+            registration: acceptanceRegistration,
             claims: view.rows.map(({ review, criterion }) => review ?? criterion),
             judgmentRows: judgmentRows ?? evidenceModel?.judgmentRows(null),
             pendingVisualClaimIds: evidenceModel?.pendingVisualClaimIds,

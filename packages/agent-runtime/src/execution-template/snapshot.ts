@@ -15,6 +15,12 @@ export function executionTemplateReference(
   renderedMarkdown?: string,
 ): ExecutionTemplateReference {
   const declaredVersion = entry.frontmatter?.version;
+  const firstSubtask = entry.frontmatter?.firstSubtask;
+  if (
+    firstSubtask !== undefined &&
+    (firstSubtask !== 'derive-acceptance' || entry.flow !== 'pr-complete')
+  )
+    throw new Error('firstSubtask must be derive-acceptance on a PR-completion template');
   return {
     id: entry.id,
     sourceId: entry.sourceId,
@@ -22,6 +28,7 @@ export function executionTemplateReference(
     platforms: entry.platforms,
     labels: entry.labels,
     relativePath: entry.relativePath,
+    ...(firstSubtask ? { firstSubtask } : {}),
     ...(entry.sourceRevision ? { sourceRevision: entry.sourceRevision } : {}),
     ...(entry.sourceDirty === undefined ? {} : { sourceDirty: entry.sourceDirty }),
     ...(declaredVersion == null || declaredVersion === ''

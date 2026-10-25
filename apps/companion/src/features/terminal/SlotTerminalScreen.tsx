@@ -42,7 +42,12 @@ import {
   type TmuxListResult,
   type TmuxWindow,
 } from '@farmslot/protocol';
-import { listSlotTmuxWindows, slotTmuxWindowTarget } from '@farmslot/review-dispatch';
+import {
+  listSlotTmuxWindows,
+  type OperatorMessageInput,
+  operatorMessageInput,
+  slotTmuxWindowTarget,
+} from '@farmslot/review-dispatch';
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
@@ -88,6 +93,7 @@ import {
   matchesCompanionTerminalTarget,
   shouldUseBareTerminalSessionForRun,
 } from '../../lib/terminal-target';
+import { terminalTextRequest } from '../../lib/terminal-text-request';
 import { baseStyles, colors, spacing } from '../../lib/theme';
 import {
   downloadVoiceAsrModel,
@@ -229,6 +235,7 @@ function recipeRunIdForVisualPair(
 }
 
 export default function TerminalScreen() {
+  const pendingOperatorMessage = useRef<OperatorMessageInput | null>(null);
   const {
     slotId: requestedSlotId,
     runId,
@@ -820,12 +827,16 @@ export default function TerminalScreen() {
 
       setIsSending(true);
       try {
+        const message =
+          pendingOperatorMessage.current?.text === trimmedText
+            ? pendingOperatorMessage.current
+            : operatorMessageInput(trimmedText);
+        pendingOperatorMessage.current = message;
         const target = terminalTargetParamsRef.current;
         if (target) {
-          await client.request('terminal.input', {
-            ...target,
-            data: `${trimmedText}\r`,
-          });
+          const request = terminalTextRequest(target, message);
+          await client.request(request.method, request.params);
+          pendingOperatorMessage.current = null;
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           setError(null);
           return true;
@@ -843,12 +854,9 @@ export default function TerminalScreen() {
           setError('Run no longer has an active slot. Terminal send blocked.');
           return false;
         }
-        await client.request('terminal.send', {
-          slotId,
-          runId: run.id,
-          text: trimmedText,
-          enter: true,
-        });
+        const request = terminalTextRequest({ slotId, runId: run.id }, message);
+        await client.request(request.method, request.params);
+        pendingOperatorMessage.current = null;
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setError(null);
         return true;

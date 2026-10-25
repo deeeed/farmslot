@@ -14,6 +14,8 @@ import {
   type TaskInitSpec,
 } from '@farmslot/agent-runtime';
 import {
+  ACCEPTANCE_REGISTRATION_INPUT,
+  type AcceptanceRegistration,
   type ArtifactRef,
   checklistStepName,
   DEFAULT_BRANCH,
@@ -24,6 +26,7 @@ import {
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type PlanningContextProjection,
+  prCompletionClaimReviewSupported,
   type RepeatReviewContext,
   type Run,
   runOutputReviewEnabled,
@@ -49,7 +52,15 @@ import {
   expandTemplate,
   expandTemplateWithReservedLast,
 } from '../core/hooks.js';
-import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
+import {
+  execLocal,
+  execOnSlot,
+  farmslotRoot,
+  getOrchestratorTaskRoot,
+  readSlotField,
+} from '../core/index.js';
+import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
+import { shellQuote } from '../core/tmux.js';
 import {
   buildFollowUpScopeContractSection,
   materializeInheritedContext,
@@ -65,8 +76,15 @@ import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
 import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
+import { persistRunNow, updateRun } from '../runs/store.js';
 
-import { farmslotDirectoryForSlot } from './agent-runtime-script.js';
+import { syncAcceptanceExecutionContract } from './acceptance-execution-contract.js';
+import {
+  acceptanceDerivationInstructions,
+  initializeAcceptanceRegistration,
+} from './acceptance-registration.js';
+import { agentRuntimeScriptForSlot, farmslotDirectoryForSlot } from './agent-runtime-script.js';
+import { fetchPRCompletionIntake, originalPRCompletionCriteria } from './completion-intake.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -293,7 +311,9 @@ export class TaskCollisionError extends Error {
 }
 
 export interface CommentRow {
-  source: 'issue' | 'review';
+  threadId?: string;
+  source: 'issue' | 'review' | 'review-summary';
+  reviewId?: string;
   id?: number;
   author: string;
   userType?: string;
@@ -302,6 +322,28 @@ export interface CommentRow {
   line?: number;
   url?: string;
   createdAt?: string;
+}
+
+export function completionCommentRows(registration: AcceptanceRegistration): CommentRow[] {
+  return registration.units[0].sources
+    .filter(({ kind }) => kind === 'review-comment')
+    .map((source) => ({
+      source:
+        source.providerKind === 'issue'
+          ? 'issue'
+          : source.providerKind === 'review'
+            ? 'review-summary'
+            : 'review',
+      ...(source.providerKind === 'review'
+        ? { reviewId: source.reviewId }
+        : { id: source.databaseId }),
+      threadId: source.threadId,
+      author: source.author ?? 'unknown',
+      body: source.body,
+      url: source.url,
+      path: source.path,
+      line: source.line,
+    }));
 }
 
 export const COMMENT_SUMMARY_MAX_ROWS = 40;
@@ -321,7 +363,7 @@ export function renderCommentSummary(rows: CommentRow[]): string {
   // Bots flood issue comments with build links / CLA / sonarcloud noise — drop them
   // from the preview but keep them in inputs/pr-comments.json for the worker's full triage.
   // Inline review-source bots (cursor[bot], etc.) flag real findings — keep all of those.
-  const filtered = rows.filter((r) => r.source === 'review' || !isBotAuthor(r));
+  const filtered = rows.filter((r) => r.source !== 'issue' || !isBotAuthor(r));
   if (filtered.length === 0) {
     return rows.length > 0
       ? `_All ${rows.length} fetched comment(s) were bot-issue noise. Worker MUST still re-fetch in step 4 — \`inputs/pr-comments.json\` has the full unfiltered set._`
@@ -331,7 +373,12 @@ export function renderCommentSummary(rows: CommentRow[]): string {
   const header = '| Source | Author | Where | Body |\n|---|---|---|---|';
   const body = capped
     .map((r) => {
-      const where = r.source === 'review' ? `${r.path ?? '?'}:${r.line ?? '?'}` : 'conversation';
+      const where =
+        r.source === 'review'
+          ? `${r.path ?? '?'}:${r.line ?? '?'}`
+          : r.source === 'review-summary'
+            ? `review ${r.reviewId ?? ''}`.trim()
+            : 'conversation';
       const oneLine = (r.body ?? '').replace(/\s+/g, ' ').trim();
       return `| ${r.source} | ${r.author} | ${where} | ${oneLine} |`;
     })
@@ -840,7 +887,7 @@ export async function writeTaskFile(
   await writeInteractiveDevSidecars(run, taskAbsDir, branch);
 
   // Build template variables
-  const ticket = run.ticketData ?? {
+  let ticket = run.ticketData ?? {
     title: run.ticketOrPr,
     description: '',
     acceptanceCriteria: [],
@@ -850,6 +897,14 @@ export async function writeTaskFile(
     labels: [],
     source: 'manual' as const,
   };
+  const originalCriteria =
+    run.flowType === 'pr-complete' && run.acceptanceContractVersion === 1
+      ? await originalPRCompletionCriteria(run)
+      : undefined;
+  if (originalCriteria) {
+    ticket = { ...ticket, acceptanceCriteria: originalCriteria.map(({ text }) => text) };
+    updateRun(run.id, { ticketData: ticket });
+  }
 
   const screenshotsMd =
     ticket.screenshots.length > 0
@@ -1059,22 +1114,59 @@ export async function writeTaskFile(
       name: 'pr-comments',
       detail: `Fetching PR #${vars.PR_NUMBER} comments + reviews`,
     });
-    try {
-      const ctx = await buildPRCompleteContext(vars.GH_REPO, prNumParsed, taskAbsDir);
-      vars.COMMENT_SUMMARY = ctx.commentSummary;
-      if (ctx.rows.length > 0) {
-        await writeFile(
-          path.join(taskAbsDir, 'inputs', 'pr-comments.json'),
-          JSON.stringify(ctx.rows, null, 2),
-          'utf-8',
+    if (run.executionTemplate?.firstSubtask === 'derive-acceptance') {
+      if (!run.acceptanceRegistration) {
+        const intake = await fetchPRCompletionIntake(vars.GH_REPO, prNumParsed);
+        const initialContext = run.engineState?.interactiveDev?.initialContext;
+        const sources = [...intake.sources];
+        if (initialContext?.trim())
+          sources.push({
+            id: `dispatch:${run.id}`,
+            kind: 'instruction',
+            body: initialContext,
+            version: createHash('sha256').update(initialContext).digest('hex'),
+          });
+        await persistRunNow(
+          updateRun(run.id, {
+            acceptanceRegistration: initializeAcceptanceRegistration(
+              run.id,
+              originalCriteria ?? [],
+              sources,
+              intake.identity,
+            ),
+          }),
+          'PR completion acceptance intake frozen',
         );
       }
-    } catch (err) {
-      // Fetch failure is recoverable — worker re-fetches in step 4. Surface the
-      // miss in the prompt so the worker doesn't act on stale context.
-      console.warn(`[task-writer] pr-complete pre-fetch failed: ${(err as Error).message}`);
-      vars.COMMENT_SUMMARY = `_Pre-fetch failed (${(err as Error).message}). Worker MUST fetch comments in step 4._`;
-    }
+      const registration = run.acceptanceRegistration;
+      if (!registration) throw new Error('PR completion: acceptance registration was not retained');
+      const rows = completionCommentRows(registration);
+      vars.COMMENT_SUMMARY = renderCommentSummary(rows);
+      await writeFile(
+        path.join(taskAbsDir, ACCEPTANCE_REGISTRATION_INPUT),
+        `${JSON.stringify({ schemaVersion: 1, generation: run.engineState?.generation ?? 0, registration }, null, 2)}\n`,
+      );
+      await writeFile(
+        path.join(taskAbsDir, 'inputs', 'pr-comments.json'),
+        `${JSON.stringify(rows, null, 2)}\n`,
+      );
+    } else
+      try {
+        const ctx = await buildPRCompleteContext(vars.GH_REPO, prNumParsed, taskAbsDir);
+        vars.COMMENT_SUMMARY = ctx.commentSummary;
+        if (ctx.rows.length > 0) {
+          await writeFile(
+            path.join(taskAbsDir, 'inputs', 'pr-comments.json'),
+            JSON.stringify(ctx.rows, null, 2),
+            'utf-8',
+          );
+        }
+      } catch (err) {
+        // Fetch failure is recoverable — worker re-fetches in step 4. Surface the
+        // miss in the prompt so the worker doesn't act on stale context.
+        console.warn(`[task-writer] pr-complete pre-fetch failed: ${(err as Error).message}`);
+        vars.COMMENT_SUMMARY = `_Pre-fetch failed (${(err as Error).message}). Worker MUST fetch comments in step 4._`;
+      }
 
     // Last-resort: extract root and dependency recipes from the PR body via LLM. Only
     // runs when family inheritance produced no recipe — covers human-authored
@@ -1182,7 +1274,7 @@ export async function writeTaskFile(
       runtimeCapabilities?.providers ?? null,
       planningContext,
     );
-    return `${withRuntimeContext.trimEnd()}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n${buildQaTaskSection(vars.TASK_DIR, run)}`;
+    return `${withRuntimeContext.trimEnd()}${run.acceptanceRegistration ? `\n${acceptanceDerivationInstructions()}` : ''}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n${buildQaTaskSection(vars.TASK_DIR, run)}`;
   };
 
   const isPrFlow = ['review-pr', 'pr-complete', 'update-branch'].includes(run.flowType);
@@ -1219,6 +1311,10 @@ export async function writeTaskFile(
   )
     terminalContract.commands.complete.artifacts.push('artifacts/review-result.json');
   terminalContract.recordedEvidenceContractVersion = run.recordedEvidenceContractVersion ?? 0;
+  if (run.acceptanceContractVersion === 1) {
+    terminalContract.acceptanceContractVersion = 1;
+    terminalContract.claimReviewSupported = prCompletionClaimReviewSupported(run);
+  }
   const humanGate =
     run.steps.some((step) => step.name === 'human-gate' && step.status !== 'skipped') &&
     humanGateEnabled(run.flowType, run.mode ?? undefined, projectVars.projectJson);
@@ -1271,6 +1367,18 @@ export async function writeTaskFile(
         }),
     artifactOnlyReplay: artifactOnlyReplayForRun(run),
   };
+  if (run.acceptanceContractVersion === 1 && !opts?.initializeTask) {
+    const checker = await agentRuntimeScriptForSlot(slotVars, 'acceptance-contract.cjs');
+    const capability = await execOnSlot(
+      slotVars,
+      `node -e ${shellQuote('process.exit(require(process.argv[1]).ACCEPTANCE_CONTRACT_VERSION === 1 ? 0 : 1)')} ${shellQuote(checker)}`,
+      { timeout: 10_000 },
+    );
+    if (capability.exitCode !== 0)
+      throw new Error(
+        'PR-completion acceptance requires runtime contract version 1; update the node before dispatch.',
+      );
+  }
   templateProvenance.executionTemplate = await (opts?.initializeTask ?? initializeHostedTaskOnSlot)(
     slotVars,
     taskAbsDir,
@@ -1280,6 +1388,19 @@ export async function writeTaskFile(
       template: configuredTemplate,
     },
   );
+  if (run.acceptanceContractVersion === 1) {
+    const taskDir = opts?.initializeTask ? taskAbsDir : taskData.taskDir;
+    await syncAcceptanceExecutionContract(
+      run,
+      opts?.initializeTask ? ORCHESTRATOR_LOCALITY : slotVars,
+      taskDir,
+      taskAbsDir,
+      async () =>
+        Boolean(opts?.initializeTask) ||
+        (await readSlotField(run.slotId!, 'current_run_id')) === run.id,
+      [],
+    );
+  }
 
   await writeQaInput(taskAbsDir, {
     ...run,

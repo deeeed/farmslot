@@ -14,6 +14,8 @@ import { Events, Methods } from '@farmslot/protocol';
 import {
   listSlotTmuxWindows,
   nativeWorkerAttemptKey,
+  type OperatorMessageInput,
+  operatorMessageInput,
   slotTmuxWindowTarget,
 } from '@farmslot/review-dispatch';
 
@@ -71,6 +73,7 @@ const TARGET_CHANGE_DEBOUNCE_MS = 50;
 
 @customElement('terminal-view')
 export class TerminalView extends TerminalViewState {
+  private _pendingOperatorMessage: OperatorMessageInput | null = null;
   static styles = [terminalViewStyles, terminalAttachmentStyles];
 
   connectedCallback() {
@@ -863,10 +866,18 @@ export class TerminalView extends TerminalViewState {
   private _handleSend() {
     if (!this._inputText.trim() || !this._hasTarget()) return;
     const worker = this._workerRef();
+    const message =
+      this._pendingOperatorMessage?.text === this._inputText
+        ? this._pendingOperatorMessage
+        : operatorMessageInput(this._inputText);
+    this._pendingOperatorMessage = message;
     gateway
       .request(worker ? Methods.TERMINAL_WORKER_INPUT : Methods.TERMINAL_SEND, {
         ...this._targetParams(),
-        ...(worker ? { data: `${this._inputText}\r` } : { text: this._inputText, enter: true }),
+        ...(worker ? { data: `${this._inputText}\r` } : message),
+      })
+      .then(() => {
+        if (this._pendingOperatorMessage === message) this._pendingOperatorMessage = null;
       })
       .catch((err) => this._warn('reinit', err));
     this._inputText = '';

@@ -6,6 +6,8 @@ import {
   acceptanceCriterionId,
   type AcceptanceCriterionRef,
   type AcceptanceCriterionView,
+  type AcceptanceRegistration,
+  type AcceptanceStatusLedger,
   acceptanceVerdictLabel,
   acceptReviewFindingsAvailable,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
@@ -93,7 +95,15 @@ export interface VisualJudgmentFeedback {
   message?: string;
 }
 
+export interface AcceptanceClaimOrigin {
+  label: string;
+  reference: string;
+  body?: string;
+  url?: string;
+}
+
 export interface AcceptanceClaimRow {
+  origin?: AcceptanceClaimOrigin;
   id: string;
   text: string;
   state: string;
@@ -106,16 +116,37 @@ export interface AcceptanceClaimRow {
 
 /** One AC presentation for publication gates, previews and evidence panels. */
 export function acceptanceClaimRows(
-  input: Pick<PublicationGateInput, 'claims' | 'judgmentRows' | 'pendingVisualClaimIds'>,
+  input: Pick<PublicationGateInput, 'claims' | 'judgmentRows' | 'pendingVisualClaimIds'> & {
+    criteria?: readonly AcceptanceCriterionRef[];
+    ledger?: AcceptanceStatusLedger;
+    registration?: AcceptanceRegistration;
+  },
 ): AcceptanceClaimRow[] {
-  const pending = new Set(input.pendingVisualClaimIds ?? []);
-  const claims: AcceptanceClaimRow[] = (
-    input.claims ??
-    input.judgmentRows?.map((row) => row.claim) ??
-    []
-  ).map((claim) => ({
+  const inherited = new Set(
+    input.ledger?.criteria.filter(({ inheritedFrom }) => inheritedFrom).map(({ id }) => id),
+  );
+  const pending = new Set((input.pendingVisualClaimIds ?? []).filter((id) => !inherited.has(id)));
+  const registered = input.registration
+    ? [...input.registration.original, ...input.registration.derived]
+    : input.criteria;
+  const existing = input.claims ?? input.judgmentRows?.map((row) => row.claim) ?? [];
+  const sourceClaims: readonly PublicationGateClaim[] = registered
+    ? [
+        ...registered.map((criterion) => {
+          const claim = existing.find(({ id }) => id === criterion.id);
+          const status = input.ledger?.criteria.find(({ id }) => id === criterion.id) ?? null;
+          return inherited.has(criterion.id)
+            ? { ...criterion, status, reviewLabels: ['Inherited parent proof'] }
+            : (claim ?? { ...criterion, status });
+        }),
+        ...existing.filter((claim) => !registered.some(({ id }) => claim.id === id)),
+      ]
+    : existing;
+  const claims: AcceptanceClaimRow[] = sourceClaims.map((claim) => ({
     source: claim,
-    judgment: input.judgmentRows?.find((row) => row.claim.id === claim.id),
+    judgment: inherited.has(claim.id)
+      ? undefined
+      : input.judgmentRows?.find((row) => row.claim.id === claim.id),
     id: claim.id,
     text: claim.text,
     state:
@@ -138,6 +169,26 @@ export function acceptanceClaimRows(
     pending: pending.has(claim.id),
   }));
   for (const row of claims) {
+    const criterion = registered?.find(({ id }) => id === row.id);
+    const inherited = input.ledger?.criteria.find(({ id }) => id === row.id)?.inheritedFrom;
+    const origin = criterion?.source;
+    if (inherited)
+      row.origin = {
+        label: `Parent proof at ${inherited.headSha.slice(0, 7)}`,
+        reference: inherited.parentRunId,
+      };
+    else if (origin) {
+      const source = input.registration?.units
+        .flatMap(({ sources }) => sources)
+        .find(({ id }) => id === origin.sourceId);
+      row.origin = {
+        label: origin.kind === 'review-comment' ? 'Review comment' : 'Operator instruction',
+        reference: origin.sourceId,
+        ...(source ? { body: source.body } : {}),
+        ...(origin.url && /^https?:\/\//.test(origin.url) ? { url: origin.url } : {}),
+      };
+    } else if (input.registration?.original.some(({ id }) => id === row.id))
+      row.origin = { label: 'Original criterion', reference: row.id };
     // The code review checks a `review` claim (ADR-062 Amendment 18).
     const status = row.source?.status;
     if (status?.proofMode === 'review' && !['failed', 'untestable'].includes(status.verdict))

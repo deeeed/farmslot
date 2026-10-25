@@ -72,7 +72,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
     await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
     await attachOperations(source.io, source.checklistPath, structured);
     await attachChecklistTiming(source.io, source.checklistPath, structured, getRun(params.runId));
-    await attachAcceptanceStatus(source.io, source.checklistPath, result);
+    await attachAcceptanceStatus(source.io, source.checklistPath, result, getRun(params.runId));
     return result;
   }
   const fleet = await loadFleetStatus();
@@ -171,7 +171,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
     await attachOperations(vars, effectiveMdPath, result.structured);
     await attachChecklistTiming(vars, effectiveMdPath, result.structured, activeRun, context);
   }
-  await attachAcceptanceStatus(vars, effectiveMdPath, result);
+  await attachAcceptanceStatus(vars, effectiveMdPath, result, activeRun);
 
   return result;
 }
@@ -199,7 +199,7 @@ async function progressFromChecklist(
       await attachChecklistTiming(io, mdPath, result.structured, run, context);
     }
   }
-  await attachAcceptanceStatus(io, mdPath, result);
+  await attachAcceptanceStatus(io, mdPath, result, run);
 }
 
 /**
@@ -246,12 +246,41 @@ async function attachAcceptanceStatus(
   vars: SlotLocality,
   effectiveMdPath: string,
   result: TaskProgressResult,
+  run?: Run,
 ): Promise<void> {
   // Both halves: the criteria the task registered, and the verdicts recorded so
   // far. A client needs the first to show a criterion still awaiting a verdict —
   // the ledger transfers the selected engine claims, with the read error when neither
   // can be read, so the panel says "unreadable" instead of quietly showing nothing.
   const read = await readAcceptanceStatusForDisplay(vars, path.dirname(effectiveMdPath));
+  if (run?.acceptanceRegistration) {
+    const { registeredAcceptanceCriteria } = await import('@farmslot/protocol');
+    read.criteria = registeredAcceptanceCriteria(
+      run.ticketData?.acceptanceCriteria ?? [],
+      run.acceptanceRegistration,
+    );
+    if (run.parentRunId) {
+      try {
+        const { readInheritedAcceptanceSource } =
+          await import('../run-completion/inherited-acceptance.js');
+        const inherited = await readInheritedAcceptanceSource(run);
+        if (inherited) {
+          const { inheritedAcceptanceView } =
+            await import('../run-completion/inherited-acceptance-view.js');
+          read.ledger = inheritedAcceptanceView(inherited, read.ledger);
+        }
+      } catch (error) {
+        // This display read must preserve ordinary progress. No inherited
+        // verdict is added, and completion still performs full qualification.
+        read.error = [
+          read.error,
+          `Inherited acceptance: ${error instanceof Error ? error.message : String(error)}`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+      }
+    }
+  }
   if (read.criteria.length > 0) result.acceptanceCriteria = read.criteria;
   if (read.ledger) result.acceptanceStatus = read.ledger;
   if (read.error) result.acceptanceStatusError = read.error;

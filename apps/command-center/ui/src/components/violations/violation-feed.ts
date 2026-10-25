@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type { MonitorViolation } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { operatorMessageInput } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
@@ -220,8 +221,7 @@ export class ViolationFeed extends LitElement {
         ...(v.role ? { role: v.role } : {}),
         ...(v.contextId ? { contextId: v.contextId } : {}),
         ...(v.target ? { target: v.target } : {}),
-        text,
-        enter: true,
+        ...operatorMessageInput(text),
       })
       .catch((err) => {
         console.warn(`[violation-feed] nudge dispatch failed:`, (err as Error).message);

@@ -22,7 +22,6 @@ import {
   type ExecutionTemplateReference,
   failedRunCancelEffects,
   failureTriageCause,
-  FLOW_STEPS,
   type GateReviewFinding,
   INTERACTIVE_HANDOFF_EXTEND_ACTION,
   interactiveHandoffAllowsExtend,
@@ -38,6 +37,7 @@ import {
   NATIVE_WORKER_RESUME_ACTION,
   needsGateParkRestore,
   parseGitHubRef,
+  pipelineStepsForRun,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
@@ -1414,8 +1414,8 @@ export async function runRehydratePrNumber(
   // "Step not found: ci-watch" — the caller would still see ok:true but
   // monitoring never starts. Surface this as an explicit partial-success
   // reason instead.
-  const { FLOW_STEPS, PipelineSteps: PS } = await import('@farmslot/protocol');
-  const flowSteps = FLOW_STEPS[run.flowType] ?? [];
+  const { PipelineSteps: PS } = await import('@farmslot/protocol');
+  const flowSteps = pipelineStepsForRun(run) ?? [];
   if (!flowSteps.includes(PS.CI_WATCH)) {
     return {
       ok: true,
@@ -1913,7 +1913,7 @@ export function continueResolvedRunDecision(
         }
         const hasRunningStep = afterResolve.steps.some((s) => s.status === 'running');
         if (!hasRunningStep) {
-          const nextStep = FLOW_STEPS[afterResolve.flowType]?.find((stepName) => {
+          const nextStep = pipelineStepsForRun(afterResolve)?.find((stepName) => {
             const step = afterResolve.steps.find((candidate) => candidate.name === stepName);
             return !step || step.status !== 'done';
           });
@@ -2040,7 +2040,7 @@ export async function resolveRunDecision(
         ? await (
             await import('../run-completion/output-close.js')
           ).closeRunOutput(params.runId, params.decisionId, undefined, overrideSnapshot)
-        : await acknowledgeRunOutput(params.runId, params.decisionId, overrideSnapshot);
+        : await acknowledgeRunOutput(params.runId, params.decisionId, overrideSnapshot, emit);
     emit(Events.RUN_UPDATED, { run });
     emit(Events.RUN_DECISION_RESOLVED, {
       runId: run.id,

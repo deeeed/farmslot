@@ -189,6 +189,17 @@ export async function confirmNativeWorkerStopped(runId: string, contextId?: stri
   if (!result.session.processStopped) throw new Error('Native stop confirmation was not recorded');
 }
 
+export function nativeWorkerInstructionCommandId(
+  runId: string,
+  binding: NativeWorkerSessionBinding,
+  key: string,
+  text: string,
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify([runId, binding.sessionId, binding.leaseId, key, text]))
+    .digest('hex');
+}
+
 export async function sendNativeWorkerInstruction(input: {
   runId: string;
   slotId: string;
@@ -199,8 +210,12 @@ export async function sendNativeWorkerInstruction(input: {
   text: string;
   /** Persisted subtask command; otherwise derived from the logical instruction key. */
   commandId?: string;
+  /** Existing authenticated command identity retained by an operator's client. */
+  logicalCommandId?: string;
   /** Self-review fix policy may execute at an operator gate. */
   allowOperatorWait?: boolean;
+  /** Explicit operator messages may enter the host's supported command queue. */
+  allowBusyQueue?: boolean;
   assertCurrent?: () => void;
 }): Promise<'confirmed' | 'attempted' | 'queued' | 'not-attempted'> {
   input.assertCurrent?.();
@@ -225,13 +240,16 @@ export async function sendNativeWorkerInstruction(input: {
   // reservation store. A retry of this instruction always uses the same native command.
   const commandId =
     input.commandId ??
-    createHash('sha256')
-      .update(JSON.stringify([run.id, binding.sessionId, binding.leaseId, input.key, input.text]))
-      .digest('hex');
+    input.logicalCommandId ??
+    nativeWorkerInstructionCommandId(run.id, binding, input.key, input.text);
   const snapshot = await readNativeWorkerSnapshot(run.id, input.role, input.contextId);
   const receipt = snapshot.commands.find((command) => command.commandId === commandId);
-  if (receipt?.accepted) return 'confirmed';
-  if (!receipt && (snapshot.session.state !== 'idle' || snapshot.pendingRequests.length))
+  if (receipt?.accepted && !input.logicalCommandId) return 'confirmed';
+  if (
+    !receipt &&
+    ((!input.allowBusyQueue && snapshot.session.state !== 'idle') ||
+      snapshot.pendingRequests.length)
+  )
     return 'not-attempted';
   if ((await readSlotField(input.slotId, 'current_run_id')) !== run.id) return 'not-attempted';
   const latest = workerBinding(run.id, input.role, input.contextId);

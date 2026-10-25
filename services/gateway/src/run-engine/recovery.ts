@@ -3,7 +3,6 @@
 import {
   type ArtifactRef,
   Events,
-  FLOW_STEPS,
   type FlowType,
   isCompletionPrerequisiteFailure,
   isGateParkInFlightOrFreed,
@@ -12,6 +11,7 @@ import {
   isSettledCompletionFailure,
   pendingResultDecision,
   PipelineSteps,
+  pipelineStepsForRun,
   refusedCompletionStep,
   type ReviewGatePayload,
   type Run,
@@ -393,7 +393,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       };
       deps.updateRun(run.id, { engineState: run.engineState });
     }
-    const expectedSteps = FLOW_STEPS[run.flowType];
+    const expectedSteps = pipelineStepsForRun(run);
     if (expectedSteps) {
       const existingNames = new Set(run.steps.map((s) => s.name));
       for (const stepName of expectedSteps) {

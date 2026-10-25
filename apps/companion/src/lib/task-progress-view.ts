@@ -14,6 +14,7 @@ import {
   type AcceptanceCriterionRef,
   type AcceptanceCriterionView,
   type AcceptanceEvidenceLink,
+  type AcceptanceRegistration,
   type AcceptanceStatusLedger,
   isSettledSubtaskStatus,
   type TaskStepSubtaskProgress,
@@ -103,6 +104,7 @@ export interface AcceptanceLedgerRow {
 }
 
 export interface AcceptanceLedgerView {
+  registration?: import('@farmslot/review-dispatch').AcceptanceRegistrationPresentation;
   /** Assessment progress and proven criteria are separate counts. */
   counts: string;
   /** Long-form tally for the accessibility label. */
@@ -128,16 +130,17 @@ export function acceptanceLedgerView(
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
   evidenceLinks: ReadonlyArray<AcceptanceEvidenceLink> = [],
   model: EvidenceReviewModel = createEvidenceReviewModel({ criteria, ledger, evidenceLinks }),
+  registration?: AcceptanceRegistration,
 ): AcceptanceLedgerView {
-  const summary = model.summary;
   // Command Center renders the same tally from the same view model.
-  const presentation = acceptancePanelPresentation(ledger, criteria, model);
+  const presentation = acceptancePanelPresentation(ledger, criteria, model, registration);
   return {
+    ...(presentation.registration ? { registration: presentation.registration } : {}),
     counts: presentation.counts,
     countsLabel: presentation.countsTooltip,
     // An unjudged criterion blocks a publish decision, so the tally must not read as neutral.
-    countsColor: summary.unrecorded > 0 ? colors.statusFail : colors.textSecondary,
-    unassessed: summary.unrecorded,
+    countsColor: presentation.unassessed > 0 ? colors.statusFail : colors.textSecondary,
+    unassessed: presentation.unassessed,
     defaultOpen: presentation.defaultOpen,
     model,
     rows: model.claims.map((criterion) => ({

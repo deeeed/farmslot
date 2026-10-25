@@ -4,13 +4,13 @@
 import {
   Events,
   type EvidenceManifestEntry,
-  FLOW_STEPS,
   type FlowType,
   humanGateEnabled,
   isCompletionPrerequisiteFailure,
   isGateParkInFlightOrFreed,
   isTerminalRunStatus,
   PipelineSteps,
+  pipelineStepsForRun,
   type Run,
   type RunDecisionPayload,
   runDispatchQueueWaitMs,
@@ -478,7 +478,7 @@ async function retainCompletionPrerequisiteFailure(
       gatePrerequisiteRefusal: error instanceof GatewayMethodError ? (error.details ?? {}) : {},
     },
   });
-  const steps = FLOW_STEPS[current!.flowType];
+  const steps = pipelineStepsForRun(current!);
   for (const next of steps.slice(steps.indexOf(stepName) + 1)) {
     updateRunStep(runId, next, { status: 'skipped' });
   }
@@ -816,7 +816,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
   // idempotent and returns early when no rewrite is needed.
   const run = await normalizeEvalReplayForTaskWrite(runId, initialRun);
 
-  const steps = FLOW_STEPS[run.flowType];
+  const steps = pipelineStepsForRun(run);
   if (!steps) throw new Error(`Unknown flow type: ${run.flowType}`);
 
   // Capture generation — if a replay bumps it mid-loop, this loop should bail

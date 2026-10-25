@@ -261,6 +261,13 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     selectionReason: selected.reason,
     ...executionTemplateReference(selected.entry, checklistMarkdown ?? taskMarkdown),
   };
+  if (
+    executionTemplate.firstSubtask === 'derive-acceptance' &&
+    (spec.handoff.surface !== 'farmslot' || spec.terminalContract?.acceptanceContractVersion !== 1)
+  )
+    throw new Error(
+      'Derived PR-completion acceptance requires a gateway-owned run and supported acceptance contract.',
+    );
   const handoffMetadata =
     spec.authored?.handoff ??
     buildHandoffMetadata({

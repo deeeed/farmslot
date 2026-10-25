@@ -14,6 +14,8 @@ import {
   type RunGatePrerequisiteReason,
 } from '@farmslot/protocol';
 
+import { inheritedAcceptanceView } from '../run-completion/inherited-acceptance-view.js';
+
 import {
   appliedClaimOverrideReceiptIds,
   claimOverrideAuthority,
@@ -38,6 +40,8 @@ interface RecordedAcceptanceContext {
   reviewBinding?: 'captured' | 'current' | 'approved';
   /** The gate's code review certifies the evidence package head (ADR-062 Amendment 18). */
   codeReviewCertified?: boolean;
+  /** Only the already-qualified original rows, never worker-declared exemptions. */
+  qualifiedInheritedCriterionIds?: readonly string[];
 }
 
 /** One evidence/claim assessment for completion, publication and inherited proof. */
@@ -45,6 +49,35 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
   acceptance: GateAcceptanceRead;
   reasons: RunGatePrerequisiteReason[];
 } {
+  const inherited = context.acceptance.inheritedOriginals;
+  if (inherited) {
+    const ids = new Set(inherited.acceptance.criteria.map(({ id }) => id));
+    const fresh = {
+      ...context.acceptance,
+      criteria: context.acceptance.criteria.filter(({ id }) => !ids.has(id)),
+      ledger: context.acceptance.ledger
+        ? {
+            ...context.acceptance.ledger,
+            criteria: context.acceptance.ledger.criteria.filter(({ id }) => !ids.has(id)),
+          }
+        : null,
+    };
+    delete fresh.inheritedOriginals;
+    const assessed = assessRecordedAcceptance({
+      ...context,
+      acceptance: fresh,
+      qualifiedInheritedCriterionIds: [...ids],
+    });
+    return {
+      reasons: assessed.reasons,
+      acceptance: {
+        ...assessed.acceptance,
+        inheritedOriginals: inherited,
+        criteria: context.acceptance.criteria,
+        ledger: inheritedAcceptanceView(inherited, assessed.acceptance.ledger),
+      },
+    };
+  }
   const { inputs, visualPolicy, qaOutput = false } = context;
   const approved = context.reviewBinding === 'approved';
   const run = approved
@@ -159,6 +192,7 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
       ) &&
       reviewed[index]!.every(
         (claim) =>
+          context.qualifiedInheritedCriterionIds?.includes(claim.id) ||
           !judged(input, claim.id) ||
           claim.verdict === 'proven' ||
           // An output review retains unreviewed visual claims for its
@@ -192,6 +226,7 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
           (claim) =>
             claim.id === criterion.id &&
             claim.text.trim() === criterion.text.trim() &&
+            (!criterion.proofMode || claim.proofMode === criterion.proofMode) &&
             (claim.verdict ===
               acceptance.ledger?.criteria.find((row) => row.id === criterion.id)?.verdict ||
               acceptance.ledger?.criteria.some(

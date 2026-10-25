@@ -17,6 +17,7 @@ const { atomicWrite, readJson } = require('./mark-io.cjs');
 const HANDOFF_INPUT = path.join('inputs', 'handoff.json');
 const {
   ACCEPTANCE_STATUS_ARTIFACT,
+  ACCEPTANCE_REGISTRATION_INPUT,
   INHERITED_ACCEPTANCE_INPUT,
   ACCEPTANCE_VERDICTS,
   ACCEPTANCE_PROOF_MODES,
@@ -57,14 +58,35 @@ function ledgerPath(taskDir) {
  * array means this run has no acceptance criteria, so the ledger does not apply.
  */
 function handoffAcceptanceCriteria(taskDir) {
-  return criteriaFromHandoff(readJson(path.join(taskDir, HANDOFF_INPUT)));
+  return criteriaFromHandoff(readJson(path.join(taskDir, HANDOFF_INPUT)), taskDir);
 }
 
 /** The `AC-<N>` list a parsed handoff carries; positions are the ids. */
-function criteriaFromHandoff(handoff) {
+function criteriaFromHandoff(handoff, taskDir) {
   const task = isRecord(handoff.task) ? handoff.task : {};
   const criteria = Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : [];
+  const projection = taskDir ? readJson(path.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT)) : {};
+  if (Object.keys(projection).length) {
+    if (projection.schemaVersion !== 1 || projection.registration?.runId !== handoff.attemptId)
+      throw new AcceptanceRefusal(
+        'acceptance registration belongs to another task or unsupported version',
+      );
+    return registeredAcceptanceCriteria(criteria, projection.registration);
+  }
+  if (handoff.executionTemplate?.firstSubtask === 'derive-acceptance')
+    throw new AcceptanceRefusal(
+      'acceptance registration transport is missing; restore it from the gateway',
+    );
   return registeredAcceptanceCriteria(criteria);
+}
+
+function pendingInitialAcceptanceDerivation(taskDir) {
+  const handoff = readJson(path.join(taskDir, HANDOFF_INPUT));
+  if (handoff.executionTemplate?.firstSubtask !== 'derive-acceptance') return false;
+  // Reading the registered list also checks task identity and projection version.
+  handoffAcceptanceCriteria(taskDir);
+  const projection = readJson(path.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT));
+  return !projection.registration?.units?.find(({ id }) => id === 'derive-acceptance')?.result;
 }
 
 /**
@@ -91,7 +113,7 @@ function requireHandoffAcceptanceCriteria(taskDir) {
     );
   }
   // One parse: the handoff read above is the only one this path makes.
-  return criteriaFromHandoff(handoff);
+  return criteriaFromHandoff(handoff, taskDir);
 }
 
 /** One message shape for a handoff the acceptance rule cannot read. */
@@ -153,10 +175,16 @@ function assertEvidencePath(taskDir, rawPath) {
 function setDerivedClaims(taskDir, claims) {
   if (claims.schemaVersion !== 2) throw new AcceptanceRefusal('Derived claims require schema 2.');
   const handoff = readJson(path.join(taskDir, HANDOFF_INPUT));
-  const registered = criteriaFromHandoff(handoff);
+  const registered = criteriaFromHandoff(handoff, taskDir);
+  const inherited = inheritedCriterionIdsForTask(taskDir, registered);
   for (const criterion of registered) {
     const claim = claims.criteria.find((entry) => entry.id === criterion.id);
-    if (!claim || claim.text !== criterion.text)
+    if (!claim && inherited.has(criterion.id)) continue;
+    if (
+      !claim ||
+      claim.text !== criterion.text ||
+      (criterion.proofMode && claim.proofMode !== criterion.proofMode)
+    )
       throw new AcceptanceRefusal(
         `Engine claim ${criterion.id} does not match the registered task.`,
       );
@@ -260,6 +288,51 @@ function acceptanceStatusList(taskDir) {
  * verdict, and `weak` or `missing` fails unless the flow's contract waives it
  * (`acceptance.allowWeak`). Returns an empty array when the run has no criteria.
  */
+/** Validate the frozen version-1 reference against original rows only. */
+function inheritedCriterionIdsForTask(taskDir, criteria, requireFresh = false) {
+  const base = readJson(path.join(taskDir, 'inputs/worker-terminal-contract.json'));
+  if (
+    requireFresh ||
+    base.acceptance?.requireFresh ||
+    !fs.existsSync(path.join(taskDir, INHERITED_ACCEPTANCE_INPUT))
+  )
+    return new Set();
+  const projection = readJson(path.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT));
+  const original = projection.registration?.original ?? criteria;
+  let reference;
+  let handoff;
+  try {
+    reference = readJson(path.join(taskDir, INHERITED_ACCEPTANCE_INPUT));
+    handoff = readJson(path.join(taskDir, HANDOFF_INPUT));
+  } catch (error) {
+    throw new AcceptanceRefusal(`Inherited acceptance reference cannot be read: ${error.message}`);
+  }
+  if (
+    !isRecord(reference) ||
+    reference.schemaVersion !== 1 ||
+    reference.source !== 'parent-run' ||
+    typeof reference.childRunId !== 'string' ||
+    !reference.childRunId ||
+    typeof reference.project !== 'string' ||
+    !reference.project ||
+    handoff.flow !== 'pr-complete' ||
+    reference.childRunId !== handoff.attemptId ||
+    reference.project !== handoff.project ||
+    typeof reference.parentRunId !== 'string' ||
+    !reference.parentRunId ||
+    reference.parentRunId === reference.childRunId ||
+    typeof reference.headSha !== 'string' ||
+    !/^[a-f0-9]{7,40}$/i.test(reference.headSha) ||
+    typeof reference.ledgerHash !== 'string' ||
+    !/^[a-f0-9]{64}$/i.test(reference.ledgerHash) ||
+    !acceptanceCriteriaMatch(original, reference.criteria)
+  )
+    throw new AcceptanceRefusal(
+      'Inherited acceptance reference does not match this follow-up task.',
+    );
+  return new Set(reference.criteria.map(({ id }) => id));
+}
+
 function acceptanceContractIssues(taskDir, options = {}) {
   let criteria;
   try {
@@ -268,41 +341,23 @@ function acceptanceContractIssues(taskDir, options = {}) {
     if (!(err instanceof AcceptanceRefusal)) throw err;
     return [err.message];
   }
+  const projection = readJson(path.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT));
+  const pending = projection.registration?.units?.filter((unit) => !unit.result) ?? [];
+  if (pending.length)
+    return pending.map(
+      (unit) =>
+        `Acceptance derivation ${unit.id} is pending${unit.error ? `: ${unit.error}` : '; complete the source classification subtask'}.`,
+    );
   if (criteria.length === 0) return [];
-  // This is a cached qualification, not a new verdict or publication authority.
-  // The gateway independently checks the approved original parent at completion.
-  if (!options.requireFresh && fs.existsSync(path.join(taskDir, INHERITED_ACCEPTANCE_INPUT))) {
-    let reference;
-    let handoff;
-    try {
-      reference = readJson(path.join(taskDir, INHERITED_ACCEPTANCE_INPUT));
-      handoff = readJson(path.join(taskDir, HANDOFF_INPUT));
-    } catch (error) {
-      return [`Inherited acceptance reference cannot be read: ${error.message}`];
-    }
-    if (
-      !isRecord(reference) ||
-      reference.schemaVersion !== 1 ||
-      reference.source !== 'parent-run' ||
-      typeof reference.childRunId !== 'string' ||
-      !reference.childRunId ||
-      typeof reference.project !== 'string' ||
-      !reference.project ||
-      handoff.flow !== 'pr-complete' ||
-      reference.childRunId !== handoff.attemptId ||
-      reference.project !== handoff.project ||
-      typeof reference.parentRunId !== 'string' ||
-      !reference.parentRunId ||
-      reference.parentRunId === reference.childRunId ||
-      typeof reference.headSha !== 'string' ||
-      !/^[a-f0-9]{7,40}$/i.test(reference.headSha) ||
-      typeof reference.ledgerHash !== 'string' ||
-      !/^[a-f0-9]{64}$/i.test(reference.ledgerHash) ||
-      !acceptanceCriteriaMatch(criteria, reference.criteria)
-    )
-      return ['Inherited acceptance reference does not match this follow-up task.'];
-    return [];
+  const known = new Set(criteria.map(({ id }) => id));
+  try {
+    const inherited = inheritedCriterionIdsForTask(taskDir, criteria, options.requireFresh);
+    criteria = criteria.filter(({ id }) => !inherited.has(id));
+  } catch (error) {
+    if (!(error instanceof AcceptanceRefusal)) throw error;
+    return [error.message];
   }
+  if (!criteria.length) return [];
   let stored;
   try {
     stored = readAcceptanceLedger(taskDir);
@@ -323,7 +378,6 @@ function acceptanceContractIssues(taskDir, options = {}) {
   }
   const issues = validateAcceptanceStatusLedger(stored);
   if (issues.length > 0) return issues;
-  const known = new Set(criteria.map((criterion) => criterion.id));
   for (const entry of stored.criteria) {
     if (!known.has(entry.id) && ACCEPTANCE_CRITERION_ID_PATTERN.test(entry.id)) {
       issues.push(
@@ -344,8 +398,13 @@ function acceptanceContractIssues(taskDir, options = {}) {
       );
       continue;
     }
+    const reviewDeferred =
+      entry.verdict === 'awaiting-review' &&
+      entry.proofMode === 'review' &&
+      options.deferReviewCriteria?.includes(criterion.id);
     if (
       options.deferClaimVerdicts !== true &&
+      !reviewDeferred &&
       (entry.verdict === 'failed' ||
         entry.verdict === 'awaiting-review' ||
         (!options.allowWeak && (entry.verdict === 'missing' || entry.verdict === 'weak')))
@@ -370,6 +429,8 @@ module.exports = {
   acceptanceRowExecution,
   acceptanceStatusList,
   handoffAcceptanceCriteria,
+  pendingInitialAcceptanceDerivation,
+  inheritedCriterionIdsForTask,
   requireHandoffAcceptanceCriteria,
   readAcceptanceLedger,
   renderAcceptanceCoverage,

@@ -1183,12 +1183,14 @@ export default function RunDetailScreen() {
         {reviewPackageActiveTab === 'timeline' ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Timeline</Text>
-            {acceptanceStatus ||
+            {run.acceptanceRegistration ||
+            acceptanceStatus ||
             acceptanceCriteria?.length ||
             acceptanceStatusError ||
             evidenceModel.claims.length ||
             evidenceModel.errors.length ? (
               <TaskAcceptancePanel
+                acceptanceRegistration={run.acceptanceRegistration}
                 evidenceModel={evidenceModel}
                 judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
                 onRecordVisualReview={recordRunVisualReview}

@@ -61,6 +61,9 @@ const {
 const { certifyingReview, openFindingAtHead, writeReviewClaimPackage } =
   await import('../run-engine/review-claim.test-support.js');
 const { postPRComment } = await import('./pr-publication.js');
+const { inheritedAcceptanceView } = await import('./inherited-acceptance-view.js');
+const { initializeAcceptanceRegistration, acceptAcceptanceDerivation } =
+  await import('../tasks/acceptance-registration.js');
 
 async function fixture(t: TestContext, requireFresh = false, noLedger = false) {
   existingComment = '';
@@ -377,6 +380,65 @@ test('an inherited review claim needs a clean code review at the approved parent
   assert.equal(
     proof?.acceptance.ledger?.criteria.find(({ id }) => id === 'AC-2')?.verdict,
     'proven',
+  );
+  assert.ok(proof?.acceptance.ledger);
+  const before = JSON.stringify(proof.acceptance.ledger);
+  const registration = initializeAcceptanceRegistration(
+    f.child.id,
+    criteria.map((text, index) => ({ id: `AC-${index + 1}`, text })),
+    [{ id: 'comment:extra', kind: 'review-comment', version: 'v1', body: 'Extra obligation' }],
+    {
+      provider: 'github',
+      repository: 'owner/repo',
+      prNumber: 210,
+      headSha: 'a'.repeat(40),
+      capturedAt: '2026-10-25T00:00:00Z',
+    },
+  );
+  f.child.acceptanceRegistration = acceptAcceptanceDerivation(
+    registration,
+    {
+      schemaVersion: 1,
+      runId: f.child.id,
+      generation: 0,
+      registrationRevision: registration.revision,
+      unitId: 'derive-acceptance',
+      classifications: [
+        {
+          sourceId: 'comment:extra',
+          sourceVersion: 'v1',
+          obligations: [{ text: 'Extra obligation', proofMode: 'state' }],
+        },
+      ],
+    },
+    0,
+  );
+  const qualified = await readQualifiedInheritedAcceptance(f.child);
+  assert.ok(qualified, 'a derived criterion does not discard qualified original proof');
+  const projected = inheritedAcceptanceView(qualified, {
+    ...proof.acceptance.ledger,
+    criteria: [
+      {
+        ...proof.acceptance.ledger.criteria[0],
+        id: 'AC-3',
+        text: 'Extra obligation',
+        verdict: 'missing',
+        proofMode: 'state',
+      },
+    ],
+  });
+  assert.deepEqual(
+    projected?.criteria.map(({ id, verdict }) => ({ id, verdict })),
+    [
+      { id: 'AC-1', verdict: 'proven' },
+      { id: 'AC-2', verdict: 'proven' },
+      { id: 'AC-3', verdict: 'missing' },
+    ],
+  );
+  assert.equal(
+    JSON.stringify(proof.acceptance.ledger),
+    before,
+    'parent proof bytes stay unchanged',
   );
   assert.equal(await inherit([certifyingReview(f.prepared), openFindingAtHead(f.prepared)]), null);
   assert.equal(await inherit([]), null);
