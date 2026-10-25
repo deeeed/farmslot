@@ -213,8 +213,8 @@ import { applyComparisonBranchPolicy } from './run/comparison-branch-policy.js';
 import { runCancel } from './run/lifecycle-control.js';
 import { triggerImprovementAnalysis } from './run/propose-improvement.js';
 import { blockedRunResumableSignal, runReplayStep } from './run/replay-step.js';
+import { assertValidTicketData } from './run/ticket-data-validation.js';
 import {
-  assertValidTicketData,
   buildLocalDevRef,
   isInternalArtifactOnlyEvalTicket,
   isManualBacklogRef,
