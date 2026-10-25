@@ -1062,6 +1062,8 @@ export interface ReviewBudgetExtension {
 export interface ReviewRoundSettlement {
   reason: string;
   at: string;
+  /** A failed WARM launch whose farm-caused COLD replacement keeps this refund. */
+  kind?: 'infrastructure-fallback';
 }
 
 export interface ReviewRoundBudget {

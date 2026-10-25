@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { gatewayResourceSource } from './gateway-http-auth';
 import { videoSourceLoadDurationMs } from './video-source-load';
 
 const uri = 'https://gateway.test/api/run-artifact?runId=run-a&path=video.mp4&bundleDigest=head';
-const source = gatewayResourceSource(uri, { Authorization: 'Bearer service-test-credential' });
+// Native sourceLoad observation, with the private fixture credential replaced.
+const source = {
+  uri: 'https://gateway.test/api/run-artifact?runId=run-a&path=video.mp4&bundleDigest=head&token=service-test-credential',
+};
 
 test('authenticated source metadata uses the URI actually delivered to the native player', () => {
   assert.notEqual(source.uri, uri, 'the legacy resource adapter adds its credential');
@@ -23,7 +25,9 @@ test('authenticated source metadata uses the URI actually delivered to the nativ
 });
 
 test('old credentials and another retained bundle cannot satisfy the active source', () => {
-  const foreign = gatewayResourceSource(uri, { Authorization: 'Bearer previous-credential' });
+  const foreign = {
+    uri: 'https://gateway.test/api/run-artifact?runId=run-a&path=video.mp4&bundleDigest=head&token=previous-credential',
+  };
   for (const loadedUri of [
     foreign.uri,
     source.uri.replace('bundleDigest=head', 'bundleDigest=old'),

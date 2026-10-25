@@ -40,6 +40,7 @@ const launch: NativeWorkerLaunch = {
 let snapshot: NativeSessionReadResult;
 let loseReply: 'resume' | 'send' | undefined;
 let afterRead: (() => Promise<void>) | undefined;
+let preparedLaunch: NativeWorkerLaunch = launch;
 const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
 mock.module('../../core/index.js', {
   namedExports: {
@@ -52,7 +53,10 @@ mock.module('../../core/slot-io.js', {
   namedExports: { ...io, slotRealpath: async () => vars.remoteRepo },
 });
 mock.module('./worker-launch.js', {
-  namedExports: { ...launchModule, prepareNativeWorkerLaunch: async () => ({ launch }) },
+  namedExports: {
+    ...launchModule,
+    prepareNativeWorkerLaunch: async () => ({ launch: preparedLaunch }),
+  },
 });
 mock.module('../../security/native-worker-owner.js', {
   namedExports: { ...owner, assertNativeRunOwner: () => {} },
@@ -111,6 +115,7 @@ async function fixture(t: TestContext, stopped: boolean) {
   calls.length = 0;
   loseReply = undefined;
   afterRead = undefined;
+  preparedLaunch = launch;
   const previous = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = principal.id;
   t.after(() => {
@@ -234,6 +239,44 @@ async function fixture(t: TestContext, stopped: boolean) {
     });
   return { run, context, resume };
 }
+
+test('handoff resumes with its validated launch after pool settings change and reconciles a lost reply', async (t) => {
+  const { run, context } = await fixture(t, true);
+  await updateRun(run.id, {
+    agentContexts: [
+      {
+        ...context,
+        nativeSession: {
+          ...context.nativeSession!,
+          acceptedAt: undefined,
+          handoffFrom: { runId: run.id, contextId: 'previous-review', leaseId: 'previous-lease' },
+          handoffCompletedAt: new Date().toISOString(),
+        },
+      },
+    ],
+  });
+  preparedLaunch = {
+    ...launch,
+    environment: { set: { PROVIDER_ROOT: '/providers/new' }, unset: [] },
+  };
+  const resume = () =>
+    resumeNativeWorker(run.id, {
+      purpose: 'handoff',
+      contextId: context.id,
+      launch,
+      assertCurrent: () => {},
+    });
+  loseReply = 'resume';
+  await assert.rejects(resume(), NodeRpcTimeoutError);
+  assert.ok(getRun(run.id)!.agentContexts![0]!.nativeSession!.recovery);
+  await resume();
+  const current = getRun(run.id)!.agentContexts![0]!;
+  assert.equal(current.nativeSession!.generation, 'resumed');
+  assert.equal(current.nativeSession!.recovery, undefined);
+  assert.equal(current.runnerSessionId, 'saved-conversation');
+  assert.equal(calls.filter((call) => call.method === NATIVE_WORKER_RESUME).length, 1);
+  assert.equal(calls.filter((call) => call.method === NATIVE_WORKER_SEND).length, 0);
+});
 
 for (const stopped of [false, true])
   test(`completion ${stopped ? 'resumes a stopped' : 'continues a live idle'} reviewer once`, async (t) => {
