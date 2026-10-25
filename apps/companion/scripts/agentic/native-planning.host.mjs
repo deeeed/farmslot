@@ -40,10 +40,75 @@ import {
   assertMountedPlanningChange,
   assertObservedMemoryQueries,
   assertPlanningReadsFromRuntime,
+  assertRenderedPlanningAge,
   retainedPlanningRows,
+  waitForPlanningRecovery,
 } from './prove-native-planning.mjs';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+
+test('saved-age evidence requires the selected caption and its age in rendered OCR', () => {
+  assert.doesNotThrow(() =>
+    assertRenderedPlanningAge(
+      { text: [{ text: 'Saved projects, 19s old.', maxContrast: 12 }] },
+      'projects',
+    ),
+  );
+  for (const text of [
+    [],
+    [{ text: 'Saved backlog, 23s old.' }],
+    [{ text: 'Saved projects,' }, { text: 'Saved backlog, 23s old.' }],
+    [{ text: 'Saved projects, age unknown.' }],
+  ])
+    assert.throws(() => assertRenderedPlanningAge({ text }, 'projects'), /must be readable/);
+  for (const maxContrast of [undefined, 1.1, 4.49])
+    assert.throws(
+      () =>
+        assertRenderedPlanningAge(
+          { text: [{ text: 'Saved projects, 19s old.', maxContrast }] },
+          'projects',
+        ),
+      /sufficient screenshot contrast/,
+    );
+});
+
+test('recovery waits for gateway startup and a backed-off client in the same cold runtime', async () => {
+  let now = 0;
+  const clock = { now: () => now, wait: async (ms) => (now += ms) };
+  const startupCompleteAt = 75000;
+  const nextClientAttemptAt = startupCompleteAt + 30000;
+  const result = await waitForPlanningRecovery(
+    async () => ({ startedAt: 42, online: now >= nextClientAttemptAt }),
+    42,
+    clock,
+  );
+  assert.equal(now, nextClientAttemptAt);
+  assert.equal(result.online, true);
+  assert.equal(result.startedAt, 42);
+});
+
+test('recovery fails closed on a new runtime, a bridge error or an expired deadline', async () => {
+  await assert.rejects(
+    waitForPlanningRecovery(async () => ({ startedAt: 43, online: true }), 42),
+    /Recovery cannot relaunch the app/,
+  );
+  const bridgeError = new Error('bridge disconnected');
+  await assert.rejects(
+    waitForPlanningRecovery(async () => {
+      throw bridgeError;
+    }, 42),
+    (error) => error === bridgeError,
+  );
+  let now = 0;
+  await assert.rejects(
+    waitForPlanningRecovery(async () => ({ startedAt: 42, online: false }), 42, {
+      now: () => now,
+      wait: async (ms) => (now += ms),
+    }),
+    /Controller must recover its exact gateway/,
+  );
+  assert.equal(now, 120000);
+});
 
 function writerCase(kind) {
   const plan = {

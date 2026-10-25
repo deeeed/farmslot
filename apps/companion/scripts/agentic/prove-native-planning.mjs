@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -80,6 +81,42 @@ export function retainedPlanningRows(result) {
       `Observed memory-only ${method} was persisted`,
     );
   return rows;
+}
+
+export async function waitForPlanningRecovery(
+  observe,
+  coldStartedAt,
+  clock = { now: Date.now, wait: delay },
+) {
+  // The parent allows 75s for gateway readiness; the client backs off up to 30s.
+  // Keep 15s for observation/transport overhead within the existing 480s recipe budget.
+  const deadline = clock.now() + 120000;
+  do {
+    const state = await observe();
+    assert.equal(state.startedAt, coldStartedAt, 'Recovery cannot relaunch the app');
+    assert(
+      clock.now() < deadline,
+      'Controller must recover its exact gateway without an app relaunch',
+    );
+    if (state.online) return state;
+    await clock.wait(250);
+  } while (clock.now() < deadline);
+  assert.fail('Controller must recover its exact gateway without an app relaunch');
+}
+
+export function assertRenderedPlanningAge(ocr, label) {
+  const text = ocr.text.map((entry) => entry.text).join(' ');
+  const prefix = `Saved ${label},`;
+  const index = text.indexOf(prefix);
+  assert(
+    index >= 0 && /^\s*\d+[smhd] old\./.test(text.slice(index + prefix.length)),
+    `The saved ${label} age must be readable in the paired screenshot`,
+  );
+  const caption = ocr.text.find((entry) => entry.text.startsWith(prefix));
+  assert(
+    caption?.maxContrast >= 4.5,
+    `The saved ${label} caption must have sufficient screenshot contrast`,
+  );
 }
 
 export function assertObservedMemoryQueries(snapshot, wire, methods) {
@@ -201,7 +238,6 @@ async function prove() {
     // Device, subprocess and SDK dependencies are runtime-only; check-import has no actions.
     const { execFile } = await import('node:child_process');
     const { promisify } = await import('node:util');
-    const { setTimeout: delay } = await import('node:timers/promises');
     const execute = promisify(execFile);
     const { createAgentDeviceClient } = await import('agent-device');
     const { confirmSimulatorURLPrompt, waitForSimulatorRecipeBridge } =
@@ -594,6 +630,27 @@ async function prove() {
       for (let i = 0; i < 6; i++) {
         const current = await capture(`projects-cold-age-${i}`);
         if (has(current, 'Saved projects,')) {
+          const imageFile = path.join(artifacts, `projects-cold-age-${i}.png`);
+          const ocr = JSON.parse(
+            (
+              await execute(
+                'osascript',
+                [
+                  '-l',
+                  'JavaScript',
+                  path.join(
+                    source,
+                    'apps/companion/scripts/agentic/recognize-simulator-prompt.jxa',
+                  ),
+                  imageFile,
+                  'projects',
+                ],
+                { timeout: 30000 },
+              )
+            ).stdout,
+          );
+          await save('d07-projects-age-ocr.json', ocr);
+          assertRenderedPlanningAge(ocr, 'projects');
           ageVisible = true;
           break;
         }
@@ -631,17 +688,7 @@ async function prove() {
       inputHash: plan.inputHash,
       coldStartedAt,
     });
-    let actuallyRecovered = false;
-    for (let i = 0; i < 10; i++) {
-      const state = await observe();
-      assert.equal(state.startedAt, coldStartedAt);
-      if (state.online) {
-        actuallyRecovered = true;
-        break;
-      }
-      await delay(250);
-    }
-    assert(actuallyRecovered, 'Controller must recover its exact gateway without an app relaunch');
+    await waitForPlanningRecovery(observe, coldStartedAt);
     // The parent controller keeps the same passive proxy and exact owned outage marker until recovery.
     await open('backlog');
     await view(

@@ -16,7 +16,27 @@ function run(args) {
     const observation = observations.objectAtIndex(i);
     const text = ObjC.unwrap(observation.topCandidates(1).objectAtIndex(0).string);
     const box = observation.boundingBox;
-    results.push({text, x:box.origin.x, y:box.origin.y, width:box.size.width, height:box.size.height});
+    const row = {text, x:box.origin.x, y:box.origin.y, width:box.size.width, height:box.size.height};
+    if (args[1] && text.indexOf('Saved ' + args[1] + ',') === 0) {
+      let darkest = 1, lightest = 0;
+      const channel = function (value) {
+        return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+      };
+      const left = Math.max(0, Math.floor(box.origin.x * bitmap.pixelsWide));
+      const right = Math.min(bitmap.pixelsWide, Math.ceil((box.origin.x + box.size.width) * bitmap.pixelsWide));
+      const top = Math.max(0, Math.floor((1 - box.origin.y - box.size.height) * bitmap.pixelsHigh));
+      const bottom = Math.min(bitmap.pixelsHigh, Math.ceil((1 - box.origin.y) * bitmap.pixelsHigh));
+      for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+        const color = bitmap.colorAtXY(x, y).colorUsingColorSpace($.NSColorSpace.sRGBColorSpace);
+        const luminance = 0.2126 * channel(Number(color.redComponent)) + 0.7152 * channel(Number(color.greenComponent)) + 0.0722 * channel(Number(color.blueComponent));
+        darkest = Math.min(darkest, luminance);
+        lightest = Math.max(lightest, luminance);
+      }
+      // Even the strongest text/background contrast in this caption must meet normal-text contrast.
+      // This is a rejection guard; independent screenshot review still decides visual acceptance.
+      row.maxContrast = (lightest + 0.05) / (darkest + 0.05);
+    }
+    results.push(row);
   }
   return JSON.stringify({width:Number(bitmap.pixelsWide),height:Number(bitmap.pixelsHigh),text:results});
 }

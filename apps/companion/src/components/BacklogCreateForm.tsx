@@ -526,17 +526,9 @@ export function BacklogCreateForm({
       </PlanningSection>
 
       <ResourceReadStatus observation={planning} label="backlog" />
-      {projectsObservation.status === 'stale' && projectsObservation.observedAt ? (
-        <Text>
-          Saved projects,{' '}
-          {Math.max(0, Math.floor((Date.now() - projectsObservation.observedAt) / 1000))}s old.
-          Actions wait for a current read.
-        </Text>
-      ) : null}
-      {error || projectsObservation.error || templateObservation.error ? (
-        <Text style={styles.error}>
-          {error || projectsObservation.error?.message || templateObservation.error?.message}
-        </Text>
+      <ResourceReadStatus observation={projectsObservation} label="projects" />
+      {error || templateObservation.error ? (
+        <Text style={styles.error}>{error || templateObservation.error?.message}</Text>
       ) : null}
       {createdLabel ? (
         <Text style={styles.success}>
