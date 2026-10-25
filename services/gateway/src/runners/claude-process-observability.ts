@@ -6,18 +6,22 @@ import { resolveExactTmuxWindowPane } from '../core/tmux.js';
 import type { SlotVars } from './observability-types.js';
 import type { probeRunnerDescendantPid } from './session-process.js';
 
-export interface ClaudeProcessRegistration {
+interface ClaudeProcessBindingRegistration {
   sessionId: string;
-  status: 'busy' | 'idle';
+  status: 'busy' | 'idle' | 'waiting';
   observedAt: number | null;
 }
 
+export interface ClaudeProcessRegistration extends ClaudeProcessBindingRegistration {
+  status: 'busy' | 'idle';
+}
+
 /** A pid registration from an earlier process is never current runner evidence. */
-export function claudeProcessRegistration(
+function claudeProcessBindingRegistration(
   value: unknown,
   pid: string,
   processStartedAt: number,
-): ClaudeProcessRegistration | null {
+): ClaudeProcessBindingRegistration | null {
   if (
     !isRecord(value) ||
     String(value.pid) !== pid ||
@@ -27,7 +31,7 @@ export function claudeProcessRegistration(
     processStartedAt <= 0 ||
     typeof value.sessionId !== 'string' ||
     !/^[a-zA-Z0-9-]+$/.test(value.sessionId) ||
-    (value.status !== 'busy' && value.status !== 'idle') ||
+    (value.status !== 'busy' && value.status !== 'idle' && value.status !== 'waiting') ||
     (value.statusUpdatedAt !== undefined &&
       (typeof value.statusUpdatedAt !== 'number' ||
         !Number.isFinite(value.statusUpdatedAt) ||
@@ -39,6 +43,18 @@ export function claudeProcessRegistration(
     status: value.status,
     observedAt: typeof value.statusUpdatedAt === 'number' ? value.statusUpdatedAt : null,
   };
+}
+
+/** Liveness readers retain their existing busy/idle observations. */
+export function claudeProcessRegistration(
+  value: unknown,
+  pid: string,
+  processStartedAt: number,
+): ClaudeProcessRegistration | null {
+  const registration = claudeProcessBindingRegistration(value, pid, processStartedAt);
+  return registration && registration.status !== 'waiting'
+    ? { ...registration, status: registration.status }
+    : null;
 }
 
 /** Reads only public native session metadata, never runner credentials or output text. */
@@ -84,7 +100,7 @@ interface ProcessReaders {
 }
 
 /** Bind registration to the exact pane's live runner, rechecking ownership after the read. */
-export async function readClaudeProcessState(
+export async function readClaudeProcessBinding(
   vars: SlotVars,
   target: string,
   overrides: Partial<ProcessReaders> = {},
@@ -116,7 +132,11 @@ export async function readClaudeProcessState(
     typeof value.sessionPath !== 'string'
   )
     return null;
-  const registration = claudeProcessRegistration(value.record, process.pid, value.processStartedAt);
+  const registration = claudeProcessBindingRegistration(
+    value.record,
+    process.pid,
+    value.processStartedAt,
+  );
   if (!registration || registration.observedAt === null) return null;
   const currentPane = await source.pane(vars, target);
   const current = await source.process(vars, pane.panePid, 'claude');
@@ -133,4 +153,14 @@ export async function readClaudeProcessState(
     sessionPath: value.sessionPath,
     processPid: process.pid,
   };
+}
+
+/** A waiting registration establishes identity, not an active or idle turn. */
+export async function readClaudeProcessState(
+  vars: SlotVars,
+  target: string,
+  overrides: Partial<ProcessReaders> = {},
+) {
+  const binding = await readClaudeProcessBinding(vars, target, overrides);
+  return binding && binding.status !== 'waiting' ? { ...binding, status: binding.status } : null;
 }
