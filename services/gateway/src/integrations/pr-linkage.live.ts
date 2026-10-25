@@ -60,7 +60,7 @@ test('authenticated discovery ignores a saved historical closed PR on a reused b
   });
   const connection = await fixture.client.connect();
   try {
-    updateRun(run.id, { prNumber: number });
+    updateRun(run.id, { prNumber: number, worktreeHeadAtDispatch: historical.headRefOid });
     const before = structuredClone(getRun(run.id)!);
     const saved = await connection.call<RunInteractiveDevResolveResult>(
       Methods.RUN_INTERACTIVE_DEV_RESOLVE,
