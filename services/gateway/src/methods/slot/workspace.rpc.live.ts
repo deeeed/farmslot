@@ -89,6 +89,17 @@ test(
         fixtures: { templates: [{ src: 'fixture.txt', dst: 'fixture.txt' }] },
       }),
     );
+    const linkedRepo = path.join(root, 'linked-checkout');
+    const emptyRepo = path.join(root, 'no-fixtures-checkout');
+    if (!uiProof) {
+      git(repo, 'worktree', 'add', '-qb', 'previous-linked', linkedRepo, 'origin/main');
+      execFileSync('git', ['clone', '-q', remote, emptyRepo]);
+      await mkdir(path.join(root, 'projects/proof-empty'), { recursive: true });
+      await writeFile(
+        path.join(root, 'projects/proof-empty/project.json'),
+        JSON.stringify({ name: 'proof-empty', default_branch: 'main', hooks: {} }),
+      );
+    }
     await writeFile(
       path.join(root, 'pool/local.json'),
       JSON.stringify({
@@ -97,7 +108,20 @@ test(
         ssh_user: os.userInfo().username,
         project: 'proof',
         platform: 'cli',
-        slots: [{ id: 'proof-slot', repo, session: 'workspace-proof' }],
+        slots: [
+          { id: 'proof-slot', repo, session: 'workspace-proof' },
+          ...(!uiProof
+            ? [
+                { id: 'proof-linked', repo: linkedRepo, session: 'workspace-proof-linked' },
+                {
+                  id: 'proof-empty',
+                  repo: emptyRepo,
+                  session: 'workspace-proof-empty',
+                  project: 'proof-empty',
+                },
+              ]
+            : []),
+        ],
       }),
     );
     const initial = {
@@ -122,7 +146,18 @@ test(
     };
     await writeFile(
       path.join(root, 'status.json'),
-      JSON.stringify({ checked_at: new Date().toISOString(), slots: [initial] }),
+      JSON.stringify({
+        checked_at: new Date().toISOString(),
+        slots: [
+          initial,
+          ...(!uiProof
+            ? [
+                { ...initial, slot: 'proof-linked', branch: 'previous-linked' },
+                { ...initial, slot: 'proof-empty', project: 'proof-empty', branch: 'main' },
+              ]
+            : []),
+        ],
+      }),
     );
     await import('../../runtime/mock-pty.test-support.js');
     const execution = await import('../../core/exec.js');
@@ -233,8 +268,78 @@ test(
       throw new Error('UI proof did not return its cleanup signal');
     }
 
+    const { inspectSlotWorkspace } = await import('./workspace.js');
+    const store = await import('../../runs/store.js');
+    const activeOwner = store.createRun(
+      {
+        project: 'proof',
+        flowType: 'dev',
+        ticketOrPr: 'PROOF-PROTECTED',
+        mode: 'validation',
+        slotId: 'proof-slot',
+      },
+      { nativeOwnerPrincipalId: fixture.person.id },
+    );
+    const staleIdentity = await inspectSlotWorkspace('proof-slot');
+    await core.updateSlotStatus('proof-slot', {
+      current_run_id: activeOwner.id,
+      lifecycle: 'busy',
+      slot_epoch: staleIdentity.epoch + 1,
+    });
+    const successorRefused = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'force',
+      expectedWorkspace: staleIdentity,
+    });
+    assert.equal(successorRefused.reason, 'identity-changed');
+    const protectedCases: string[] = [];
+    for (const fields of [
+      { current_run_id: activeOwner.id, lifecycle: 'busy' },
+      { current_run_id: null, lifecycle: 'manual' },
+      { current_run_id: null, lifecycle: 'ready', handoff_run_id: activeOwner.id },
+      {
+        current_run_id: null,
+        lifecycle: 'ready',
+        handoff_run_id: null,
+        cleanup_run_id: activeOwner.id,
+      },
+    ]) {
+      await core.updateSlotStatus('proof-slot', fields);
+      const protectedWork = await inspectSlotWorkspace('proof-slot');
+      const refused = await call<SlotRefreshResult>('slot.refresh', {
+        slotId: 'proof-slot',
+        release: true,
+        mode: 'force',
+        expectedWorkspace: protectedWork,
+      });
+      assert.equal(refused.refreshed, false);
+      assert.equal(refused.reason, 'protected', JSON.stringify({ fields, refused }));
+      assert.equal(git(repo, 'branch', '--show-current'), 'previous');
+      protectedCases.push(refused.detail ?? 'protected');
+    }
+    store.updateRun(activeOwner.id, { status: 'done', completedAt: new Date().toISOString() });
+    await core.updateSlotStatus('proof-slot', {
+      current_run_id: null,
+      cleanup_run_id: null,
+      handoff_run_id: null,
+      lifecycle: 'ready',
+      phase: null,
+    });
+    git(repo, 'remote', 'set-url', 'origin', path.join(root, 'unavailable.git'));
+    const unknownWork = await inspectSlotWorkspace('proof-slot');
+    assert.equal(unknownWork.publication, 'unknown');
+    const unknownRefused = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'force',
+      expectedWorkspace: unknownWork,
+    });
+    assert.equal(unknownRefused.reason, 'unknown');
+    assert.equal(git(repo, 'branch', '--show-current'), 'previous');
+    git(repo, 'remote', 'set-url', 'origin', remote);
     const before = await call<FleetStatusResult>('fleet.status');
-    const work = before.fleet.slots[0]?.workspace;
+    const work = before.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.workspace;
     assert.ok(work);
     const recovered = await call<SlotRefreshResult>('slot.refresh', {
       slotId: 'proof-slot',
@@ -252,7 +357,6 @@ test(
     assert.equal(row.workspace_recovery, null);
     assert.equal(row.fixtures, 'OK');
     await writeFile(path.join(repo, 'file.txt'), 'first local change\n');
-    const { inspectSlotWorkspace } = await import('./workspace.js');
     const dirty = await inspectSlotWorkspace('proof-slot');
     await writeFile(path.join(repo, 'file.txt'), 'changed after confirmation\n');
     const refused = await call<SlotRefreshResult>('slot.refresh', {
@@ -319,7 +423,6 @@ test(
     });
     assert.equal(baselineRefresh.refreshed, true, baselineRefresh.detail);
     assert.equal(await readFile(retained, 'utf8'), 'Retained evidence\n');
-    const store = await import('../../runs/store.js');
     const owner = store.createRun(
       {
         project: 'proof',
@@ -349,6 +452,26 @@ test(
     });
     assert.equal(ownedRelease.refreshed, true, ownedRelease.detail);
     assert.equal((await core.readSlotRow('proof-slot'))?.current_run_id, null);
+    const linkedWork = await inspectSlotWorkspace('proof-linked');
+    const linkedRelease = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-linked',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: linkedWork,
+    });
+    assert.equal(linkedRelease.refreshed, true, linkedRelease.detail);
+    assert.equal(git(linkedRepo, 'branch', '--show-current'), 'wt/workspace-proof-linked');
+    assert.equal(git(linkedRepo, 'rev-parse', 'HEAD'), git(linkedRepo, 'rev-parse', 'origin/main'));
+    assert.equal(await readFile(path.join(linkedRepo, 'fixture.txt'), 'utf8'), 'synced fixture\n');
+    const emptyWork = await inspectSlotWorkspace('proof-empty');
+    const emptyRelease = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-empty',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: emptyWork,
+    });
+    assert.equal(emptyRelease.refreshed, true, emptyRelease.detail);
+    assert.equal((await core.readSlotRow('proof-empty'))?.fixtures, 'not-required');
     const result = {
       pass: true,
       recovered,
@@ -358,6 +481,11 @@ test(
       retried,
       baselineRefresh,
       ownedRelease,
+      successorRefused,
+      protectedCases,
+      unknownRefused,
+      linkedRelease,
+      emptyRelease,
       branch: git(repo, 'branch', '--show-current'),
       head: git(repo, 'rev-parse', 'HEAD'),
       row,

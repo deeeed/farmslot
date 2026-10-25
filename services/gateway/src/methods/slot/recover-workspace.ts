@@ -113,7 +113,7 @@ export async function recoverSlotWorkspace(
         'Workspace changed; inspect and confirm again',
         workspace.branch,
       );
-    const fleet = await loadFleetStatus();
+    const fleet = await loadFleetStatus(true);
     const status = fleet.slots.find((slot) => slot.slot === params.slotId);
     const eligibility = slotRecoveryEligibility(status ? { ...status, workspace } : undefined);
     if (!eligibility.allowed)
