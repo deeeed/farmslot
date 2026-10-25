@@ -8,6 +8,7 @@ import {
   type ReadyGatePayload,
   reviewRoundBudgetLabel,
   type ReviewStatus,
+  type Run,
   type RunDecision,
 } from '@farmslot/protocol';
 
@@ -27,6 +28,8 @@ import {
   admitReviewRound,
   assertReviewRoundAvailable,
   attachReviewRoundBudget,
+  clearReviewRoundSettlement,
+  prepareReviewRoundAvailabilityCheck,
   reviewLaunchStartedAt,
   reviewNoVerdictCapReason,
   reviewRoundAdmissionId,
@@ -34,10 +37,14 @@ import {
   settleReviewRoundNoVerdict,
 } from './review-round-budget.js';
 
-function fixture(t: TestContext, ref = `example/budget-${randomUUID()}#42`) {
+function fixture(
+  t: TestContext,
+  ref = `example/budget-${randomUUID()}#42`,
+  flowType: Run['flowType'] = 'dev',
+) {
   const run = createRun({
     project: 'review-round-budget',
-    flowType: 'dev',
+    flowType,
     mode: 'interactive',
     ticketOrPr: ref,
     runner: 'scripted',
@@ -65,6 +72,127 @@ test('normalized issue references do not pool pre-PR rounds or contaminate a lat
   });
   assert.equal((await runReviewRoundBudget(getRun(second.id)!)).used, 0);
   assert.equal((await runReviewRoundBudget(getRun(first.id)!)).used, 3);
+});
+
+test('update-branch has two own rounds after the parent PR spent five, preserving raw receipts', async (t) => {
+  const parent = fixture(t);
+  const update = fixture(t, parent.ticketOrPr, 'update-branch');
+  const sibling = fixture(t, parent.ticketOrPr, 'update-branch');
+  const gate: RunDecision = {
+    id: 'ready',
+    type: 'engine_human_gate',
+    title: 'Ready',
+    description: '',
+    actions: [],
+    createdAt: new Date().toISOString(),
+    payload: {
+      kind: 'ready',
+      prNumber: 42,
+      repo: null,
+      branch: 'feature',
+      workerReport: '',
+      diffStat: { files: 0, additions: 0, deletions: 0 },
+    },
+  };
+  for (const run of [parent, update]) updateRun(run.id, { decisions: [gate] });
+  for (let i = 0; i < 5; i++) await admitReviewRound(parent.id, `parent-${i}`);
+  assert.equal((await runReviewRoundBudget(getRun(update.id)!)).label, 'Review rounds 0/2');
+  const check = await prepareReviewRoundAvailabilityCheck(update.id);
+  check();
+  await admitReviewRound(update.id, 'merge-review');
+  updateRun(update.id, { engineState: { generation: 2 } });
+  await admitReviewRound(update.id, 'merge-review');
+  assert.equal((await runReviewRoundBudget(getRun(update.id)!)).used, 1);
+  const last = await Promise.allSettled([
+    admitReviewRound(update.id, 'last-a'),
+    admitReviewRound(update.id, 'last-b'),
+  ]);
+  assert.equal(last.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.throws(check, /All 2 review rounds.*update-branch/);
+  await assert.rejects(admitReviewRound(update.id, 'third'), /All 2 review rounds/);
+  await assert.rejects(admitReviewRound(parent.id, 'parent-sixth'), /five review rounds/);
+  assert.equal((await runReviewRoundBudget(getRun(sibling.id)!)).label, 'Review rounds 0/2');
+  await admitReviewRound(sibling.id, 'sibling-first');
+  for (const [run, label] of [
+    [parent, 'Review rounds 5/5'],
+    [update, 'Review rounds 2/2'],
+  ] as const) {
+    const current = getRun(run.id)!;
+    assert.equal((await runReviewRoundBudget(current)).label, label);
+    assert.equal(
+      (current.decisions[0].payload as ReadyGatePayload).reviewRoundBudget?.label,
+      label,
+    );
+    const persisted = JSON.parse(
+      await readFile(path.join(runsDirectory(), `${run.id}.json`), 'utf8'),
+    );
+    assert.equal(persisted.reviewRoundOwners['merge-review'], update.id);
+    assert.equal(persisted.reviewRoundOwners['sibling-first'], sibling.id);
+    assert.equal(persisted.reviewRoundAdmissions.length, 8);
+  }
+});
+
+test('legacy copied receipts keep their PR charge when an update-branch reattaches', async (t) => {
+  const parent = fixture(t);
+  const update = fixture(t, parent.ticketOrPr, 'update-branch');
+  for (const run of [parent, update]) updateRun(run.id, { reviewRoundAdmissions: ['legacy'] });
+  await admitReviewRound(update.id, 'legacy');
+  assert.equal(getRun(update.id)!.reviewRoundOwners, undefined);
+  assert.equal((await runReviewRoundBudget(getRun(parent.id)!)).used, 1);
+  assert.equal((await runReviewRoundBudget(getRun(update.id)!)).used, 0);
+  await admitReviewRound(update.id, 'new-owned');
+  await admitReviewRound(parent.id, 'new-feature');
+  updateRun(update.id, { status: 'failed' });
+  await deleteRun(update.id);
+  assert.equal((await runReviewRoundBudget(getRun(parent.id)!)).used, 2);
+  assert.equal(getRun(parent.id)!.reviewRoundOwners?.['new-owned'], update.id);
+  const successor = fixture(t, parent.ticketOrPr);
+  assert.equal((await runReviewRoundBudget(getRun(successor.id)!)).used, 2);
+});
+
+test('update-branch settlements and recovered verdicts affect only their own budget and no-verdict cap', async (t) => {
+  const parent = fixture(t);
+  const update = fixture(t, parent.ticketOrPr, 'update-branch');
+  for (let i = 0; i < 3; i++) {
+    await admitReviewRound(parent.id, `parent-failed-${i}`);
+    await settleReviewRoundNoVerdict(parent.id, `parent-failed-${i}`, 'parent timeout');
+  }
+  assert.equal(await reviewNoVerdictCapReason(getRun(update.id)!), undefined);
+  for (let i = 0; i < 3; i++) {
+    await admitReviewRound(update.id, `update-failed-${i}`);
+    await settleReviewRoundNoVerdict(update.id, `update-failed-${i}`, `update failure ${i}`);
+  }
+  await admitReviewRound(update.id, 'update-failed-0');
+  assert.deepEqual(
+    [
+      (await runReviewRoundBudget(getRun(update.id)!)).used,
+      (await runReviewRoundBudget(getRun(update.id)!)).noVerdict,
+    ],
+    [0, 3],
+  );
+  const reason = await reviewNoVerdictCapReason(getRun(update.id)!);
+  assert.match(reason ?? '', /Last: update failure 0; update failure 1; update failure 2$/);
+  assert.doesNotMatch(reason ?? '', /parent timeout/);
+  await clearReviewRoundSettlement(update.id, 'update-failed-0');
+  assert.equal((await runReviewRoundBudget(getRun(update.id)!)).used, 1);
+  assert.equal(await reviewNoVerdictCapReason(getRun(update.id)!), undefined);
+  assert.equal((await runReviewRoundBudget(getRun(parent.id)!)).noVerdict, 3);
+  assert.equal((await runReviewRoundBudget(getRun(parent.id)!)).used, 0);
+});
+
+test('archived update-branch admissions do not spend a later feature or update run budget', async (t) => {
+  const update = fixture(t, undefined, 'update-branch');
+  await admitReviewRound(update.id, 'archived-update');
+  updateRun(update.id, { status: 'failed', completedAt: new Date().toISOString() });
+  assert.equal(await archiveRun(update.id), true);
+  t.after(() => rm(path.join(runsDirectory(), 'archive', `${update.id}.json`), { force: true }));
+  const feature = fixture(t, update.ticketOrPr);
+  const next = fixture(t, update.ticketOrPr, 'update-branch');
+  assert.equal((await runReviewRoundBudget(getRun(feature.id)!)).used, 0);
+  assert.equal((await runReviewRoundBudget(getRun(next.id)!)).used, 0);
+  await admitReviewRound(next.id, 'later-update');
+  assert.equal(getRun(feature.id)!.reviewRoundOwners?.['archived-update'], update.id);
+  assert.equal((await runReviewRoundBudget(getRun(next.id)!)).used, 1);
 });
 
 test('pipeline and gate chains share five admissions persisted before launch', async (t) => {

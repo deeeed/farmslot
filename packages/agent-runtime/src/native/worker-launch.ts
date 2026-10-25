@@ -13,6 +13,8 @@ export interface NativeWorkerLaunch {
   environment: { set: Record<string, string>; unset: string[] };
   effort?: string;
   safetyTier: SafetyTier;
+  /** Gateway-owned reviewer interaction policy. Does not change filesystem grants. */
+  approvalPolicy?: 'never';
   filesystemPolicy?: NativeWorkerFilesystemPolicy;
 }
 
@@ -123,6 +125,7 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
           'environment',
           'effort',
           'safetyTier',
+          'approvalPolicy',
           'filesystemPolicy',
         ].includes(key),
     )
@@ -140,6 +143,8 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
       throw new Error(`Invalid native worker ${key}`);
   if (typeof launch.effort === 'string' && !/^[a-z][a-z0-9_-]*$/.test(launch.effort))
     throw new Error('Invalid native worker effort');
+  if (launch.approvalPolicy !== undefined && launch.approvalPolicy !== 'never')
+    throw new Error('Invalid native worker approval policy');
   const environment = object(launch.environment);
   if (Object.keys(environment).some((key) => !['set', 'unset'].includes(key)))
     throw new Error('Unsupported native worker environment field');
@@ -160,6 +165,7 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
     ...(typeof launch.accountLabel === 'string' ? { accountLabel: launch.accountLabel } : {}),
     ...(typeof launch.effort === 'string' ? { effort: launch.effort } : {}),
     safetyTier: launch.safetyTier as SafetyTier,
+    ...(launch.approvalPolicy === 'never' ? { approvalPolicy: 'never' } : {}),
     ...(launch.filesystemPolicy === undefined
       ? {}
       : {
@@ -175,7 +181,11 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
  */
 const ROUTING_ENVIRONMENT = new Set(['GW_URL']);
 
-/** Journals compare launch settings without retaining project environment values. */
+/**
+ * Journals bind sandbox grants and worker settings without retaining environment values.
+ * The gateway rederives reviewer approval routing on resume, like gateway routing;
+ * it may suppress prompts without changing the bound tier or filesystem grants.
+ */
 export function nativeWorkerLaunchDigest(launch: NativeWorkerLaunch): string {
   return createHash('sha256')
     .update(

@@ -269,9 +269,16 @@ export async function ensureNodeSupportBundle(
   const activateBundle = async (how: 'published' | 'current', publishCommand?: string) => {
     const selection = nodeSupportHashPath(vars.remoteRepo, runtimeDir);
     const readOnly = options.selectSlot === false;
-    const references = readOnly
-      ? { selectionPaths: [], runHashes: [] }
-      : await (io.retentionReferences ?? nodeSupportRetentionReferences)(vars);
+    let references: NodeSupportRetentionReferences | null = { selectionPaths: [], runHashes: [] };
+    if (!readOnly) {
+      try {
+        references = await (io.retentionReferences ?? nodeSupportRetentionReferences)(vars);
+      } catch {
+        // Unknown ownership protects every bundle; garbage collection must not block a launch.
+        references = null;
+        step('support', 'Node support pruning skipped: retention inventory is unreadable');
+      }
+    }
     const result = await io.exec(
       vars,
       buildNodeSupportActivationCommand({

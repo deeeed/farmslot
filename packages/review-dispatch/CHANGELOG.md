@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share plain CI-watch check counts, failing names, next poll and timeout countdown between both clients.
+
 - Show completed checklist durations and live current-step elapsed time in both operator apps.
 
 - Share publication blocking while a review refresh is pending or failed.
@@ -9,6 +11,14 @@
 - Share current-checklist counts, item labels and attempt identity for run progress in both clients.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.18.1 - 2026-10-24
+
+- Count activity review rounds in the owning budget, excluding other maintenance runs and refunded attempts while retaining legacy gate fallback.
+
+## 0.18.0 - 2026-10-23
+
+- Add shared CI-watch card summary and countdown presentation.
 
 ## 0.17.0 - 2026-10-23
 

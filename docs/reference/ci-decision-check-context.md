@@ -34,7 +34,43 @@ late responses from another decision or connection cannot replace it. Loading
 and failure keep the frozen snapshot visible and expose a retry. Refresh does
 not resolve, rerun, publish or modify the gate's actions.
 
+## Follow-up execution mode
+
+Under [ADR-018 Amendment 1](../adr/018-dev-flow-interactive-autonomous.md#amendment-1-ci-watch-follow-ups-inherit-run-mode-2026-10-25),
+CI-watch follow-up creation MUST preserve the parent's `Run.mode` for
+`pr-complete` and `update-branch`, including validation mode. Automatic chaining, a resolved CI decision and
+restart recovery MUST use the same rule. The child MUST NOT substitute its flow's
+standalone default for the parent's mode. Standalone dispatch defaults and explicit
+operator choices remain authoritative for new initial runs.
+
 ## Public surface
+
+### CI-watch run cards
+
+Command Center and Companion MUST show a shared plain-text CI-watch summary on
+the run card and run pipeline. It uses the recorded `checkSummary`, failing check
+names, actionable comment count and `nextPollAt`. A green check count does not
+hide outstanding actionable comments. Decisions, paused runs and active worker
+fixes MUST describe their actual activity instead of advertising a poll.
+
+The existing CI monitor MUST project optional `progressTimeoutAt` and
+`totalTimeoutAt` ISO timestamps into its step outputs and update events. They
+come from its current no-progress and total-window clocks plus configured limits,
+including progress resets and an operator's existing Keep waiting action. This
+adds observation only; timeout, polling, fix and decision behavior is unchanged.
+The no-progress default is two hours. Total defaults to the larger of six hours
+or three configured no-progress windows; project overrides remain authoritative. Clients MUST use the earlier recorded deadline, never
+reconstruct a total window from the run or step start, or invent default limits
+for a legacy record. Past deadlines say timeout is due until the engine raises
+its decision. Countdown clocks stop when the run is no longer watching.
+
+`@farmslot/protocol` owns the optional output/event fields. The stable additive
+`ciWatchStatusView` export belongs to `@farmslot/review-dispatch`; both clients use
+that model and one thin renderer per platform. `run.list`, run detail and events
+already carry the step outputs. There is no new RPC, CLI flag, harness hook or
+wire version; fresh SDK/shared minor releases carry these additions.
+
+### CI decision check snapshots
 
 `@farmslot/protocol` owns the snapshot types and comparison view-model. Gateway
 `pr.status` returns the optional field; the CI monitor retains it when

@@ -82,6 +82,66 @@ test('a live reviewer takes the current node while old fix contexts and step cop
   assert.equal(view.steps.filter((step) => step.status === 'running').length, 1);
 });
 
+test('activity rounds use the same maintenance ownership and settlements as the gate budget', () => {
+  const source = run({
+    flowType: 'update-branch',
+    status: 'reviewing',
+    agentContexts: [actor('review')],
+    reviewRoundAdmissions: ['p1', 'p2', 'p3', 'p4', 'p5', 'own', 'sibling', 'refunded', 'own'],
+    reviewRoundOwners: { own: 'r1', sibling: 'other', refunded: 'r1' },
+    reviewRoundSettlements: { refunded: { reason: 'timeout', at: '2026-10-24T00:00:00Z' } },
+  });
+  assert.equal(runActivityView(source)?.label, 'Reviewer checking changes · round 1');
+  assert.equal(
+    runActivityView({ ...source, agentContexts: [actor('review-fix')] })?.label,
+    'Worker fixing 2 review findings · round 2',
+  );
+  assert.equal(
+    runActivityView({ ...source, flowType: 'dev' })?.label,
+    'Reviewer checking changes · round 5',
+  );
+  source.reviewRoundSettlements = {};
+  assert.equal(runActivityView(source)?.label, 'Reviewer checking changes · round 2');
+});
+
+test('activity uses a legacy gate count only when durable admission metadata is absent', () => {
+  const source = run({
+    status: 'reviewing',
+    agentContexts: [actor('review')],
+    decisions: [
+      {
+        id: 'old',
+        type: 'engine_human_gate',
+        title: 'Ready',
+        description: '',
+        actions: [],
+        createdAt: '2026-10-24T00:00:00Z',
+        payload: {
+          kind: 'ready',
+          prNumber: 42,
+          repo: null,
+          branch: 'feature',
+          workerReport: '',
+          diffStat: { files: 0, additions: 0, deletions: 0 },
+          reviewRoundBudget: {
+            used: 5,
+            limit: 5,
+            remaining: 0,
+            label: 'Review rounds 5/5',
+            noVerdict: 0,
+            noVerdictLimit: 3,
+          },
+        },
+      },
+    ],
+  });
+  source.reviewRoundAdmissions = undefined;
+  assert.equal(runActivityView(source)?.label, 'Reviewer checking changes · round 5');
+  source.reviewRoundAdmissions = ['one', 'refunded'];
+  source.reviewRoundSettlements = { refunded: { reason: 'timeout', at: '2026-10-24T00:00:00Z' } };
+  assert.equal(runActivityView(source)?.label, 'Reviewer checking changes · round 1');
+});
+
 test('a person waiting at a gate, a paused run and a finished run have no running actor', () => {
   for (const status of ['blocked', 'paused', 'done'] as const)
     assert.equal(runActivityView(run({ status })), null);

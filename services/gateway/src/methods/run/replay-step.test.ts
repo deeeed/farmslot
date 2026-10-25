@@ -1,6 +1,7 @@
 // @farmslot:serial — snapshots, overwrites, and restores the shared root `.farm-status.json`.
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -32,7 +33,7 @@ import { executeHumanGateStep } from '../../run-engine/post-dispatch-steps.js';
 import { isPublicationReviewRecoveryHeld } from '../../run-engine/recovery.js';
 import { makeRun } from '../../run-engine/test-fixtures.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
+import { createRun, deleteRun, getRun, runsDirectory, updateRun } from '../../runs/store.js';
 import {
   currentSessionOriginator,
   runWithSessionOriginator,
@@ -2340,6 +2341,50 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
   assert.equal(after?.status, 'blocked');
   assert.equal(reopened?.resolvedAt, undefined);
   assert.equal(reopened?.context?.supersededBy, undefined);
+});
+
+test('slot activation persists its dispatch baseline and ordinary prepare replay clears the intent', async (t) => {
+  const baseline = 'a'.repeat(40);
+  const taskFile = '/tmp/activation-baseline-fixture/TASK.md';
+  const run = createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'PROJ-4200' });
+  updateRun(run.id, {
+    recordedEvidenceContractVersion: 0,
+    status: 'failed',
+    taskFile,
+    slotId: null,
+    worktreeHeadAtDispatch: baseline,
+    steps: run.steps.map((step) =>
+      step.name === 'write-task' ? { ...step, status: 'done', outputs: { taskFile } } : step,
+    ),
+  });
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  let observed: unknown;
+  await runReplayStep({ runId: run.id, stepName: 'prepare', triggeredBy: 'operator' }, () => {}, {
+    preserveDispatchBaseline: true,
+    startEngine: async (id) => {
+      observed = getRun(id)?.steps.find((step) => step.name === 'dispatch')?.inputs
+        ?.activationDispatchBaseline;
+    },
+  });
+  assert.equal(observed, baseline);
+  const persisted: Run = JSON.parse(
+    await readFile(path.join(runsDirectory(), `${run.id}.json`), 'utf8'),
+  );
+  assert.equal(
+    persisted.steps.find((step) => step.name === 'dispatch')?.inputs?.activationDispatchBaseline,
+    baseline,
+  );
+  assert.equal(persisted.worktreeHeadAtDispatch, baseline);
+  updateRun(run.id, { status: 'failed' });
+  await runReplayStep({ runId: run.id, stepName: 'prepare', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async (id) => {
+      observed = getRun(id)?.steps.find((step) => step.name === 'dispatch')?.inputs
+        ?.activationDispatchBaseline;
+    },
+  });
+  assert.equal(observed, undefined);
 });
 
 test('runReplayStep drops a stale monitor decision when replaying from prepare', async (t) => {

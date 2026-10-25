@@ -62,9 +62,44 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
     path.join(runs, 'ended.json'),
     JSON.stringify(makeRun({ id: 'ended', status: 'done', slotId: 'fixture-1' })),
   );
+  for (const id of ['retained-failure', 'discarded-failure', 'worker-failed']) {
+    await writeFile(
+      path.join(runs, `${id}.json`),
+      JSON.stringify(
+        makeRun({
+          id,
+          status: 'failed',
+          slotId: 'fixture-1',
+          steps: [
+            {
+              name: 'complete',
+              status: 'failed',
+              outputs:
+                id === 'worker-failed'
+                  ? {}
+                  : {
+                      gatePrerequisiteRefusal: {},
+                      ...(id === 'discarded-failure'
+                        ? { gatePrerequisiteDiscardedAt: '2026-10-24T00:00:00Z' }
+                        : {}),
+                    },
+            },
+          ],
+        }),
+      ),
+    );
+  }
   await writeFile(
     path.join(runs, 'runtime-capabilities-7777.json'),
     JSON.stringify({ schemaVersion: 1, capabilities: [] }),
+  );
+  await writeFile(
+    path.join(runs, 'historical.json'),
+    JSON.stringify({
+      id: 'historical',
+      readOnly: true,
+      conversionStatus: 'unconvertible-historical',
+    }),
   );
   await mkdir(path.join(runs, 'archive'));
   await writeFile(
@@ -76,18 +111,29 @@ test('one-shot inventory finds active fixture ownership on disk with an empty ru
   );
   assert.equal(listRuns().runs.length, 0);
   const references = await nodeSupportRetentionReferences(await loadSlotVars('fixture-1'));
+  const fixturePaths = [
+    path.join(home, '.farmslot-runtime/slot/temp/farmslot/.observability/node-support-hash'),
+    path.join(home, 'slot/temp/farmslot/ci-parity'),
+    path.join(home, 'slot/temp/policy'),
+  ];
   assert.deepEqual(references.activeRuns, [
-    {
-      runId: 'active',
-      paths: [
-        path.join(home, '.farmslot-runtime/slot/temp/farmslot/.observability/node-support-hash'),
-        path.join(home, 'slot/temp/farmslot/ci-parity'),
-        path.join(home, 'slot/temp/policy'),
-      ],
-    },
+    { runId: 'active', paths: fixturePaths },
+    { runId: 'retained-failure', paths: fixturePaths },
   ]);
-  assert.deepEqual(references.endedRunIds, ['archived-owner', 'ended']);
-  assert.deepEqual(references.runInventory?.runIds, ['archived-owner', 'active', 'ended']);
+  assert.deepEqual(references.endedRunIds, [
+    'archived-owner',
+    'discarded-failure',
+    'ended',
+    'worker-failed',
+  ]);
+  assert.deepEqual(references.runInventory?.runIds, [
+    'archived-owner',
+    'active',
+    'discarded-failure',
+    'ended',
+    'retained-failure',
+    'worker-failed',
+  ]);
   const next = await Promise.all([
     nodeSupportRetentionReferences(await loadSlotVars('fixture-1')),
     nodeSupportRetentionReferences(await loadSlotVars('fixture-1')),

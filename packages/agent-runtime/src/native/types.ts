@@ -27,6 +27,7 @@ export interface NativeAdapterOptions {
   env?: NodeJS.ProcessEnv;
   effort?: string;
   safetyTier?: SafetyTier;
+  approvalPolicy?: 'never';
   filesystemPolicy?: NativeWorkerFilesystemPolicy;
   processSandbox?: NativeProcessSandbox;
 }

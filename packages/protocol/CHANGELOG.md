@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Expose current CI-watch progress and total deadlines so clients use the monitor’s configured windows.
+
 - Expose checklist timing in task progress and per-step worker durations in monthly analytics.
 
 - Share source-first, deduplicated run reference links between Command Center and Companion; show shared total and current-step elapsed time on the existing metadata line.
@@ -11,6 +13,18 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Add shared linked-ticket lookup and operator ticket metadata on runs without changing frozen task inputs.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.70.2 - 2026-10-24
+
+- Track per-run update-branch review admissions and share bounded budget projections between the gateway and activity labels, preserving feature PR history.
+
+## 0.70.1 - 2026-10-24
+
+- Preserve operator notes when returning publication findings to the worker, without accepting client-supplied findings.
+
+## 0.70.0 - 2026-10-23
+
+- Add optional CI-watch progress and total deadlines; wire protocol remains 0.63.0.
 
 ## 0.69.0 - 2026-10-23
 

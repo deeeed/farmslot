@@ -468,3 +468,38 @@ There is no new action or RPC. `@farmslot/protocol` changes in one release with 
 - the gate's Request Review preselects the row runner's latest lineage in WARM;
 - any re-review whose session is unavailable runs a delta-scoped COLD review;
 - the review records the fallback reason and its compared ranges, and the gate shows them with that review in the CLI, Command Center and Companion.
+
+## Amendment 6: a bounded update-branch review budget, 2026-10-24
+
+**Status:** Accepted by the lead for the update-branch budget repair.
+**Specification:** [Update-branch budget](../reference/review-modes-warm-cold.md#update-branch-budget).
+
+### Decision
+
+Each `update-branch` run receives two review rounds for its branch update,
+separate from the feature PR's five-round budget and scoped extensions. It
+cannot receive an extension. Replay and restart reuse that run's admissions;
+they do not create another two rounds. A later update-branch run has its own
+budget because it checks a separate branch update.
+
+New maintenance admissions record their owning run beside the existing opaque
+receipts. Legacy receipts keep their PR charge and are never reassigned on
+reattachment. Shared persistence retains all receipts, owners and settlements.
+Each gate and no-verdict cap counts only the admissions in its budget.
+
+### Rationale and consequences
+
+A successful merge-main push could fail its required review because the feature
+PR had spent five rounds and update-branch cannot receive extensions. Two own
+rounds let the maintenance check settle without reopening the feature budget.
+The existing review, immutable-input and publication requirements still apply;
+spending the budget does not invalidate an already qualifying pass.
+
+### Public surface
+
+There is no new RPC, CLI action or harness setting. `@farmslot/protocol` 0.70.2
+adds optional `Run.reviewRoundOwners`, the update-branch limit constant and a
+bounded base-limit argument to `reviewRoundBudget`. `reviewRoundBudgetForRun`
+and `reviewRoundAdmissionsInScope` share accounting between the gateway and
+`@farmslot/review-dispatch` 0.18.1 activity labels. Existing calls keep five rounds. The wire protocol remains 0.63.0. Clients keep rendering the shared budget
+projection; they do not infer scope themselves.

@@ -8,11 +8,13 @@ import { promisify } from 'node:util';
 
 import type { ReviewSelection, ReviewStatus } from '@farmslot/protocol';
 
-import { farmslotRoot } from '../fleet/state.js';
+import '../runtime/mock-pty.test-support.js';
+
+import { shellQuote } from '../core/tmux.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
 import { rerunReviewIfReviewedInputsChanged } from '../run-engine/post-dispatch-steps.js';
-import { deleteTestRunIfPresent, makeReadyGatePackage } from '../run-engine/test-fixtures.js';
-import { createRun, getRun, updateRun } from '../runs/store.js';
+import { makeReadyGatePackage } from '../run-engine/test-fixtures.js';
+import { getRun, updateRun } from '../runs/store.js';
 
 import {
   noteReviewInputsAtLaunch,
@@ -21,75 +23,65 @@ import {
   reviewedInputsAwaitingReview,
   reviewedInputsChanged,
 } from './reviewed-inputs.js';
+import { git, slotWithTask } from './reviewed-inputs.test-support.js';
 
 const execFileAsync = promisify(execFile);
 
-async function git(repo: string, ...args: string[]) {
-  await execFileAsync('git', [
-    '-C',
-    repo,
-    '-c',
-    'user.name=Farmslot Test',
-    '-c',
-    'user.email=farmslot-test@example.invalid',
-    ...args,
-  ]);
-}
-
-/** A local slot whose checkout holds a worker task dir with description and evidence. */
-async function slotWithTask(t: import('node:test').TestContext) {
-  const id = `reviewed-inputs-${process.pid}-${Date.now()}`;
-  const repo = await mkdtemp(path.join(os.tmpdir(), `${id}-`));
-  const poolFile = path.join(farmslotRoot, 'pool', `${id}.json`);
-  const taskRelDir = `test/${id}`;
-  const artifacts = path.join(repo, '.sandbox/farmslot-farm/worker-task', taskRelDir, 'artifacts');
-  const run = createRun({
-    flowType: 'dev',
-    mode: 'autonomous',
-    project: 'farmslot-farm',
-    ticketOrPr: 'TAT-4031-LIKE',
-    runner: 'claude',
-  });
-  updateRun(run.id, {
-    slotId: `${id}-slot`,
-    taskFile: path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks', taskRelDir, 'TASK.md'),
-  });
-  t.after(async () => {
-    await deleteTestRunIfPresent(run.id);
-    await rm(poolFile, { force: true });
-    await rm(repo, { recursive: true, force: true });
-  });
-  await writeFile(path.join(repo, 'README.md'), 'fixture\n');
-  await execFileAsync('git', ['init', '-q', repo]);
-  await git(repo, 'add', '.');
-  await git(repo, 'commit', '-q', '-m', 'base');
-  await mkdir(artifacts, { recursive: true });
-  await writeFile(path.join(artifacts, 'pr-description.md'), '## Removed surfaces\n- Banner\n');
-  await writeFile(
-    path.join(artifacts, 'evidence-manifest.json'),
-    JSON.stringify({
-      before_after_pairs: [{ label: 'flag on', before: 'on-before.png', after: 'on-after.png' }],
-    }),
-  );
-  await writeFile(path.join(artifacts, 'on-after.png'), 'png-v1');
-  await writeFile(
-    poolFile,
-    JSON.stringify({
-      machine: 'localhost',
-      project: 'farmslot-farm',
-      platform: 'cli',
-      host: 'localhost',
-      ssh_user: os.userInfo().username,
-      slots: [{ id: `${id}-slot`, enabled: true, repo, session: `${id}-slot` }],
-    }),
-  );
-  return { run, repo, artifacts };
-}
+const { reviewerScratchRule } = await import('./review-agent.js');
 
 /** A review launched on the slot as it is now, then passed. */
 async function reviewPasses(runId: string) {
   await noteReviewInputsAtLaunch(runId);
   await recordReviewedInputs(runId);
+}
+
+for (const [shell, flags] of [
+  ['bash', ['--noprofile', '--norc']],
+  ['zsh', ['-f']],
+] as const) {
+  test(`reviewer replay ${shell} allocates fresh output, preserves arguments and returns failures`, async (t) => {
+    const scratch = await mkdtemp(path.join(os.tmpdir(), 'review recipe shell-'));
+    t.after(() => rm(scratch, { recursive: true, force: true }));
+    const wrapper = /```sh\n([\s\S]*?)\n```/.exec(reviewerScratchRule('reviewer'))?.[1];
+    assert.ok(wrapper);
+    const command = [
+      process.execPath,
+      '-e',
+      'console.log(JSON.stringify(process.argv.slice(1)))',
+      'an argument with spaces',
+    ]
+      .map(shellQuote)
+      .join(' ');
+    const result = await execFileAsync(
+      shell,
+      [
+        ...flags,
+        '-c',
+        `${wrapper}\nreviewer_recipe_replay ${command}\nreviewer_recipe_replay ${command}\n` +
+          'if reviewer_recipe_replay sh -c \'exit 27\'; then exit 99; else test "$?" -eq 27; fi',
+      ],
+      { env: { ...process.env, TMPDIR: scratch } },
+    ).catch((error: unknown) => {
+      if (shell === 'zsh' && error instanceof Error && 'code' in error && error.code === 'ENOENT')
+        return null;
+      throw error;
+    });
+    if (!result) {
+      t.skip('zsh is not installed');
+      return;
+    }
+    const { stdout } = result;
+    const attempts: string[][] = stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.equal(attempts.length, 2);
+    assert.notEqual(attempts[0]![2], attempts[1]![2]);
+    for (const attempt of attempts) {
+      assert.deepEqual(attempt.slice(0, 2), ['an argument with spaces', '--artifacts-dir']);
+      assert.ok(attempt[2]!.startsWith(path.join(scratch, 'farmslot-review/reviewer') + path.sep));
+    }
+  });
 }
 
 test('what a passing review judged changes with the evidence or HEAD, not the description', async (t) => {

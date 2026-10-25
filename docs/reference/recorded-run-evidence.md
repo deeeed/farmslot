@@ -343,6 +343,32 @@ unapproved selection and stale/missing approved dependencies. Current mutable
 files are not authority for approved refresh. Keep PR/run identity and concurrent
 body/head-change checks; refreshing never reopens approval or changes code.
 
+Under ADR-062 Amendment 19, one publication package MAY include after or
+standalone media from additional recipe attempts captured in the same run's
+inventory. Each additional attempt MUST have clean product provenance matching
+the selected attempt's source revision and the frozen publication head, belong
+to the run's branch or its detached checkout, and retain its full validated
+closure with captured digests. The gateway MUST recheck that identity against
+the approved package head before publication and refresh. Foreign or uncaptured
+attempts, missing provenance/dependencies, tracked changes, stale revisions and
+substituted bytes MUST refuse. Before-only media from additional attempts MUST retain the existing clean,
+unchanged dispatch-baseline qualification. Captures keep their original attempt
+paths; no copies are relabelled as another execution.
+
+The selected successful attempt remains the sole claim-verdict source. Additional
+media MUST NOT merge sibling claim ledgers, satisfy the selected attempt's missing
+claims or grant visual judgment authority to a different execution. All consumed
+closures MUST remain covered by the package hash, dependency validation and text
+secret scan. This changes publication selection only; the retained-repair and QA
+claim-selection contracts keep their existing authority.
+
+A persistence proof MAY span attempts in this package. Its setup attempt records
+the write and initial observation, and the selected attempt asserts that same
+value after the actual session restart. The retained recipe inputs, expectations,
+recordings and session-transition evidence MUST make that relationship inspectable.
+An earlier attempt's passing verdict MUST NOT fill a missing or failed assertion
+in the selected attempt.
+
 Generate PR links/clips only through the authorized pipeline. Use `#t=` only for
 a demonstrated seekable host, otherwise media plus configured claim/moment links.
 Before publication or refresh, the gateway MUST scan the selected frozen
@@ -1556,7 +1582,7 @@ it, and agent-runtime's existing artifact checker consumes it.
 
 ## PR-completion acceptance registration
 
-Status: Proposed, 2026-10-23, ADR-062 Amendment 19. Effective only after approval and coordinated consumer release.
+Status: Accepted, 2026-10-25, ADR-062 Amendment 20. Approved as Amendment 19, proposal `31435dc1`; renumbered after the concurrent multi-attempt amendment. Effective after coordinated consumer release.
 
 ### Original criteria and opt-in
 

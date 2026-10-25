@@ -4,6 +4,14 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.38.3 - 2026-10-24
+
+- Reject invalid evidence manifests during progress marks with field-level errors, before checklist or signal updates.
+
+## 0.38.2 - 2026-10-23
+
+- Run managed native reviewers without approval prompts while preserving their sandbox write scope and worker safety policy.
+
 ## 0.38.1 - 2026-10-23
 
 - Keep native review sessions alive after oversized runner events. Compact recorded diagnostic payloads while preserving protocol control messages and schema-bound results.

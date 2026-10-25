@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '../../core/config.js';
+import { execOnSlot } from '../../core/exec.js';
 
 import {
   checkCommitSigning,
@@ -222,4 +223,29 @@ test('checkCommitSigning reports a git config it cannot read', async (t) => {
   const step = await checkCommitSigning(slot, FARM_IDENTITY);
   assert.equal(step.status, 'fail');
   assert.match(step.detail, /^cannot read git config in .* \(exit \d+\): .*bad config/);
+});
+
+test('signing probe uses the supplied worker-session executor, not a healthy node shell', async (t) => {
+  const { repo, gpg } = await fixture(t);
+  const slot = repo('slot', {
+    ...FARM_IDENTITY,
+    'gpg.program': await gpg(
+      'gpg-context',
+      `#!/bin/sh
+cat >/dev/null
+if [ "$SIGNING_WORKER_CONTEXT" != ready ]; then echo 'agent unavailable in worker session' >&2; exit 2; fi
+${GPG_SIGNS.split('\n').slice(1).join('\n')}`,
+    ),
+  });
+  const unavailable = await checkCommitSigning(slot, FARM_IDENTITY, {
+    execute: (command, timeout) =>
+      execOnSlot(slot, `export SIGNING_WORKER_CONTEXT=unavailable; ${command}`, { timeout }),
+  });
+  assert.equal(unavailable.status, 'fail');
+  assert.match(unavailable.detail, /agent unavailable in worker session/);
+  const ready = await checkCommitSigning(slot, FARM_IDENTITY, {
+    execute: (command, timeout) =>
+      execOnSlot(slot, `export SIGNING_WORKER_CONTEXT=ready; ${command}`, { timeout }),
+  });
+  assert.equal(ready.status, 'pass');
 });

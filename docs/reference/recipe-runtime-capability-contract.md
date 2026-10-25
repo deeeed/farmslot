@@ -288,6 +288,13 @@ MUST NOT mark the slot reclaimed.
   servers, Metro, browser helpers and the configured simulator. An absent or
   unknown resource-watch status MUST NOT skip shutdown. Successful CI completion
   without a successor MUST perform cleanup even when no step deferred a release.
+- COMPLETE or FINALIZE prerequisite and publish-package refusals MUST retain the
+  existing worker, slot, checkout and leases for in-place recovery under ADR-065.
+  A missing delivered result or failed result-decision write MUST NOT trigger
+  automatic terminal cleanup. Re-entry MUST preserve the retained failure until
+  supported replay or an explicit operator close/discard settles it. Cancel and
+  archive MUST keep their existing ownership and confirmed-cleanup guards.
+  Retained refusals MUST remain active owners of node-support fixture references.
 - A live stacked child, fix round, foreign owner, successor reservation or foreign
   capability lease MUST prevent teardown of its resources. Shutdown MUST recheck
   the expected owner, slot epoch and replay generation before each resource.
@@ -311,6 +318,9 @@ MUST NOT mark the slot reclaimed.
   Publication, verification, selection and pruning MUST serialize on the execution
   node. Unknown selection state MUST refuse pruning; staging directories, active
   publishers and paths outside the bundle root MUST remain untouched.
+  Read-only and unconvertible historical run records MUST NOT count as live owners.
+  An unreadable run inventory MUST disable pruning and journal release without
+  blocking verified bundle delivery or review execution.
   Cached read-only consumers MUST retain their bundle without changing any slot
   selection, and executing readers MUST prevent pruning until they exit.
   Device shutdown MUST share the registry acquisition lock and check device

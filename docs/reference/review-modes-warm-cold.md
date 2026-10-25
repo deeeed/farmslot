@@ -28,9 +28,30 @@ only the remaining rows. A WARM row 1 continues its own review lineage at the
 gate. Runs without a sequence take the pipeline reviewer from the project
 `review` configuration.
 
+## Reviewer recipe replays
+
+**Status:** Accepted under ADR-032 Amendment 2 (approved by the lead 2026-10-24).
+
+The reviewer-specific execution contract MUST direct recipe replays into a fresh
+directory under that reviewer's temporary scratch root, using the project's
+existing recipe run or call command. It MUST clear both `RECIPE_TASK_DIR` and
+`FARMSLOT_TASK_DIR` and pass an explicit `--artifacts-dir`. A replay MUST preserve
+the command's failure status and MUST NOT replace the author's selected recipe
+attempt, acceptance ledger or evidence. This rule overrides copied worker
+instructions that bind proof commands to the parent task.
+
+COLD and WARM reviewers MUST receive this contract. Their checklist markers,
+signals, feedback and verdict files retain their existing paths. The reviewed-input
+fingerprint MUST continue to cover author recipe attempts, their evidence and
+`latest-valid-recipe-run.json`; an author evidence change still invalidates a pass.
+
+The private gateway contract adds no public API or harness configuration. It uses
+the existing recipe CLI flag and environment variables named above.
+
 ## Round budget
 
-The gateway MUST default to at most five reviewer rounds for a repository/PR. Before
+Except for the update-branch budget below, the gateway MUST default to at most
+five reviewer rounds for a repository/PR. Before
 a PR identity exists, admission is scoped to its canonical run. Initial, retry,
 WARM/COLD, pipeline, standalone and publish-gate reviewer attempts MUST spend
 this same budget; only a counted attempt spends a round (see
@@ -50,6 +71,32 @@ or starting a reviewer. The refusal MUST tell the operator to stop and diagnose
 a design problem or scope creep, then narrow the scope or redesign. Spending all
 five rounds MUST NOT prevent publication when all existing approval conditions
 are satisfied.
+
+### Update-branch budget
+
+**Status:** Accepted under ADR-063 Amendment 6 for the lead-approved repair.
+
+Each `update-branch` run MUST have a two-round budget independent of the PR's
+feature budget. The gate MUST show `N/2` and refuse a third counted attempt
+before launch. Parent extensions MUST NOT raise this limit or appear in its
+review instructions. Update-branch remains ineligible for extensions.
+
+New update-branch admissions MUST record the owning run ID in
+`Run.reviewRoundOwners`, keyed by the unchanged admission receipt. The shared
+PR lock and durable snapshot copies MUST retain admissions, ownership,
+settlements and grants. Feature budgets MUST exclude owned maintenance
+receipts; an update-branch budget MUST count only its own receipts. No-verdict
+counts, failure reasons, activity rounds and gate labels MUST use the same scope.
+The shared `reviewRoundBudgetForRun` and `reviewRoundAdmissionsInScope` SDK
+helpers own that projection. Activity MUST prefer durable receipts and settlements
+over stale gate counts, retaining gate-count fallback for legacy records without
+admission metadata.
+
+Legacy unowned receipts MUST retain their PR accounting. Reattaching an existing
+receipt MUST NOT assign ownership, spend another round or clear a settlement.
+Restart, replay, archive and retirement MUST retain ownership metadata wherever
+admission history survives. A later update-branch run gets its own two rounds.
+Existing review and publication checks still apply.
 
 ### Scoped extension
 

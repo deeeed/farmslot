@@ -94,7 +94,7 @@ export async function recordedPublicationDependencies(
   const entries = new Map<string, ArtifactRef>();
   const byPath = new Map(media.map((artifact) => [artifact.path, artifact]));
   const roots = selectedRoot
-    ? [selectedRoot, ...(source?.beforeArtifactRoots ?? []).map((root) => `artifacts/${root}`)]
+    ? [selectedRoot, ...(source?.additionalArtifactRoots ?? []).map((root) => `artifacts/${root}`)]
     : recordedEvidenceRoots(
         artifacts,
         media.map((artifact) => artifact.path),
@@ -113,18 +113,20 @@ export async function recordedPublicationDependencies(
     ];
     if (issues.length)
       throw new Error(`Publication recipe closure is invalid (${root}): ${issues.join('; ')}`);
-    const isBaseline = source?.beforeArtifactRoots?.some((entry) => root === `artifacts/${entry}`);
+    const isAdditional = source?.additionalArtifactRoots?.some(
+      (entry) => root === `artifacts/${entry}`,
+    );
     for (const file of input.artifactPaths ?? []) {
       const artifactPath = path.posix.join(root, file);
       if (
-        isBaseline &&
+        isAdditional &&
         baseline?.inventory
           .find((entry) => entry.path === artifactPath)
           ?.sha256?.replace(/^sha256:/u, '') !==
           input.artifactDigests[file]?.replace(/^sha256:/u, '')
       )
         throw new Error(
-          `Baseline closure is missing or changed in the run capture: ${artifactPath}`,
+          `Captured recipe closure is missing or changed in the run capture: ${artifactPath}`,
         );
       if (isGatewayOwnedArtifactPath(artifactPath))
         throw new Error(`Publication recipe closure includes gateway-owned data: ${artifactPath}`);
@@ -238,6 +240,7 @@ async function frozenPublicationTextClosure(
   inventory: readonly ArtifactRef[],
   selected: readonly ArtifactRef[],
   bundleRef?: RunArtifactBundleRef,
+  headSha?: string | null,
 ): Promise<FrozenPublicationTextClosure> {
   const media = selected
     .filter((artifact) => isUploadableMediaPath(artifact.path))
@@ -251,10 +254,11 @@ async function frozenPublicationTextClosure(
     inventory,
     selectedRecordedMedia,
     bundleRef,
+    headSha ?? null,
   );
   // This inventory is the frozen publication closure, not the task's historical
   // artifacts. Media pixels retain their existing visual-review requirements.
-  // Selected before roots were validated above even though only the head ledger
+  // Additional recipe roots were validated above even though only the selected ledger
   // is returned as verdict authority.
   const textPrefixes = [
     ...new Set([
@@ -295,10 +299,17 @@ export async function scanFrozenPublicationEvidence(
   inventory: readonly ArtifactRef[],
   selectedEvidenceKeys: readonly string[],
   bundleRef?: RunArtifactBundleRef,
+  headSha?: string,
 ): Promise<void> {
   if (!inventory.length && !selectedEvidenceKeys.length) return;
   const selected = scannedFrozenSelection(inventory, selectedEvidenceKeys);
-  const { textEntries } = await frozenPublicationTextClosure(run, inventory, selected, bundleRef);
+  const { textEntries } = await frozenPublicationTextClosure(
+    run,
+    inventory,
+    selected,
+    bundleRef,
+    headSha,
+  );
   await scanFrozenPublicationText(run, textEntries, bundleRef);
 }
 
@@ -308,6 +319,7 @@ export async function verifyFrozenPublicationEvidence(
   inventory: readonly ArtifactRef[],
   selectedEvidenceKeys: readonly string[],
   bundleRef?: RunArtifactBundleRef,
+  headSha?: string,
 ): Promise<void> {
   if (!inventory.length && !selectedEvidenceKeys.length) return;
   const selected = scannedFrozenSelection(inventory, selectedEvidenceKeys);
@@ -322,6 +334,7 @@ export async function verifyFrozenPublicationEvidence(
     inventory,
     selected,
     bundleRef,
+    headSha,
   );
   for (const source of sources) {
     const issues = validateRecordedEvidencePackage(source.input).findings.filter(

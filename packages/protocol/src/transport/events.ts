@@ -341,6 +341,8 @@ export interface CiCheckUpdatedPayload {
   dedupReason?: string | null;
   lastFixCommitSha?: string | null;
   timeoutWindowStartedAt?: string;
+  progressTimeoutAt?: string;
+  totalTimeoutAt?: string;
   lastProgressAt?: string;
   lastProgressReason?: string;
 }

@@ -29,6 +29,8 @@ import {
   runStepQueuedMs,
   unavailableContributionLabel,
 } from '@farmslot/protocol';
+export { isCIWatchWorkerFixActive } from '@farmslot/review-dispatch';
+
 import { flowColor as _flowColor, flowLabel as _flowLabel } from '@farmslot/theme';
 
 import { colors } from '../../styles/theme-tokens.js';
@@ -278,7 +280,12 @@ export function runModeDiffersFromDefault(run: Partial<Pick<Run, 'flowType' | 'm
 export function runChainedModeDrift(
   run: Partial<Pick<Run, 'flowType' | 'mode' | 'parentRunId' | 'lane'>>,
 ): boolean {
-  if (run.lane === 'comparison') return false;
+  if (
+    run.lane === 'comparison' ||
+    run.flowType === 'pr-complete' ||
+    run.flowType === 'update-branch'
+  )
+    return false;
   return Boolean(run.parentRunId && runModeDiffersFromDefault(run));
 }
 
@@ -388,10 +395,6 @@ const PR_RECOMMENDATION_LABEL: Record<string, string> = {
 export function prRecommendationLabel(raw: string | null | undefined): string {
   if (!raw) return '';
   return PR_RECOMMENDATION_LABEL[raw] ?? raw;
-}
-
-export function isCIWatchWorkerFixActive(phase: unknown, fixInProgress: unknown): boolean {
-  return fixInProgress === true && (phase === 'fixing' || phase === 'waiting_for_worker');
 }
 
 export function elapsed(createdAt: string, completedAt?: string): string {

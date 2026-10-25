@@ -462,6 +462,7 @@ export async function publishSelectedEvidence(
   prNumber: number,
   selection: PublicationEvidenceSelection,
   artifactBundle?: RunArtifactBundleRef,
+  headSha?: string,
 ): Promise<PublishedEvidence> {
   const selectedEvidenceKeys = expandPublicationEvidenceSelection(selection);
   assertPublicationTextSafe(JSON.stringify(selection.trustedEvidenceManifest ?? null));
@@ -470,6 +471,7 @@ export async function publishSelectedEvidence(
     selection.evidenceManifest,
     selectedEvidenceKeys,
     artifactBundle,
+    headSha,
   );
   const artifactUrls = await uploadArtifacts(run, prNumber, selectedEvidenceKeys, {
     failOnError: true,
@@ -772,30 +774,36 @@ function prefixPromotedEvidenceManifest(
   };
 }
 
+type EvidenceManifestFileRead =
+  | { manifest: EvidenceManifest; sourceBytes: string }
+  | { issues: string[] };
+
 async function readEvidenceManifestFile(
   manifestPath: string,
   artifactRoot: string | null,
   sourceBytes: string,
-): Promise<{ manifest: EvidenceManifest; sourceBytes: string } | null> {
+): Promise<EvidenceManifestFileRead> {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(sourceBytes);
-    const issues = validateEvidenceManifest(parsed);
-    if (issues.length > 0) {
-      console.warn(
-        `[run-completion] invalid evidence manifest ${manifestPath}: ${issues.join('; ')}`,
-      );
-      return null;
-    }
-    return {
-      manifest: prefixPromotedEvidenceManifest(parsed as EvidenceManifest, artifactRoot),
-      sourceBytes,
-    };
-  } catch (err) {
+    parsed = JSON.parse(sourceBytes);
+  } catch (error) {
+    const issues = [`manifest: invalid JSON: ${(error as Error).message}`];
     console.warn(
-      `[run-completion] invalid evidence manifest ${manifestPath}: ${(err as Error).message}`,
+      `[run-completion] invalid evidence manifest ${manifestPath}: ${issues.join('; ')}`,
     );
-    return null;
+    return { issues };
   }
+  const issues = validateEvidenceManifest(parsed);
+  if (issues.length > 0) {
+    console.warn(
+      `[run-completion] invalid evidence manifest ${manifestPath}: ${issues.join('; ')}`,
+    );
+    return { issues };
+  }
+  return {
+    manifest: prefixPromotedEvidenceManifest(parsed as EvidenceManifest, artifactRoot),
+    sourceBytes,
+  };
 }
 
 export interface ResolvedPublicationManifest {
@@ -806,12 +814,14 @@ export interface ResolvedPublicationManifest {
   selectedArtifactRoot?: string;
   pointerPath?: string;
   pointerBytes?: string;
-  beforeArtifactRoots?: string[];
+  additionalArtifactRoots?: string[];
 }
 
 /** Existing run capture authority, separate from the selected head's claims. */
 export interface PublicationBaselineContext {
   baseSha?: string;
+  /** Undefined permits capture admission; null records an unavailable publication head. */
+  headSha?: string | null;
   branch?: string | null;
   inventory: readonly ArtifactRef[];
 }
@@ -864,7 +874,7 @@ export async function assertPublicationManifestOwnership(
       videos: { after: manifest.videos?.after },
     }),
   );
-  const beforeRoots = new Set<string>();
+  const additionalRoots = new Set<string>();
   const retainedManifests = new Map<string, Promise<string | null>>();
   for (const file of evidenceManifestArtifactPaths(manifest)) {
     const relativeFile = file.slice('artifacts/'.length);
@@ -926,9 +936,6 @@ export async function assertPublicationManifestOwnership(
               }
             }
             if (
-              !before.has(file) ||
-              other.has(file) ||
-              !baseline?.baseSha ||
               capturedDigest('artifact-manifest.json') !==
                 createHash('sha256').update(manifestBytes).digest('hex') ||
               !capturedDigest(path.posix.relative(directory, relativeFile)) ||
@@ -939,21 +946,66 @@ export async function assertPublicationManifestOwnership(
             )
               throw new RecordedEvidenceReadError(
                 'evidence-selection-invalid',
-                `Publication declaration ${file} belongs to another recipe attempt. Before evidence must be captured by this run on its unchanged baseline.`,
+                `Publication declaration ${file} is outside selected recipe attempt ${artifactRoot}. Additional evidence must be captured by this run on its clean selected head; only before evidence may use its unchanged baseline.`,
               );
+            const beforeOnly = before.has(file) && !other.has(file);
+            let headSha = baseline?.headSha;
+            if (!beforeOnly) {
+              if (headSha === null)
+                throw new RecordedEvidenceReadError(
+                  'evidence-selection-invalid',
+                  'Additional after and standalone evidence requires a known publication head. Restore the source or refresh its package.',
+                );
+              const selectedBytes = await io.readText(
+                path.join(artifactsDir, artifactRoot, 'product-provenance.json'),
+              );
+              let selected: unknown;
+              if (selectedBytes !== null) {
+                try {
+                  selected = JSON.parse(selectedBytes);
+                } catch (cause) {
+                  throw new RecordedEvidenceReadError(
+                    'evidence-package-unverifiable',
+                    'The selected head product provenance is invalid.',
+                    { cause },
+                  );
+                }
+              }
+              const selectedDigest = baseline?.inventory
+                .find(
+                  (artifact) =>
+                    artifact.path === `artifacts/${artifactRoot}/product-provenance.json`,
+                )
+                ?.sha256?.replace(/^sha256:/u, '');
+              if (
+                !selectedBytes ||
+                selectedDigest !== createHash('sha256').update(selectedBytes).digest('hex') ||
+                !isRecord(selected) ||
+                typeof selected.git_ref !== 'string' ||
+                !/^[a-f0-9]{40}$/iu.test(selected.git_ref) ||
+                selected.dirty !== false ||
+                (headSha && selected.git_ref !== headSha)
+              )
+                throw new RecordedEvidenceReadError(
+                  'evidence-selection-invalid',
+                  `Publication declaration ${file} is outside selected recipe attempt ${artifactRoot}: product-provenance.json must have a captured clean git_ref at the selected head.`,
+                );
+              headSha = selected.git_ref;
+            }
+            const expectedSha = beforeOnly ? baseline?.baseSha : headSha;
             const invalidProvenanceField =
-              (provenance.git_ref !== baseline.baseSha && 'git_ref') ||
+              ((!expectedSha || provenance.git_ref !== expectedSha) && 'git_ref') ||
               (provenance.dirty !== false && 'dirty') ||
-              (baseline.branch &&
+              (baseline?.branch &&
                 provenance.branch !== baseline.branch &&
                 provenance.branch !== 'detached' &&
                 'branch');
             if (invalidProvenanceField)
               throw new RecordedEvidenceReadError(
                 'evidence-selection-invalid',
-                `Baseline product-provenance.json for ${file} failed ${invalidProvenanceField} validation. Before evidence must be captured by this run on its unchanged baseline.`,
+                `The product-provenance.json for ${file} failed ${invalidProvenanceField} validation. Additional evidence must match the clean selected head; before evidence may match the unchanged baseline.`,
               );
-            beforeRoots.add(directory);
+            additionalRoots.add(directory);
           }
           break;
         }
@@ -966,10 +1018,10 @@ export async function assertPublicationManifestOwnership(
       if (directory === '.') break;
     }
   }
-  return [...beforeRoots];
+  return [...additionalRoots];
 }
 
-/** Preserve presentation and non-recipe captures without selecting another execution. */
+/** Keep declared captures and their closures without changing the selected claim execution. */
 async function includePublicationDeclarations(
   selected: EvidenceManifest,
   artifactRoot: string,
@@ -979,19 +1031,19 @@ async function includePublicationDeclarations(
 ): Promise<{
   manifest: EvidenceManifest;
   declarationSources?: ResolvedPublicationManifest['declarationSources'];
-  beforeArtifactRoots?: string[];
+  additionalArtifactRoots?: string[];
 }> {
   const declarationPath = path.join(artifactsDir, 'evidence-manifest.json');
   const bytes = await io.readText(declarationPath);
   if (bytes === null) return { manifest: selected };
   const declaration = await readEvidenceManifestFile(declarationPath, null, bytes);
-  if (!declaration)
+  if ('issues' in declaration)
     throw new RecordedEvidenceReadError(
       'evidence-package-unverifiable',
-      'The publication declarations are invalid. Correct evidence-manifest.json.',
+      `The publication declarations are invalid. Correct evidence-manifest.json: ${declaration.issues.join('; ')}`,
     );
 
-  const beforeArtifactRoots = await assertPublicationManifestOwnership(
+  const additionalArtifactRoots = await assertPublicationManifestOwnership(
     declaration.manifest,
     artifactRoot,
     artifactsDir,
@@ -1014,7 +1066,7 @@ async function includePublicationDeclarations(
       omit: [...(selected.omit ?? []), ...(declaration.manifest.omit ?? [])],
     },
     declarationSources: [{ file: 'artifacts/evidence-manifest.json', bytes }],
-    beforeArtifactRoots,
+    additionalArtifactRoots,
   };
 }
 
@@ -1068,10 +1120,13 @@ export async function readSelectedPublicationManifest(
   const selected = await readSelectedPublicationManifestReference(taskDir, io);
   if (!selected) return null;
   const bytes = await io.readText(selected.manifestPath);
-  return bytes === null
-    ? null
-    : ((await readEvidenceManifestFile(selected.manifestPath, selected.artifactRoot, bytes))
-        ?.manifest ?? null);
+  if (bytes === null) return null;
+  const result = await readEvidenceManifestFile(
+    selected.manifestPath,
+    selected.artifactRoot,
+    bytes,
+  );
+  return 'manifest' in result ? result.manifest : null;
 }
 
 function evidenceManifestCandidatePaths(
@@ -1135,11 +1190,12 @@ export async function resolvePublicationManifest(
         );
       continue;
     }
-    const resolved = await readEvidenceManifestFile(manifestPath, artifactRoot, sourceBytes);
-    if (!resolved && pointerBytes !== undefined && contractVersion !== 0)
+    const result = await readEvidenceManifestFile(manifestPath, artifactRoot, sourceBytes);
+    const resolved = 'manifest' in result ? result : null;
+    if ('issues' in result && pointerBytes !== undefined && contractVersion !== 0)
       throw new RecordedEvidenceReadError(
         'evidence-package-unverifiable',
-        'The selected recipe attempt evidence-manifest.json is invalid. Re-run the recipe.',
+        `The selected recipe attempt evidence-manifest.json is invalid. Re-run the recipe: ${result.issues.join('; ')}`,
       );
     if (contractVersion !== 0 && resolved && !artifactRoot && selected?.artifactRoot)
       await assertPublicationManifestOwnership(

@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { isTerminalRunStatus, resolveRunSlotId, type Run } from '@farmslot/protocol';
+import { hasUnsettledRunExecution, resolveRunSlotId, type Run } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
 import { expandFixturePath } from '@farmslot/slot-config';
@@ -38,6 +38,13 @@ export const NODE_SUPPORT_COMMAND_CACHE_MS = 10 * 60_000;
 // Covers the cache window plus bounded delivery; running commands also hold a read lock.
 export const NODE_SUPPORT_READER_RETAIN_MS = 2 * NODE_SUPPORT_COMMAND_CACHE_MS;
 
+function isHistoricalRun(record: unknown): boolean {
+  return (
+    isRecord(record) &&
+    (record.readOnly === true || record.conversionStatus === 'unconvertible-historical')
+  );
+}
+
 /** Historical outputs can refer to an older bundle than the slot now selects. */
 function supportHashes(values: readonly unknown[]): string[] {
   const hashes = new Set<string>();
@@ -56,7 +63,7 @@ function supportHashes(values: readonly unknown[]): string[] {
 }
 
 export function referencedNodeSupportHashes(runs: readonly Run[]): string[] {
-  return supportHashes(runs.filter((run) => !run.archivedAt));
+  return supportHashes(runs.filter((run) => !run.archivedAt && !isHistoricalRun(run)));
 }
 
 /** One-shot activators do not have the gateway's run store loaded in memory. */
@@ -81,6 +88,7 @@ export async function persistedNodeSupportRuns(directory: string): Promise<Run[]
     // Corrupt records have unknown references, so pruning must still fail closed.
     const record: unknown = JSON.parse(content);
     if (!isRecord(record)) throw new Error(`Unreadable node-support run references: ${name}`);
+    if (isHistoricalRun(record)) continue;
     const run = parseRunRecordFile(name, content);
     // Other stores (for example runtime-capabilities) share the run directory.
     if (run) runs.push(run);
@@ -132,7 +140,7 @@ export async function nodeSupportRetentionReferences(
         ...listRuns().runs,
       ].map((run) => [run.id, run]),
     ).values(),
-  ];
+  ].filter((run) => !isHistoricalRun(run));
   const selectionPaths = [];
   const activeRuns: ActiveRunSupportReferences[] = [];
   for (const slot of await loadMachineSlots(vars.machine)) {
@@ -143,7 +151,7 @@ export async function nodeSupportRetentionReferences(
     const selection = nodeSupportHashPath(selected.remoteRepo, project.runtimeDir);
     selectionPaths.push(selection);
     for (const run of runs) {
-      if (run.archivedAt || isTerminalRunStatus(run.status) || resolveRunSlotId(run) !== slot.id)
+      if (run.archivedAt || !hasUnsettledRunExecution(run) || resolveRunSlotId(run) !== slot.id)
         continue;
       const paths = [selection];
       const fixtures = project.projectJson.fixtures;
@@ -182,7 +190,7 @@ export async function nodeSupportRetentionReferences(
       runIds: runs.map((run) => run.id),
     },
     endedRunIds: runs
-      .filter((run) => run.archivedAt || isTerminalRunStatus(run.status))
+      .filter((run) => run.archivedAt || !hasUnsettledRunExecution(run))
       .map((run) => run.id),
     runHashes: referencedNodeSupportHashes(runs),
   };
@@ -193,7 +201,8 @@ export interface NodeSupportActivationParams {
   supportHash: string;
   selectionPath?: string;
   readerTtlMs?: number;
-  references: NodeSupportRetentionReferences;
+  /** Unknown inventory permits selection, but cannot authorize any pruning. */
+  references: NodeSupportRetentionReferences | null;
   publishCommand?: string;
   verifyCommand: string;
 }
@@ -225,6 +234,15 @@ with (root/'.activation.lock').open('a') as lock:
   temporary=lease.with_name(lease.name+'.'+str(os.getpid())+'.tmp')
   temporary.write_text(json.dumps({'expiresAt':max(previous,time.time()+d['readerTtlMs']/1000)}));os.replace(temporary,lease)
   print(json.dumps({'reader':d['supportHash']}));sys.exit(0)
+ def select():
+  selection=Path(d['selectionPath']).expanduser();selection.parent.mkdir(parents=True,exist_ok=True)
+  temporary=selection.with_name(selection.name+'.'+str(os.getpid())+'.tmp')
+  try:
+   temporary.write_text(d['supportHash']+'\\n');os.chmod(temporary,0o644);os.replace(temporary,selection)
+  finally:
+   temporary.unlink(missing_ok=True)
+ if d['references'] is None:
+  select();print(json.dumps({'selected':d['supportHash'],'removed':[]}));sys.exit(0)
  keep=set(d['references']['runHashes']);keep.add(d['supportHash'])
  active=root/'.active-run-references';active.mkdir(exist_ok=True)
  inventory=d['references'].get('runInventory',{})
@@ -280,12 +298,7 @@ with (root/'.activation.lock').open('a') as lock:
   except FileNotFoundError:continue
   if not re.fullmatch('[a-f0-9]{64}',value):raise ValueError('Invalid node support selection: '+name)
   if name!=d['selectionPath']:keep.add(value)
- selection=Path(d['selectionPath']).expanduser();selection.parent.mkdir(parents=True,exist_ok=True)
- temporary=selection.with_name(selection.name+'.'+str(os.getpid())+'.tmp')
- try:
-  temporary.write_text(d['supportHash']+'\\n');os.chmod(temporary,0o644);os.replace(temporary,selection)
- finally:
-  temporary.unlink(missing_ok=True)
+ select()
  removed=[]
  for bundle in root.iterdir():
   if not re.fullmatch('[a-f0-9]{64}',bundle.name) or not bundle.is_dir() or bundle.is_symlink():continue

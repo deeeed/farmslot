@@ -113,6 +113,8 @@ export function rollbackReclaimedSlotReleaseOptions(
 }
 
 export interface RunReplayStepHooks {
+  /** Slot activation reuses this run's original before-evidence baseline after preparation. */
+  preserveDispatchBaseline?: boolean;
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
   /** Test-only: pause after reading device requirements, while the engine still runs. */
@@ -2061,6 +2063,13 @@ async function replayRunStep(
         detail: undefined,
       });
     }
+
+    // This generation's pending dispatch owns the activation intent. Ordinary
+    // replay clears step inputs above, so preservation cannot leak into a new prepare.
+    if (hooks.preserveDispatchBaseline && existing.worktreeHeadAtDispatch)
+      updateRunStep(params.runId, PS.DISPATCH, {
+        inputs: { activationDispatchBaseline: existing.worktreeHeadAtDispatch },
+      });
 
     // Clear decisions when replaying the completion/gate path so stale CI/review
     // decisions do not short-circuit or re-block it. Preserve resolved human-gate

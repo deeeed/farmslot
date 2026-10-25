@@ -82,6 +82,11 @@ export interface StatuslineRecord {
 }
 
 export interface RunnerObservability {
+  /** Runner-owned questions only; a null value does not rule out other permission gates. Null reading means unknown. */
+  getPendingQuestion?(
+    vars: SlotVars,
+    target: string,
+  ): Promise<ObservabilityReading<string | null> | null>;
   /** Enter-submitted input may steer an active turn with exact queue/native proof. */
   supportsMidTurnPrompt?: boolean;
   /** How this provider proves that the exact prompt was accepted. */

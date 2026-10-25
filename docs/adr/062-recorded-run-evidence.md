@@ -1064,9 +1064,40 @@ A code review already certifies the exact package head before publication. Showi
   - Planning refuses `proves` on a `review` claim.
   - A confirmed receipt reads as proven in `run.get` while keeping its engine verdict.
 
-## Amendment 19: derived acceptance for PR completion, 2026-10-23
+## Amendment 19 (2026-10-24): Publish captures from same-run attempts at one head
 
-**Status:** Proposed. Arthur requested this amendment; implementation requires lead approval.
+**Status:** Proposed under the lead's approved multi-attempt evidence scope.
+**Specification:** [Consumers and publication](../reference/recorded-run-evidence.md#consumers-and-publication).
+
+### Decision
+
+One publication package may include after and standalone captures from several
+recipe attempts captured by the same run at its clean publication head. Each
+attempt keeps its original path, execution identity and complete immutable
+closure. Admission and frozen readers check the run's captured inventory,
+product provenance and every consumed byte. Before captures retain their existing
+exception for the run's unchanged dispatch baseline.
+
+The successful-attempt pointer still selects claim verdicts. Additional captures
+do not combine ledgers, borrow passing sibling verdicts or qualify visual claims
+from another execution. Cross-head claim retention remains Amendment 10's
+separate repair contract. No new pointer, package format or public RPC is added.
+
+### Rationale and consequences
+
+A network change or application restart needs a fresh recipe attempt, while its
+captures may document the same code revision. Restricting publication media to
+one attempt rejects valid proof without adding source integrity. This amendment
+chooses several attempts per publication package for session-persistence proof:
+retain the recorded write and the relaunched session's assertion of the same
+value. Recording remains bound to each original session. Several checked
+closures can share the existing publication package and approval hash. Missing,
+foreign, dirty, stale-head or changed closures still refuse, and all selected
+closures retain the existing secret scan and publication approval requirements.
+
+## Amendment 20: derived acceptance for PR completion, 2026-10-23
+
+**Status:** Accepted. Lead approved proposal `31435dc1` as Amendment 19 on 2026-10-25. Renumbered to 20 because main independently assigned 19 to multi-attempt captures.
 **Specification:** [PR-completion acceptance registration](../reference/recorded-run-evidence.md#pr-completion-acceptance-registration).
 
 ### Decision
@@ -1085,4 +1116,4 @@ The registration revision participates in completion and gate identity. New inst
 
 Completion currently displays ticket criteria while review fixes and operator obligations remain outside the panel. It also stamps both review capabilities false for ordinary PR completion, making fresh visual, mixed and review-mode claims impossible to finish. Registration and the proof destination must agree before completion.
 
-Extend the shared protocol and existing registry, contract resolver, completion guard and client presentation. Do not add a second ledger, verdict writer or client-specific acceptance model. Existing runs keep their selected template and frozen contract until an explicit supported migration. This proposal authorizes no implementation or live-run operation before approval.
+Extend the shared protocol and existing registry, contract resolver, completion guard and client presentation. Do not add a second ledger, verdict writer or client-specific acceptance model. Existing runs keep their selected template and frozen contract until an explicit supported migration. Implementation is approved; this decision authorizes no live-run migration or replay.

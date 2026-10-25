@@ -50,6 +50,7 @@ import {
 import { terminalizePriorRunOnSlot } from './nudge.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
 import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
+import { recordRetainedPrBaseline } from './worktree-baseline.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
@@ -405,6 +406,7 @@ export async function warmSessionHandoffDispatch(
   // a new task delivery even though it reuses an existing runner. Keep this
   // check immediately before the send, after target/session resolution, and
   // persist any one-shot consumption before the runner can receive the prompt.
+  await recordRetainedPrBaseline(params.runId, vars);
   const latestRequestingRun = getRun(params.runId) ?? requestingRun;
   await enforceDispatchPressureGate({
     machine: vars.machine,

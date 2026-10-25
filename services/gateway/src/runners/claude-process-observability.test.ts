@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   claudeProcessRegistration,
+  readClaudeProcessBinding,
   readClaudeProcessState,
 } from './claude-process-observability.js';
 import { makeVars } from './test-fixtures.js';
@@ -29,6 +30,29 @@ test('native registration binds pid generation and an explicit native turn state
     { ...registration, sessionId: '../foreign' },
   ])
     assert.equal(claudeProcessRegistration(value, '42', 900), null);
+});
+
+test('waiting registration binds the question session without changing busy/idle observations', async () => {
+  const vars = makeVars();
+  const readers = {
+    pane: async () => ({ paneId: '%owned', panePid: '7' }),
+    process: async () => ({ state: 'present' as const, pid: '42' }),
+    exec: async () => ({
+      stdout: JSON.stringify({
+        record: { ...registration, status: 'waiting' },
+        processStartedAt: 900,
+        sessionPath: '/sessions/saved-review.jsonl',
+      }),
+      stderr: '',
+      exitCode: 0,
+    }),
+  };
+  assert.equal(claudeProcessRegistration({ ...registration, status: 'waiting' }, '42', 900), null);
+  const binding = await readClaudeProcessBinding(vars, 'worker', readers);
+  assert.equal(binding?.status, 'waiting');
+  assert.equal(binding?.sessionId, 'saved-review');
+  assert.equal(binding?.processPid, '42');
+  assert.equal(await readClaudeProcessState(vars, 'worker', readers), null);
 });
 
 test('legacy native registration retains identity without claiming a timestamped observation', () => {

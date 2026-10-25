@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { EXEC_TIMEOUT_EXIT_CODE } from '../../core/exec.js';
 import {
   execLocal,
   execOnSlot,
@@ -11,6 +12,7 @@ import {
   loadProjectVars,
   type SlotVars,
 } from '../../core/index.js';
+import { ORCHESTRATOR_LOCALITY, slotWriteFiles } from '../../core/slot-io.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { withoutNodeReconnectWait } from '../../fleet/node-rpc.js';
 import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
@@ -664,6 +666,8 @@ export async function runPrepareCommand(
     windowLabel?: string;
     phase?: string;
     forceLocal?: boolean;
+    /** Probes preserve retained preflight panes and reap only their own phase window. */
+    preserveOtherPrepareWindows?: boolean;
     prepareScope?: { token: string; identityPath: string };
   },
 ): Promise<import('../../core/exec.js').ExecResult> {
@@ -679,9 +683,7 @@ export async function runPrepareCommand(
     : (c: string, eopts?: { cwd?: string; timeout?: number }) =>
         execOnSlot(vars, c, { cwd: eopts?.cwd, timeout: eopts?.timeout });
   const windowCwd = useLocal && !slotIsLocal ? farmslotRoot : vars.remoteRepo;
-  // Reject empty / whitespace / unsafe labels: they break tmux window targeting
-  // (`prepare- ` is selectable but unreadable) and the heredoc terminator below
-  // derives from the window name, so unsanitized chars can break script staging.
+  // Labels form both the tmux window target and staged script path.
   const rawLabel = (opts?.windowLabel ?? '').trim();
   const labelPart = /^[A-Za-z0-9_-]+$/.test(rawLabel) ? rawLabel : Date.now().toString();
   const phaseName = opts?.phase ? sanitizePhaseName(opts.phase) : '';
@@ -781,10 +783,12 @@ export async function runPrepareCommand(
   // every reaped window — if a sweep ever tears down another gateway's live prepare
   // window, that shows up in the log as the culprit (pairs with the 129/143 signal
   // hint recovered on the victim side).
-  const sweepR = await exec(buildPreparePreLaunchSweepCommand(sessionName, labelPart), {
-    cwd: opts?.cwd,
-    timeout: 15_000,
-  }).catch(() => undefined);
+  const sweepR = opts?.preserveOtherPrepareWindows
+    ? undefined
+    : await exec(buildPreparePreLaunchSweepCommand(sessionName, labelPart), {
+        cwd: opts?.cwd,
+        timeout: 15_000,
+      }).catch(() => undefined);
   const reaped = sweepR?.stdout?.trim();
   if (reaped) {
     console.warn(
@@ -818,14 +822,38 @@ export async function runPrepareCommand(
   // clean target. We do this BEFORE launching the window so pipe-pane doesn't race the
   // mkdir inside the wrapped cmd. Also stage the wrapped script here so the respawn
   // call can exec it directly without going through a host-shell parser.
-  const stageHeredocLimit = `__FARMSLOT_PREPARE_${windowName.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}__`;
+  const stageTimeout = 10_000;
+  let stagedCommand = wrappedCmd;
+  if (!useLocal && !slotIsLocal && wrappedCmd.includes('~/farmslot-node')) {
+    const { NodeSupportPendingError, resolveRemoteFarmCommand } =
+      await import('../../node-support/remote-command.js');
+    try {
+      stagedCommand = await resolveRemoteFarmCommand(vars, wrappedCmd, { budgetMs: stageTimeout });
+    } catch (error) {
+      if (!(error instanceof NodeSupportPendingError)) throw error;
+      return failSetup('stage prepare script', {
+        stdout: '',
+        stderr: error.message,
+        exitCode: EXEC_TIMEOUT_EXIT_CODE,
+      });
+    }
+  }
   const stageR = await exec(
-    `mkdir -p ${shellQuote(slotHostScratchDir)} && ${buildPrepareStaleLaunchCleanupCommand(slotHostScratchDir, phaseFileName)} && : > ${shellQuote(slotHostLogPath)} && cat > ${shellQuote(wrappedScriptPath)} <<'${stageHeredocLimit}'\n${wrappedCmd}\n${stageHeredocLimit}\n`,
-    { cwd: opts?.cwd, timeout: 10_000 },
+    `mkdir -p ${shellQuote(slotHostScratchDir)} && ${buildPrepareStaleLaunchCleanupCommand(slotHostScratchDir, phaseFileName)} && : > ${shellQuote(slotHostLogPath)}`,
+    { cwd: opts?.cwd, timeout: stageTimeout },
   );
   if (stageR.exitCode !== 0) {
     return failSetup('stage prepare script', stageR);
   }
+  // The file transport keeps task inputs out of shell argv, including the
+  // node-support command wrapper used by remote slots.
+  await slotWriteFiles(useLocal ? ORCHESTRATOR_LOCALITY : vars, slotHostScratchDir, [
+    {
+      path: path.posix.basename(wrappedScriptPath),
+      content: Buffer.from(`${stagedCommand}\n`).toString('base64'),
+      mode: 0o600,
+    },
+  ]);
   const launchR = await exec(newWindowCmd, { cwd: opts?.cwd, timeout: 30_000 });
   if (launchR.exitCode !== 0) {
     return failSetup('tmux new-window', launchR);

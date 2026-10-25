@@ -715,12 +715,12 @@ test('Send back refusals keep the gate pending and charge nothing', async (t) =>
         runId: run.id,
         decisionId: 'gate-1',
         actionId: SEND_BACK_TO_AGENT_ACTION,
-        selectionData: { feedback: 'Use this text instead' },
+        selectionData: { issues: ['Use this text instead'] },
       },
       () => {},
       { admitVisualRepair: async () => (admitted++, Promise.reject(new Error('unreachable'))) },
     ),
-    /Send no selection data/u,
+    /Only an operator feedback or comment note/u,
   );
   assert.equal(admitted, 0, 'client-supplied repair content is refused before admission');
   await assert.rejects(
@@ -739,6 +739,25 @@ test('Send back refusals keep the gate pending and charge nothing', async (t) =>
   assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
   assert.equal(persisted.engineState?.publishGate?.reviews?.[0]?.retryCount, 0);
   assert.equal(persisted.engineState?.publishGate?.visualRepairs, undefined);
+});
+
+test('Send back preserves operator feedback without accepting client-supplied findings', async (t) => {
+  const { run, admission } = sendBackFixture(t, 'PROJ-SEND-BACK-NOTE');
+  const feedback = 'Fix both open findings and re-prove AC-1.';
+  await runResolveDecision(
+    {
+      runId: run.id,
+      decisionId: 'gate-1',
+      actionId: SEND_BACK_TO_AGENT_ACTION,
+      selectionData: { feedback },
+    },
+    () => {},
+    { admitVisualRepair: admission },
+  );
+  const persisted = getRun(run.id)!;
+  assert.deepEqual(persisted.decisions[0]?.selectionData, { feedback });
+  assert.equal(persisted.engineState?.publishGate?.visualRepairs?.length, 1);
+  assert.equal(persisted.engineState?.publishGate?.reviews?.[0]?.retryCount, 1);
 });
 
 test('Send back reserves one fix round when the gate is consumed and a retry reuses it', async (t) => {

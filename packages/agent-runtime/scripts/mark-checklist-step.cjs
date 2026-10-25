@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { validateEvidenceManifest } = require('./evidence-manifest.cjs');
 const {
   expandedArtifactsForCommand,
   resolveWorkerTerminalContract,
@@ -68,6 +69,7 @@ function printHelp() {
       'Override: farmslot-agent mark <task-dir> --checklist REVIEW.md <step> — optional --signal; signal defaults from checklist name.',
       'Bootstrap: ./mark start — role-owned signal with status running (no checklist box).',
       'Progress: ./mark 1, ./mark 2, ... — checks the box and appends checklistTiming.',
+      'Existing evidence manifests are validated before progress or success marks, with field errors on refusal.',
       'Operator: ./mark wait --who "name" --reason "..."; ./mark resume clears the wait without marking a row.',
       'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason "..." | status.',
       '  While a child owns step N, ./mark N is refused; the child complete ticks it. Run ./mark sub --help for the child verbs.',
@@ -508,6 +510,49 @@ function resolveTarget(taskPath, stepNumber, markLast) {
 }
 
 const taskDir = path.dirname(signalPath);
+
+// Validate existing declarations before a progress mark changes the checklist or
+// signal. Missing manifests are normal before proof capture; reviewers must be
+// able to report invalid worker evidence, and operator controls stay available.
+function assertEvidenceManifests() {
+  const contract = loadTerminalContract(taskDir, taskPath);
+  if (contract?.flowType === 'review') return;
+  const manifestPath = 'artifacts/evidence-manifest.json';
+  const paths = new Set([
+    manifestPath,
+    resolveWorkerTerminalArtifactPath(
+      taskDir,
+      manifestPath,
+      contract?.recordedEvidenceContractVersion ?? 0,
+    ),
+  ]);
+  const issues = [];
+  for (const file of paths) {
+    let bytes;
+    try {
+      bytes = fs.readFileSync(path.join(taskDir, file), 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    let manifest;
+    try {
+      manifest = JSON.parse(bytes);
+    } catch (error) {
+      issues.push(`${file}: invalid JSON: ${error.message}`);
+      continue;
+    }
+    issues.push(...validateEvidenceManifest(manifest).map((issue) => `${file}: ${issue}`));
+  }
+  if (issues.length > 0) {
+    console.error(`Invalid evidence manifest:\n${issues.map((issue) => `- ${issue}`).join('\n')}`);
+    process.exit(1);
+  }
+}
+
+if (stepNumber != null || terminalCommand === 'complete' || terminalCommand === 'no-change') {
+  assertEvidenceManifests();
+}
 
 /**
  * A step owned by a child unit belongs to that child until it is settled

@@ -462,6 +462,10 @@ export interface CIWatchStepOutput {
   lastFixCommitSha?: string | null;
   fixProgress?: CIWatchFixProgress;
   timeoutWindowStartedAt?: string;
+  /** Current configured no-progress deadline, projected by the monitor. */
+  progressTimeoutAt?: string;
+  /** Current total wait-window deadline, including an explicit Keep waiting reset. */
+  totalTimeoutAt?: string;
   lastProgressAt?: string;
   lastProgressReason?: string;
   pollCount: number;
