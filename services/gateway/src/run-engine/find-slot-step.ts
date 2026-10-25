@@ -30,6 +30,7 @@ import {
   loadPoolConfigs,
   loadProjectConfig,
   loadProjectConfigs,
+  mapLifecycleAndPhase,
 } from '../fleet/state.js';
 import {
   capturePressureAdmissionDecisionsLightweight,
@@ -1437,9 +1438,16 @@ export async function executeFindSlotStep(
         continue;
       // Match the claim fences against the live row before offering the choice.
       const row = await readSlotRow(slot.slot);
+      if (!row) continue;
+      const lifecycle =
+        row.phase === undefined
+          ? mapLifecycleAndPhase(
+              typeof row.lifecycle === 'string' ? row.lifecycle : undefined,
+              typeof row.mode === 'string' ? row.mode : undefined,
+            ).lifecycle
+          : (row.lifecycle ?? 'ready');
       if (
-        !row ||
-        row.lifecycle !== 'ready' ||
+        lifecycle !== 'ready' ||
         row.agent === 'working' ||
         slotClaimBlocker(row, runId, getRun) ||
         (typeof row.current_run_id === 'string' && pickerActiveOwners.has(row.current_run_id))
@@ -1458,9 +1466,9 @@ export async function executeFindSlotStep(
 
     const desc =
       reason === 'no_free_slots'
-        ? `No free slots for **${run.project}**. ${projectSlots.length} slots exist but all are busy or disabled.`
+        ? `No eligible free slots for **${run.project}**. Abort and dispatch again once an allowed slot is ready.`
         : reason === 'missing_required_resources'
-          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Wait until a listed iOS or Android resource slot is ready, then pick it.`
+          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Abort and dispatch again once an allowed resource slot is ready.`
           : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
 
     const slotPickerPayload: import('@farmslot/protocol').SlotPickerPayload = {

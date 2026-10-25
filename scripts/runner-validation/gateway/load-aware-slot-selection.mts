@@ -289,7 +289,17 @@ try {
   for (const row of rows) row.lifecycle = row.slot === 'manual-slot' ? 'manual' : 'ready';
   execFileSync('git', ['-C', path.join(root, 'medium-slot'), 'checkout', '-qb', 'previous-task']);
   rows[1]!.branch = 'previous-task';
-  await writeFile(path.join(root, 'status.json'), JSON.stringify({ slots: rows }));
+  rows[1]!.lifecycle = 'released';
+  await writeFile(
+    path.join(root, 'status.json'),
+    JSON.stringify({
+      slots: rows.map((row) =>
+        row.slot === 'medium-slot'
+          ? Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'phase'))
+          : row,
+      ),
+    }),
+  );
   sample('load-hot', 83, 16);
   sample('load-medium', 6, 16);
   const picker = await client.call<RunCreateResult>('run.create', {
@@ -344,12 +354,54 @@ try {
       (d) => d.resolvedAction === 'pick' && d.selectionData?.slotId === 'hot-slot',
     ),
   );
+  for (const reason of ['no_free_slots', 'missing_required_resources'] as const) {
+    const empty = await client.call<RunCreateResult>('run.create', {
+      ...params,
+      ticketOrPr: reason === 'no_free_slots' ? 'example/proof#142' : 'example/proof#143',
+      allowedSlots: [reason === 'no_free_slots' ? 'manual-slot' : 'medium-slot'],
+    });
+    // Fixture admission only: no prepare or device operation is started.
+    if (reason === 'missing_required_resources')
+      store.updateRun(empty.run.id, { prepareProfile: 'companion-full' });
+    await assert.rejects(
+      executeFindSlotStep(empty.run.id, store.getRun(empty.run.id)!, 0, {
+        ...context,
+        createEngineDecision: async (runId, why, description, actions, payload, options) => {
+          const waiting = createEngineDecision(runId, why, description, actions, payload, {
+            ...options,
+            readProgress: async () => ({ kind: 'idle' }),
+          });
+          const until = Date.now() + 3000;
+          while (!store.getRun(runId)!.decisions.some((d) => !d.resolvedAt)) {
+            assert(Date.now() < until, 'empty picker did not open');
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          const current = await client!.call<RunGetResult>('run.get', { runId });
+          const decision = current.run.decisions.find((d) => !d.resolvedAt)!;
+          if (decision.payload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+          assert.equal(decision.payload.reason, reason);
+          assert.deepEqual(decision.payload.candidates, []);
+          assert.match(decision.description, /Abort and dispatch again/);
+          assert.doesNotMatch(decision.description, /listed/);
+          await client!.call('run.resolveDecision', {
+            runId,
+            decisionId: decision.id,
+            actionId: 'abort',
+          });
+          return waiting;
+        },
+      }),
+      /Aborted|cancelled/i,
+    );
+  }
   const result = {
     status: 'PASS',
     redHeadroomPreserved: red.preview.slotId,
     heldQueueSelection: queueSelection,
     operatorPickerSelection: pickedReadback.run.slotId,
     manualSlotExcludedFromPicker: true,
+    legacyReleasedSlotRemainsEligible: true,
+    emptyNoFreeAndMissingResourceMessagesVerified: true,
     staleBranchHumanDecisionPreserved: true,
     lowestLoadPreview: preview.preview.slotId,
     allowlistSelection: readback.run.slotId,
@@ -359,7 +411,7 @@ try {
     explicitPickPreserved: true,
     recoveredSelection: recovered.preview.slotId,
     boundary:
-      'Authenticated production preview/create/get and FIND_SLOT over disposable local pools and real private Git checkouts. Existing metrics ingestion seeded with synthetic loads; optional ticket metadata substituted. Scheduler disabled; no task writing, worker/model/provider/app or live slot operation.',
+      'Authenticated production preview/create/get and FIND_SLOT over disposable local pools and real private Git checkouts. Existing metrics ingestion seeded with synthetic loads; optional ticket metadata substituted, with companion-full admission seeded only for the missing-resource fixture. Scheduler disabled; no task writing, worker/model/provider/app or live slot operation.',
   };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result));

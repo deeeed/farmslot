@@ -524,3 +524,47 @@ test('the stale-slot picker still permits an explicit node-load override', async
   );
   assert.equal(hot.branch, 'fix/hot');
 });
+
+test('the picker keeps released legacy rows without a phase eligible', async () => {
+  reset('dev', 'TAT-9000');
+  expectedTarget = undefined;
+  const legacy = candidate('legacy', 'macpro', 'fix/legacy');
+  slots.splice(0, slots.length, legacy);
+  liveRows.set(legacy.slot, { lifecycle: 'released', phase: undefined });
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.2));
+  expectedSlot = pickedSlot = legacy.slot;
+  await executeFindSlotStep(run.id, run, 0, context);
+  if (pickerPayload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+  assert.deepEqual(
+    pickerPayload.candidates.map((s) => s.slotId),
+    [legacy.slot],
+  );
+});
+
+for (const reason of ['no_free_slots', 'missing_required_resources'] as const) {
+  test(`the empty ${reason} picker gives an actionable message`, async () => {
+    reset('dev', 'TAT-9000');
+    expectedTarget = undefined;
+    const slot = candidate('waiting', 'macpro', 'fix/old');
+    if (reason === 'no_free_slots') slot.lifecycle = 'manual';
+    else run.prepareProfile = 'companion-full';
+    slots.splice(0, slots.length, slot);
+    await assert.rejects(
+      executeFindSlotStep(run.id, run, 0, {
+        ...context,
+        createEngineDecision: async (_id, _reason, description, _actions, payload) => {
+          assert.equal(payload?.kind, 'slot_picker');
+          if (payload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+          assert.equal(payload.reason, reason);
+          assert.deepEqual(payload.candidates, []);
+          assert.match(description, /Abort and dispatch again/);
+          assert.doesNotMatch(description, /listed/);
+          assert.deepEqual(claims, []);
+          assert.deepEqual(finishedReclaims, []);
+          return 'abort';
+        },
+      }),
+      /Aborted: no suitable slot/,
+    );
+  });
+}

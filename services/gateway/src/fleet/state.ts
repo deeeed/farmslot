@@ -381,7 +381,7 @@ interface RawStatus {
 // ─── Transform ───
 
 // Map old lifecycle values from .farm-status.json to new 5-state model + phase
-function mapLifecycleAndPhase(
+export function mapLifecycleAndPhase(
   rawLifecycle: string | undefined,
   rawMode: string | undefined,
 ): { lifecycle: SlotLifecycle; phase: SlotPhase; warm: boolean } {
