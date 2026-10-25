@@ -33,6 +33,35 @@ export function initPrLinkage(broadcast: BroadcastFn): void {
 // Delays between the 4 attempts: 0s, 5s, 20s, 65s cumulative.
 const RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
 
+interface DiscoveredPR {
+  number: number;
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
+  headRefOid: string;
+}
+
+function canBindPR(run: Run, ciRepo: string, pr: DiscoveredPR): boolean {
+  if (pr.state !== 'CLOSED') return true;
+  const key = monitoredPRKey({ host: 'github.com', repo: ciRepo, number: pr.number });
+  if (run.prPublications?.some(({ pr: published }) => monitoredPRKey(published) === key))
+    return true;
+  if (!pr.headRefOid) return false;
+  if (
+    pr.headRefOid === run.reviewResult?.reviewSnapshot?.headSha ||
+    run.decisions.some(
+      ({ payload }) =>
+        payload?.kind === 'ready' &&
+        (payload.headSha === pr.headRefOid || payload.prPackage?.headSha === pr.headRefOid),
+    )
+  )
+    return true;
+  return (run.engineState?.publishGate?.reviews ?? []).some(
+    (review) =>
+      review.reviewSnapshot?.headSha === pr.headRefOid ||
+      review.reviewedHeadSha === pr.headRefOid ||
+      review.attempts?.some((attempt) => attempt.reviewSnapshot?.headSha === pr.headRefOid),
+  );
+}
+
 export async function findPRNumber(
   run: Run,
   ciRepo: string,
@@ -79,6 +108,18 @@ export async function findPRNumber(
     }
   }
 
+  // Discovery can have persisted a historical same-branch PR before this check
+  // existed. Revalidate it too, so a finalize retry can create the run's own PR.
+  if (run.prNumber && run.prNumber > 0) {
+    // An unavailable saved-PR read must stop publication, never create a duplicate.
+    const { stdout } = await ghRequest(
+      ['pr', 'view', String(run.prNumber), '--repo', ciRepo, '--json', 'number,state,headRefOid'],
+      { force: true },
+    );
+    const linked = JSON.parse(stdout) as DiscoveredPR;
+    if (canBindPR(run, ciRepo, linked)) return run.prNumber;
+  }
+
   // 3. gh pr list --head <branch> with exponential backoff (4 attempts, 5s/15s/45s).
   if (!run.branch) {
     console.warn(`[pr-linkage] findPRNumber miss runId=${run.id.slice(0, 8)} branch=<empty>`);
@@ -120,7 +161,7 @@ export async function findPRNumber(
     '--head',
     run.branch,
     '--json',
-    'number',
+    'number,state,headRefOid',
     '--limit',
     '1',
   ];
@@ -141,7 +182,7 @@ export async function findPRNumber(
       continue;
     }
     try {
-      const prs = JSON.parse(stdout || '[]') as Array<{ number: number }>;
+      const prs = JSON.parse(stdout || '[]') as DiscoveredPR[];
       if (prs.length > 0) {
         setBinding(run.branch, ciRepo, prs[0].number);
         return prs[0].number;
@@ -157,10 +198,11 @@ export async function findPRNumber(
   // gate. Fall back to all states once so recovery paths can still link it.
   try {
     const { stdout } = await ghRequest([...listArgs, '--state', 'all'], { force: true });
-    const prs = JSON.parse(stdout || '[]') as Array<{ number: number }>;
-    if (prs.length > 0) {
-      setBinding(run.branch, ciRepo, prs[0].number);
-      return prs[0].number;
+    const prs = JSON.parse(stdout || '[]') as DiscoveredPR[];
+    const pr = prs[0];
+    if (pr && canBindPR(run, ciRepo, pr)) {
+      setBinding(run.branch, ciRepo, pr.number);
+      return pr.number;
     }
   } catch (err) {
     console.warn(

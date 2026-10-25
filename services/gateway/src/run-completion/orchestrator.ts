@@ -1557,7 +1557,7 @@ export async function publishCompletionPackage(
     );
 
     emit('substep', { name: 'resolve-pr-number', detail: `Resolving PR number against ${ciRepo}` });
-    let prNumber = run.prNumber ?? (await findPRNumber(run, ciRepo, { noRetry: true }));
+    let prNumber = await findPRNumber(run, ciRepo, { noRetry: true });
     if (!prNumber) {
       emit('substep', { name: 'create-pr', detail: `Creating draft PR on ${ciRepo}` });
       prNumber = await createPrFromApprovedPackage(run, ciRepo, publicationPackage);
