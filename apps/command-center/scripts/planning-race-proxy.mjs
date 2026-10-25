@@ -29,6 +29,7 @@ export async function startPlanningRaceProxy({
       'intelligence.triage.get',
       'assessment.summary',
       'analytics.query',
+      'prRules.list',
     ].includes(method),
   );
   const artifacts = await realpath(directory);
@@ -48,12 +49,18 @@ export async function startPlanningRaceProxy({
   const authentications = [];
   const barrierReplies = [];
   const analyticsReplies = [];
+  const prReplies = [];
   const observedReads = {};
   const commands = {
     'intelligence.triage.analyze': 0,
     'intelligence.triage.feedback': 0,
     'run.resolveDecision': 0,
     'analytics.backfill': 0,
+    'prWatch.scan': 0,
+    'prWatch.repair': 0,
+    'prRules.scan': 0,
+    'prRules.preview': 0,
+    'prReview.request': 0,
   };
   let persistence = Promise.resolve();
   const status = () => ({
@@ -69,6 +76,7 @@ export async function startPlanningRaceProxy({
     authentications,
     barrierReplies,
     analyticsReplies,
+    prReplies,
     commands,
     observedReads,
     held: held?.receipt,
@@ -211,7 +219,9 @@ export async function startPlanningRaceProxy({
             ['assessment.summary', 'assessment.list', 'assessment.get', 'run.get'].includes(
               frame.method,
             )) ||
-            (method === 'analytics.query' && frame.method === method))
+            (method === 'analytics.query' && frame.method === method) ||
+            (method === 'prRules.list' &&
+              ['prWatch.list', 'prRules.list', 'prPush.list'].includes(frame.method)))
         ) {
           assert(frame.resourceRead?.version === 1, 'Domain reads must be observed');
           observedReads[frame.method] = (observedReads[frame.method] ?? 0) + 1;
@@ -224,7 +234,9 @@ export async function startPlanningRaceProxy({
         if (
           frame.type === 'req' &&
           (frame.method === 'backlog.list' ||
-            (method === 'analytics.query' && frame.method === method))
+            (method === 'analytics.query' && frame.method === method) ||
+            (method === 'prRules.list' &&
+              ['prWatch.list', 'prRules.list', 'prPush.list'].includes(frame.method)))
         ) {
           assert(pair.reads.size < 100);
           pair.reads.set(frame.id, {
@@ -302,6 +314,18 @@ export async function startPlanningRaceProxy({
           });
           void persist();
         }
+        if (read && ['prWatch.list', 'prRules.list', 'prPush.list'].includes(read.method)) {
+          prReplies.push({
+            method: read.method,
+            connection: pair.connection,
+            requestAt: read.requestAt,
+            repliedAt: Date.now(),
+            ok: frame.ok,
+            error: frame.error,
+            resourceState: frame.resourceState,
+          });
+          void persist();
+        }
         if (candidate && frame.type === 'res' && frame.id === candidate.id) {
           assert(frame.ok && frame.resourceState?.epoch && frame.payload);
           assert(pair.authentication, 'Bind held data to the actual authenticated connection');
@@ -343,10 +367,12 @@ export async function startPlanningRaceProxy({
           const changes = frame.payload?.changes?.filter((row) =>
             method === 'analytics.query'
               ? row.key.family === 'analytics' && row.key.scope === 'farm'
-              : method === 'intelligence.triage.get'
-                ? row.key.family === 'assessment' && row.key.scope === 'farm'
-                : row.key.family === 'planning' &&
-                  row.key.collection === (method === 'roadmap.list' ? 'roadmap' : 'backlog'),
+              : method === 'prRules.list'
+                ? row.key.family === 'pr-automation' && row.key.scope === 'farm'
+                : method === 'intelligence.triage.get'
+                  ? row.key.family === 'assessment' && row.key.scope === 'farm'
+                  : row.key.family === 'planning' &&
+                    row.key.collection === (method === 'roadmap.list' ? 'roadmap' : 'backlog'),
           );
           if (changes?.length) {
             assert(events.length < 100);

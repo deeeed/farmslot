@@ -23,7 +23,6 @@ export class PRAutomationController implements ReactiveController {
   pools: ConfigPoolsResult['pools'] = [];
   githubAccounts: ConfigGitHubAccountsResult['accounts'] = [];
   accountsError = '';
-  private accountsLoaded = false;
   push: PRPushListResult = { attention: [], devices: [], deliveries: [] };
   error = '';
   actionError = '';
@@ -112,7 +111,6 @@ export class PRAutomationController implements ReactiveController {
         // Query observers retain stale data on transport loss and clear it on owner/authority loss.
         this.githubAccounts = [];
         this.accountsError = '';
-        this.accountsLoaded = false;
         this.host.requestUpdate();
         if (gateway.connectionState === 'connected') void this.refreshAccounts();
       }),
@@ -124,15 +122,16 @@ export class PRAutomationController implements ReactiveController {
     this.unsubscribers.forEach((unsubscribe) => unsubscribe());
     this.unsubscribers = [];
   }
-  async refresh(): Promise<void> {
-    // Explicit retry remains until the real-client migration proof passes.
-    await Promise.all([
-      this.watchResources.retry(),
-      this.ruleResources.retry(),
-      this.pushResources.retry(),
-    ]);
-    if (!this.accountsLoaded && gateway.connectionState === 'connected')
-      await this.refreshAccounts();
+  get canRetryRead(): boolean {
+    return gateway.connectionState === 'connected' && !this.loading && !this.busy;
+  }
+  async retryReadErrors(): Promise<void> {
+    if (!this.canRetryRead) return;
+    await Promise.all(
+      [this.watchResources, this.ruleResources, this.pushResources]
+        .filter((resource) => resource.state.error)
+        .map((resource) => resource.retry()),
+    );
   }
   async refreshAccounts(refresh = false): Promise<void> {
     const epoch = gateway.connectionEpoch;
@@ -150,7 +149,6 @@ export class PRAutomationController implements ReactiveController {
       this.githubAccounts = [];
       this.accountsError = error instanceof Error ? error.message : String(error);
     }
-    this.accountsLoaded = true;
     this.host.requestUpdate();
   }
   async mutate<T>(method: string, params: unknown): Promise<T | undefined> {

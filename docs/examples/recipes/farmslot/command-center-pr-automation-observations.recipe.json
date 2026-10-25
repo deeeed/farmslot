@@ -1,0 +1,62 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "PR automation follows source observations and retries failed reads",
+  "description": "Use a pre-client rule fixture and disabled synthetic push registration on the private gateway. Prove actual source writes and read-error Retry. No scans, providers, worker commands, live push or client-state injection.",
+  "proofTargets": [
+    {
+      "id": "ruleSourceUpdates",
+      "claim": "An external rule replacement updates the mounted rule without Refresh."
+    },
+    {
+      "id": "pushSourceUpdates",
+      "claim": "A disabled private registration updates the mounted notification inventory without exposing its token."
+    },
+    {
+      "id": "errorOnlyRetry",
+      "claim": "A live source error exposes enabled Retry; only failed queries reread and source repair restores readiness."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-pr-automation-observations.mjs",
+        "timeout_ms": 120000,
+        "intent": "Prove PR configuration writers and error-only Retry on the isolated gateway.",
+        "next": "ruleSourceUpdates"
+      },
+      "ruleSourceUpdates": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"ruleSourceUpdates\":true",
+        "intent": "An external rule replacement updates the mounted rule without Refresh.",
+        "proves": ["ruleSourceUpdates"],
+        "next": "pushSourceUpdates"
+      },
+      "pushSourceUpdates": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"pushSourceUpdates\":true",
+        "intent": "A disabled private registration updates the mounted notification inventory without exposing its token.",
+        "proves": ["pushSourceUpdates"],
+        "next": "errorOnlyRetry"
+      },
+      "errorOnlyRetry": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"errorOnlyRetry\":true",
+        "intent": "A live source error exposes enabled Retry; only failed queries reread and source repair restores readiness.",
+        "proves": ["errorOnlyRetry"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

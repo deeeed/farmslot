@@ -1097,7 +1097,7 @@ export class PRAutomationPanel extends LitElement {
       this.matchesSelected(monitor.config.pr),
     );
     const feedback = html`
-      ${!controller.connected
+      ${gateway.connectionState !== 'connected'
         ? html`<p class="attention">Reconnect to the gateway to load current PR work.</p>`
         : nothing}
       ${[
@@ -1110,6 +1110,15 @@ export class PRAutomationPanel extends LitElement {
       ]
         .filter(Boolean)
         .map((error) => html`<p role="alert" class="error">${error}</p>`)}
+      ${controller.error
+        ? html`<button
+            data-testid="pr-automation-read-retry"
+            ?disabled=${!controller.canRetryRead}
+            @click=${() => void controller.retryReadErrors()}
+          >
+            Retry configuration
+          </button>`
+        : nothing}
       ${keyed(
         `${this.editor ?? ''}:${this.target() ?? ''}:${this.draftId ?? ''}`,
         this.renderEditor(disabled),
@@ -1162,13 +1171,6 @@ export class PRAutomationPanel extends LitElement {
     return html`<section class="automation-management" aria-label="PR automation">
       <div class="row">
         <h2>Automation</h2>
-        <span class="spacer"></span
-        ><button
-          ?disabled=${disabled || controller.loading}
-          @click=${() => void controller.refresh()}
-        >
-          ${controller.loading ? 'Refreshing…' : 'Refresh configuration'}
-        </button>
       </div>
       <div class="row" role="tablist" aria-label="PR automation views">
         ${(['rules', 'policies', 'attention'] as const).map(

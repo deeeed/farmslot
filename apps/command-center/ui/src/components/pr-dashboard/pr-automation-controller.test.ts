@@ -99,8 +99,32 @@ test('PR consumers observe canonical reads; stale actions and previous-owner com
   complete({ changed: true });
   assert.equal(await pending, undefined);
   assert.equal(controller.actionError, '');
-  await controller.refresh();
-  assert.equal(watches.retries, 1);
+  controller.hostDisconnected();
+});
+
+test('configuration Retry targets only failed reads on a live transport', async () => {
+  const controller = new PRAutomationController(host);
+  const observations = Observation.all.slice(-5);
+  controller.hostConnected();
+  const watches = observations.find((value) => value.query?.method === 'prWatch.list');
+  const rules = observations.find((value) => value.query?.method === 'prRules.list');
+  const push = observations.find((value) => value.query?.method === 'prPush.list');
+  assert(watches && rules && push);
+  watches.publish({ status: 'ready', data: { monitors: [] } });
+  rules.publish({ status: 'ready', data: { teams: [], rules: [], intents: [] } });
+  push.publish({ status: 'ready', data: { attention: [], devices: [], deliveries: [] } });
+  await controller.retryReadErrors();
+  assert.equal(rules.retries, 0, 'Healthy configuration does not need an explicit reread');
+  rules.publish({ status: 'error', error: { code: 'SOURCE_UNAVAILABLE', message: 'Read failed' } });
+  await controller.retryReadErrors();
+  assert.equal(rules.retries, 1);
+  assert.equal(watches.retries, 0);
+  assert.equal(push.retries, 0);
+  gateway.connectionState = 'disconnected';
+  assert.equal(controller.canRetryRead, false);
+  await controller.retryReadErrors();
+  assert.equal(rules.retries, 1, 'Disconnected Retry never queues a read');
+  gateway.connectionState = 'connected';
   controller.hostDisconnected();
 });
 
