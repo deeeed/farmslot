@@ -104,17 +104,35 @@ afterEach(() => {
   connection = 1;
 });
 
-test('analytics filters select shared queries while Refresh retries the current selection', async () => {
+test('analytics filter selections do not retry an unchanged healthy query', async () => {
   const panel = new AnalyticsPanel();
   await panel.load();
   const query = controller();
   assert.equal(query.selected?.method, 'analytics.query');
   assert.equal(query.retries, 0);
   await panel.load();
-  assert.equal(query.retries, 1, 'Retained Refresh retries rather than bypassing the cache');
+  assert.equal(query.retries, 0, 'The shared observer owns updates to the selected query');
   invoke(panel, 'toggleFilter', 'project', 'alpha');
   assert.deepEqual(query.selected?.params, { project: 'alpha' });
   assert.deepEqual(commands, [], 'Read/filter paths never issue commands or direct RPC reads');
+});
+
+test('updating a relative time window advances its bound without retrying the old query', async (t) => {
+  let now = Date.parse('2026-10-25T01:00:00.000Z');
+  t.mock.method(Date, 'now', () => now);
+  const panel = new AnalyticsPanel();
+  invoke(panel, 'setWindow', '24h');
+  const query = controller();
+  assert.deepEqual(query.selected?.params, { since: '2026-10-24T01:00:00.000Z' });
+  const firstId = query.selected?.id;
+  now += 60_000;
+  await panel.load();
+  assert.deepEqual(query.selected?.params, { since: '2026-10-24T01:01:00.000Z' });
+  assert.notEqual(query.selected?.id, firstId);
+  assert.equal(query.retries, 0);
+  invoke(panel, 'setWindow', '');
+  assert.deepEqual(query.selected?.params, {});
+  assert.deepEqual(commands, []);
 });
 
 test('stale analytics refuses the backfill command at invocation time', async () => {

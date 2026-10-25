@@ -67,7 +67,6 @@ export class AnalyticsPanel extends LitElement {
   @state() private error = '';
   @state() private notice = '';
   @state() private commandError = '';
-  private queryId?: string;
   private commandOwner?: string;
   private unsubscribeConnection?: () => void;
   private readonly query = new ResourceQueryController<AnalyticsQueryResult>(this, (state) => {
@@ -352,18 +351,13 @@ export class AnalyticsPanel extends LitElement {
       query = resourceQuery<AnalyticsQueryResult>(Methods.ANALYTICS_QUERY, params);
     } catch (err) {
       // Hash selectors are user input; an invalid query cannot retain the previous filter's data.
-      this.queryId = undefined;
       this.query.setQuery(undefined);
       this.result = null;
       this.loading = false;
       this.error = err instanceof Error ? err.message : String(err);
       return;
     }
-    const sameQuery = this.queryId === query.id;
-    this.queryId = query.id;
     this.query.setQuery(query);
-    // Retain Refresh, including recomputing the selected relative time window.
-    if (sameQuery) await this.query.retry();
   }
 
   private async runBackfill() {
@@ -465,6 +459,7 @@ export class AnalyticsPanel extends LitElement {
               (w) => html`
                 <button
                   class="pill ${this.window === w.token ? 'active' : ''}"
+                  data-window=${w.token}
                   @click=${() => this.setWindow(w.token)}
                 >
                   ${w.label}
@@ -564,9 +559,15 @@ export class AnalyticsPanel extends LitElement {
           ${this.hasActiveFilters
             ? html`<button @click=${() => this.clearAll()}>Clear filters</button>`
             : nothing}
-          <button @click=${() => this.load()} ?disabled=${this.loading}>
-            ${this.loading ? 'Loading…' : 'Refresh'}
-          </button>
+          ${this.window
+            ? html`<button
+                data-action="update-window"
+                @click=${() => this.load()}
+                ?disabled=${this.loading}
+              >
+                Update time window
+              </button>`
+            : nothing}
           <button
             @click=${() => this.runBackfill()}
             ?disabled=${this.backfilling || !this.query.ready}
@@ -577,7 +578,20 @@ export class AnalyticsPanel extends LitElement {
       </div>
 
       ${this.staleNotice ? html`<p data-analytics-stale>${this.staleNotice}</p>` : nothing}
-      ${this.error ? html`<div class="error">${this.error}</div>` : nothing}
+      ${this.error
+        ? html`<div class="error" role="alert">
+            ${this.error}
+            ${this.query.state.error
+              ? html`<button
+                  data-action="retry"
+                  @click=${() => this.query.retry()}
+                  ?disabled=${this.loading}
+                >
+                  Retry
+                </button>`
+              : nothing}
+          </div>`
+        : nothing}
       ${this.commandError ? html`<div class="error">${this.commandError}</div>` : nothing}
       ${this.notice ? html`<div class="notice">${this.notice}</div>` : nothing}
       ${!r

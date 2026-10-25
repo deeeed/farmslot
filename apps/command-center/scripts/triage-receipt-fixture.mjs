@@ -61,7 +61,10 @@ if (mode === 'setup') {
   };
   await writeFile(output, JSON.stringify(fixture) + '\n', { flag: 'wx', mode: 0o600 });
   const checkpoint = () => writeFile(output, JSON.stringify(fixture) + '\n', { mode: 0o600 });
-  if (process.env.FARMSLOT_ASSESSMENT_HISTORY_PROOF === '1') {
+  if (
+    process.env.FARMSLOT_ASSESSMENT_HISTORY_PROOF === '1' ||
+    process.env.FARMSLOT_ANALYTICS_OBSERVATION_PROOF === '1'
+  ) {
     const farm = path.resolve(process.env.FARMSLOT_ROOT);
     const directory = path.resolve(
       process.env.FARMSLOT_ANALYTICS_DIR ?? path.join(farm, '.runs', 'analytics'),

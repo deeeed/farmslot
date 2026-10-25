@@ -23,9 +23,13 @@ export async function startPlanningRaceProxy({
   assert.equal(target.port, '7913', 'Use the isolated proof gateway');
   assert.equal(port, 7915, 'Use the isolated browser race proxy');
   assert(
-    ['backlog.list', 'roadmap.list', 'intelligence.triage.get', 'assessment.summary'].includes(
-      method,
-    ),
+    [
+      'backlog.list',
+      'roadmap.list',
+      'intelligence.triage.get',
+      'assessment.summary',
+      'analytics.query',
+    ].includes(method),
   );
   const artifacts = await realpath(directory);
   const owner = randomUUID();
@@ -43,11 +47,13 @@ export async function startPlanningRaceProxy({
   const duplicates = [];
   const authentications = [];
   const barrierReplies = [];
+  const analyticsReplies = [];
   const observedReads = {};
   const commands = {
     'intelligence.triage.analyze': 0,
     'intelligence.triage.feedback': 0,
     'run.resolveDecision': 0,
+    'analytics.backfill': 0,
   };
   let persistence = Promise.resolve();
   const status = () => ({
@@ -62,6 +68,7 @@ export async function startPlanningRaceProxy({
     method,
     authentications,
     barrierReplies,
+    analyticsReplies,
     commands,
     observedReads,
     held: held?.receipt,
@@ -199,16 +206,14 @@ export async function startPlanningRaceProxy({
         }
         if (frame.type === 'req' && frame.method === 'auth.connect') pair.authRequestId = frame.id;
         if (
-          method === 'assessment.summary' &&
           frame.type === 'req' &&
-          ['assessment.summary', 'assessment.list', 'assessment.get', 'run.get'].includes(
-            frame.method,
-          )
+          ((method === 'assessment.summary' &&
+            ['assessment.summary', 'assessment.list', 'assessment.get', 'run.get'].includes(
+              frame.method,
+            )) ||
+            (method === 'analytics.query' && frame.method === method))
         ) {
-          assert(
-            frame.resourceRead?.version === 1,
-            'Assessment and outcome reads must be observed',
-          );
+          assert(frame.resourceRead?.version === 1, 'Domain reads must be observed');
           observedReads[frame.method] = (observedReads[frame.method] ?? 0) + 1;
           void persist();
         }
@@ -216,11 +221,16 @@ export async function startPlanningRaceProxy({
           commands[frame.method]++;
           void persist();
         }
-        if (frame.type === 'req' && frame.method === 'backlog.list') {
+        if (
+          frame.type === 'req' &&
+          (frame.method === 'backlog.list' ||
+            (method === 'analytics.query' && frame.method === method))
+        ) {
           assert(pair.reads.size < 100);
           pair.reads.set(frame.id, {
             requestAt: Date.now(),
             observed: frame.resourceRead?.version === 1,
+            method: frame.method,
           });
         }
         if (frame.type === 'req' && frame.method === method) {
@@ -281,6 +291,17 @@ export async function startPlanningRaceProxy({
         }
         const read = frame.type === 'res' ? pair.reads.get(frame.id) : undefined;
         if (read) pair.reads.delete(frame.id);
+        if (read?.method === 'analytics.query') {
+          analyticsReplies.push({
+            connection: pair.connection,
+            requestAt: read.requestAt,
+            repliedAt: Date.now(),
+            ok: frame.ok,
+            error: frame.error,
+            resourceState: frame.resourceState,
+          });
+          void persist();
+        }
         if (candidate && frame.type === 'res' && frame.id === candidate.id) {
           assert(frame.ok && frame.resourceState?.epoch && frame.payload);
           assert(pair.authentication, 'Bind held data to the actual authenticated connection');
@@ -320,10 +341,12 @@ export async function startPlanningRaceProxy({
         }
         if (frame.type === 'event' && frame.event === 'resource.changed') {
           const changes = frame.payload?.changes?.filter((row) =>
-            method === 'intelligence.triage.get'
-              ? row.key.family === 'assessment' && row.key.scope === 'farm'
-              : row.key.family === 'planning' &&
-                row.key.collection === (method === 'roadmap.list' ? 'roadmap' : 'backlog'),
+            method === 'analytics.query'
+              ? row.key.family === 'analytics' && row.key.scope === 'farm'
+              : method === 'intelligence.triage.get'
+                ? row.key.family === 'assessment' && row.key.scope === 'farm'
+                : row.key.family === 'planning' &&
+                  row.key.collection === (method === 'roadmap.list' ? 'roadmap' : 'backlog'),
           );
           if (changes?.length) {
             assert(events.length < 100);
