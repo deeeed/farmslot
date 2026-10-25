@@ -44,6 +44,10 @@ const wait = async (predicate, label) => {
   }
 };
 const has = (value, label) => value.nodes.some((node) => node.label === label);
+const hasButton = (value, label) =>
+  value.nodes.some(
+    (node) => node.label === label && /button/i.test(node.type) && node.enabled !== false,
+  );
 const reveal = async (id) => {
   for (let attempt = 0; attempt < 6; attempt++) {
     const value = await snapshot();
@@ -116,11 +120,16 @@ try {
 
   await reveal('fleet-release-proof-unpublished');
   await press('id="fleet-release-proof-unpublished"');
+  const inspected = await wait(
+    (value) => has(value, 'Keep work') || hasButton(value, 'Release and update to main'),
+    'unpublished workspace inspection',
+  );
+  if (!has(inspected, 'Keep work')) await press('role="button" label="Release and update to main"');
   await wait((value) => has(value, 'Keep work'), 'discard warning');
   await capture('native-discard-warning');
   await press('label="Keep work"');
   unchanged();
-  await press('label="Release and update to main"');
+  await press('role="button" label="Release and update to main"');
   await wait((value) => has(value, 'Keep work'), 'renewed discard warning');
   // A real edit after the confirmation was created, with unchanged HEAD and slot epoch.
   const changedWork = originalWork + 'changed after confirmation\n';
@@ -135,8 +144,11 @@ try {
   await capture('native-changed-content-refused');
 
   await press('label="Inspect again"');
-  await wait((value) => has(value, 'Release and update to main'), 'fresh workspace inspection');
-  await press('label="Release and update to main"');
+  await wait(
+    (value) => hasButton(value, 'Release and update to main'),
+    'fresh workspace inspection',
+  );
+  await press('role="button" label="Release and update to main"');
   await wait((value) => has(value, 'Discard local work and update'), 'fresh discard warning');
   await press('label="Discard local work and update"');
   await wait((value) => value.nodes.some((n) => n.label?.startsWith('refreshed')), 'discard');
