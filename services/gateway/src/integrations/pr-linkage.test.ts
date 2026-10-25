@@ -43,7 +43,7 @@ mock.module('./github-client.js', {
 });
 after(() => mock.restoreAll());
 const { findPRNumber } = await import('./pr-linkage.js');
-const { makeRun } = await import('../run-engine/test-fixtures.js');
+const { makeRun, makeReadyGatePackage } = await import('../run-engine/test-fixtures.js');
 
 beforeEach(() => {
   candidate = { number: 193, state: 'CLOSED', headRefOid: unrelatedHead };
@@ -152,6 +152,33 @@ test('a closed PR from an earlier review attempt remains part of this run', asyn
         ],
       },
     },
+  });
+  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
+});
+
+test('a closed PR at the approved publication head stays linked without a review or publication receipt', async () => {
+  const run = makeRun({
+    branch: 'fix/reused',
+    prNumber: candidate.number,
+    decisions: [
+      {
+        id: 'publication',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: '',
+        actions: [],
+        createdAt: '2026-10-26T00:00:00Z',
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: 'owner/repo',
+          branch: 'fix/reused',
+          workerReport: '',
+          diffStat: { files: 1, additions: 1, deletions: 1 },
+          prPackage: makeReadyGatePackage({ headSha: candidate.headRefOid }),
+        },
+      },
+    ],
   });
   assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), candidate.number);
 });

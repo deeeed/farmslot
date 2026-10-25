@@ -53,7 +53,12 @@ function canBindPR(run: Run, ciRepo: string, pr: DiscoveredPR): boolean {
   if (!pr.headRefOid) return false;
   if (
     pr.headRefOid === run.worktreeHeadAtDispatch ||
-    pr.headRefOid === run.reviewResult?.reviewSnapshot?.headSha
+    pr.headRefOid === run.reviewResult?.reviewSnapshot?.headSha ||
+    run.decisions.some(
+      ({ payload }) =>
+        payload?.kind === 'ready' &&
+        (payload.headSha === pr.headRefOid || payload.prPackage?.headSha === pr.headRefOid),
+    )
   )
     return true;
   return (run.engineState?.publishGate?.reviews ?? []).some(
