@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { after, mock, test } from 'node:test';
+import { after, before, describe, mock, test } from 'node:test';
 
 import '../../runtime/mock-pty.test-support.js';
 
@@ -362,4 +362,99 @@ test('nudge accepts a signed merge of unsigned publication-base history and stil
     'test: unsigned new contribution',
   );
   await assert.rejects(verifyWorkerPushedBranch(run.id, slotId), /Unsigned outgoing commit/);
+});
+
+describe('unfetched PR signature bases', () => {
+  const branch = 'never-fetched-pr';
+  let published = '';
+  let signedHead = '';
+  before(() => {
+    const remote = path.join(root, 'unfetched-pr.git');
+    git('init', '-q', '--bare', remote);
+    git('remote', 'add', 'origin', remote);
+    git('config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+    git('push', '-q', 'origin', `${main}:refs/heads/main`);
+    git('update-ref', 'refs/remotes/origin/main', main);
+    git('checkout', '-q', '-B', 'previous-finished-task', main);
+    git(
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'test: published PR author',
+    );
+    published = git('rev-parse', 'HEAD');
+    git('push', '-q', 'origin', `${published}:refs/heads/${branch}`);
+    git('reset', '--hard', main);
+    git('commit', '-q', '--allow-empty', '-m', 'test: signed previous task');
+    signedHead = git('rev-parse', 'HEAD');
+    assert.equal(git('for-each-ref', '--format=%(refname)', `refs/remotes/origin/${branch}`), '');
+  });
+  after(() => git('remote', 'remove', 'origin'));
+
+  async function pendingRun(t: test.TestContext, target: string) {
+    const run = store.createRun({
+      flowType: 'update-branch',
+      project: 'proof',
+      ticketOrPr: 'example/repo#138',
+    });
+    store.updateRun(run.id, { slotId, branch: target, prNumber: 138 });
+    t.after(async () => {
+      store.updateRun(run.id, { status: 'done' });
+      await store.deleteRun(run.id);
+    });
+    const { recordRetainedPrBaseline } = await import('./worktree-baseline.js');
+    const vars = await core.loadSlotVars(slotId);
+    return { run, record: () => recordRetainedPrBaseline(run.id, vars) };
+  }
+
+  test('update-branch fetches a never-fetched PR ref before capturing its inherited baseline', async (t) => {
+    const f = await pendingRun(t, branch);
+    await f.record();
+    assert.equal(git('rev-parse', `refs/remotes/origin/${branch}`), published);
+    assert.equal(git('branch', '--show-current'), 'previous-finished-task');
+    assert.equal(git('rev-parse', 'HEAD'), signedHead);
+    assert.equal(store.getRun(f.run.id)?.worktreeHeadAtDispatch, signedHead);
+  });
+
+  test('fetching an unfetched PR ref still refuses unsigned local work without a baseline', async (t) => {
+    git('update-ref', '-d', `refs/remotes/origin/${branch}`);
+    git(
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'test: unsigned inherited work',
+    );
+    const before = git('rev-parse', 'HEAD');
+    const f = await pendingRun(t, branch);
+    await assert.rejects(f.record(), /Unsigned outgoing commit/);
+    assert.equal(git('rev-parse', `refs/remotes/origin/${branch}`), published);
+    assert.equal(git('rev-parse', 'HEAD'), before);
+    assert.equal(store.getRun(f.run.id)?.worktreeHeadAtDispatch, undefined);
+  });
+
+  test('an unavailable PR branch names the fetch refusal and does not capture a baseline', async (t) => {
+    const before = git('rev-parse', 'HEAD');
+    const f = await pendingRun(t, 'unavailable-pr');
+    await assert.rejects(
+      f.record(),
+      /Cannot fetch PR branch unavailable-pr before checking inherited commit signatures/,
+    );
+    assert.equal(git('rev-parse', 'HEAD'), before);
+    assert.equal(store.getRun(f.run.id)?.worktreeHeadAtDispatch, undefined);
+  });
+
+  test('disabled signing still skips remote-ref requirements', async (t) => {
+    git('config', 'commit.gpgsign', 'false');
+    t.after(() => git('config', 'commit.gpgsign', 'true'));
+    const before = git('rev-parse', 'HEAD');
+    const f = await pendingRun(t, 'not-fetched-signing-off');
+    await f.record();
+    assert.equal(store.getRun(f.run.id)?.worktreeHeadAtDispatch, before);
+  });
 });

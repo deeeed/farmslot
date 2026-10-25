@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Fetch an unfetched PR branch before the inherited-commit signature check, preserving the dispatch checkout and unsigned-work refusal.
 - Release a selected finished checkout before writing the next task, while refusing unpublished work and changed ownership.
 - Reject malformed ticket data at run creation with the exact field that needs correction.
 
