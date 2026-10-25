@@ -31,8 +31,8 @@ observability means `unknown`, even when the screen looks idle.
 
 `send-and-verify.sh` returns JSON and exits nonzero when refused or unverified.
 Native transcripts and hook logs can outgrow the largest string a process holds, so the
-driver reads them in bounded ranges: recent records for questions and hooks, and the session
-header plus records after the send for proof. Native probes take their script on stdin, so
+driver reads them in bounded ranges: the current prompt or turn for questions, recent hook
+records, and the session header plus records after the send for proof. Native probes take their script on stdin, so
 payload size has no argument limit. Proof needs the whole message: a hook digest covers only
 its prefix, so it proves only a message that short.
 It refuses the wrong runner, a shell when a model is expected, a pending question
@@ -82,7 +82,9 @@ compatible structured observability is installed.
 ## Questions and queued input
 
 Question details come from unresolved native `AskUserQuestion` or
-`request_user_input` calls and matching tool results. A visible menu or question
+`request_user_input` calls and matching tool results. Async `request_user_input_async`
+questions stay open after their acknowledgement until answered, superseded by a new
+prompt, or their turn ends. A visible menu or question
 also blocks delivery. Surface the captured question to the lead; never guess an answer.
 
 For an explicit answer, first inspect `question` and `question_fingerprint`.
@@ -97,6 +99,16 @@ navigation keys and explicit `{ "text": "answer" }` actions up to 2048 bytes
 are accepted. A changed question is refused. `response_sent` acknowledges the
 input attempt; it does not claim the runner started a turn. Read native state
 again before continuing. Historical screen questions never authorize a response.
+
+For a collapsed async question editor, explicit `S-Left` opens the first pending
+question; `S-Right` navigates back. For example, a chosen free-text answer is:
+
+```bash
+printf '%s' '["S-Left",{"text":"The explicit answer"},"Enter"]' | scripts/answer-question.sh <pane> codex <question-fingerprint> [trace.jsonl]
+```
+
+Inspect the captured options and choose the required navigation explicitly. The driver
+does not choose an option or open the editor automatically.
 
 Only the bottom composer above the status footer supplies live buffered input.
 Its empty placeholder and historical submitted prompts never count as a buffer.
