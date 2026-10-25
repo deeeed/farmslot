@@ -68,13 +68,16 @@ import { configuredPrepareProfileNames, resolvePrepareProfile } from '../slot/pr
 
 import { inspectReleasableBranchHolders } from './branch-checkout.js';
 import {
+  automaticSlotLoads,
   capturePressureAdmissionDecisions,
   formatPressureRejection,
 } from './pressure-admission.js';
 import {
   activeRunIds,
   activeRunSlotIds,
+  automaticSlotLoadBlocker,
   companionResourceBlocker,
+  compareSlotLoads,
   findBestSlot,
   isCdpLive,
   isDispatchStaleBranch,
@@ -187,10 +190,11 @@ export function findAffinitySlot(
   ticketOrPr: string,
   options?: SlotSelectionOptions,
 ): SlotStatus | null {
+  const ranked = [...slots].sort((a, b) => compareSlotLoads(a, b, options));
   return (
-    slots.find((s) => {
+    ranked.find((s) => {
       const selected = slotSelectionOptionsFor(s, options);
-      if (!selected) return false;
+      if (!selected || automaticSlotLoadBlocker(s, selected)) return false;
       if (
         options?.plans &&
         (selected.pressureRejectedMachines?.has(s.machine) ||
@@ -1331,6 +1335,9 @@ export function resolveDispatchPreviewFromFleet(
     releasableBranchHolderIds: options?.releasableBranchHolderIds,
     projectConfigs,
     pressureRejectedMachines,
+    ...(!params.slotId && pressureDecisions
+      ? { automaticLoads: automaticSlotLoads(pressureDecisions) }
+      : {}),
     parkPreservedSlotIds: options?.parkPreservedSlotIds,
     plans: options?.plans,
   };
@@ -1379,6 +1386,7 @@ export function resolveDispatchPreviewFromFleet(
     if (err) throw new Error(`Slot ${params.slotId}: ${err}`);
     slotInfo = found;
   } else {
+    const best = findBestSlot(slots, params.project, selectionOptions);
     // PR affinity: for pr-complete and review-pr, prefer slot already on this PR's branch
     if (params.flowType === 'pr-complete' || params.flowType === 'review-pr') {
       const affinitySlot = findAffinitySlot(slots, params.project, params.ticketOrPr, {
@@ -1391,6 +1399,7 @@ export function resolveDispatchPreviewFromFleet(
       if (
         affinitySlot &&
         !pressureRejectedMachines.has(affinitySlot.machine) &&
+        (!best || compareSlotLoads(affinitySlot, best, selectionOptions) <= 0) &&
         !validateSlotForDispatch(
           affinitySlot,
           slots,
@@ -1419,7 +1428,6 @@ export function resolveDispatchPreviewFromFleet(
       }
     }
 
-    const best = findBestSlot(slots, params.project, selectionOptions);
     if (!best) {
       const allow =
         params.allowedSlots && params.allowedSlots.length > 0 ? new Set(params.allowedSlots) : null;

@@ -72,3 +72,21 @@ ADR-024's interactive PR-complete re-entry changes the dispatch UI control surfa
 
 - ADR-013 (gateway-mediated orchestration) -- mode extends the run state machine
 - ADR-017 (LLM task summaries) -- summary generation works identically for dev flows
+
+## Amendment 1: CI-watch follow-ups inherit run mode, 2026-10-25
+
+**Status:** Accepted under the lead-directed follow-up mode repair.
+**Specification:** [Follow-up execution mode](../reference/ci-decision-check-context.md#follow-up-execution-mode).
+
+A CI-watch `pr-complete` or `update-branch` follow-up inherits the parent's
+`Run.mode`, including creation after a decision or restart recovery. An autonomous
+parent must not create a child that waits for interactive acceptance approval.
+An interactive parent retains interactive handling. Standalone dispatch keeps its
+existing per-flow defaults and explicit operator choices.
+
+Validation parents retain validation mode. This replaces the previous flow-baseline
+rule for chained runs; interactive families keep their operator handoff.
+
+No new RPC, CLI flag, SDK field or template kind is added. The existing mode
+selects the child's execution contract; runner, model, tier and family context
+continue through their existing inheritance rules.

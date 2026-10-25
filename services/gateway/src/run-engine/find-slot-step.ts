@@ -48,10 +48,13 @@ import {
   inspectReleasableBranchHolders,
   releaseBranchHolderForSelection,
 } from '../methods/dispatch/branch-checkout.js';
+import { automaticSlotLoads } from '../methods/dispatch/pressure-admission.js';
 import {
   activeRunIds,
   activeRunSlotIds,
+  automaticSlotLoadBlocker,
   companionResourceBlocker,
+  compareSlotLoads,
   isCdpLive,
   isFreeSlot,
   isReplaceableWarmSlot,
@@ -78,6 +81,7 @@ import {
   isCancelledSlotHolder,
   reclaimCancelledSlot,
 } from '../run-lifecycle/cancelled-slot-reclaim.js';
+import { reclaimFinishedSlot } from '../run-lifecycle/finished-slot-reclaim.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import {
   assertNativeProfileSlot,
@@ -204,6 +208,7 @@ async function claimSelectedSlot(
   slotId: string,
   runId: string,
   generation: number,
+  emit: BroadcastFn,
   phase: 'preparing' | 'working',
   agent?: 'working',
   opts?: { takeoverLiveOwner?: boolean; reserveOnly?: boolean },
@@ -241,7 +246,7 @@ async function claimSelectedSlot(
       // Record the binding only after source revalidation. Automatic replans keep their
       // original open request, while the claim and any teardown see this exact target.
       if (current?.slotId !== slotId) updateRun(runId, { slotId });
-      return claimAdmittedSlot(slotId, runId, generation, phase, agent, opts);
+      return claimAdmittedSlot(slotId, runId, generation, emit, phase, agent, opts);
     },
     { nodeId: pool?.machine },
   );
@@ -251,6 +256,7 @@ async function claimAdmittedSlot(
   slotId: string,
   runId: string,
   generation: number,
+  emit: BroadcastFn,
   phase: 'preparing' | 'working',
   agent?: 'working',
   opts?: { takeoverLiveOwner?: boolean; reserveOnly?: boolean },
@@ -297,8 +303,11 @@ async function claimAdmittedSlot(
     }
   }
 
-  if (!run.engineState?.flags?.skipPrepare)
+  if (!run.engineState?.flags?.skipPrepare) {
+    if (!run.engineState?.flags?.freshReuse && !opts?.takeoverLiveOwner && !opts?.reserveOnly)
+      await reclaimFinishedSlot(slotId, run, emit);
     await releaseBranchHolderForSelection(slotId, run.branch);
+  }
   await commitSlotClaim(slotId, runId, generation, phase, agent, opts);
   if (selectedExecutionTemplate && !run.executionTemplate) {
     updateRun(runId, { executionTemplate: selectedExecutionTemplate });
@@ -826,7 +835,7 @@ export async function executeFindSlotStep(
     // gate as every other binding; the kill switch is the deliberate bypass.
     await assertEngineBoundSlotPressureAdmitted(runId, run, warmSlot.machine);
     // Take over the parent's ownership fence; DISPATCH decides warm vs fresh after liveness.
-    await claimSelectedSlot(run.slotId, runId, generation, 'working', 'working', {
+    await claimSelectedSlot(run.slotId, runId, generation, broadcastFn, 'working', 'working', {
       takeoverLiveOwner: true,
     });
     return {
@@ -881,7 +890,7 @@ export async function executeFindSlotStep(
     if (wizardSlot) await assertEngineBoundSlotPressureAdmitted(runId, run, wizardSlot.machine);
     // Reserve the handoff exactly like the decision-card path: without this,
     // two wizard nudges racing the same worker would both deliver.
-    await claimSelectedSlot(run.slotId, runId, generation, 'working', 'working', {
+    await claimSelectedSlot(run.slotId, runId, generation, broadcastFn, 'working', 'working', {
       takeoverLiveOwner: true,
     });
     return {
@@ -963,11 +972,11 @@ export async function executeFindSlotStep(
     // the same CAS that refuses foreign reservations. A read-then-teardown
     // check would let a nudge reserve in the gap and have its in-flight
     // delivery killed here. The ordinary claim below consumes the fence.
-    await claimSelectedSlot(run.slotId, runId, generation, 'preparing', undefined, {
+    await claimSelectedSlot(run.slotId, runId, generation, broadcastFn, 'preparing', undefined, {
       ...(replaceableWarm || becameFree ? { reserveOnly: true } : { takeoverLiveOwner: true }),
     });
     await withRunSources(getRun(runId)!, () => prepareSlotForFreshReuse(run.slotId!, runId));
-    await claimSelectedSlot(run.slotId, runId, generation, 'preparing');
+    await claimSelectedSlot(run.slotId, runId, generation, broadcastFn, 'preparing');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
     return {
       inputs,
@@ -994,8 +1003,22 @@ export async function executeFindSlotStep(
     requiredCapabilities,
     sourcePlans,
   );
+  const pressureDecisions = capturePressureAdmissionDecisionsLightweight([
+    ...new Set(
+      fleet.slots.filter((slot) => slot.project === run.project).map((slot) => slot.machine),
+    ),
+  ]);
+  const automaticLoads = run.slotId ? undefined : automaticSlotLoads(pressureDecisions);
+  if (automaticLoads?.size) {
+    inputs.hostLoadSelection = Object.fromEntries(automaticLoads);
+    // Persist exclusions even when every allowed node is overloaded and FIND_SLOT fails.
+    updateRunStep(runId, 'find-slot', { inputs });
+    await persistRunNow(getRun(runId)!, 'find-slot host load selection');
+  }
+  const selectionReason = (machine: string) => automaticLoads?.get(machine)?.reason;
   const selectionOptions: SlotSelectionOptions = {
     ...capabilitySelection,
+    automaticLoads,
     targetBranch,
     releasableBranchHolderIds,
     requiredPrepareProfile,
@@ -1032,7 +1055,10 @@ export async function executeFindSlotStep(
     );
   }
   const freeSlots = projectSlots.filter(isFreeSlot);
-  if (freeSlots.length > 0) await refreshBranches(freeSlots, { force: true });
+  const refreshableSlots = freeSlots.filter(
+    (slot) => !automaticSlotLoadBlocker(slot, selectionOptions),
+  );
+  if (refreshableSlots.length > 0) await refreshBranches(refreshableSlots, { force: true });
   const isEligibleFreeSlot = (slot: (typeof freeSlots)[number]) => {
     const selected = optionsFor(slot);
     return !!selected && !validateSlotForDispatch(slot, fleet.slots, selected);
@@ -1060,6 +1086,7 @@ export async function executeFindSlotStep(
     slotId: s.slot,
     score: isEligibleFreeSlot(s) ? scoreCandidate(s) : -1,
     cdpLive: isCdpLive(s.health.cdp),
+    ...(automaticLoads?.has(s.machine) ? { hostLoad: automaticLoads.get(s.machine) } : {}),
   }));
 
   // Affinity: for review-pr and pr-complete, prefer the held slot already on this branch
@@ -1073,6 +1100,9 @@ export async function executeFindSlotStep(
     });
     if (
       affinitySlot &&
+      !eligibleFreeSlots.some(
+        (slot) => compareSlotLoads(slot, affinitySlot, selectionOptions) < 0,
+      ) &&
       !validateSlotForDispatch(affinitySlot, fleet.slots, optionsFor(affinitySlot))
     ) {
       console.log(
@@ -1080,13 +1110,14 @@ export async function executeFindSlotStep(
       );
       // Held-slot affinity reuse still launches a fresh worker on the machine.
       await assertEngineBoundSlotPressureAdmitted(runId, run, affinitySlot.machine);
-      await claimSelectedSlot(affinitySlot.slot, runId, generation, 'preparing');
+      await claimSelectedSlot(affinitySlot.slot, runId, generation, broadcastFn, 'preparing');
       broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
       return {
         inputs,
         outputs: {
           selectedSlot: affinitySlot.slot,
           selectionMethod: 'affinity',
+          selectionReason: selectionReason(affinitySlot.machine),
           branch: affinitySlot.branch,
           candidateCount: freeSlots.length,
           candidates,
@@ -1102,10 +1133,13 @@ export async function executeFindSlotStep(
     // at the top of the case. Production lane only — collect helper short-circuits on
     // comparison lane to preserve ADR-024 §7 scrub-between-siblings.
     if (run.lane !== 'comparison') {
-      const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
+      const automaticProjectSlots = projectSlots.filter(
+        (slot) => !automaticSlotLoadBlocker(slot, selectionOptions),
+      );
+      const busyMatching = selectBranchAffinityRefreshSlots(automaticProjectSlots);
       if (busyMatching.length > 0) await refreshBranches(busyMatching, { force: true });
       const nudgeCandidates = await collectBranchAffinityNudgeCandidates(
-        fleet.slots,
+        fleet.slots.filter((slot) => !automaticSlotLoadBlocker(slot, selectionOptions)),
         run.project,
         run.ticketOrPr,
         {
@@ -1220,9 +1254,17 @@ export async function executeFindSlotStep(
           // decision-card nudge fail its own eligibility recheck. The wizard-shortcut path
           // doesn't markSlotBusy at all (slot already has agent=working from the prior run);
           // this branch needs the same preservation.
-          await claimSelectedSlot(top.slot.slot, runId, generation, 'working', 'working', {
-            takeoverLiveOwner: true,
-          });
+          await claimSelectedSlot(
+            top.slot.slot,
+            runId,
+            generation,
+            broadcastFn,
+            'working',
+            'working',
+            {
+              takeoverLiveOwner: true,
+            },
+          );
           broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
           return {
             inputs,
@@ -1258,9 +1300,17 @@ export async function executeFindSlotStep(
           await assertEngineBoundSlotPressureAdmitted(runId, run, top.slot.machine);
           // Atomic fence BEFORE destroying the prior worker — same rationale
           // as the freshReuse wizard-shortcut above.
-          await claimSelectedSlot(top.slot.slot, runId, generation, 'preparing', undefined, {
-            takeoverLiveOwner: true,
-          });
+          await claimSelectedSlot(
+            top.slot.slot,
+            runId,
+            generation,
+            broadcastFn,
+            'preparing',
+            undefined,
+            {
+              takeoverLiveOwner: true,
+            },
+          );
           // Bind the slot BEFORE the destructive teardown: if preparation
           // throws, failure cleanup locates the slot via run.slotId and can
           // clear the reservation the fence just wrote.
@@ -1268,7 +1318,7 @@ export async function executeFindSlotStep(
           await withRunSources(getRun(runId)!, () =>
             prepareSlotForFreshReuse(top.slot.slot, runId),
           );
-          await claimSelectedSlot(top.slot.slot, runId, generation, 'preparing');
+          await claimSelectedSlot(top.slot.slot, runId, generation, broadcastFn, 'preparing');
           broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
           return {
             inputs,
@@ -1322,13 +1372,16 @@ export async function executeFindSlotStep(
             const selected = optionsFor(picked);
             if (!selected)
               throw new SourceAdmissionRefusal('Picked slot has no usable source plan');
-            const err = validateSlotForDispatch(picked, freshFleet.slots, selected);
+            const err = validateSlotForDispatch(picked, freshFleet.slots, {
+              ...selected,
+              automaticLoads: undefined,
+            });
             if (err) throw new Error(`Selected slot ${pickedSlotId}: ${err}`);
             // A human pick is not a pressure override. The same admission gate
             // as every other fresh binding, before updateRun/claim.
             await assertEngineBoundSlotPressureAdmitted(runId, run, picked.machine);
             updateRun(runId, { slotId: pickedSlotId });
-            await claimSelectedSlot(pickedSlotId, runId, generation, 'preparing');
+            await claimSelectedSlot(pickedSlotId, runId, generation, broadcastFn, 'preparing');
             broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
             return {
               inputs,
@@ -1343,6 +1396,16 @@ export async function executeFindSlotStep(
         }
       }
     }
+  }
+
+  if (
+    !run.slotId &&
+    freeSlots.length > 0 &&
+    freeSlots.every((slot) => automaticSlotLoadBlocker(slot, selectionOptions))
+  ) {
+    throw new Error(
+      `No allowed free slot below the automatic load threshold: ${[...new Set(freeSlots.map((slot) => automaticSlotLoadBlocker(slot, selectionOptions)))].join(' ')}`,
+    );
   }
 
   // Human intervention when no good candidates exist
@@ -1437,7 +1500,10 @@ export async function executeFindSlotStep(
         });
       const selected = optionsFor(picked);
       if (!selected) throw new SourceAdmissionRefusal('Picked slot has no usable source plan');
-      const pickedSlotError = validateSlotForDispatch(picked, freshFleet.slots, selected);
+      const pickedSlotError = validateSlotForDispatch(picked, freshFleet.slots, {
+        ...selected,
+        automaticLoads: undefined,
+      });
       if (pickedSlotError) throw new Error(`Selected slot ${pickedSlotId}: ${pickedSlotError}`);
       // "Use Selected Slot" is not a pressure override. The same admission gate
       // as every other fresh binding, before updateRun/claim/reset.
@@ -1450,7 +1516,7 @@ export async function executeFindSlotStep(
     // owner's worker is still writing in — and the claim's 'preparing' fence
     // keeps rivals out for the duration of the reset below.
     updateRun(runId, { slotId: pickedSlotId });
-    await claimSelectedSlot(pickedSlotId, runId, generation, 'preparing');
+    await claimSelectedSlot(pickedSlotId, runId, generation, broadcastFn, 'preparing');
 
     // If user requested reset, do it behind the claim fence
     if (resolvedDecision?.selectionData?.resetBranch) {
@@ -1553,7 +1619,7 @@ export async function executeFindSlotStep(
   const slotId = result.preview.slotId;
   if (!slotId) throw new Error('Workspace review must use its workspace allocation path');
   // Mark slot as claimed by this run
-  await claimSelectedSlot(slotId, runId, generation, 'preparing');
+  await claimSelectedSlot(slotId, runId, generation, broadcastFn, 'preparing');
   run = getRun(runId)!;
   // Stamp the slot's persistent runner/model fields now so the UI's slot
   // card surfaces the upcoming worker as soon as the bind happens.
@@ -1616,6 +1682,11 @@ export async function executeFindSlotStep(
       runner: resolvedRunner,
       model: resolvedModel,
       selectionMethod,
+      selectionReason: result.pressureAdmission
+        ? automaticSlotLoads(
+            new Map([[result.pressureAdmission.machine, result.pressureAdmission]]),
+          ).get(result.pressureAdmission.machine)?.reason
+        : selectionReason(fleet.slots.find((slot) => slot.slot === slotId)!.machine),
       candidateCount: freeSlots.length,
       candidates,
     },

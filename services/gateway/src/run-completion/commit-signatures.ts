@@ -1,4 +1,9 @@
-import { type FlowType, isInteractiveDevRun, type Run } from '@farmslot/protocol';
+import {
+  type FlowType,
+  isInteractiveDevRun,
+  remoteBranchRefspec,
+  type Run,
+} from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -29,10 +34,34 @@ export async function assertCommitSignatures(
   baseRef: string,
   headRef = 'HEAD',
   inheritedHeadSha?: string,
+  fetchMissingBranch?: string,
 ): Promise<void> {
   const identity = await readGitIdentity(vars);
   if (!isGitTrue(loadGitIdentity()?.['commit.gpgsign']) && !isGitTrue(identity['commit.gpgsign']))
     return;
+  if (fetchMissingBranch) {
+    const git = `git -C ${shellQuote(vars.remoteRepo)}`;
+    const present = await execOnSlot(
+      vars,
+      `${git} show-ref --verify --quiet ${shellQuote(baseRef)}`,
+      { timeout: 10_000 },
+    );
+    if (present.exitCode === 1) {
+      const fetched = await execOnSlot(
+        vars,
+        `${git} fetch origin ${shellQuote(remoteBranchRefspec(fetchMissingBranch))}`,
+        { timeout: 30_000 },
+      );
+      if (fetched.exitCode !== 0)
+        throw new Error(
+          `Cannot fetch PR branch ${fetchMissingBranch} before checking inherited commit signatures: ${fetched.stderr.trim() || fetched.stdout.trim()}`,
+        );
+    } else if (present.exitCode !== 0) {
+      throw new Error(
+        `Cannot read signature base ${baseRef}: ${present.stderr.trim() || present.stdout.trim()}`,
+      );
+    }
+  }
   // Check only the contribution, including merges, never trusted base history.
   // Read headers directly so missing local public keys cannot masquerade as
   // missing signatures. GitHub still owns account/signature verification.
@@ -76,6 +105,7 @@ export async function assertInheritedPrCommitsSigned(
     `refs/remotes/origin/${run.branch}`,
     headRef,
     `refs/remotes/origin/${base}`,
+    run.branch,
   );
 }
 

@@ -530,6 +530,12 @@ post-publication target MUST be the adopted PR without reuse of the older packag
 
 ## Pipeline settlement
 
+Archive and delete MUST confirm an owned terminal worker's release before
+evicting its live run record. Done/failed runs MUST keep their checkout; cancelled
+runs retain ADR-054's explicit-eviction reset policy. Cleanup MUST retain the
+record on an unconfirmed release and MUST NOT tear down a successor's slot.
+Closeout and completion-recovery holds retain the refusals below.
+
 Pipeline entry and restart recovery MUST use the same step-to-status projection.
 A refused COMPLETE or FINALIZE prerequisite ends the pipeline as `needs-decision`
 when the run delivered a result, otherwise as `failed`; it MUST NOT leave the run

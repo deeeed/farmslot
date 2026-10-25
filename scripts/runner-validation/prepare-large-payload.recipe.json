@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Prepare transfers large payloads without shell argv",
+  "description": "Use a disposable authenticated gateway, real files and Bash, with substituted tmux transport. Transfer a 1.5 MiB diff through normal prepare and the existing node file API. No product slot or real tmux server.",
+  "workflow": {
+    "entry": "prepare",
+    "nodes": {
+      "prepare": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --import ./services/gateway/src/runtime/mock-pty.test-support.ts scripts/runner-validation/gateway/prepare-large-payload.mts",
+        "timeout_ms": 120000,
+        "intent": "The actual prepare path preserves large diff bytes while exec commands stay small, and the node file API preserves the same bytes and mode.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

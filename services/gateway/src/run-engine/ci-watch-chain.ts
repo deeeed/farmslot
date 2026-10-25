@@ -1,7 +1,6 @@
 import {
   adoptedPublicationTarget,
   type FlowType,
-  modeForFlow,
   PR_BOUND_FLOW_TYPES,
   type Run,
   type RunCreateParams,
@@ -78,10 +77,8 @@ export function buildCIWatchChainedRunParams(
       model: current.metrics.model ?? undefined,
       runner: current.metrics.runner ?? undefined,
       effort: current.effort,
-      // Headless CI-watch follow-ups (pr-complete / update-branch) always use the
-      // flow baseline mode. Interactive belongs on the operator's initial worker
-      // (e.g. dev), not on chained fix loops inherited via current.mode.
-      mode: modeForFlow(flowType),
+      // Continue the execution mode the operator chose for this run family.
+      mode: current.mode,
       // Chained CI-watch runs inherit parent's safety tier (ADR-023) and
       // the operator's machine/allowed-slot restriction so the chain
       // doesn't leak onto a machine the user filtered out.
