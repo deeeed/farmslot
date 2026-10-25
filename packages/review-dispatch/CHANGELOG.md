@@ -16,6 +16,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.0 - 2026-10-26
+
+- Share fleet workspace rows, safe bulk release, discard confirmation and recovery progress between both operator apps.
+
 ## 0.19.0 - 2026-10-25
 
 - Show original and derived acceptance, source links, inherited proof, pending instructions and exclusions consistently in both clients.

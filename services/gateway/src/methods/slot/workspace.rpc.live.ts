@@ -1,12 +1,13 @@
 // Opt-in authenticated RPC proof with real Git/fixtures and disposable slots.
 // No product checkout, model turn or tmux server. PTY is the only substituted transport.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import type { FleetStatusResult, SlotRefreshResult } from '@farmslot/protocol';
 
@@ -17,7 +18,7 @@ const source = fileURLToPath(new URL('../../../../../', import.meta.url));
 
 test(
   'fenced recovery verifies default and fixtures; changed dirt cannot reuse confirmation',
-  { timeout: uiProof ? 8 * 60 * 60_000 : 600_000 },
+  { timeout: uiProof ? 8 * 60 * 60_000 : 20 * 60_000 },
   async (t) => {
     const output = process.env.FARMSLOT_WORKSPACE_PROOF_OUT;
     assert.ok(output, 'set FARMSLOT_WORKSPACE_PROOF_OUT');
@@ -395,6 +396,26 @@ test(
     assert.equal(held.lifecycle, 'held');
     assert.equal(held.phase, 'occupied');
     assert.equal(held.workspace_recovery.phase, 'fixtures');
+    await core.updateSlotStatus('proof-slot', {
+      lifecycle: 'busy',
+      phase: 'releasing',
+      releasing_since: '2020-01-01T00:00:00Z',
+    });
+    const restart = await promisify(execFile)(
+      process.execPath,
+      [
+        '--experimental-test-module-mocks',
+        '--import',
+        'tsx',
+        fileURLToPath(new URL('./workspace-restart.live-support.ts', import.meta.url)),
+      ],
+      { cwd: source, env: process.env, timeout: 120_000 },
+    );
+    assert.match(restart.stdout, /FRESH_PROCESS_RECOVERY_HELD/);
+    const restartedRow = await core.readSlotRow('proof-slot');
+    assert.equal(restartedRow?.lifecycle, 'held');
+    assert.equal(restartedRow?.phase, 'occupied');
+    assert.deepEqual(restartedRow?.workspace_recovery, held.workspace_recovery);
     const reset = await core.resetSlotIf('proof-slot', () => true);
     assert.equal(reset, false);
     const claim = await core.claimSlotStatusIf('proof-slot', () => true, { lifecycle: 'busy' });
@@ -463,7 +484,26 @@ test(
     assert.equal(git(linkedRepo, 'branch', '--show-current'), 'wt/workspace-proof-linked');
     assert.equal(git(linkedRepo, 'rev-parse', 'HEAD'), git(linkedRepo, 'rev-parse', 'origin/main'));
     assert.equal(await readFile(path.join(linkedRepo, 'fixture.txt'), 'utf8'), 'synced fixture\n');
+    for (const [key, value] of [
+      ['user.name', 'Fixture'],
+      ['user.email', 'fixture@example.invalid'],
+      ['commit.gpgsign', 'false'],
+      ['core.hooksPath', '/dev/null'],
+    ])
+      git(emptyRepo, 'config', key, value);
+    git(emptyRepo, 'checkout', '-qb', 'squashed-deleted');
+    await writeFile(path.join(emptyRepo, 'squash.txt'), 'squashed work\n');
+    git(emptyRepo, 'add', 'squash.txt');
+    git(emptyRepo, 'commit', '-qm', 'test: branch work');
+    git(emptyRepo, 'push', '-qu', 'origin', 'squashed-deleted');
+    await writeFile(path.join(seed, 'squash.txt'), 'squashed work\n');
+    git(seed, 'add', 'squash.txt');
+    git(seed, 'commit', '-qm', 'test: squash merged work');
+    git(seed, 'push', '-q', remote, 'main');
+    git(emptyRepo, 'push', '-q', 'origin', '--delete', 'squashed-deleted');
+    git(emptyRepo, 'fetch', '-q', 'origin', 'main');
     const emptyWork = await inspectSlotWorkspace('proof-empty');
+    assert.equal(emptyWork.publication, 'merged', 'Deleted squash branch is covered by its patch');
     const emptyRelease = await call<SlotRefreshResult>('slot.refresh', {
       slotId: 'proof-empty',
       release: true,
@@ -478,6 +518,7 @@ test(
       refused,
       confirmed,
       failed,
+      restart: { held: true, freshProcess: true },
       retried,
       baselineRefresh,
       ownedRelease,
@@ -486,6 +527,7 @@ test(
       unknownRefused,
       linkedRelease,
       emptyRelease,
+      deletedSquashMerged: emptyWork.publication === 'merged',
       branch: git(repo, 'branch', '--show-current'),
       head: git(repo, 'rev-parse', 'HEAD'),
       row,

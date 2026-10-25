@@ -19,7 +19,11 @@ assert.equal(device.name, 'Fleet recovery proof', 'Use a dedicated proof simulat
 for (const repo of [context.repo, context.secondRepo, context.localRepo])
   assert.ok(fs.realpathSync(repo).startsWith(root + path.sep));
 const client = createAgentDeviceClient({ stateDir: device.deviceStateDir });
-const selection = { session: device.session, platform: 'ios', udid: device.udid };
+const selection = {
+  session: device.session,
+  platform: device.platform ?? 'ios',
+  ...(device.platform === 'android' ? { serial: device.serial } : { udid: device.udid }),
+};
 const git = (repo, ...args) =>
   execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 const snapshot = () =>
@@ -44,11 +48,18 @@ const reveal = async (id) => {
   for (let attempt = 0; attempt < 6; attempt++) {
     const value = await snapshot();
     const node = value.nodes.find((item) => item.identifier === id);
-    if (node?.rect && node.rect.y > 110 && node.rect.y + node.rect.height < 775) return;
+    const screen = value.nodes[0]?.rect;
+    assert.ok(screen, 'Native snapshot must expose viewport dimensions');
+    if (
+      node?.rect &&
+      node.rect.y > screen.height * 0.12 &&
+      node.rect.y + node.rect.height < screen.height * 0.88
+    )
+      return;
     await client.interactions.swipe({
       ...selection,
-      from: { x: 200, y: 690 },
-      to: { x: 200, y: 420 },
+      from: { x: screen.width * 0.5, y: screen.height * 0.8 },
+      to: { x: screen.width * 0.5, y: screen.height * 0.4 },
       durationMs: 500,
     });
   }

@@ -20,6 +20,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.73.0 - 2026-10-26
+
+- Expose slot workspace publication, ownership and recovery identity with shared eligibility for guarded fleet release and update.
+
 ## 0.72.0 - 2026-10-25
 
 - Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
