@@ -11,6 +11,11 @@ import type {
 
 import type { AcceptanceStatusLedger } from './acceptance.js';
 import type {
+  AcceptanceExecutionContract,
+  AcceptanceRegistration,
+  AcceptanceReviewCriterion,
+} from './acceptance-registration.js';
+import type {
   AgentContext,
   AgentContextTarget,
   RunnerSessionArchiveRef,
@@ -739,6 +744,9 @@ export interface VisualRepairRecord {
 }
 
 export interface ReviewStatus {
+  acceptanceReviewCoverage?: AcceptanceReviewCriterion[];
+  /** Completion reviews bind the evidence fingerprint captured before their launch. */
+  reviewedInputsFingerprint?: string;
   id: string;
   source?: 'dispatch' | 'human-gate' | 'pipeline';
   runner?: string | null;
@@ -1551,6 +1559,8 @@ export interface ResultDecisionReceipt {
 
 /** Review retained output independently of worker outcome or publication. */
 export interface OutputReviewPayload {
+  /** This captured output holds PR completion, without a publication gate. */
+  completionProof?: PRCompletionProofIdentity;
   artifactBundle?: RunArtifactBundleRef;
   kind: 'output-review';
   claimOverrideReceiptIds?: string[];
@@ -1558,6 +1568,19 @@ export interface OutputReviewPayload {
   visualJudgmentReceiptIds?: string[];
   manifestDigest: string;
   reportPath: string;
+}
+
+export interface PRCompletionProofIdentity {
+  registrationRevision: number;
+  contractRevision: number;
+  headSha: string;
+}
+
+export interface PRCompletionProofHold extends PRCompletionProofIdentity {
+  state: 'held' | 'reviewed';
+  decisionId?: string;
+  resumedGeneration?: number;
+  workerOutcome?: RunMetrics['outcome'];
 }
 
 export interface RunOutput {
@@ -1579,11 +1602,21 @@ export interface RunOutput {
 }
 
 export function runOutputCloseUnavailableReason(run: Run): string | null {
+  if (
+    run.acceptanceProofHold &&
+    run.steps.find(({ name }) => name === 'complete')?.status === 'done'
+  )
+    return 'PR completion has already advanced beyond this proof hold.';
   if (!run.metrics.outcome) return 'Record the worker outcome before closing execution.';
   if (run.park && !['restored', 'cancelled'].includes(run.park.phase))
     return 'Restore or cancel the machine pause before closing this execution.';
   if (
-    run.completionPolicy !== 'artifact-only' ||
+    (run.completionPolicy !== 'artifact-only' &&
+      !(
+        run.flowType === 'pr-complete' &&
+        run.acceptanceContractVersion === 1 &&
+        run.acceptanceProofHold
+      )) ||
     run.lane === 'comparison' ||
     run.engineState?.evalExperiment ||
     run.reviewWorkspace ||
@@ -1612,11 +1645,28 @@ export function runOutputCloseUnavailableReason(run: Run): string | null {
 }
 
 /** Workflow-owned output review policy, shared by planning and retained output presentation. */
-export function runOutputReviewEnabled(
-  run: Pick<Run, 'completionPolicy' | 'lane' | 'engineState' | 'reviewWorkspace'>,
+export function prCompletionClaimReviewSupported(
+  run: Pick<Run, 'lane' | 'engineState' | 'reviewWorkspace'> &
+    Partial<Pick<Run, 'flowType' | 'acceptanceContractVersion'>>,
 ): boolean {
   return (
-    run.completionPolicy === 'artifact-only' &&
+    run.flowType === 'pr-complete' &&
+    run.acceptanceContractVersion === 1 &&
+    run.lane !== 'comparison' &&
+    !run.engineState?.evalExperiment &&
+    !run.reviewWorkspace
+  );
+}
+
+export function runOutputReviewEnabled(
+  run: Pick<Run, 'completionPolicy' | 'lane' | 'engineState' | 'reviewWorkspace'> &
+    Partial<Pick<Run, 'flowType' | 'acceptanceContractVersion' | 'acceptanceProofHold'>>,
+): boolean {
+  return (
+    (run.completionPolicy === 'artifact-only' ||
+      Boolean(
+        prCompletionClaimReviewSupported(run) && run.acceptanceProofHold?.state === 'held',
+      )) &&
     run.lane !== 'comparison' &&
     !run.engineState?.evalExperiment &&
     !run.reviewWorkspace
@@ -2760,6 +2810,12 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  acceptanceProofHold?: PRCompletionProofHold;
+  /** New PR-completion consumers; retained runs keep their frozen contracts. */
+  acceptanceContractVersion?: 1;
+  acceptanceExecutionContract?: AcceptanceExecutionContract;
+  /** ADR-062: immutable original criteria plus validated source-linked appends. */
+  acceptanceRegistration?: AcceptanceRegistration;
   /** Gateway-stamped at creation. Absence identifies retained pre-cutover runs; never backfilled. */
   recordedEvidenceContractVersion?: number;
   /** Append-only gateway-authorised human exceptions; engine evidence stays immutable. */
@@ -3063,6 +3119,8 @@ export interface RunEngineState {
   reviewedInputs?: { fingerprint: string; recordedAt: string; rerunFor?: string };
   /** The same fingerprint, taken when the latest review document was written. */
   reviewInputsAtLaunch?: string;
+  /** The exact review-mode obligations included in the generated request. */
+  reviewAcceptanceAtLaunch?: AcceptanceReviewCriterion[];
   /** Persisted before branch mutations. A matching false value proves an early
    * prepare failure never reached branch setup; absent historical state is unknown. */
   prepareBranch?: { slotId: string; branch: string; started: boolean };
@@ -3393,6 +3451,16 @@ export type RunLane = 'production' | 'validation' | 'comparison';
  * runtime and uses `--force-with-lease` for rebase pushes.
  */
 export type BranchUpdateStrategy = 'rebase' | 'merge' | 'project-default';
+
+/** Retained runs keep their pipeline; new completion runs can schedule claim review. */
+export function pipelineStepsForRun(
+  run: Pick<Run, 'flowType' | 'acceptanceContractVersion'>,
+): PipelineStep[] {
+  const steps = FLOW_STEPS[run.flowType];
+  return run.flowType === 'pr-complete' && run.acceptanceContractVersion === 1
+    ? steps.flatMap((step) => (step === 'complete' ? ['review', step] : [step]))
+    : steps;
+}
 
 export const BRANCH_UPDATE_STRATEGIES: readonly BranchUpdateStrategy[] = [
   'rebase',

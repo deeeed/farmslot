@@ -42,7 +42,12 @@ import {
   type TmuxWindow,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
-import { listSlotTmuxWindows, slotTmuxWindowTarget } from '@farmslot/review-dispatch';
+import {
+  listSlotTmuxWindows,
+  type OperatorMessageInput,
+  operatorMessageInput,
+  slotTmuxWindowTarget,
+} from '@farmslot/review-dispatch';
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
@@ -84,6 +89,7 @@ import {
   matchesCompanionTerminalTarget,
   targetWarningForRun,
 } from '../../lib/terminal-target';
+import { terminalTextRequest } from '../../lib/terminal-text-request';
 import { baseStyles, colors, spacing } from '../../lib/theme';
 import {
   downloadVoiceAsrModel,
@@ -222,6 +228,7 @@ function recipeRunIdForVisualPair(
 }
 
 export default function TerminalScreen() {
+  const pendingOperatorMessage = useRef<OperatorMessageInput | null>(null);
   const {
     slotId: requestedSlotId,
     runId,
@@ -795,10 +802,17 @@ export default function TerminalScreen() {
       try {
         command = beginTerminalCommand('send');
         if (!command) return false;
+        const message =
+          pendingOperatorMessage.current?.text === trimmedText
+            ? pendingOperatorMessage.current
+            : operatorMessageInput(trimmedText);
+        pendingOperatorMessage.current = message;
         setIsSending(true);
         inputCommands.current++;
-        await client.request('terminal.input', { ...command.target, data: `${trimmedText}\r` });
+        const request = terminalTextRequest(command.target, message);
+        await client.request(request.method, request.params);
         if (!command.current()) return false;
+        if (pendingOperatorMessage.current === message) pendingOperatorMessage.current = null;
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         if (!command.current()) return false;
         setError(null);

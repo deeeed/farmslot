@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/agent-runtime",
-  "version": "0.38.3",
+  "version": "0.39.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,6 +17,10 @@
     "./scripts/checklist-target.cjs": "./scripts/checklist-target.cjs",
     "./scripts/mark-io.cjs": "./scripts/mark-io.cjs",
     "./scripts/acceptance-ledger.cjs": "./scripts/acceptance-ledger.cjs",
+    "./scripts/acceptance-contract.cjs": {
+      "types": "./scripts/acceptance-contract.d.cts",
+      "default": "./scripts/acceptance-contract.cjs"
+    },
     "./scripts/acceptance-cli.cjs": "./scripts/acceptance-cli.cjs",
     "./scripts/subtask-unit.cjs": "./scripts/subtask-unit.cjs",
     "./scripts/worker-terminal-contract.cjs": "./scripts/worker-terminal-contract.cjs",
@@ -51,7 +55,7 @@
   },
   "scripts": {
     "typecheck": "yarn workspace @farmslot/protocol build && tsc --noEmit --project tsconfig.json",
-    "test": "node --test test/evidence-manifest.test.cjs test/mark-operator-wait.test.cjs test/review-diff-scope.test.cjs test/claim-review-gate.test.mjs test/deterministic-checks.test.cjs && node test/mark-checklist-step.test.cjs && node test/mark-subtask.test.cjs && node --test test/acceptance-ledger.test.cjs test/acceptance-ledger-cutover.test.cjs && node test/checklist-target-sync.test.mjs && node test/acceptance-ledger-sync.test.mjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs && node test/task-init.test.mjs && node --import tsx ../../scripts/e2e-subtask-mark.mts && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/execution-template && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/task-init && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/native",
+    "test": "node --test test/evidence-manifest.test.cjs test/mark-operator-wait.test.cjs test/review-diff-scope.test.cjs test/claim-review-gate.test.mjs test/deterministic-checks.test.cjs && node test/mark-checklist-step.test.cjs && node test/mark-subtask.test.cjs && node --test test/acceptance-ledger.test.cjs test/acceptance-ledger-cutover.test.cjs test/acceptance-contract.test.cjs test/acceptance-derivation.test.cjs && node test/checklist-target-sync.test.mjs && node test/acceptance-ledger-sync.test.mjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs && node test/task-init.test.mjs && node --import tsx ../../scripts/e2e-subtask-mark.mts && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/execution-template && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/task-init && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/native",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\"",
@@ -102,6 +106,7 @@
     "dist/**/*.js.map",
     "scripts/**/*.cjs",
     "scripts/**/*.mjs",
+    "scripts/acceptance-contract.d.cts",
     "scripts/retained-recipe-attempt.d.cts",
     "scripts/execution-template-cli.mjs",
     "scripts/git-diff.d.cts",

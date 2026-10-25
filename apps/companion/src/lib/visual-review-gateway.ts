@@ -9,6 +9,7 @@ import {
   type TerminalSendParams,
 } from '@farmslot/protocol';
 import { type GatewayResourceCache, resourceQuery } from '@farmslot/protocol/client-cache';
+import { operatorMessageInput } from '@farmslot/review-dispatch';
 
 import {
   type ArtifactHttpHeaders,
@@ -159,7 +160,10 @@ export function createVisualReviewGateway(
         throw new Error('The feedback target changed. Review it again before sending.');
       if (!run.slotId || isTerminalRunStatus(run.status))
         throw new Error('This run no longer accepts worker feedback.');
-      await client.request(Methods.TERMINAL_SEND, params);
+      await client.request(Methods.TERMINAL_SEND, {
+        ...params,
+        ...operatorMessageInput(params.text, params.operatorMessageId),
+      });
       assertCurrent();
     },
   };

@@ -1,6 +1,7 @@
 // signal.ts — Worker signal file schema for push-based completion detection.
 // Workers write SIGNAL.json to their task directory; task-watcher detects it.
 
+import type { AcceptanceDerivationResult } from '../contracts/acceptance-registration.js';
 import type {
   AgentRole,
   WorkerTerminalDisposition,
@@ -63,6 +64,8 @@ export interface SubtaskSignal extends WorkerSignal {
   role: 'subtask';
   contextId: string;
   parent: WorkerSignalParentLink;
+  /** A worker proposal; only the gateway run record registers its obligations. */
+  acceptanceDerivation?: AcceptanceDerivationResult;
 }
 
 export type WorkerSignalStatus = WorkerSignal['status'];

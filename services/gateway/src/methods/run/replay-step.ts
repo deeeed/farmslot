@@ -5,12 +5,12 @@ import {
   blockedWorkerRecoveryStep,
   DEFAULT_TASK_DIR,
   Events,
-  FLOW_STEPS,
   type FlowType,
   isCompletionPrerequisiteFailure,
   isInteractiveDevRun,
   isTerminalRunStatus,
   PipelineSteps as PS,
+  pipelineStepsForRun,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
   type QueueClaim,
@@ -954,6 +954,33 @@ export async function runReplayStep(
   return replayRunStepCoalesced(params, emit, hooks);
 }
 
+/** Internal proof continuation keeps validation, acknowledgement and replay serialized. */
+export async function continuePRCompletionStep(
+  runId: string,
+  stepName: 'monitor' | 'review' | 'complete',
+  emit: Emit,
+  acknowledge: () => Promise<boolean>,
+): Promise<RunReplayStepResult & { continued: boolean }> {
+  return withRunTransition(runId, async () => {
+    if (!(await acknowledge())) return { run: getRun(runId)!, continued: false };
+    const result = await replayRunStepCoalesced(
+      { runId, stepName, triggeredBy: 'operator' },
+      emit,
+      {},
+      true,
+    );
+    const run = getRun(runId)!;
+    if (stepName === 'complete' && run.acceptanceProofHold?.state === 'reviewed')
+      updateRun(runId, {
+        acceptanceProofHold: {
+          ...run.acceptanceProofHold,
+          resumedGeneration: run.engineState?.generation ?? 0,
+        },
+      });
+    return { run: getRun(runId) ?? result.run, continued: true };
+  });
+}
+
 async function replayRunStepCoalesced(
   params: RunReplayStepParams,
   emit: Emit,
@@ -1081,7 +1108,7 @@ async function replayRunStep(
   // `dispatching` — claims replaced that weaker status-flag guard.
   const triggeredBy = params.triggeredBy ?? 'operator';
 
-  const flowSteps = FLOW_STEPS[existing.flowType];
+  const flowSteps = pipelineStepsForRun(existing);
   const writeTaskIdx = flowSteps ? flowSteps.indexOf(PS.WRITE_TASK) : -1;
   const replayTargetIdx = flowSteps
     ? flowSteps.indexOf(params.stepName as (typeof flowSteps)[number])
@@ -2095,6 +2122,22 @@ async function replayRunStep(
               const ownerIdx = decisionOwningStepIndex(d.type, flowSteps);
               return ownerIdx < 0 || ownerIdx < targetIdx;
             });
+    // Captured proof remains COMPLETE's evidence source after acknowledgement.
+    // Keep that resolved receipt across replay and uncertain-response retries.
+    const completionProofDecision =
+      existing.flowType === 'pr-complete' && existing.acceptanceProofHold?.state === 'reviewed'
+        ? existing.decisions.find(
+            ({ id, payload }) =>
+              id === existing.acceptanceProofHold?.decisionId &&
+              payload?.kind === 'output-review' &&
+              Boolean(payload.completionProof),
+          )
+        : undefined;
+    if (
+      completionProofDecision &&
+      !clearedDecisions.some(({ id }) => id === completionProofDecision.id)
+    )
+      clearedDecisions.push(completionProofDecision);
 
     // Reset run status, clear error and stale outcome
     const {

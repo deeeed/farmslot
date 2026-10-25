@@ -49,6 +49,8 @@ export interface ProjectExecutionTemplatesConfig {
  * Absolute source paths and environment values intentionally do not belong here.
  */
 export interface ExecutionTemplateReference {
+  /** Explicit first child unit; only PR-completion templates may declare it. */
+  firstSubtask?: 'derive-acceptance';
   id: string;
   sourceId: string;
   flow: string;

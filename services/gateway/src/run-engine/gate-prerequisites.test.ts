@@ -17,6 +17,7 @@ import {
   type RecipeClaimLedger,
   type RecordedEvidencePackageInput,
   type ReviewStatus,
+  type Run,
   type RunDecision,
 } from '@farmslot/protocol';
 
@@ -1824,4 +1825,76 @@ test('an unreadable secret scan fails closed, a verdict holds for its content, a
   assert.ok(again.reasons.some(({ code }) => code === 'publication-secret-values'));
   const clean = await collectRunGateReadiness(makeRun(), prepared, inputs);
   assert.ok(!clean.reasons.some(({ code }) => code === 'publication-secret-values'));
+});
+
+test('completion review claims without a publication package require the current evidence fingerprint', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'completion-review-inputs-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { claims } = await writeReviewClaimPackage(directory);
+  const input = (await readRecordedEvidencePackage(directory)).input;
+  const head = 'a'.repeat(40);
+  const fingerprint = 'f'.repeat(64);
+  const run: Run = {
+    ...makeRun({
+      flowType: 'pr-complete',
+      status: 'completing',
+      lane: 'production',
+      mode: 'autonomous',
+      variant: null,
+    }),
+    acceptanceContractVersion: 1,
+  };
+  run.acceptanceExecutionContract = {
+    schemaVersion: 1,
+    runId: run.id,
+    revision: 1,
+    registrationRevision: 0,
+    baseContractHash: 'b'.repeat(64),
+    inheritedCriterionIds: [],
+    claimReviewGate: false,
+    publicationReview: true,
+    proofModes: [
+      { id: 'AC-1', text: claims.criteria[0].text, proofMode: 'state' },
+      { id: 'AC-2', text: claims.criteria[1].text, proofMode: 'review' },
+    ],
+  };
+  const { reviewAcceptanceCriteria } = await import('../review/acceptance-coverage.js');
+  run.engineState = {
+    publishGate: {
+      reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+      reviews: [
+        {
+          ...certifyingReview(makeReadyGatePackage({ headSha: head })),
+          source: 'pipeline',
+          acceptanceReviewCoverage: reviewAcceptanceCriteria(run),
+          reviewedInputsFingerprint: fingerprint,
+        },
+      ],
+    },
+  };
+  const sources = {
+    deterministic: passed,
+    progress: idle,
+    acceptance: async () => ({
+      criteria: claims.criteria.map(({ id, text }) => ({ id, text })),
+      ledger: claims,
+      issues: [],
+    }),
+    recordedEvidence: async () => [input],
+    prCompletionHead: async () => head,
+    prCompletionInputs: async () => ({ fingerprint, legacyFingerprint: fingerprint }),
+  };
+  const ready = await collectRunGateAssessment(run, null, sources);
+  assert.equal(ready.readiness.state, 'ready', JSON.stringify(ready.readiness.reasons));
+  const stale = await collectRunGateAssessment(run, null, {
+    ...sources,
+    prCompletionInputs: async () => ({
+      fingerprint: 'e'.repeat(64),
+      legacyFingerprint: 'e'.repeat(64),
+    }),
+  });
+  assert.equal(stale.readiness.state, 'not-ready');
+  assert.ok(
+    stale.readiness.reasons.some(({ evidencePolicy }) => evidencePolicy === 'claim-verdict'),
+  );
 });

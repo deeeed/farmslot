@@ -5,12 +5,22 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import type { PressureAdmissionDecision, SlotStatus } from '@farmslot/protocol';
+import type { PressureAdmissionDecision, QueueItem, SlotStatus } from '@farmslot/protocol';
 
-import { queueItemHeldByPressure, selectQueueDispatchSlot } from '../../backlog/dispatch-queue.js';
+import '../../runtime/mock-pty.test-support.js';
+
+import {
+  buildQueuePreviewParams,
+  queueItemHeldByPressure,
+  selectQueueDispatchSlot,
+} from '../../backlog/dispatch-queue.js';
 import { runWithSessionOriginator } from '../../security/work-originator.js';
 
-import { evaluatePressureAdmission, type PressureAdmissionConfig } from './pressure-admission.js';
+import {
+  automaticSlotLoads,
+  evaluatePressureAdmission,
+  type PressureAdmissionConfig,
+} from './pressure-admission.js';
 import {
   resetPressureAdmissionControlCacheForTest,
   setPressureAdmissionEnabled,
@@ -234,6 +244,105 @@ const decisions = new Map<string, PressureAdmissionDecision>([
 ]);
 
 const selectionArtifact: Record<string, unknown> = {};
+
+function loadDecision(machine: string, load1: number): PressureAdmissionDecision {
+  const original = decisionFor(machine, 'green');
+  return {
+    outcome: 'admitted',
+    machine,
+    state: 'disabled',
+    enforced: false,
+    evidence: {
+      ...original.evidence,
+      samples: original.evidence.samples.map((sample) => ({ ...sample, load1 })),
+    },
+  };
+}
+
+test('automatic placement skips load 83/16 with refusal disabled and ranks allowed nodes by load/core', () => {
+  const slots = [
+    slot({ slot: 'hot', machine: 'hot', branch: 'fix/TASK-1' }),
+    slot({ slot: 'medium', machine: 'medium' }),
+    slot({
+      slot: 'light',
+      machine: 'light',
+      health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OFF', fixtures: 'OK' },
+    }),
+  ];
+  const decisions = new Map([
+    ['hot', loadDecision('hot', 83 / 16)],
+    ['medium', loadDecision('medium', 6 / 16)],
+    ['light', loadDecision('light', 1.4 / 8)],
+  ]);
+  const params = {
+    project: 'demo-farm',
+    flowType: 'fix-bug' as const,
+    ticketOrPr: 'TASK-1',
+    targetBranch: 'fix/TASK-1',
+  };
+  const resolve = (allowedSlots?: string[]) =>
+    resolveDispatchPreviewFromFleet({ ...params, allowedSlots }, slots, undefined, {
+      pressureDecisions: decisions,
+    });
+  assert.equal(resolve().preview.slotId, 'light', 'lower load wins over branch and CDP preference');
+  assert.equal(
+    resolve(['hot', 'medium']).preview.slotId,
+    'medium',
+    'allowlist excludes lighter node',
+  );
+  assert.throws(() => resolve(['hot']), /load\/core 5.19 >= 1.50.*skipped/);
+  assert.equal(queueItemHeldByPressure(slots, 'demo-farm', decisions, ['hot']), true);
+  assert.equal(queueItemHeldByPressure(slots, 'demo-farm', decisions), false);
+  assert.equal(
+    resolveDispatchPreviewFromFleet({ ...params, slotId: 'hot' }, slots, undefined, {
+      pressureDecisions: decisions,
+    }).preview.slotId,
+    'hot',
+    'explicit picks retain the opt-in admission policy',
+  );
+  const held = [{ ...slots[0], lifecycle: 'held' as const, branch: 'owner-repo-42' }, slots[1]];
+  assert.equal(
+    resolveDispatchPreviewFromFleet(
+      { ...params, flowType: 'pr-complete', ticketOrPr: 'owner/repo#42' },
+      held,
+      undefined,
+      { pressureDecisions: decisions },
+    ).preview.slotId,
+    'medium',
+    'held affinity cannot bypass overload exclusion',
+  );
+  decisions.set('hot', loadDecision('hot', 1));
+  assert.equal(
+    resolveDispatchPreviewFromFleet(
+      { ...params, flowType: 'pr-complete', ticketOrPr: 'owner/repo#42' },
+      held,
+      undefined,
+      { pressureDecisions: decisions },
+    ).preview.slotId,
+    'medium',
+    'lighter free node wins over an eligible held branch',
+  );
+});
+
+test('automatic load policy uses its existing threshold override and ignores stale evidence', () => {
+  const decision = loadDecision('node', 2);
+  const decisions = new Map([['node', decision]]);
+  assert.equal(automaticSlotLoads(decisions).get('node')?.skipped, true);
+  assert.equal(automaticSlotLoads(decisions, { load1Critical: 3 }).get('node')?.skipped, false);
+  for (const code of ['PRESSURE_EVIDENCE_STALE', 'PRESSURE_EVIDENCE_UNAVAILABLE'] as const) {
+    const stale = { ...decision, advisory: { code, reason: 'No live evidence', causes: [] } };
+    assert.equal(automaticSlotLoads(new Map([['node', stale]])).get('node')?.load1, null);
+  }
+  assert.equal(
+    resolveDispatchPreviewFromFleet(
+      { project: 'demo-farm', flowType: 'dev', ticketOrPr: 'TASK-1' },
+      [slot({ slot: 'unknown', machine: 'unknown' })],
+      undefined,
+      { pressureDecisions: new Map() },
+    ).preview.slotId,
+    'unknown',
+  );
+});
 
 test('automatic selection excludes pressure-rejected machines', () => {
   const result = resolveDispatchPreviewFromFleet(
@@ -468,5 +577,96 @@ after(() => {
       null,
       2,
     ),
+  );
+});
+
+test('automatic placement preserves red headroom ahead of lower load', () => {
+  const light = slot({
+    slot: 'light-red',
+    machine: 'light',
+    hostLoad: { cpuPercent: 20, memoryPercent: 40, diskPercent: 97, headroom: 'red' },
+  });
+  const healthy = slot({ slot: 'healthy', machine: 'healthy' });
+  const pressureDecisions = new Map([
+    ['light', loadDecision('light', 0.1)],
+    ['healthy', loadDecision('healthy', 0.4)],
+  ]);
+  const params = { project: 'demo-farm', flowType: 'dev' as const, ticketOrPr: 'TASK-1' };
+  assert.equal(
+    resolveDispatchPreviewFromFleet(params, [light, healthy], undefined, { pressureDecisions })
+      .preview.slotId,
+    'healthy',
+  );
+  assert.equal(
+    resolveDispatchPreviewFromFleet(
+      { ...params, flowType: 'pr-complete', ticketOrPr: 'owner/repo#42' },
+      [{ ...light, lifecycle: 'held', branch: 'owner-repo-42' }, healthy],
+      undefined,
+      { pressureDecisions },
+    ).preview.slotId,
+    'healthy',
+  );
+});
+
+test('queue load hold includes held PR affinity, including a spread subset', async () => {
+  const slots = [
+    slot({ slot: 'hot', machine: 'hot' }),
+    slot({ slot: 'held', machine: 'light', lifecycle: 'held', branch: 'owner-repo-42' }),
+  ];
+  const pressureDecisions = new Map([
+    ['hot', loadDecision('hot', 83 / 16)],
+    ['light', loadDecision('light', 0.2)],
+  ]);
+  const item: QueueItem = {
+    id: 'load-held',
+    project: 'demo-farm',
+    flowType: 'pr-complete',
+    ticketOrPr: 'owner/repo#42',
+    priority: 1,
+    status: 'queued',
+    createdAt: new Date().toISOString(),
+    allowedSlots: ['hot', 'held'],
+  };
+  const capturePressure = () => pressureDecisions;
+  assert.equal(await selectQueueDispatchSlot(slots, item, { capturePressure }), 'held');
+  const store = await import('../../runs/store.js');
+  const sibling = store.createRun({ flowType: 'dev', project: item.project, ticketOrPr: 'TASK-2' });
+  store.updateRun(sibling.id, {
+    status: 'monitoring',
+    slotId: 'sibling-slot',
+    launchGroupId: 'load-group',
+  });
+  try {
+    assert.equal(
+      await selectQueueDispatchSlot(
+        slots,
+        {
+          ...item,
+          allowedSlots: [...item.allowedSlots!, 'sibling-slot'],
+          launchSlotPolicy: 'spread',
+          launchGroupId: 'load-group',
+        },
+        { capturePressure },
+      ),
+      'held',
+    );
+  } finally {
+    store.updateRun(sibling.id, { status: 'done' });
+    await store.deleteRun(sibling.id);
+  }
+  assert.equal(
+    queueItemHeldByPressure(
+      slots,
+      item.project,
+      pressureDecisions,
+      ['hot'],
+      buildQueuePreviewParams(item),
+    ),
+    true,
+  );
+  pressureDecisions.set('light', loadDecision('light', 4));
+  assert.equal(
+    await selectQueueDispatchSlot(slots, { ...item, allowedSlots: ['held'] }, { capturePressure }),
+    null,
   );
 });

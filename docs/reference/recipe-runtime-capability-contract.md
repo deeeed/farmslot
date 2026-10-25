@@ -419,6 +419,13 @@ separate, also-default-off switch: `dispatch.pressureAdmission.setEnabled`, with
 `FARMSLOT_DISPATCH_PRESSURE_ADMISSION=off|refuse` overriding it per gateway
 process.
 
+Automatic slot placement uses the latest live load-per-core sample even when dispatch
+pressure refusal is off. It skips nodes at or above `FARMSLOT_PRESSURE_LOAD1_CRITICAL`
+(default 1.5) and retains red-headroom priority, then ranks eligible allowed nodes by lower load
+before branch or CDP preference. Unknown or stale load falls back to existing slot ranking after nodes
+with current samples. FIND_SLOT records each node's sample and exclusion reason in
+the run before binding. Explicit slot selections retain the opt-in pressure gate.
+
 ### Affected resources
 
 `retention` is policy: it says what the framework should _want_ at a boundary, and

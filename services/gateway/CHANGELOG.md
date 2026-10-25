@@ -4,6 +4,14 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep original PR-completion criteria and append source-linked review and instruction obligations, with current-head code review and captured visual proof before completion.
+
+- Prefer lightly loaded allowed nodes for automatic slot placement, skip nodes at the load-per-core threshold, and record the selection reasons before writing the task.
+
+- Fetch an unfetched PR branch before the inherited-commit signature check, preserving the dispatch checkout and unsigned-work refusal.
+- Release a selected finished checkout before writing the next task, while refusing unpublished work and changed ownership.
+- Reject malformed ticket data at run creation with the exact field that needs correction.
+
 - Show unanswered structured worker questions as operator decisions, and resume monitoring when the worker records the answer.
 - Stop owned workers before terminal runs leave the live store while preserving finished checkouts, and verify published commits against the actual remote when tracking refs are stale.
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.

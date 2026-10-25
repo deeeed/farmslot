@@ -4,7 +4,19 @@
 
 - Observe native host journal commits and shared account status without replaying commands; preserve structured missing-session errors.
 
+- Ship the acceptance-contract TypeScript declaration in the public package.
+
+- Support acknowledged acceptance derivation and revision-bound proof destinations for PR completion.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.39.1 - 2026-10-25
+
+- Include the acceptance-contract declaration so typed consumers can resolve the exported helper.
+
+## 0.39.0 - 2026-10-25
+
+- Derive PR-completion acceptance through acknowledged checklist children and consume gateway-confirmed proof destinations without changing frozen task contracts.
 
 ## 0.38.3 - 2026-10-24
 

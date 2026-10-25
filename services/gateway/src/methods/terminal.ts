@@ -441,7 +441,10 @@ export async function terminalReinit(
   return { reinitialized: ok };
 }
 
-export async function terminalSend(params: TerminalSendParams): Promise<void> {
+export async function terminalSend(
+  params: TerminalSendParams,
+  emit: EventEmitter = () => {},
+): Promise<{ operatorMessageId: string; delivery: 'confirmed' | 'queued' } | void> {
   if (isWorkspaceTerminal(params)) {
     const { run } = await resolveWorkspaceTerminal(params);
     await workspaceTerminalOperation(run, 'send', {
@@ -450,6 +453,9 @@ export async function terminalSend(params: TerminalSendParams): Promise<void> {
     });
     return;
   }
+  const { operatorMessage } = await import('./run/operator-message.js');
+  const message = await operatorMessage(params, emit);
+  if (message) return message;
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   if ((params.enter ?? true) && params.bareSession !== true && !resolved.runner) {
     throw new Error(

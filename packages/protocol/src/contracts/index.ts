@@ -1,4 +1,5 @@
 export * from './acceptance.js';
+export * from './acceptance-registration.js';
 export * from './agents.js';
 export * from './analytics.js';
 export * from './assessment.js';

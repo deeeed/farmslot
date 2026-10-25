@@ -39,7 +39,7 @@ import {
   watchNodeFile,
 } from '../resources/node-file-observations.js';
 import { publishProgressResources } from '../resources/run-changes.js';
-import { listRuns } from '../runs/store.js';
+import { getRun, listRuns } from '../runs/store.js';
 
 import { ACCEPTANCE_STATUS_FILENAME, acceptanceStatusPathFor } from './acceptance-status.js';
 import { hashChecklistCheckboxes } from './checklist-hash.js';
@@ -120,6 +120,9 @@ interface SlotWatch {
   observationPending?: number;
   observationError?: string;
   lastCheckboxHash?: string; // debounce: only emit when checkboxes actually change
+  acceptanceSyncError?: string;
+  acceptanceSyncPending?: boolean;
+  acceptanceSyncQueued?: boolean;
   /** `artifacts/acceptance-status.json` beside this context's checklist — the AC ledger. */
   acceptanceStatusFilePath: string;
   acceptanceStatusWatcher?: FSWatcher; // chokidar watcher for local (acceptance-status.json)
@@ -909,6 +912,7 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
       subtaskDebounceKey(key),
       acceptanceDebounceKey(key),
       `${key}#operations`,
+      `${key}#acceptance-sync`,
     ]) {
       const timer = debounceTimers.get(timerKey);
       if (timer) clearTimeout(timer);
@@ -1147,6 +1151,66 @@ interface ComputeAndEmitOptions {
   fromSubtask?: boolean;
   /** The update originates from the acceptance ledger: skip the hash, no tag. */
   fromAcceptance?: boolean;
+  skipAcceptanceSync?: boolean;
+}
+
+function acceptanceSyncState(runId: string): string {
+  const run = getRun(runId);
+  return JSON.stringify([
+    run?.acceptanceRegistration?.revision,
+    run?.acceptanceExecutionContract?.revision,
+    run?.acceptanceRegistration?.units.map(({ id, error, delivery }) => [
+      id,
+      error,
+      delivery?.status,
+    ]),
+  ]);
+}
+
+/** Registration can await machine ownership; ordinary progress must not wait for it. */
+function scheduleAcceptanceSync(key: string, sw: SlotWatch): void {
+  if (
+    !sw.runId ||
+    (sw.role !== undefined && sw.role !== 'primary') ||
+    getRun(sw.runId)?.acceptanceContractVersion !== 1
+  )
+    return;
+  if (sw.acceptanceSyncPending) {
+    sw.acceptanceSyncQueued = true;
+    return;
+  }
+  const timerKey = `${key}#acceptance-sync`;
+  if (debounceTimers.has(timerKey)) return;
+  debounceTimers.set(
+    timerKey,
+    setTimeout(async () => {
+      debounceTimers.delete(timerKey);
+      if (activeWatches.get(key) !== sw || !sw.runId) return;
+      sw.acceptanceSyncPending = true;
+      const before = acceptanceSyncState(sw.runId);
+      const previousError = sw.acceptanceSyncError;
+      try {
+        const { syncAcceptanceRegistration } = await import('./acceptance-registration-sync.js');
+        await syncAcceptanceRegistration(sw.runId, sw.slotId, sw, path.dirname(sw.taskFilePath));
+        sw.acceptanceSyncError = undefined;
+      } catch (error) {
+        sw.acceptanceSyncError = error instanceof Error ? error.message : String(error);
+        console.error(
+          `[task-watcher] acceptance sync failed for ${key}: ${sw.acceptanceSyncError}`,
+        );
+      }
+      if (
+        activeWatches.get(key) === sw &&
+        (before !== acceptanceSyncState(sw.runId) || previousError !== sw.acceptanceSyncError)
+      )
+        await computeAndEmit(key, undefined, { fromAcceptance: true, skipAcceptanceSync: true });
+      sw.acceptanceSyncPending = false;
+      if (sw.acceptanceSyncQueued && activeWatches.get(key) === sw) {
+        sw.acceptanceSyncQueued = false;
+        scheduleAcceptanceSync(key, sw);
+      }
+    }, DEBOUNCE_MS),
+  );
 }
 
 async function computeAndEmit(
@@ -1162,6 +1226,7 @@ async function computeAndEmit(
   publishProgressResources(sw.slotId, sw.runId, sw.contextId);
 
   try {
+    if (!options.skipAcceptanceSync) scheduleAcceptanceSync(key, sw);
     if (!options.fromSubtask && !options.fromAcceptance) {
       // Read fresh content if not provided
       let markdown = content;
@@ -1182,6 +1247,13 @@ async function computeAndEmit(
       role: sw.role,
       contextId: sw.contextId,
     });
+    if (sw.acceptanceSyncError)
+      result.acceptanceStatusError = [
+        result.acceptanceStatusError,
+        `Acceptance registration: ${sw.acceptanceSyncError}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
     emit(
       sw.slotId,
       result,

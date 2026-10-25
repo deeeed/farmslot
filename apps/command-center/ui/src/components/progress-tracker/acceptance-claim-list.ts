@@ -47,6 +47,18 @@ export function renderAcceptanceClaimList(
         <details class="gate-claim-text">
           <summary class="ac-text" title=${claim.text}>${claim.text}</summary>
           ${claim.detail ? html`<p>${claim.detail}</p>` : nothing}
+          ${claim.origin
+            ? html`<p data-testid="acceptance-origin" data-source-id=${claim.origin.reference}>
+                ${claim.origin.url
+                  ? html`<a href=${claim.origin.url} target="_blank" rel="noopener noreferrer"
+                      >${claim.origin.label}</a
+                    >`
+                  : claim.origin.label}
+                ${claim.origin.body
+                  ? html`<span>${claim.origin.body}</span>`
+                  : html`<span>${claim.origin.reference}</span>`}
+              </p>`
+            : nothing}
         </details>
         ${html`<span
           class="gate-state ac-verdict"

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Resolve the PR signature base before dispatch",
+  "description": "Prove missing PR-ref fetch, baseline persistence, unsigned-work and fetch refusals with a private authenticated gateway and local Git remote. No live worker or slot.",
+  "workflow": {
+    "entry": "baseline",
+    "nodes": {
+      "baseline": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --import ./services/gateway/src/runtime/mock-pty.test-support.ts scripts/runner-validation/gateway/pr-signature-base-fetch.mts",
+        "timeout_ms": 120000,
+        "intent": "Fetch an unfetched PR ref before baseline capture, retain the checkout, and preserve signature and fetch refusals.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

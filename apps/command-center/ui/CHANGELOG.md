@@ -4,6 +4,9 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show derived acceptance sources, inherited proof and pending instructions, and retain message identities across steering retries.
+
+- Keep expected inherited modes from triggering a baseline warning on CI-watch follow-ups.
 - Show check counts, failures, next poll and time left on CI-watch run cards and pipelines.
 
 - Show muted step durations and live elapsed time in Worker progress.

@@ -722,7 +722,12 @@ async function routeAuthorizedMethod(
     case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
     case Methods.NATIVE_SESSION_WORKSPACE_DIFF:
     case Methods.NATIVE_SESSION_CLOSE:
-      return nativeSessionRoute(method, p, authorizeGatewayMethod(authRuntime, state, method));
+      return nativeSessionRoute(
+        method,
+        p,
+        authorizeGatewayMethod(authRuntime, state, method),
+        emit,
+      );
     // Gateway self-status
     case Methods.GATEWAY_PING:
       return { ok: true, serverTimeMs: Date.now() };
@@ -1017,9 +1022,10 @@ async function routeAuthorizedMethod(
       }
       return { unsubscribed: true };
     }
-    case Methods.TERMINAL_SEND:
-      await terminalSend(p as TerminalSendParams);
-      return { sent: true };
+    case Methods.TERMINAL_SEND: {
+      const delivery = await terminalSend(p as TerminalSendParams, emit);
+      return { sent: true, ...delivery };
+    }
     case Methods.TERMINAL_INPUT:
       await terminalInput(p as TerminalInputParams);
       return { sent: true };

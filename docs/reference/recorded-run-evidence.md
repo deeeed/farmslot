@@ -1580,6 +1580,61 @@ The version-1 reference carries `schemaVersion`, `source`, `childRunId`,
 owns the shared types and path; gateway preparation stages it, retention freezes
 it, and agent-runtime's existing artifact checker consumes it.
 
+## PR-completion acceptance registration
+
+Status: Accepted, 2026-10-25, ADR-062 Amendment 20. Approved as Amendment 19, proposal `31435dc1`; renumbered after the concurrent multi-attempt amendment. Effective after coordinated consumer release.
+
+### Original criteria and opt-in
+
+The default base MUST retain the original PR's parent-run criteria, falling back to its linked ticket criteria when no parent registration exists. Unavailable source data MUST NOT become an empty set; an explicitly empty original registration is valid. `requireFresh` changes proof eligibility, not which original obligations survive.
+
+The selected normal or interactive PR-completion template opts into derivation by declaring a derive-acceptance subtask as its first subtask, before fixes or proof planning. The resolved template records that declaration; no global switch or prose-heading classifier decides opt-in. The declaration is the exact frontmatter field `firstSubtask: derive-acceptance`, valid only for PR completion. Its child owns `CHECKLIST.md` step 1; marking other steps cannot bypass it. An opted-out template derives no comment/instruction ACs. The proof-destination rules below apply to original criteria too.
+
+### One intake and registration owner
+
+Task init MUST freeze one authoritative, versioned PR-review intake snapshot for manual, interactive, monitor and CI-chain entry points. The existing context preview MUST be projected from that snapshot, not treated as authority or fetched separately. It MUST identify the PR/head, provider, source comment/thread IDs, URL, body/version, resolution state and capture identity. It MUST include human reviewers and configured review bots, with Bugbot included by default; the monitor's general Bot-author skip MUST NOT exclude these review comments. A failed or incomplete fetch blocks derivation explicitly, never substitutes an empty comment set. ADR-055 remains the provider/intake owner.
+
+The retained worker owns semantic classification in the derive subtask, using that snapshot and persisted dispatch instructions. Each actionable unresolved comment MUST produce one source-linked AC. Each extra operator obligation MUST produce one AC linked to its instruction record and obligation index. Resolved/non-actionable sources receive a recorded exclusion with a reason. The subtask MUST NOT settle until every snapshot comment and instruction record is accounted for; engine validation rejects missing, duplicate or invented source coverage. The shared projection exposes exclusions on demand without counting them as ACs. Classification uses the existing worker turn, not a new classifier service or review round.
+
+The engine MUST store accepted appends, provenance and a monotonic registration revision in the existing run record. The immutable handoff base plus those appends are the sole criterion registry. The engine validates run authority, current generation, template opt-in and source coverage. Workers propose typed subtask results; they MUST NOT edit authoritative registration or verdicts. `farmslot-agent ac` remains read-only. A task-local registration projection is transport only; completion independently validates it against the run record. The transport is `inputs/acceptance-registration.json`. `mark sub <id> complete --acceptance-result <path>` submits a proposal through the existing child signal and waits for the durable gateway acknowledgement before settling the child.
+
+Original IDs, text and order MUST stay fixed. Derived IDs append after the highest `AC-N`. Retrying the same source obligation returns its existing ID. Source edits MUST NOT silently rewrite accepted obligations. Derived proposals declare their intended proof mode; later proof declarations must agree.
+
+### Interactive instructions
+
+For an opted-in run, every authenticated accepted `operatorMessage` steer creates a pending derivation item and its own new derive-acceptance child unit, keyed to the persisted message identity. Register it through ADR-060 in the active worker/checklist context; the initial derive unit stays settled and MUST NOT be reopened. A completion-held run uses its retained-worker continuation before starting that new unit. The retained worker uses the same typed result schema to append extra obligations or record none. Retries reuse that message's unit. No engine NLP classifier or separate client action is required. Completion waits for every admitted item's unit to settle. Unconfirmed delivery is not evidence of worker receipt or satisfaction. Semantic `terminal.send` input carries `operatorMessageId`; worker-bound native sends reuse their existing `commandId`. Retry the same identity and content. Raw terminal keystrokes are not authenticated instruction records.
+
+Plain steers on opted-out templates retain normal delivery and create no registration wait. An explicit append proposal for an opted-out template is refused clearly. Restart, replay and stale worker replies MUST preserve current revision and source identity.
+
+### Inherited and fresh proof
+
+Eligible original criteria MAY retain approved parent evidence only under the existing ID/text, source and review-qualification rules. Derived rows need their own qualified proof; a parent's PASS is insufficient. `requireFresh` applies to every criterion. Parent bytes, receipt identities and proof heads MUST remain unchanged; inherited provenance is visible per row. Full child-list inequality alone MUST NOT invalidate eligible original rows. The inheritance transport/checker MUST distinguish original inherited references from fresh obligations without rewriting a frozen version-1 reference.
+
+Effective requirements MUST use the declared mode of every criterion needing child proof, whether original or derived. Original modes may arrive from an eligible parent or the normal recipe `proofTargets`; they are not assumed to exist in the ID/text registration. Every relevant mode declaration or change MUST drive a supported execution-contract revision before terminal completion, even on opted-out templates. The gateway MUST deliver and confirm the required worker-terminal contract revision before `./mark complete`, so its checker can defer an eligible awaiting-review claim to the scheduled review destination. Deferral is not proof. No worker boolean grants a capability. New-run capability version 1 selects immutable execution-contract revisions through `inputs/acceptance-contract.json`, each bound to the frozen base hash and registration revision. Node readback confirms delivery; old runtime exports fail task init clearly. Existing comparison/eval/workspace review exclusions refuse a fresh visual destination explicitly. Unknown or unsupported destinations refuse explicitly instead of accepting an impossible obligation or downgrading it to `state`.
+
+| Mode     | Fresh PR-completion proof                                                                                                                                                    |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `state`  | Passing executed expectations bound to the registered claim. Derivation alone adds no review.                                                                                |
+| `visual` | Eligible visual expectation plus qualified authenticated judgment; enable `claimReviewGate` and the captured-output decision below.                                          |
+| `mixed`  | Both state requirements and qualified visual judgment through that decision.                                                                                                 |
+| `review` | The conditional REVIEW step's qualifying structured result at the current pushed PR head, covering this criterion, with no open findings under the configured review policy. |
+
+After MONITOR, a fresh `review` criterion MUST activate the existing REVIEW step before COMPLETE, using the existing worker-fix/review lifecycle. For PR completion, `publicationReview` MUST reflect that step's availability rather than require HUMAN_GATE. This is an explicit scoped extension of Amendment 18 point 4 and the prepared-package rule above: a captured structured REVIEW-step result suffices, and no prepared publication package or HUMAN_GATE is required. Other flows keep their existing qualification. Completion revalidates the actual PR head after awaits.
+
+Fresh visual/mixed criteria MUST trigger the existing captured-output `output-review` decision after MONITOR and any required REVIEW step, before COMPLETE's provenance comment, FINALIZE and CI_WATCH. This trigger comes from unresolved fresh criteria, not `completionPolicy === artifact-only`; the default completion policy stays intact. Capture the selected evidence and use its **captured** claim binding rather than the publication gate's **current** binding. The existing authenticated judgment authority records receipts. For this PR-completion proof hold, `mark-reviewed` MUST revalidate the captured identity, current registration and qualified claims, then resume COMPLETE; it neither writes verdicts nor skips remaining steps. Other output-review flows keep their acknowledgment-only behavior. Hold/rejected proof keeps completion held. `close-run` instead closes execution with its recorded gaps and artifacts, without successful PR completion or a provenance comment. The worker's normal push to the existing PR has already occurred. This decision neither creates a PR nor offers `approve-publish`.
+
+The gateway's existing review request/result binding MUST record included review-mode criterion IDs and definition hashes from the frozen request, with the reviewed head. Fresh `review` proof requires that inclusion. A new review-mode registration is a changed reviewed input even when HEAD is unchanged; any needed re-review is warm and scoped to those new criteria or other changed code/evidence. Adding unrelated state criteria MUST NOT force another code review. Qualified parent proof keeps its historical rules; never backfill new coverage onto old receipts.
+
+Existing review and visual judgments are reusable only while their claim, execution, head and reviewed-input bindings qualify. Human overrides and unchanged reviewed inputs do not request another round. Derivation does not waive the PR's existing code-review obligations. Waivers retain their existing meaning and are not proof.
+
+### Freshness, clients and delivery
+
+An accepted append MUST advance the existing acceptance input revision and broadcast it. Readiness/completion bind that revision; a concurrent append invalidates an older ready decision. Gate refresh may preserve still-qualified proofs but exposes every new obligation before approval. Original frozen contracts, task inputs, evidence and decisions remain immutable.
+
+`registeredAcceptanceCriteria`, `acceptanceCriteriaView` and the shared `@farmslot/review-dispatch` presentation MUST project the complete list, source/exclusion links, inherited/fresh provenance and verdicts. Command Center and Companion use that projection for rows, counts and blocking state. Unassessed registered criteria remain visible.
+
+Protocol, SDK/CLI, runtime and shared presentation changes MUST ship before affected templates activate. Old consumers refuse unsupported revisions clearly. Existing runs/pins do not silently migrate. Activation proof covers all entry points including Bugbot/fetch failure; complete classification and retry/restart idempotency; inherited plus fresh rows; ordinary/zero-obligation/opted-out steers; a mid-run append invalidating readiness; original and derived criteria in all four proof destinations; review-coverage and stale/wrong-head refusal; and matching client panels. No live-run migration or replay is authorized by this proposal.
+
 ## QA case ledger
 
 Status: Proposed, 2026-10-18, ADR-062 Amendment 13.

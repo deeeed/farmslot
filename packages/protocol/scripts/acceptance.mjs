@@ -1,6 +1,8 @@
 // Portable acceptance contract. Operator scripts and clients consume the same implementation.
 const ACCEPTANCE_STATUS_ARTIFACT = 'artifacts/acceptance-status.json';
 const INHERITED_ACCEPTANCE_INPUT = 'inputs/inherited-acceptance.json';
+const ACCEPTANCE_REGISTRATION_INPUT = 'inputs/acceptance-registration.json';
+const ACCEPTANCE_CONTRACT_INPUT = 'inputs/acceptance-contract.json';
 const ACCEPTANCE_VERDICTS = [
   'proven',
   'weak',
@@ -16,10 +18,41 @@ function acceptanceCriterionId(index) {
   return `AC-${index + 1}`;
 }
 
-function registeredAcceptanceCriteria(criteria) {
-  return criteria
+function registeredAcceptanceCriteria(criteria, registration) {
+  const original = criteria
     .filter((text) => String(text).trim().length > 0)
     .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }));
+  if (registration === undefined) return original;
+  if (
+    !isRecord(registration) ||
+    registration.schemaVersion !== 1 ||
+    !Number.isSafeInteger(registration.revision) ||
+    registration.revision < 1 ||
+    !acceptanceCriteriaMatch(original, registration.original) ||
+    !Array.isArray(registration.derived) ||
+    !Array.isArray(registration.units)
+  )
+    throw new Error('acceptance registration: invalid revision or changed original criteria');
+  const ids = new Set(original.map(({ id }) => id));
+  let next = original.length;
+  for (const row of registration.derived) {
+    if (
+      !isRecord(row) ||
+      row.id !== `AC-${++next}` ||
+      ids.has(row.id) ||
+      !isNonEmptyString(row.text) ||
+      !ACCEPTANCE_PROOF_MODES.includes(row.proofMode) ||
+      !isRecord(row.source) ||
+      !['review-comment', 'instruction'].includes(row.source.kind) ||
+      !isNonEmptyString(row.source.sourceId) ||
+      !isNonEmptyString(row.source.sourceVersion) ||
+      !Number.isSafeInteger(row.source.obligationIndex) ||
+      row.source.obligationIndex < 0
+    )
+      throw new Error('acceptance registration: invalid derived criterion or source');
+    ids.add(row.id);
+  }
+  return [...registration.original, ...registration.derived];
 }
 
 /** The execution whose retained package a task-ledger row binds to: a QA case row names its own. */
@@ -267,8 +300,10 @@ function renderAcceptanceCoverage(ledger, criteria = ledger.criteria) {
 // task-dir IO
 
 export {
+  ACCEPTANCE_CONTRACT_INPUT,
   ACCEPTANCE_CRITERION_ID_PATTERN,
   ACCEPTANCE_PROOF_MODES,
+  ACCEPTANCE_REGISTRATION_INPUT,
   ACCEPTANCE_STATUS_ARTIFACT,
   ACCEPTANCE_VERDICTS,
   acceptanceCriteriaMatch,

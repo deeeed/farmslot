@@ -25,7 +25,9 @@ import type {
   AcceptanceCriterionRef,
   AcceptanceCriterionView,
   AcceptanceEvidenceLink,
+  AcceptanceRegistration,
   AcceptanceStatusLedger,
+  Run,
 } from '@farmslot/protocol';
 import {
   acceptanceClaimRows,
@@ -332,6 +334,7 @@ export function acceptanceEvidenceRows(
 
 /** A run's acceptance data as run detail holds it; null means none or not loaded. */
 export interface RunAcceptanceData {
+  run?: Pick<Run, 'acceptanceRegistration'> | null;
   evidenceModel?: EvidenceReviewModel | null;
   acceptanceStatus?: AcceptanceStatusLedger | null;
   acceptanceCriteria?: AcceptanceCriterionRef[] | null;
@@ -341,6 +344,7 @@ export interface RunAcceptanceData {
 }
 
 export interface AcceptancePanelInputs {
+  registration?: AcceptanceRegistration;
   evidenceModel?: EvidenceReviewModel;
   ledger: AcceptanceStatusLedger;
   criteria?: ReadonlyArray<AcceptanceCriterionRef>;
@@ -355,18 +359,25 @@ export interface AcceptancePanelInputs {
  * acceptance evidence link from it, so both read the same rows.
  */
 export function acceptancePanelInputs(data: RunAcceptanceData): AcceptancePanelInputs | null {
+  const registration = data.run?.acceptanceRegistration;
   if (
     !data.evidenceModel?.claims.length &&
     !data.acceptanceStatus &&
     !data.acceptanceCriteria?.length &&
-    !data.acceptanceStatusError
+    !data.acceptanceStatusError &&
+    !registration
   ) {
     return null;
   }
   return {
+    ...(registration
+      ? { registration, criteria: [...registration.original, ...registration.derived] }
+      : {}),
     ledger: data.acceptanceStatus ?? { schemaVersion: 1, criteria: [] },
     ...(data.evidenceModel ? { evidenceModel: data.evidenceModel } : {}),
-    ...(data.acceptanceCriteria?.length ? { criteria: data.acceptanceCriteria } : {}),
+    ...(!registration && data.acceptanceCriteria?.length
+      ? { criteria: data.acceptanceCriteria }
+      : {}),
     ...(data.acceptanceStatusError ? { error: data.acceptanceStatusError } : {}),
     ...(data.acceptanceEvidenceLinks?.length
       ? { evidenceLinks: data.acceptanceEvidenceLinks }
@@ -560,6 +571,7 @@ export function renderUntestableOverride(
 export function renderAcceptancePanel(
   ledger: AcceptanceStatusLedger,
   options: {
+    registration?: AcceptanceRegistration;
     evidenceModel?: EvidenceReviewModel;
     judgments?: AcceptanceClaimListActions & { rows: readonly EvidenceReviewJudgmentRow[] };
     markUntestable?: (id: string, reason: string) => void;
@@ -594,11 +606,17 @@ export function renderAcceptancePanel(
   if (
     rows.length === 0 &&
     !options.error &&
+    !options.registration &&
     !model?.packageStatus &&
     !(options.showOccurrences && model?.occurrences.length)
   )
     return nothing;
-  const view = acceptancePanelPresentation(ledger, options.criteria ?? ledger.criteria, model);
+  const view = acceptancePanelPresentation(
+    ledger,
+    options.criteria ?? ledger.criteria,
+    model,
+    options.registration,
+  );
   const linked = rows.filter((row) => row.link).length;
   // Like the links, a manifest read error only matters while there is no ledger.
   const linksError = ledger.criteria.length === 0 ? options.evidenceLinksError : null;
@@ -627,6 +645,26 @@ export function renderAcceptancePanel(
             >`
           : nothing}
       </summary>
+      ${view.registration?.pending.map(
+        (message) =>
+          html`<p class="ac-note" data-testid="acceptance-registration-pending">${message}</p>`,
+      )}
+      ${view.registration?.exclusions.length
+        ? html`<details class="ac-note" data-testid="acceptance-exclusions">
+            <summary>Excluded sources (${view.registration.exclusions.length})</summary>
+            ${view.registration.exclusions.map(
+              (source) =>
+                html`<p data-source-id=${source.sourceId}>
+                  ${source.url
+                    ? html`<a href=${source.url} target="_blank" rel="noopener noreferrer"
+                        >${source.label}</a
+                      >`
+                    : source.label}:
+                  ${source.reason}
+                </p>`,
+            )}
+          </details>`
+        : nothing}
       <div class="ac-rows">
         ${options.error
           ? html`<div class="ac-error" data-testid="acceptance-error">
@@ -640,6 +678,9 @@ export function renderAcceptancePanel(
           : nothing}
         ${renderAcceptanceClaimList(
           acceptanceClaimRows({
+            criteria: options.criteria,
+            ledger,
+            registration: options.registration,
             claims: rows.map(({ view, link }) => ({ ...view, evidenceLinked: Boolean(link) })),
             judgmentRows: options.judgments?.rows ?? model.judgmentRows(null),
             pendingVisualClaimIds: model.pendingVisualClaimIds,
