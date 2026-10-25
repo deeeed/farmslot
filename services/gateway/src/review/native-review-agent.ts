@@ -324,6 +324,13 @@ async function runNativeReviewAttempt(
       }
     }
   }
+  if (warm?.reviewValidationDepth && warm.reviewValidationDepth !== validationDepth)
+    fallBack(
+      new WarmReviewRefusal(
+        'session-unavailable',
+        'the requested validation depth differs from the retained reviewer',
+      ),
+    );
   const lastReviewedHeadSha = input.rereview?.lastReviewedHeadSha ?? retained?.lastReviewedHeadSha;
   if (!recovering && lastReviewedHeadSha) {
     const tree = await execOnSlot(
@@ -452,6 +459,8 @@ async function runNativeReviewAttempt(
           reviewResultFile: resultRelPath,
           artifactScope: artifactScope ?? null,
           reviewLoopNumber: loopNumber,
+          // Legacy sessions keep their original environment policy until a fresh launch.
+          reviewValidationDepth: retained ? warm?.reviewValidationDepth : validationDepth,
           ...(fallbackRecord ? { reviewFallback: fallbackRecord } : {}),
           runner,
           model,
@@ -588,61 +597,74 @@ async function runNativeReviewAttempt(
       const source =
         context?.nativeSession?.handoffFrom ??
         (warm ? { runId: warmRunId!, contextId: warm.id } : undefined);
+      const dispatch = () =>
+        dispatchNativeWorker({
+          runId,
+          vars,
+          role: 'review',
+          contextId,
+          allowOperatorWait: true,
+          assertCurrent: admit,
+          retainedFrom: source,
+          taskFile: taskMdPath,
+          signalFile: taskDirRelPath(taskDir, target.signal),
+          taskId: run.ticketOrPr,
+          runner,
+          model,
+          resultSchema,
+          effort: input.effort?.trim() || undefined,
+          safetyTier: run.safetyTier ?? runnerDefaultSafetyTier(runner),
+          project: projectVars.projectJson,
+          projectVars,
+          domain: resolveEffectiveDomain(run.domain, vars.domain),
+          initialPrompt:
+            reviewChecklistMarkPrompt(taskDir, taskMdPath, target, feedbackRelPath, resultRelPath) +
+            '\nRead the reviewer-specific execution contract. Do NOT run /review.' +
+            REFUSED_APPROVALS,
+          beforeInput: async () => {
+            const current = admit();
+            const { enforceDispatchPressureGate } = await import('../methods/dispatch/execute.js');
+            await enforceDispatchPressureGate({
+              machine: vars.machine,
+              runId,
+              run: current,
+              attemptKey: `native-review:${runId}:${contextId}`,
+              deps: {
+                persistRun: async (id, patch) => {
+                  await persistRunNow(updateRun(id, patch), 'native reviewer pressure admission');
+                },
+              },
+            });
+          },
+          emit: () => {},
+        });
       const dispatched =
         attachedToLiveCommand ||
         (recovering &&
           getRun(runId)?.agentContexts?.find((entry) => entry.id === contextId)?.nativeCommandId)
           ? Promise.resolve()
-          : dispatchNativeWorker({
-              runId,
-              vars,
-              role: 'review',
-              contextId,
-              allowOperatorWait: true,
-              assertCurrent: admit,
-              retainedFrom: source,
-              taskFile: taskMdPath,
-              signalFile: taskDirRelPath(taskDir, target.signal),
-              taskId: run.ticketOrPr,
-              runner,
-              model,
-              resultSchema,
-              effort: input.effort?.trim() || undefined,
-              safetyTier: run.safetyTier ?? runnerDefaultSafetyTier(runner),
-              project: projectVars.projectJson,
-              projectVars,
-              domain: resolveEffectiveDomain(run.domain, vars.domain),
-              initialPrompt:
-                reviewChecklistMarkPrompt(
-                  taskDir,
-                  taskMdPath,
-                  target,
-                  feedbackRelPath,
-                  resultRelPath,
-                ) +
-                '\nRead the reviewer-specific execution contract. Do NOT run /review.' +
-                REFUSED_APPROVALS,
-              beforeInput: async () => {
-                const current = admit();
-                const { enforceDispatchPressureGate } =
-                  await import('../methods/dispatch/execute.js');
-                await enforceDispatchPressureGate({
-                  machine: vars.machine,
-                  runId,
-                  run: current,
-                  attemptKey: `native-review:${runId}:${contextId}`,
-                  deps: {
-                    persistRun: async (id, patch) => {
-                      await persistRunNow(
-                        updateRun(id, patch),
-                        'native reviewer pressure admission',
-                      );
-                    },
-                  },
-                });
-              },
-              emit: () => {},
-            });
+          : (async () => {
+              try {
+                await dispatch();
+              } catch (error) {
+                const pending = getRun(runId)?.agentContexts?.find(
+                  (entry) => entry.id === contextId,
+                )?.nativeSession;
+                if (
+                  !warm ||
+                  !input.rereview ||
+                  !pending?.handoffFrom ||
+                  pending.acceptedAt ||
+                  !nativeReviewOperationIsCurrent() ||
+                  !(error instanceof NativeWorkerOperationUncertainError) ||
+                  !['launch', 'handoff'].includes(error.operation)
+                )
+                  throw error;
+                // A lost transfer/resume reply retains this exact lease, command and
+                // recovery intent. Reconcile once before declaring the session unavailable.
+                await dispatch();
+              }
+            })();
       try {
         await dispatched;
       } catch (error) {

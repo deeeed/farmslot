@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Warm reviewer continuity across pool updates",
+  "description": "An isolated native provider and authenticated gateway reads prove that static re-reviews retain their conversation across an unrelated pool change and a lost handoff resume reply. Explicit effort changes still use the delta-scoped cold fallback. No product run or slot is touched.",
+  "workflow": {
+    "entry": "warm-continuity",
+    "nodes": {
+      "warm-continuity": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_WARM_PROOF_RECEIPT=temp/warm-review-continuity/receipt.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/review/native-warm-continuation.rpc.live.ts",
+        "timeout_ms": 660000,
+        "intent": "Retain the native conversation and admit one round while reconciling a lost resume reply; preserve explicit cold fallback behavior.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

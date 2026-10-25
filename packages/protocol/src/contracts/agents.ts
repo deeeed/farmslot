@@ -127,6 +127,8 @@ export interface AgentContext {
   /** Durable reviewer lineage, supplied by the review runtime. */
   reviewId?: string;
   reviewLoopNumber?: number | null;
+  /** Frozen review launch policy; absent on retained sessions created before depth capture. */
+  reviewValidationDepth?: import('./runs.js').ReviewValidationDepth;
   /** Why this reviewer runs a delta-scoped COLD in a fresh session; a reattach reports it again. */
   reviewFallback?: import('./runs.js').ReviewSessionFallback;
   /** Gateway validation completed for the structured reviewer result and archived artifacts. */

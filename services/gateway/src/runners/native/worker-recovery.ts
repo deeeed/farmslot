@@ -2,7 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import { NATIVE_WORKER_RESUME, NATIVE_WORKER_SEND } from '@farmslot/agent-runtime/native';
-import { nativeWorkerLaunchDigest } from '@farmslot/agent-runtime/native/worker-launch';
+import {
+  type NativeWorkerLaunch,
+  nativeWorkerLaunchDigest,
+} from '@farmslot/agent-runtime/native/worker-launch';
 import {
   isTerminalRunStatus,
   Methods,
@@ -45,7 +48,13 @@ export async function resumeNativeWorker(
         assertCurrent: () => void;
       }
     | { purpose: 'blocked-worker'; commandId: string; assertCurrent: () => void }
-    | { purpose: 'handoff'; contextId: string; assertCurrent: () => void }
+    | {
+        purpose: 'handoff';
+        contextId: string;
+        assertCurrent: () => void;
+        /** The transfer already validated this exact launch against its recorded digest. */
+        launch?: NativeWorkerLaunch;
+      }
     | { purpose: 'review-fix'; assertCurrent?: () => void }
     | {
         purpose: 'operator-message';
@@ -366,25 +375,30 @@ async function resumeNativeWorkerExclusive(
   if ((isLocal(vars.host, vars.machine) ? 'local' : vars.machine) !== binding.executionNodeId)
     throw new Error('Native recovery execution node changed');
   const projectVars = await loadProjectVars(run.project);
-  const prepared = await prepareNativeWorkerLaunch({
-    role: context.role,
-    vars,
-    project: projectVars.projectJson,
-    projectVars,
-    runner: context.runner,
-    model: context.model,
-    taskDir: path.posix.dirname(context.taskFile),
-    sessionId: binding.sessionId,
-    leaseId: binding.leaseId,
-    effort: binding.effort ?? 'auto',
-    safetyTier: binding.safetyTier!,
-    accountLabel: binding.accountLabel,
-    profile: binding.profile,
-    stateDirectory: binding.stateDirectory,
-    prepareAccount: false,
-    domain: resolveEffectiveDomain(run.domain, vars.domain),
-  });
+  const prepared =
+    options?.purpose === 'handoff' && options.launch
+      ? { launch: options.launch }
+      : await prepareNativeWorkerLaunch({
+          role: context.role,
+          reviewValidationDepth: context.reviewValidationDepth,
+          vars,
+          project: projectVars.projectJson,
+          projectVars,
+          runner: context.runner,
+          model: context.model,
+          taskDir: path.posix.dirname(context.taskFile),
+          sessionId: binding.sessionId,
+          leaseId: binding.leaseId,
+          effort: binding.effort ?? 'auto',
+          safetyTier: binding.safetyTier!,
+          accountLabel: binding.accountLabel,
+          profile: binding.profile,
+          stateDirectory: binding.stateDirectory,
+          prepareAccount: false,
+          domain: resolveEffectiveDomain(run.domain, vars.domain),
+        });
   if (
+    prepared.launch.leaseId !== binding.leaseId ||
     nativeWorkerLaunchDigest(prepared.launch) !== binding.launchDigest ||
     (snapshot.session.cwd !== vars.remoteRepo &&
       !(

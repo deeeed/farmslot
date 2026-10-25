@@ -1,12 +1,13 @@
 // Opt-in real-provider proof for ADR-063 Amendment 5. All state and sessions are isolated.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { access, chmod, mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { NATIVE_WORKER_RESUME } from '@farmslot/agent-runtime/native';
 import {
   Methods,
   type NativeSessionReadResult,
@@ -68,6 +69,7 @@ test(
         host: 'localhost',
         ssh_user: os.userInfo().username,
         codex_path: binary,
+        env: { REVIEW_UNUSED_PROVIDER_ROOT: '/fixture/providers/old' },
         slots: [{ id: slotId, enabled: true, repo, session: 'unused-native-proof', resources: {} }],
       }),
     );
@@ -105,6 +107,33 @@ test(
       `repo/${taskDir}/artifacts/pr-description.md`,
       '# Verify the greeting text\n\nmessage.txt contains hello. Local fixture only, no publication.\n',
     );
+
+    process.env.FARMSLOT_ROOT = root;
+    process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
+    process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
+    process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
+    process.env.FARMSLOT_NATIVE_STATE_DIR = path.join(root, 'native');
+    process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+    const nativeRouting = await import('../runners/native/node.js');
+    const { NodeRpcTimeoutError } = await import('../fleet/node-rpc.js');
+    let loseHandoffResumeReply = false;
+    let handoffResumeCalls = 0;
+    mock.module('../runners/native/node.js', {
+      namedExports: {
+        ...nativeRouting,
+        routeNativeExecution: async (
+          ...args: Parameters<typeof nativeRouting.routeNativeExecution>
+        ) => {
+          const result = await nativeRouting.routeNativeExecution(...args);
+          if (args[1] === NATIVE_WORKER_RESUME && loseHandoffResumeReply) {
+            handoffResumeCalls++;
+            loseHandoffResumeReply = false;
+            throw new NodeRpcTimeoutError('owned-proof', 1);
+          }
+          return result;
+        },
+      },
+    });
 
     const fixture = await createNativeProofFixture(t, root);
     const { client, person, trackSession } = fixture;
@@ -209,14 +238,29 @@ test(
 
     await write('repo/message.txt', 'hello\nsecond revision\n');
     commit('test: revise native review fixture');
+    // Refresh the pool between the original launch and handoff. The static
+    // reviewer does not consume this tool selector; its launch must stay stable.
+    const poolPath = path.join(root, 'pool/local.json');
+    const pool = JSON.parse(await readFile(poolPath, 'utf8'));
+    pool.env.REVIEW_UNUSED_PROVIDER_ROOT = '/fixture/providers/new';
+    await writeFile(poolPath, JSON.stringify(pool));
+    const updatedVars = await loadSlotVars(slotId);
+    loseHandoffResumeReply = true;
     const warmMode = reReviewMode({ ...first, issues: first.issues ?? [] }, 'cold');
     const warmContinuation = reReviewContinuation(first);
     assert.ok(warmMode === 'warm' && warmContinuation);
-    const second = await review({ mode: warmMode, loopNumber: 2, rereview: warmContinuation });
+    const second = await review({
+      vars: updatedVars,
+      mode: warmMode,
+      loopNumber: 2,
+      rereview: warmContinuation,
+    });
     assert.equal(second.verdict, 'pass');
     assert.equal(second.mode, 'warm');
     assert.equal(second.session?.sessionId, first.session.sessionId);
     assert.equal(second.reviewId, first.reviewId);
+    assert.equal(handoffResumeCalls, 1, 'Lost resume reply reconciled without a second resume');
+    assert.equal(second.session?.fallback, undefined);
     assert.equal(second.reviewSnapshot?.baseSha, first.reviewSnapshot.headSha);
     assert.ok(second.reviewSnapshot?.headSha);
     const secondTarget = target();
@@ -249,6 +293,7 @@ test(
     assert.notEqual(thirdTarget.sessionId, secondTarget.sessionId);
     await client.call<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, thirdTarget);
     if (process.env.FARMSLOT_WARM_PROOF_RECEIPT) {
+      await mkdir(path.dirname(process.env.FARMSLOT_WARM_PROOF_RECEIPT), { recursive: true });
       await writeFile(
         process.env.FARMSLOT_WARM_PROOF_RECEIPT,
         JSON.stringify(
@@ -257,6 +302,8 @@ test(
             runId: run.id,
             familyId: run.familyId,
             prNumber: run.prNumber,
+            unusedPoolChangePreservedWarm: true,
+            lostHandoffResumeReplyReconciled: true,
             first: { session: first.session, snapshot: first.reviewSnapshot, ...firstTarget },
             warm: { session: second.session, snapshot: second.reviewSnapshot, ...secondTarget },
             fallback: { session: third.session, snapshot: third.reviewSnapshot, ...thirdTarget },
