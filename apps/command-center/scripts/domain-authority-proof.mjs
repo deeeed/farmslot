@@ -176,6 +176,7 @@ export function createDomainAuthorityProof({
       'Actual domain account switch',
     );
     if (kind === 'analytics') {
+      await navigate(route());
       const held = await until(
         proxyStatus,
         (value) =>
@@ -192,13 +193,17 @@ export function createDomainAuthorityProof({
       await screenshot('analytics-new-admin-before-reply');
       await releasePending();
     } else {
+      await navigate(route(sources.original));
       evidence.domainSwitchCleared = await until(
         inspect,
         (value) =>
           value.principalId === actor.principalId &&
-          !value.assessment?.records.some((row) => row.id === sources.original.assessmentId) &&
-          !value.assessment?.articleIds.includes(sources.original.assessmentId) &&
-          !value.assessment?.canonicalReads.selected?.dataPresent,
+          value.observations?.[method] &&
+          value.assessment &&
+          value.assessment.selectedId === sources.original.assessmentId &&
+          !value.assessment.records.some((row) => row.id === sources.original.assessmentId) &&
+          !value.assessment.articleIds.includes(sources.original.assessmentId) &&
+          !value.assessment.canonicalReads.selected?.dataPresent,
         'The old assessment owner must disappear after account switch',
       );
       await navigate(route(sources.actor));
