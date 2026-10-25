@@ -40,6 +40,20 @@ const wait = async (predicate, label) => {
   }
 };
 const has = (value, label) => value.nodes.some((node) => node.label === label);
+const reveal = async (id) => {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const value = await snapshot();
+    const node = value.nodes.find((item) => item.identifier === id);
+    if (node?.rect && node.rect.y > 110 && node.rect.y + node.rect.height < 775) return;
+    await client.interactions.swipe({
+      ...selection,
+      from: { x: 200, y: 690 },
+      to: { x: 200, y: 420 },
+      durationMs: 500,
+    });
+  }
+  throw new Error(`Native control is not visible: ${id}`);
+};
 const capture = async (name) => {
   fs.writeFileSync(path.join(output, `${name}.json`), JSON.stringify(await snapshot(), null, 2));
   await client.capture.screenshot({ ...selection, path: path.join(output, `${name}.png`) });
@@ -85,6 +99,7 @@ try {
   await capture('native-bulk-complete');
   await press('id="fleet-recovery-close"');
 
+  await reveal('fleet-release-proof-unpublished');
   await press('id="fleet-release-proof-unpublished"');
   await wait((value) => has(value, 'Keep work'), 'discard warning');
   await capture('native-discard-warning');
