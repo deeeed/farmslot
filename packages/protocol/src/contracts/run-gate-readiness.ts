@@ -82,6 +82,8 @@ export interface EvidencePolicyAttestation {
 
 /** A projection of the current decision's checked inputs, never approval authority. */
 export interface RunGateInputIdentity {
+  acceptanceRevision?: number;
+  acceptanceContractRevision?: number;
   runId: string;
   generation: number;
   headSha?: string | null;

@@ -1,6 +1,9 @@
 const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { isDeepStrictEqual } = require('node:util');
+const { ACCEPTANCE_REGISTRATION_INPUT } = require('@farmslot/protocol/scripts/acceptance.mjs');
+const { pendingInitialAcceptanceDerivation } = require('./acceptance-ledger.cjs');
 
 const {
   checklistNumberingMismatches,
@@ -59,7 +62,7 @@ const SUB_USAGE = [
   '      register one child unit on parent step N: writes subtasks/<id>.md,',
   '      subtasks/index.json and subtasks/<id>-SIGNAL.json.',
   '  sub <id> <n>                      tick child box n (child status running)',
-  '  sub <id> complete [--report PATH] [--mark-last]',
+  '  sub <id> complete [--report PATH] [--mark-last] [--acceptance-result PATH]',
   '                                    finish the child, tick the parent box',
   '  sub <id> blocked --reason "..."   block the child and the parent signal',
   '  sub <id> status                   print the child projection as JSON',
@@ -314,7 +317,17 @@ function writeParentSignal(taskDir, unit, { status, stepLabel, reason, event, no
 function writeChildSignal(
   taskDir,
   unit,
-  { status, stepLabel, reason, outcome, disposition, events, reportPath, now },
+  {
+    status,
+    stepLabel,
+    reason,
+    outcome,
+    disposition,
+    events,
+    reportPath,
+    now,
+    acceptanceDerivation,
+  },
 ) {
   const signalPath = path.join(taskDir, unit.signal);
   const signal = readJson(signalPath);
@@ -328,6 +341,7 @@ function writeChildSignal(
     ...(disposition ? { disposition } : {}),
     ...(reason ? { reason } : {}),
     ...(reportPath ? { evidence: { reportPath } } : {}),
+    ...(acceptanceDerivation ? { acceptanceDerivation } : {}),
     step: stepLabel,
     checklistTiming: { schemaVersion: 1, source: unit.checklist, events },
     timestamp: now,
@@ -437,6 +451,11 @@ function subStart(taskDir, rest) {
     ...(flags.checklist ? { checklist: flags.checklist } : {}),
     ...(flags.signal ? { signal: flags.signal } : {}),
   });
+  if (
+    pendingInitialAcceptanceDerivation(taskDir) &&
+    (id !== 'derive-acceptance' || stepNumber !== 1 || target.checklist !== 'CHECKLIST.md')
+  )
+    throw new SubtaskRefusal('The first subtask must derive acceptance on CHECKLIST.md step 1.');
   const parent = parsedChecklistFile(taskDir, target.checklist);
   const parentRow = parent.items.find((item) => item.stepNumber === stepNumber) ?? null;
   if (!parentRow) {
@@ -566,7 +585,11 @@ function resumeParentSignal(taskDir, unit, now) {
 }
 
 function subComplete(taskDir, unit, rest) {
-  const flags = parseFlags(rest, ['--report', '--mark-last'], 'sub complete');
+  const flags = parseFlags(
+    rest,
+    ['--report', '--mark-last', '--acceptance-result'],
+    'sub complete',
+  );
   if (flags.report !== undefined) {
     const reportAbs = path.join(taskDir, flags.report);
     if (!fs.existsSync(reportAbs) || !fs.statSync(reportAbs).isFile()) {
@@ -593,6 +616,42 @@ function subComplete(taskDir, unit, rest) {
   }
   const lastRow =
     allowOneUnchecked && unchecked.length === 1 ? unchecked[unchecked.length - 1] : null;
+  const projection = readJson(path.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT));
+  const admitted = projection.registration?.units?.find((row) => row.id === unit.id);
+  if (admitted || flags['acceptance-result'] !== undefined) {
+    if (!admitted) throw new SubtaskRefusal('Acceptance derivation is not enabled for this child.');
+    if (!flags['acceptance-result'])
+      throw usageRefusal(
+        'Derivation completion requires --acceptance-result with the typed source classification.',
+      );
+    const resultPath = path.resolve(taskDir, flags['acceptance-result']);
+    if (!resultPath.startsWith(`${path.resolve(taskDir)}${path.sep}`))
+      throw usageRefusal('Acceptance result must stay inside the task directory.');
+    const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
+    if (
+      result.runId !== projection.registration.runId ||
+      result.unitId !== unit.id ||
+      result.generation !== projection.generation
+    )
+      throw new SubtaskRefusal(
+        'Acceptance result names a different run, unit or worker generation.',
+      );
+    if (!admitted.result || !isDeepStrictEqual(admitted.result, result)) {
+      const previous = readJson(path.join(taskDir, unit.signal));
+      writeChildSignal(taskDir, unit, {
+        status: 'running',
+        stepLabel: 'Awaiting acceptance registration',
+        events: timingOf(previous, unit.checklist).events,
+        now: new Date().toISOString(),
+        acceptanceDerivation: result,
+      });
+      throw new SubtaskRefusal(
+        admitted.error
+          ? `Acceptance derivation refused: ${admitted.error}. Correct the result and retry.`
+          : 'Acceptance derivation submitted to the gateway. Retry after its registration acknowledgement.',
+      );
+    }
+  }
   if (lastRow) markStepInFile(child.absolute, lastRow);
 
   const now = new Date().toISOString();

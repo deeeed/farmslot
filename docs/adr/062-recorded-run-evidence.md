@@ -1117,3 +1117,14 @@ The registration revision participates in completion and gate identity. New inst
 Completion currently displays ticket criteria while review fixes and operator obligations remain outside the panel. It also stamps both review capabilities false for ordinary PR completion, making fresh visual, mixed and review-mode claims impossible to finish. Registration and the proof destination must agree before completion.
 
 Extend the shared protocol and existing registry, contract resolver, completion guard and client presentation. Do not add a second ledger, verdict writer or client-specific acceptance model. Existing runs keep their selected template and frozen contract until an explicit supported migration. Implementation is approved; this decision authorizes no live-run migration or replay.
+
+### Public surface and delivery
+
+- `@farmslot/protocol` 0.71.0 owns `AcceptanceRegistration`, source-linked criteria, typed derivation results and acceptance input revisions on `Run`. `registeredAcceptanceCriteria` and `acceptanceCriteriaView` retain the original list and project accepted appends.
+- `@farmslot/agent-runtime` 0.39.0 owns `mark sub <id> complete --acceptance-result <path>`. Its child stays running until the gateway persists the validated result and returns an acknowledgement. `farmslot-agent ac` remains read-only.
+- A PR-completion template declares `firstSubtask: derive-acceptance`. Task init records that declaration and requires a gateway-owned, capable handoff. The initial child owns `CHECKLIST.md` step 1.
+- `terminal.send.operatorMessageId` names a retry-stable authenticated instruction. Native worker sends retain their existing `commandId`. Both enter the same registration owner; ordinary input on opted-out templates adds no derivation unit.
+- New PR-completion runs receive capability version 1. The gateway selects immutable `inputs/acceptance-contracts/<revision>.json` records through `inputs/acceptance-contract.json`, confirms node delivery, and leaves the original terminal contract unchanged. The runtime refuses unsupported versions or stale modes. Existing comparison/eval review exclusions remain explicit unsupported destinations, never mode downgrades.
+- `@farmslot/review-dispatch` 0.19.0 extends the existing acceptance presentation for both clients. Source links, exclusions, pending instructions and inherited proof use that shared projection.
+
+Release the protocol, runtime and shared consumers before opting project templates in. Existing runs and selected pins retain their contracts. This amendment adds no project, harness, network or deployment default.

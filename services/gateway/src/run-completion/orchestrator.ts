@@ -1074,6 +1074,7 @@ export async function prepareCompletionPackageTransitionLocked(
 export async function runCompletionPipeline(
   runId: string,
   options?: {
+    acceptanceIdentity?: import('./pr-completion-proof.js').PRCompletionTransactionIdentity;
     skipRetrospective?: boolean;
     suppressPrMutation?: boolean;
     forPublication?: boolean;
@@ -1083,6 +1084,13 @@ export async function runCompletionPipeline(
 ): Promise<CompletionResult> {
   let run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
+  const assertAcceptanceCurrent = async () => {
+    if (options?.acceptanceIdentity)
+      await (
+        await import('./pr-completion-proof.js')
+      ).assertPRCompletionIdentity(runId, options.acceptanceIdentity);
+  };
+  await assertAcceptanceCurrent();
 
   const flags: CompletionResult = {
     ...(options?.inheritedAcceptance ? { inheritedAcceptance: options.inheritedAcceptance } : {}),
@@ -1107,7 +1115,10 @@ export async function runCompletionPipeline(
   //    rest of the pipeline (cost extraction, report generation) is not
   //    blocked. The explicit run.refreshMirror capture returns a failure to the
   //    client instead of continuing when the mirror is incomplete.
-  if (!isReviewPR) {
+  const reviewedCapture = run.acceptanceProofHold?.state === 'reviewed';
+  if (reviewedCapture && !run.output?.artifactBundle)
+    throw new Error('Reviewed completion proof has no retained capture');
+  if (!isReviewPR && !reviewedCapture) {
     try {
       await captureRunOutput(runId, true, true, {
         requireSourceArtifacts: options?.requireArtifactMirror,
@@ -1226,6 +1237,7 @@ export async function runCompletionPipeline(
     commentNumber &&
     (commentReport || options?.inheritedAcceptance)
   ) {
+    await assertAcceptanceCurrent();
     try {
       flags.prCommentPosted = await postPRComment(run, commentReport, commentRepo, commentNumber, {
         failOnError: Boolean(options?.inheritedAcceptance),
@@ -1252,6 +1264,7 @@ export async function runCompletionPipeline(
 
   // 4. Update PR title with proper conventional commit format (skip for review-pr — author owns title)
   if (!isReviewPR && ciRepo && prNumber) {
+    await assertAcceptanceCurrent();
     try {
       await updatePRTitle(run, ciRepo, prNumber);
       flags.prTitleUpdated = true;
@@ -1265,6 +1278,7 @@ export async function runCompletionPipeline(
   let artifactUrls = new Map<string, string>();
   let completionEvidenceSelection: string[] | undefined;
   if (!isReviewPR && prNumber && run.taskFile) {
+    await assertAcceptanceCurrent();
     const { manifest, inventory } = await readCurrentPackageEvidence(updatedRun);
     const published = await publishSelectedEvidence(
       updatedRun,
@@ -1283,6 +1297,7 @@ export async function runCompletionPipeline(
 
   // 6. For flows with ci-watch: rewrite PR body + check author checklist, then mark ready.
   if (!isReviewPR && ciRepo && prNumber) {
+    await assertAcceptanceCurrent();
     // Replace local artifact paths with uploaded URLs + auto-check author checklist boxes.
     // Fail-closed and ordered before markPRReady: a sanitization failure must leave the
     // PR in draft rather than publish a body that still exposes local-only paths.
@@ -1297,6 +1312,7 @@ export async function runCompletionPipeline(
       },
     );
     if (shouldMarkReadyAfterCompletion(updatedRun)) {
+      await assertAcceptanceCurrent();
       try {
         await markPRReady(ciRepo, prNumber);
         flags.prMarkedReady = true;

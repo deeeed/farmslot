@@ -712,6 +712,7 @@ async function executeStoredAction(
 
   if (action.type === 'terminal.send') {
     await terminalSend({
+      operatorMessageId: action.actionId,
       slotId: String(action.params.slotId),
       text: String(action.params.text),
       ...(typeof action.params.enter === 'boolean' ? { enter: action.params.enter } : {}),

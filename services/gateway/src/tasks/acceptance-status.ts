@@ -10,6 +10,7 @@
 import path from 'node:path';
 
 import {
+  ACCEPTANCE_REGISTRATION_INPUT,
   ACCEPTANCE_STATUS_ARTIFACT,
   acceptanceCriterionId,
   type AcceptanceCriterionRef,
@@ -127,7 +128,37 @@ export async function readHandoffAcceptanceCriteria(
       `invalid ${handoffPath}: task.acceptanceCriteria must be an array`,
     );
   }
-  return registeredAcceptanceCriteria(criteria);
+  const projectionPath = path.posix.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT);
+  if (!(await slotFileExists(ctx, projectionPath))) {
+    if (
+      'executionTemplate' in parsed &&
+      parsed.executionTemplate &&
+      typeof parsed.executionTemplate === 'object' &&
+      'firstSubtask' in parsed.executionTemplate &&
+      parsed.executionTemplate.firstSubtask === 'derive-acceptance'
+    )
+      throw new AcceptanceReadError(projectionPath, 'Acceptance registration transport is missing');
+    return registeredAcceptanceCriteria(criteria);
+  }
+  const projection: unknown = JSON.parse(await slotReadFile(ctx, projectionPath));
+  if (!projection || typeof projection !== 'object' || !('registration' in projection))
+    throw new AcceptanceReadError(projectionPath, 'Invalid acceptance registration transport');
+  if (
+    !projection.registration ||
+    typeof projection.registration !== 'object' ||
+    !('runId' in projection.registration) ||
+    !('attemptId' in parsed) ||
+    projection.registration.runId !== parsed.attemptId
+  )
+    throw new AcceptanceReadError(
+      projectionPath,
+      'Acceptance registration belongs to another task',
+    );
+  // The portable validator checks the original list and every append. Gate
+  // readers independently compare this transport with the owning run record.
+  const { registeredAcceptanceCriteria: projectCriteria } =
+    await import('@farmslot/protocol/scripts/acceptance.mjs');
+  return projectCriteria(criteria, projection.registration);
 }
 
 /**

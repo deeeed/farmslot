@@ -99,6 +99,17 @@ async function closeRunOutputOnce(
       const current = getRun(runId)!;
       const closedAt = current.output?.closedAt ?? new Date().toISOString();
       const patch: Partial<Run> = {
+        ...(current.acceptanceProofHold
+          ? {
+              metrics: {
+                ...current.metrics,
+                outcome:
+                  current.metrics.outcome === 'failure'
+                    ? ('failure' as const)
+                    : ('partial' as const),
+              },
+            }
+          : {}),
         status: 'done',
         completedAt: current.completedAt ?? closedAt,
         output: {

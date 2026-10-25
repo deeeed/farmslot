@@ -24,7 +24,11 @@ const {
   signalContentUnchanged,
   writeSignal,
 } = require('./mark-io.cjs');
-const { AcceptanceRefusal, requireHandoffAcceptanceCriteria } = require('./acceptance-ledger.cjs');
+const {
+  AcceptanceRefusal,
+  pendingInitialAcceptanceDerivation,
+  requireHandoffAcceptanceCriteria,
+} = require('./acceptance-ledger.cjs');
 const {
   openSubtaskRefusal,
   openSubtaskUnits,
@@ -561,6 +565,10 @@ if (stepNumber != null || terminalCommand === 'complete' || terminalCommand === 
  */
 function assertStepNotOwnedBySubtask(stepNumber) {
   if (stepNumber == null) return;
+  if (path.basename(taskPath) === 'CHECKLIST.md' && pendingInitialAcceptanceDerivation(taskDir)) {
+    console.error('Complete the derive-acceptance child on step 1 before marking task steps.');
+    process.exit(1);
+  }
   const owner = subtaskOwningStep(taskDir, path.basename(taskPath), stepNumber);
   if (!owner) return;
   const open = openSubtaskUnits(taskDir).find((entry) => entry.unit.id === owner.id);

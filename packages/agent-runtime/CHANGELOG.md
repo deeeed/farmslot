@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.0 - 2026-10-25
+
+- Derive PR-completion acceptance through acknowledged checklist children and consume gateway-confirmed proof destinations without changing frozen task contracts.
+
 ## 0.38.3 - 2026-10-24
 
 - Reject invalid evidence manifests during progress marks with field-level errors, before checklist or signal updates.

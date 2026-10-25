@@ -4,6 +4,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.71.0 - 2026-10-25
+
+- Register source-linked PR-completion criteria without replacing original obligations, and bind readiness to acceptance and proof-contract revisions.
+
+## 0.70.2 - 2026-10-24
+
 - Expose current CI-watch progress and total deadlines so clients use the monitor’s configured windows.
 
 - Expose checklist timing in task progress and per-step worker durations in monthly analytics.
@@ -11,10 +19,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Share source-first, deduplicated run reference links between Command Center and Companion; show shared total and current-step elapsed time on the existing metadata line.
 
 - Add shared linked-ticket lookup and operator ticket metadata on runs without changing frozen task inputs.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
-
-## 0.70.2 - 2026-10-24
 
 - Track per-run update-branch review admissions and share bounded budget projections between the gateway and activity labels, preserving feature PR history.
 

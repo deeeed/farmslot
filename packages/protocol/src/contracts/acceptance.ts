@@ -1,6 +1,11 @@
 import * as contract from '../../scripts/acceptance.mjs';
 import type { EvidenceMomentRef, RecipeClaimKind } from '../recipe/evidence.js';
 
+import type {
+  AcceptanceCriterionSource,
+  AcceptanceRegistration,
+} from './acceptance-registration.js';
+
 // ADR-062 engine claims are the normal verdict authority. Task init assigns
 // positional AC ids; selected recipe execution transfers a schema-2 projection
 // into the task namespace. Schema 1 survives only as retained display input.
@@ -40,7 +45,10 @@ export const ACCEPTANCE_CRITERION_ID_PATTERN = contract.ACCEPTANCE_CRITERION_ID_
  */
 export const acceptanceCriterionId = contract.acceptanceCriterionId;
 export const acceptanceCriteriaMatch = contract.acceptanceCriteriaMatch;
-export const registeredAcceptanceCriteria = contract.registeredAcceptanceCriteria;
+export const registeredAcceptanceCriteria: (
+  criteria: readonly unknown[],
+  registration?: AcceptanceRegistration,
+) => AcceptanceCriterionRef[] = contract.registeredAcceptanceCriteria;
 
 export interface AcceptanceCriterionStatus {
   /** `AC-<N>`, N the 1-based position in the handoff criteria array. */
@@ -69,6 +77,8 @@ export interface AcceptanceCriterionStatus {
    * rows belong to the ledger's `recipeRunId`.
    */
   recipeRunId?: string;
+  /** Gateway display provenance; the retained parent engine bytes stay unchanged. */
+  inheritedFrom?: InheritedAcceptanceProvenance;
 }
 
 export interface AcceptanceStatusLedger {
@@ -93,6 +103,9 @@ export const acceptanceVerdictLabel = contract.acceptanceVerdictLabel;
 export interface AcceptanceCriterionRef {
   id: string;
   text: string;
+  /** Declared by derivation, or inherited from qualified original proof. */
+  proofMode?: AcceptanceProofMode;
+  source?: AcceptanceCriterionSource;
 }
 
 /** A criterion paired with its verdict, or null when none is recorded yet. */

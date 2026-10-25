@@ -44,7 +44,12 @@ import {
   type TmuxListResult,
   type TmuxWindow,
 } from '@farmslot/protocol';
-import { listSlotTmuxWindows, slotTmuxWindowTarget } from '@farmslot/review-dispatch';
+import {
+  listSlotTmuxWindows,
+  type OperatorMessageInput,
+  operatorMessageInput,
+  slotTmuxWindowTarget,
+} from '@farmslot/review-dispatch';
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
@@ -229,6 +234,7 @@ function recipeRunIdForVisualPair(
 }
 
 export default function TerminalScreen() {
+  const pendingOperatorMessage = useRef<OperatorMessageInput | null>(null);
   const {
     slotId: requestedSlotId,
     runId,
@@ -821,12 +827,18 @@ export default function TerminalScreen() {
 
       setIsSending(true);
       try {
+        const message =
+          pendingOperatorMessage.current?.text === trimmedText
+            ? pendingOperatorMessage.current
+            : operatorMessageInput(trimmedText);
+        pendingOperatorMessage.current = message;
         const target = terminalTargetParamsRef.current;
         if (target) {
-          await client.request('terminal.input', {
+          await client.request('terminal.send', {
             ...target,
-            data: `${trimmedText}\r`,
+            ...message,
           });
+          pendingOperatorMessage.current = null;
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           setError(null);
           return true;
@@ -847,9 +859,9 @@ export default function TerminalScreen() {
         await client.request('terminal.send', {
           slotId,
           runId: run.id,
-          text: trimmedText,
-          enter: true,
+          ...message,
         });
+        pendingOperatorMessage.current = null;
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setError(null);
         return true;

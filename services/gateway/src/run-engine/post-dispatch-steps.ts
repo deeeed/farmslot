@@ -38,6 +38,12 @@ import {
 import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
+import {
+  codeReviewCertifiesPRCompletion,
+  readPRCompletionHead,
+  reviewAcceptanceCriteria,
+  reviewCoversPRCompletionCriteria,
+} from '../review/acceptance-coverage.js';
 import { executeReview, reReviewMode } from '../review/orchestrator.js';
 import {
   markReviewedInputsRerun,
@@ -55,6 +61,7 @@ import {
   runCompletionPipeline,
 } from '../run-completion/orchestrator.js';
 import { captureRunOutput, failRunOutputCapture } from '../run-completion/output.js';
+import { preparePRCompletionProofHold } from '../run-completion/pr-completion-proof.js';
 import {
   computeReadyGateReviewSubjectHash,
   readReadyGatePreparedPackage,
@@ -165,6 +172,7 @@ type MonitorTerminalErrorArgs = {
 };
 
 export interface PostDispatchStepContext {
+  prCompletionHead?: typeof readPRCompletionHead;
   assertGatePrerequisites?: typeof assertRunGateReady;
   waitForCompletionProgress?: () => Promise<void>;
   activeMonitors: Map<string, AbortController>;
@@ -683,6 +691,24 @@ export async function executeReviewStep(
     enabled: true,
     ...(reviewSelection ? { reviewSelection } : {}),
   };
+  if (
+    current.flowType === 'pr-complete' &&
+    current.acceptanceContractVersion === 1 &&
+    !current.acceptanceExecutionContract?.publicationReview
+  )
+    return {
+      inputs: { ...inputs, enabled: false },
+      outputs: { skipped: true, reason: 'no-fresh-review-criteria' },
+    };
+  if (
+    current.flowType === 'pr-complete' &&
+    current.acceptanceContractVersion === 1 &&
+    codeReviewCertifiesPRCompletion(
+      current,
+      await (context.prCompletionHead ?? readPRCompletionHead)(current),
+    )
+  )
+    return { inputs, outputs: { skipped: true, reason: 'review-criteria-already-qualified' } };
 
   const reviewSkip = await evalReviewAxisSkip(current);
   if (reviewSkip.skipped) {
@@ -775,31 +801,117 @@ export async function executeReviewStep(
   const reviewer = execution
     ? { reviewRunner: execution.runner, model: execution.model, effort: execution.effort }
     : {};
-  const mode = current.reviewMode;
+  const completionReview =
+    current.flowType === 'pr-complete' && current.acceptanceContractVersion === 1;
+  const savedCompletionReview = completionReview
+    ? current.engineState?.publishGate?.reviews?.find(
+        (review) =>
+          review.source === 'pipeline' &&
+          review.id === PIPELINE_REVIEW_SOURCE.artifactRefs(1, runId).id,
+      )
+    : undefined;
+  const mode = savedCompletionReview ? 'warm' : current.reviewMode;
   const primaryContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;
   const reviewId =
-    mode === 'warm'
+    savedCompletionReview?.id ??
+    (mode === 'warm'
       ? primaryContext?.reviewLineages[0]?.reviewId
-      : mode === 'cold'
+      : mode === 'cold' || completionReview
         ? PIPELINE_REVIEW_SOURCE.artifactRefs(1, runId).id
-        : undefined;
+        : undefined);
   // A result decision's Send back continues from its recorded findings: the
   // worker gets them first, as Continue Fixing does, instead of a fresh review.
   const sendBack = takeSendBackReview(runId);
-  const result = await executeReviewForRun(
+  const requestedCriteria = completionReview ? reviewAcceptanceCriteria(current) : [];
+  let result = await executeReviewForRun(
     runId,
     current.slotId,
     sendBack
       ? {
           ...reviewer,
+          ...(completionReview ? { publicationReview: true } : {}),
           validationDepth: sendBack.validationDepth ?? validationDepth,
           // ADR-063 Amendment 5: the fix's re-review continues this review's lineage WARM.
           mode: reReviewMode(sendBack, mode),
           reviewId: sendBack.reviewId ?? reviewId,
           resumeFromResult: sendBack,
         }
-      : { ...reviewer, validationDepth, mode, reviewId },
+      : {
+          ...reviewer,
+          validationDepth,
+          mode,
+          reviewId,
+          ...(completionReview
+            ? { publicationReview: true, rereview: reReviewOfStatus(savedCompletionReview) }
+            : {}),
+        },
   );
+  if (completionReview && result.verdict === 'pass' && !result.skipped) {
+    if (!result.reviewId) throw new Error('Completion review has no recorded reviewer identity');
+    if (
+      !requestedCriteria.every((criterion) =>
+        result.acceptanceReviewCoverage?.some(
+          ({ id, definitionHash }) =>
+            id === criterion.id && definitionHash === criterion.definitionHash,
+        ),
+      )
+    )
+      throw new Error('Completion review result did not bind its frozen acceptance request');
+    const firstId = result.reviewId;
+    const minimum = Math.max(
+      1,
+      current.engineState?.publishGate?.reviewPolicy?.minimumReviews ?? 1,
+    );
+    for (;;) {
+      const latest = getRun(runId)!;
+      const head = await (context.prCompletionHead ?? readPRCompletionHead)(latest);
+      if (codeReviewCertifiesPRCompletion(latest, head)) break;
+      let launched = false;
+      for (let index = 0; index < minimum; index++) {
+        const id =
+          index === 0
+            ? firstId
+            : PIPELINE_REVIEW_SOURCE.artifactRefs(1, `${runId}-completion-${index + 1}`).id;
+        const previous = getRun(runId)?.engineState?.publishGate?.reviews?.find(
+          (review) => review.id === id,
+        );
+        const actualHead = await (context.prCompletionHead ?? readPRCompletionHead)(getRun(runId)!);
+        if (previous && reviewCoversPRCompletionCriteria(getRun(runId)!, previous, actualHead))
+          continue;
+        const selection = current.engineState?.publishGate?.reviewSequence?.[index];
+        const model = selection ? executionModelFromSelection(selection) : null;
+        const requested = reviewAcceptanceCriteria(getRun(runId)!);
+        result = await executeReviewForRun(runId, current.slotId!, {
+          ...reviewer,
+          ...(model
+            ? { reviewRunner: model.runner, model: model.model, effort: model.effort }
+            : {}),
+          publicationReview: true,
+          validationDepth,
+          reviewId: id,
+          mode: previous ? 'warm' : (selection?.mode ?? 'cold'),
+          rereview: reReviewOfStatus(previous),
+        });
+        launched = true;
+        if (
+          result.verdict === 'pass' &&
+          !requested.every((criterion) =>
+            result.acceptanceReviewCoverage?.some(
+              ({ id, definitionHash }) =>
+                id === criterion.id && definitionHash === criterion.definitionHash,
+            ),
+          )
+        )
+          throw new Error('Completion review result did not bind its frozen acceptance request');
+        if (result.verdict !== 'pass' || result.skipped) break;
+      }
+      if (result.verdict !== 'pass' || result.skipped) break;
+      if (!launched)
+        throw new Error(
+          'Completion review policy remains blocked by recorded findings or duplicate reviewer sessions',
+        );
+    }
+  }
   const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
 
   // Interactive mode: present review results as a decision before proceeding
@@ -1482,6 +1594,9 @@ export async function executeCompleteStep(
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
   let current = getRun(runId)!;
   let inheritedAcceptance: InheritedAcceptanceProvenance | undefined;
+  let acceptanceIdentity:
+    | import('../run-completion/pr-completion-proof.js').PRCompletionTransactionIdentity
+    | undefined;
   const generation = current.engineState?.generation ?? 0;
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
@@ -1497,11 +1612,28 @@ export async function executeCompleteStep(
   }
   if (!current.slotId) throw new Error('No slot assigned');
   // Record the verified Git result independently of acceptance/publication approval.
+  if (current.acceptanceRegistration?.units.some(({ result }) => !result)) {
+    const { continuePRCompletionStep } = await import('../methods/run/replay-step.js');
+    await continuePRCompletionStep(
+      runId,
+      'monitor',
+      broadcastFn,
+      async () =>
+        (getRun(runId)?.engineState?.generation ?? 0) === generation &&
+        Boolean(getRun(runId)?.acceptanceRegistration?.units.some(({ result }) => !result)),
+    );
+    return {
+      inputs: { flowType: current.flowType },
+      outputs: { acceptanceDerivationPending: true },
+    };
+  }
   // A refused completion must not strand a successful push behind stale ownership.
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   if (noCodeDisposition || ['blocked', 'failed'].includes(current.metrics.disposition ?? ''))
     await abandonBranchMaintenance(current);
   else await completeBranchMaintenance(current);
+  if (await preparePRCompletionProofHold(runId, broadcastFn, generation))
+    return { inputs: { flowType: current.flowType }, outputs: { proofHeld: true } };
   if (!shouldPrepareLocalFirstPackage(current)) {
     // SIGNAL.json can precede the worker's final native turn completion. Keep
     // this engine attempt alive while that is the only unmet prerequisite.
@@ -1511,7 +1643,21 @@ export async function executeCompleteStep(
         throw new Error('Completion was superseded while waiting for worker idle');
       current = latest!;
       try {
-        await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
+        const readiness = await (context.assertGatePrerequisites ?? assertRunGateReady)(
+          current,
+          null,
+          'complete',
+        );
+        if (current.flowType === 'pr-complete' && current.acceptanceContractVersion === 1) {
+          acceptanceIdentity = {
+            generation: readiness.identity.generation,
+            registrationRevision: readiness.identity.acceptanceRevision ?? 0,
+            contractRevision: readiness.identity.acceptanceContractRevision ?? 0,
+            headSha:
+              readiness.identity.headSha ??
+              (await (context.prCompletionHead ?? readPRCompletionHead)(current)),
+          };
+        }
         if (current.parentRunId) {
           const { readInheritedAcceptanceSource } =
             await import('../run-completion/inherited-acceptance.js');
@@ -1588,6 +1734,7 @@ export async function executeCompleteStep(
     };
   }
   const completion = await runCompletionPipeline(runId, {
+    acceptanceIdentity,
     skipRetrospective,
     suppressPrMutation: noCodeDisposition || artifactOnly,
     inheritedAcceptance,

@@ -323,6 +323,13 @@ export async function syncTerminalContractForFlowOnSlot(
       claimReviewGate: parent.claimReviewGate,
       publicationReview: parent.publicationReview,
       recordedEvidenceContractVersion: parent.recordedEvidenceContractVersion,
+      ...(parent.acceptanceContractVersion === 1
+        ? {
+            acceptanceContractVersion: 1,
+            claimReviewSupported: parent.claimReviewSupported,
+            acceptanceParentContract: WORKER_TERMINAL_CONTRACT_INPUT,
+          }
+        : {}),
     };
   }
   if (reportPath) contract = withTerminalReportPath(contract, reportPath, additionalArtifactPaths);

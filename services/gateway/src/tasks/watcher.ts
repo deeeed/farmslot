@@ -1016,6 +1016,10 @@ async function computeAndEmit(
   if (!sw) return;
 
   try {
+    if (sw.runId && (sw.role === undefined || sw.role === 'primary')) {
+      const { syncAcceptanceRegistration } = await import('./acceptance-registration-sync.js');
+      await syncAcceptanceRegistration(sw.runId, sw.slotId, sw, path.dirname(sw.taskFilePath));
+    }
     if (!options.fromSubtask && !options.fromAcceptance) {
       // Read fresh content if not provided
       let markdown = content;

@@ -18,6 +18,8 @@ import {
 import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
+import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
+import { reviewAcceptanceCriteria } from '../review/acceptance-coverage.js';
 import type { ReviewOptions } from '../review/orchestrator.js';
 import {
   admitReviewRound,
@@ -2446,4 +2448,147 @@ test('a requested gate review whose package meets a stale CI receipt returns to 
     },
   });
   assert.equal(gates, 2, 'the requested review returns to the gate');
+});
+
+function completionReviewFixture(t: import('node:test').TestContext) {
+  const created = createRun({
+    project: 'completion-review-proof',
+    flowType: 'pr-complete',
+    mode: 'autonomous',
+    ticketOrPr: 'example/repo#42',
+    slotId: 'isolated-review-slot',
+  });
+  t.after(() => deleteTestRunIfPresent(created.id));
+  updateRun(created.id, {
+    acceptanceContractVersion: 1,
+    acceptanceExecutionContract: {
+      schemaVersion: 1,
+      runId: created.id,
+      revision: 1,
+      registrationRevision: 1,
+      baseContractHash: 'b'.repeat(64),
+      inheritedCriterionIds: [],
+      proofModes: [{ id: 'AC-1', text: 'Preserve balance semantics', proofMode: 'review' }],
+      claimReviewGate: false,
+      publicationReview: true,
+    },
+    engineState: { publishGate: { reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' } } },
+  });
+  const calls: ReviewOptions[] = [];
+  const context: PostDispatchStepContext = {
+    ...restartReplayContext(),
+    prCompletionHead: async () => 'a'.repeat(40),
+    executeReviewForRun: async (id, _slot, options) => {
+      assert.ok(options);
+      calls.push(options);
+      const current = getRun(id)!;
+      const coverage = reviewAcceptanceCriteria(current);
+      const review: ReviewStatus = {
+        id: options.reviewId!,
+        source: 'pipeline',
+        mode: options.mode ?? 'cold',
+        loopNumber: calls.length,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        reviewerSessionId: `independent-${options.reviewId}`,
+        reviewedHeadSha: 'a'.repeat(40),
+        acceptanceReviewCoverage: coverage,
+      };
+      updateRun(id, {
+        engineState: {
+          ...current.engineState,
+          publishGate: {
+            ...current.engineState?.publishGate,
+            reviews: [
+              ...(current.engineState?.publishGate?.reviews ?? []).filter(
+                ({ id }) => id !== review.id,
+              ),
+              review,
+            ],
+          },
+        },
+      });
+      return {
+        verdict: 'pass',
+        retryCount: 0,
+        reviewId: review.id,
+        acceptanceReviewCoverage: coverage,
+      };
+    },
+  };
+  return { id: created.id, calls, context };
+}
+
+test('completion REVIEW satisfies two independent reviews and reuses them for state-only additions', async (t) => {
+  const { id, calls, context } = completionReviewFixture(t);
+  await executeReviewStep(id, context);
+  assert.equal(calls.length, 2);
+  assert.equal(new Set(calls.map(({ reviewId }) => reviewId)).size, 2);
+  assert.ok(calls.every(({ publicationReview }) => publicationReview));
+  const current = getRun(id)!;
+  updateRun(id, {
+    acceptanceExecutionContract: {
+      ...current.acceptanceExecutionContract!,
+      revision: 2,
+      proofModes: [
+        ...current.acceptanceExecutionContract!.proofModes,
+        { id: 'AC-2', text: 'Fresh state', proofMode: 'state' },
+      ],
+    },
+  });
+  const reused = await executeReviewStep(id, context);
+  assert.equal(reused.outputs?.reason, 'review-criteria-already-qualified');
+  assert.equal(calls.length, 2);
+});
+
+test('new unchanged-head review criteria reuse both retained review identities WARM', async (t) => {
+  const { id, calls, context } = completionReviewFixture(t);
+  await executeReviewStep(id, context);
+  const firstIds = calls.map(({ reviewId }) => reviewId);
+  const current = getRun(id)!;
+  updateRun(id, {
+    acceptanceExecutionContract: {
+      ...current.acceptanceExecutionContract!,
+      revision: 2,
+      proofModes: [
+        ...current.acceptanceExecutionContract!.proofModes,
+        { id: 'AC-2', text: 'Additional invariant', proofMode: 'review' },
+      ],
+    },
+  });
+  await executeReviewStep(id, context);
+  assert.deepEqual(
+    calls.slice(2).map(({ reviewId }) => reviewId),
+    firstIds,
+  );
+  assert.ok(calls.slice(2).every(({ mode }) => mode === 'warm'));
+});
+
+test('completion REVIEW refuses a result without its requested criterion coverage', async (t) => {
+  const { id, context, calls } = completionReviewFixture(t);
+  context.executeReviewForRun = async () => {
+    calls.push({});
+    return {
+      verdict: 'pass',
+      retryCount: 0,
+      reviewId: PIPELINE_REVIEW_SOURCE.artifactRefs(1, id).id,
+    };
+  };
+  await assert.rejects(executeReviewStep(id, context), /frozen acceptance request/);
+  assert.equal(calls.length, 1, 'a malformed receipt does not spend another review');
+});
+
+test('completion state-only contracts never launch a review', async (t) => {
+  const { id, context, calls } = completionReviewFixture(t);
+  const current = getRun(id)!;
+  updateRun(id, {
+    acceptanceExecutionContract: {
+      ...current.acceptanceExecutionContract!,
+      publicationReview: false,
+      proofModes: [{ id: 'AC-1', text: 'State check', proofMode: 'state' }],
+    },
+  });
+  const result = await executeReviewStep(id, context);
+  assert.equal(result.outputs?.reason, 'no-fresh-review-criteria');
+  assert.equal(calls.length, 0);
 });

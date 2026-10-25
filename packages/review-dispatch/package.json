@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/review-dispatch",
-  "version": "0.18.1",
+  "version": "0.19.0",
   "description": "Shared review and dispatch selection, validation, and view model",
   "type": "module",
   "main": "./dist/index.js",

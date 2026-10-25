@@ -19,6 +19,7 @@ import {
   type Run,
   validateInteractiveOperatorPacket,
 } from '@farmslot/protocol';
+import { operatorMessageInput } from '@farmslot/review-dispatch';
 
 import { useRunAcceptance } from '../../../hooks/useRunAcceptance';
 import {
@@ -196,8 +197,7 @@ export function InteractiveOperatorPacketsPanel({
         await client.request(Methods.TERMINAL_SEND, {
           slotId: run.slotId,
           runId: run.id,
-          text: request.text,
-          enter: true,
+          ...operatorMessageInput(request.text),
         });
       } else if (request.kind === 'decision.resolve') {
         if (!client) throw new Error('Gateway is not connected.');

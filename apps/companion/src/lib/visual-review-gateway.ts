@@ -7,6 +7,7 @@ import {
   type RunRecipeRunsForRunResult,
   type TerminalSendParams,
 } from '@farmslot/protocol';
+import { operatorMessageInput } from '@farmslot/review-dispatch';
 
 import {
   type ArtifactHttpHeaders,
@@ -127,7 +128,10 @@ export function createVisualReviewGateway(
       return artifactSource(urlFor(runId, artifact), authHeaders);
     },
     async sendWorkerMessage(params) {
-      await request(Methods.TERMINAL_SEND, params);
+      await request(Methods.TERMINAL_SEND, {
+        ...params,
+        ...operatorMessageInput(params.text, params.operatorMessageId),
+      });
     },
   };
 }
