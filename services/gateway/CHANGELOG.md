@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Ignore unrelated closed PRs on reused branch names during discovery and publication retries, preserving open, merged and run-owned PRs.
+
 - Exclude ineligible slots from the human slot picker while preserving stale-branch decisions and explicit node-load overrides.
 
 - Keep original PR-completion criteria and append source-linked review and instruction obligations, with current-head code review and captured visual proof before completion.
