@@ -7,6 +7,8 @@ import { hasUserSlotChanges } from '../../fleet/slot-scaffolding.js';
 import { ghRequest } from '../../integrations/github-client.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
 
+export class UnpublishedSlotCommitsError extends Error {}
+
 interface UnpushedCommitOptions {
   preservedByLocalBranch?: boolean;
   patchBase?: string;
@@ -269,7 +271,7 @@ export async function assertPrepareCommitsPublished(
         }
       }
     }
-    throw new Error(refusal);
+    throw new UnpublishedSlotCommitsError(refusal);
   }
   // Only the new merged-work exemption needs this extra protection. Existing
   // published/start-ref prepares still clean fixture/deps leftovers after all refusals.

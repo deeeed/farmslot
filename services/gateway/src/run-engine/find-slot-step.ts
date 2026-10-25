@@ -13,6 +13,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
 } from '@farmslot/protocol';
+import { withProjectSources } from '@farmslot/slot-config';
 
 import { loadSlotVars } from '../core/config.js';
 import {
@@ -56,6 +57,7 @@ import {
   companionResourceBlocker,
   compareSlotLoads,
   isCdpLive,
+  isDispatchStaleBranch,
   isFreeSlot,
   isReplaceableWarmSlot,
   parkPreservedSlotIds,
@@ -81,7 +83,10 @@ import {
   isCancelledSlotHolder,
   reclaimCancelledSlot,
 } from '../run-lifecycle/cancelled-slot-reclaim.js';
-import { reclaimFinishedSlot } from '../run-lifecycle/finished-slot-reclaim.js';
+import {
+  reclaimFinishedSlot,
+  reclaimPublishedFreeSlot,
+} from '../run-lifecycle/finished-slot-reclaim.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import {
   assertNativeProfileSlot,
@@ -1054,16 +1059,28 @@ export async function executeFindSlotStep(
       `No complete source plan for eligible slots:\n${reasons.join('\n')}`,
     );
   }
-  const freeSlots = projectSlots.filter(isFreeSlot);
+  const freeSlots = projectSlots.filter(
+    (slot) => isFreeSlot(slot) && !pickedSlotIneligibility(slot, run.project),
+  );
+  const activeOwners = activeRunIds(getAllRuns(), runId);
   const refreshableSlots = freeSlots.filter(
     (slot) => !automaticSlotLoadBlocker(slot, selectionOptions),
   );
   if (refreshableSlots.length > 0) await refreshBranches(refreshableSlots, { force: true });
-  const isEligibleFreeSlot = (slot: (typeof freeSlots)[number]) => {
+  const isEligibleFreeSlot = (slot: (typeof freeSlots)[number], automatic = true) => {
     const selected = optionsFor(slot);
-    return !!selected && !validateSlotForDispatch(slot, fleet.slots, selected);
+    return (
+      !!selected &&
+      !slotClaimBlockedByRelease(slot) &&
+      (!slot.currentRunId || !activeOwners.has(slot.currentRunId)) &&
+      !validateSlotForDispatch(
+        slot,
+        fleet.slots,
+        automatic ? selected : { ...selected, automaticLoads: undefined },
+      )
+    );
   };
-  const eligibleFreeSlots = freeSlots.filter(isEligibleFreeSlot);
+  const eligibleFreeSlots = freeSlots.filter((slot) => isEligibleFreeSlot(slot));
   if (!run.slotId && eligibleFreeSlots.length === 0) {
     for (const slot of projectSlots) {
       if (!isCancelledSlotHolder(slot.currentRunId, runId)) continue;
@@ -1408,12 +1425,36 @@ export async function executeFindSlotStep(
     );
   }
 
+  // A published idle checkout must be reclaimed before the stale-branch decision,
+  // otherwise selection never reaches the existing pre-claim finished-run cleanup.
+  const allFreeBranchesStale =
+    eligibleFreeSlots.length > 0 &&
+    eligibleFreeSlots.every(
+      (slot) =>
+        isDispatchScoreStale(scoreCandidate(slot)) &&
+        isDispatchStaleBranch(slot, optionsFor(slot)?.projectConfigs, parkPreserved),
+    );
+  if (!run.slotId && !skipPrepare && allFreeBranchesStale) {
+    const ordered = [...eligibleFreeSlots].sort(
+      (a, b) => compareSlotLoads(a, b, selectionOptions) || scoreCandidate(a) - scoreCandidate(b),
+    );
+    for (const slot of ordered) {
+      if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slot.slot);
+      const reclaim = () => reclaimPublishedFreeSlot(slot.slot, run, generation, broadcastFn);
+      const plan = sourcePlans?.get(slot.slot);
+      const reclaimed =
+        plan && 'params' in plan
+          ? await withProjectSources(plan.sources, reclaim)
+          : await withRunSources(run, reclaim);
+      if (reclaimed) {
+        return executeFindSlotStep(runId, getRun(runId) ?? run, generation, context);
+      }
+      if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slot.slot);
+    }
+  }
+
   // Human intervention when no good candidates exist
-  if (
-    !run.slotId &&
-    (eligibleFreeSlots.length === 0 ||
-      eligibleFreeSlots.every((s) => isDispatchScoreStale(scoreCandidate(s))))
-  ) {
+  if (!run.slotId && (eligibleFreeSlots.length === 0 || allFreeBranchesStale)) {
     const freeSlotsMissingCompanionResource =
       freeSlots.length > 0 &&
       prepareProfileNeedsCompanionResource(requiredPrepareProfile) &&
@@ -1424,26 +1465,22 @@ export async function executeFindSlotStep(
         : eligibleFreeSlots.length === 0 && freeSlotsMissingCompanionResource
           ? 'missing_required_resources'
           : 'all_stale';
-    const allProjectSlots = projectSlots.map((s) => ({
-      slotId: s.slot,
-      score:
-        isFreeSlot(s) && isEligibleFreeSlot(s)
-          ? scoreCandidate(s)
-          : reason === 'missing_required_resources' &&
-              !companionResourceBlocker(s, requiredPrepareProfile)
-            ? scoreCandidate(s)
-            : -1,
-      branch: s.branch || '',
-      lifecycle: s.lifecycle,
-      health: s.health,
-      machine: s.machine,
-    }));
+    const allProjectSlots = freeSlots
+      .filter((slot) => isEligibleFreeSlot(slot, false))
+      .map((s) => ({
+        slotId: s.slot,
+        score: scoreCandidate(s),
+        branch: s.branch || '',
+        lifecycle: s.lifecycle,
+        health: s.health,
+        machine: s.machine,
+      }));
 
     const desc =
       reason === 'no_free_slots'
         ? `No free slots for **${run.project}**. ${projectSlots.length} slots exist but all are busy or disabled.`
         : reason === 'missing_required_resources'
-          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Wait until a listed iOS or Android resource slot is ready, then pick it.`
+          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Wait until an allowed slot has the required iOS or Android resources.`
           : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
 
     const slotPickerPayload: import('@farmslot/protocol').SlotPickerPayload = {

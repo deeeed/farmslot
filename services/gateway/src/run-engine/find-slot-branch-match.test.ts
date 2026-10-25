@@ -79,6 +79,10 @@ let prHead = branch;
 const claims: string[] = [];
 const finishedReclaims: string[] = [];
 let finishedRefusal: string | undefined;
+let expectedTarget: string | undefined = branch;
+const publishedReclaims: string[] = [];
+const publishedSlots = new Set<string>();
+let pickerPayload: import('@farmslot/protocol').RunDecisionPayload | undefined;
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
@@ -189,7 +193,7 @@ mock.module('../methods/dispatch.js', {
       params: import('@farmslot/protocol').DispatchPreviewParams,
       _options: object,
     ) => {
-      if (!run.slotId) assert.equal(params.targetBranch, branch);
+      if (!run.slotId) assert.equal(params.targetBranch, expectedTarget);
       const selected = run.slotId
         ? slots.find((slot) => slot.slot === run.slotId)
         : scoring.findBestSlot(slots, project, {
@@ -225,6 +229,12 @@ const finished = await import('../run-lifecycle/finished-slot-reclaim.js');
 mock.module('../run-lifecycle/finished-slot-reclaim.js', {
   namedExports: {
     ...finished,
+    reclaimPublishedFreeSlot: async (slotId: string) => {
+      publishedReclaims.push(slotId);
+      if (!publishedSlots.has(slotId)) return false;
+      slots.find((slot) => slot.slot === slotId)!.branch = 'main';
+      return true;
+    },
     reclaimFinishedSlot: async (slotId: string) => {
       assert.deepEqual(claims, [], 'cleanup must finish before the incoming claim');
       finishedReclaims.push(slotId);
@@ -260,6 +270,10 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   refreshedSlots.length = 0;
   nudgeCandidates = [];
   pickedSlot = undefined;
+  expectedTarget = branch;
+  publishedReclaims.length = 0;
+  publishedSlots.clear();
+  pickerPayload = undefined;
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -267,7 +281,8 @@ const context: Parameters<typeof executeFindSlotStep>[3] = {
   setRunFlags: () => {},
   requiresCollisionPrecheck: () => false,
   handleCollisionDecision: async () => 'create-new',
-  createEngineDecision: async (_id, reason) => {
+  createEngineDecision: async (_id, reason, _description, _actions, payload) => {
+    pickerPayload = payload;
     if (!pickedSlot) throw new Error('unexpected all_stale slot picker');
     run.decisions.push({
       id: 'load-pick',
@@ -457,4 +472,85 @@ test('an operator affinity-card pick retains explicit pressure policy on an over
   assert.equal(result.outputs?.selectedSlot, hot.slot);
   assert.equal(result.outputs?.selectionMethod, 'human-override');
   assert.deepEqual(claims, [hot.slot]);
+});
+
+for (const flowType of ['dev', 'fix-bug'] as const) {
+  test(`a published stale checkout is reclaimed automatically before the ${flowType} picker`, async () => {
+    reset(flowType, 'TAT-9000');
+    expectedTarget = undefined;
+    const idle = candidate('published-slot', 'macpro', 'TAT-4221-old');
+    idle.hostLoad = { cpuPercent: 60, memoryPercent: 60, diskPercent: 10, headroom: 'yellow' };
+    slots.splice(0, slots.length, idle);
+    expectedSlot = idle.slot;
+    publishedSlots.add(idle.slot);
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+    assert.equal(result.outputs?.selectedSlot, idle.slot);
+    assert.deepEqual(publishedReclaims, [idle.slot]);
+    assert.equal(idle.branch, 'main');
+    assert.equal(pickerPayload, undefined, 'reclamation precedes the human decision');
+    assert.deepEqual(claims, [idle.slot]);
+  });
+}
+
+test('a protected stale checkout stays intact while another published candidate is selected', async () => {
+  reset('dev', 'TAT-9000');
+  expectedTarget = undefined;
+  const protectedSlot = candidate('protected-slot', 'macpro', 'fix/unpublished');
+  const published = candidate('published-slot', 'mini', 'fix/pushed');
+  slots.splice(0, slots.length, protectedSlot, published);
+  publishedSlots.add(published.slot);
+  expectedSlot = published.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, published.slot);
+  assert.deepEqual(publishedReclaims, [protectedSlot.slot, published.slot]);
+  assert.equal(protectedSlot.branch, 'fix/unpublished');
+  assert.equal(pickerPayload, undefined);
+});
+
+test('the fallback picker omits manual, held, busy, disabled, ghost and active-owner slots', async () => {
+  reset('dev', 'TAT-9000');
+  expectedTarget = undefined;
+  const selectable = candidate('selectable', 'macpro', 'fix/unpublished');
+  slots.splice(
+    0,
+    slots.length,
+    selectable,
+    { ...candidate('manual', 'macpro', 'HEAD'), lifecycle: 'manual' },
+    { ...candidate('held', 'macpro', 'fix/held'), lifecycle: 'held' },
+    { ...candidate('busy', 'macpro', 'fix/busy'), lifecycle: 'busy', agent: 'working' },
+    { ...candidate('disabled', 'macpro', 'fix/disabled'), enabled: false },
+    { ...candidate('ghost', 'macpro', 'fix/ghost'), missingFromPool: true },
+    { ...candidate('active', 'macpro', 'fix/active'), currentRunId: 'active-owner' },
+    { ...candidate('releasing', 'macpro', 'fix/releasing'), phase: 'releasing' },
+  );
+  cancelledHolder = makeRun({ id: 'active-owner', slotId: 'active', status: 'reviewing' });
+  pressureDecisions.set('macpro', loadDecision('macpro', 1));
+  expectedSlot = pickedSlot = selectable.slot;
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(pickerPayload?.kind, 'slot_picker');
+  if (pickerPayload?.kind !== 'slot_picker') throw new Error('Missing picker');
+  assert.deepEqual(
+    pickerPayload.candidates.map((slot) => slot.slotId),
+    [selectable.slot],
+  );
+  assert.deepEqual(publishedReclaims, [selectable.slot]);
+});
+
+test('the picker preserves explicit load override eligibility while automatic reclaim excludes it', async () => {
+  reset('dev', 'TAT-9000');
+  expectedTarget = undefined;
+  const cold = candidate('protected', 'mini', 'fix/unpublished');
+  const hot = candidate('hot', 'macpro', 'fix/published');
+  slots.splice(0, slots.length, cold, hot);
+  pressureDecisions.set('mini', loadDecision('mini', 0.2));
+  pressureDecisions.set('macpro', loadDecision('macpro', 6));
+  expectedSlot = pickedSlot = hot.slot;
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(publishedReclaims, [cold.slot]);
+  assert.equal(pickerPayload?.kind, 'slot_picker');
+  if (pickerPayload?.kind !== 'slot_picker') throw new Error('Missing picker');
+  assert.deepEqual(
+    pickerPayload.candidates.map((s) => s.slotId),
+    [cold.slot, hot.slot],
+  );
 });

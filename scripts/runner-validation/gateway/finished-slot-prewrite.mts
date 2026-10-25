@@ -291,6 +291,10 @@ try {
   for (const kind of [
     'pushed',
     'merged-deleted',
+    'automatic-pushed',
+    'automatic-merged',
+    'automatic-ownerless',
+    'automatic-unpublished',
     'unpublished',
     'successor',
     'completion-refused',
@@ -306,7 +310,11 @@ try {
     git(repo, 'add', '.');
     git(repo, 'commit', '-qm', kind);
     if (kind !== 'unpublished') git(repo, 'push', '-q', 'origin', oldBranch);
-    if (kind === 'merged-deleted') {
+    if (
+      kind === 'merged-deleted' ||
+      kind === 'automatic-merged' ||
+      kind === 'automatic-unpublished'
+    ) {
       git(repo, 'checkout', '-q', 'main');
       git(repo, 'merge', '--no-ff', '-qm', 'merge finished task', oldBranch);
       git(repo, 'push', '-q', 'origin', 'main');
@@ -314,6 +322,12 @@ try {
       git(repo, 'fetch', '-q', '--prune', 'origin');
       git(repo, 'checkout', '-q', oldBranch);
     }
+    if (kind === 'automatic-unpublished') {
+      await writeFile(path.join(repo, 'unpublished-tip.txt'), 'Keep this unpublished work\n');
+      git(repo, 'add', '.');
+      git(repo, 'commit', '-qm', 'local work after upstream deletion');
+    }
+
     const old = store.createRun({
       project,
       flowType: 'fix-bug',
@@ -325,6 +339,7 @@ try {
       slotId: slot,
     });
     store.updateRun(old.id, { status: 'done' });
+    if (kind === 'automatic-ownerless') await store.deleteRun(old.id);
     const oldTask = path.join(repo, 'temp/tasks/fix/old/TASK.md');
     await mkdir(path.dirname(oldTask), { recursive: true });
     await writeFile(oldTask, 'old task\n');
@@ -337,7 +352,7 @@ try {
             lifecycle: 'ready',
             agent: 'idle',
             phase: null,
-            current_run_id: old.id,
+            current_run_id: kind === 'automatic-ownerless' ? null : old.id,
             slot_epoch: 10,
             branch: oldBranch,
             task_file: 'fix/old',
@@ -355,7 +370,7 @@ try {
       scripted: { mode: 'command', commandRef: 'proof' },
       transport: 'tmux',
       ticketOrPr: 'PROOF-137',
-      slotId: slot,
+      ...(kind.startsWith('automatic-') ? {} : { slotId: slot }),
       ticketData: {
         source: 'manual',
         title: 'Keep the new task',
@@ -469,10 +484,14 @@ try {
       await access(oldTask);
       assert.equal(git(repo, 'branch', '--show-current'), oldBranch);
       results.push({ kind, retainedCheckoutPreserved: true });
-    } else if (kind === 'unpublished' || kind === 'successor') {
+    } else if (kind === 'unpublished' || kind === 'successor' || kind === 'automatic-unpublished') {
       await assert.rejects(
         executeFindSlotStep(created.run.id, store.getRun(created.run.id)!, 0, context),
-        kind === 'unpublished' ? /UNMERGED_WORK/ : /cleanup refused/,
+        kind === 'unpublished'
+          ? /UNMERGED_WORK/
+          : kind === 'automatic-unpublished'
+            ? /Unexpected fixture decision/
+            : /cleanup refused/,
       );
       assert.equal(store.getRun(created.run.id)?.taskFile, null);
       await access(oldTask);
@@ -517,6 +536,7 @@ try {
       assert.equal(readback.run.taskFile, taskFile);
       results.push({
         kind,
+        ...(kind.startsWith('automatic-') ? { automaticSelectionWithoutDecision: true } : {}),
         releasedBeforeClaimAndWrite: true,
         newTaskSurvivesPrepare: true,
         taskSha256: createHash('sha256').update(before).digest('hex'),
