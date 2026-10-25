@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
+import { resourceRevisions } from '../resources/revisions.js';
+
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-work-graph-test-'));
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
@@ -857,6 +859,12 @@ test('failed required edges targeting reference nodes keep graph attention visib
     toNodeId: 'wn_reference_downstream',
     condition: { kind: 'manual', gateId: 'reference-gate' },
   });
+  const collectionKey = { family: 'planning', collection: 'work-graphs' } as const;
+  const detailKey = { ...collectionKey, itemId: graphId };
+  const beforeGate = {
+    collection: resourceRevisions.revision(collectionKey),
+    detail: resourceRevisions.revision(detailKey),
+  };
   await workGraph.gateResolve({
     graphId,
     edgeId: 'we_failed_reference_gate',
@@ -864,6 +872,14 @@ test('failed required edges targeting reference nodes keep graph attention visib
     reason: 'reference dependency rejected',
     decision: 'rejected',
   });
+  assert(
+    resourceRevisions.revision(collectionKey) > beforeGate.collection,
+    'Gate decisions invalidate the open graph collection',
+  );
+  assert(
+    resourceRevisions.revision(detailKey) > beforeGate.detail,
+    'Gate decisions invalidate the selected graph',
+  );
   await workGraph.activateWorkGraph({ graphId });
 
   const projection = await workGraph.schedulerTick({ graphId });
@@ -1233,7 +1249,21 @@ test('scheduler reconciles restart/idempotency and does not duplicate graph enqu
   });
   runs.updateRun(upstreamRun.id, { status: 'done', completedAt: new Date().toISOString() });
 
+  const collectionKey = { family: 'planning', collection: 'work-graphs' } as const;
+  const detailKey = { ...collectionKey, itemId: graphId };
+  const beforeSchedule = {
+    collection: resourceRevisions.revision(collectionKey),
+    detail: resourceRevisions.revision(detailKey),
+  };
   await workGraph.schedulerTick({ graphId });
+  assert(
+    resourceRevisions.revision(collectionKey) > beforeSchedule.collection,
+    'Scheduler commits invalidate collection projections',
+  );
+  assert(
+    resourceRevisions.revision(detailKey) > beforeSchedule.detail,
+    'Scheduler commits invalidate the selected graph',
+  );
   await workGraph.schedulerTick({ graphId });
 
   const projection = workGraph.getWorkGraph({ graphId }).graph;

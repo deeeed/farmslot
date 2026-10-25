@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,8 @@ assert.equal(process.cwd(), root);
 assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
 assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
 const heldReply = process.argv[2] === 'held-reply';
-assert(!process.argv[2] || heldReply);
+const prAuthority = process.argv[2] === 'pr-authority';
+assert(!process.argv[2] || heldReply || prAuthority);
 const target = await automationGatewayTarget();
 assert(['127.0.0.1', 'localhost'].includes(new URL(target.url).hostname));
 assert.equal(new URL(target.url).port, process.env.GATEWAY_PORT);
@@ -191,6 +192,105 @@ const views = () => [
   ['config.projects', `config/project/${fixture.project}`, fixture.project],
 ];
 const queries = {};
+const inspectPR = () =>
+  cdp([
+    'eval',
+    tab,
+    `
+function find(root){const panel=root.querySelector('pr-automation-panel');if(panel)return panel;for(const child of root.querySelectorAll('*'))if(child.shadowRoot){const panel=find(child.shadowRoot);if(panel)return panel;}}
+const panel=find(document);if(!panel)return {mounted:false};
+const url=(suffix)=>performance.getEntriesByType('resource').map(x=>x.name).filter(name=>new URL(name).pathname.endsWith(suffix)).at(-1);
+const {gateway}=await import(url('/src/gateway-client.ts'));const {getResourceCache}=await import(url('/src/resource-cache.ts'));
+const controller=Reflect.get(panel,'controller');
+const observations=['watchResources','ruleResources','pushResources'].map(name=>{
+ const observer=Reflect.get(controller,name),query=Reflect.get(observer,'query'),state=observer.state;
+ if(observer.belongsToWorkspace&&getResourceCache()?.read(query)!==state)throw Error('Inspect actual canonical PR state');
+ return {method:query.method,persisted:query.persisted,ready:observer.ready,status:state.status,error:state.error,observedAt:state.observedAt,dataPresent:state.data!==undefined,canonicalDataPresent:getResourceCache()?.read(query)?.data!==undefined};
+});
+return {mounted:true,principalId:gateway.authenticatedPrincipalId,workspaceAccess:gateway.workspaceAccess,connectionId:gateway.resourceConnectionId,timeOrigin:performance.timeOrigin,observations,rules:controller.reviews.rules.map(r=>({id:r.id,name:r.config.name})),text:panel.shadowRoot.textContent};
+`,
+  ]);
+async function warmPR() {
+  await navigate('prs?prSection=automation&prTab=rules');
+  const view = await until(
+    inspectPR,
+    (value) =>
+      value.principalId === actor.principalId &&
+      value.observations?.every((row) => row.ready && !row.persisted) &&
+      value.rules.some(
+        (row) => row.id === fixture.prFixture.ruleId && row.name === fixture.prFixture.ruleName,
+      ) &&
+      value.text.includes(fixture.prFixture.ruleName),
+    "Render the disposable actor's actual memory-only PR rule",
+  );
+  await screenshot('private-pr-authorized');
+  return view;
+}
+async function deniedPR() {
+  const view = await until(
+    inspectPR,
+    (value) =>
+      value.principalId === actor.principalId &&
+      value.workspaceAccess === 'farm' &&
+      value.observations?.every(
+        (row) => !row.ready && !!row.error && !row.dataPresent && !row.canonicalDataPresent,
+      ) &&
+      value.rules.length === 0 &&
+      !value.text.includes(fixture.prFixture.ruleName),
+    'Operator authority must clear the actual PR projections and forbidden canonical data',
+  );
+  assert.equal(view.timeOrigin, evidence.prWarm.timeOrigin);
+  await screenshot('private-pr-forbidden');
+  return view;
+}
+async function seedPR() {
+  const seeded = await execute(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      'apps/command-center/scripts/pr-automation-observation-fixture.mjs',
+      'seed',
+    ],
+    { timeout: 30000, env: { ...process.env, FARMSLOT_GATEWAY_PROFILE: actor.profile } },
+  );
+  fixture.prFixture = JSON.parse(
+    await readFile(process.env.FARMSLOT_DOMAIN_PROOF_SETUP, 'utf8'),
+  ).prFixture;
+  assert.equal(fixture.prFixture.ownerId, actor.principalId);
+  assert.equal(fixture.prFixture.seededBeforeUi, false);
+  assert(fixture.prFixture.seededBeforeOwnerPRView);
+  evidence.prSourceSetup = JSON.parse(seeded.stdout);
+  await until(
+    () => cdp(['gateway', 'prRules.list', '{}'], actor.profile),
+    (value) => value.rules.some((row) => row.id === fixture.prFixture.ruleId),
+    'The actual gateway file watcher must admit the owning private PR source before its view opens',
+  );
+}
+async function changePRWhileRevoked() {
+  const file = path.join(fixture.farm, '.pr-rules.json');
+  const source = JSON.parse(await readFile(file, 'utf8'));
+  const rule = source.rules.find((row) => row.id === fixture.prFixture.ruleId);
+  assert.equal(rule.ownerId, actor.principalId);
+  rule.config.name = `Changed while PR authority revoked ${randomUUID()}`;
+  fixture.prFixture.ruleName = rule.config.name;
+  const bytes = Buffer.from(JSON.stringify(source) + '\n');
+  const temporary = path.join(fixture.farm, '.pr-rules.d07-' + randomUUID());
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  fixture.prFixture.allowedHashes['.pr-rules.json'].push(sha256);
+  fixture.prFixture.temporaries.push({ file: temporary, sha256 });
+  await writeFile(process.env.FARMSLOT_DOMAIN_PROOF_SETUP, JSON.stringify(fixture), {
+    mode: 0o600,
+  });
+  await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
+  await rename(temporary, file);
+  evidence.prChangedSource = {
+    id: rule.id,
+    name: rule.config.name,
+    sha256,
+    committedAt: Date.now(),
+  };
+}
 async function inspectAll(scope) {
   return cdp([
     'eval',
@@ -434,6 +534,7 @@ try {
     secret: actorSecret,
   };
   profilesApi.saveProfiles(profiles);
+  if (prAuthority) await seedPR();
   restoreBrowser = true;
   await signOut();
   await cdp(['login', tab], actor.profile);
@@ -451,6 +552,7 @@ try {
   );
   claims.principalSwitchClearsFive = true;
   evidence.actorSaved = await warm(actor.principalId);
+  if (prAuthority) evidence.prWarm = await warmPR();
   const actorScope = evidence.actorSaved['roadmap.list'].inspectedScope;
   await screenshot('five-collections-before-revocation');
   if (heldReply) await prepareHeldReply();
@@ -470,6 +572,10 @@ try {
       s.roles[0].role === 'operator',
     'A real role downgrade keeps farm access while removing admin authority',
   );
+  if (prAuthority) {
+    evidence.prDenied = await deniedPR();
+    claims.prAuthorityClearsProjection = true;
+  }
   if (heldReply) await replayAfterRoleChange(actorScope);
   const operatorMethods = ['backlog.list', 'workGraph.list', 'dispatch.queue.list'];
   evidence.operatorViews = [];
@@ -565,6 +671,7 @@ try {
     'backlog.list': { id: owned.backlog.id, title: backlogTitle },
     'roadmap.list': { id: owned.roadmap.id, title: roadmapTitle },
   };
+  if (prAuthority) await changePRWhileRevoked();
   await rpc('principal.grant', {
     principalId: actor.principalId,
     role: 'admin',
@@ -578,12 +685,23 @@ try {
       `${method} requires a fresh authorized read`,
     );
   claims.authorityRecoveryRefetchesFive = true;
+  if (prAuthority) {
+    evidence.prRecovered = await warmPR();
+    assert(
+      evidence.prRecovered.observations.every(
+        (row) => row.observedAt > evidence.prChangedSource.committedAt,
+      ),
+    );
+    assert.equal(evidence.prRecovered.timeOrigin, evidence.prWarm.timeOrigin);
+    claims.prAuthorityRecoveryReadsNewSource = true;
+  }
   await screenshot('five-collections-authority-restored');
 } catch (error) {
   failures.push(error);
   if (tab) {
     try {
       evidence.failureView = await inspectView();
+      if (prAuthority && fixture.prFixture) evidence.prFailureView = await inspectPR();
       await screenshot('first-failure');
     } catch (captureError) {
       failures.push(captureError);

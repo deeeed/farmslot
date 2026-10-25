@@ -1,0 +1,75 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Copilot automatic reads respect the publication cadence",
+  "description": "Headless protocol proof through an authenticated private WebSocket endpoint. Real owning-store clear writes, original held reply bytes and normal server publication timing exercise the production cache. No UI, provider or cache-value injection.",
+  "proofTargets": [
+    {
+      "id": "realWriterState",
+      "claim": "The production cache reaches actual chat.clear state and its final resource revision."
+    },
+    {
+      "id": "heldReplyRevalidated",
+      "claim": "A real held reply is revalidated against newer owning-store publications."
+    },
+    {
+      "id": "boundedAutomaticReads",
+      "claim": "Automatic reads respect the declared copilot interval across a slow-reply boundary."
+    },
+    {
+      "id": "idleQuiet",
+      "claim": "The observed connection stays quiet after writes stop and never invokes provider commands."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node --import tsx apps/command-center/scripts/prove-copilot-cadence.mjs",
+        "timeout_ms": 30000,
+        "intent": "Exercise actual copilot writes and observed reads across a held reply.",
+        "next": "realWriterState"
+      },
+      "realWriterState": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"realWriterState\":true",
+        "intent": "Read actual cleared state with the final owning-store revision.",
+        "proves": ["realWriterState"],
+        "next": "heldReplyRevalidated"
+      },
+      "heldReplyRevalidated": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"heldReplyRevalidated\":true",
+        "intent": "A real held reply is revalidated against newer owning-store publications.",
+        "proves": ["heldReplyRevalidated"],
+        "next": "boundedAutomaticReads"
+      },
+      "boundedAutomaticReads": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"boundedAutomaticReads\":true",
+        "intent": "Bound automatic reads across the slow-reply boundary.",
+        "proves": ["boundedAutomaticReads"],
+        "next": "idleQuiet"
+      },
+      "idleQuiet": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"idleQuiet\":true",
+        "intent": "Stay idle after writes stop, with no provider commands.",
+        "proves": ["idleQuiet"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -46,7 +46,9 @@ test('worker inventory filters have one canonical identity and retain node depen
   assert.equal(resourceDependenciesForRead('tmux.worker.endSession', {}), undefined);
 });
 
-test('equivalent inventory observers share reads and a held invalidation leaves one follow-up', async () => {
+test('equivalent inventory observers share reads and a held invalidation leaves one follow-up', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  t.mock.method(performance, 'now', () => Date.now());
   let changed: ((payload: ResourceChangedPayload) => void) | undefined;
   let revision = 0;
   const pending: Array<(value: { workers: string[] }) => void> = [];
@@ -114,6 +116,10 @@ test('equivalent inventory observers share reads and a held invalidation leaves 
       changes: query.dependencies.map((key) => ({ key, revision, kind: 'updated' })),
     });
     pending.shift()!({ workers: ['old'] });
+    await flush();
+    assert.equal(reads, 1, 'The automatic follow-up respects the worker family interval');
+    assert.equal(cache.read(query).status, 'stale');
+    t.mock.timers.tick(RESOURCE_PUBLISH_INTERVAL_MS.workers!);
     await flush();
     assert.equal(reads, 2);
     assert.equal(cache.read(query).status, 'stale');

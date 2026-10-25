@@ -2,7 +2,7 @@ import type { NativeSessionReadResult, NativeSessionTargetParams } from '../rpc/
 import { Methods } from '../rpc/registry.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
-import { resourceKeyId, type ResourceReadStamp } from './keys.js';
+import { RESOURCE_PUBLISH_INTERVAL_MS, resourceKeyId, type ResourceReadStamp } from './keys.js';
 import {
   nativeHistoryStorageId,
   readNativeHistory,
@@ -47,6 +47,8 @@ interface QueryEntry {
   lastUsed: number;
   pending?: PendingRead;
   dirty: boolean;
+  lastRequestedAt?: number;
+  readTimer?: ReturnType<typeof setTimeout>;
 }
 
 const deletionReasons = new Set<ResourceConnectionReason>([
@@ -143,7 +145,14 @@ export function createGatewayResourceCache(
     for (const listener of entry.listeners) listener(entry.state);
   }
 
+  function cancelScheduledRead(entry: QueryEntry): void {
+    if (entry.readTimer !== undefined) clearTimeout(entry.readTimer);
+    entry.readTimer = undefined;
+  }
+
   function invalidate(entry: QueryEntry, clear = false): void {
+    cancelScheduledRead(entry);
+    if (clear) entry.lastRequestedAt = undefined;
     entry.serial++;
     entry.pending?.controller.abort();
     entry.pending = undefined;
@@ -159,6 +168,7 @@ export function createGatewayResourceCache(
     while (inactive.length > (options.maxInactiveEntries ?? 100)) {
       const entry = inactive.shift()!;
       entry.serial++;
+      cancelScheduledRead(entry);
       entries.delete(entry.query.id);
       if (!store.persistent) {
         const memory = store;
@@ -290,8 +300,10 @@ export function createGatewayResourceCache(
     connection = next;
     usable = false;
     revisions.clear();
-    for (const entry of entries.values())
+    for (const entry of entries.values()) {
+      entry.lastRequestedAt = undefined;
       invalidate(entry, revoke || scopeChanged || authorityChanged);
+    }
     barrier = barrier
       .then(async () => {
         // Process every authority transition in order, even if a newer connect is queued.
@@ -546,6 +558,21 @@ export function createGatewayResourceCache(
       return;
     }
     if (entry.pending?.version === version) return entry.pending.promise;
+    const interval = entry.query.dependencies.reduce(
+      (maximum, key) => Math.max(maximum, RESOURCE_PUBLISH_INTERVAL_MS[key.family] ?? 0),
+      0,
+    );
+    const wait = interval - (performance.now() - (entry.lastRequestedAt ?? -Infinity));
+    if (observedOnly && wait > 0) {
+      // A slow read's follow-up can finish just before the next producer notice.
+      // Coalesce that automatic read too, rather than exceeding the family's bound.
+      entry.readTimer ??= setTimeout(() => {
+        entry.readTimer = undefined;
+        if (entry.dirty || entry.state.status !== 'ready') schedule(entry);
+      }, wait);
+      return;
+    }
+    cancelScheduledRead(entry);
     const pending: PendingRead = {
       version,
       serial: ++entry.serial,
@@ -565,6 +592,8 @@ export function createGatewayResourceCache(
     notify(entry);
     pending.promise = (async () => {
       try {
+        if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
+        entry.lastRequestedAt = performance.now();
         const reply =
           entry.query.method === Methods.NATIVE_SESSION_READ
             ? await readNativeHistory(
@@ -801,7 +830,10 @@ export function createGatewayResourceCache(
       if (entry.state.status !== 'ready' || entry.dirty) schedule(entry);
       return () => {
         entry.listeners.delete(receive);
-        if (!entry.listeners.size && entry.pending) invalidate(entry);
+        if (!entry.listeners.size) {
+          cancelScheduledRead(entry);
+          if (entry.pending) invalidate(entry);
+        }
         entry.lastUsed = ++lastUsed;
         prune();
       };
@@ -825,6 +857,7 @@ export function createGatewayResourceCache(
       unsubscribeStore();
       for (const entry of entries.values()) {
         entry.serial++;
+        cancelScheduledRead(entry);
         entry.pending?.controller.abort();
         entry.listeners.clear();
       }

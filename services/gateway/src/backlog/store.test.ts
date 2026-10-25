@@ -9,6 +9,7 @@ import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
 import { validateTicketRef } from '../methods/dispatch/ticket-ref.js';
 import { farmslotRoot } from '../projects/repo-root.js';
+import { resourceRevisions } from '../resources/revisions.js';
 
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-backlog-test-'));
 const specRoot = path.join(farmslotRoot, '.sandbox', `backlog-spec-test-${process.pid}`);
@@ -489,7 +490,21 @@ test('launch plan queues baseline first and materializes comparison candidates i
     { kind: 'system' },
   );
 
+  const backlogKey = { family: 'planning', collection: 'backlog' } as const;
+  const queueKey = { family: 'planning', collection: 'dispatch-queue' } as const;
+  const beforeEnqueue = {
+    backlog: resourceRevisions.revision(backlogKey),
+    queue: resourceRevisions.revision(queueKey),
+  };
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert(
+    resourceRevisions.revision(backlogKey) > beforeEnqueue.backlog,
+    'Launch admission invalidates the readable backlog',
+  );
+  assert(
+    resourceRevisions.revision(queueKey) > beforeEnqueue.queue,
+    'The baseline queue entry invalidates queue membership',
+  );
   assert.equal(enqueued.queueItem.launchPlanId, 'lp_compare');
   assert.equal(enqueued.queueItem.launchCandidateId, 'baseline');
   assert.equal(enqueued.queueItem.launchSlotPolicy, 'exact');
@@ -514,8 +529,26 @@ test('launch plan queues baseline first and materializes comparison candidates i
     slotId: enqueued.queueItem.slotId,
   });
 
+  const beforeStart = {
+    backlog: resourceRevisions.revision(backlogKey),
+    queue: resourceRevisions.revision(queueKey),
+  };
   await backlog.markBacklogRunStarted(enqueued.queueItem, baselineRun);
+  assert(
+    resourceRevisions.revision(backlogKey) > beforeStart.backlog,
+    'Baseline attachment invalidates its planning projection',
+  );
+  assert(
+    resourceRevisions.revision(queueKey) > beforeStart.queue,
+    'Materialized comparison candidates invalidate the queue',
+  );
+  const materializedRevision = resourceRevisions.revision(queueKey);
   await backlog.markBacklogRunStarted(enqueued.queueItem, baselineRun);
+  assert.equal(
+    resourceRevisions.revision(queueKey),
+    materializedRevision,
+    'An idempotent candidate handoff adds no membership invalidation',
+  );
 
   const queued = queue
     .getQueueSnapshot()
@@ -1085,6 +1118,8 @@ test('run observation heals needs-attention when linked run completes', async ()
     item.lastObservedRunStatus = 'blocked';
   });
 
+  const key = { family: 'planning', collection: 'backlog' } as const;
+  const beforeSettlement = resourceRevisions.revision(key);
   await backlog.markBacklogRunObserved({
     id: 'blocked-then-done',
     status: 'done',
@@ -1092,6 +1127,10 @@ test('run observation heals needs-attention when linked run completes', async ()
     backlogItemId: created.item.id,
   } as never);
 
+  assert(
+    resourceRevisions.revision(key) > beforeSettlement,
+    'A settled run invalidates its current backlog projection',
+  );
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'done');
   assert.equal(item?.lastObservedRunStatus, 'done');

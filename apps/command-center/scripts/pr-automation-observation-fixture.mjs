@@ -153,9 +153,16 @@ if (mode === 'seed') {
       await checkpoint();
     },
   );
-  fixture.seededBeforeUi = true;
+  fixture.seededBeforeUi = process.env.FARMSLOT_PR_AUTHORITY_PROOF !== '1';
+  fixture.seededBeforeOwnerPRView = true;
   await checkpoint();
-  console.log(JSON.stringify({ seededBeforeUi: true, ruleId: fixture.ruleId, providerCalls: 0 }));
+  console.log(
+    JSON.stringify({
+      seededBeforeUi: fixture.seededBeforeUi,
+      ruleId: fixture.ruleId,
+      providerCalls: 0,
+    }),
+  );
 } else {
   const fixture = setup.prFixture;
   assert.equal(fixture.farm, farm);

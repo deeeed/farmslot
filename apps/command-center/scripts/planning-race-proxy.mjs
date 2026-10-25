@@ -30,6 +30,7 @@ export async function startPlanningRaceProxy({
       'assessment.summary',
       'analytics.query',
       'prRules.list',
+      'chat.sessionContext',
     ].includes(method),
   );
   const artifacts = await realpath(directory);
@@ -51,6 +52,7 @@ export async function startPlanningRaceProxy({
   const barrierReplies = [];
   const analyticsReplies = [];
   const prReplies = [];
+  const copilotReplies = [];
   const observedReads = {};
   const commands = {
     'intelligence.triage.analyze': 0,
@@ -66,6 +68,9 @@ export async function startPlanningRaceProxy({
     'backlog.enqueue': 0,
     'backlog.autoDispatchTick': 0,
     'run.create': 0,
+    'chat.send': 0,
+    'chat.new': 0,
+    'chat.confirmAction': 0,
   };
   let persistence = Promise.resolve();
   const status = () => ({
@@ -83,6 +88,7 @@ export async function startPlanningRaceProxy({
     barrierReplies,
     analyticsReplies,
     prReplies,
+    copilotReplies,
     commands,
     observedReads,
     held: held?.receipt,
@@ -252,6 +258,7 @@ export async function startPlanningRaceProxy({
               frame.method,
             )) ||
             (method === 'analytics.query' && frame.method === method) ||
+            (method === 'chat.sessionContext' && frame.method === method) ||
             (method === 'prRules.list' &&
               ['prWatch.list', 'prRules.list', 'prPush.list'].includes(frame.method)))
         ) {
@@ -267,6 +274,7 @@ export async function startPlanningRaceProxy({
           frame.type === 'req' &&
           (frame.method === 'backlog.list' ||
             (method === 'analytics.query' && frame.method === method) ||
+            (method === 'chat.sessionContext' && frame.method === method) ||
             (method === 'prRules.list' &&
               ['prWatch.list', 'prRules.list', 'prPush.list'].includes(frame.method)))
         ) {
@@ -346,6 +354,19 @@ export async function startPlanningRaceProxy({
           });
           void persist();
         }
+        if (read?.method === 'chat.sessionContext') {
+          copilotReplies.push({
+            id: frame.id,
+            connection: pair.connection,
+            requestAt: read.requestAt,
+            repliedAt: Date.now(),
+            ok: frame.ok,
+            resourceState: frame.resourceState,
+            messages: frame.payload?.messages,
+            usage: frame.payload?.usage,
+          });
+          void persist();
+        }
         if (read && ['prWatch.list', 'prRules.list', 'prPush.list'].includes(read.method)) {
           prReplies.push({
             method: read.method,
@@ -401,10 +422,12 @@ export async function startPlanningRaceProxy({
               ? row.key.family === 'analytics' && row.key.scope === 'farm'
               : method === 'prRules.list'
                 ? row.key.family === 'pr-automation' && row.key.scope === 'farm'
-                : method === 'intelligence.triage.get'
-                  ? row.key.family === 'assessment' && row.key.scope === 'farm'
-                  : row.key.family === 'planning' &&
-                    row.key.collection === (method === 'roadmap.list' ? 'roadmap' : 'backlog'),
+                : method === 'chat.sessionContext'
+                  ? row.key.family === 'copilot' && row.key.ownerId === 'gateway-copilot'
+                  : method === 'intelligence.triage.get'
+                    ? row.key.family === 'assessment' && row.key.scope === 'farm'
+                    : row.key.family === 'planning' &&
+                      row.key.collection === (method === 'roadmap.list' ? 'roadmap' : 'backlog'),
           );
           if (changes?.length) {
             assert(events.length < 100);
