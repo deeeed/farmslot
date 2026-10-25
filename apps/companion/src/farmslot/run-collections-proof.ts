@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 
 import {
   nativeResourceQueryInfo,
@@ -42,6 +42,7 @@ import type {
 import { getResourceCache, getResourceWorkspaceKey } from '../lib/resource-cache';
 import { useConnectionStore } from '../store/connection';
 import { useDecisionStore } from '../store/decisions';
+import { useFilterStore } from '../store/filters';
 import { useFleetStore } from '../store/fleet';
 import { useRunStore } from '../store/runs';
 
@@ -49,6 +50,13 @@ import { readBacklogReadyTouches } from './backlog-ready-touch-proof';
 import type { FarmslotRecipeUiObserver } from './RecipeBridgeProvider';
 
 const startedAt = Date.now();
+// Recipe evidence records real lifecycle events only, without driving app or cache state.
+const appStateHistory = [{ state: AppState.currentState, at: startedAt }];
+if (__DEV__ && process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE === '1')
+  AppState.addEventListener('change', (state) => {
+    appStateHistory.push({ state, at: Date.now() });
+    if (appStateHistory.length > 16) appStateHistory.shift();
+  });
 interface ConversationProofFrame {
   focused: boolean;
   observation: ResourceQueryState<RunGetResult>;
@@ -286,6 +294,9 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
       runCollections: {
         platform: Platform.OS,
         startedAt,
+        appStateHistory: [...appStateHistory],
+        planningFilters: useFilterStore.getState().filters,
+        backlogObservation: cache?.read(resourceQuery('backlog.list', { includeArchived: true })),
         backlogReadyTouches: readBacklogReadyTouches(),
         online: useConnectionStore.getState().client?.connectionState === 'connected',
         connectionGeneration: useConnectionStore.getState().client?.connectionGeneration,
@@ -304,8 +315,11 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
                   persisted: query.persisted,
                   status: state?.status ?? 'loading',
                   hasData: state?.data !== undefined,
+                  // Existing authenticated query values, read-only and never persisted here.
+                  data: state?.data,
                   observedAt: state?.observedAt,
                   errorCode: state?.error?.code,
+                  errorMessage: state?.error?.message,
                   resourceState: state?.resourceState,
                 },
               ];

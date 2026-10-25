@@ -1,0 +1,95 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion D07 integration before healthy control removal",
+  "description": "Approved D07 Boot 1. One already launched owned app; no cold restart, provider launch, native command or UI/cache injection. Existing native screens, canonical observations, owning private writes, actual errors/Retry and lifecycle events supply proof. Cold and authority proofs are reused under the explicit lead disposition.",
+  "proofTargets": [
+    {
+      "id": "d07-filtered-membership",
+      "claim": "Independent project changes move an unlinked candidate into and out of the actual selected project scope."
+    },
+    {
+      "id": "d07-pr-writer",
+      "claim": "A disabled rule owning write changes its real mounted native card and canonical observed query."
+    },
+    {
+      "id": "d07-copilot-writer",
+      "claim": "A real stopped Co-Pilot configuration write advances its canonical native query while the existing screen remains mounted."
+    },
+    {
+      "id": "d07-errors-retry",
+      "claim": "Real PR and checkout-source errors retain facts, render errors, accept Retry and recover through owning source repairs."
+    },
+    {
+      "id": "d07-background",
+      "claim": "The same native process backgrounds and reconnects in the same epoch, showing a source change made while away without replay."
+    }
+  ],
+  "workflow": {
+    "entry": "integration-ready",
+    "nodes": {
+      "integration-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-backlog",
+        "timeout_ms": 30000,
+        "intent": "Attach to the existing Backlog screen on the one reserved device.",
+        "next": "prove"
+      },
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-native-planning-integration.mjs prove",
+        "timeout_ms": 540000,
+        "intent": "Prove native source updates, errors, Retry and background recovery.",
+        "next": "d07-filtered-membership"
+      },
+      "d07-filtered-membership": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07FilteredMembership\":true",
+        "intent": "Show project changes add and remove the same filtered native row.",
+        "proves": ["d07-filtered-membership"],
+        "next": "d07-pr-writer"
+      },
+      "d07-pr-writer": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07PRWriter\":true",
+        "intent": "Show the disabled rule change through its owning write and current query.",
+        "proves": ["d07-pr-writer"],
+        "next": "d07-copilot-writer"
+      },
+      "d07-copilot-writer": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07CopilotWriter\":true",
+        "intent": "Bind stopped Co-Pilot configuration to the actual native query.",
+        "proves": ["d07-copilot-writer"],
+        "next": "d07-errors-retry"
+      },
+      "d07-errors-retry": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07NativeErrorsRetry\":true",
+        "intent": "Show real source errors, actual Retry and recovery without commands.",
+        "proves": ["d07-errors-retry"],
+        "next": "d07-background"
+      },
+      "d07-background": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07NativeBackground\":true",
+        "intent": "Show the same app recover a background source write without replay.",
+        "proves": ["d07-background"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

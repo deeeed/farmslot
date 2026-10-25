@@ -94,6 +94,7 @@ async function proxyServer() {
     sequence,
     counts: { ...counts },
     successfulReads: { ...successfulReads },
+    connections: pairs.size,
     lastObservedReads: { ...lastObservedReads },
     failure,
     stopped: closing,
