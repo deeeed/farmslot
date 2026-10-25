@@ -15,6 +15,7 @@ import { createNativeProofFixture } from '../../runtime/native-proof-fixture.liv
 
 const uiProof = process.env.FARMSLOT_WORKSPACE_UI_PROOF === '1';
 const layoutProof = process.env.FARMSLOT_WORKSPACE_LAYOUT_PROOF === '1';
+const coldFailureOnly = process.env.FARMSLOT_WORKSPACE_COLD_FAILURE_PROOF === '1';
 const source = fileURLToPath(new URL('../../../../../', import.meta.url));
 
 test(
@@ -203,10 +204,23 @@ test(
     }
 
     const execution = await import('../../core/exec.js');
-    const executeOnSlot: typeof execution.execOnSlot = async (...args) =>
-      /\btmux\b/.test(args[1])
-        ? { exitCode: 1, stdout: '', stderr: '' }
-        : execution.execOnSlot(...args);
+    let failPostReleaseProbe = false;
+    const executeOnSlot: typeof execution.execOnSlot = async (...args) => {
+      if (/\btmux\b/.test(args[1])) return { exitCode: 1, stdout: '', stderr: '' };
+      if (failPostReleaseProbe && args[1].includes('FARMSLOT_WORKSPACE_PROBE')) {
+        const state = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
+        const row = state.slots.find((slot: { slot: string }) => slot.slot === args[0].slotId);
+        if (
+          row?.branch === 'main' &&
+          row.phase === 'releasing' &&
+          row.workspace_recovery?.phase === 'cleanup'
+        ) {
+          failPostReleaseProbe = false;
+          throw new Error('Injected post-release identity probe failure');
+        }
+      }
+      return execution.execOnSlot(...args);
+    };
     mock.module('../../core/exec.js', {
       namedExports: { ...execution, execOnSlot: executeOnSlot },
     });
@@ -411,11 +425,24 @@ test(
     const before = await call<FleetStatusResult>('fleet.status');
     const work = before.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.workspace;
     assert.ok(work);
-    const recovered = await call<SlotRefreshResult>('slot.refresh', {
+    failPostReleaseProbe = true;
+    const postReleaseFailure = await call<SlotRefreshResult>('slot.refresh', {
       slotId: 'proof-slot',
       release: true,
       mode: 'safe',
       expectedWorkspace: work,
+    });
+    assert.equal(postReleaseFailure.refreshed, false);
+    assert.match(postReleaseFailure.detail ?? '', /Injected post-release identity probe failure/);
+    const coldHeld = await core.readSlotRow('proof-slot');
+    assert.equal(coldHeld?.lifecycle, 'held');
+    assert.equal(coldHeld?.warm, false, 'Full teardown is cold even when the next probe fails');
+    const retryCold = await inspectSlotWorkspace('proof-slot');
+    const recovered = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: retryCold,
     });
     assert.equal(recovered.refreshed, true, recovered.detail);
     const immediate = (await call<FleetStatusResult>('fleet.status')).fleet.slots.find(
@@ -434,6 +461,18 @@ test(
     assert.equal(row.fixtures, 'OK');
     assert.equal(row.warm, false, 'Full release tears down warm resources');
     assert.equal(row.workspace, null, 'Ready observations are not persisted across later claims');
+    if (coldFailureOnly) {
+      await writeFile(
+        path.join(output, 'cold-retry.json'),
+        JSON.stringify(
+          { pass: true, postReleaseFailure, coldHeld, recovered, coldOnRetry: row.warm === false },
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
+
     await writeFile(path.join(repo, 'file.txt'), 'first local change\n');
     const dirty = await inspectSlotWorkspace('proof-slot');
     await writeFile(path.join(repo, 'file.txt'), 'changed after confirmation\n');
@@ -605,6 +644,8 @@ test(
     assert.equal(emptyRelease.refreshed, true, emptyRelease.detail);
     assert.equal((await core.readSlotRow('proof-empty'))?.fixtures, 'not-required');
     const result = {
+      postReleaseFailure,
+      coldOnPostReleaseProbeFailure: coldHeld?.warm === false,
       pass: true,
       recovered,
       refused,

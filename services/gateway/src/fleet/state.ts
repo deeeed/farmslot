@@ -333,7 +333,6 @@ export function clearBranchOverlay(slotId: string): void {
 // newer fields. Optionality here reflects that honestly so transformSlot's
 // defaults are compiler-enforced instead of hidden behind casts.
 interface RawSlot {
-  workspace?: SlotStatus['workspace'];
   workspace_error?: string | null;
   slot_epoch?: number;
   cleanup_run_id?: string | null;

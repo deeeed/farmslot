@@ -78,6 +78,7 @@ interface ProbePause {
   started(): void;
 }
 let pausedProbe: ProbePause | undefined;
+let pausedRead: (ProbePause & { kind: 'default' | 'publication' }) | undefined;
 const probe: WorkspaceProbe = {
   branch: 'main',
   headSha: 'a'.repeat(40),
@@ -95,12 +96,19 @@ mock.module('../../core/read-probes.js', {
   namedExports: {
     readSlotProbe: async (_vars: SlotVars, _command: string, scope: string, timeout: number) => {
       probeReads.push({ scope, timeout });
+      const kind = scope.includes('publication') ? 'publication' : 'default';
+      const pause = pausedRead;
+      if (pause && pause.kind === kind && timeout === 120_000) {
+        pausedRead = undefined;
+        pause.started();
+        await pause.gate;
+      }
       return {
         exitCode: 0,
         stdout:
           scope === 'workspace' || scope === 'workspace-recovery'
             ? JSON.stringify(probe)
-            : `${'a'.repeat(40)}\trefs/heads/main\n`,
+            : `${scope.includes('publication') ? probe.headSha : 'a'.repeat(40)}\trefs/heads/main\n`,
         stderr: '',
       };
     },
@@ -199,3 +207,59 @@ test('owned recovery probes have their own operation budget instead of a passive
     { scope: 'workspace-recovery', timeout: 120_000 },
   ]);
 });
+
+for (const kind of ['default', 'publication'] as const) {
+  test(`a pending recovery ${kind} read cannot extend a passive reader's deadline`, async () => {
+    const status = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
+    Object.assign(status.slots[0], {
+      branch: 'main',
+      current_run_id: null,
+      cleanup_run_id: null,
+      handoff_run_id: null,
+      lifecycle: 'ready',
+      phase: null,
+    });
+    await writeFile(path.join(root, 'status.json'), JSON.stringify(status));
+    probe.originKey = `concurrent-${kind}`;
+    probe.branch = 'main';
+    probe.headSha = (kind === 'default' ? 'a' : 'b').repeat(40);
+    probe.localDefaultSha = kind === 'default' ? 'a'.repeat(40) : null;
+    let resume: () => void = () => assert.fail('Read gate missing');
+    let notify: () => void = () => assert.fail('Read start missing');
+    const started = new Promise<void>((resolve) => {
+      notify = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    pausedRead = { kind, gate, started: notify };
+    const before = probeReads.length;
+    const recovery = inspectSlotWorkspace('cache-slot', { timeoutMs: 120_000 });
+    await started;
+    const passive = inspectSlotWorkspace('cache-slot');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let completedBeforeRelease: boolean;
+    try {
+      completedBeforeRelease = await Promise.race([
+        passive.then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(() => resolve(false), 500);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+      resume();
+      await Promise.all([recovery, passive]);
+    }
+    assert.equal(
+      completedBeforeRelease,
+      true,
+      'Passive readers must not join a pending recovery command',
+    );
+    const reads = probeReads.slice(before).filter((read) => read.scope.includes(kind));
+    assert.ok(
+      reads.some((read) => read.scope === `workspace-recovery-${kind}` && read.timeout === 120_000),
+    );
+    assert.ok(reads.some((read) => read.scope === `workspace-${kind}` && read.timeout === 5000));
+  });
+}

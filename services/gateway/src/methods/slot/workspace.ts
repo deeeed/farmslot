@@ -109,18 +109,19 @@ async function remoteDefault(
   timeoutMs: number,
 ): Promise<RemoteObservation> {
   const cacheKey = `${key}:${branch}`;
+  const recoveryBudget = timeoutMs > 5000;
   const cached = remoteDefaults.get(cacheKey);
-  if (!fresh && cached && cached.until > Date.now()) return cached.promise;
+  if (!fresh && !recoveryBudget && cached && cached.until > Date.now()) return cached.promise;
   const promise = readSlotProbe(
     vars,
     `git -C ${shellQuote(vars.remoteRepo)} ls-remote --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
-    fresh ? 'workspace-recovery-default' : 'workspace-default',
+    fresh || recoveryBudget ? 'workspace-recovery-default' : 'workspace-default',
     timeoutMs,
   ).then((result) => ({
     sha: result.stdout.trim().split(/\s+/)[0] || null,
     observedAt: new Date().toISOString(),
   }));
-  if (fresh) {
+  if (fresh || recoveryBudget) {
     const observation = await promise;
     remoteDefaults.set(cacheKey, {
       until: Date.now() + 15_000,
@@ -242,7 +243,7 @@ export async function inspectSlotWorkspace(
       const published = await readSlotProbe(
         vars,
         `${git} ls-remote --heads ${shellQuote(probe.publicationRemote)} ${shellQuote(probe.publicationRef)}`,
-        'workspace-publication',
+        timeoutMs > 5000 ? 'workspace-recovery-publication' : 'workspace-publication',
         timeoutMs,
       );
       const sha = published.stdout.trim().split(/\s+/)[0];

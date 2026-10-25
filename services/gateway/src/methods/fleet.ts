@@ -140,7 +140,6 @@ interface SlotCheckResult {
 
 interface PreviousSlotStatus {
   workspace_recovery?: unknown;
-  workspace?: unknown;
   lifecycle?: string | null;
   phase?: string | null;
   warm?: boolean | null;

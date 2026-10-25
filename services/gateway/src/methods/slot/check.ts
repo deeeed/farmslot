@@ -25,7 +25,6 @@ import {
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { isOptionalFixtureAbsence } from '../../fleet/fixture-absence.js';
 import { loadFleetStatus } from '../../fleet/state.js';
-export { isOptionalFixtureAbsence } from '../../fleet/fixture-absence.js';
 import { fixtureCheckVars } from '../../node-support/ensure.js';
 import {
   resolveClaudeBinary,

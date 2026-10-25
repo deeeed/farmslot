@@ -282,6 +282,7 @@ export async function recoverSlotWorkspace(
         );
         if (!released.released) throw new Error(released.reason ?? 'Cleanup did not finish');
         keepWarm = false;
+        await save('cleanup');
         // The existing release clears its own ownership fields and resets Git.
         await advanceIdentity();
         await save('fixtures', 'cleanup');
