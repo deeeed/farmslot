@@ -418,6 +418,21 @@ async function updateOwnedPlanning(plan, kind) {
   });
 }
 
+async function committedPlanningBytes(file, before) {
+  // Owning APIs can acknowledge readable memory before their queued disk write.
+  // Wait only while the exact original bytes remain; validate every changed result below.
+  const deadline = Date.now() + 5000;
+  let after;
+  do {
+    after = await readFile(file);
+    if (after.equals(before)) {
+      assert(Date.now() < deadline, 'Owning source did not persist its mutation');
+      await delay(20);
+    }
+  } while (after.equals(before));
+  return after;
+}
+
 /** One real external source mutation, once, with immutable raw before/after provenance. */
 export async function writePlanningSource(plan, kind, artifacts) {
   assert.match(
@@ -464,7 +479,7 @@ export async function writePlanningSource(plan, kind, artifacts) {
       assert.equal(committed.item.id, row.id);
       assert.equal(committed.item.title, plan.expected.backlog.after);
       assert.equal(committed.item.status, 'candidate');
-      after = await readFile(file);
+      after = await committedPlanningBytes(file, before);
       const current = JSON.parse(after);
       assert.equal(current.find((entry) => entry.id === row.id).title, committed.item.title);
       assert.deepEqual(
@@ -485,16 +500,7 @@ export async function writePlanningSource(plan, kind, artifacts) {
         assert.equal(committed.item.status, 'queued');
         assert.equal(committed.item.priority, expected.afterPriority);
       }
-      // Queue priority updates publish readable memory before their queued disk write.
-      // Wait only while the exact original bytes remain; foreign/new wrong bytes fail.
-      const deadline = Date.now() + 5000;
-      do {
-        after = await readFile(file);
-        if (after.equals(before)) {
-          assert(Date.now() < deadline, 'Owning source did not persist its mutation');
-          await delay(20);
-        }
-      } while (after.equals(before));
+      after = await committedPlanningBytes(file, before);
       assertPlanningSourceTransition(plan, kind, original, JSON.parse(after));
     } else {
       const raw = before.toString('utf8');

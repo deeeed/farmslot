@@ -9,6 +9,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -536,7 +537,9 @@ test(
     const source = new WebSocketServer({ server });
     const sockets = new Set();
     const methods = [];
+    let persisted;
     t.after(async () => {
+      await persisted;
       for (const peer of sockets) peer.terminate();
       await new Promise((resolve) => source.close(resolve));
       if (server.listening) await new Promise((resolve) => server.close(resolve));
@@ -581,7 +584,10 @@ test(
             status: 'candidate',
             serverManaged: 'must-survive',
           };
-          await writeFile(file, JSON.stringify([item]));
+          persisted = delay(40).then(async () => {
+            await writeFile(`${file}.tmp`, JSON.stringify([item]));
+            await rename(`${file}.tmp`, file);
+          });
           peer.send(JSON.stringify({ type: 'res', id: request.id, ok: true, payload: { item } }));
         } else assert.fail(`Unexpected source method: ${request.method}`);
       });
@@ -715,7 +721,10 @@ for (const kind of ['graph', 'queue']) {
             );
           } else {
             // The real priority handler acknowledges readable memory before queued persistence.
-            persisted = delay(40).then(() => writeFile(file, after));
+            persisted = delay(40).then(async () => {
+              await writeFile(`${file}.tmp`, after);
+              await rename(`${file}.tmp`, file);
+            });
             peer.send(
               JSON.stringify({
                 type: 'res',
