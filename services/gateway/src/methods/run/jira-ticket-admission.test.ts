@@ -12,12 +12,15 @@ import { jiraTicketData, manualTicketData } from '../../run-completion/test-fixt
 
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'jira-ticket-admission-'));
 process.env.FARMSLOT_RUNS_DIR = path.join(temporary, 'runs');
+process.env.NODE_TEST_CONTEXT = '1';
+process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
 
 const { farmslotRoot } = await import('../../fleet/state.js');
 const { createRun, deleteRun, getAllRuns, getRun, updateRun } = await import('../../runs/store.js');
 const { fetchTicketData } = await import('../../run-engine/ticket-data.js');
 const { backfillMissingRunLinks } = await import('../../run-engine/run-links.js');
 const { runCreate } = await import('../run.js');
+const { routeRunMethod } = await import('../../server/run-route.js');
 const { jiraTicketDataForCreate } = await import('./ticket-policy.js');
 
 // A project with a Jira source whose credentials live in test-only env names.
@@ -79,6 +82,39 @@ function withJira(t: test.TestContext, respond: (url: string) => Response | Prom
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+test('run.create rejects a missing description before ticket admission, registration or events', async (t) => {
+  const { description: _description, ...missing } = jiraTicketData('TAT-4436');
+  const before = getAllRuns().map((run) => run.id);
+  t.after(async () => {
+    for (const run of getAllRuns().filter((run) => !before.includes(run.id))) {
+      updateRun(run.id, { status: 'done' });
+      await deleteRun(run.id);
+    }
+  });
+  const events: unknown[] = [];
+  await assert.rejects(
+    routeRunMethod(
+      'run.create',
+      {
+        project,
+        flowType: 'fix-bug',
+        ticketOrPr: 'TAT-4436',
+        ticketData: missing,
+      },
+      {
+        emit: (_event, payload) => events.push(payload),
+        broadcast: (frame) => events.push(frame),
+      },
+    ),
+    /Missing required field: ticketData\.description/,
+  );
+  assert.deepEqual(
+    getAllRuns().map((run) => run.id),
+    before,
+  );
+  assert.deepEqual(events, []);
+});
 
 test('creating a run for a Jira key on a project without a Jira source refuses (TAT-4138 / fca56a36)', async () => {
   const before = getAllRuns().length;

@@ -5,6 +5,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Keep original PR-completion criteria and append source-linked review and instruction obligations, with current-head code review and captured visual proof before completion.
+- Fetch an unfetched PR branch before the inherited-commit signature check, preserving the dispatch checkout and unsigned-work refusal.
+- Release a selected finished checkout before writing the next task, while refusing unpublished work and changed ownership.
+- Reject malformed ticket data at run creation with the exact field that needs correction.
 
 - Show unanswered structured worker questions as operator decisions, and resume monitoring when the worker records the answer.
 - Stop owned workers before terminal runs leave the live store while preserving finished checkouts, and verify published commits against the actual remote when tracking refs are stale.

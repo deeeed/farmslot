@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Run creation names malformed ticket fields",
+  "description": "Use a disposable authenticated gateway to reject missing ticket descriptions before registration and preserve valid empty or omitted ticket data. No worker, model, farm slot or product run.",
+  "workflow": {
+    "entry": "create",
+    "nodes": {
+      "create": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --import ./services/gateway/src/runtime/mock-pty.test-support.ts scripts/runner-validation/gateway/ticket-data-validation.mts",
+        "timeout_ms": 120000,
+        "intent": "Malformed ticket data names its missing description without registering a run, while valid and omitted payloads preserve their existing behavior.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
