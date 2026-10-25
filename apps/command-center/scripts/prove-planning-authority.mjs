@@ -11,6 +11,8 @@ import { register } from 'tsx/esm/api';
 
 import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
 
+import { createDomainAuthorityProof } from './domain-authority-proof.mjs';
+
 const execute = promisify(execFile);
 const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
 assert.equal(process.cwd(), root);
@@ -18,7 +20,10 @@ assert.equal(process.env.FARMSLOT_OFFLINE_PROOF, '1');
 assert.equal(process.env.FARMSLOT_DISABLE_ORCHESTRATION, '1');
 const heldReply = process.argv[2] === 'held-reply';
 const prAuthority = process.argv[2] === 'pr-authority';
-assert(!process.argv[2] || heldReply || prAuthority);
+const domainKind = ['assessment-authority', 'analytics-authority'].includes(process.argv[2])
+  ? process.argv[2].split('-')[0]
+  : undefined;
+assert(!process.argv[2] || heldReply || prAuthority || domainKind);
 const target = await automationGatewayTarget();
 assert(['127.0.0.1', 'localhost'].includes(new URL(target.url).hostname));
 assert.equal(new URL(target.url).port, process.env.GATEWAY_PORT);
@@ -459,62 +464,7 @@ async function replayAfterRoleChange(scope) {
   await screenshot('old-admin-reply-after-role-revocation');
   claims.heldReplyCannotCrossAuthority = true;
 }
-const failures = [];
-try {
-  const principals = (await rpc('principal.list')).principals;
-  evidence.originalPrincipal = principals.find((p) => p.id === fixture.ownerId);
-  assert(evidence.originalPrincipal?.roles.some((r) => r.role === 'admin'));
-  owned.backlog = (
-    await rpc('backlog.create', {
-      project: fixture.project,
-      title: `Authority ${randomUUID()}`,
-      sourceKind: 'manual',
-      flowType: 'dev',
-    })
-  ).item;
-  owned.roadmap = (
-    await rpc('roadmap.save', {
-      item: {
-        project: fixture.project,
-        title: `Authority ${randomUUID()}`,
-        body: 'Owned authority proof.',
-      },
-    })
-  ).item;
-  owned.graph = (
-    await rpc('workGraph.create', { project: fixture.project, title: `Authority ${randomUUID()}` })
-  ).graph.graph;
-  owned.queue = (
-    await rpc('dispatch.queue.add', {
-      project: fixture.project,
-      flowType: 'dev',
-      ticketOrPr: owned.backlog.sourceRef,
-      priority: 7,
-    })
-  ).item;
-  const graphFile = path.join(
-    process.env.FARMSLOT_WORK_GRAPH_DIR ?? path.join(fixture.farm, '.work-graphs'),
-    `${owned.graph.id}.json`,
-  );
-  assert.equal(JSON.parse(await readFile(graphFile, 'utf8')).graph.id, owned.graph.id);
-  fixture.created.push(graphFile);
-  await writeFile(process.env.FARMSLOT_DOMAIN_PROOF_SETUP, JSON.stringify(fixture, null, 2), {
-    mode: 0o600,
-  });
-  await navigate(views()[0][1]);
-  const initialLogin = await until(
-    authState,
-    (state) => state.authForm || state.connection === 'connected',
-    'Wait for the actual initial authentication state',
-  );
-  if (initialLogin.authForm) assert((await cdp(['login', tab])).authenticated);
-  evidence.initialAuthentication = await until(
-    authState,
-    (state) => state.connection === 'connected' && state.principalId === fixture.ownerId,
-    'Sign in the selected original account through its real form',
-  );
-  evidence.originalSaved = await warm(fixture.ownerId);
-  const originalScope = evidence.originalSaved['roadmap.list'].inspectedScope;
+async function createActor() {
   const created = await rpc('principal.create', {
     subject: { type: 'service', displayName: `Offline authority ${randomUUID()}` },
     roles: [
@@ -536,173 +486,264 @@ try {
     secret: actorSecret,
   };
   profilesApi.saveProfiles(profiles);
-  if (prAuthority) await seedPR();
-  restoreBrowser = true;
-  await signOut();
-  await cdp(['login', tab], actor.profile);
-  await until(
-    authState,
-    (s) => s.principalId === actor.principalId && s.connection === 'connected',
-    'Use the actual sign-in form for the disposable actor',
-  );
-  evidence.oldScopeAfterSwitch = await inspectAll(originalScope);
-  assert(
-    Object.values(evidence.oldScopeAfterSwitch).every(
-      (s) => s.principalId === actor.principalId && s.storedQueryIds.length === 0,
-    ),
-    'Switching principals must delete all old saved planning rows',
-  );
-  claims.principalSwitchClearsFive = true;
-  evidence.actorSaved = await warm(actor.principalId);
-  if (prAuthority) evidence.prWarm = await warmPR();
-  const actorScope = evidence.actorSaved['roadmap.list'].inspectedScope;
-  await screenshot('five-collections-before-revocation');
-  if (heldReply) await prepareHeldReply();
-  await rpc('principal.revokeRole', {
-    principalId: actor.principalId,
-    role: 'admin',
-    scope: { kind: 'global' },
-  });
-  await reconnect();
-  evidence.operatorAuthentication = await until(
-    authState,
-    (s) =>
-      s.principalId === actor.principalId &&
-      s.connection === 'connected' &&
-      s.workspaceAccess === 'farm' &&
-      s.roles?.length === 1 &&
-      s.roles[0].role === 'operator',
-    'A real role downgrade keeps farm access while removing admin authority',
-  );
-  if (prAuthority) {
-    evidence.prDenied = await deniedPR();
-    claims.prAuthorityClearsProjection = true;
-  }
-  if (heldReply) await replayAfterRoleChange(actorScope);
-  const operatorMethods = ['backlog.list', 'workGraph.list', 'dispatch.queue.list'];
-  evidence.operatorViews = [];
-  for (const [method, hash, id] of views()) {
-    if (!operatorMethods.includes(method)) continue;
-    await navigate(hash);
-    const view = await until(
-      inspectView,
-      (v) =>
-        v.principalId === actor.principalId &&
-        v.observations?.[method]?.ready &&
-        v.observations[method].observedAt > evidence.actorSaved[method].cacheObservedAt &&
-        v.observations[method].rows.some((r) => r.id === id),
-      `Read permitted ${method} afresh through its actual view after the role downgrade`,
+}
+const domain = domainKind
+  ? createDomainAuthorityProof({
+      kind: domainKind,
+      root,
+      fixture,
+      evidence,
+      claims,
+      execute,
+      cdp,
+      getTab: () => tab,
+      navigate,
+      until,
+      screenshot,
+      authState,
+      signOut,
+      reconnect,
+      rpc,
+      originalProfile,
+      createActor,
+      getActor: () => actor,
+      allowBrowserRestore: () => {
+        restoreBrowser = true;
+      },
+    })
+  : undefined;
+const failures = [];
+try {
+  const principals = (await rpc('principal.list')).principals;
+  evidence.originalPrincipal = principals.find((p) => p.id === fixture.ownerId);
+  assert(evidence.originalPrincipal?.roles.some((r) => r.role === 'admin'));
+  if (domain) {
+    await domain.run();
+  } else {
+    owned.backlog = (
+      await rpc('backlog.create', {
+        project: fixture.project,
+        title: `Authority ${randomUUID()}`,
+        sourceKind: 'manual',
+        flowType: 'dev',
+      })
+    ).item;
+    owned.roadmap = (
+      await rpc('roadmap.save', {
+        item: {
+          project: fixture.project,
+          title: `Authority ${randomUUID()}`,
+          body: 'Owned authority proof.',
+        },
+      })
+    ).item;
+    owned.graph = (
+      await rpc('workGraph.create', {
+        project: fixture.project,
+        title: `Authority ${randomUUID()}`,
+      })
+    ).graph.graph;
+    owned.queue = (
+      await rpc('dispatch.queue.add', {
+        project: fixture.project,
+        flowType: 'dev',
+        ticketOrPr: owned.backlog.sourceRef,
+        priority: 7,
+      })
+    ).item;
+    const graphFile = path.join(
+      process.env.FARMSLOT_WORK_GRAPH_DIR ?? path.join(fixture.farm, '.work-graphs'),
+      `${owned.graph.id}.json`,
     );
-    evidence.operatorViews.push({ method, view });
-  }
-  evidence.operatorSaved = await until(
-    () => inspectAll(actorScope),
-    (result) =>
-      Object.entries(result).every(([method, state]) =>
-        operatorMethods.includes(method)
-          ? state.cacheStatus === 'ready' &&
-            state.cacheObservedAt > evidence.actorSaved[method].cacheObservedAt &&
-            state.storedDataSha256 === state.cacheDataSha256
-          : !state.cacheHasData &&
-            state.storedObservedAt === undefined &&
-            !state.storedQueryIds.some((id) => id.startsWith(`${method}:`)),
-      ),
-    'Partial authority must save only freshly authorized lists and clear every forbidden collection',
-  );
-  for (const [method, hash, id] of views()) {
-    if (operatorMethods.includes(method)) continue;
-    await navigate(hash);
-    const view = await until(
-      inspectView,
-      (v) =>
-        v.mounted &&
-        v.principalId === actor.principalId &&
-        !!v.observations?.[method]?.error &&
-        !v.observations[method].dataPresent &&
-        !v.renderedRows.some((row) => row.id === id) &&
-        (method === 'config.projects'
-          ? !v.configuration?.labels.includes(fixture.project) && v.configuration?.info.length === 0
-          : v.editorTitle !== owned.roadmap.title),
-      `The actual ${method} view cannot retain forbidden facts after a role downgrade`,
+    assert.equal(JSON.parse(await readFile(graphFile, 'utf8')).graph.id, owned.graph.id);
+    fixture.created.push(graphFile);
+    await writeFile(process.env.FARMSLOT_DOMAIN_PROOF_SETUP, JSON.stringify(fixture, null, 2), {
+      mode: 0o600,
+    });
+    await navigate(views()[0][1]);
+    const initialLogin = await until(
+      authState,
+      (state) => state.authForm || state.connection === 'connected',
+      'Wait for the actual initial authentication state',
     );
-    evidence.operatorViews.push({ method, view });
-  }
-  claims.partialRoleRefetchesAllowed = true;
-  await screenshot('operator-forbidden-configuration-cleared');
-  await rpc('principal.revokeRole', {
-    principalId: actor.principalId,
-    role: 'operator',
-    scope: { kind: 'global' },
-  });
-  await reconnect();
-  evidence.revoked = await until(
-    () => inspectAll(actorScope),
-    (result) =>
-      Object.values(result).every(
-        (s) =>
-          s.connection === 'connected' &&
-          s.principalId === actor.principalId &&
-          !s.cacheHasData &&
-          s.storedObservedAt === undefined &&
-          s.storedQueryIds.length === 0 &&
-          s.renderAccess === 'none',
-      ),
-    'Reported revoked authority must clear all five persisted and cached planning collections',
-  );
-  await screenshot('five-collections-authority-revoked');
-  claims.revokedRoleClearsFive = true;
-  const backlogTitle = `Changed while revoked ${randomUUID()}`;
-  const roadmapTitle = `Changed while revoked ${randomUUID()}`;
-  const changedBacklog = await rpc('backlog.update', {
-    itemId: owned.backlog.id,
-    title: backlogTitle,
-  });
-  const currentRoadmap = (await rpc('roadmap.get', { itemId: owned.roadmap.id })).item;
-  const changedRoadmap = await rpc('roadmap.save', {
-    item: {
-      id: currentRoadmap.id,
-      project: fixture.project,
-      title: roadmapTitle,
-      body: currentRoadmap.body,
-    },
-    expectedHash: currentRoadmap.fileHash,
-  });
-  assert.equal(changedBacklog.item.title, backlogTitle);
-  assert.equal(changedRoadmap.item.title, roadmapTitle);
-  evidence.recoverySources = {
-    'backlog.list': { id: owned.backlog.id, title: backlogTitle },
-    'roadmap.list': { id: owned.roadmap.id, title: roadmapTitle },
-  };
-  if (prAuthority) await changePRWhileRevoked();
-  await rpc('principal.grant', {
-    principalId: actor.principalId,
-    role: 'admin',
-    scope: { kind: 'global' },
-  });
-  await reconnect();
-  evidence.recovered = await warm(actor.principalId);
-  for (const method of Object.keys(queries))
+    if (initialLogin.authForm) assert((await cdp(['login', tab])).authenticated);
+    evidence.initialAuthentication = await until(
+      authState,
+      (state) => state.connection === 'connected' && state.principalId === fixture.ownerId,
+      'Sign in the selected original account through its real form',
+    );
+    evidence.originalSaved = await warm(fixture.ownerId);
+    const originalScope = evidence.originalSaved['roadmap.list'].inspectedScope;
+    await createActor();
+    if (prAuthority) await seedPR();
+    restoreBrowser = true;
+    await signOut();
+    await cdp(['login', tab], actor.profile);
+    await until(
+      authState,
+      (s) => s.principalId === actor.principalId && s.connection === 'connected',
+      'Use the actual sign-in form for the disposable actor',
+    );
+    evidence.oldScopeAfterSwitch = await inspectAll(originalScope);
     assert(
-      evidence.recovered[method].cacheObservedAt > evidence.actorSaved[method].cacheObservedAt,
-      `${method} requires a fresh authorized read`,
-    );
-  claims.authorityRecoveryRefetchesFive = true;
-  if (prAuthority) {
-    evidence.prRecovered = await warmPR();
-    assert(
-      evidence.prRecovered.observations.every(
-        (row) => row.observedAt > evidence.prChangedSource.committedAt,
+      Object.values(evidence.oldScopeAfterSwitch).every(
+        (s) => s.principalId === actor.principalId && s.storedQueryIds.length === 0,
       ),
+      'Switching principals must delete all old saved planning rows',
     );
-    assert.equal(evidence.prRecovered.timeOrigin, evidence.prWarm.timeOrigin);
-    claims.prAuthorityRecoveryReadsNewSource = true;
+    claims.principalSwitchClearsFive = true;
+    evidence.actorSaved = await warm(actor.principalId);
+    if (prAuthority) evidence.prWarm = await warmPR();
+    const actorScope = evidence.actorSaved['roadmap.list'].inspectedScope;
+    await screenshot('five-collections-before-revocation');
+    if (heldReply) await prepareHeldReply();
+    await rpc('principal.revokeRole', {
+      principalId: actor.principalId,
+      role: 'admin',
+      scope: { kind: 'global' },
+    });
+    await reconnect();
+    evidence.operatorAuthentication = await until(
+      authState,
+      (s) =>
+        s.principalId === actor.principalId &&
+        s.connection === 'connected' &&
+        s.workspaceAccess === 'farm' &&
+        s.roles?.length === 1 &&
+        s.roles[0].role === 'operator',
+      'A real role downgrade keeps farm access while removing admin authority',
+    );
+    if (prAuthority) {
+      evidence.prDenied = await deniedPR();
+      claims.prAuthorityClearsProjection = true;
+    }
+    if (heldReply) await replayAfterRoleChange(actorScope);
+    const operatorMethods = ['backlog.list', 'workGraph.list', 'dispatch.queue.list'];
+    evidence.operatorViews = [];
+    for (const [method, hash, id] of views()) {
+      if (!operatorMethods.includes(method)) continue;
+      await navigate(hash);
+      const view = await until(
+        inspectView,
+        (v) =>
+          v.principalId === actor.principalId &&
+          v.observations?.[method]?.ready &&
+          v.observations[method].observedAt > evidence.actorSaved[method].cacheObservedAt &&
+          v.observations[method].rows.some((r) => r.id === id),
+        `Read permitted ${method} afresh through its actual view after the role downgrade`,
+      );
+      evidence.operatorViews.push({ method, view });
+    }
+    evidence.operatorSaved = await until(
+      () => inspectAll(actorScope),
+      (result) =>
+        Object.entries(result).every(([method, state]) =>
+          operatorMethods.includes(method)
+            ? state.cacheStatus === 'ready' &&
+              state.cacheObservedAt > evidence.actorSaved[method].cacheObservedAt &&
+              state.storedDataSha256 === state.cacheDataSha256
+            : !state.cacheHasData &&
+              state.storedObservedAt === undefined &&
+              !state.storedQueryIds.some((id) => id.startsWith(`${method}:`)),
+        ),
+      'Partial authority must save only freshly authorized lists and clear every forbidden collection',
+    );
+    for (const [method, hash, id] of views()) {
+      if (operatorMethods.includes(method)) continue;
+      await navigate(hash);
+      const view = await until(
+        inspectView,
+        (v) =>
+          v.mounted &&
+          v.principalId === actor.principalId &&
+          !!v.observations?.[method]?.error &&
+          !v.observations[method].dataPresent &&
+          !v.renderedRows.some((row) => row.id === id) &&
+          (method === 'config.projects'
+            ? !v.configuration?.labels.includes(fixture.project) &&
+              v.configuration?.info.length === 0
+            : v.editorTitle !== owned.roadmap.title),
+        `The actual ${method} view cannot retain forbidden facts after a role downgrade`,
+      );
+      evidence.operatorViews.push({ method, view });
+    }
+    claims.partialRoleRefetchesAllowed = true;
+    await screenshot('operator-forbidden-configuration-cleared');
+    await rpc('principal.revokeRole', {
+      principalId: actor.principalId,
+      role: 'operator',
+      scope: { kind: 'global' },
+    });
+    await reconnect();
+    evidence.revoked = await until(
+      () => inspectAll(actorScope),
+      (result) =>
+        Object.values(result).every(
+          (s) =>
+            s.connection === 'connected' &&
+            s.principalId === actor.principalId &&
+            !s.cacheHasData &&
+            s.storedObservedAt === undefined &&
+            s.storedQueryIds.length === 0 &&
+            s.renderAccess === 'none',
+        ),
+      'Reported revoked authority must clear all five persisted and cached planning collections',
+    );
+    await screenshot('five-collections-authority-revoked');
+    claims.revokedRoleClearsFive = true;
+    const backlogTitle = `Changed while revoked ${randomUUID()}`;
+    const roadmapTitle = `Changed while revoked ${randomUUID()}`;
+    const changedBacklog = await rpc('backlog.update', {
+      itemId: owned.backlog.id,
+      title: backlogTitle,
+    });
+    const currentRoadmap = (await rpc('roadmap.get', { itemId: owned.roadmap.id })).item;
+    const changedRoadmap = await rpc('roadmap.save', {
+      item: {
+        id: currentRoadmap.id,
+        project: fixture.project,
+        title: roadmapTitle,
+        body: currentRoadmap.body,
+      },
+      expectedHash: currentRoadmap.fileHash,
+    });
+    assert.equal(changedBacklog.item.title, backlogTitle);
+    assert.equal(changedRoadmap.item.title, roadmapTitle);
+    evidence.recoverySources = {
+      'backlog.list': { id: owned.backlog.id, title: backlogTitle },
+      'roadmap.list': { id: owned.roadmap.id, title: roadmapTitle },
+    };
+    if (prAuthority) await changePRWhileRevoked();
+    await rpc('principal.grant', {
+      principalId: actor.principalId,
+      role: 'admin',
+      scope: { kind: 'global' },
+    });
+    await reconnect();
+    evidence.recovered = await warm(actor.principalId);
+    for (const method of Object.keys(queries))
+      assert(
+        evidence.recovered[method].cacheObservedAt > evidence.actorSaved[method].cacheObservedAt,
+        `${method} requires a fresh authorized read`,
+      );
+    claims.authorityRecoveryRefetchesFive = true;
+    if (prAuthority) {
+      evidence.prRecovered = await warmPR();
+      assert(
+        evidence.prRecovered.observations.every(
+          (row) => row.observedAt > evidence.prChangedSource.committedAt,
+        ),
+      );
+      assert.equal(evidence.prRecovered.timeOrigin, evidence.prWarm.timeOrigin);
+      claims.prAuthorityRecoveryReadsNewSource = true;
+    }
+    await screenshot('five-collections-authority-restored');
   }
-  await screenshot('five-collections-authority-restored');
 } catch (error) {
   failures.push(error);
   if (tab) {
     try {
-      evidence.failureView = await inspectView();
+      evidence.failureView = domain ? await domain.inspect() : await inspectView();
       if (prAuthority && fixture.prFixture) evidence.prFailureView = await inspectPR();
       await screenshot('first-failure');
     } catch (captureError) {
@@ -710,6 +751,13 @@ try {
     }
   }
 } finally {
+  if (domain) {
+    try {
+      await domain.releasePending();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
   if (actor) {
     try {
       if (restoreBrowser) {

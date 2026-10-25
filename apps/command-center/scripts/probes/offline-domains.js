@@ -36,6 +36,9 @@ function observation(controller) {
     error: state.error,
     resourceState: state.resourceState,
     data: state.data,
+    belongsToWorkspace: controller.belongsToWorkspace,
+    canonicalDataPresent: cache.read(query).data !== undefined,
+    params: query.params,
   };
 }
 const pr = find(document, 'pr-automation-panel');
@@ -53,6 +56,35 @@ if (analytics) observation(Reflect.get(analytics, 'query'));
 if (chat) for (const field of ['runtimeQuery', 'usageQuery']) observation(Reflect.get(chat, field));
 const visibleText = (panel) => panel && (panel.shadowRoot ?? panel).textContent;
 const visible = (element) => Boolean(element && element.getClientRects().length);
+const buttons = (panel) =>
+  [...panel.shadowRoot.querySelectorAll('button')].map((button) => ({
+    action: button.dataset.action,
+    label: button.textContent.trim(),
+    disabled: button.disabled,
+  }));
+let assessmentReads;
+if (assessment) {
+  const { resourceQuery } = await import(loaded('/packages/protocol/src/client-cache/index.ts'));
+  const inspect = (method, params) => {
+    const query = resourceQuery(method, params),
+      state = cache.read(query);
+    return {
+      id: query.id,
+      persisted: query.persisted,
+      status: state.status,
+      dataPresent: state.data !== undefined,
+      data: state.data,
+      error: state.error,
+      observedAt: state.observedAt,
+    };
+  };
+  assessmentReads = {
+    history: inspect('assessment.list', { limit: 50 }),
+    selected: Reflect.get(assessment, 'selectedId')
+      ? inspect('assessment.get', { id: Reflect.get(assessment, 'selectedId') })
+      : undefined,
+  };
+}
 return {
   loaded: true,
   connection: gateway.connectionState,
@@ -60,6 +92,7 @@ return {
   timeOrigin: performance.timeOrigin,
   observedAt: Date.now(),
   principalId: gateway.authenticatedPrincipalId,
+  workspaceAccess: gateway.workspaceAccess,
   observations,
   pr: pr && {
     text: visibleText(pr),
@@ -81,10 +114,25 @@ return {
     records: Reflect.get(assessment, 'records'),
     text: visibleText(assessment),
     selectedId: Reflect.get(assessment, 'selectedId'),
+    summary: Reflect.get(assessment, 'summary'),
+    cursor: Reflect.get(assessment, 'cursor'),
+    outcomeCount: Reflect.get(assessment, 'outcomeResources').size,
+    historyReady: Reflect.get(assessment, 'historyReady'),
+    outcomes: [...Reflect.get(assessment, 'outcomeResources')].map(([id, controller]) => ({
+      id,
+      ready: controller.ready,
+      data: controller.state.data,
+    })),
+    articleIds: [...assessment.shadowRoot.querySelectorAll('article')].map((node) => node.id),
+    buttons: buttons(assessment),
+    canonicalReads: assessmentReads,
   },
   analytics: analytics && {
     result: Reflect.get(analytics, 'result'),
     text: visibleText(analytics),
+    statLineCount: analytics.shadowRoot.querySelectorAll('.stat-line').length,
+    chartCount: analytics.shadowRoot.querySelectorAll('.grid').length,
+    buttons: buttons(analytics),
   },
   chat: chat && {
     open: chat.open,

@@ -38,6 +38,7 @@ assert(!output.startsWith(root + '/') && !directory.startsWith(home + '/'));
 const policyFile = path.join(home, 'triage-policy.json');
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const policyBytes = (policy) => Buffer.from(JSON.stringify(policy) + '\n');
+const analyticsAuthority = process.env.FARMSLOT_ANALYTICS_AUTHORITY_PROOF === '1';
 
 if (mode === 'setup') {
   let previous = null;
@@ -63,7 +64,9 @@ if (mode === 'setup') {
   const checkpoint = () => writeFile(output, JSON.stringify(fixture) + '\n', { mode: 0o600 });
   if (
     process.env.FARMSLOT_ASSESSMENT_HISTORY_PROOF === '1' ||
-    process.env.FARMSLOT_ANALYTICS_OBSERVATION_PROOF === '1'
+    process.env.FARMSLOT_ASSESSMENT_AUTHORITY_PROOF === '1' ||
+    process.env.FARMSLOT_ANALYTICS_OBSERVATION_PROOF === '1' ||
+    analyticsAuthority
   ) {
     const farm = path.resolve(process.env.FARMSLOT_ROOT);
     const directory = path.resolve(
@@ -124,28 +127,51 @@ if (mode === 'setup') {
     hash(policyBytes({ ...policy, receiptDirectory: receipts[1] })),
   ];
   const { createRun, persistRunNow } = await import('../../../services/gateway/src/runs/store.ts');
-  const run = createRun(
-    {
-      flowType: 'dev',
-      mode: 'interactive',
-      project: context.project,
-      ticketOrPr: `Triage source ${randomUUID()}`,
-      safetyTier: 'sandboxed',
-    },
-    { deferBackgroundPersist: true },
-  );
-  run.status = 'done';
-  run.completedAt = new Date().toISOString();
-  run.steps = [
-    { name: 'validation', status: 'failed', detail: 'Read-only source-observation fixture' },
-  ];
-  const runFile = path.join(process.env.FARMSLOT_RUNS_DIR, `${run.id}.json`);
-  Object.assign(fixture, { runId: run.id, ticketOrPr: run.ticketOrPr, runFile });
-  await checkpoint();
-  await persistRunNow(run, 'read-only triage source proof');
-  assert((await realpath(runFile)).startsWith(home + '/'));
+  if (analyticsAuthority) fixture.runs = [];
+  for (const role of analyticsAuthority ? ['warm', 'pending'] : ['source']) {
+    const run = createRun(
+      {
+        flowType: 'dev',
+        mode: 'interactive',
+        project: context.project,
+        ticketOrPr: `Triage source ${randomUUID()}`,
+        safetyTier: 'sandboxed',
+      },
+      { deferBackgroundPersist: true },
+    );
+    run.status = 'done';
+    run.completedAt = new Date().toISOString();
+    run.steps = [
+      { name: 'validation', status: 'failed', detail: 'Read-only source-observation fixture' },
+    ];
+    const runFile = path.join(process.env.FARMSLOT_RUNS_DIR, `${run.id}.json`);
+    if (role === 'pending')
+      Object.assign(fixture, {
+        pendingRunId: run.id,
+        pendingTicketOrPr: run.ticketOrPr,
+        pendingRunFile: runFile,
+      });
+    else Object.assign(fixture, { runId: run.id, ticketOrPr: run.ticketOrPr, runFile });
+    if (analyticsAuthority)
+      fixture.runs.push({ id: run.id, file: runFile, ticketOrPr: run.ticketOrPr, role });
+    await checkpoint();
+    await persistRunNow(run, 'read-only triage source proof');
+    assert((await realpath(runFile)).startsWith(home + '/'));
+    if (role === 'warm') {
+      const { appendAnalyticsRecord, buildAnalyticsRecord } =
+        await import('../../../services/gateway/src/runs/analytics.ts');
+      await appendAnalyticsRecord(buildAnalyticsRecord(run));
+    }
+  }
   await writeFile(policyFile, policyBytes(policy), { mode: 0o600 });
-  console.log(JSON.stringify({ setupOnly: true, runId: run.id, providerCalls: 0 }));
+  console.log(
+    JSON.stringify({
+      setupOnly: true,
+      runId: fixture.runId,
+      ...(analyticsAuthority ? { pendingRunId: fixture.pendingRunId, runs: fixture.runs } : {}),
+      providerCalls: 0,
+    }),
+  );
 } else {
   const fixture = JSON.parse(await readFile(output, 'utf8'));
   assert.equal(fixture.home, home);
@@ -172,11 +198,21 @@ if (mode === 'setup') {
     const file = path.join(home, 'assessments', `${item.id}.json`);
     assert.equal(item.file, file);
     assert.equal(await realpath(file), file);
-    const record = JSON.parse(await readFile(file, 'utf8'));
+    const bytes = await readFile(file);
+    const record = JSON.parse(bytes);
     assert.equal(record.id, item.id);
-    assert.equal(record.ownerId, fixture.ownerId);
-    assert.equal(record.ownerGeneration ?? 0, fixture.ownerGeneration);
-    if (item.kind === 'outcome') assert.equal(record.subject.run.id, fixture.runId);
+    assert.equal(record.ownerId, item.ownerId ?? fixture.ownerId);
+    assert.equal(record.ownerGeneration ?? 0, item.ownerGeneration ?? fixture.ownerGeneration);
+    if (item.kind === 'authority') {
+      assert.equal(item.runId, fixture.runId);
+      assert.equal(record.subject.run.id, item.runId);
+      assert.equal(record.subject.run.project, fixture.project);
+      assert.equal(record.consumer, 'failure-triage');
+      assert(
+        item.allowedHashes.includes(hash(bytes)),
+        'Refuse a foreign authority assessment write',
+      );
+    } else if (item.kind === 'outcome') assert.equal(record.subject.run.id, fixture.runId);
     else assert.equal(record.subject.suggestion.source.ref, 'synthetic:d07-assessment-expiry');
     await unlink(file);
   }
@@ -206,7 +242,10 @@ if (mode === 'setup') {
         .split('\n')
         .filter(Boolean)) {
         const row = JSON.parse(line);
-        assert.equal(row.runId, fixture.runId, 'Refuse an unrelated analytics append');
+        assert(
+          (fixture.runs ?? [{ id: fixture.runId }]).some((run) => run.id === row.runId),
+          'Refuse an unrelated analytics append',
+        );
         assert.equal(row.project, fixture.project);
       }
       if (saved) {
@@ -217,14 +256,20 @@ if (mode === 'setup') {
     for (const [name, saved] of Object.entries(fixture.analytics.before))
       assert.equal(hash(await readFile(path.join(directory, name))), saved.sha256);
   }
-  if (fixture.runFile) {
+  for (const owned of fixture.runs ??
+    (fixture.runFile
+      ? [{ id: fixture.runId, file: fixture.runFile, ticketOrPr: fixture.ticketOrPr }]
+      : [])) {
     try {
-      const file = await realpath(fixture.runFile);
-      assert(file.startsWith(home + '/') && path.basename(file) === `${fixture.runId}.json`);
+      const expected = path.join(process.env.FARMSLOT_RUNS_DIR, `${owned.id}.json`);
+      assert.equal(owned.file, expected);
+      const file = await realpath(owned.file);
+      assert.equal(file, expected);
+      assert(file.startsWith(home + '/'));
       const run = JSON.parse(await readFile(file, 'utf8'));
-      assert.equal(run.id, fixture.runId);
+      assert.equal(run.id, owned.id);
       assert.equal(run.project, fixture.project);
-      assert.equal(run.ticketOrPr, fixture.ticketOrPr);
+      assert.equal(run.ticketOrPr, owned.ticketOrPr);
       assert.equal(run.status, 'done');
       await unlink(file);
     } catch (error) {

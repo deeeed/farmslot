@@ -51,6 +51,7 @@ export async function startPlanningRaceProxy({
   const authentications = [];
   const barrierReplies = [];
   const analyticsReplies = [];
+  const assessmentReplies = [];
   const prReplies = [];
   const copilotReplies = [];
   const observedReads = {};
@@ -59,6 +60,8 @@ export async function startPlanningRaceProxy({
     'intelligence.triage.feedback': 0,
     'run.resolveDecision': 0,
     'analytics.backfill': 0,
+    'assessment.feedback': 0,
+    'assessment.report': 0,
     'prWatch.refresh': 0,
     'prWatch.repair': 0,
     'prRules.scan': 0,
@@ -87,6 +90,7 @@ export async function startPlanningRaceProxy({
     authentications,
     barrierReplies,
     analyticsReplies,
+    assessmentReplies,
     prReplies,
     copilotReplies,
     commands,
@@ -273,6 +277,7 @@ export async function startPlanningRaceProxy({
         if (
           frame.type === 'req' &&
           (frame.method === 'backlog.list' ||
+            (method === 'assessment.summary' && frame.method.startsWith('assessment.')) ||
             (method === 'analytics.query' && frame.method === method) ||
             (method === 'chat.sessionContext' && frame.method === method) ||
             (method === 'prRules.list' &&
@@ -351,6 +356,20 @@ export async function startPlanningRaceProxy({
             ok: frame.ok,
             error: frame.error,
             resourceState: frame.resourceState,
+            payloadSha256: frame.ok ? digest(JSON.stringify(frame.payload)) : undefined,
+          });
+          void persist();
+        }
+        if (read?.method.startsWith('assessment.')) {
+          assessmentReplies.push({
+            method: read.method,
+            connection: pair.connection,
+            requestAt: read.requestAt,
+            repliedAt: Date.now(),
+            ok: frame.ok,
+            error: frame.error,
+            resourceState: frame.resourceState,
+            payloadSha256: frame.ok ? digest(JSON.stringify(frame.payload)) : undefined,
           });
           void persist();
         }
