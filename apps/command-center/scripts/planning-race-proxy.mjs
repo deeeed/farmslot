@@ -31,6 +31,7 @@ export async function startPlanningRaceProxy({
       'analytics.query',
       'prRules.list',
       'chat.sessionContext',
+      'config.projects',
     ].includes(method),
   );
   const artifacts = await realpath(directory);
@@ -54,12 +55,39 @@ export async function startPlanningRaceProxy({
   const assessmentReplies = [];
   const prReplies = [];
   const copilotReplies = [];
+  const configurationReplies = [];
+  const commandReplies = [];
+  const changeGates = [];
+  let changeGate;
+  let heldChangeFrames = [];
+  const configurationReads = new Set([
+    'config.pools',
+    'config.pool.raw',
+    'config.projects',
+    'config.project',
+    'config.templates',
+    'llm.config.get',
+    'llm.auth.list',
+    'llm.tiers',
+  ]);
+  const configurationCommands = new Set([
+    'llm.config.set',
+    'llm.auth.add',
+    'config.project.autoRecovery.update',
+  ]);
   const observedReads = {};
   const commands = {
     'intelligence.triage.analyze': 0,
     'intelligence.triage.feedback': 0,
     'run.resolveDecision': 0,
     'analytics.backfill': 0,
+    'llm.config.set': 0,
+    'llm.auth.add': 0,
+    'config.project.autoRecovery.update': 0,
+    'llm.auth.test': 0,
+    'llm.auth.login': 0,
+    'llm.auth.import': 0,
+    'llm.auth.refresh': 0,
     'assessment.feedback': 0,
     'assessment.report': 0,
     'prWatch.refresh': 0,
@@ -93,6 +121,10 @@ export async function startPlanningRaceProxy({
     assessmentReplies,
     prReplies,
     copilotReplies,
+    configurationReplies,
+    commandReplies,
+    changeGates,
+    resourceChangesHeld: Boolean(changeGate),
     commands,
     observedReads,
     held: held?.receipt,
@@ -154,9 +186,42 @@ export async function startPlanningRaceProxy({
           'release-after-authority-change',
           'suspend',
           'resume',
+          'hold-resource-changes',
+          'release-resource-changes',
         ].includes(input.action),
       );
-      if (input.action === 'suspend') {
+      if (input.action === 'hold-resource-changes') {
+        assert.equal(method, 'config.projects');
+        assert(!changeGate && heldChangeFrames.length === 0 && pairs.size === 1);
+        assert(changeGates.length < 8, 'Bound configuration proof gates');
+        const [pair] = pairs;
+        assert(pair.authentication && pair.client.readyState === WebSocket.OPEN);
+        changeGate = {
+          id: changeGates.length + 1,
+          connection: pair.connection,
+          principalId: pair.authentication.principalId,
+          heldAt: Date.now(),
+          frames: [],
+        };
+        changeGates.push(changeGate);
+      } else if (input.action === 'release-resource-changes') {
+        assert(changeGate && heldChangeFrames.length > 0, 'Release actual held change frames');
+        for (const heldFrame of heldChangeFrames) {
+          assert.equal(heldFrame.pair.connection, changeGate.connection);
+          assert.equal(heldFrame.pair.authentication.principalId, changeGate.principalId);
+          assert.equal(heldFrame.pair.client.readyState, WebSocket.OPEN);
+          assert.equal(digest(heldFrame.bytes), heldFrame.receipt.frameSha256);
+          await new Promise((resolve, reject) =>
+            heldFrame.pair.client.send(heldFrame.bytes, { binary: false }, (error) =>
+              error ? reject(error) : resolve(),
+            ),
+          );
+          heldFrame.receipt.forwardedAt = Date.now();
+        }
+        changeGate.releasedAt = Date.now();
+        changeGate = undefined;
+        heldChangeFrames = [];
+      } else if (input.action === 'suspend') {
         assert.equal(
           method,
           'backlog.list',
@@ -235,6 +300,7 @@ export async function startPlanningRaceProxy({
       upstream: new WebSocket(upstream),
       connection: ++connection,
       reads: new Map(),
+      commandRequests: new Map(),
     };
     pairs.add(pair);
     const waiting = [];
@@ -257,10 +323,11 @@ export async function startPlanningRaceProxy({
         if (frame.type === 'req' && frame.method === 'auth.connect') pair.authRequestId = frame.id;
         if (
           frame.type === 'req' &&
-          ((method === 'assessment.summary' &&
-            ['assessment.summary', 'assessment.list', 'assessment.get', 'run.get'].includes(
-              frame.method,
-            )) ||
+          ((method === 'config.projects' && configurationReads.has(frame.method)) ||
+            (method === 'assessment.summary' &&
+              ['assessment.summary', 'assessment.list', 'assessment.get', 'run.get'].includes(
+                frame.method,
+              )) ||
             (method === 'analytics.query' && frame.method === method) ||
             (method === 'chat.sessionContext' && frame.method === method) ||
             (method === 'prRules.list' &&
@@ -275,8 +342,17 @@ export async function startPlanningRaceProxy({
           void persist();
         }
         if (
+          method === 'config.projects' &&
+          frame.type === 'req' &&
+          configurationCommands.has(frame.method)
+        ) {
+          assert(pair.commandRequests.size < 20);
+          pair.commandRequests.set(frame.id, { method: frame.method, requestAt: Date.now() });
+        }
+        if (
           frame.type === 'req' &&
           (frame.method === 'backlog.list' ||
+            (method === 'config.projects' && configurationReads.has(frame.method)) ||
             (method === 'assessment.summary' && frame.method.startsWith('assessment.')) ||
             (method === 'analytics.query' && frame.method === method) ||
             (method === 'chat.sessionContext' && frame.method === method) ||
@@ -348,6 +424,34 @@ export async function startPlanningRaceProxy({
         }
         const read = frame.type === 'res' ? pair.reads.get(frame.id) : undefined;
         if (read) pair.reads.delete(frame.id);
+        const command = frame.type === 'res' ? pair.commandRequests.get(frame.id) : undefined;
+        if (command) {
+          pair.commandRequests.delete(frame.id);
+          commandReplies.push({
+            ...command,
+            id: frame.id,
+            connection: pair.connection,
+            repliedAt: Date.now(),
+            ok: frame.ok,
+            error: frame.error?.code,
+            payloadSha256: frame.ok ? digest(JSON.stringify(frame.payload)) : undefined,
+            profileId: frame.payload?.profileId,
+            backup: frame.payload?.backup,
+          });
+          void persist();
+        }
+        if (read && method === 'config.projects' && configurationReads.has(read.method)) {
+          configurationReplies.push({
+            ...read,
+            connection: pair.connection,
+            repliedAt: Date.now(),
+            ok: frame.ok,
+            error: frame.error?.code,
+            resourceState: frame.resourceState,
+            payloadSha256: frame.ok ? digest(JSON.stringify(frame.payload)) : undefined,
+          });
+          void persist();
+        }
         if (read?.method === 'analytics.query') {
           analyticsReplies.push({
             connection: pair.connection,
@@ -436,6 +540,21 @@ export async function startPlanningRaceProxy({
           void persist();
         }
         if (frame.type === 'event' && frame.event === 'resource.changed') {
+          if (changeGate) {
+            assert.equal(pair.connection, changeGate.connection);
+            assert(heldChangeFrames.length < 64, 'Bound held configuration publications');
+            const receipt = {
+              connection: pair.connection,
+              receivedAt: Date.now(),
+              epoch: frame.payload?.epoch,
+              changes: frame.payload?.changes,
+              frameSha256: digest(bytes),
+            };
+            changeGate.frames.push(receipt);
+            heldChangeFrames.push({ pair, bytes: Buffer.from(bytes), receipt });
+            void persist();
+            return;
+          }
           const changes = frame.payload?.changes?.filter((row) =>
             method === 'analytics.query'
               ? row.key.family === 'analytics' && row.key.scope === 'farm'

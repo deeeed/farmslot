@@ -11,6 +11,7 @@
 //   node scripts/cdp.mjs screenshot <hash> <path> [--appearance dark|light] [--width N --height N]
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
+//   node scripts/cdp.mjs fill <hash> <selector> --stdin Read sensitive input from stdin, keeping it out of process arguments.
 //   node scripts/cdp.mjs click <hash> <selector>       Click a control, searching shadow roots.
 //   node scripts/cdp.mjs click <hash> <selector> --allow-disabled  Send real pointer input to a disabled control for stale-action proofs.
 //   node scripts/cdp.mjs click <hash> <selector> --observe-file <path>  Read a probe immediately after the real click.
@@ -755,7 +756,8 @@ try {
     const [hash, selector, value] = rest;
     if (!hash || !selector || value === undefined)
       die(`usage: cdp.mjs ${cmd} <hash> <selector> <value>`);
-    console.log(JSON.stringify(await inputInTab(hash, selector, value, cmd === 'select'), null, 2));
+    const input = cmd === 'fill' && value === '--stdin' ? readFileSync(0, 'utf8') : value;
+    console.log(JSON.stringify(await inputInTab(hash, selector, input, cmd === 'select'), null, 2));
   } else if (cmd === 'viewport') {
     const [hash, width, height] = rest;
     if (!hash || width === undefined || height === undefined)

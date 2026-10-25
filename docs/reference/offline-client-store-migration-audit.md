@@ -363,7 +363,7 @@ Web controllers and Companion query hooks own active observations. Demand-only
 configuration reads share the same cache and reject replies after an owner
 change. Local option arrays and forms are projections, not freshness owners.
 Clean configuration forms follow a new read; actual unsaved policy edits survive
-it. Companion backlog commands require the displayed current collection and
+it. Provider configuration and project policy collections adopt only canonical observations: initial, reconnect, slot-toggle and post-command reads are not separately scheduled. Successful command receipts may acknowledge the local form draft without replacing collection data; a later typed draft keeps its own contents. Provider import/login/refresh remain explicit commands, while their resulting registration facts arrive through the existing configuration writer keys. Error-only Retry retries only failed configuration queries. Companion backlog commands require the displayed current collection and
 capture profile, principal and connection authority before dispatch. An explicit
 backlog spec preview remains nonpersisted and fences late replies by its owner
 and selected item; content persistence belongs to the later content slice.

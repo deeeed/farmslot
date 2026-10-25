@@ -220,18 +220,17 @@ export class LLMConfig extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this._loadData();
-  }
-
-  private async _loadData() {
     this._configQuery.setQuery(resourceQuery<LLMConfigGetResult>(Methods.LLM_CONFIG_GET));
     this._authQuery.setQuery(resourceQuery<LLMAuthListResult>(Methods.LLM_AUTH_LIST));
     this._tiersQuery.setQuery(resourceQuery<LLMTiersResult>(Methods.LLM_TIERS));
-    await Promise.all([
-      this._configQuery.retry(),
-      this._authQuery.retry(),
-      this._tiersQuery.retry(),
-    ]);
+  }
+
+  private async _retryReadErrors() {
+    await Promise.all(
+      [this._configQuery, this._authQuery, this._tiersQuery]
+        .filter((query) => query.state.error)
+        .map((query) => query.retry()),
+    );
   }
 
   private applyConfiguration(): void {
@@ -300,7 +299,6 @@ export class LLMConfig extends LitElement {
     this._configQuery.requireReady();
     this._authQuery.requireReady();
     await gateway.request(Methods.LLM_CONFIG_SET, { defaultProvider: provider });
-    await this._configQuery.retry();
   }
 
   private async _addKey(provider: string) {
@@ -310,7 +308,6 @@ export class LLMConfig extends LitElement {
     if (!key) return;
     await gateway.request(Methods.LLM_AUTH_ADD, { provider, type: 'api_key', credential: key });
     this._keyInput = { ...this._keyInput, [provider]: '' };
-    await this._loadData();
   }
 
   private async _testProvider(provider: string) {
@@ -346,7 +343,6 @@ export class LLMConfig extends LitElement {
           overwritten?: string[];
         },
       );
-      await this._loadData();
     } catch (err) {
       this._importStatus = `Error: ${(err as Error).message}`;
     }
@@ -372,7 +368,6 @@ export class LLMConfig extends LitElement {
           overwritten?: string[];
         },
       );
-      await this._loadData();
     } catch (err) {
       this._importStatus = `Error: ${(err as Error).message}`;
     }
@@ -427,7 +422,6 @@ export class LLMConfig extends LitElement {
         if (fail.length) parts.push(`failed: ${fail.map((f) => f.error).join('; ')}`);
         this._refreshStatus = { ...this._refreshStatus, [provider]: parts.join(' — ') };
       }
-      await this._loadData();
     } catch (err) {
       this._refreshStatus = {
         ...this._refreshStatus,
@@ -472,7 +466,6 @@ export class LLMConfig extends LitElement {
       )) as LLMAuthLoginResult;
       if (res.ok) {
         this._loginStatus = `Signed in as ${res.email ?? res.profileId ?? 'OAuth profile'}`;
-        await this._loadData();
       } else {
         this._loginStatus = `Failed: ${res.error}`;
       }
@@ -511,7 +504,7 @@ export class LLMConfig extends LitElement {
             <button
               ?disabled=${gateway.connectionState !== 'connected' ||
               !this._authQuery.belongsToWorkspace}
-              @click=${() => this._loadData()}
+              @click=${() => this._retryReadErrors()}
             >
               Retry configuration read
             </button>
@@ -630,7 +623,7 @@ export class LLMConfig extends LitElement {
     const expiryInfo = p.oauthExpires !== undefined ? this._formatExpiry(p.oauthExpires) : null;
     const supportsOAuthLogin = p.name === 'openai-codex';
     return html`
-      <div class="provider-card ${isActive ? 'active' : ''}">
+      <div class="provider-card ${isActive ? 'active' : ''}" data-provider=${p.name}>
         <div class="provider-name">
           ${p.label}
           ${isActive ? html`<span style="color:${colors.accent}">(active)</span>` : nothing}
@@ -680,6 +673,7 @@ export class LLMConfig extends LitElement {
             </p>`
           : html`<div class="key-row">
               <input
+                data-testid=${`llm-key-${p.name}`}
                 class="key-input"
                 type="password"
                 placeholder="sk-... or API key"
@@ -692,6 +686,7 @@ export class LLMConfig extends LitElement {
                 }}
               />
               <button
+                data-testid=${`llm-key-save-${p.name}`}
                 @click=${() => this._addKey(p.name)}
                 ?disabled=${!this.configurationReady || !this._keyInput[p.name]}
               >
@@ -701,6 +696,7 @@ export class LLMConfig extends LitElement {
         <div class="btn-row">
           ${!isActive
             ? html`<button
+                data-testid=${`llm-provider-active-${p.name}`}
                 class="primary"
                 ?disabled=${!this.configurationReady}
                 @click=${() => this._setProvider(p.name)}

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import type { PRMonitorConfig, PRMonitorObservation } from '@farmslot/protocol';
+import type { ResourceKey } from '@farmslot/protocol/client-cache';
 
 import { resourceRevisions } from '../resources/revisions.js';
 
@@ -128,6 +130,29 @@ test('malformed, unsupported and duplicate persisted records fail loading rather
 test('observations survive restart, failed reads preserve facts and stale reads cannot undo a pause', async (t) => {
   const { file, store } = await fixture(t);
   const monitor = await store.subscribe('owner', config);
+  const keys = [
+    { family: 'pr-automation', scope: 'farm' },
+    { family: 'decisions', scope: 'farm' },
+  ] as const;
+  const published: ResourceKey[] = [];
+  const advance = resourceRevisions.advance.bind(resourceRevisions);
+  t.mock.method(
+    resourceRevisions,
+    'advance',
+    (...args: Parameters<typeof resourceRevisions.advance>) => {
+      assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), store.snapshot());
+      published.push(structuredClone(args[0]));
+      advance(...args);
+    },
+  );
+  async function commit<T>(write: () => Promise<T>): Promise<T> {
+    const before = keys.map((key) => resourceRevisions.revision(key));
+    const start = published.length;
+    const result = await write();
+    assert.deepEqual(published.slice(start), keys, 'Committed monitor changes publish both keys');
+    keys.forEach((key, index) => assert.equal(resourceRevisions.revision(key), before[index] + 1));
+    return result;
+  }
   const observation: PRMonitorObservation = {
     checkedAt: '2026-09-09T12:00:00.000Z',
     headSha: 'head-a',
@@ -147,23 +172,42 @@ test('observations survive restart, failed reads preserve facts and stale reads 
       },
     ],
   };
-  const fresh = await store.observe(monitor.id, 'owner', monitor.revision, { observation });
+  const fresh = await commit(() =>
+    store.observe(monitor.id, 'owner', monitor.revision, { observation }),
+  );
   assert(fresh);
-  const acknowledged = await store.acknowledge(
-    monitor.id,
-    'owner',
-    fresh.revision,
-    fresh.incidents[0].id,
+  const acknowledged = await commit(() =>
+    store.acknowledge(monitor.id, 'owner', fresh.revision, fresh.incidents[0].id),
   );
   assert.equal(acknowledged.incidents[0].resolvedAt, undefined);
-  const failed = await store.observe(monitor.id, 'owner', acknowledged.revision, {
-    error: 'Provider unavailable',
-    checkedAt: '2026-09-09T12:05:00.000Z',
-  });
+  const failed = await commit(() =>
+    store.observe(monitor.id, 'owner', acknowledged.revision, {
+      error: 'Provider unavailable',
+      checkedAt: '2026-09-09T12:05:00.000Z',
+    }),
+  );
   assert(failed);
   assert.deepEqual(failed.observation, observation);
   assert.equal(failed.incidents[0].resolvedAt, undefined);
-  await store.setLifecycle(monitor.id, 'owner', failed.revision, 'paused');
+  const paused = await commit(() =>
+    store.setLifecycle(monitor.id, 'owner', failed.revision, 'paused'),
+  );
+  const beforeRefusal = keys.map((key) => resourceRevisions.revision(key));
+  const committed = store.snapshot();
+  const bytes = readFileSync(file);
+  const publications = published.length;
   assert.equal(await store.observe(monitor.id, 'owner', failed.revision, { observation }), null);
+  await assert.rejects(store.configure(monitor.id, 'owner', failed.revision, config), /changed/);
+  await assert.rejects(
+    store.acknowledge(monitor.id, 'foreign-owner', paused.revision, fresh.incidents[0].id),
+    /not found/,
+  );
+  assert.deepEqual(
+    keys.map((key) => resourceRevisions.revision(key)),
+    beforeRefusal,
+  );
+  assert.equal(published.length, publications, 'Stale and refused writes publish neither key');
+  assert.deepEqual(store.snapshot(), committed);
+  assert.deepEqual(readFileSync(file), bytes);
   assert.equal((await PRMonitorStore.load(file)).get(monitor.id, 'owner').lifecycle, 'paused');
 });

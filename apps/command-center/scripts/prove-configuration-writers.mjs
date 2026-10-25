@@ -37,6 +37,7 @@ async function navigate(hash) {
   assert(['127.0.0.1', 'localhost'].includes(url.hostname));
   assert.equal(url.port, process.env.VITE_PORT);
   url.searchParams.set('config-writers', path.basename(path.dirname(artifacts)));
+  url.searchParams.set('authority-proof', path.basename(path.dirname(artifacts)));
   url.hash = hash;
   await cdp('goto', url.href);
   const pages = (await cdp('tabs')).filter(

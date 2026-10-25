@@ -32,7 +32,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-- Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM, plus review command, cold-view, slot/branch/node/resource-writer, fleet-freshness and planning/PR/assessment/analytics authority proofs.
+- Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM, plus review command, cold-view, slot/branch/node/resource-writer, fleet-freshness and planning/PR/assessment/analytics authority proofs. CDP form fills accept sensitive input through stdin without placing it in process arguments.
 
 ## 0.15.0 - 2026-10-19
 

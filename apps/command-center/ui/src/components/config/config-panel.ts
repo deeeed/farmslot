@@ -87,6 +87,7 @@ export class ConfigPanel extends LitElement {
   @state() private _fleetSlots: SlotStatus[] = [];
   @state() private _autoRecoveryDraft: AutoRecoveryDraft | null = null;
   @state() private _autoRecoveryDirty = false;
+  private _autoRecoverySource?: ProjectConfig;
   @state() private _autoRecoverySaving = false;
   @state() private _autoRecoveryError = '';
   @state() private _projectLearnings = new Map<string, ProjectLearningsDocument>();
@@ -141,6 +142,8 @@ export class ConfigPanel extends LitElement {
     this._projects = this._projectsQuery.belongsToWorkspace
       ? (this._projectsQuery.state.data?.projects ?? [])
       : [];
+    if (!this._projectsQuery.belongsToWorkspace || !this._projectsQuery.state.data)
+      this._autoRecoverySource = undefined;
     this._loading =
       !this._pools.length &&
       !this._projects.length &&
@@ -169,7 +172,6 @@ export class ConfigPanel extends LitElement {
     if (state.status !== 'stale' || !state.observedAt) return '';
     return `Saved projects, ${Math.max(0, Math.floor((Date.now() - state.observedAt) / 1000))}s old. Actions wait for a current read.`;
   }
-  private _connUnsub?: () => void;
   private _stateUnsub?: () => void;
 
   connectedCallback() {
@@ -178,34 +180,21 @@ export class ConfigPanel extends LitElement {
     const s = getState();
     this._filters = s.globalFilters;
     this._fleetSlots = s.fleet?.slots ?? [];
-    this.loadData();
-    // Retry when gateway connects (initial page load may fire before WS is open)
-    this._connUnsub = gateway.onConnectionChange((st) => {
-      if (st === 'connected' && this._pools.length === 0) {
-        this.loadData();
-      }
-    });
+    this._poolsQuery.setQuery(resourceQuery<ConfigPoolsResult>(Methods.CONFIG_POOLS));
+    this._projectsQuery.setQuery(resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS));
     // Track global filter + fleet changes (fleet needed for slot lifecycle in toggle)
     this._stateUnsub = subscribe((s) => {
       this._filters = s.globalFilters;
       this._fleetSlots = s.fleet?.slots ?? [];
     });
-    // Reload pool data after a slot toggle so enabled/mode stay in sync
-    this.addEventListener('slot-toggled', this._onSlotToggled);
   }
 
   disconnectedCallback() {
     this._seatsUnsub?.();
     this._seatsUnsub = null;
     super.disconnectedCallback();
-    this._connUnsub?.();
     this._stateUnsub?.();
-    this.removeEventListener('slot-toggled', this._onSlotToggled);
   }
-
-  private _onSlotToggled = () => {
-    this.loadData();
-  };
 
   updated(changed: Map<string, unknown>) {
     if (changed.has('initialPath') && this.initialPath) {
@@ -259,12 +248,6 @@ export class ConfigPanel extends LitElement {
   private get filteredProjects(): ProjectConfig[] {
     if (this._filters.projects.length === 0) return this._projects;
     return this._projects.filter((p) => this._filters.projects.includes(p.name));
-  }
-
-  private async loadData() {
-    this._poolsQuery.setQuery(resourceQuery<ConfigPoolsResult>(Methods.CONFIG_POOLS));
-    this._projectsQuery.setQuery(resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS));
-    await Promise.all([this._poolsQuery.retry(), this._projectsQuery.retry()]);
   }
 
   private _seatsUnsub: (() => void) | null = null;
@@ -386,7 +369,6 @@ export class ConfigPanel extends LitElement {
       if (result.ok && current()) {
         this._editorDirty = false;
         this.leavePoolEditor();
-        await this.loadData();
       }
     } catch (err) {
       if (current()) this._editorError = (err as Error).message;
@@ -403,9 +385,10 @@ export class ConfigPanel extends LitElement {
     if (
       !this._autoRecoveryDraft ||
       this._autoRecoveryDraft.project !== project.name ||
-      !this._autoRecoveryDirty
+      (!this._autoRecoveryDirty && this._autoRecoverySource !== project)
     ) {
       this._autoRecoveryDraft = this.draftFromProject(project);
+      this._autoRecoverySource = project;
       this._autoRecoveryDirty = false;
       this._autoRecoveryError = '';
     }
@@ -433,6 +416,14 @@ export class ConfigPanel extends LitElement {
 
   private async saveAutoRecovery(project: ProjectConfig) {
     const draft = this.autoRecoveryDraft(project);
+    const workspace = getResourceWorkspaceKey();
+    const connection = gateway.connectionEpoch;
+    const selection = this._selection;
+    const current = () =>
+      this.isConnected &&
+      workspace === getResourceWorkspaceKey() &&
+      connection === gateway.connectionEpoch &&
+      selection === this._selection;
     this._autoRecoverySaving = true;
     this._autoRecoveryError = '';
     try {
@@ -441,11 +432,14 @@ export class ConfigPanel extends LitElement {
         project: project.name,
         autoRecovery: autoRecoveryUpdateFromDraft(draft),
       })) as ConfigProjectAutoRecoveryUpdateResult;
-      this._projects = this._projects.map((p) => (p.name === project.name ? result.project : p));
-      this._autoRecoveryDraft = this.draftFromProject(result.project);
-      this._autoRecoveryDirty = false;
+      if (current() && this._autoRecoveryDraft === draft) {
+        // A command may acknowledge the editor draft; the collection follows its query only.
+        this._autoRecoveryDraft = this.draftFromProject(result.project);
+        this._autoRecoverySource = project;
+        this._autoRecoveryDirty = false;
+      }
     } catch (err) {
-      this._autoRecoveryError = err instanceof Error ? err.message : String(err);
+      if (current()) this._autoRecoveryError = err instanceof Error ? err.message : String(err);
     } finally {
       this._autoRecoverySaving = false;
     }

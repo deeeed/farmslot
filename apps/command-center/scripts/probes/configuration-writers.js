@@ -31,12 +31,15 @@ for (const name of ['_poolsQuery', '_poolRawQuery', '_projectsQuery'])
 const templates = panel.querySelector('template-viewer');
 if (templates) read(Reflect.get(templates, '_query'));
 const llm = panel.querySelector('llm-config');
-if (llm) for (const name of ['_configQuery', '_authQuery']) read(Reflect.get(llm, name));
+if (llm)
+  for (const name of ['_configQuery', '_authQuery', '_tiersQuery']) read(Reflect.get(llm, name));
 const editor = panel.querySelector('.cp-json-editor');
 return {
   mounted: true,
   connection: gateway.connectionState,
   connectionId: gateway.resourceConnectionId,
+  principalId: gateway.authenticatedPrincipalId,
+  timeOrigin: performance.timeOrigin,
   observations,
   poolSlots: [...panel.querySelectorAll('slot-toggle')].map((toggle) => ({
     slotId: toggle.slotId,
@@ -55,9 +58,37 @@ return {
   providers: llm && {
     text: llm.shadowRoot?.textContent,
     cards: Reflect.get(llm, '_providers'),
+    config: Reflect.get(llm, '_config'),
+    keyInputs: [...(llm.shadowRoot?.querySelectorAll('.provider-card[data-provider]') ?? [])].map(
+      (card) => ({
+        provider: card.dataset.provider,
+        inputEmpty: (card.querySelector('input[type="password"]')?.value ?? '') === '',
+        draftEmpty: (Reflect.get(llm, '_keyInput')[card.dataset.provider] ?? '') === '',
+        active: card.classList.contains('active'),
+        text: card.textContent,
+      }),
+    ),
+    retry: [...(llm.shadowRoot?.querySelectorAll('[role="alert"] button') ?? [])].map((button) => ({
+      text: button.textContent.trim(),
+      disabled: button.disabled,
+      visible: Boolean(button.getClientRects().length),
+    })),
     alert: llm.shadowRoot?.querySelector('[role="alert"]')?.textContent,
     buttons: [...(llm.shadowRoot?.querySelectorAll('.provider-card button') ?? [])].map(
       (button) => ({ text: button.textContent.trim(), disabled: button.disabled }),
     ),
+  },
+  project: {
+    selection: Reflect.get(panel, '_selection'),
+    projects: Reflect.get(panel, '_projects'),
+    autoRecovery: {
+      draft: Reflect.get(panel, '_autoRecoveryDraft'),
+      dirty: Reflect.get(panel, '_autoRecoveryDirty'),
+      saving: Reflect.get(panel, '_autoRecoverySaving'),
+      error: Reflect.get(panel, '_autoRecoveryError'),
+      text: panel.querySelector('.cp-auto-recovery-section')?.textContent,
+      maxAttemptsInput: panel.querySelector('.cp-form-grid input[type="number"]')?.value,
+      saveDisabled: panel.querySelector('.cp-auto-actions button')?.disabled,
+    },
   },
 };
