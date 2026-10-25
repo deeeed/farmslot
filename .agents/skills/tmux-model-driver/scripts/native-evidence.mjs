@@ -42,7 +42,7 @@ import {
 
 // Native logs grow past the largest string a process can hold, so they are read in ranges.
 const READ_LIMIT_BYTES = 64 * 1024 * 1024;
-// Unresolved questions block the turn and acceptance follows the send: both are recent.
+// Prompt acceptance follows the send. Async questions can outlive this recent window.
 const RECENT_NATIVE_BYTES = 8 * 1024 * 1024;
 const SESSION_HEADER_BYTES = 1024 * 1024;
 
@@ -198,32 +198,137 @@ function unansweredQuestion(hooks, transcriptPath) {
   };
 }
 
+function* questionRecordsBackwards(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  try {
+    let end = fs.fstatSync(fd).size;
+    let partial = Buffer.alloc(0);
+    while (end > 0) {
+      const start = Math.max(0, end - RECENT_NATIVE_BYTES);
+      const length = end - start;
+      if (length + partial.length > READ_LIMIT_BYTES)
+        throw new Error('Native question record exceeds the bounded read limit');
+      const bytes = Buffer.alloc(length + partial.length);
+      fs.readSync(fd, bytes, 0, length, start);
+      partial.copy(bytes, length);
+      const newline = start > 0 ? bytes.indexOf(10) : -1;
+      end = start;
+      if (start > 0 && newline === -1) {
+        partial = bytes;
+        continue;
+      }
+      const lines = bytes
+        .subarray(newline + 1)
+        .toString('utf8')
+        .split('\n');
+      partial = newline === -1 ? Buffer.alloc(0) : bytes.subarray(0, newline);
+      for (const line of lines.reverse()) yield* parseHookJsonl(line);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function questionReplyIds(text) {
+  const match = text
+    .trim()
+    .match(
+      /^<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>$/,
+    );
+  if (!match) return null;
+  const value = JSON.parse(match[1]);
+  return (Array.isArray(value) ? value : [value]).map((reply) => reply.questionItemId);
+}
+
 export function transcriptQuestion(transcriptPath) {
   if (!transcriptPath) return null;
-  const unresolved = new Map();
-  for (const record of parseHookJsonl(readRecent(transcriptPath))) {
+  const resolved = new Set();
+  const acceptedAsync = new Set();
+  const answered = new Set();
+  let asyncQuestion = null;
+  for (const record of questionRecordsBackwards(transcriptPath)) {
+    if (
+      record.type === 'event_msg' &&
+      ['task_complete', 'turn_aborted'].includes(record.payload?.type)
+    )
+      break;
+    const message = record.type === 'response_item' ? record.payload : record.message;
+    if (message?.role === 'user') {
+      const content = message.content;
+      const text =
+        typeof content === 'string'
+          ? content
+          : (content || [])
+              .filter((item) => ['input_text', 'text'].includes(item.type))
+              .map((item) => item.text)
+              .join('\n');
+      // Native context refreshes are user-role metadata, not a submitted prompt.
+      if (/^<environment_context>[\s\S]*<\/environment_context>$/.test(text.trim())) continue;
+      const ids = questionReplyIds(text);
+      if (ids) {
+        for (const id of ids) answered.add(id);
+      } else if (
+        typeof content === 'string' ||
+        (content || []).some((item) => item.type !== 'tool_result')
+      ) {
+        break;
+      }
+    }
     const items =
       record.type === 'response_item' ? [record.payload] : record.message?.content || [];
-    for (const item of items) {
+    for (const item of [...items].reverse()) {
       if (!item) continue;
-      if (item.type === 'tool_result' || item.type === 'function_call_output')
-        unresolved.delete(item.tool_use_id || item.call_id);
+      if (item.type === 'tool_result' || item.type === 'function_call_output') {
+        const id = item.tool_use_id || item.call_id;
+        resolved.add(id);
+        if (typeof item.output === 'string' && item.output.trim() === '{"accepted":true}')
+          acceptedAsync.add(id);
+      }
+      const id = item.call_id || item.id;
+      if (
+        item.type === 'function_call' &&
+        ['request_user_input_async', 'functions.request_user_input_async'].includes(item.name) &&
+        acceptedAsync.has(id)
+      ) {
+        const input = JSON.parse(item.arguments);
+        const pending = input.questions
+          .map((question, index) => ({
+            question,
+            itemId: JSON.stringify(['request_user_input_async', id, index]),
+          }))
+          .filter(({ itemId }) => !answered.has(itemId) && !answered.has(id));
+        if (pending.length)
+          asyncQuestion = {
+            source: 'native-session',
+            tool: item.name,
+            call_id: id,
+            questions: pending.map(({ question }) => question),
+            question_item_ids: pending.map(({ itemId }) => itemId),
+          };
+      }
       if (
         (item.type === 'tool_use' || item.type === 'function_call') &&
+        !resolved.has(id) &&
         ['AskUserQuestion', 'request_user_input', 'functions.request_user_input'].includes(
           item.name,
         )
       ) {
         const input = typeof item.arguments === 'string' ? JSON.parse(item.arguments) : item.input;
-        unresolved.set(item.id || item.call_id, {
+        return {
           source: 'native-session',
           tool: item.name,
           questions: input?.questions || [],
-        });
+        };
       }
     }
   }
-  return [...unresolved.values()].at(-1) || null;
+  return asyncQuestion;
 }
 
 const claudeTranscripts = new Map();
