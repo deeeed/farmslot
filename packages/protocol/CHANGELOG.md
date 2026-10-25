@@ -18,6 +18,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.72.0 - 2026-10-25
+
+- Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
+
 ## 0.71.0 - 2026-10-25
 
 - Register source-linked PR-completion criteria without replacing original obligations, and bind readiness to acceptance and proof-contract revisions.
