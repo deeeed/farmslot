@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/agent-runtime",
-  "version": "0.39.0",
+  "version": "0.39.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -106,6 +106,7 @@
     "dist/**/*.js.map",
     "scripts/**/*.cjs",
     "scripts/**/*.mjs",
+    "scripts/acceptance-contract.d.cts",
     "scripts/retained-recipe-attempt.d.cts",
     "scripts/execution-template-cli.mjs",
     "scripts/git-diff.d.cts",

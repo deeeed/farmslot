@@ -51,6 +51,14 @@ assert.equal(
 );
 assert.ok(packageJson.files.includes('scripts/evidence-manifest.d.cts'));
 assert.equal(
+  packageJson.exports['./scripts/acceptance-contract.cjs'].types,
+  './scripts/acceptance-contract.d.cts',
+);
+assert.ok(
+  packageJson.files.includes('scripts/acceptance-contract.d.cts'),
+  'the acceptance-contract export must ship its TypeScript declaration',
+);
+assert.equal(
   typeof require('@farmslot/agent-runtime/scripts/evidence-manifest.cjs').validateEvidenceManifest,
   'function',
 );
