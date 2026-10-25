@@ -202,3 +202,57 @@ test('a refused completion keeps its workspace even beside older finished histor
   );
   assert.deepEqual(releases, []);
 });
+
+test('a parked run that freed the slot keeps its record while the successor is released', async () => {
+  const parked = makeRun({
+    id: 'parked-A',
+    slotId: 'finished-slot',
+    status: 'human-gating',
+    branch: 'fix/parked-A',
+  });
+  parked.park = {
+    version: 1,
+    operationId: 'park-A',
+    previewId: 'preview-A',
+    runId: parked.id,
+    generation: 1,
+    machine: 'local',
+    slotId: 'finished-slot',
+    mode: 'release',
+    phase: 'parked',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-09-04T00:00:10.000Z',
+    prePauseStatus: 'human-gating',
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+    resourceManifest: {
+      capturedAt: '2026-09-04T00:00:00.000Z',
+      resources: [],
+      capabilityLeases: [],
+    },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: '2026-09-04T00:00:00.000Z',
+    updatedAt: '2026-09-04T00:00:10.000Z',
+  };
+  history.push(parked);
+  const before = structuredClone(parked);
+  await reclaimFinishedSlot('finished-slot', incoming, () => {});
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0]?.params.expectedRunId, 'old-run');
+  assert.deepEqual(parked, before);
+});
+
+test('an unclaimed pending request does not block releasing the finished checkout', async () => {
+  const pending = makeRun({
+    id: 'pending-A',
+    slotId: 'finished-slot',
+    status: 'slot-finding',
+    steps: [{ name: 'find-slot', status: 'pending' }],
+  });
+  history.push(pending);
+  const before = structuredClone(pending);
+  await reclaimFinishedSlot('finished-slot', incoming, () => {});
+  assert.equal(releases.length, 1);
+  assert.deepEqual(pending, before);
+});

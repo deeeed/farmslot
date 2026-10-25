@@ -14,6 +14,7 @@ import {
   readSlotRow,
 } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
+import { isActiveSlotHolder, slotPinIsRequestOnly } from '../methods/dispatch/slot-scoring.js';
 import type { EventEmitter } from '../methods/slot/shared.js';
 import {
   detectLinkedWorktree,
@@ -71,7 +72,7 @@ export async function reclaimFinishedSlot(
     (run) =>
       run.id !== incoming.id &&
       run.slotId === slotId &&
-      (!isTerminalRunStatus(run.status) ||
+      ((isActiveSlotHolder(run, incoming.id) && !slotPinIsRequestOnly(run, row)) ||
         (run.branch === branch &&
           (isCompletionPrerequisiteFailure(run) || isHeldForResultDecision(run)))),
   );

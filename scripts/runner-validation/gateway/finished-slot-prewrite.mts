@@ -294,6 +294,8 @@ try {
     'unpublished',
     'successor',
     'completion-refused',
+    'parked-history',
+    'pending-request',
   ] as const) {
     events.length = 0;
     git(repo, 'checkout', '-q', 'main');
@@ -370,6 +372,60 @@ try {
       summary: 'Keep the new task',
       engineState: { generation: 0 },
     });
+    let retained: Run | undefined;
+    let preservedBranch: string | undefined;
+    let preservedHead: string | undefined;
+    if (kind === 'parked-history' || kind === 'pending-request') {
+      preservedBranch = `fix/retained-${kind}`;
+      git(repo, 'branch', preservedBranch, 'origin/main');
+      preservedHead = git(repo, 'rev-parse', preservedBranch);
+      const prior = store.createRun({
+        project,
+        flowType: 'fix-bug',
+        mode: 'autonomous',
+        ticketOrPr: 'PROOF-RETAINED',
+        slotId: slot,
+        branch: preservedBranch,
+      });
+      retained = store.updateRun(
+        prior.id,
+        kind === 'pending-request'
+          ? { status: 'slot-finding', steps: [{ name: 'find-slot', status: 'pending' }] }
+          : {
+              status: 'human-gating',
+              steps: [
+                { name: 'find-slot', status: 'done' },
+                { name: 'human-gate', status: 'running' },
+              ],
+              park: {
+                version: 1,
+                operationId: 'park-A',
+                previewId: 'preview-A',
+                runId: prior.id,
+                generation: 1,
+                machine: 'local',
+                slotId: slot,
+                mode: 'release',
+                phase: 'parked',
+                slotDisposition: 'freed',
+                slotFreedAt: '2026-09-04T00:00:10.000Z',
+                prePauseStatus: 'human-gating',
+                prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+                resourceManifest: {
+                  capturedAt: '2026-09-04T00:00:00.000Z',
+                  resources: [],
+                  capabilityLeases: [],
+                },
+                recoveryHandle: null,
+                errors: [],
+                residuals: { runner: 'stopped', resources: [] },
+                createdAt: '2026-09-04T00:00:00.000Z',
+                updatedAt: '2026-09-04T00:00:10.000Z',
+              },
+            },
+      );
+      retained = structuredClone(retained);
+    }
     if (kind === 'successor')
       successor = async () => {
         await core.updateSlotStatus(slot, { current_run_id: 'foreign-successor', slot_epoch: 11 });
@@ -465,6 +521,15 @@ try {
         newTaskSurvivesPrepare: true,
         taskSha256: createHash('sha256').update(before).digest('hex'),
       });
+      if (retained && preservedBranch) {
+        const saved: RunGetResult = await client.call<RunGetResult>('run.get', {
+          runId: retained.id,
+        });
+        assert.equal(saved.run.slotId, retained.slotId);
+        assert.equal(saved.run.status, retained.status);
+        assert.deepEqual(saved.run.park, retained.park);
+        assert.equal(git(repo, 'rev-parse', preservedBranch), preservedHead);
+      }
     }
     for (const run of store.getAllRuns()) {
       store.updateRun(run.id, { status: 'done' });

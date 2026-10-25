@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Release a selected finished checkout before writing the next task, while refusing unpublished work and changed ownership.
+- Reject malformed ticket data at run creation with the exact field that needs correction.
 
 - Show unanswered structured worker questions as operator decisions, and resume monitoring when the worker records the answer.
 - Stop owned workers before terminal runs leave the live store while preserving finished checkouts, and verify published commits against the actual remote when tracking refs are stale.
