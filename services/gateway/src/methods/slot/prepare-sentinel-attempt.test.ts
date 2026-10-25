@@ -6,11 +6,13 @@ import path from 'node:path';
 import { after, before, mock, test } from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
+import type { SlotWriteFileEntry } from '../../core/slot-io.js';
 
 // runPrepareCommand is driven through a faked slot exec layer with an in-memory
 // slot filesystem: no tmux server, shell or process is touched.
 const files = new Map<string, string>();
 const commands: string[] = [];
+const staged: string[] = [];
 
 const realCore = await import('../../core/index.js');
 mock.module('../../core/index.js', {
@@ -26,11 +28,24 @@ mock.module('../../core/index.js', {
           ? { stdout: '', stderr: '', exitCode: 1 }
           : { stdout: content, stderr: '', exitCode: 0 };
       }
-      // This launch completes as soon as its wrapper is staged.
-      const staged = /cat > '([^']+)-([0-9a-f]{12})\.sh' <</.exec(cmd);
-      if (staged) files.set(`${staged[1]}-${staged[2]}.exit`, `0 ${staged[2]}\n`);
       if (cmd.includes("'#{pane_dead}'")) return { stdout: '1\n', stderr: '', exitCode: 0 };
       return { stdout: '', stderr: '', exitCode: 0 };
+    },
+  },
+});
+const realFiles = await import('../../core/slot-io.js');
+mock.module('../../core/slot-io.js', {
+  namedExports: {
+    ...realFiles,
+    slotWriteFiles: async (_ctx: unknown, root: string, entries: SlotWriteFileEntry[]) => {
+      for (const entry of entries) {
+        const script = path.posix.join(root, entry.path);
+        staged.push(script);
+        files.set(script, Buffer.from(entry.content, 'base64').toString());
+        const attempt = /^(.*)-([0-9a-f]{12})\.sh$/.exec(script);
+        assert.ok(attempt);
+        files.set(`${attempt[1]}-${attempt[2]}.exit`, `0 ${attempt[2]}\n`);
+      }
     },
   },
 });
@@ -84,13 +99,14 @@ test("an earlier launch's late exit code never decides the current launch", asyn
     ),
     `polled only this launch's sentinel: ${polled.join(', ')}`,
   );
-  const stage = commands.find((cmd) => /cat > '[^']+' <</.test(cmd));
-  assert.ok(stage, 'the wrapper is staged');
+  assert.equal(staged.length, 1, 'the wrapper is staged through the file transport');
   assert.ok(
-    stage.includes(
-      buildPrepareStaleLaunchCleanupCommand(
-        '/tmp/farmslot-prepare',
-        'mm-pixel6-prepare-3e2f400a-deps',
+    commands.some((command) =>
+      command.includes(
+        buildPrepareStaleLaunchCleanupCommand(
+          '/tmp/farmslot-prepare',
+          'mm-pixel6-prepare-3e2f400a-deps',
+        ),
       ),
     ),
     'staging removes earlier launches of this phase',
