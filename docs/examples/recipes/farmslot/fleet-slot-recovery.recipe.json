@@ -1,0 +1,40 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Fleet slot recovery safety and native actions",
+  "description": "ADR-042 Amendment 1 validation against disposable Git checkouts and an authenticated Companion. Start workspace.rpc.live.ts in UI-proof mode, authenticate an owned proof simulator, and set FARMSLOT_WORKSPACE_UI_PROOF_OUT plus FARMSLOT_WORKSPACE_PROOF_DEVICE. The fixture caller owns teardown. This recipe covers recovery safety and native bulk/discard actions; unrestricted scored-selection proof is separate.",
+  "proofTargets": [
+    {
+      "id": "recovery-safety",
+      "claim": "Recovery verifies default HEAD and fixtures, binds discard to actual content, preserves retained evidence, and holds failed work until a guarded retry succeeds."
+    },
+    {
+      "id": "native-recovery",
+      "claim": "Actual Companion presses release safe idle slots, exclude unpublished work from bulk, preserve cancelled discard, refuse changed-content confirmation and complete freshly confirmed discard."
+    }
+  ],
+  "workflow": {
+    "entry": "rpc-safety",
+    "nodes": {
+      "rpc-safety": {
+        "action": "command",
+        "cmd": "FARMSLOT_WORKSPACE_UI_PROOF=0 FARMSLOT_WORKSPACE_PROOF_OUT=\"${FARMSLOT_WORKSPACE_UI_PROOF_OUT:?Set the UI fixture output}/rpc\" TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx --test services/gateway/src/methods/slot/workspace.rpc.live.ts",
+        "timeout_ms": 660000,
+        "intent": "Exercise authenticated gateway refresh requests and assert independent real Git, fixture and persisted-ownership effects.",
+        "proves": ["recovery-safety"],
+        "next": "native-actions"
+      },
+      "native-actions": {
+        "action": "command",
+        "cmd": "node apps/companion/scripts/agentic/fleet-recovery-proof.mjs",
+        "timeout_ms": 900000,
+        "intent": "Press the native fleet controls and verify safe bulk, cancelled discard, changed-content refusal and confirmed recovery through Git and persisted status.",
+        "proves": ["native-recovery"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

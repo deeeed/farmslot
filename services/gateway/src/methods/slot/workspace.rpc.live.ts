@@ -142,11 +142,14 @@ test(
 
     const fixture = await createNativeProofFixture(t, root);
     fixtureOwnsRoot = true;
+    const connection = await fixture.client.connect();
+    t.after(() => connection.close());
+    connection.onEvent((event) => {
+      if (event.event === 'slot.refresh.step')
+        console.log('RECOVERY_STEP', JSON.stringify(event.payload));
+    });
     const call = <T>(method: string, params?: unknown) =>
-      fixture.client.callWithEvents<T>(method, params, (event) => {
-        if (event.event === 'slot.refresh.step')
-          console.log('RECOVERY_STEP', JSON.stringify(event.payload));
-      });
+      connection.call<T>(method, params, { timeoutMs: 300_000 });
     if (uiProof) {
       process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '0';
       const secondRepo = path.join(root, 'checkout-two');
