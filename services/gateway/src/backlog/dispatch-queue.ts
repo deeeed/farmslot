@@ -48,6 +48,7 @@ import {
   parkPreservedSlotIds,
   resolveDispatchPreviewFromFleet,
 } from '../methods/dispatch.js';
+import { automaticSlotLoads } from '../methods/dispatch/pressure-admission.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import {
@@ -1135,8 +1136,11 @@ export function queueItemHeldByPressure(
     (slot) => slot.project === project && isFreeSlot(slot) && (!allow || allow.has(slot.slot)),
   );
   if (freeProjectSlots.length === 0) return false;
+  const loads = automaticSlotLoads(pressureDecisions);
   return freeProjectSlots.every(
-    (slot) => pressureDecisions.get(slot.machine)?.outcome === 'rejected',
+    (slot) =>
+      pressureDecisions.get(slot.machine)?.outcome === 'rejected' ||
+      loads.get(slot.machine)?.skipped,
   );
 }
 
@@ -1171,9 +1175,12 @@ export async function selectQueueDispatchSlot(
       ),
     ),
   ]);
-  if (queueItemHeldByPressure(slots, item.project, pressureDecisions, item.allowedSlots)) {
+  if (
+    !item.slotId &&
+    queueItemHeldByPressure(slots, item.project, pressureDecisions, item.allowedSlots)
+  ) {
     console.log(
-      `[dispatch-queue] holding ${item.id} (${item.project}/${item.ticketOrPr}): every allowed free machine is pressure-rejected`,
+      `[dispatch-queue] holding ${item.id} (${item.project}/${item.ticketOrPr}): every allowed free machine is pressure-rejected or above the automatic load threshold`,
     );
     return null;
   }
@@ -1198,7 +1205,7 @@ export async function selectQueueDispatchSlot(
       if (allowed.length > 0) {
         if (queueItemHeldByPressure(slots, item.project, pressureDecisions, allowed)) {
           console.log(
-            `[dispatch-queue] holding ${item.id} (${item.project}/${item.ticketOrPr}): every spread-allowed free machine is pressure-rejected`,
+            `[dispatch-queue] holding ${item.id} (${item.project}/${item.ticketOrPr}): every spread-allowed free machine is pressure-rejected or above the automatic load threshold`,
           );
           return null;
         }

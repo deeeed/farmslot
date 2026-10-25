@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import type { Run, SlotStatus } from '@farmslot/protocol';
+import type { PressureAdmissionDecision, Run, SlotStatus } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const { makeRun } = await import('./test-fixtures.js');
@@ -67,6 +67,9 @@ const slots: SlotStatus[] = [
   },
 ];
 let run: Run;
+let pressureDecisions = new Map<string, PressureAdmissionDecision>();
+let expectedSlot = 'macpro-mmt-1';
+const refreshedSlots: string[] = [];
 let cancelledHolder: Run | undefined;
 const originalSlots = structuredClone(slots);
 const reclaims: string[] = [];
@@ -82,6 +85,16 @@ mock.module('../runs/store.js', {
     getAllRuns: () => (cancelledHolder ? [run, cancelledHolder] : [run]),
     listRuns: () => ({ runs: [], totalCount: 0 }),
     persistRunNow: async () => {},
+    updateRunStep: (
+      _id: string,
+      name: string,
+      patch: Partial<import('@farmslot/protocol').RunStep>,
+    ) => {
+      const step = run.steps.find((step) => step.name === name);
+      assert.ok(step);
+      Object.assign(step, patch);
+      return run;
+    },
     updateRun: (_id: string, patch: Partial<Run>) => Object.assign(run, patch),
   },
 });
@@ -142,17 +155,20 @@ mock.module('../methods/pr/raw-cache.js', {
   },
 });
 const scoring = await import('../methods/dispatch/slot-scoring.js');
+const { automaticSlotLoads } = await import('../methods/dispatch/pressure-admission.js');
 mock.module('../methods/dispatch.js', {
   namedExports: {
     ...scoring,
     resolveDispatchPreviewFromFleet: () => {
       throw new Error('unexpected dispatch queue');
     },
-    refreshBranches: async () => {},
+    refreshBranches: async (rows: SlotStatus[]) => {
+      refreshedSlots.push(...rows.map((row) => row.slot));
+    },
     collectBranchAffinityNudgeCandidates: async () => [],
     findAffinitySlot: () => null,
     selectBranchAffinityRefreshSlots: () => [],
-    capturePressureAdmissionDecisionsLightweight: () => new Map(),
+    capturePressureAdmissionDecisionsLightweight: () => pressureDecisions,
     consumedPressureAdmissionRef: () => {
       throw new Error('unexpected pressure override');
     },
@@ -166,13 +182,22 @@ mock.module('../methods/dispatch.js', {
       throw new Error('unexpected worker reuse');
     },
     PressureAdmissionRejectedError: class extends Error {},
-    dispatchPreview: async (params: { targetBranch?: string }) => {
+    dispatchPreview: async (
+      params: import('@farmslot/protocol').DispatchPreviewParams,
+      _options: object,
+    ) => {
       if (!run.slotId) assert.equal(params.targetBranch, branch);
       const selected = run.slotId
         ? slots.find((slot) => slot.slot === run.slotId)
-        : scoring.findBestSlot(slots, project, { targetBranch: params.targetBranch });
-      assert.equal(selected?.slot, 'macpro-mmt-1');
-      return { preview: { slotId: selected.slot, runner: 'codex', model: 'gpt-6.1-sol' } };
+        : scoring.findBestSlot(slots, project, {
+            ...params,
+            automaticLoads: automaticSlotLoads(pressureDecisions),
+          });
+      assert.equal(selected?.slot, expectedSlot);
+      return {
+        preview: { slotId: selected!.slot, runner: 'codex', model: 'gpt-6.1-sol' },
+        pressureAdmission: pressureDecisions.get(selected!.machine),
+      };
     },
   },
 });
@@ -223,9 +248,13 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
     lane: 'production',
     variant: null,
     engineState: { generation: 0 },
+    steps: [{ name: 'find-slot', status: 'running' }],
   });
   claims.length = 0;
   prHead = branch;
+  pressureDecisions = new Map();
+  expectedSlot = 'macpro-mmt-1';
+  refreshedSlots.length = 0;
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -316,4 +345,67 @@ test('skip-prepare retains its selected checkout without finished-run release', 
   await executeFindSlotStep(run.id, run, 0, context);
   assert.deepEqual(finishedReclaims, []);
   assert.deepEqual(claims, [run.slotId]);
+});
+
+function loadDecision(machine: string, load1: number): PressureAdmissionDecision {
+  const collectedAt = new Date().toISOString();
+  return {
+    outcome: 'admitted',
+    machine,
+    state: 'disabled',
+    enforced: false,
+    evidence: {
+      machine,
+      generation: 'current',
+      evaluatedAt: collectedAt,
+      samples: [{ collectedAt, cpu: 0.2, memory: 0.4, disk: 0.4, load1, critical: false }],
+      consecutiveCriticalSamples: 0,
+      requiredConsecutiveCriticalSamples: 3,
+      staleAfterMs: 150000,
+      latestSampleAt: collectedAt,
+    },
+  };
+}
+
+test('find-slot avoids overloaded allowed nodes and records the load decision before write-task', async () => {
+  reset('fix-bug', 'TAT-4137');
+  for (const row of slots) {
+    row.branch = 'main';
+    row.lifecycle = 'ready';
+    row.agent = 'idle';
+  }
+  slots[0]!.branch = branch;
+  pressureDecisions = new Map([
+    ['macpro', loadDecision('macpro', 83 / 16)],
+    ['macwork', loadDecision('macwork', 6 / 16)],
+    ['mini', loadDecision('mini', 1.4 / 8)],
+  ]);
+  expectedSlot = 'macwork-mmt-1';
+  run.allowedSlots = ['macpro-mmt-1', expectedSlot];
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, expectedSlot);
+  assert.match(String(result.outputs?.selectionReason), /0.38 < 1.50/);
+  assert.match(
+    JSON.stringify(run.steps.find((step) => step.name === 'find-slot')?.inputs),
+    /5.19 >= 1.50.*skipped/,
+  );
+  assert.deepEqual(refreshedSlots, [expectedSlot], 'do not probe overloaded or disallowed slots');
+  assert.deepEqual(claims, [expectedSlot]);
+  assert.equal(run.taskFile, null);
+});
+
+test('find-slot records why an all-overloaded allowlist cannot be selected', async () => {
+  reset('fix-bug', 'TAT-4137');
+  pressureDecisions = new Map([['macpro', loadDecision('macpro', 83 / 16)]]);
+  run.allowedSlots = ['macpro-mmt-1'];
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, context),
+    /No allowed free slot below.*5.19 >= 1.50/,
+  );
+  assert.match(
+    JSON.stringify(run.steps.find((step) => step.name === 'find-slot')?.inputs),
+    /skipped for automatic selection/,
+  );
+  assert.deepEqual(claims, []);
+  assert.deepEqual(refreshedSlots, []);
 });

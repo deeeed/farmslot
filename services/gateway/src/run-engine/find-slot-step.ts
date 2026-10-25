@@ -48,10 +48,13 @@ import {
   inspectReleasableBranchHolders,
   releaseBranchHolderForSelection,
 } from '../methods/dispatch/branch-checkout.js';
+import { automaticSlotLoads } from '../methods/dispatch/pressure-admission.js';
 import {
   activeRunIds,
   activeRunSlotIds,
+  automaticSlotLoadBlocker,
   companionResourceBlocker,
+  compareSlotLoads,
   isCdpLive,
   isFreeSlot,
   isReplaceableWarmSlot,
@@ -1000,8 +1003,22 @@ export async function executeFindSlotStep(
     requiredCapabilities,
     sourcePlans,
   );
+  const pressureDecisions = capturePressureAdmissionDecisionsLightweight([
+    ...new Set(
+      fleet.slots.filter((slot) => slot.project === run.project).map((slot) => slot.machine),
+    ),
+  ]);
+  const automaticLoads = run.slotId ? undefined : automaticSlotLoads(pressureDecisions);
+  if (automaticLoads?.size) {
+    inputs.hostLoadSelection = Object.fromEntries(automaticLoads);
+    // Persist exclusions even when every allowed node is overloaded and FIND_SLOT fails.
+    updateRunStep(runId, 'find-slot', { inputs });
+    await persistRunNow(getRun(runId)!, 'find-slot host load selection');
+  }
+  const selectionReason = (machine: string) => automaticLoads?.get(machine)?.reason;
   const selectionOptions: SlotSelectionOptions = {
     ...capabilitySelection,
+    automaticLoads,
     targetBranch,
     releasableBranchHolderIds,
     requiredPrepareProfile,
@@ -1038,7 +1055,10 @@ export async function executeFindSlotStep(
     );
   }
   const freeSlots = projectSlots.filter(isFreeSlot);
-  if (freeSlots.length > 0) await refreshBranches(freeSlots, { force: true });
+  const refreshableSlots = freeSlots.filter(
+    (slot) => !automaticSlotLoadBlocker(slot, selectionOptions),
+  );
+  if (refreshableSlots.length > 0) await refreshBranches(refreshableSlots, { force: true });
   const isEligibleFreeSlot = (slot: (typeof freeSlots)[number]) => {
     const selected = optionsFor(slot);
     return !!selected && !validateSlotForDispatch(slot, fleet.slots, selected);
@@ -1066,6 +1086,7 @@ export async function executeFindSlotStep(
     slotId: s.slot,
     score: isEligibleFreeSlot(s) ? scoreCandidate(s) : -1,
     cdpLive: isCdpLive(s.health.cdp),
+    ...(automaticLoads?.has(s.machine) ? { hostLoad: automaticLoads.get(s.machine) } : {}),
   }));
 
   // Affinity: for review-pr and pr-complete, prefer the held slot already on this branch
@@ -1079,6 +1100,9 @@ export async function executeFindSlotStep(
     });
     if (
       affinitySlot &&
+      !eligibleFreeSlots.some(
+        (slot) => compareSlotLoads(slot, affinitySlot, selectionOptions) < 0,
+      ) &&
       !validateSlotForDispatch(affinitySlot, fleet.slots, optionsFor(affinitySlot))
     ) {
       console.log(
@@ -1093,6 +1117,7 @@ export async function executeFindSlotStep(
         outputs: {
           selectedSlot: affinitySlot.slot,
           selectionMethod: 'affinity',
+          selectionReason: selectionReason(affinitySlot.machine),
           branch: affinitySlot.branch,
           candidateCount: freeSlots.length,
           candidates,
@@ -1108,10 +1133,13 @@ export async function executeFindSlotStep(
     // at the top of the case. Production lane only — collect helper short-circuits on
     // comparison lane to preserve ADR-024 §7 scrub-between-siblings.
     if (run.lane !== 'comparison') {
-      const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
+      const automaticProjectSlots = projectSlots.filter(
+        (slot) => !automaticSlotLoadBlocker(slot, selectionOptions),
+      );
+      const busyMatching = selectBranchAffinityRefreshSlots(automaticProjectSlots);
       if (busyMatching.length > 0) await refreshBranches(busyMatching, { force: true });
       const nudgeCandidates = await collectBranchAffinityNudgeCandidates(
-        fleet.slots,
+        fleet.slots.filter((slot) => !automaticSlotLoadBlocker(slot, selectionOptions)),
         run.project,
         run.ticketOrPr,
         {
@@ -1365,6 +1393,16 @@ export async function executeFindSlotStep(
         }
       }
     }
+  }
+
+  if (
+    !run.slotId &&
+    freeSlots.length > 0 &&
+    freeSlots.every((slot) => automaticSlotLoadBlocker(slot, selectionOptions))
+  ) {
+    throw new Error(
+      `No allowed free slot below the automatic load threshold: ${[...new Set(freeSlots.map((slot) => automaticSlotLoadBlocker(slot, selectionOptions)))].join(' ')}`,
+    );
   }
 
   // Human intervention when no good candidates exist
@@ -1638,6 +1676,11 @@ export async function executeFindSlotStep(
       runner: resolvedRunner,
       model: resolvedModel,
       selectionMethod,
+      selectionReason: result.pressureAdmission
+        ? automaticSlotLoads(
+            new Map([[result.pressureAdmission.machine, result.pressureAdmission]]),
+          ).get(result.pressureAdmission.machine)?.reason
+        : selectionReason(fleet.slots.find((slot) => slot.slot === slotId)!.machine),
       candidateCount: freeSlots.length,
       candidates,
     },
