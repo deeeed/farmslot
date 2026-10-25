@@ -965,7 +965,7 @@ async function ingestRecoveredReviewer(
   // The attempt returned a verdict after all, so a no-verdict settlement no longer applies.
   const roundId = reviewContextRoundId(ctx);
   if (roundId && (persisted.verdict === 'pass' || persisted.verdict === 'issues'))
-    await clearReviewRoundSettlement(runId, roundId);
+    await clearReviewRoundSettlement(runId, roundId, ctx);
   if (native)
     await (await import('../review/native-review-agent.js')).stopSettledReviewer(runId, ctx.id);
   console.log(

@@ -168,7 +168,7 @@ counts, because its reviewer may be running, and so does a legacy tmux reviewer.
 Admitting a receipt again (a reattach) keeps its settlement. When a settled
 attempt's pass or issues verdict arrives later, through restart recovery or a
 workspace monitor replay that records it, the settlement is cleared and the
-attempt counts.
+attempt counts, except for the farm-caused replacement below.
 
 Settlements MUST be merged across the admission scope and copied to every live
 run in it. Rounds used are admissions minus no-verdict settlements;
@@ -189,6 +189,20 @@ An operator's Request Review still launches, and so does the first fix pass and
 re-review of Continue Fixing or Send back. Their no-verdict ends count again.
 The gate shows `N/L` and, once there are any, the no-verdict count against its
 cap.
+
+### Farm-caused fallback
+
+**Status:** Accepted (lead F144 direction, 2026-10-25) under ADR-063 Amendment 7.
+
+A retained WARM review that fails before initial command acceptance because its native handoff or resume cannot be established MUST first reconcile the same reserved context, lease and command once. Uncertain delivery MUST NOT launch another reviewer. The existing owner, slot, profile, generation, lease, saved conversation and launch-digest checks MUST still pass.
+
+A confirmed stopped, unaccepted WARM attempt that requires a farm-caused delta-scoped COLD replacement MUST keep its admitted receipt and record a gateway-owned `ReviewRoundSettlement` with `kind: 'infrastructure-fallback'`, reason and time. That admission MUST spend no review round. A valid verdict from the replacement MUST NOT clear this kind, including during reattach, restart recovery or scope merging. The failed WARM launch still counts once against the existing no-verdict cap. Admission history, grants and findings MUST NOT be removed or reset.
+
+An explicit COLD request, an ordinary completed WARM review, or an incompatible requested model, effort or validation-depth change MUST retain normal accounting. No waiver of the replacement's findings or publication requirements is granted.
+
+A native static-code attempt MUST capture its launch validation depth on `AgentContext.reviewValidationDepth` and derive launch environment from explicit project settings and pinned sources, excluding unrelated pool tool selections. Full-live attempts MUST retain their pool tool environment. A retained legacy session without this marker MUST preserve its previous launch policy. The already digest-validated handoff launch MUST be carried into its stopped-session resume rather than rebuilt from newer pool values.
+
+The optional fields ship in `@farmslot/protocol` 0.71.1. The gateway writes and consumes them; existing shared budget projections remain authoritative. No new CLI flag or RPC is added and wire protocol remains 0.63.0.
 
 ## Session and range
 

@@ -290,6 +290,29 @@ test('a settled attempt whose verdict recovery ingests counts again', async (t) 
   assert.deepEqual([after.used, after.noVerdict], [before.used + 1, 0]);
 });
 
+test('recovered farm fallback verdict preserves its free admission', async (t) => {
+  const f = await fixture(t);
+  f.ctx.reviewFallback = {
+    reason: 'session-unavailable',
+    detail: 'the retained reviewer could not resume',
+    comparedRanges: [],
+  };
+  updateRun(f.run.id, { agentContexts: [f.ctx] });
+  const round = reviewContextRoundId(f.ctx)!;
+  await admitReviewRound(f.run.id, round);
+  await settleReviewRoundNoVerdict(
+    f.run.id,
+    round,
+    'retained resume never started',
+    'infrastructure-fallback',
+  );
+  const before = await runReviewRoundBudget(getRun(f.run.id)!);
+  assert.deepEqual((await f.recover()).repairedIds, ['review-2']);
+  assert.equal(getRun(f.run.id)!.reviewRoundSettlements?.[round]?.kind, 'infrastructure-fallback');
+  const after = await runReviewRoundBudget(getRun(f.run.id)!);
+  assert.deepEqual([after.used, after.noVerdict], [before.used, 1]);
+});
+
 test('failed artifact capture leaves the same review repairable without spending another attempt', async (t) => {
   const f = await fixture(t, 'capture-error');
   assert.deepEqual((await f.recover()).recoveredIds, []);

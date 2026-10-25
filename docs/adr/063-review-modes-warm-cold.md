@@ -445,7 +445,7 @@ The delta is the change since the lineage's last reviewed head. After a rebase, 
 **Unchanged:**
 
 - admission limits, the round budget and the no-verdict cap still stop automatic launches, and settlements and restart receipt reuse work as before (Amendments 1 and 2);
-- a re-review spends one round, and its result updates the lineage like any recheck;
+- a re-review spends one round, subject to Amendment 7's farm-caused fallback exception, and its result updates the lineage like any recheck;
 - runner diversity is still never a rule;
 - `run rereview` and PR-rule review-pr chains keep their own continuation rules.
 
@@ -503,3 +503,24 @@ bounded base-limit argument to `reviewRoundBudget`. `reviewRoundBudgetForRun`
 and `reviewRoundAdmissionsInScope` share accounting between the gateway and
 `@farmslot/review-dispatch` 0.18.1 activity labels. Existing calls keep five rounds. The wire protocol remains 0.63.0. Clients keep rendering the shared budget
 projection; they do not infer scope themselves.
+
+## Amendment 7: farm-caused fallback preserves the review budget, 2026-10-25
+
+**Status:** Accepted (lead F144 direction, 2026-10-25).
+**Specification:** [Farm-caused fallback](../reference/review-modes-warm-cold.md#farm-caused-fallback).
+
+### Decision
+
+Static-code reviewer launches use their explicit project environment and pinned sources, without unrelated pool tool overrides. Full-live reviews keep their pool environment. A retained session keeps its recorded launch policy, including the legacy policy when no validation depth was captured. Handoff recovery uses the launch already validated for that lease and reconciles an uncertain transfer or resume once before declaring the session unavailable. Owner, slot, profile, lease, generation and launch-digest fences remain in force.
+
+When a farm failure prevents a retained WARM reviewer from accepting its initial command, its delta-scoped COLD replacement keeps the same admission and spends no review round. The failed WARM launch is settled as `infrastructure-fallback`. Its replacement's valid verdict does not clear that settlement, including after restart recovery. The failed launch still counts against the existing no-verdict cap, so automatic retries remain bounded.
+
+Ordinary WARM reviews, explicitly selected COLD reviews and incompatible requested model, effort or validation-depth changes keep their existing accounting. The replacement's findings remain authoritative; no finding or approval requirement is waived.
+
+### Rationale and consequences
+
+A provider rollout changed unused reviewer environment and invalidated a saved launch. Handoff also reloaded newer pool settings after validating an earlier launch. Two farm-caused COLD replacements exhausted a validation run's review budget. Keeping irrelevant pool selection out of static launch identity and reconciling the existing intent avoids those replacements; the accounting exception keeps a necessary farm fallback from spending the author's round.
+
+### Public surface
+
+`@farmslot/protocol` 0.71.1 adds optional `AgentContext.reviewValidationDepth` for the gateway's retained launch policy and optional `ReviewRoundSettlement.kind = 'infrastructure-fallback'` for the gateway-owned settlement. Existing budget projections subtract the same settled admission and retain the failed-launch cap. No new CLI action, RPC, shared renderer policy or native runtime field is introduced. Wire protocol 0.63.0 is unchanged.

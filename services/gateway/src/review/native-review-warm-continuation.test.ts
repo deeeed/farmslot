@@ -32,7 +32,7 @@ const noop = async () => {};
 // Scripted host behaviour; the run store, the session registry and the round budget are real.
 let ancestorExitCode = 0;
 /** How a retained reviewer's resume fails before it accepts the prompt. */
-let resumeFailure: 'handoff' | 'delivery' | 'superseded' | null = null;
+let resumeFailure: 'handoff' | 'handoff-once' | 'delivery' | 'superseded' | null = null;
 let freshSessions = 0;
 let commandFailed = false;
 const resumed: string[] = [];
@@ -113,6 +113,15 @@ mock.module('../runners/native/worker.js', {
         leaseId: `lease-${input.contextId}`,
         generation: 'generation',
         commandId: 'review-command',
+        ...(source
+          ? {
+              handoffFrom: {
+                runId: input.retainedFrom!.runId,
+                contextId: source.id,
+                leaseId: source.nativeSession!.leaseId,
+              },
+            }
+          : {}),
       };
       if (source && resumeFailure) {
         // The handoff reservation exists, but the reviewer never accepted the prompt.
@@ -127,8 +136,10 @@ mock.module('../runners/native/worker.js', {
           });
           throw new Error('Native review was superseded by another run action');
         }
+        const operation = resumeFailure === 'delivery' ? 'delivery' : 'handoff';
+        if (resumeFailure === 'handoff-once') resumeFailure = null;
         throw new NativeWorkerOperationUncertainError(
-          resumeFailure,
+          operation,
           resumeFailure === 'delivery' ? 'prompt acceptance timed out' : 'transfer refused',
           undefined,
         );
@@ -524,7 +535,49 @@ test('a head that no longer descends from the reviewed head falls back to the de
   assert.notEqual(result.reviewerSessionId, reviewers(run.id)[0]!.runnerSessionId);
 });
 
-test('a resume that fails to start runs the fallback under the same admitted round', async (t) => {
+test('an uncertain handoff is reconciled under its same context before a cold fallback', async (t) => {
+  const run = await prePublishRun(t, published);
+  const first = await review(run.id);
+  const sessionsBefore = freshSessions;
+  resumeFailure = 'handoff-once';
+  const result = await reReview(run.id);
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+  assert.equal(result.session?.fallback, undefined);
+  assert.equal(dispatches.length, 3);
+  assert.equal(dispatches[1]!.contextId, dispatches[2]!.contextId);
+  assert.deepEqual(dispatches[1]!.retainedFrom, dispatches[2]!.retainedFrom);
+  assert.equal(freshSessions, sessionsBefore);
+  assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, 2);
+});
+
+test('a legacy retained reviewer keeps its original launch environment policy', async (t) => {
+  const run = await prePublishRun(t, published);
+  const first = await review(run.id);
+  updateRun(run.id, {
+    agentContexts: getRun(run.id)!.agentContexts!.map((context) => ({
+      ...context,
+      reviewValidationDepth: undefined,
+    })),
+  });
+  const result = await reReview(run.id);
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+  assert.equal(reviewers(run.id).at(-1)!.reviewValidationDepth, undefined);
+});
+
+test('an explicit validation-depth change uses a paid fresh delta review', async (t) => {
+  const run = await prePublishRun(t, published);
+  await review(run.id);
+  const result = await reReview(run.id, { validationDepth: 'full-live' });
+  assert.equal(result.mode, 'cold');
+  assert.match(result.session?.fallback?.detail ?? '', /validation depth differs/);
+  assert.equal(dispatches.length, 2);
+  assert.equal(dispatches[1]!.retainedFrom, undefined);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 2);
+});
+
+test('a resume that remains unavailable after reconciliation falls back under the same receipt', async (t) => {
   const run = await prePublishRun(t, published);
   await review(run.id);
   const admittedBefore = getRun(run.id)!.reviewRoundAdmissions?.length ?? 0;
@@ -533,11 +586,17 @@ test('a resume that fails to start runs the fallback under the same admitted rou
   assert.equal(result.mode, 'cold');
   assert.equal(result.session?.fallback?.reason, 'session-unavailable');
   assert.match(result.session?.fallback?.detail ?? '', /could not resume/);
-  assert.equal(dispatches.length, 3);
+  assert.equal(dispatches.length, 4);
   assert.ok(dispatches[1]!.retainedFrom);
-  assert.equal(dispatches[2]!.retainedFrom, undefined);
+  assert.equal(dispatches[1]!.contextId, dispatches[2]!.contextId);
+  assert.equal(dispatches[3]!.retainedFrom, undefined);
   assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, admittedBefore + 1);
-  assert.equal(getRun(run.id)!.reviewRoundSettlements, undefined);
+  assert.deepEqual(
+    Object.values(getRun(run.id)!.reviewRoundSettlements ?? {}).map((entry) => entry.kind),
+    ['infrastructure-fallback'],
+  );
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, admittedBefore);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).noVerdict, 1);
   assert.deepEqual(
     reviewers(run.id).map((context) => context.status),
     ['complete', 'failed', 'complete'],
@@ -564,6 +623,8 @@ test('a resume that fails to start runs the fallback under the same admitted rou
   assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, admitted.length);
   assert.equal(reattached.mode, 'cold');
   assert.deepEqual(reattached.session?.fallback, result.session?.fallback);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, admittedBefore);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).noVerdict, 1);
 });
 
 test('a delivery that may have reached the retained reviewer never starts a second reviewer', async (t) => {
