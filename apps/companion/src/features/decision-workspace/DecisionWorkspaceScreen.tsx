@@ -76,6 +76,7 @@ import {
 import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import {
+  type DecisionDocumentContent,
   decisionDocumentSelection,
   decisionEvidenceMediaItems,
 } from '../../lib/decision-evidence-media';
@@ -237,12 +238,7 @@ export default function DecisionDetailScreen({
   const attestationReason =
     evidenceReason && evidenceReason.decisionId === decision?.id ? evidenceReason.text : '';
   const [viewerUri, setViewerUri] = useState<string | null>(null);
-  const [documentViewer, setDocumentViewer] = useState<{
-    title: string;
-    body: string;
-    path?: string;
-    sharedArtifact?: ReturnType<typeof decisionDocumentSelection>;
-  } | null>(null);
+  const [documentViewer, setDocumentViewer] = useState<DecisionDocumentContent | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
   useEffect(() => {
     // ADR-063 Amendment 5: a gate lists its lineages; rows preselect their runner's latest
@@ -890,7 +886,6 @@ export default function DecisionDetailScreen({
           setDocumentViewer({
             title: documentTitle(artifact.path),
             body,
-            path: artifact.path,
             sharedArtifact,
           }),
         )

@@ -12,6 +12,12 @@ import {
 } from './artifact-url';
 import { evidenceMediaItems, recordedEvidenceArtifactUrl } from './evidence-media-items';
 
+export interface DecisionDocumentContent {
+  title: string;
+  body: string;
+  sharedArtifact?: SharedRunArtifactSelection;
+}
+
 interface DecisionEvidenceMediaInput {
   runId?: string | null;
   slotId?: string;
