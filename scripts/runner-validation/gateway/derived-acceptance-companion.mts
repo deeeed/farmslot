@@ -59,6 +59,13 @@ export async function proveCompanionAcceptance(input: {
     ]);
   };
   const dismiss = async (nodes: UiNode[]) => {
+    const devMenuClose = nodes.find(
+      ({ AXLabel, AXUniqueId }) => AXLabel === 'Close' && AXUniqueId === 'xmark',
+    );
+    if (devMenuClose && nodes.some(({ AXLabel }) => AXLabel === 'Open DevTools')) {
+      await tap(devMenuClose);
+      return true;
+    }
     const open = nodes.find(({ AXLabel }) => AXLabel === 'Open');
     if (open && nodes.some(({ AXLabel }) => AXLabel?.startsWith('Open in'))) {
       await tap(open);
@@ -139,6 +146,29 @@ export async function proveCompanionAcceptance(input: {
       'Companion Metro readiness',
       90_000,
     );
+    const manifestResponse = await fetch(origin, {
+      headers: { 'expo-platform': 'ios', accept: 'application/expo+json' },
+    });
+    const manifest = await manifestResponse.json();
+    const extra = manifest.extra?.expoClient?.extra;
+    await writeFile(
+      path.join(input.output, 'companion-config-readback.json'),
+      JSON.stringify(
+        {
+          gatewayUrl: extra?.gatewayUrl,
+          tokenPresent: Boolean(extra?.gatewayAuthToken),
+          keys: extra ? Object.keys(extra) : Object.keys(manifest),
+        },
+        null,
+        2,
+      ),
+    );
+    assert.equal(
+      extra?.gatewayUrl,
+      input.gateway,
+      'Metro must serve this private gateway configuration',
+    );
+    assert.ok(extra?.gatewayAuthToken, 'Metro must serve an opaque proof credential');
     await command('xcrun', ['simctl', 'launch', simulator, 'net.siteed.farmslot.development']);
     await command('xcrun', [
       'simctl',
@@ -149,7 +179,20 @@ export async function proveCompanionAcceptance(input: {
     await wait(async () => {
       await dismiss(await tree());
       const targets = await (await fetch(`${origin}/json/list`)).json();
-      return Array.isArray(targets) && targets.length > 0;
+      if (!Array.isArray(targets) || !targets.length) return false;
+      const ready = await fetch(`${origin}/farmslot-recipe/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: 'status',
+          payload: {},
+          nodeId: 'derived-acceptance-proof',
+          timeout_ms: 2000,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const status = await ready.json();
+      return status.ok === true && status.platform === 'ios';
     }, 'native Companion bundle');
     await command('xcrun', [
       'simctl',
@@ -162,6 +205,10 @@ export async function proveCompanionAcceptance(input: {
     await wait(async () => {
       last = await tree();
       if (await dismiss(last)) return false;
+      await writeFile(
+        path.join(input.output, 'companion-progress-tree.json'),
+        JSON.stringify(last, null, 2).replaceAll(input.credential, '[proof credential]'),
+      );
       for (const node of last)
         for (const text of input.criteria) if (node.AXLabel?.includes(text)) seen.add(text);
       const panel = last.find(({ AXLabel }) => AXLabel?.startsWith('Acceptance criteria:'));

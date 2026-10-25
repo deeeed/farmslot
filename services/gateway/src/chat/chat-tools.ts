@@ -493,7 +493,15 @@ export async function executeTool(
 
       // ─── Write tools ───
       case 'send_terminal': {
-        await terminalSend({ slotId: String(args.slot_id), text: String(args.text), enter: true });
+        await terminalSend(
+          {
+            slotId: String(args.slot_id),
+            text: String(args.text),
+            enter: true,
+            operatorMessageId: callId,
+          },
+          await broadcast(),
+        );
         result = { sent: true };
         break;
       }

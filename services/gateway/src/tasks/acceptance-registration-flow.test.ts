@@ -64,6 +64,7 @@ const { ORCHESTRATOR_LOCALITY } = await import('../core/slot-io.js');
 const { initializeAcceptanceRegistration } = await import('./acceptance-registration.js');
 const { syncAcceptanceRegistration } = await import('./acceptance-registration-sync.js');
 const { operatorMessage } = await import('../methods/run/operator-message.js');
+const { executeTool } = await import('../chat/chat-tools.js');
 const { runWithSessionOriginator } = await import('../security/work-originator.js');
 const { createGatewayAuthRuntime } = await import('../security/auth.js');
 const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: root });
@@ -410,4 +411,22 @@ test('a generation change during delivery refuses acknowledgement and preserves 
   const unit = store.getRun(run.id)!.acceptanceRegistration!.units.at(-1)!;
   assert.equal(unit.delivery?.status, 'pending');
   assert.equal(unit.result, undefined);
+});
+
+test('chat terminal tools reuse their authenticated call identity for acceptance steering', async (t) => {
+  const { run } = await fixture(t);
+  const request = () =>
+    runWithSessionOriginator(person, () =>
+      executeTool(
+        'send_terminal',
+        { slot_id: run.slotId, text: 'Also retain the original invariant' },
+        'chat-call-1',
+      ),
+    );
+  const first = await request();
+  assert.equal(first.isError, false, first.content);
+  assert.equal(store.getRun(run.id)!.acceptanceRegistration!.units.length, 2);
+  const retry = await request();
+  assert.equal(retry.isError, false, retry.content);
+  assert.equal(store.getRun(run.id)!.acceptanceRegistration!.units.length, 2);
 });

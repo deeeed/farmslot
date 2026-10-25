@@ -711,19 +711,22 @@ async function executeStoredAction(
   }
 
   if (action.type === 'terminal.send') {
-    await terminalSend({
-      operatorMessageId: action.actionId,
-      slotId: String(action.params.slotId),
-      text: String(action.params.text),
-      ...(typeof action.params.enter === 'boolean' ? { enter: action.params.enter } : {}),
-      ...(normalizeAgentRole(action.params.role)
-        ? { role: normalizeAgentRole(action.params.role) }
-        : {}),
-      ...(stringParam(action.params, 'contextId')
-        ? { contextId: String(action.params.contextId) }
-        : {}),
-      ...(stringParam(action.params, 'target') ? { target: String(action.params.target) } : {}),
-    });
+    await terminalSend(
+      {
+        operatorMessageId: action.actionId,
+        slotId: String(action.params.slotId),
+        text: String(action.params.text),
+        ...(typeof action.params.enter === 'boolean' ? { enter: action.params.enter } : {}),
+        ...(normalizeAgentRole(action.params.role)
+          ? { role: normalizeAgentRole(action.params.role) }
+          : {}),
+        ...(stringParam(action.params, 'contextId')
+          ? { contextId: String(action.params.contextId) }
+          : {}),
+        ...(stringParam(action.params, 'target') ? { target: String(action.params.target) } : {}),
+      },
+      emit,
+    );
     return { slotId: String(action.params.slotId) };
   }
 

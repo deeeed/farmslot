@@ -33,7 +33,7 @@ const store = await load('services/gateway/src/runs/store.ts');
 const { createGatewayAuthRuntime } = await load('services/gateway/src/security/auth.ts');
 const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: root });
 const operator = auth.writer.createPrincipal(
-  { type: 'person', displayName: 'Acceptance rendering proof' },
+  { type: 'service', displayName: 'acceptance-rendering-proof' },
   [{ role: 'admin', scope: { kind: 'global' } }],
 );
 const credential = auth.writer.issueCredential(operator.id, 'Disposable rendering proof');

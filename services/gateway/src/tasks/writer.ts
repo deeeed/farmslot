@@ -1256,7 +1256,7 @@ export async function writeTaskFile(
       runtimeCapabilities?.providers ?? null,
       planningContext,
     );
-    return `${withRuntimeContext.trimEnd()}\n${run.acceptanceRegistration ? acceptanceDerivationInstructions() : ''}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n${buildQaTaskSection(vars.TASK_DIR, run)}`;
+    return `${withRuntimeContext.trimEnd()}${run.acceptanceRegistration ? `\n${acceptanceDerivationInstructions()}` : ''}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n${buildQaTaskSection(vars.TASK_DIR, run)}`;
   };
 
   const isPrFlow = ['review-pr', 'pr-complete', 'update-branch'].includes(run.flowType);

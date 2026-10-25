@@ -103,13 +103,14 @@ async function fixture(t: TestContext) {
   });
   t.after(async () => {
     const current = store.getRun(run.id)!;
-    store.updateRun(run.id, {
+    const closed = store.updateRun(run.id, {
       status: 'done',
       agentContexts: current.agentContexts?.map((context) => ({
         ...context,
         nativeSession: { ...context.nativeSession!, closedAt: new Date().toISOString() },
       })),
     });
+    await store.persistRunNow(closed, 'operator delivery fixture teardown');
     await store.deleteRun(run.id);
   });
   return store.getRun(run.id)!;
