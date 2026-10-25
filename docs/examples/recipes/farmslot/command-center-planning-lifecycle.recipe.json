@@ -1,0 +1,62 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Planning survives a same-epoch transport outage",
+  "description": "Suspend only the owned browser proxy tunnel. Change the real private backlog through the live gateway. The same browser document retains stale rows and disabled actual Mark ready, then one current observed read recovers under the unchanged gateway epoch without planning or provider commands.",
+  "proofTargets": [
+    {
+      "id": "disconnectedPlanningRetained",
+      "claim": "An actual transport outage preserves the mounted planning row as stale and disables its actual previously enabled Mark ready control."
+    },
+    {
+      "id": "sameEpochPlanningRecovery",
+      "claim": "The same document/principal recovers the real offline source write through one new observed connection under the unchanged gateway epoch, without commands."
+    },
+    {
+      "id": "ownedFixtureRemoved",
+      "claim": "Normal sign-out closes the owned tab, removes the disposable item and preserves original planning facts."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-planning-race.mjs lifecycle",
+        "timeout_ms": 120000,
+        "intent": "Prove planning lifecycle through the actual isolated browser and owning gateway.",
+        "next": "disconnectedPlanningRetained"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "disconnectedPlanningRetained": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"disconnectedPlanningRetained\":true",
+        "intent": "Verify saved rows and disabled actions during the transport outage.",
+        "proves": ["disconnectedPlanningRetained"],
+        "next": "sameEpochPlanningRecovery"
+      },
+      "sameEpochPlanningRecovery": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"sameEpochPlanningRecovery\":true",
+        "intent": "Verify current data on the new connection under the same gateway epoch.",
+        "proves": ["sameEpochPlanningRecovery"],
+        "next": "ownedFixtureRemoved"
+      },
+      "ownedFixtureRemoved": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"ownedFixtureRemoved\":true",
+        "intent": "Verify sign-out, tab closure and owned fixture removal.",
+        "proves": ["ownedFixtureRemoved"],
+        "next": "done"
+      }
+    }
+  }
+}

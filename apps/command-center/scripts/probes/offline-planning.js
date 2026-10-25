@@ -125,6 +125,12 @@ return {
   graphStatus: graphStatus?.textContent.trim(),
   queueRows,
   mutationButtons,
+  backlogReadyActions:
+    panel.localName === 'backlog-panel'
+      ? [...root.querySelectorAll('button')]
+          .filter((button) => button.textContent.trim() === 'Mark ready' && viewportVisible(button))
+          .map((button) => ({ disabled: button.disabled, text: button.textContent.trim() }))
+      : undefined,
   configuration:
     panel.localName === 'config-panel'
       ? {

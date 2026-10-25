@@ -392,6 +392,14 @@ assessment, analytics and copilot migrations remain acceptance gates. Existing
 manual Retry/Refresh controls remain until their replacement proof is accepted;
 upstream collectors remain outside this slice.
 
+### Planning transport and idle-observer checks
+
+`command-center-planning-observers.recipe.json` keeps a real Backlog panel and two additional read-only canonical observers attached for a measured sixteen-second window. The existing CDP frame counter requires zero planning reads while the document, connection and principal stay unchanged. A private Vite transform that adds a periodic read must fail that assertion; restored source must pass.
+
+`command-center-planning-lifecycle.recipe.json` suspends only the owned browser proxy tunnel while the gateway remains running. An independent gateway client changes the actual backlog source. The mounted page retains its saved row and age with its previously enabled Mark ready control disabled, then one current observed read restores the new source value under the same gateway epoch, document and principal. Watched browser command counters remain zero; fixture writers use a separate direct connection. Controls suppressing disconnected-state updates or reconnect synchronization must fail their respective guards, and restoration must pass. The original held-read/duplicate-notice race remains a separate regression. These checks do not establish native, desktop or sustained busy-writer acceptance.
+
+PR push writer-key regressions exercise delivery reservation, delivery updates/failures, token replacement and acknowledgement through the actual private-file store. Each changed write publishes only after its disk bytes and readable snapshot agree; keys exclude private device/token/owner data. Stale reservations, duplicate acknowledgements and refused writes remain revision-quiet.
+
 ## D07 memory-only domain migration
 
 Implementation and local regression coverage do not accept the draft. Mounted-client writer, authority, late-read and recovery evidence remains required for these domains. Companion planning/configuration runtime proof and desktop cold proof are still pending.
@@ -437,7 +445,7 @@ Global-admin method authorization remains authoritative for these families. PR a
 
 ### Owning publications
 
-Every listed durable owner publishes after successful persistence and its new readable memory is installed. Refused/failed commits do not publish success. No-op PR transactions stay quiet.
+PR stores, assessment records/artifacts, analytics appends and copilot runtime persistence publish after a successful durable commit is readable; refused or failed commits do not publish success. Chat usage keys follow readable in-memory append/clear/delete/restore changes, while session persistence or durable deletion may finish later. No-op PR transactions stay quiet.
 
 | Boundary                           | Actual writers and derived results                                                                                                                       | Key/event                                                                                                                               |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |

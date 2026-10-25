@@ -12,6 +12,7 @@ import type {
   PRPushRegisterParams,
   PRTeamConfig,
 } from '@farmslot/protocol';
+import type { ResourceKey } from '@farmslot/protocol/client-cache';
 
 import { publishPRAutomationResources } from './pr-automation-changes.js';
 import { GatewayResourceRevisions, resourceRevisions } from './revisions.js';
@@ -67,10 +68,11 @@ async function directory(t: test.TestContext): Promise<string> {
   return dir;
 }
 
-async function advances(write: () => Promise<unknown>): Promise<void> {
+async function advances<T>(write: () => Promise<T>): Promise<T> {
   const before = resourceRevisions.revision(key);
-  await write();
+  const result = await write();
   assert.equal(resourceRevisions.revision(key), before + 1);
+  return result;
 }
 
 test('PR notifications contain only the authorized canonical farm key', (t) => {
@@ -126,6 +128,147 @@ test('all PR store notifications observe committed disk bytes and the new readab
   await advances(() => push.register('private-owner', registration, () => true));
   await advances(() => push.disable('private-owner', registration.installationId));
   assert.equal(push.snapshot().devices[0].enabled, false);
+});
+
+test('push delivery writers publish committed canonical keys without disabling a replacement device', async (t) => {
+  const dir = await directory(t);
+  const file = join(dir, 'push.json');
+  const store = await PRPushStore.load(file);
+  const owner = 'private-delivery-owner';
+  const sourceId = 'private-review-source';
+  const replacementToken = 'ExpoPushToken[private-replacement-token]';
+  const publishedKeys: ResourceKey[] = [];
+  const advance = resourceRevisions.advance.bind(resourceRevisions);
+  t.mock.method(
+    resourceRevisions,
+    'advance',
+    (...[changedKey, kind]: Parameters<GatewayResourceRevisions['advance']>) => {
+      assert.deepEqual(changedKey, key, 'No device, owner, delivery or token belongs in the key');
+      assert.equal(kind ?? 'updated', 'updated');
+      assert.deepEqual(
+        JSON.parse(readFileSync(file, 'utf8')),
+        store.snapshot(),
+        'Each delivery notification follows durable and readable state replacement',
+      );
+      publishedKeys.push(structuredClone(changedKey));
+      advance(changedKey, kind);
+    },
+  );
+  await advances(() => store.register(owner, registration, () => true));
+  const originalDevice = store.snapshot().devices[0];
+  const originalTokenRevision = originalDevice.tokenRevision ?? originalDevice.revision;
+  const delivery = await advances(() => store.reserve(originalDevice, sourceId, Date.now()));
+  assert(delivery);
+  assert.equal(store.snapshot().deliveries[0].state, 'queued');
+  await advances(() => store.update(delivery.id, { state: 'sending', attempts: 1 }));
+  assert.equal(store.snapshot().deliveries[0].state, 'sending');
+  await advances(() =>
+    store.recordFailure(
+      delivery.id,
+      originalTokenRevision,
+      { state: 'failed', error: 'Current token rejected', attempts: 1 },
+      true,
+    ),
+  );
+  const failed = store.snapshot();
+  assert.equal(failed.devices[0].enabled, false);
+  assert.equal(failed.deliveries[0].state, 'failed');
+  await advances(() =>
+    store.register(
+      owner,
+      { ...registration, token: replacementToken, expectedRevision: failed.devices[0].revision },
+      () => true,
+    ),
+  );
+  const replacement = store.snapshot();
+  assert.equal(replacement.devices[0].enabled, true);
+  assert.equal(replacement.devices[0].token, replacementToken);
+  assert.equal(replacement.devices[0].tokenRevision, originalTokenRevision + 1);
+  assert.equal(replacement.deliveries[0].state, 'queued');
+  assert.equal(replacement.deliveries[0].attempts, 0);
+  assert.equal(replacement.deliveries[0].error, undefined);
+
+  // A late old-token receipt changes the retained delivery, so it must publish.
+  // Its device ownership check must still preserve the newly registered token.
+  await advances(() =>
+    store.recordFailure(
+      delivery.id,
+      originalTokenRevision,
+      {
+        state: 'failed',
+        error: 'Late old-token rejection',
+        nextAttemptAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+      true,
+    ),
+  );
+  const late = store.snapshot();
+  assert.deepEqual(late.devices, replacement.devices);
+  assert.equal(late.deliveries[0].state, 'queued');
+  assert.equal(late.deliveries[0].error, 'Late old-token rejection');
+  assert.equal(late.deliveries[0].nextAttemptAt, undefined);
+  await advances(() => store.acknowledge(owner, sourceId, () => true));
+  assert(store.acknowledgement(owner, sourceId));
+  assert.equal(publishedKeys.length, 7);
+  const event = resourceRevisions.notice(publishedKeys);
+  assert(event.changes.every((change) => change.kind === 'updated'));
+  for (const privateValue of [
+    owner,
+    sourceId,
+    originalDevice.id,
+    delivery.id,
+    registration.token,
+    replacementToken,
+  ])
+    assert(!JSON.stringify(event).includes(privateValue), 'Only the canonical farm key is public');
+});
+
+test('unchanged reservations and acknowledgements and refused delivery writes stay revision-quiet', async (t) => {
+  const dir = await directory(t);
+  const file = join(dir, 'push.json');
+  const store = await PRPushStore.load(file);
+  const owner = 'private-quiet-owner';
+  const sourceId = 'private-quiet-source';
+  await store.register(owner, registration, () => true);
+  const originalDevice = store.snapshot().devices[0];
+  const delivery = await store.reserve(originalDevice, sourceId, Date.now());
+  assert(delivery);
+  await store.register(
+    owner,
+    {
+      ...registration,
+      expectedRevision: originalDevice.revision,
+      token: 'ExpoPushToken[quiet-replacement]',
+    },
+    () => true,
+  );
+  await store.acknowledge(owner, sourceId, () => true);
+  const snapshot = store.snapshot();
+  const bytes = readFileSync(file);
+  const before = resourceRevisions.revision(key);
+  assert.equal(await store.reserve(originalDevice, 'stale-device-source', Date.now()), undefined);
+  assert.deepEqual(await store.reserve(snapshot.devices[0], sourceId, Date.now() + 1), delivery);
+  await store.acknowledge(owner, sourceId, () => true);
+  await assert.rejects(
+    store.acknowledge(owner, 'refused-source', () => false),
+    /unavailable/,
+  );
+  await assert.rejects(store.update('missing-delivery', { state: 'failed' }), /unavailable/);
+  await assert.rejects(
+    store.recordFailure('missing-delivery', originalDevice.revision, { state: 'failed' }, true),
+    /unavailable/,
+  );
+  await assert.rejects(
+    store.register(
+      owner,
+      { ...registration, expectedRevision: originalDevice.revision },
+      () => true,
+    ),
+    /settings changed/,
+  );
+  assert.equal(resourceRevisions.revision(key), before);
+  assert.deepEqual(store.snapshot(), snapshot);
+  assert.deepEqual(readFileSync(file), bytes);
 });
 
 test('failed commits retain old memory and revisions, and a later successful write still publishes', async (t) => {

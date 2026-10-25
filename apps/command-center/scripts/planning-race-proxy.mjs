@@ -41,6 +41,7 @@ export async function startPlanningRaceProxy({
   let held;
   let latestEvent;
   let stopped = false;
+  let suspended = false;
   let failure;
   const requests = [];
   const events = [];
@@ -61,11 +62,16 @@ export async function startPlanningRaceProxy({
     'prRules.scan': 0,
     'prRules.preview': 0,
     'prReview.submit': 0,
+    'backlog.markReady': 0,
+    'backlog.enqueue': 0,
+    'backlog.autoDispatchTick': 0,
+    'run.create': 0,
   };
   let persistence = Promise.resolve();
   const status = () => ({
     startId,
     stopped,
+    suspended,
     failure,
     armed,
     requests,
@@ -130,11 +136,33 @@ export async function startPlanningRaceProxy({
       }
       const input = JSON.parse(bytes);
       assert(
-        ['trace-ready', 'arm', 'duplicate', 'release', 'release-after-authority-change'].includes(
-          input.action,
-        ),
+        [
+          'trace-ready',
+          'arm',
+          'duplicate',
+          'release',
+          'release-after-authority-change',
+          'suspend',
+          'resume',
+        ].includes(input.action),
       );
-      if (input.action === 'arm') {
+      if (input.action === 'suspend') {
+        assert.equal(
+          method,
+          'backlog.list',
+          'Outage controls belong to the planning lifecycle proof',
+        );
+        assert(!suspended && pairs.size === 1, 'Suspend one actual owned browser connection');
+        suspended = true;
+        for (const pair of pairs) {
+          pairs.delete(pair);
+          pair.client.terminate();
+          pair.upstream.terminate();
+        }
+      } else if (input.action === 'resume') {
+        assert(suspended, 'Resume only a deliberately suspended tunnel');
+        suspended = false;
+      } else if (input.action === 'arm') {
         assert(!armed && !held, 'One held reply per case');
         armed = true;
       } else if (input.action === 'duplicate') {
@@ -188,6 +216,10 @@ export async function startPlanningRaceProxy({
   });
   const sockets = new WebSocketServer({ server });
   sockets.on('connection', (client) => {
+    if (suspended) {
+      client.close(1013, 'Owned planning proof outage');
+      return;
+    }
     const pair = {
       client,
       upstream: new WebSocket(upstream),
