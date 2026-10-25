@@ -1,0 +1,88 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Assessments and linked run outcomes use source observations",
+  "description": "Use the actual private actor and pre-client assessment store fixtures. Prove feedback, independent run deletion, read-error Retry, a quiet mounted panel and the real retention boundary. No provider or worker execution; no client-state injection.",
+  "proofTargets": [
+    {
+      "id": "feedbackWithoutPolling",
+      "claim": "Actual independent feedback updates mounted assessment history, detail and summary without Refresh."
+    },
+    {
+      "id": "independentRunOutcome",
+      "claim": "Deleting the actual associated run updates the mounted outcome from a canonical run observation."
+    },
+    {
+      "id": "contextualRetry",
+      "claim": "An actual outcome read error exposes contextual Retry and its real query is retried."
+    },
+    {
+      "id": "idleNoPeriodicReads",
+      "claim": "The mounted assessment panel issues no periodic reads for longer than the former 15-second poll."
+    },
+    {
+      "id": "historyExpiry",
+      "claim": "A pre-client record expires through its owning clock deadline; mounted history and summary update with no write or source-file change."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-assessment-observations.mjs",
+        "timeout_ms": 150000,
+        "intent": "Prove mounted assessment and run-source observations on the isolated gateway.",
+        "next": "feedbackWithoutPolling"
+      },
+      "feedbackWithoutPolling": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"feedbackWithoutPolling\":true",
+        "intent": "Actual independent feedback updates mounted assessment history, detail and summary without Refresh.",
+        "proves": ["feedbackWithoutPolling"],
+        "next": "independentRunOutcome"
+      },
+      "independentRunOutcome": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"independentRunOutcome\":true",
+        "intent": "Deleting the actual associated run updates the mounted outcome from a canonical run observation.",
+        "proves": ["independentRunOutcome"],
+        "next": "contextualRetry"
+      },
+      "contextualRetry": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"contextualRetry\":true",
+        "intent": "An actual outcome read error exposes contextual Retry and its real query is retried.",
+        "proves": ["contextualRetry"],
+        "next": "idleNoPeriodicReads"
+      },
+      "idleNoPeriodicReads": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"idleNoPeriodicReads\":true",
+        "intent": "The mounted assessment panel issues no periodic reads for longer than the former 15-second poll.",
+        "proves": ["idleNoPeriodicReads"],
+        "next": "historyExpiry"
+      },
+      "historyExpiry": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"historyExpiry\":true",
+        "intent": "A pre-client record expires through its owning clock deadline; mounted history and summary update with no writ",
+        "proves": ["historyExpiry"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

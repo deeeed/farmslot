@@ -1,7 +1,18 @@
 // Launch-time owned store fixture and hash-fenced teardown. No worker or provider is started.
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFile, mkdir, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,6 +61,32 @@ if (mode === 'setup') {
   };
   await writeFile(output, JSON.stringify(fixture) + '\n', { flag: 'wx', mode: 0o600 });
   const checkpoint = () => writeFile(output, JSON.stringify(fixture) + '\n', { mode: 0o600 });
+  if (process.env.FARMSLOT_ASSESSMENT_HISTORY_PROOF === '1') {
+    const farm = path.resolve(process.env.FARMSLOT_ROOT);
+    const directory = path.resolve(
+      process.env.FARMSLOT_ANALYTICS_DIR ?? path.join(farm, '.runs', 'analytics'),
+    );
+    assert(directory.startsWith(farm + '/') || directory.startsWith(home + '/'));
+    fixture.analytics = { directory, before: {} };
+    let names = [];
+    try {
+      names = await readdir(directory);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    for (const name of names.filter((name) => /^events-\d{4}-\d{2}\.ndjson$/.test(name))) {
+      const file = path.join(directory, name);
+      assert.equal(await realpath(file), file);
+      const bytes = await readFile(file);
+      fixture.analytics.before[name] = {
+        bytes: bytes.toString('base64'),
+        sha256: hash(bytes),
+        mode: (await stat(file)).mode & 0o777,
+      };
+    }
+    await checkpoint();
+  }
+
   const original = path.join(root, 'scripts/failure-triage/results/v2-held-out');
   assert.equal(
     hash(await readFile(path.join(original, 'receipt-manifest.json'))),
@@ -123,6 +160,59 @@ if (mode === 'setup') {
       await writeFile(policyFile, before);
       await (await import('node:fs/promises')).chmod(policyFile, fixture.previous.mode);
     } else await unlink(policyFile);
+  }
+  for (const [name, expected] of Object.entries(fixture.assessmentBaseline ?? {})) {
+    assert(/^[a-f0-9-]{36}\.json$/.test(name));
+    assert.equal(hash(await readFile(path.join(home, 'assessments', name))), expected);
+  }
+  for (const item of fixture.assessments ?? []) {
+    const file = path.join(home, 'assessments', `${item.id}.json`);
+    assert.equal(item.file, file);
+    assert.equal(await realpath(file), file);
+    const record = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(record.id, item.id);
+    assert.equal(record.ownerId, fixture.ownerId);
+    assert.equal(record.ownerGeneration ?? 0, fixture.ownerGeneration);
+    if (item.kind === 'outcome') assert.equal(record.subject.run.id, fixture.runId);
+    else assert.equal(record.subject.suggestion.source.ref, 'synthetic:d07-assessment-expiry');
+    await unlink(file);
+  }
+  if (fixture.analytics) {
+    const directory = fixture.analytics.directory;
+    assert(directory.startsWith(context.root + '/') || directory.startsWith(home + '/'));
+    let names = [];
+    try {
+      names = await readdir(directory);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    for (const name of names.filter((name) => /^events-\d{4}-\d{2}\.ndjson$/.test(name))) {
+      const file = path.join(directory, name);
+      assert.equal(await realpath(file), file);
+      const bytes = await readFile(file);
+      const saved = fixture.analytics.before[name];
+      const original = saved ? Buffer.from(saved.bytes, 'base64') : Buffer.alloc(0);
+      assert(
+        bytes.subarray(0, original.length).equals(original),
+        'Refuse a changed analytics prefix',
+      );
+      if (bytes.equals(original)) continue;
+      for (const line of bytes
+        .subarray(original.length)
+        .toString('utf8')
+        .split('\n')
+        .filter(Boolean)) {
+        const row = JSON.parse(line);
+        assert.equal(row.runId, fixture.runId, 'Refuse an unrelated analytics append');
+        assert.equal(row.project, fixture.project);
+      }
+      if (saved) {
+        await writeFile(file, original);
+        await chmod(file, saved.mode);
+      } else await unlink(file);
+    }
+    for (const [name, saved] of Object.entries(fixture.analytics.before))
+      assert.equal(hash(await readFile(path.join(directory, name))), saved.sha256);
   }
   if (fixture.runFile) {
     try {

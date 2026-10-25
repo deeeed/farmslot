@@ -57,11 +57,12 @@ export class AssessmentPanel extends LitElement {
   private readonly assessmentSummary: ResourceQueryController<AssessmentSummary> =
     new ResourceQueryController<AssessmentSummary>(this, (state) => {
       if (this.injectedHistory || !this.isConnected) return;
+      if (state.status !== 'ready') this.historyReady = false;
       if (!this.assessmentSummary.belongsToWorkspace || state.data === undefined) {
         this.records = [];
         this.summary = null;
         this.cursor = undefined;
-        this.decisionOutcomes.clear();
+        this.clearOutcomeObservers();
       }
       if (state.error) this.error = state.error.message;
       if (state.status === 'ready') {
@@ -70,14 +71,13 @@ export class AssessmentPanel extends LitElement {
       }
     });
   private reloadPending = false;
+  private historyReady = false;
   private loadedPages = 1;
   private readonly decisionOutcomes = new Map<string, { label: string; final: boolean }>();
-  private readonly outcomeRequests = new Set<string>();
+  private readonly outcomeResources = new Map<string, ResourceQueryController<RunGetResult>>();
   private readonly expandedOutcomeIds = new Set<string>();
   @state() private selectedId = getHashParam('assessment');
   @state() private cursor?: string;
-  private interval?: ReturnType<typeof setInterval>;
-  private unsubscribe?: () => void;
   static styles = css`
     :host {
       display: block;
@@ -164,21 +164,13 @@ export class AssessmentPanel extends LitElement {
       return;
     }
     this.assessmentSummary.setQuery(resourceQuery<AssessmentSummary>(Methods.ASSESSMENT_SUMMARY));
-    this.unsubscribe = gateway.onConnectionChange((status) => {
-      if (status === 'connected') void this.load();
-    });
-    if (gateway.connectionState === 'connected') void this.load();
-    this.interval = setInterval(() => {
-      if (!this.busy && gateway.connectionState === 'connected') void this.load();
-    }, 15000);
   }
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.onHashChange);
-    this.unsubscribe?.();
-    clearInterval(this.interval);
+    this.clearOutcomeObservers();
   }
-  private async load(more = false, refresh = true) {
+  private async load(more = false, refresh = false) {
     if (this.busy || this.injectedHistory || !this.isConnected) return;
     const owner = getResourceWorkspaceKey();
     const connection = gateway.connectionEpoch;
@@ -188,6 +180,7 @@ export class AssessmentPanel extends LitElement {
       owner === getResourceWorkspaceKey() &&
       connection === gateway.connectionEpoch;
     this.busy = true;
+    this.historyReady = false;
     try {
       const consumer = this.historyFilter === 'all' ? {} : { consumer: this.historyFilter };
       const [history, summary] = await Promise.all([
@@ -243,6 +236,13 @@ export class AssessmentPanel extends LitElement {
           : '';
       if (more) this.loadedPages++;
       this.cursor = page.nextCursor;
+      const visibleOutcomes = new Set(
+        this.records
+          .filter((record) => selectedId === record.id || this.expandedOutcomeIds.has(record.id))
+          .map((record) => record.id),
+      );
+      for (const id of this.outcomeResources.keys())
+        if (!visibleOutcomes.has(id)) this.stopOutcomeObserver(id);
       for (const record of this.records) {
         if (
           (selectedId === record.id || this.expandedOutcomeIds.has(record.id)) &&
@@ -251,13 +251,14 @@ export class AssessmentPanel extends LitElement {
           void this.loadDecisionOutcome(record);
       }
       this.summary = summary;
+      this.historyReady = this.assessmentSummary.ready;
       this.error = '';
     } catch (error) {
       if (stillCurrent())
         this.error =
           error instanceof Error
             ? error.message
-            : 'Assessment history could not be loaded. Refresh to retry.';
+            : 'Assessment history could not be loaded. Retry the read.';
     } finally {
       this.busy = false;
       if (this.reloadPending) {
@@ -284,7 +285,7 @@ export class AssessmentPanel extends LitElement {
       owner === getResourceWorkspaceKey() && connection === gateway.connectionEpoch;
     this.busy = true;
     try {
-      if (!this.assessmentSummary.ready)
+      if (!this.historyReady || !this.assessmentSummary.ready)
         throw new Error('Wait for current assessment history before acting.');
       const current = await readAssessment<AssessmentRecord>(
         Methods.ASSESSMENT_GET,
@@ -312,33 +313,47 @@ export class AssessmentPanel extends LitElement {
         this.error =
           error instanceof Error
             ? error.message
-            : 'Feedback was not saved. Refresh the record before retrying.';
+            : 'Feedback was not saved. Retry the record read before acting again.';
     } finally {
       this.busy = false;
     }
   }
-  private async loadDecisionOutcome(record: AssessmentRecord) {
+  private stopOutcomeObserver(id: string): void {
+    const observer = this.outcomeResources.get(id);
+    observer?.hostDisconnected();
+    if (observer) this.removeController(observer);
+    this.outcomeResources.delete(id);
+    this.decisionOutcomes.delete(id);
+  }
+  private clearOutcomeObservers(): void {
+    for (const id of this.outcomeResources.keys()) this.stopOutcomeObserver(id);
+  }
+  private loadDecisionOutcome(record: AssessmentRecord): void {
     const run = record.subject.run;
     const decision = run?.decision;
     if (
       !run ||
       (record.consumer !== 'failure-triage' && !decision) ||
-      this.outcomeRequests.has(record.id) ||
+      this.outcomeResources.has(record.id) ||
       this.injectedHistory
     )
       return;
-    const owner = getResourceWorkspaceKey();
-    const connection = gateway.connectionEpoch;
-    const stillCurrent = () =>
-      this.isConnected &&
-      owner === getResourceWorkspaceKey() &&
-      connection === gateway.connectionEpoch;
-    this.outcomeRequests.add(record.id);
-    this.decisionOutcomes.set(record.id, { label: 'Checking run outcome…', final: false });
-    this.requestUpdate();
-    try {
-      const result = await readAssessment<RunGetResult>(Methods.RUN_GET, { runId: run.id }, true);
-      if (!stillCurrent()) return;
+    const observer = new ResourceQueryController<RunGetResult>(this, (state) => {
+      const current = this.outcomeResources.get(record.id);
+      // Lit connects a newly added controller before it is inserted in this map.
+      if (!current) return;
+      if (!current.belongsToWorkspace) {
+        this.decisionOutcomes.delete(record.id);
+        return;
+      }
+      const result = state.data;
+      if (!result) {
+        this.decisionOutcomes.set(record.id, {
+          label: state.error ? 'Run outcome unavailable' : 'Checking run outcome…',
+          final: false,
+        });
+        return;
+      }
       const associated =
         record.consumer === 'failure-triage'
           ? (result.run?.decisions.filter((item) => item.triageAssessmentId === record.id) ?? [])
@@ -371,16 +386,24 @@ export class AssessmentPanel extends LitElement {
                 final: false,
               },
       );
-    } catch (error) {
-      if (!stillCurrent()) return;
-      this.decisionOutcomes.set(record.id, {
-        label: `Could not load run outcome: ${error instanceof Error ? error.message : String(error)}`,
-        final: false,
-      });
-    } finally {
-      this.outcomeRequests.delete(record.id);
-      this.requestUpdate();
-    }
+    });
+    this.outcomeResources.set(record.id, observer);
+    observer.setQuery(resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: run.id }));
+  }
+  private renderOutcomeError(id: string) {
+    const observer = this.outcomeResources.get(id);
+    return observer?.state.error
+      ? html`<p class="error" role="alert">
+          Could not load run outcome: ${observer.state.error.message}
+          <button
+            data-action="retry-outcome"
+            ?disabled=${gateway.connectionState !== 'connected'}
+            @click=${() => observer.retry()}
+          >
+            Retry
+          </button>
+        </p>`
+      : nothing;
   }
   private get canExportSelected(): boolean {
     return (
@@ -403,7 +426,7 @@ export class AssessmentPanel extends LitElement {
     const connection = gateway.connectionEpoch;
     this.busy = true;
     try {
-      if (!this.assessmentSummary.ready)
+      if (!this.historyReady || !this.assessmentSummary.ready)
         throw new Error('Wait for current assessment history before exporting.');
       const report = await gateway.request<AssessmentReport>(
         Methods.ASSESSMENT_REPORT,
@@ -475,9 +498,15 @@ export class AssessmentPanel extends LitElement {
           <option value="review-routing">Review-routing advice</option>
         </select>
       </label>
-      <button data-action="refresh" @click=${() => this.load()} ?disabled=${this.busy}>
-        Refresh
-      </button>
+      ${this.error && !this.historyReady
+        ? html`<button
+            data-action="retry"
+            @click=${() => this.load(false, true)}
+            ?disabled=${this.busy || gateway.connectionState !== 'connected'}
+          >
+            Retry
+          </button>`
+        : nothing}
       <button
         data-action="export"
         title=${this.canExportSelected
@@ -486,7 +515,7 @@ export class AssessmentPanel extends LitElement {
         @click=${() => this.exportReport()}
         ?disabled=${this.busy ||
         !this.canExportSelected ||
-        (!this.injectedHistory && !this.assessmentSummary.ready)}
+        (!this.injectedHistory && (!this.historyReady || !this.assessmentSummary.ready))}
       >
         ${this.selectedId ? 'Export selected case' : 'Export effectiveness snapshot'}
       </button>
@@ -655,7 +684,10 @@ export class AssessmentPanel extends LitElement {
                 if ((event.currentTarget as HTMLDetailsElement).open) {
                   this.expandedOutcomeIds.add(record.id);
                   void this.loadDecisionOutcome(record);
-                } else this.expandedOutcomeIds.delete(record.id);
+                } else {
+                  this.expandedOutcomeIds.delete(record.id);
+                  this.stopOutcomeObserver(record.id);
+                }
               }}
             >
               <summary>
@@ -678,6 +710,7 @@ export class AssessmentPanel extends LitElement {
                       ${this.decisionOutcomes.get(record.id)?.label ??
                       (this.injectedHistory ? 'Unavailable in fixture' : 'Open to check')}
                     </p>
+                    ${this.renderOutcomeError(record.id)}
                   </section>`
                 : record.consumer === 'decision-advice'
                   ? html`<p>Decision context was not saved with this older assessment.</p>`
@@ -689,6 +722,7 @@ export class AssessmentPanel extends LitElement {
                       ${this.decisionOutcomes.get(record.id)?.label ??
                       (this.injectedHistory ? 'Unavailable in fixture' : 'Open to check')}
                     </p>
+                    ${this.renderOutcomeError(record.id)}
                     <small
                       >Association records the operator's choice, not whether advice caused
                       it.</small
@@ -792,7 +826,8 @@ export class AssessmentPanel extends LitElement {
                       <button
                         type="submit"
                         ?disabled=${this.busy ||
-                        (!this.injectedHistory && !this.assessmentSummary.ready)}
+                        (!this.injectedHistory &&
+                          (!this.historyReady || !this.assessmentSummary.ready))}
                       >
                         Save feedback
                       </button>

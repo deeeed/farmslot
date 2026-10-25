@@ -22,7 +22,11 @@ export async function startPlanningRaceProxy({
   assert.equal(target.hostname, '127.0.0.1');
   assert.equal(target.port, '7913', 'Use the isolated proof gateway');
   assert.equal(port, 7915, 'Use the isolated browser race proxy');
-  assert(['backlog.list', 'roadmap.list', 'intelligence.triage.get'].includes(method));
+  assert(
+    ['backlog.list', 'roadmap.list', 'intelligence.triage.get', 'assessment.summary'].includes(
+      method,
+    ),
+  );
   const artifacts = await realpath(directory);
   const owner = randomUUID();
   const startId = randomUUID();
@@ -39,6 +43,7 @@ export async function startPlanningRaceProxy({
   const duplicates = [];
   const authentications = [];
   const barrierReplies = [];
+  const observedReads = {};
   const commands = {
     'intelligence.triage.analyze': 0,
     'intelligence.triage.feedback': 0,
@@ -58,6 +63,7 @@ export async function startPlanningRaceProxy({
     authentications,
     barrierReplies,
     commands,
+    observedReads,
     held: held?.receipt,
   });
   const persist = () => {
@@ -192,6 +198,20 @@ export async function startPlanningRaceProxy({
           return;
         }
         if (frame.type === 'req' && frame.method === 'auth.connect') pair.authRequestId = frame.id;
+        if (
+          method === 'assessment.summary' &&
+          frame.type === 'req' &&
+          ['assessment.summary', 'assessment.list', 'assessment.get', 'run.get'].includes(
+            frame.method,
+          )
+        ) {
+          assert(
+            frame.resourceRead?.version === 1,
+            'Assessment and outcome reads must be observed',
+          );
+          observedReads[frame.method] = (observedReads[frame.method] ?? 0) + 1;
+          void persist();
+        }
         if (frame.type === 'req' && Object.hasOwn(commands, frame.method)) {
           commands[frame.method]++;
           void persist();

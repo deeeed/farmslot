@@ -11,6 +11,7 @@ import { resourceRevisions } from '../resources/revisions.js';
 import { readAssessmentArtifact, saveAssessmentArtifact } from './artifacts.js';
 import {
   assessmentHistory,
+  assessmentRecord,
   beginAssessment,
   finishAssessment,
   recordAssessmentFeedback,
@@ -20,6 +21,56 @@ import {
 
 const key: ResourceKey = { family: 'assessment', scope: 'farm' };
 const context = { ownerId: 'assessment-reader', consumer: 'smoke-test' as const, subject: {} };
+
+for (const kind of ['history', 'detail'] as const) {
+  test(`an observed ${kind} expires without another writer or periodic read`, async (t) => {
+    const home = await scratch(t);
+    resourceRevisions.dispose();
+    t.after(() => resourceRevisions.dispose());
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    const record = await beginAssessment(context);
+    await finishAssessment(record, { status: 'completed' });
+    const file = path.join(home, 'assessments', `${record.id}.json`);
+    const saved = await readFile(file);
+    if (kind === 'history') await assessmentHistory(context.ownerId);
+    else await assessmentRecord(context.ownerId, record.id);
+    const before = resourceRevisions.revision(key);
+    t.mock.timers.tick(30 * 86400_000);
+    assert.equal(resourceRevisions.revision(key), before);
+    t.mock.timers.tick(1);
+    assert.equal(resourceRevisions.revision(key), before + 1);
+    assert.equal((await assessmentHistory(context.ownerId)).records.length, 0);
+    await assert.rejects(assessmentRecord(context.ownerId, record.id), /expired/);
+    assert.equal(
+      resourceRevisions.revision(key),
+      before + 1,
+      'The fired expiry is not published twice',
+    );
+    assert.deepEqual(
+      await readFile(file),
+      saved,
+      'Expiry invalidation must not rewrite the source',
+    );
+  });
+}
+
+test('a read catches an overdue expiry before replacing its delayed timer', async (t) => {
+  await scratch(t);
+  resourceRevisions.dispose();
+  t.after(() => resourceRevisions.dispose());
+  const now = Date.now();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });
+  const record = await beginAssessment(context);
+  await finishAssessment(record, { status: 'completed' });
+  await assessmentHistory(context.ownerId);
+  const before = resourceRevisions.revision(key);
+  // Wall time passed while the timer callback is still waiting for an event-loop turn.
+  t.mock.method(Date, 'now', () => now + 30 * 86400_000 + 1);
+  assert.equal((await assessmentHistory(context.ownerId)).records.length, 0);
+  assert.equal(resourceRevisions.revision(key), before + 1);
+  await assessmentHistory(context.ownerId);
+  assert.equal(resourceRevisions.revision(key), before + 1, 'The same expiry publishes once');
+});
 
 async function scratch(t: test.TestContext) {
   const home = await mkdtemp(path.join(tmpdir(), 'assessment-resource-'));

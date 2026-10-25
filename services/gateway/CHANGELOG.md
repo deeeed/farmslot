@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Publish configuration changes from owning stores and existing file watchers, including rapid replacements and optional registration directories created later. Observe roadmap deletion after atomic replacement across supported hosts. Report malformed project and provider-registration sources as client read errors and omit declared webhook secrets while retaining internal webhook verification.
 
-- Publish readable PR automation, assessment, analytics and copilot changes after their owning commits. Reload external PR-rule configuration with source-error refusal and recovery, and observe assessment policies plus their bounded, policy-selected triage evaluation receipts. Refuse current observed reads after observation loss while retaining exact receipt admission and command-time validation.
+- Publish readable PR automation, assessment, analytics and copilot changes after their owning commits. Reload external PR-rule configuration with source-error refusal and recovery, and observe assessment policies plus their bounded, policy-selected triage evaluation receipts. Refuse current observed reads after observation loss while retaining exact receipt admission and command-time validation. Invalidate retained assessment history at its expiry deadline without panel polling or source rewrites.
 
 - Give each update-branch run two review rounds independent of the feature PR budget, preserving replay receipts and scoped no-verdict accounting.
 - Include the operator note and every open review finding alongside visual repair instructions in REVIEW-FIX feedback.

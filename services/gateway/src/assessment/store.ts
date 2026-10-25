@@ -30,8 +30,14 @@ import {
 const RETENTION_DAYS = 30;
 const MAX_RECORDS = 5000;
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const assessmentKey = { family: 'assessment', scope: 'farm' } as const;
 const active = new Set<string>();
 const nextPruneAt = new Map<string, number>();
+interface ObservedAssessmentExpiry {
+  records: Map<string, number>;
+  revision: number;
+}
+const observedExpiries = new Map<string, ObservedAssessmentExpiry>();
 let failedWritesSinceStart = 0;
 export function assessmentAuditHealth(): import('@farmslot/protocol').AssessmentAuditHealth {
   return { status: failedWritesSinceStart ? 'degraded' : 'ok', failedWritesSinceStart };
@@ -43,7 +49,7 @@ export function recordAuditFailure(): void {
 
 function assessmentChanged(): void {
   // Records are principal/generation scoped by their owning reads. Publish no owner or record IDs.
-  resourceRevisions.advance({ family: 'assessment', scope: 'farm' });
+  resourceRevisions.advance(assessmentKey);
 }
 let tail: Promise<unknown> = Promise.resolve();
 
@@ -53,6 +59,37 @@ function root(): string {
 function location(id: string): string {
   if (!ID.test(id)) throw new Error('Invalid assessment ID');
   return path.join(root(), `${id}.json`);
+}
+
+/** Retained history changes at its time boundary even when no writer runs. */
+function observeExpiry(records: AssessmentRecord[], replace = false): void {
+  const directory = root();
+  const previous = observedExpiries.get(directory);
+  const deadlines = replace
+    ? new Map<string, number>()
+    : (previous?.records ?? new Map<string, number>());
+  const now = Date.now();
+  let crossedDuringRead =
+    previous?.revision === resourceRevisions.revision(assessmentKey) &&
+    [...previous.records.values()].some((at) => at <= now);
+  for (const [id, at] of deadlines) if (at <= now) deadlines.delete(id);
+  for (const record of records) {
+    if (active.has(location(record.id))) continue;
+    const at = Date.parse(record.startedAt) + RETENTION_DAYS * 86400_000 + 1;
+    if (at > now) deadlines.set(record.id, at);
+    else crossedDuringRead = true;
+  }
+  // Catch up before cancelling a timer whose callback lost its event-loop turn.
+  if (crossedDuringRead) assessmentChanged();
+  observedExpiries.set(directory, {
+    records: deadlines,
+    revision: resourceRevisions.revision(assessmentKey),
+  });
+  resourceRevisions.scheduleInvalidation(
+    `assessment-history:${directory}`,
+    assessmentKey,
+    deadlines.size ? Math.min(...deadlines.values()) : undefined,
+  );
 }
 /** Session reads see only their own generation; a reused id never adopts older records. */
 function owns(ownerId: string, record: AssessmentRecord): boolean {
@@ -114,6 +151,7 @@ async function retained(prune = false): Promise<AssessmentRecord[]> {
       record.status = 'interrupted';
     records.push(record);
   }
+  observeExpiry(records, true);
   return records;
 }
 
@@ -329,5 +367,6 @@ export async function assessmentRecord(ownerId: string, id: string): Promise<Ass
   )
     throw new Error('Assessment not found or expired');
   if (record.status === 'started' && !active.has(location(id))) record.status = 'interrupted';
+  observeExpiry([record]);
   return record;
 }
