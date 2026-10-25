@@ -174,7 +174,7 @@ try {
   );
   assert.ok(ownerRows.length);
   assert.ok(ownerRows.every((slot) => !slot.workspace || slot.workspace.currentRunId === afterId));
-  browser('click', route, 'fleet-refresh-modal >>> button[aria-label="Close"]');
+  browser('click', route, 'fleet-canvas >>> fleet-refresh-modal >>> button[aria-label="Close"]');
   await poll(
     async () =>
       JSON.parse(

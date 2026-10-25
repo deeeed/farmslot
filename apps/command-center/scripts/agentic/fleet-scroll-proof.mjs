@@ -15,7 +15,8 @@ export async function proveFleetScrolling(output, route) {
       (target) =>
         target.type === 'page' &&
         target.url.startsWith(origin + '/') &&
-        new URL(target.url).hash === '#' + route,
+        (new URL(target.url).hash === '#' + route ||
+          new URL(target.url).hash.startsWith('#' + route + '&')),
     );
     assert.equal(targets.length, 1, 'Select exactly the owned proof tab');
     const { sessionId } = await browser.send('Target.attachToTarget', {

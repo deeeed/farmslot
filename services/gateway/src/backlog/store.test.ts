@@ -2487,6 +2487,9 @@ test('backlog.dequeue clears stale baseline run linkage on launch-plan re-enqueu
     queue.getQueueSnapshot().filter((item) => item.backlogItemId === created.item.id).length >= 2,
   );
 
+  // Enqueue starts a quiet slot-eligibility claim. Let that manual-slot check finish
+  // before testing stale linkage, rather than racing its transient dispatching state.
+  await queue.tryDispatchNext();
   const dequeued = await backlog.dequeueBacklogItem({ itemId: created.item.id });
   assert.equal(dequeued.item.status, 'ready');
   assert.equal(dequeued.item.runId, undefined);
