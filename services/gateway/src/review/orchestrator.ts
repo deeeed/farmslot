@@ -454,7 +454,7 @@ async function executeOwnedReview(
         ) === true;
       return {
         ...recoveredFixResult,
-        usage: recoveredFixResult.attempts?.at(-1)?.usage,
+        usage: recoveredFixResult.attempts?.at(-1)?.usage ?? recoveredFixResult.usage,
         runner: reviewRunner,
         model,
         effort: effort,
@@ -528,7 +528,7 @@ async function executeOwnedReview(
       });
       return {
         ...retryResult,
-        usage: retryResult.attempts?.at(-1)?.usage,
+        usage: retryResult.attempts?.at(-1)?.usage ?? retryResult.usage,
         runner: reviewRunner,
         model,
         effort: effort,
@@ -649,7 +649,7 @@ async function executeOwnedReview(
     });
     return {
       ...retryResult,
-      usage: retryResult.attempts?.at(-1)?.usage,
+      usage: retryResult.attempts?.at(-1)?.usage ?? retryResult.usage,
       runner: reviewRunner,
       model,
       effort: effort,
@@ -854,15 +854,6 @@ function fixDeltaIsKnownEmpty(snapshot: ReviewFixDeltaSnapshot): boolean {
   return snapshot.diffStat.files === 0 && (snapshot.untrackedFiles?.length ?? 0) === 0;
 }
 
-function reviewFindingsUnchanged(issues: ReviewIssue[], prior: ReviewIssue[]): boolean {
-  const keys = (findings: ReviewIssue[]) =>
-    findings
-      .map((issue) => JSON.stringify([issue.file, issue.line, issue.severity, issue.description]))
-      .sort();
-  const previous = keys(prior);
-  return issues.length === prior.length && keys(issues).every((key, i) => key === previous[i]);
-}
-
 function stopReviewFixAtGate(
   result: ReviewAgentResult,
   attempts: ReviewAttempt[],
@@ -917,8 +908,10 @@ async function completeReviewFix(
   const before = run?.engineState?.reviewInputsAtLaunch;
   const after = noSourceChanges && run && before ? await deps.readFixedInputs(run) : null;
   const evidenceChanged = !!after && after.fingerprint !== before;
+  if (noSourceChanges && delta.fixHeadSha === delta.fixBaseSha && (!before || !after))
+    return undefined;
   if (noSourceChanges && delta.fixHeadSha === delta.fixBaseSha && !evidenceChanged) {
-    if (!reviewFindingsUnchanged(result.issues, attempts.at(-1)?.issues ?? [])) return undefined;
+    // No changed source or reviewed inputs means these findings are unchanged by construction.
     return stopReviewFixAtGate(
       result,
       attempts,
@@ -2137,6 +2130,9 @@ async function recoverReviewFixPass({
     const recheckLoop = reviewedLoop + 1;
     const priorResult: ReviewAgentResult = {
       reviewId: lineage,
+      mode: ownerReview?.mode ?? mode,
+      session: ownerReview?.session,
+      reviewerSessionId: ownerReview?.reviewerSessionId,
       verdict: 'issues',
       issues,
       validationDepth,
@@ -2364,7 +2360,9 @@ async function recoverReviewFixPass({
     );
     if (runSupersededSince(getRun(runId), recoveryGeneration)) return null;
     const initialAttempt: ReviewAttempt = {
-      mode,
+      mode: priorResult.mode ?? mode,
+      session: priorResult.session,
+      usage: priorResult.usage,
       loopNumber: reviewedLoop,
       verdict: 'issues',
       unresolvedCount: issues.length,
@@ -2403,7 +2401,7 @@ async function recoverReviewFixPass({
       runId,
       fixSignal,
       priorResult,
-      [initialAttempt],
+      ownerReview?.attempts?.length ? ownerReview.attempts : [initialAttempt],
       fixDelta,
       recoveredRetryCount,
       maxRetries,

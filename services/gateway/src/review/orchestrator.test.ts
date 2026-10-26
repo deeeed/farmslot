@@ -1,20 +1,32 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { AgentContext, ReviewIssue, WorkerSignal } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  isQualifyingReview,
+  type ReviewIssue,
+  type WorkerSignal,
+} from '@farmslot/protocol';
 
 import {
+  assertPublicationReviewPolicySatisfied,
   buildPublishGateReviewStatus,
   CONTINUE_REVIEW_FIX_ACTION,
   gateReviewContinuation,
   pendingReviewContinuation,
   publicationGateDecisionActions,
+  publicationReviewMatchesPreparedPackage,
+  reviewFinalSnapshotMatchesPreparedPackage,
 } from '../run-engine/gate-policy.js';
 import {
   executePublishGateReviewPlan,
   resumeInterruptedPublicationReview,
 } from '../run-engine/ready-gate.js';
-import { deleteTestRunIfPresent, makeRun } from '../run-engine/test-fixtures.js';
+import {
+  deleteTestRunIfPresent,
+  makeReadyGatePackage,
+  makeRun,
+} from '../run-engine/test-fixtures.js';
 import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
 import { createRun, getRun } from '../runs/store.js';
 
@@ -1890,6 +1902,8 @@ test('runReviewRetryLoop: an empty completed fix returns unchanged findings to t
       timestamp: new Date().toISOString(),
     })),
   });
+  deps.getRun = () => makeRun({ engineState: { reviewInputsAtLaunch: 'unchanged' } });
+  deps.readFixedInputs = async () => ({ fingerprint: 'unchanged', legacyFingerprint: 'unchanged' });
   const result = await runReviewRetryLoop({
     ...baseArgs,
     maxRetries: 3,
@@ -1916,6 +1930,109 @@ test('runReviewRetryLoop: an empty completed fix returns unchanged findings to t
   assert.deepEqual(gateReview.issues, ISSUES);
   assert.equal(gateReview.fixDelta?.diffStat?.files, 0);
   assert.equal(pendingReviewContinuation([gateReview]), undefined);
+});
+
+for (const missing of ['baseline', 'probe'] as const) {
+  test(`runReviewRetryLoop: an empty source delta with missing ${missing} still gets reviewed`, async () => {
+    const { deps, calls } = buildDeps({
+      reviewVerdicts: ['pass'],
+      fixDeltaFiles: 0,
+      sourceLinesChanged: 0,
+      fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+    });
+    deps.getRun = () =>
+      makeRun({ engineState: missing === 'probe' ? { reviewInputsAtLaunch: 'before' } : {} });
+    deps.readFixedInputs = async () => null;
+    const result = await runReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 1,
+      retryCount: 0,
+      deps,
+      reviewResult: { verdict: 'issues', issues: ISSUES },
+    });
+    assert.equal(calls.reviewAgent, 1);
+    assert.equal(result.verdict, 'pass');
+  });
+}
+
+test('runReviewRetryLoop: an accepted small fix after a cold delta fallback qualifies at the final gate', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: [],
+    sourceLinesChanged: 1,
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  const session = {
+    mode: 'cold' as const,
+    continuity: 'fresh' as const,
+    reviewId: 'fallback-review',
+    sessionId: 'original-reviewer',
+    lastReviewedHeadSha: 'base-head',
+    fallback: {
+      reason: 'missing-session' as const,
+      detail: 'The retained session was unavailable.',
+      comparedRanges: ['earlier-head..base-head'],
+    },
+  };
+  const priorSnapshot = {
+    source: 'local-git' as const,
+    baseRef: 'earlier-head',
+    baseSha: 'earlier-head',
+    headSha: 'base-head',
+    diffHash: 'reviewed-delta',
+    capturedAt: new Date().toISOString(),
+  };
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    retryCount: 0,
+    deps,
+    reviewResult: {
+      reviewId: session.reviewId,
+      mode: 'cold',
+      session,
+      reviewerSessionId: session.sessionId,
+      verdict: 'issues',
+      issues: ISSUES,
+      reviewSnapshot: priorSnapshot,
+    },
+  });
+  const prepared = makeReadyGatePackage({
+    headSha: 'head-2',
+    reviewSnapshot: {
+      ...priorSnapshot,
+      baseSha: 'pr-base',
+      headSha: 'head-2',
+      diffHash: 'full-pr',
+    },
+  });
+  const gateReview = buildPublishGateReviewStatus({
+    source: 'dispatch',
+    priorReviewCount: 0,
+    reviewId: session.reviewId,
+    reviewResult: result,
+    requestedRunner: 'codex',
+    reviewedPackage: prepared,
+  });
+  assert.equal(calls.reviewAgent, 0);
+  assert.equal(isQualifyingReview(gateReview), true);
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(gateReview, prepared), true);
+  assert.equal(publicationReviewMatchesPreparedPackage(gateReview, prepared), true);
+  assert.doesNotThrow(() =>
+    assertPublicationReviewPolicySatisfied(
+      makeRun({ engineState: { publishGate: { reviews: [gateReview] } } }),
+      prepared,
+    ),
+  );
+  assert.deepEqual(gateReview.session, session, 'the original reviewer trace is unchanged');
+  assert.deepEqual(gateReview.attempts?.[0]?.reviewSnapshot, priorSnapshot);
+  assert.equal(gateReview.attempts?.[1]?.session, undefined);
+  for (const field of ['fixBaseSha', 'fixHeadSha'] as const) {
+    const broken = structuredClone(gateReview);
+    const delta = broken.attempts?.at(-1)?.fixDelta;
+    assert.ok(delta);
+    delta[field] = 'unrelated-head';
+    assert.equal(reviewFinalSnapshotMatchesPreparedPackage(broken, prepared), false);
+  }
 });
 
 for (const sourceLinesChanged of [0, 50, 51, undefined]) {

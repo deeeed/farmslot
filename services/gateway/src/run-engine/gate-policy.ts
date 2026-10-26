@@ -630,13 +630,30 @@ function reviewSnapshotDiffMatchesPackage(
   const session = review?.session;
   const deltaFallback = review?.mode === 'cold' ? session?.fallback : undefined;
   if (review && (review.mode === 'warm' || deltaFallback)) {
+    const fix = review.attempts?.at(-1);
+    const priorSnapshot = review.attempts?.at(-2)?.reviewSnapshot;
+    // Gateway acceptance extends the captured delta without claiming another reviewer turn.
+    const acceptedFix =
+      deltaFallback &&
+      fix?.verdict === 'pass' &&
+      !fix.session &&
+      fix.timeline?.some(
+        (segment) => segment.kind === 'worker-fix' && segment.verdict === 'pass',
+      ) &&
+      fix.fixDelta?.source === 'local-git' &&
+      priorSnapshot?.source === 'local-git' &&
+      fix.fixDelta.fixBaseSha === priorSnapshot.headSha &&
+      fix.fixDelta.fixHeadSha === snapshot.headSha &&
+      priorSnapshot.baseRef === snapshot.baseRef &&
+      priorSnapshot.baseSha === snapshot.baseSha;
+    const compared = acceptedFix && priorSnapshot ? priorSnapshot : snapshot;
     // A fresh fallback keeps its authorized delta, whose base can differ from
     // the publication package's full contribution. Its new baseline is head.
     const rangeMatches = deltaFallback
       ? !!snapshot.baseSha &&
         !!snapshot.diffHash &&
-        session?.lastReviewedHeadSha === snapshot.headSha &&
-        deltaFallback.comparedRanges.at(-1) === `${snapshot.baseSha}..${snapshot.headSha}`
+        session?.lastReviewedHeadSha === compared.headSha &&
+        deltaFallback.comparedRanges.at(-1) === `${compared.baseSha}..${compared.headSha}`
       : snapshot.baseRef === preparedSnapshot.baseRef &&
         snapshot.baseSha === session?.lastReviewedHeadSha;
     return (
