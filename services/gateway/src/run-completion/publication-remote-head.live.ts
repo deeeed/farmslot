@@ -2,7 +2,7 @@
 // TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test --test-force-exit <this-file>
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { hostname, userInfo } from 'node:os';
 import path from 'node:path';
@@ -165,7 +165,9 @@ test(
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       if (http.listening) await new Promise<void>((resolve) => http.close(() => resolve()));
       await waitCleanup();
-      execFileSync(path.join(process.env.HOME!, 'xreview/bin/purge-tmp'), [root]);
+      const { makeOwnerWritable } = await import('../core/owned-copy.js');
+      await makeOwnerWritable(root);
+      await rm(root, { recursive: true, force: true });
     });
     await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
     const address = http.address();
