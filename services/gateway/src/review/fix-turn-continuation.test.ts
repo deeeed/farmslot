@@ -89,7 +89,7 @@ const fixContext = (
   },
 });
 
-// Drive the 2 s poll loop on mocked time; each step lets the loop's slot reads settle.
+// Advance at the 10 s activity-probe cadence; each tick settles the async slot reads.
 async function waitOnTimeline(
   t: TestContext,
   minutes: number,
@@ -104,8 +104,8 @@ async function waitOnTimeline(
       value = result;
     },
   );
-  for (let elapsed = 0; !settled && elapsed < minutes * MINUTE; elapsed += 2000) {
-    t.mock.timers.tick(2000);
+  for (let elapsed = 0; !settled && elapsed < minutes * MINUTE; elapsed += 10_000) {
+    t.mock.timers.tick(10_000);
     for (let flush = 0; flush < 6; flush += 1)
       await new Promise((resolve) => setImmediate(resolve));
   }
