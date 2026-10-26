@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Include configured pi providers such as LiteLLM in the model catalog while retaining built-in models.
+
 - Push completion commits for existing PRs and verify the actual remote branch matches the published HEAD before finalize succeeds.
 - Stop unchanged empty review-fix cycles and accept completed evidence-only fixes or fixes of at most 50 source lines without another review, retaining the original review and fix provenance.
 - Validate nested review-fix and CI-fix declarations against their selected contract, preserving the primary checklist checks.
