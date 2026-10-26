@@ -4,6 +4,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- Repair a missing gateway-written payload from its own directory.
+
 - Retain gateway-written files from their own directory through `gatewayFiles`, so a package can freeze a file the gateway wrote after its source bundle.
 
 - Queue retention work within a process so long captures do not exhaust other runs' file-lock retries. External contention errors include the lock path.

@@ -124,12 +124,27 @@ async function gitBytes(
   return Buffer.from(result.stdout, 'base64');
 }
 
+/** Untracked diff text stays under the exec cap; files past it are listed without content. */
+const UNTRACKED_DIFF_BUDGET = 8 * 1024 * 1024;
+
+// Git lists a file over core.bigFileThreshold as a binary new file without reading
+// it, so a file that does not fit the remaining budget is listed exactly that way.
+const NEW_FILE_DIFF = GIT_DIFF_COMMAND.replace(/^git /, () => 'git -c core.bigFileThreshold="$1" ');
+
 // Untracked files diff as new files. `--no-index` exits 1 when the sides differ.
 const UNTRACKED_DIFF_SCRIPT = [
   'set -euo pipefail',
+  'budget=$1',
+  'shift',
+  'tmp=$(mktemp "${TMPDIR:-/tmp}/farmslot-untracked.XXXXXX")',
+  `trap 'rm -f "$tmp"' EXIT`,
+  `new_file_diff() { ${NEW_FILE_DIFF} --full-index --no-index -- /dev/null "$file" > "$tmp" || [ $? -eq 1 ]; }`,
   `git -c core.quotePath=false ls-files --others --exclude-standard -z -- "$@" | while IFS= read -r -d '' file; do`,
   '  [ -f "$file" ] || continue',
-  `  ${GIT_DIFF_COMMAND} --no-index -- /dev/null "$file" || [ $? -eq 1 ]`,
+  '  if [ "$budget" -gt 1 ]; then new_file_diff "$budget"; fi',
+  '  if [ "$budget" -le 1 ] || [ $(($(wc -c < "$tmp"))) -gt "$budget" ]; then new_file_diff 1; fi',
+  '  budget=$((budget - $(wc -c < "$tmp")))',
+  '  cat "$tmp"',
   'done',
 ].join('\n');
 
@@ -142,7 +157,14 @@ async function gitUntrackedDiff(
   const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
   const result = await (deps.runOnSlot ?? execArgvOnSlot)(
     slotVars,
-    ['bash', '-c', UNTRACKED_DIFF_SCRIPT, 'git-untracked-diff', ...(path ? [path] : [])],
+    [
+      'bash',
+      '-c',
+      UNTRACKED_DIFF_SCRIPT,
+      'git-untracked-diff',
+      String(UNTRACKED_DIFF_BUDGET),
+      ...(path ? [path] : []),
+    ],
     { cwd: repoPath, maxBuffer: 10 * 1024 * 1024 },
   );
   if (result.exitCode !== 0) {
@@ -421,7 +443,8 @@ export async function gitDiff(
   if (params.includeUntracked && params.target !== 'worktree') {
     throw new Error('includeUntracked requires a worktree diff');
   }
-  const args = ['diff'];
+  // Full blob ids let clients map each path to content they hold offline.
+  const args = ['diff', '--full-index'];
   let commits: Pick<GitDiffResult, 'mergeBaseSha' | 'headSha'> = {};
 
   if (params.base) {

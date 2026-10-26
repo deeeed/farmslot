@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -148,6 +150,20 @@ mock.module('../review/pipeline-visual-review.js', {
     ) => {
       if (!scriptedEvidence) return nativeVisual.stampPipelineVisualReviews(...args);
       stampedSources.push(args[1]);
+    },
+  },
+});
+const nativeDiffUtils = await import('../run-engine/diff-artifact-utils.js');
+let crashDiffWrite = false;
+// A crash during the package diff write leaves only a partial temporary file.
+mock.module('../run-engine/diff-artifact-utils.js', {
+  namedExports: {
+    ...nativeDiffUtils,
+    atomicWriteTextFile: async (target: string, content: string) => {
+      if (!crashDiffWrite || !target.endsWith('.diff'))
+        return nativeDiffUtils.atomicWriteTextFile(target, content);
+      await writeFile(`${target}.tmp.crashed`, content.slice(0, content.length / 2));
+      throw new Error('simulated crash during the diff write');
     },
   },
 });
@@ -379,6 +395,31 @@ test('package preparation retains the exact diff and untracked manifest its diff
     }),
     /Retained package diff changed/,
   );
+});
+
+test('a crashed diff write never blocks a later preparation of the same diff', async (t) => {
+  resetRun();
+  await writeFile(path.join(repo, 'src', 'child', '1.ts'), 'interrupted\n', { flag: 'a' });
+  t.after(() => {
+    crashDiffWrite = false;
+    git('checkout', '--', 'src/child/1.ts');
+  });
+  const options = {
+    diffStat: fullDiff,
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' as const },
+  };
+  crashDiffWrite = true;
+  await assert.rejects(prepareCompletionPackage(run.id, options), /simulated crash/);
+  crashDiffWrite = false;
+  const { prPackage } = await prepareCompletionPackage(run.id, options);
+  const diffPath = prPackage.reviewSnapshot!.diffPath!;
+  const file = path.join(path.dirname(taskFile), diffPath);
+  assert.ok(existsSync(`${file}.tmp.crashed`), 'the crash targeted this diff');
+  const digest = createHash('sha256')
+    .update(await readFile(file))
+    .digest('hex');
+  assert.equal(diffPath, `artifacts/publication-packages/diff-${digest}.diff`);
+  await rm(`${file}.tmp.crashed`);
 });
 
 test('attachment at unchanged HEAD refuses the old publication base at approval and publication', async () => {

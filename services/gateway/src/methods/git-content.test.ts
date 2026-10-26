@@ -202,6 +202,15 @@ test('git.diff includeUntracked adds untracked files and never ignored ones', as
   assert.match(result.diff, /^diff --git a\/new\.txt b\/new\.txt$/m);
   assert.match(result.diff, /^\+brand new$/m);
   assert.doesNotMatch(result.diff, /\.env|fixture-secret/);
+  // Full blob ids on tracked and untracked files, so clients can map paths to content.
+  assert.match(
+    result.diff,
+    new RegExp(
+      `^index ${git('rev-parse', 'main:tracked.txt')}\\.\\.${git('hash-object', 'tracked.txt')} 100644$`,
+      'm',
+    ),
+  );
+  assert.match(result.diff, new RegExp(`^index 0{40}\\.\\.${git('hash-object', 'new.txt')}$`, 'm'));
 
   const withoutUntracked = await gitDiff({ slotId: 's', base: 'main', target: 'worktree' }, deps);
   assert.doesNotMatch(withoutUntracked.diff, /new\.txt/);
@@ -215,6 +224,39 @@ test('git.diff includeUntracked adds untracked files and never ignored ones', as
     gitDiff({ slotId: 's', base: 'main', includeUntracked: true }, deps),
     /includeUntracked requires a worktree diff/,
   );
+});
+
+test('git.diff lists untracked files past the output cap as binary new files', async (t) => {
+  const { repo, commit, git, write } = await fixture(t);
+  await commit({ 'tracked.txt': 'base\n', '.gitignore': '.env\n' }, 'base');
+  git('checkout', '--quiet', '-b', 'feature');
+  await write('tracked.txt', 'base\nchanged\n');
+  const fiveMegabytes = `${'a'.repeat(99)}\n`.repeat(50 * 1024);
+  // Sorted as ls-files lists them: a.txt uses most of the budget, so b.txt no longer fits.
+  await write('a.txt', fiveMegabytes);
+  await write('b.txt', fiveMegabytes);
+  await write('huge.log', Buffer.alloc(12 * 1024 * 1024, 'x'));
+  await write('small.txt', 'small\n');
+  await write('.env', Buffer.alloc(12 * 1024 * 1024, 's'));
+
+  const { diff } = await gitDiff(
+    { slotId: 's', base: 'main', target: 'worktree', includeUntracked: true },
+    slot(repo),
+  );
+
+  assert.ok(Buffer.byteLength(diff) < 10 * 1024 * 1024);
+  assert.match(diff, /^\+changed$/m);
+  assert.match(diff, /^diff --git a\/a\.txt b\/a\.txt\n(?:.*\n){4}@@ -0,0 \+1,51200 @@$/m);
+  for (const file of ['b.txt', 'huge.log'])
+    assert.match(
+      diff,
+      new RegExp(
+        `^diff --git a/${file} b/${file}\\nnew file mode 100644\\nindex 0{40}\\.\\.${git('hash-object', file)}\\nBinary files /dev/null and b/${file} differ$`,
+        'm',
+      ),
+    );
+  assert.match(diff, /^diff --git a\/small\.txt b\/small\.txt\n(?:.*\n){5}\+small$/m);
+  assert.doesNotMatch(diff, /\.env/);
 });
 
 test('git.diff names the merge-base and head it compared after the base branch moves', async (t) => {

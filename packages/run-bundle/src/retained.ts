@@ -628,7 +628,10 @@ async function completeRetainedPayloads(
             meta.bytes,
           );
         } else {
-          const source = resolvePathInsideRoot(await realpath(request.taskDir), relative);
+          const root = request.gatewayFiles?.paths.includes(relative)
+            ? request.gatewayFiles.taskDir
+            : request.taskDir;
+          const source = resolvePathInsideRoot(await realpath(root), relative);
           if ((await realpath(source)) !== source)
             throw new Error('Retained repair source is redirected.');
           copied = await copyHashed(source, temp, meta.bytes);

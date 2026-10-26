@@ -44,6 +44,7 @@ import {
   visualReviewAuthority,
 } from '../run-engine/claim-reviews.js';
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
+import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import { contributionStack } from '../run-engine/diff-artifacts.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { readFrozenPublicationRecipeSources } from '../run-engine/recorded-evidence-sources.js';
@@ -720,13 +721,14 @@ async function retainPackageDiff(taskDir: string, diffText: string): Promise<Art
     sizeBytes: Buffer.byteLength(diffText),
   };
   const file = path.join(taskDir, diff.path);
-  await mkdir(path.dirname(file), { recursive: true });
   try {
-    await writeFile(file, diffText, { encoding: 'utf-8', flag: 'wx' });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     if ((await stat(file)).size !== diff.sizeBytes || (await sha256File(file)) !== sha256)
       throw new Error(`Retained package diff changed: ${diff.path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    // A crash leaves only the temporary file, never a partial diff under this name.
+    await mkdir(path.dirname(file), { recursive: true });
+    await atomicWriteTextFile(file, diffText);
   }
   return diff;
 }
