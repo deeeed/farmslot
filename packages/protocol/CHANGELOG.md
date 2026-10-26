@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Allow combined findings approval and evidence attestation when every review reason explicitly permits accepting findings.
+
 - Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
 
 - Expose slot workspace publication, ownership and recovery identity with shared eligibility for guarded fleet release and update.
