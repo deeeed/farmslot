@@ -10,9 +10,8 @@ import {
 
 import {
   type ContentKey,
-  type ResourceContentCohort,
   resourceContentId,
-  type ResourceContentOrigin,
+  type ResourceContentPlacement,
   type StoredResourceContentInfo,
   type StoredResourceQueryInfo,
 } from './store.js';
@@ -75,22 +74,31 @@ export interface ResourceBudgetEvictions {
   content: ContentKey[];
 }
 
-interface BudgetRow {
+interface BudgetRow extends ResourceContentPlacement {
   id: string;
   bytes: number;
   accessedAt: number;
   content?: ContentKey;
-  prefetch: boolean;
-  gate: boolean;
+}
+
+/** Content rule 6: prefetch evicts only prefetch rows, and run prefetch never evicts gate rows. */
+export function resourceEvictable(
+  incoming: ResourceContentPlacement,
+  row: ResourceContentPlacement,
+): boolean {
+  return (
+    incoming.origin !== 'prefetch' ||
+    (row.origin === 'prefetch' && (incoming.cohort === 'gate' || row.cohort !== 'gate'))
+  );
 }
 
 /**
- * Content rules 5 and 6: content and opened workspace snapshots share one least recently used
- * budget. Prefetch uses at most half of it, never evicts what the user opened, and run prefetch
- * never evicts gate content. Undefined refuses the incoming entry without evicting anything.
+ * Content rules 5 and 6: content and workspace snapshots share one least recently used budget.
+ * Prefetch uses at most half of it, never evicts what the user opened, and run prefetch never
+ * evicts gate rows. Undefined refuses the incoming entry without evicting anything.
  */
 export function resourceBudgetEvictions(
-  incoming: { bytes: number; origin: ResourceContentOrigin; cohort?: ResourceContentCohort },
+  incoming: ResourceContentPlacement & { bytes: number },
   content: readonly StoredResourceContentInfo[],
   workspace: readonly StoredResourceQueryInfo[],
   budget: number,
@@ -102,23 +110,23 @@ export function resourceBudgetEvictions(
       bytes: row.bytes,
       accessedAt: row.accessedAt,
       content: { kind: row.kind, id: row.id },
-      prefetch: row.origin === 'prefetch',
-      gate: row.cohort === 'gate',
+      origin: row.origin,
+      cohort: row.cohort,
     })),
     ...workspace.map((row) => ({
       id: row.id,
       bytes: row.bytes,
       accessedAt: row.accessedAt || row.observedAt,
-      prefetch: false,
-      gate: false,
+      origin: row.origin,
+      cohort: row.cohort,
     })),
   ].sort((a, b) => a.accessedAt - b.accessedAt || a.id.localeCompare(b.id));
-  const evictable = (row: BudgetRow) =>
-    !prefetch || (row.prefetch && (incoming.cohort === 'gate' || !row.gate));
+  const evictable = (row: BudgetRow) => resourceEvictable(incoming, row);
   const removed = new Set<BudgetRow>();
+  const prefetchBytes = (row: BudgetRow) => (row.origin === 'prefetch' ? row.bytes : 0);
   let total = rows.reduce((sum, row) => sum + row.bytes, incoming.bytes);
   let prefetched = rows.reduce(
-    (sum, row) => sum + (row.prefetch ? row.bytes : 0),
+    (sum, row) => sum + prefetchBytes(row),
     prefetch ? incoming.bytes : 0,
   );
   const evict = (fits: () => boolean, eligible: (row: BudgetRow) => boolean) => {
@@ -127,7 +135,7 @@ export function resourceBudgetEvictions(
       if (removed.has(row) || !eligible(row)) continue;
       removed.add(row);
       total -= row.bytes;
-      if (row.prefetch) prefetched -= row.bytes;
+      prefetched -= prefetchBytes(row);
     }
   };
   if (prefetch) evict(() => prefetched <= budget / 2, evictable);

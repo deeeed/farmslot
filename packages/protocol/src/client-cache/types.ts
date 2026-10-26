@@ -13,6 +13,7 @@ import type {
   ContentKey,
   ResourceContentCohort,
   ResourceContentOrigin,
+  ResourceContentPlacement,
   ResourceStore,
   ResourceStoreAuthority,
   ResourceStoreMetadata,
@@ -114,10 +115,22 @@ export interface ResourceContentInput {
   alias?: string;
 }
 
+export interface ResourceContentRetain extends ResourceContentPlacement {
+  token?: ResourceContentWriteToken;
+}
+
 export interface GatewayResourceCache {
   observe<T>(query: ResourceQuery<T>, listener: (state: ResourceQueryState<T>) => void): () => void;
   read<T>(query: ResourceQuery<T>): ResourceQueryState<T>;
-  retry<T>(query: ResourceQuery<T>): Promise<ResourceQueryState<T>>;
+  /**
+   * A `prefetch` placement persists a workspace snapshot as prefetched content: it counts toward
+   * the prefetch half of the budget and evicts only what prefetch may evict. A later read the user
+   * observes, or a read without a placement, keeps it as opened.
+   */
+  retry<T>(
+    query: ResourceQuery<T>,
+    placement?: ResourceContentPlacement,
+  ): Promise<ResourceQueryState<T>>;
   /** Presence for this owner, without loading the bytes or changing their recency. */
   hasContent(key: ContentKey): Promise<boolean>;
   /** Stored bytes for this owner, without changing their recency. */
@@ -129,5 +142,10 @@ export interface GatewayResourceCache {
   /** Verifies, applies the caps and the shared budget, and returns false when refused. */
   storeContent(input: ResourceContentInput): Promise<boolean>;
   contentWriteToken(): ResourceContentWriteToken;
+  /**
+   * Refreshes held content and applies the stronger origin and cohort without transferring its
+   * bytes. False when it is not held or the write is refused.
+   */
+  retainContent(key: ContentKey, retain: ResourceContentRetain): Promise<boolean>;
   dispose(reason?: ResourceConnectionReason): Promise<void>;
 }

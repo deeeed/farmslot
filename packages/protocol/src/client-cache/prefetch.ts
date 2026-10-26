@@ -1,6 +1,6 @@
 import type { ReviewWorkspaceSubject } from '../contracts/review-workspace.js';
 import type { ReadyGatePrPackage, ReviewDiffSnapshot, Run } from '../contracts/runs.js';
-import type { GitDiffResult, GitLogResult, GitShowBatchResult, GitShowResult } from '../rpc/git.js';
+import type { GitDiffResult, GitLogResult, GitShowBatchResult } from '../rpc/git.js';
 import { Methods } from '../rpc/registry.js';
 import type { RunGetResult } from '../rpc/run.js';
 import { isRunArtifactImagePath } from '../runs/artifact-media.js';
@@ -44,7 +44,7 @@ export interface ContentPrefetchOptions {
   >;
   cache: Pick<
     GatewayResourceCache,
-    'retry' | 'hasContent' | 'readContent' | 'storeContent' | 'contentWriteToken'
+    'retry' | 'readContent' | 'storeContent' | 'retainContent' | 'contentWriteToken'
   >;
   /** Plain RPC for reads that are not stored queries: `git.show`, `git.log` and frozen `git.diff`. */
   request<T>(method: string, params: unknown, signal: AbortSignal): Promise<T>;
@@ -314,6 +314,11 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     });
   }
 
+  /** Held content is reused, never transferred again; reuse by a gate promotes it to that cohort. */
+  function retain(key: ContentKey, { cohort, token }: PrefetchWrite): Promise<boolean> {
+    return cache.retainContent(key, { origin: 'prefetch', cohort, token });
+  }
+
   async function readByPath(
     path: string,
     expected: string | undefined,
@@ -321,13 +326,15 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
   ): Promise<Uint8Array | undefined> {
     if (!expected || !input.head) return undefined;
     try {
-      const shown = await options.request<GitShowResult>(
+      // The batched form carries raw bytes, so files that are not UTF-8 can verify too.
+      const page = await options.request<GitShowBatchResult>(
         Methods.GIT_SHOW,
-        { ...input.scope, ref: input.head, path },
+        { ...input.scope, ref: input.head, paths: [path] },
         input.signal,
       );
-      const data = encoder.encode(shown.content);
-      return gitBlobHash(data) === expected ? data : undefined;
+      const entry = page.entries[0];
+      const data = entry?.status === 'ok' && base64Bytes(entry.content ?? '');
+      return data && gitBlobHash(data) === expected ? data : undefined;
     } catch (error) {
       if (isRefusal(error) || input.signal.aborted) throw error;
       return undefined;
@@ -343,7 +350,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
   ): Promise<boolean> {
     if (!file.newPath) return true;
     const expected = blobSha ?? file.newId;
-    if (expected && (await cache.hasContent({ kind: 'blob', id: expected }))) return true;
+    if (expected && (await retain({ kind: 'blob', id: expected }, input))) return true;
     const base = await readBase();
     if (!base) return true;
     let data: Uint8Array | undefined = base;
@@ -372,7 +379,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       if (!file.oldPath) continue;
       byBase.set(file.oldPath, [...(byBase.get(file.oldPath) ?? []), file]);
       const id = file.oldId;
-      if (id && !held.has(id) && (await cache.hasContent({ kind: 'blob', id }))) held.add(id);
+      if (id && !held.has(id) && (await retain({ kind: 'blob', id }, input))) held.add(id);
     }
     const paths = [...byBase.keys()];
     let after: string | undefined;
@@ -425,7 +432,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     const bundleDigest = prPackage.artifactBundle?.bundleDigest;
     if (snapshot?.diffPath && snapshot.diffHash) {
       const key: ContentKey = { kind: 'diff', id: snapshot.diffHash };
-      let data = await cache.readContent(key);
+      let data = (await retain(key, write)) ? await cache.readContent(key) : undefined;
       if (!data) {
         const read = await options.readArtifact(
           { runId: run.id, path: snapshot.diffPath, bundleDigest },
@@ -455,7 +462,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       )
         continue;
       const key: ContentKey = { kind: 'artifact', id: entry.sha256 };
-      if (await cache.hasContent(key)) continue;
+      if (await retain(key, write)) continue;
       const data = await options.readArtifact(
         { runId: run.id, path: entry.path, bundleDigest },
         signal,
@@ -464,7 +471,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     }
   }
 
-  /** The diff is the observed query result, kept as a stale snapshot by the cache. */
+  /** The diff is the observed query result, kept by the cache as a stale prefetch snapshot. */
   async function prefetchSlot(
     state: PrefetchRunState,
     run: Run,
@@ -479,7 +486,8 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       target: 'worktree',
       includeUntracked: true,
     });
-    const diff = freshData(await cache.retry(query), since, write.signal);
+    const placement = { origin: 'prefetch' as const, cohort: write.cohort };
+    const diff = freshData(await cache.retry(query, placement), since, write.signal);
     state.head = diff.headSha;
     if (
       diff.mergeBaseSha &&

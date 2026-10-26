@@ -73,17 +73,21 @@ function readQuoted(text: string, start: number): { value: string; end: number }
   return undefined;
 }
 
-function diffPath(raw: string): string | undefined {
-  const value = raw.startsWith('"') ? readQuoted(raw, 0)?.value : raw;
-  return value?.replace(/^[ab]\//, '');
+function unquotePath(raw: string): string | undefined {
+  return raw.startsWith('"') ? readQuoted(raw, 0)?.value : raw;
+}
+
+/** Only `diff --git`, `---` and `+++` paths carry the a/ and b/ prefixes. */
+function prefixedPath(raw: string): string | undefined {
+  return unquotePath(raw)?.replace(/^[ab]\//, '');
 }
 
 /** `diff --git a/P b/P` names one path twice when no other header names it. */
 function headerPaths(rest: string): [string, string] | undefined {
   if (rest.startsWith('"')) {
     const first = readQuoted(rest, 0);
-    const second = first && diffPath(rest.slice(first.end + 1));
-    return first && second !== undefined ? [diffPath(first.value)!, second] : undefined;
+    const second = first && prefixedPath(rest.slice(first.end + 1));
+    return first && second !== undefined ? [first.value.replace(/^[ab]\//, ''), second] : undefined;
   }
   const half = (rest.length - 1) / 2;
   const [a, b] = [rest.slice(0, half), rest.slice(half + 1)];
@@ -143,8 +147,8 @@ export function parseUnifiedDiff(text: string): UnifiedDiffFile[] {
       else if (name === 'deleted file mode') [deleted, file.oldMode] = [true, value];
       else if (name === 'old mode') file.oldMode = value;
       else if (name === 'new mode') file.newMode = value;
-      else if (name === 'rename from' || name === 'copy from') named.from = diffPath(value);
-      else if (name === 'rename to' || name === 'copy to') named.to = diffPath(value);
+      else if (name === 'rename from' || name === 'copy from') named.from = unquotePath(value);
+      else if (name === 'rename to' || name === 'copy to') named.to = unquotePath(value);
       else if (name === 'index') {
         const ids = /^([0-9a-f]+)\.\.([0-9a-f]+)(?: ([0-7]{6}))?$/.exec(value);
         if (ids) {
@@ -153,7 +157,8 @@ export function parseUnifiedDiff(text: string): UnifiedDiffFile[] {
         }
       } else if (line.startsWith('--- ') || line.startsWith('+++ ')) {
         const path = line.slice(4).replace(/\t$/, '');
-        named[line[0] === '-' ? 'minus' : 'plus'] = path === '/dev/null' ? null : diffPath(path);
+        named[line[0] === '-' ? 'minus' : 'plus'] =
+          path === '/dev/null' ? null : prefixedPath(path);
       } else if (line === 'GIT binary patch' || /^Binary files .* differ$/.test(line))
         file.binary = true;
     }

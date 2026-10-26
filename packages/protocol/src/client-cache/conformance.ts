@@ -201,6 +201,34 @@ export async function runResourceStoreConformance(factory: StoreFactory): Promis
         (await store.getQuery<ConformanceData>('atomic'))?.data.value === 'after',
         'read must not expose stored mutable state',
       );
+      await store.putQuery({
+        id: 'placed',
+        data: { value: 'prefetched diff' },
+        observedAt: 3,
+        bytes: 27,
+        origin: 'prefetch',
+        cohort: 'gate',
+      });
+      const listed = await store.listQueries();
+      const placed = listed.find((row) => row.id === 'placed');
+      const reread = await store.getQuery('placed');
+      verify(
+        (listed.find((row) => row.id === 'atomic')?.origin ?? 'opened') === 'opened' &&
+          placed?.origin === 'prefetch' &&
+          placed.cohort === 'gate' &&
+          reread?.origin === 'prefetch' &&
+          reread.cohort === 'gate',
+        'query placement must persist, and a row without one is opened',
+      );
+      if (store.touchQuery) {
+        await store.touchQuery('placed', 4, 'opened');
+        const opened = await store.getQuery('placed');
+        verify(
+          opened?.origin === 'opened' && opened.accessedAt === 4,
+          'touching a query as opened must upgrade its placement',
+        );
+      }
+      await store.deleteQuery('placed');
       await store.deleteAll();
       await store.putQuery(original);
       verify(
@@ -271,6 +299,16 @@ export async function runResourceStoreConformance(factory: StoreFactory): Promis
       verify(
         touched?.accessedAt === 5 && touched.origin === 'opened' && !('data' in touched),
         'touch must change recency and origin, and listings must omit bytes',
+      );
+      await store.retainContent(key, 6, { origin: 'prefetch', cohort: 'gate' });
+      await store.retainContent({ kind: 'blob', id: 'not-held' }, 6, { cohort: 'gate' });
+      const retained = await store.getContent(key);
+      verify(
+        retained?.origin === 'opened' &&
+          retained.cohort === 'gate' &&
+          retained.accessedAt === 6 &&
+          !(await store.hasContent({ kind: 'blob', id: 'not-held' })),
+        'retaining must apply only the stronger origin and cohort to held content',
       );
       await store.deleteContent(empty);
       verify(
@@ -352,6 +390,13 @@ export async function runResourceStoreConformance(factory: StoreFactory): Promis
         sameBytes(await cache.openContentByAlias('frozen-diff:run:base:head'), data) &&
           (await store.getContent(key))?.origin === 'opened',
         'opening by alias must mark content opened',
+      );
+      verify(
+        (await cache.retainContent(key, { origin: 'prefetch', cohort: 'gate' })) &&
+          (await store.getContent(key))?.cohort === 'gate' &&
+          (await store.getContent(key))?.origin === 'opened' &&
+          !(await cache.retainContent({ kind: 'blob', id: gitBlobHash(new Uint8Array()) }, {})),
+        'retaining must promote held content and report content that is not held',
       );
       const lateData = new TextEncoder().encode('late file\n');
       const late = cache.storeContent({

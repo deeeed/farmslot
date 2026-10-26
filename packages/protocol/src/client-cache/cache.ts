@@ -19,6 +19,7 @@ import {
   type ContentKey,
   createMemoryResourceStore,
   normalizeResourceStoreScope,
+  type ResourceContentPlacement,
   type ResourceStore,
   type ResourceStoreMetadata,
   resourceStoreScopeId,
@@ -32,6 +33,7 @@ import type {
   ResourceCacheConnection,
   ResourceConnectionReason,
   ResourceContentInput,
+  ResourceContentRetain,
   ResourceContentWriteToken,
   ResourceQueryError,
   ResourceQueryState,
@@ -47,6 +49,8 @@ interface PendingRead {
   serial: number;
   controller: AbortController;
   promise: Promise<void>;
+  /** Set only while every caller sharing this read is a prefetch. */
+  prefetch?: ResourceContentPlacement;
 }
 interface QueryEntry {
   query: ResourceQuery;
@@ -566,7 +570,12 @@ export function createGatewayResourceCache(
     });
   }
 
-  async function fetchEntry(entry: QueryEntry, observedOnly = false): Promise<void> {
+  async function fetchEntry(
+    entry: QueryEntry,
+    observedOnly = false,
+    placement?: ResourceContentPlacement,
+  ): Promise<void> {
+    const prefetch = placement?.origin === 'prefetch' ? placement : undefined;
     await barrier;
     await entry.hydration;
     if (
@@ -608,7 +617,15 @@ export function createGatewayResourceCache(
       notify(entry);
       return;
     }
-    if (entry.pending?.version === version) return entry.pending.promise;
+    if (entry.pending?.version === version) {
+      // Any caller that is not a prefetch makes the shared read an opened one.
+      const shared = entry.pending.prefetch;
+      entry.pending.prefetch =
+        shared && prefetch
+          ? { origin: 'prefetch', cohort: shared.cohort === 'gate' ? 'gate' : prefetch.cohort }
+          : undefined;
+      return entry.pending.promise;
+    }
     const interval = entry.query.dependencies.reduce(
       (maximum, key) => Math.max(maximum, RESOURCE_PUBLISH_INTERVAL_MS[key.family] ?? 0),
       0,
@@ -629,6 +646,7 @@ export function createGatewayResourceCache(
       serial: ++entry.serial,
       controller: new AbortController(),
       promise: Promise.resolve(),
+      prefetch,
     };
     entry.pending = pending;
     entry.dirty = false;
@@ -760,23 +778,36 @@ export function createGatewayResourceCache(
           writingIncarnation === storeVersion &&
           writingStore === store &&
           !writingStore.deleted;
+        // A snapshot someone observes is opened, whoever started the read.
+        const prefetched = entry.listeners.size ? undefined : pending.prefetch;
         if (persistResult && current()) {
           await updateStore(writingStore, current, async () => {
+            // Prefetch never removes a row it could not replace, including one the user opened.
             if (!saved) {
-              await writingStore.deleteQuery(nativeHistoryStorageId(entry.query));
+              if (!prefetched) await writingStore.deleteQuery(nativeHistoryStorageId(entry.query));
               return;
             }
+            let row = saved;
             if (retention?.cohort === 'workspace') {
+              const stored = await writingStore.listQueries();
+              const previous = stored.find((value) => value.id === saved.id);
+              // Refreshing an opened snapshot keeps it opened; gate outranks run.
+              if (prefetched && (!previous || previous.origin === 'prefetch'))
+                row = {
+                  ...saved,
+                  origin: 'prefetch',
+                  cohort: previous?.cohort === 'gate' ? 'gate' : (prefetched.cohort ?? 'run'),
+                };
               const victims = workspaceRetentionEvictions(
                 entry.query,
-                saved,
-                await writingStore.listQueries(),
+                row,
+                stored,
                 options.contentBudgetBytes ?? defaultContentBudgetBytes,
                 await writingStore.listContent(),
               );
               if (!current()) return;
               if (!victims) {
-                await writingStore.deleteQuery(saved.id);
+                if (!prefetched) await writingStore.deleteQuery(saved.id);
                 return;
               }
               for (const id of victims.queries) {
@@ -812,7 +843,7 @@ export function createGatewayResourceCache(
                 total -= oldest.bytes;
               }
             }
-            if (current()) await writingStore.putQuery(saved);
+            if (current()) await writingStore.putQuery(row);
           });
         }
       } catch (error) {
@@ -911,18 +942,14 @@ export function createGatewayResourceCache(
     return saved?.data;
   }
 
-  /** Writes accept only bytes from the current connection's owner, verified and within budget. */
-  async function storeContent(input: ResourceContentInput): Promise<boolean> {
-    const key = contentKey(input.key);
-    const { data, origin, cohort, token } = input;
+  /** Content writes accept only the current connection's owner, from the token's fetch onward. */
+  async function writeContent(
+    token: ResourceContentWriteToken | undefined,
+    write: (target: ResourceStore, current: () => boolean) => Promise<boolean>,
+  ): Promise<boolean> {
     if (disposed || !connection.connected) return false;
     const ownerVersion = token?.ownerVersion ?? hydrationOwnerVersion;
     const connectionId = token?.connectionId ?? connection.id;
-    if (
-      !resourceContentWithinLimits(key, data) ||
-      !verifyResourceContent(key, data, input.untrackedFiles)
-    )
-      return false;
     await barrier;
     const writingStore = store;
     const incarnation = token?.storeVersion ?? storeVersion;
@@ -934,46 +961,48 @@ export function createGatewayResourceCache(
       incarnation === storeVersion &&
       writingStore === store &&
       !writingStore.deleted;
-    let stored = false;
+    let written = false;
     await updateStore(writingStore, current, async () => {
+      written = (await write(writingStore, current)) && current();
+    });
+    return written;
+  }
+
+  /** Stores verified bytes within the caps and the shared budget. */
+  function storeContent(input: ResourceContentInput): Promise<boolean> {
+    const key = contentKey(input.key);
+    const { data, origin, cohort } = input;
+    if (
+      !resourceContentWithinLimits(key, data) ||
+      !verifyResourceContent(key, data, input.untrackedFiles)
+    )
+      return Promise.resolve(false);
+    return writeContent(input.token, async (target, current) => {
       const accessedAt = Date.now();
-      const content = await writingStore.listContent();
-      const held = content.find((row) => row.kind === key.kind && row.id === key.id);
-      if (held) {
+      const content = await target.listContent();
+      if (content.some((row) => row.kind === key.kind && row.id === key.id)) {
         // The same identity holds the same bytes; keep the stronger origin and cohort.
-        const kept = {
-          origin: held.origin === 'opened' ? held.origin : origin,
-          cohort: held.cohort === 'gate' ? held.cohort : cohort,
-        };
-        if (!current()) return;
-        if (kept.cohort !== held.cohort)
-          await writingStore.putContent({
-            ...key,
-            data,
-            bytes: data.byteLength,
-            accessedAt,
-            ...kept,
-          });
-        else await writingStore.touchContent(key, accessedAt, kept.origin);
+        if (!current()) return false;
+        await target.retainContent(key, accessedAt, { origin, cohort });
       } else {
         const victims = resourceBudgetEvictions(
           { bytes: data.byteLength, origin, cohort },
           content,
-          (await writingStore.listQueries()).filter(
+          (await target.listQueries()).filter(
             (row) => workspaceRetentionMembership(row.id) !== undefined,
           ),
           options.contentBudgetBytes ?? defaultContentBudgetBytes,
         );
-        if (!victims || !current()) return;
+        if (!victims || !current()) return false;
         for (const id of victims.queries) {
-          await writingStore.deleteQuery(id);
-          if (!current()) return;
+          await target.deleteQuery(id);
+          if (!current()) return false;
         }
         for (const victim of victims.content) {
-          await writingStore.deleteContent(victim);
-          if (!current()) return;
+          await target.deleteContent(victim);
+          if (!current()) return false;
         }
-        await writingStore.putContent({
+        await target.putContent({
           ...key,
           data,
           bytes: data.byteLength,
@@ -982,11 +1011,22 @@ export function createGatewayResourceCache(
           accessedAt,
         });
       }
-      if (input.alias !== undefined && current())
-        await writingStore.putContentAlias(input.alias, key);
-      stored = current();
+      if (input.alias !== undefined && current()) await target.putContentAlias(input.alias, key);
+      return true;
     });
-    return stored;
+  }
+
+  /** Promotes held content without its bytes, behind the same fences as a store. */
+  function retainContent(key: ContentKey, retain: ResourceContentRetain): Promise<boolean> {
+    const held = contentKey(key);
+    return writeContent(retain.token, async (target, current) => {
+      if (!(await target.hasContent(held)) || !current()) return false;
+      await target.retainContent(held, Date.now(), {
+        origin: retain.origin,
+        cohort: retain.cohort,
+      });
+      return true;
+    });
   }
 
   return {
@@ -1024,7 +1064,7 @@ export function createGatewayResourceCache(
             !accessedStore.deleted;
           await updateStore(accessedStore, current, async () => {
             if (current())
-              await accessedStore.touchQuery?.(nativeHistoryStorageId(query), accessedAt);
+              await accessedStore.touchQuery?.(nativeHistoryStorageId(query), accessedAt, 'opened');
           });
         };
         void touch().catch((error: unknown) => {
@@ -1051,10 +1091,10 @@ export function createGatewayResourceCache(
       if (disposed) throw new Error('Resource cache is disposed');
       return entryFor(query).state as ResourceQueryState<T>;
     },
-    async retry<T>(query: ResourceQuery<T>) {
+    async retry<T>(query: ResourceQuery<T>, placement?: ResourceContentPlacement) {
       if (disposed) throw new Error('Resource cache is disposed');
       const entry = entryFor(query);
-      await fetchEntry(entry);
+      await fetchEntry(entry, false, placement);
       return entry.state as ResourceQueryState<T>;
     },
     async hasContent(key) {
@@ -1067,6 +1107,7 @@ export function createGatewayResourceCache(
     openContentByAlias: (alias) =>
       readContentBytes((target) => target.getContentByAlias(alias), true),
     storeContent,
+    retainContent,
     contentWriteToken: (): ResourceContentWriteToken => ({
       connectionId: connection.id,
       ownerVersion: hydrationOwnerVersion,

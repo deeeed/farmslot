@@ -26,7 +26,16 @@ export interface ResourceStoreIdentity {
   metadata: ResourceStoreMetadata;
 }
 
-export interface StoredResourceQueryInfo {
+export type ResourceContentOrigin = 'opened' | 'prefetch';
+/** Pending-gate content outranks active-run prefetch in eviction. */
+export type ResourceContentCohort = 'gate' | 'run';
+/** Who placed a budgeted row. A row without an origin was opened. */
+export interface ResourceContentPlacement {
+  origin?: ResourceContentOrigin;
+  cohort?: ResourceContentCohort;
+}
+
+export interface StoredResourceQueryInfo extends ResourceContentPlacement {
   id: string;
   observedAt: number;
   accessedAt?: number;
@@ -47,9 +56,6 @@ export interface ContentKey {
   kind: 'diff' | 'blob' | 'artifact';
   id: string;
 }
-export type ResourceContentOrigin = 'opened' | 'prefetch';
-/** Pending-gate content outranks active-run prefetch in eviction. */
-export type ResourceContentCohort = 'gate' | 'run';
 
 export interface StoredResourceContentInfo extends ContentKey {
   bytes: number;
@@ -73,7 +79,7 @@ export interface ResourceStore {
   putQuery<T>(entry: StoredResourceQuery<T>): Promise<void>;
   deleteQuery(id: string): Promise<void>;
   /** Access recency never changes observation age. Optional for older custom stores. */
-  touchQuery?(id: string, accessedAt: number): Promise<void>;
+  touchQuery?(id: string, accessedAt: number, origin?: ResourceContentOrigin): Promise<void>;
   listQueries(): Promise<StoredResourceQueryInfo[]>;
   /** Presence only, without loading the bytes. */
   hasContent(key: ContentKey): Promise<boolean>;
@@ -84,6 +90,12 @@ export interface ResourceStore {
   getContentByAlias(alias: string): Promise<StoredResourceContent | undefined>;
   /** Recency only, plus an optional origin change; the bytes are never rewritten. */
   touchContent(key: ContentKey, accessedAt: number, origin?: ResourceContentOrigin): Promise<void>;
+  /** Refreshes recency and applies only a stronger origin ('opened') or cohort ('gate'). */
+  retainContent(
+    key: ContentKey,
+    accessedAt: number,
+    placement: ResourceContentPlacement,
+  ): Promise<void>;
   deleteContent(key: ContentKey): Promise<void>;
   listContent(): Promise<StoredResourceContentInfo[]>;
   byteTotals(): Promise<ResourceStoreByteTotals>;
@@ -170,10 +182,11 @@ export function createMemoryResourceStore(): ResourceStore {
     async putQuery(entry) {
       if (available()) entries.set(entry.id, copy(entry));
     },
-    async touchQuery(id, accessedAt) {
+    async touchQuery(id, accessedAt, origin) {
       if (available()) {
         const entry = entries.get(id);
         if (entry) entry.accessedAt = accessedAt;
+        if (entry && origin) entry.origin = origin;
       }
     },
     async deleteQuery(id) {
@@ -181,11 +194,13 @@ export function createMemoryResourceStore(): ResourceStore {
     },
     async listQueries() {
       return available()
-        ? [...entries.values()].map(({ id, observedAt, accessedAt, bytes }) => ({
+        ? [...entries.values()].map(({ id, observedAt, accessedAt, bytes, origin, cohort }) => ({
             id,
             observedAt,
             accessedAt,
             bytes,
+            origin,
+            cohort,
           }))
         : [];
     },
@@ -218,6 +233,13 @@ export function createMemoryResourceStore(): ResourceStore {
         entry.accessedAt = accessedAt;
         if (origin) entry.origin = origin;
       }
+    },
+    async retainContent(key, accessedAt, { origin, cohort }) {
+      const entry = available() ? contents.get(resourceContentId(key)) : undefined;
+      if (!entry) return;
+      entry.accessedAt = accessedAt;
+      if (origin === 'opened') entry.origin = origin;
+      if (cohort === 'gate') entry.cohort = cohort;
     },
     async deleteContent(key) {
       if (!available()) return;

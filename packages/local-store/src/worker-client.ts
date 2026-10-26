@@ -142,8 +142,9 @@ export class ResourceStoreWorkerClient {
       async putQuery(entry) {
         if (available()) await request({ operation: 'putQuery', handle, entry });
       },
-      async touchQuery(key, accessedAt) {
-        if (available()) await request({ operation: 'touchQuery', handle, key, accessedAt });
+      async touchQuery(key, accessedAt, origin) {
+        if (available())
+          await request({ operation: 'touchQuery', handle, key, accessedAt, origin });
       },
       async deleteQuery(key) {
         if (available()) await request({ operation: 'deleteQuery', handle, key });
@@ -192,6 +193,10 @@ export class ResourceStoreWorkerClient {
       async touchContent(key, accessedAt, origin) {
         if (available())
           await request({ operation: 'touchContent', handle, key, accessedAt, origin });
+      },
+      async retainContent(key, accessedAt, placement) {
+        if (available())
+          await request({ operation: 'retainContent', handle, key, accessedAt, placement });
       },
       async deleteContent(key) {
         if (available()) await request({ operation: 'deleteContent', handle, key });

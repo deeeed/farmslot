@@ -1,4 +1,8 @@
-import { type ResourceBudgetEvictions, resourceBudgetEvictions } from './content.js';
+import {
+  type ResourceBudgetEvictions,
+  resourceBudgetEvictions,
+  resourceEvictable,
+} from './content.js';
 import {
   RESOURCE_QUERY_DEFINITIONS,
   type ResourceQuery,
@@ -38,8 +42,9 @@ export function workspaceRetentionEvictions(
         (a.accessedAt || a.observedAt) - (b.accessedAt || b.observedAt) || a.id.localeCompare(b.id),
     );
   // One byte budget across content and every workspace family in this authenticated portable store.
+  // A prefetched snapshot follows Content rule 6 there and in its slot and run caps.
   const budgeted = resourceBudgetEvictions(
-    { bytes: saved.bytes, origin: 'opened' },
+    saved,
     content,
     rows.filter((row) => row.id !== saved.id),
     budget,
@@ -53,10 +58,11 @@ export function workspaceRetentionEvictions(
     let excess = members.length - retention.maxEntries;
     for (const row of members) {
       if (excess <= 0) break;
-      if (row.id === saved.id) continue;
+      if (row.id === saved.id || !resourceEvictable(saved, row)) continue;
       removed.add(row.id);
       excess--;
     }
+    if (excess > 0) return undefined;
   }
   return { queries: [...removed], content: budgeted.content };
 }

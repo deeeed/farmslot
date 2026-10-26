@@ -1,6 +1,7 @@
 import type {
   ContentKey,
   ResourceContentOrigin,
+  ResourceContentPlacement,
   ResourceStoreMetadata,
   ResourceStoreScope,
   StoredResourceContent,
@@ -29,7 +30,14 @@ export type StoreWorkerRequest =
       handle: number;
     }
   | { id: number; operation: 'getQuery' | 'deleteQuery'; handle: number; key: string }
-  | { id: number; operation: 'touchQuery'; handle: number; key: string; accessedAt: number }
+  | {
+      id: number;
+      operation: 'touchQuery';
+      handle: number;
+      key: string;
+      accessedAt: number;
+      origin?: ResourceContentOrigin;
+    }
   | { id: number; operation: 'setMetadata'; handle: number; metadata: ResourceStoreMetadata }
   | { id: number; operation: 'putQuery'; handle: number; entry: StoredResourceQuery }
   | {
@@ -48,7 +56,15 @@ export type StoreWorkerRequest =
       accessedAt: number;
       origin?: ResourceContentOrigin;
     }
-  | { id: number; operation: 'putContent'; handle: number; entry: StoredResourceContent };
+  | { id: number; operation: 'putContent'; handle: number; entry: StoredResourceContent }
+  | {
+      id: number;
+      operation: 'retainContent';
+      handle: number;
+      key: ContentKey;
+      accessedAt: number;
+      placement: ResourceContentPlacement;
+    };
 
 export type StoreWorkerResponse =
   | { id: number; ok: true; value: unknown }

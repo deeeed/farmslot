@@ -67,7 +67,7 @@ export function createStoreWorkerHandler(
             value = await store.putQuery(request.entry);
             break;
           case 'touchQuery':
-            value = await store.touchQuery?.(request.key, request.accessedAt);
+            value = await store.touchQuery?.(request.key, request.accessedAt, request.origin);
             break;
           case 'deleteQuery':
             value = await store.deleteQuery(request.key);
@@ -92,6 +92,9 @@ export function createStoreWorkerHandler(
             break;
           case 'touchContent':
             value = await store.touchContent(request.key, request.accessedAt, request.origin);
+            break;
+          case 'retainContent':
+            value = await store.retainContent(request.key, request.accessedAt, request.placement);
             break;
           case 'deleteContent':
             value = await store.deleteContent(request.key);

@@ -6,11 +6,14 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import {
+  createGatewayResourceCache,
+  resourceQuery,
   type ResourceStore,
   resourceStoreScopeId,
   runResourceStoreConformance,
 } from '@farmslot/protocol/client-cache';
 
+import { ResourceCacheConformanceTransport } from '../../protocol/src/client-cache/conformance.js';
 import { createExpoSqliteDriver } from '../src/native.js';
 import {
   createSqliteResourceStore,
@@ -170,7 +173,7 @@ test('sixth scope evicts the least recently used store including read access', a
   }
 });
 
-test('schema 3 rebuilds a schema 2 store and keeps content as exact SQLite blobs', async () => {
+test('schema 4 rebuilds an older store and keeps content as exact SQLite blobs', async () => {
   const { sqlite, adapter } = database();
   const old = await createSqliteResourceStore({
     database: adapter,
@@ -180,8 +183,8 @@ test('schema 3 rebuilds a schema 2 store and keeps content as exact SQLite blobs
   await old.putQuery({ id: 'q', data: { value: 'schema 2' }, observedAt: 1, bytes: 20 });
   const store = await createSqliteResourceStore({ database: adapter, scope: scope('blob') });
   try {
-    assert.equal(RESOURCE_STORE_SCHEMA_VERSION, 3);
-    assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 3);
+    assert.equal(RESOURCE_STORE_SCHEMA_VERSION, 4);
+    assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 4);
     assert(old.deleted);
     assert.equal(await store.getQuery('q'), undefined);
     const data = new Uint8Array(1024 * 1024 + 256).map((_, index) => index % 256);
@@ -242,5 +245,72 @@ test('deleting a scope from a connection that never opened a store removes its c
   } finally {
     second.sqlite.close();
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a prefetched slot diff keeps its placement in SQLite and cannot evict opened content', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1 });
+  const { sqlite, adapter } = database();
+  const identity = scope('placement');
+  const store = await createSqliteResourceStore({ database: adapter, scope: identity });
+  const transport = new ResourceCacheConformanceTransport(identity);
+  transport.setConnection({
+    connected: true,
+    id: 1,
+    capabilities: {
+      ...transport.connection.capabilities!,
+      resourceChanges: {
+        version: 1,
+        epoch: 'conformance-epoch',
+        versionLists: false,
+        observedReads: 1,
+        workspaceReads: 1,
+      },
+    },
+  });
+  const cache = createGatewayResourceCache({ transport, store, contentBudgetBytes: 100 });
+  const query = (slotId: string) =>
+    resourceQuery<{ value: string }>('git.diff', {
+      slotId,
+      runId: 'run',
+      base: 'main',
+      target: 'worktree',
+      includeUntracked: true,
+    });
+  const prefetch = async (slotId: string) => {
+    const reading = cache.retry(query(slotId), { origin: 'prefetch', cohort: 'run' });
+    (await transport.nextRead()).resolve({ value: 'x'.repeat(28) });
+    await reading;
+  };
+  try {
+    await prefetch('first');
+    assert.deepEqual(
+      sqlite
+        .prepare('SELECT origin, cohort FROM resource_queries')
+        .all()
+        .map(({ origin, cohort }) => ({ origin, cohort })),
+      [{ origin: 'prefetch', cohort: 'run' }],
+    );
+    t.mock.timers.tick(1);
+    const opened = new Uint8Array(60).fill(1);
+    await store.putContent({
+      kind: 'artifact',
+      id: 'opened',
+      data: opened,
+      bytes: 60,
+      origin: 'opened',
+      cohort: 'run',
+      accessedAt: Date.now(),
+    });
+    t.mock.timers.tick(1);
+    await prefetch('second');
+    assert.deepEqual(
+      (await store.listQueries()).map(({ id, origin }) => ({ id, origin })),
+      [{ id: query('second').id, origin: 'prefetch' }],
+    );
+    assert.equal(await store.hasContent({ kind: 'artifact', id: 'opened' }), true);
+  } finally {
+    await cache.dispose();
+    sqlite.close();
   }
 });

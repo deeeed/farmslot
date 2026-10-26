@@ -1,4 +1,6 @@
 import {
+  type ResourceContentCohort,
+  type ResourceContentOrigin,
   type ResourceStore,
   type ResourceStoreMetadata,
   type ResourceStoreScope,
@@ -22,7 +24,7 @@ export interface SqliteResourceStoreOptions {
   onDeleted?: (scopeId: string) => void;
 }
 
-export const RESOURCE_STORE_SCHEMA_VERSION = 3;
+export const RESOURCE_STORE_SCHEMA_VERSION = 4;
 export const RESOURCE_STORE_LIMIT = 5;
 
 export interface ResourceSqliteDiagnostics {
@@ -38,8 +40,16 @@ interface StoreRow {
 interface MetadataRow {
   metadata: string | null;
 }
-interface QueryRow extends StoredResourceQueryInfo {
+interface QueryInfoRow extends Omit<StoredResourceQueryInfo, 'origin' | 'cohort'> {
+  origin: ResourceContentOrigin | null;
+  cohort: ResourceContentCohort | null;
+}
+interface QueryRow extends QueryInfoRow {
   data: string;
+}
+/** A NULL origin was opened. */
+function queryInfo({ origin, cohort, ...info }: QueryInfoRow): StoredResourceQueryInfo {
+  return { ...info, ...(origin ? { origin } : {}), ...(cohort ? { cohort } : {}) };
 }
 interface ContentRow extends StoredResourceContentInfo {
   // A native driver may bind an empty array as NULL.
@@ -122,6 +132,8 @@ class DatabaseOwner {
         observed_at INTEGER NOT NULL,
         bytes INTEGER NOT NULL,
         accessed_at INTEGER NOT NULL DEFAULT 0,
+        origin TEXT,
+        cohort TEXT,
         PRIMARY KEY (store_id, id)
       )`);
       await db.run(`CREATE TABLE IF NOT EXISTS resource_content (
@@ -340,27 +352,28 @@ export async function createSqliteResourceStore(
       return read(async () => {
         const saved = (
           await db.all<QueryRow>(
-            `SELECT id, data, observed_at AS observedAt, accessed_at AS accessedAt, bytes
-          FROM resource_queries WHERE store_id = ? AND id = ?`,
+            `SELECT id, data, observed_at AS observedAt, accessed_at AS accessedAt, bytes, origin,
+            cohort FROM resource_queries WHERE store_id = ? AND id = ?`,
             [row.id, id],
           )
         )[0];
         if (!saved) return undefined;
+        const { data, ...info } = saved;
         return {
-          id: saved.id,
-          data: JSON.parse(saved.data) as T,
-          observedAt: saved.observedAt,
-          bytes: saved.bytes,
+          ...queryInfo(info),
+          data: JSON.parse(data) as T,
           accessedAt: saved.accessedAt || saved.observedAt,
         };
       }, undefined);
     },
     putQuery<T>(entry: StoredResourceQuery<T>) {
       return write(
-        `INSERT INTO resource_queries (store_id, id, data, observed_at, bytes, accessed_at)
-        SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM resource_stores WHERE id = ?)
+        `INSERT INTO resource_queries
+          (store_id, id, data, observed_at, bytes, accessed_at, origin, cohort)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM resource_stores WHERE id = ?)
         ON CONFLICT (store_id, id) DO UPDATE SET data = excluded.data,
-          observed_at = excluded.observed_at, bytes = excluded.bytes, accessed_at = excluded.accessed_at`,
+          observed_at = excluded.observed_at, bytes = excluded.bytes, accessed_at = excluded.accessed_at,
+          origin = excluded.origin, cohort = excluded.cohort`,
         [
           row.id,
           entry.id,
@@ -368,28 +381,32 @@ export async function createSqliteResourceStore(
           entry.observedAt,
           entry.bytes,
           entry.accessedAt ?? entry.observedAt,
+          entry.origin ?? null,
+          entry.cohort ?? null,
           row.id,
         ],
       );
     },
-    touchQuery(id, accessedAt) {
-      return write('UPDATE resource_queries SET accessed_at = ? WHERE store_id = ? AND id = ?', [
-        accessedAt,
-        row.id,
-        id,
-      ]);
+    touchQuery(id, accessedAt, origin) {
+      return write(
+        `UPDATE resource_queries SET accessed_at = ?, origin = COALESCE(?, origin)
+        WHERE store_id = ? AND id = ?`,
+        [accessedAt, origin ?? null, row.id, id],
+      );
     },
     deleteQuery(id) {
       return write('DELETE FROM resource_queries WHERE store_id = ? AND id = ?', [row.id, id]);
     },
     listQueries() {
       return read(
-        () =>
-          db.all<StoredResourceQueryInfo>(
-            `SELECT id, observed_at AS observedAt, accessed_at AS accessedAt, bytes
-        FROM resource_queries WHERE store_id = ?`,
-            [row.id],
-          ),
+        async () =>
+          (
+            await db.all<QueryInfoRow>(
+              `SELECT id, observed_at AS observedAt, accessed_at AS accessedAt, bytes, origin, cohort
+          FROM resource_queries WHERE store_id = ?`,
+              [row.id],
+            )
+          ).map(queryInfo),
         [],
       );
     },
@@ -453,6 +470,15 @@ export async function createSqliteResourceStore(
         `UPDATE resource_content SET accessed_at = ?, origin = COALESCE(?, origin)
         WHERE store_id = ? AND kind = ? AND id = ?`,
         [accessedAt, origin ?? null, row.id, key.kind, key.id],
+      );
+    },
+    retainContent(key, accessedAt, { origin, cohort }) {
+      return write(
+        `UPDATE resource_content SET accessed_at = ?,
+          origin = CASE WHEN ? = 'opened' THEN 'opened' ELSE origin END,
+          cohort = CASE WHEN ? = 'gate' THEN 'gate' ELSE cohort END
+        WHERE store_id = ? AND kind = ? AND id = ?`,
+        [accessedAt, origin ?? null, cohort ?? null, row.id, key.kind, key.id],
       );
     },
     deleteContent(key) {

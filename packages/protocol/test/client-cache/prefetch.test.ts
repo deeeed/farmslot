@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 
+import { createGatewayResourceCache } from '../../src/client-cache/cache.js';
 import { gitBlobHash, verifyResourceContent } from '../../src/client-cache/content.js';
 import type { ResourceKey } from '../../src/client-cache/keys.js';
 import {
@@ -10,10 +11,16 @@ import {
   createContentPrefetcher,
 } from '../../src/client-cache/prefetch.js';
 import { type ResourceQuery, resourceQuery } from '../../src/client-cache/registry.js';
-import type { ContentKey } from '../../src/client-cache/store.js';
+import {
+  type ContentKey,
+  createMemoryResourceStore,
+  type ResourceContentPlacement,
+} from '../../src/client-cache/store.js';
 import type {
   ResourceCacheConnection,
+  ResourceCacheTransport,
   ResourceContentInput,
+  ResourceContentRetain,
   ResourceQueryState,
 } from '../../src/client-cache/types.js';
 import type { Run } from '../../src/contracts/runs.js';
@@ -86,20 +93,22 @@ const UNTRACKED = [
 interface Call {
   method: string;
   params: Record<string, unknown>;
+  placement?: ResourceContentPlacement;
 }
 
 function createWorld() {
   return {
     runs: new Map<string, Run>(),
     /** Git objects: ref, then path, then text. */
-    objects: new Map<string, Map<string, string>>(),
+    objects: new Map<string, Map<string, string | Uint8Array>>(),
     worktree: new Map<string, GitDiffResult>(),
     frozen: new Map<string, GitDiffResult>(),
     heads: new Map<string, string>(),
     artifacts: new Map<string, Uint8Array>(),
     content: new Map<string, Uint8Array>(),
-    /** Content whose bytes were loaded, as opposed to checked for presence. */
+    /** Content whose bytes were loaded, as opposed to retained by identity. */
     reads: [] as string[],
+    retains: [] as string[],
     stores: [] as ResourceContentInput[],
     calls: [] as Call[],
     pageSize: 100,
@@ -166,6 +175,48 @@ function gateRun(
   return diffHash;
 }
 
+/** The gateway's direct reads and artifact endpoint, answered from the world. */
+function gateway(world: World) {
+  async function enter(call: Call) {
+    world.calls.push(call);
+    await world.block(call);
+    const code = world.fail(call);
+    if (code) throw Object.assign(new Error(code), { code });
+  }
+  async function request<T>(method: string, params: unknown): Promise<T> {
+    const value = params as Record<string, unknown>;
+    await enter({ method, params: value });
+    if (method === Methods.GIT_LOG)
+      return { entries: [{ hash: world.heads.get(String(value.slotId)) }] } as T;
+    if (method === Methods.GIT_DIFF) return world.frozen.get(String(value.runId)) as T;
+    const objects = world.objects.get(String(value.ref)) ?? new Map<string, string>();
+    const paths = value.paths as string[];
+    const start = value.after === undefined ? 0 : paths.indexOf(String(value.after)) + 1;
+    const page = paths.slice(start, start + world.pageSize);
+    const have = (value.have ?? []) as string[];
+    return {
+      entries: page.map((path) => {
+        const content = objects.get(path);
+        if (content === undefined) return { path, status: 'missing' };
+        const raw = typeof content === 'string' ? bytes(content) : content;
+        const object = { path, id: gitBlobHash(raw), size: raw.byteLength };
+        return have.includes(object.id)
+          ? { ...object, status: 'held' }
+          : { ...object, status: 'ok', content: Buffer.from(raw).toString('base64') };
+      }),
+      cursor: page[page.length - 1],
+      hasMore: start + page.length < paths.length,
+    } as T;
+  }
+  async function readArtifact(artifact: ContentPrefetchArtifact): Promise<Uint8Array> {
+    await enter({ method: 'artifact', params: { ...artifact } });
+    const data = world.artifacts.get(artifact.path);
+    if (!data) throw new Error('missing artifact');
+    return data;
+  }
+  return { enter, request, readArtifact };
+}
+
 function harness(
   world = createWorld(),
   capabilities: ResourceCacheConnection['capabilities'] = BATCHED,
@@ -180,17 +231,14 @@ function harness(
   const connectionListeners = new Set<(next: ResourceCacheConnection) => void>();
   const changeListeners = new Set<(payload: ResourceChangedPayload) => void>();
   const contentId = (key: ContentKey) => `${key.kind}:${key.id}`;
-  async function enter(call: Call) {
-    world.calls.push(call);
-    await world.block(call);
-    const code = world.fail(call);
-    if (code) throw Object.assign(new Error(code), { code });
-  }
   const cache = {
-    async retry<T>(query: ResourceQuery<T>): Promise<ResourceQueryState<T>> {
+    async retry<T>(
+      query: ResourceQuery<T>,
+      placement?: ResourceContentPlacement,
+    ): Promise<ResourceQueryState<T>> {
       const params = query.params as Record<string, unknown>;
       try {
-        await enter({ method: query.method, params });
+        await enter({ method: query.method, params, ...(placement ? { placement } : {}) });
       } catch (error) {
         return { status: 'error', error: { code: (error as { code: string }).code, message: '' } };
       }
@@ -200,8 +248,10 @@ function harness(
           : world.worktree.get(String(params.slotId));
       return { status: 'ready', data: data as T, observedAt: Date.now() };
     },
-    async hasContent(key: ContentKey) {
-      return world.content.has(contentId(key));
+    async retainContent(key: ContentKey, retain: ResourceContentRetain) {
+      if (!world.content.has(contentId(key))) return false;
+      world.retains.push(`${contentId(key)}:${retain.cohort}`);
+      return true;
     },
     async readContent(key: ContentKey) {
       world.reads.push(contentId(key));
@@ -220,41 +270,7 @@ function harness(
       return true;
     },
   };
-  async function request<T>(method: string, params: unknown): Promise<T> {
-    const value = params as Record<string, unknown>;
-    await enter({ method, params: value });
-    if (method === Methods.GIT_LOG)
-      return { entries: [{ hash: world.heads.get(String(value.slotId)) }] } as T;
-    if (method === Methods.GIT_DIFF) return world.frozen.get(String(value.runId)) as T;
-    const objects = world.objects.get(String(value.ref)) ?? new Map<string, string>();
-    if (!Array.isArray(value.paths)) {
-      const content = objects.get(String(value.path));
-      if (content === undefined) throw new Error('missing');
-      return { content, id: blob(content) } as T;
-    }
-    const paths = value.paths as string[];
-    const start = value.after === undefined ? 0 : paths.indexOf(String(value.after)) + 1;
-    const page = paths.slice(start, start + world.pageSize);
-    const have = (value.have ?? []) as string[];
-    return {
-      entries: page.map((path) => {
-        const content = objects.get(path);
-        if (content === undefined) return { path, status: 'missing' };
-        const object = { path, id: blob(content), size: bytes(content).byteLength };
-        return have.includes(object.id)
-          ? { ...object, status: 'held' }
-          : { ...object, status: 'ok', content: Buffer.from(content).toString('base64') };
-      }),
-      cursor: page[page.length - 1],
-      hasMore: start + page.length < paths.length,
-    } as T;
-  }
-  async function readArtifact(artifact: ContentPrefetchArtifact): Promise<Uint8Array> {
-    await enter({ method: 'artifact', params: { ...artifact } });
-    const data = world.artifacts.get(artifact.path);
-    if (!data) throw new Error('missing artifact');
-    return data;
-  }
+  const { enter, request, readArtifact } = gateway(world);
   const prefetcher = createContentPrefetcher({
     transport: {
       getConnection: () => connection,
@@ -447,6 +463,7 @@ test('an active slot run keeps its worktree diff as a query and prefetches only 
         target: 'worktree',
         includeUntracked: true,
       }).params,
+      placement: { origin: 'prefetch', cohort: 'run' },
     },
     { method: 'git.show', params: { slotId: 'slot-s', ref: BASE, paths: ['src/a.ts'] } },
   ]);
@@ -570,7 +587,7 @@ test('content held by identity is never transferred again', async () => {
   first.prefetcher.setTargets([target('g1', true)]);
   await flush();
   first.prefetcher.dispose();
-  const world = { ...first.world, calls: [], reads: [], stores: [] };
+  const world = { ...first.world, calls: [], reads: [], retains: [], stores: [] };
   const { prefetcher } = harness(world);
   prefetcher.setTargets([target('g1', true)]);
   await flush();
@@ -587,8 +604,18 @@ test('content held by identity is never transferred again', async () => {
     },
   ]);
   assert.deepEqual(world.stores, []);
-  // Presence checks load no bytes; only the held diff is read, to list its files.
+  // Retaining loads no bytes; only the held diff is read, to list its files.
   assert.deepEqual(world.reads, [`diff:${diffHash}`]);
+  assert.deepEqual(
+    [...world.retains].sort(),
+    [
+      `diff:${diffHash}`,
+      ...[A_OLD, GONE, A_NEW, ADDED, ''].map((text) => `blob:${blob(text)}`),
+      `artifact:${sha256(PNG)}`,
+    ]
+      .map((id) => `${id}:gate`)
+      .sort(),
+  );
 });
 
 test('an active run rereads its diff only when a coalesced git.log reports a new head', async (t) => {
@@ -653,17 +680,50 @@ test('a failed patch or check reads the file by path once and keeps only a match
   await flush();
   assert.deepEqual(
     calls('git.show')
-      .filter((call) => !call.params.paths)
+      .filter((call) => call.params.ref === HEAD)
       .map((call) => call.params),
     [
-      { slotId: 'slot-g1', ref: HEAD, path: 'src/a.ts' },
-      { slotId: 'slot-g1', ref: HEAD, path: 'src/b.ts' },
+      { slotId: 'slot-g1', ref: HEAD, paths: ['src/a.ts'] },
+      { slotId: 'slot-g1', ref: HEAD, paths: ['src/b.ts'] },
     ],
   );
   const ids = world.stores.map(({ key }) => key.id);
   assert.ok(ids.includes(blob(A_NEW)));
   for (const rejected of [bNew, 'tampered\n', 'claimed\n'])
     assert.ok(!ids.includes(blob(rejected)));
+});
+
+test('a new side that is not UTF-8 verifies through the raw bytes of the by-path read', async () => {
+  const { world, prefetcher, calls } = harness();
+  // ISO-8859-1 text: the diff and both sides carry the byte 0xE9, which is not UTF-8.
+  const latin1 = (text: string) => Uint8Array.from(text, (char) => char.charCodeAt(0));
+  const before = latin1('caf\xe9\n');
+  const after = latin1('caf\xe9s\n');
+  const diff = [
+    'diff --git a/src/l.txt b/src/l.txt',
+    `index ${gitBlobHash(before)}..${gitBlobHash(after)} 100644`,
+    '--- a/src/l.txt',
+    '+++ b/src/l.txt',
+    '@@ -1 +1 @@',
+    '-caf\xe9',
+    '+caf\xe9s',
+    '',
+  ].join('\n');
+  world.objects.set(BASE, new Map([['src/l.txt', before]]));
+  world.objects.set(HEAD, new Map([['src/l.txt', after]]));
+  gateRun(world, 'g1', 'p1', new TextDecoder().decode(latin1(diff)), []);
+  world.artifacts.set('artifacts/p1.diff', latin1(diff));
+  prefetcher.setTargets([target('g1', true)]);
+  await flush();
+  assert.deepEqual(
+    calls('git.show').map((call) => call.params),
+    [
+      { slotId: 'slot-g1', ref: BASE, paths: ['src/l.txt'] },
+      { slotId: 'slot-g1', ref: HEAD, paths: ['src/l.txt'] },
+    ],
+  );
+  const stored = world.stores.find(({ key }) => key.id === gitBlobHash(after));
+  assert.deepEqual(stored?.data, after);
 });
 
 test('without capabilities.batchedContent nothing is read until the gateway offers it', async () => {
@@ -737,4 +797,159 @@ test('observed git.diff accepts includeUntracked only for a worktree diff, false
     () => resourceQuery(Methods.GIT_DIFF, { ...worktree, includeUntracked: 'yes' }),
     /boolean/,
   );
+});
+
+/** The prefetcher over the real cache and memory store, so budgets and eviction are the cache's. */
+function realCache(world: World, contentBudgetBytes: number) {
+  const connection: ResourceCacheConnection = {
+    id: 1,
+    connected: true,
+    authMode: 'token',
+    scope: { gatewayUrl: 'ws://prefetch.invalid/', principalId: 'owner', principalGeneration: 0 },
+    authority: { roles: [{ role: 'admin', scope: { kind: 'global' } }], workspaceAccess: 'farm' },
+    capabilities: {
+      ...BATCHED,
+      resourceChanges: {
+        version: 1,
+        epoch: 'epoch',
+        versionLists: false,
+        observedReads: 1,
+        workspaceReads: 1,
+      },
+    },
+  };
+  const transport: ResourceCacheTransport = {
+    getConnection: () => connection,
+    onConnectionChange: () => () => {},
+    onResourceChanged: () => () => {},
+    async request<T>(method: string, params: unknown) {
+      const value = params as Record<string, unknown>;
+      world.calls.push({ method, params: value });
+      const data =
+        method === Methods.RUN_GET
+          ? { run: world.runs.get(String(value.runId)) }
+          : world.worktree.get(String(value.slotId));
+      return { data: data as T };
+    },
+    resynchronize: () => {},
+  };
+  const store = createMemoryResourceStore();
+  const cache = createGatewayResourceCache({ transport, store, contentBudgetBytes });
+  const { request, readArtifact } = gateway(world);
+  const prefetcher = createContentPrefetcher({ transport, cache, request, readArtifact });
+  /** Rows inside the content budget: content and workspace snapshots, which carry an origin. */
+  const rows = async () =>
+    [...(await store.listContent()), ...(await store.listQueries())].filter((row) => row.origin);
+  return { cache, store, prefetcher, rows };
+}
+
+function worktreeRun(world: World, runId: string, slotId: string, diff: string) {
+  world.runs.set(runId, { id: runId, slotId, decisions: [] } as unknown as Run);
+  world.worktree.set(slotId, { diff, mergeBaseSha: BASE, headSha: HEAD });
+}
+
+test('real cache: a slot diff snapshot is prefetch and never evicts opened content', async () => {
+  const world = createWorld();
+  world.objects.set(BASE, new Map([['src/a.ts', A_OLD]]));
+  worktreeRun(
+    world,
+    's1',
+    'slot-s',
+    [...modified('src/a.ts', A_OLD, A_NEW, A_HUNK), ''].join('\n'),
+  );
+  const { cache, store, prefetcher, rows } = realCache(world, 2000);
+  // The snapshot fits only by evicting the opened file; the base files fit beside it.
+  const snapshot = bytes(JSON.stringify(world.worktree.get('slot-s'))).byteLength;
+  const opened = bytes(`${'o'.repeat(2000 - snapshot + 49)}\n`);
+  const openedKey: ContentKey = { kind: 'blob', id: gitBlobHash(opened) };
+  assert.equal(
+    await cache.storeContent({ key: openedKey, data: opened, origin: 'opened', cohort: 'run' }),
+    true,
+  );
+  prefetcher.setTargets([target('s1', false)]);
+  await flush();
+  assert.ok((await store.listQueries()).every((row) => !row.id.startsWith(`${Methods.GIT_DIFF}:`)));
+  assert.deepEqual(await cache.readContent(openedKey), opened);
+  assert.deepEqual(
+    (await rows())
+      .filter((row) => 'kind' in row)
+      .map((row) => [row.id, row.origin])
+      .sort(),
+    [
+      [openedKey.id, 'opened'],
+      [blob(A_OLD), 'prefetch'],
+      [blob(A_NEW), 'prefetch'],
+    ].sort(),
+  );
+  prefetcher.dispose();
+  await cache.dispose();
+});
+
+test('real cache: gate prefetch promotes held run content, which run prefetch cannot evict', async () => {
+  const world = createWorld();
+  world.objects.set(BASE, new Map([['src/a.ts', A_OLD]]));
+  const diff = [...modified('src/a.ts', A_OLD, A_NEW, A_HUNK), ''].join('\n');
+  worktreeRun(world, 'r1', 'slot-r1', diff);
+  const budget = 8000;
+  const { cache, prefetcher, rows } = realCache(world, budget);
+  prefetcher.setTargets([target('r1', false)]);
+  await flush();
+  const cohorts = async () =>
+    Object.fromEntries((await rows()).map((row) => [row.id, `${row.origin}/${row.cohort}`]));
+  const diffSnapshot = resourceQuery(Methods.GIT_DIFF, {
+    slotId: 'slot-r1',
+    runId: 'r1',
+    base: 'main',
+    target: 'worktree',
+    includeUntracked: true,
+  }).id;
+  assert.deepEqual(await cohorts(), {
+    [blob(A_OLD)]: 'prefetch/run',
+    [blob(A_NEW)]: 'prefetch/run',
+    [diffSnapshot]: 'prefetch/run',
+  });
+
+  // The run reaches its gate: the same change, now as a retained package.
+  const diffHash = gateRun(world, 'r1', 'p1', diff, []);
+  world.runs.get('r1')!.slotId = 'slot-r1';
+  world.calls.length = 0;
+  prefetcher.setTargets([target('r1', true)]);
+  await flush();
+  assert.deepEqual(
+    world.calls.filter((call) => call.method === Methods.GIT_SHOW).map((call) => call.params),
+    [{ slotId: 'slot-r1', ref: BASE, paths: ['src/a.ts'], have: [blob(A_OLD)] }],
+  );
+  const promoted = await cohorts();
+  assert.equal(promoted[blob(A_OLD)], 'prefetch/gate');
+  assert.equal(promoted[blob(A_NEW)], 'prefetch/gate');
+  assert.equal(promoted[diffHash], 'prefetch/gate');
+
+  // A later active run needs more than the prefetch half once the run snapshot is gone, so it
+  // is refused rather than evicting the gate's files.
+  const gateBytes = (await rows())
+    .filter((row) => row.origin === 'prefetch' && row.cohort === 'gate')
+    .reduce((sum, row) => sum + row.bytes, 0);
+  const lines = Math.ceil((budget / 2 - gateBytes + 1) / 11);
+  const big = 'abcdefghij\n'.repeat(lines);
+  world.objects.get(BASE)!.set('big.txt', big);
+  worktreeRun(
+    world,
+    'r2',
+    'slot-r2',
+    [
+      ...modified('big.txt', big, `${big}tail\n`, [
+        `@@ -${lines - 2},3 +${lines - 2},4 @@`,
+        ...Array.from({ length: 3 }, () => ' abcdefghij'),
+        '+tail',
+      ]),
+      '',
+    ].join('\n'),
+  );
+  prefetcher.setTargets([target('r1', true), target('r2', false)]);
+  await flush();
+  const after = await cohorts();
+  assert.equal(after[blob(big)], undefined);
+  for (const id of [blob(A_OLD), blob(A_NEW), diffHash]) assert.equal(after[id], 'prefetch/gate');
+  prefetcher.dispose();
+  await cache.dispose();
 });

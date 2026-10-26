@@ -260,3 +260,38 @@ test('a malformed hunk marks only its file, and parsing resumes at the next file
   assert.equal(applyUnifiedDiff(' only one line\n', files[0]), undefined);
   assert.equal(applyUnifiedDiff('a\n', files[1]), 'b\n');
 });
+
+test('rename and copy headers name repository paths, even inside a/ or b/ directories', () => {
+  const files = parseUnifiedDiff(
+    [
+      'diff --git a/a/old.txt b/a/new.txt',
+      'similarity index 100%',
+      'rename from a/old.txt',
+      'rename to a/new.txt',
+      'diff --git "a/b/caf\\303\\251.txt" "b/b/copy.txt"',
+      'similarity index 100%',
+      'copy from "b/caf\\303\\251.txt"',
+      'copy to b/copy.txt',
+      'diff --git a/a/x.ts b/b/x.ts',
+      'similarity index 80%',
+      'rename from a/x.ts',
+      'rename to b/x.ts',
+      'index 1111111..2222222 100644',
+      '--- a/a/x.ts',
+      '+++ b/b/x.ts',
+      '@@ -1 +1 @@',
+      '-x',
+      '+y',
+      '',
+    ].join('\n'),
+  );
+  assert.deepEqual(
+    files.map(({ oldPath, newPath }) => [oldPath, newPath]),
+    [
+      ['a/old.txt', 'a/new.txt'],
+      ['b/café.txt', 'b/copy.txt'],
+      ['a/x.ts', 'b/x.ts'],
+    ],
+  );
+  assert.equal(applyUnifiedDiff('same\n', files[0]), 'same\n');
+});

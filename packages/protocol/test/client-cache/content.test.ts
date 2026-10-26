@@ -13,6 +13,7 @@ import {
   RESOURCE_CONTENT_LIMITS,
   type ResourceContentCohort,
   type ResourceContentOrigin,
+  type ResourceContentRetain,
   resourceContentWithinLimits,
   resourceQuery,
   type ResourceStore,
@@ -74,6 +75,8 @@ function fixture(contentBudgetBytes?: number, store: ResourceStore = createMemor
       return cache.storeContent({ ...entry, origin, cohort, alias });
     },
     open: (label: string) => cache.openContent(content.get(label)!.key),
+    retain: (label: string, retain: ResourceContentRetain) =>
+      cache.retainContent(content.get(label)!.key, retain),
     /** The label an alias resolves to. */
     async byAlias(alias: string) {
       const data = await cache.readContentByAlias(alias);
@@ -554,6 +557,133 @@ test('the latest alias wins, refused bytes never move it, and eviction removes i
     tick();
     assert.ok(await put('d', 20, 'prefetch', 'gate', 'held'));
     assert.equal(await byAlias('held'), 'd');
+  } finally {
+    await cache.dispose();
+  }
+});
+
+function slotDiff(slotId: string) {
+  return resourceQuery<{ value: string }>('git.diff', {
+    slotId,
+    runId: 'run',
+    base: 'main',
+    target: 'worktree',
+    includeUntracked: true,
+  });
+}
+// 40 serialized bytes.
+const diffReply = { value: 'x'.repeat(28) };
+
+test('a prefetched slot diff under a full budget cannot evict opened or gate rows', async (t) => {
+  const tick = clock(t);
+  const { cache, store, transport, put, held } = fixture(100);
+  const prefetchDiff = async (slotId: string, cohort: ResourceContentCohort) => {
+    const reading = cache.retry(slotDiff(slotId), { origin: 'prefetch', cohort });
+    (await transport.nextRead()).resolve(diffReply);
+    return reading;
+  };
+  try {
+    tick();
+    assert.ok(await put('opened', 50, 'opened', 'run'));
+    tick();
+    assert.ok(await put('gate', 40, 'prefetch', 'gate'));
+    tick();
+    assert.deepEqual((await prefetchDiff('slot-a', 'run')).data, diffReply);
+    assert.deepEqual(await store.listQueries(), []);
+    assert.deepEqual(await held(), ['gate:prefetch:gate', 'opened:opened:run']);
+    tick();
+    await prefetchDiff('slot-b', 'gate');
+    assert.deepEqual(
+      (await store.listQueries()).map(({ id, origin, cohort }) => ({ id, origin, cohort })),
+      [{ id: slotDiff('slot-b').id, origin: 'prefetch', cohort: 'gate' }],
+    );
+    assert.deepEqual(await held(), ['opened:opened:run']);
+  } finally {
+    await cache.dispose();
+  }
+});
+
+test('prefetched snapshots count toward the prefetch half until a normal read opens them', async (t) => {
+  const tick = clock(t);
+  const { cache, store, transport, put } = fixture(100);
+  const query = slotDiff('slot');
+  const read = async (placement?: { origin: 'prefetch'; cohort: ResourceContentCohort }) => {
+    const reading = cache.retry(query, placement);
+    (await transport.nextRead()).resolve(diffReply);
+    await reading;
+  };
+  const snapshot = async () => {
+    const [row] = await store.listQueries();
+    return row ? (row.origin ?? 'opened') : 'none';
+  };
+  try {
+    tick();
+    await read({ origin: 'prefetch', cohort: 'run' });
+    assert.equal(await snapshot(), 'prefetch');
+    tick();
+    assert.ok(await put('run', 20, 'prefetch', 'run'));
+    assert.equal(await snapshot(), 'none');
+    tick();
+    await read({ origin: 'prefetch', cohort: 'run' });
+    tick();
+    await read();
+    assert.equal(await snapshot(), 'opened');
+    tick();
+    assert.ok(await put('opened', 40, 'opened', 'run'));
+    tick();
+    assert.equal(await put('blocked', 30, 'prefetch', 'gate'), false);
+    assert.equal(await snapshot(), 'opened');
+    tick();
+    await read({ origin: 'prefetch', cohort: 'gate' });
+    assert.equal(await snapshot(), 'opened');
+  } finally {
+    await cache.dispose();
+  }
+});
+
+test('a snapshot observed while its prefetch read is in flight is stored as opened', async () => {
+  const { cache, store, transport } = fixture(100);
+  const query = slotDiff('slot');
+  try {
+    const reading = cache.retry(query, { origin: 'prefetch', cohort: 'run' });
+    const read = await transport.nextRead();
+    const stop = cache.observe(query, () => {});
+    read.resolve(diffReply);
+    await reading;
+    stop();
+    assert.deepEqual(
+      (await store.listQueries()).map(({ origin }) => origin ?? 'opened'),
+      ['opened'],
+    );
+  } finally {
+    await cache.dispose();
+  }
+});
+
+test('a run blob promoted to the gate survives later run prefetch', async (t) => {
+  const tick = clock(t);
+  const { cache, transport, put, retain, held } = fixture(100);
+  try {
+    tick();
+    assert.ok(await put('blob', 30, 'prefetch', 'run'));
+    tick();
+    assert.ok(await retain('blob', { origin: 'prefetch', cohort: 'gate' }));
+    assert.deepEqual(await held(), ['blob:prefetch:gate']);
+    tick();
+    assert.ok(await put('run1', 20, 'prefetch', 'run'));
+    tick();
+    assert.ok(await put('run2', 20, 'prefetch', 'run'));
+    tick();
+    assert.equal(await put('run3', 40, 'prefetch', 'run'), false);
+    assert.deepEqual(await held(), ['blob:prefetch:gate', 'run2:prefetch:run']);
+    assert.equal(await cache.retainContent(blob('not held').key, { cohort: 'gate' }), false);
+    const token = cache.contentWriteToken();
+    transport.setConnection({ connected: false }, 'network');
+    transport.setConnection({ connected: true, id: 2 });
+    assert.equal(await retain('run2', { cohort: 'gate', token }), false);
+    assert.deepEqual(await held(), ['blob:prefetch:gate', 'run2:prefetch:run']);
+    assert.ok(await retain('run2', { origin: 'opened' }));
+    assert.deepEqual(await held(), ['blob:prefetch:gate', 'run2:opened:run']);
   } finally {
     await cache.dispose();
   }
