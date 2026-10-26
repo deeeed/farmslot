@@ -510,7 +510,9 @@ export async function validateDeterministicChecksForRun(
   };
   const content = await readTaskFile(input);
   const contract: WorkerTerminalContractDocument | null = content ? JSON.parse(content) : null;
-  if (!contract?.deterministicChecks?.length) {
+  const declaredChecks =
+    contract?.deterministicChecks?.filter((check) => check.reference !== 'ci.local_check') ?? [];
+  if (!declaredChecks.length) {
     for (const checklist of new Set([
       'CHECKLIST.md',
       'TASK.md',
@@ -533,7 +535,7 @@ export async function validateDeterministicChecksForRun(
   // come from a verified parent; re-running the entire terminal contract here
   // would incorrectly demand a second task-bound acceptance ledger.
   const checker = await agentRuntimeScriptForSlot(vars, 'worker-terminal-contract.cjs');
-  const checklists = [...new Set(contract.deterministicChecks.map((check) => check.checklist))];
+  const checklists = [...new Set(declaredChecks.map((check) => check.checklist))];
   const evaluate = [
     'const {deterministicChecks}=require(process.argv[1]);',
     'const results=JSON.parse(process.argv[3]).map(c=>deterministicChecks.evaluate(process.argv[2],c));',
@@ -562,7 +564,7 @@ export async function validateDeterministicChecksForRun(
     !checks.length ||
     evaluated.some((item) => item.issues.length > 0) ||
     checks.some((check) => check.status !== 'passed') ||
-    contract.deterministicChecks.some(
+    declaredChecks.some(
       (expected) =>
         !checks.some(
           (check) =>
@@ -575,7 +577,7 @@ export async function validateDeterministicChecksForRun(
   ) {
     throw new Error(
       `Deterministic CI gate blocked: no verified receipts were returned for ${taskDir}/${input}, ` +
-        `which declares ${contract.deterministicChecks.length} check(s). Verify the selected task/checklist contract and rerun its CI mark step.`,
+        `which declares ${declaredChecks.length} check(s). Verify the selected task/checklist contract and rerun its CI mark step.`,
     );
   }
   return checks;

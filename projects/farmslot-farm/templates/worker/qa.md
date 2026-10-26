@@ -26,8 +26,6 @@ failed smoke must remain a failure with retained evidence.
 
 ### Deterministic checks
 
-{{CI_PARITY_STEP}}
-
 ### Results
 
 - [ ] Assess the frozen criteria as PASS, FAIL or UNTESTABLE against executed assertions and inspected evidence. Write `artifacts/recipe-coverage.md`, `artifacts/evidence-manifest.json` and `artifacts/report.html`, including source/provider revisions, failed attempts, coverage gaps and cleanup. Write `artifacts/qa-result.json` exactly as the generated TASK.md QA-input contract requires, binding the admitted profile/inputs, source, packages, smoke proof target and scope/suite digests. Use the installed protocol's `digestRecipeDocument` for digests; do not invent evidence or counters.

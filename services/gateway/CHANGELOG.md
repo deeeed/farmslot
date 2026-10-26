@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Remove the local CI-parity worker step and its completion receipt requirement.
+
 - Ignore unrelated closed PRs on reused branch names during discovery and publication retries, preserving open, merged and run-owned PRs.
 - Keep static re-reviews warm across unrelated pool tool updates and reconcile retained handoff recovery before fallback, and keep farm-caused replacements free under the same admission.
 

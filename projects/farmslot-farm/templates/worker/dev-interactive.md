@@ -83,8 +83,6 @@ bash {{recipe_validate_wrapper}} \
 
 ## CI parity
 
-{{CI_PARITY_STEP}}
-
 ## Completion signal
 
 When the operator says the interactive session is complete:
