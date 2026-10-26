@@ -230,7 +230,7 @@ export interface ReservedFixPass {
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
-const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min without a fix-progress signal
+const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min without a fix signal or runner activity
 const FEEDBACK_MAX_ACTIVE_MS = 2 * 60 * 60_000; // bound continuously progressing fix passes
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -793,6 +793,25 @@ export async function reviewFixTurnIsActive(
   return runnerTurnLeaseIsActive(vars, target, runner, expectedTurnToken, followContinuations);
 }
 
+/** Activity postpones an inactivity failure; it does not acknowledge delivery of the fix. */
+export async function reviewFixHasActivity(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  workerRunner: string,
+  expectedTurnToken?: string,
+): Promise<boolean> {
+  const run = getRun(runId);
+  const context = run && selectAgentContext(run, { role: 'review-fix' });
+  if (!run || !context || !['working', 'launching', 'waiting'].includes(context.status))
+    return false;
+  if (run.transport === 'native') {
+    const command = expectedTurnToken ?? context.nativeCommandId;
+    return command ? nativeFixTurnIsActive(runId, command) : false;
+  }
+  const target = context.target?.target;
+  return target ? runnerTurnIsActive(vars, target, context.runner ?? workerRunner) : false;
+}
+
 // Module-level constant — wiring is fixed at module load. Tests pass their own deps struct
 // instead of reassigning here. Function declarations referenced inside the literal are
 // hoisted, so the const initializer captures live function refs even though they appear
@@ -1289,9 +1308,7 @@ export async function runReviewRetryLoop({
         taskDir,
         FEEDBACK_TIMEOUT_MS,
         fixSignalBaseline,
-        fixTurnToken
-          ? () => reviewFixTurnIsActive(vars, runId, workerRunner, fixTurnToken)
-          : undefined,
+        () => reviewFixHasActivity(vars, runId, workerRunner, fixTurnToken),
       );
       fixCompletedAt = new Date().toISOString();
       assertNativeReviewOperationCurrent();
@@ -2267,9 +2284,7 @@ async function recoverReviewFixPass({
             taskDir,
             FEEDBACK_TIMEOUT_MS,
             rawSignal ?? '',
-            deliveredTurnToken
-              ? () => reviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
-              : undefined,
+            () => reviewFixHasActivity(vars, runId, workerRunner, deliveredTurnToken),
             () =>
               getRun(runId)?.agentContexts?.find((context) => context.id === fixContext.id)
                 ?.signalAttemptId ?? undefined,

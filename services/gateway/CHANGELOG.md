@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Remove the local CI-parity worker step and its completion receipt requirement.
+- Keep busy review-fix workers alive through signal inactivity, including fixes without delivery turn tokens.
 - Include configured pi providers such as LiteLLM in the model catalog while retaining built-in models.
 
 - Push completion commits for existing PRs and verify the actual remote branch matches the published HEAD before finalize succeeds.
