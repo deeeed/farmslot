@@ -231,8 +231,7 @@ export async function validateTerminalSignalArtifacts(
       const contract = JSON.parse(
         await slotReadFile(vars, contractPath),
       ) as WorkerTerminalContractDocument;
-      const declaredChecks =
-        contract.deterministicChecks?.filter((check) => check.reference !== 'ci.local_check') ?? [];
+      const declaredChecks = requiredDeterministicChecks(contract);
       if (declaredChecks.length) {
         return {
           ok: false,
@@ -477,6 +476,14 @@ export function deterministicChecklistTaskFileForPublication(
   return fixes[0]?.taskFile ?? run.taskFile;
 }
 
+function requiredDeterministicChecks(
+  contract: WorkerTerminalContractDocument | null,
+): NonNullable<WorkerTerminalContractDocument['deterministicChecks']> {
+  return (
+    contract?.deterministicChecks?.filter((check) => check.reference !== 'ci.local_check') ?? []
+  );
+}
+
 /** Revalidate task-owned receipts on the selected checkout before publication. */
 export async function validateDeterministicChecksForRun(
   run: Run,
@@ -512,8 +519,7 @@ export async function validateDeterministicChecksForRun(
   };
   const content = await readTaskFile(input);
   const contract: WorkerTerminalContractDocument | null = content ? JSON.parse(content) : null;
-  const declaredChecks =
-    contract?.deterministicChecks?.filter((check) => check.reference !== 'ci.local_check') ?? [];
+  const declaredChecks = requiredDeterministicChecks(contract);
   if (!declaredChecks.length) {
     for (const checklist of new Set([
       'CHECKLIST.md',

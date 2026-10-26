@@ -234,7 +234,7 @@ or resolve publication gates.
 
 `project.json` may set `ci.local_check` to a nonempty portable shell command. The built-in project uses `yarn ci:local`; the repository quality job calls the same script. Its guard list is shared, formatting is scoped to changed files when Git supplies a base, and tests requiring a tmux server remain CI-only.
 
-The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`, including `vars['ci.local_check']`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
+The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
 
 ### Mark and receipt rules
 
