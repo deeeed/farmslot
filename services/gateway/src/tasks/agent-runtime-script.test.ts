@@ -254,7 +254,7 @@ test('project command expansion uses its connected installation', async (t) => {
       `node "${roots[index]}/resolve.mjs" "${roots[index]}" literal {{repo}}`,
     );
     const ciTemplate = expandTemplateWithReservedLast(
-      '{{resolver}}\n{{CI_PARITY_STEP}}\n{{feedback}}',
+      '- [ ] **1. Work** {{resolver}}\n{{CI_PARITY_STEP}}\n- [ ] **3. Finish** {{feedback}}',
       vars,
       project,
       { feedback: 'literal {{repo}}' },
@@ -263,6 +263,7 @@ test('project command expansion uses its connected installation', async (t) => {
     assert.ok(ciTemplate.includes(`node "${roots[index]}/resolve.mjs"`));
     assert.doesNotMatch(ciTemplate, /CI_PARITY_STEP|DETERMINISTIC: ci\.local_check/);
     assert.ok(ciTemplate.includes('literal {{repo}}'));
+    assert.match(ciTemplate, /\*\*2\. Finish\*\*/);
   }
   assert.ok(requests.every((request) => request.cwd === undefined));
 });

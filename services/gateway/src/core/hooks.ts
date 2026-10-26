@@ -3,9 +3,15 @@
 export * from '@farmslot/slot-config';
 
 import {
+  assertNoUnknownPlaceholders,
+  collectPlaceholderTokens,
+  renderTemplatePlaceholders,
+} from '@farmslot/protocol';
+import {
   currentProjectSources,
   expandSourceBindings,
   expandTemplateWithReservedLast as expandReservedTemplate,
+  knownTemplatePlaceholders,
 } from '@farmslot/slot-config';
 
 /** Role templates use the same part renderer as task init, preserving opaque values. */
@@ -17,11 +23,21 @@ export const expandTemplateWithReservedLast: typeof expandReservedTemplate = (
   extraVars,
 ) => {
   template = expandSourceBindings(template, currentProjectSources() ?? projectVars?.sourceContext);
-  return expandReservedTemplate(
-    template.replace(/^[ \t]*\{\{CI_PARITY_STEP\}\}|\{\{CI_PARITY_STEP\}\}/gm, ''),
-    vars,
-    projectVars,
-    reserved,
-    extraVars,
+  if (!template.includes('{{CI_PARITY_STEP}}')) {
+    return expandReservedTemplate(template, vars, projectVars, reserved, extraVars);
+  }
+  assertNoUnknownPlaceholders(
+    template,
+    [...knownTemplatePlaceholders(vars, projectVars, extraVars), ...Object.keys(reserved)],
+    'Role template',
   );
+  const values = Object.fromEntries(
+    [...collectPlaceholderTokens(template)]
+      .filter((token) => token !== '{{CI_PARITY_STEP}}')
+      .map((token) => [
+        token.slice(2, -2),
+        expandReservedTemplate(token, vars, projectVars, reserved, extraVars),
+      ]),
+  );
+  return renderTemplatePlaceholders(template, values, 'Role template');
 };

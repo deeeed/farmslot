@@ -231,13 +231,15 @@ export async function validateTerminalSignalArtifacts(
       const contract = JSON.parse(
         await slotReadFile(vars, contractPath),
       ) as WorkerTerminalContractDocument;
-      if (contract.deterministicChecks?.length) {
+      const declaredChecks =
+        contract.deterministicChecks?.filter((check) => check.reference !== 'ci.local_check') ?? [];
+      if (declaredChecks.length) {
         return {
           ok: false,
           kind: 'infrastructure',
           message:
             `Artifact checker ${checker} returned ${resultLine ? 'an empty' : 'no'} deterministic-check projection, ` +
-            `but ${contractPath} declares ${contract.deterministicChecks.length} check(s). ` +
+            `but ${contractPath} declares ${declaredChecks.length} check(s). ` +
             'Verify the connected node runtime and the selected task/checklist contract; the CI receipts have not been verified.',
         };
       }

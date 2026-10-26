@@ -1,3 +1,5 @@
+import { enumerateChecklistCheckboxes } from '../checklist-target.js';
+
 /**
  * `{{NAME}}` placeholder guard shared by every template renderer (task writer,
  * agent-runtime task init, prompt templates). Pure string functions: no slot or
@@ -44,8 +46,17 @@ export function renderTemplatePlaceholders(
   vars: Record<string, string>,
   source = 'template',
 ): string {
+  const hasParityPart = template.includes('{{CI_PARITY_STEP}}');
   let content = template.replace(/^[ \t]*\{\{CI_PARITY_STEP\}\}|\{\{CI_PARITY_STEP\}\}/gm, '');
   assertNoUnknownPlaceholders(content, Object.keys(vars), source);
   content = content.replace(PLACEHOLDER_TOKEN_RE, (token) => vars[token.slice(2, -2)]);
+  if (hasParityPart) {
+    const lines = content.split('\n');
+    for (const item of enumerateChecklistCheckboxes(content)) {
+      const label = item.rawLabel.replace(/^(\*{0,2})\d+[.)]\s/, `$1${item.stepNumber}. `);
+      lines[item.lineIndex] = lines[item.lineIndex].replace(item.rawLabel, label);
+    }
+    content = lines.join('\n');
+  }
   return content;
 }

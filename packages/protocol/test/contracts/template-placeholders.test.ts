@@ -44,7 +44,7 @@ test('malformed tokens are collected and rejected even when the name is "known"'
 
 test('legacy CI parts disappear while inserted values stay opaque', () => {
   const source =
-    '## Checklist\n- [ ] **1. Work** {{ISSUES}}\n{{CI_PARITY_STEP}}\n- [ ] **2. Finish**';
+    '## Checklist\n- [ ] **1. Work** {{ISSUES}}\n{{CI_PARITY_STEP}}\n- [ ] **3. Finish**';
   const rendered = renderTemplatePlaceholders(source, {
     TASK_DIR: '.task/proof',
     ISSUES: '{{REPO}}',
