@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
@@ -161,6 +162,7 @@ const { publicationBaseForRun, stackPrBase } = await import('../run-engine/stack
 const { parseGitNumstat } = await import('../run-engine/diff-artifacts.js');
 const { captureCurrentReviewSnapshot } = await import('../review/snapshots.js');
 const { assertPublicationReviewPolicySatisfied } = await import('../run-engine/gate-policy.js');
+const { serveRunArtifact } = await import('../methods/filesystem.js');
 
 let root = '';
 let git: (...args: string[]) => string;
@@ -337,18 +339,46 @@ test('package preparation retains the exact diff and untracked manifest its diff
     await readFile(path.join(taskDir, prPackage.artifactPath), 'utf8'),
   ) as typeof prPackage;
   const snapshot = retained.reviewSnapshot!;
-  assert.equal(snapshot.diffPath, prPackage.artifactPath.replace(/\.json$/, '.diff'));
+  assert.match(snapshot.diffPath!, /^artifacts\/publication-packages\/diff-[0-9a-f]{64}\.diff$/);
   assert.deepEqual(
     snapshot.untrackedFiles?.map((file) => file.path),
     ['src/child/nouveau-café.ts'],
   );
-  const diff = await readFile(path.join(taskDir, snapshot.diffPath!), 'utf8');
+  // Clients read the package's retained bundle entry, never the live task file.
+  await rm(path.join(taskDir, snapshot.diffPath!));
+  const server = createServer((request, response) => {
+    void serveRunArtifact(request, response);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const bundleDigest = retained.artifactBundle!.bundleDigest;
+  const query = new URLSearchParams({ runId: run.id, path: snapshot.diffPath!, bundleDigest });
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/run-artifact?${query}`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-farmslot-bundle-digest'), bundleDigest);
+  const diff = await response.text();
   assert.match(diff, /déjà vu 日本/);
   assert.equal(
     reviewDiffHash(reviewSnapshotIdentityText(diff, snapshot.untrackedFiles ?? [])),
     snapshot.diffHash,
   );
   assert.notEqual(reviewDiffHash(diff), snapshot.diffHash, 'the manifest is part of the identity');
+  // The same diff reuses its content-addressed file only while those bytes still verify.
+  await writeFile(path.join(taskDir, snapshot.diffPath!), diff.replace('日本', 'XX'));
+  await assert.rejects(
+    prepareCompletionPackage(run.id, {
+      diffStat: fullDiff,
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    }),
+    /Retained package diff changed/,
+  );
 });
 
 test('attachment at unchanged HEAD refuses the old publication base at approval and publication', async () => {

@@ -406,7 +406,15 @@ export async function gitDiff(
   params: GitDiffParams,
   deps: GitExecDeps = {},
 ): Promise<GitDiffResult> {
-  if (params.runId) deps = await workspaceReviewGit({ ...params, runId: params.runId });
+  // Explicit fields: client params must not reach workspaceReviewGit options.
+  if (params.runId)
+    deps = await workspaceReviewGit({
+      runId: params.runId,
+      slotId: params.slotId,
+      base: params.base,
+      head: params.head,
+      target: params.target,
+    });
   if (params.head && !params.base) {
     throw new Error('An exact review head requires a base ref');
   }
@@ -502,7 +510,12 @@ export async function gitShow(
   params: GitShowParams,
   deps: GitExecDeps = {},
 ): Promise<GitShowResult> {
-  if (params.runId) deps = await workspaceReviewGit({ ...params, runId: params.runId });
+  if (params.runId)
+    deps = await workspaceReviewGit({
+      runId: params.runId,
+      slotId: params.slotId,
+      ref: params.ref,
+    });
   // Show the resolved object so the content is exactly the object `id` names.
   const { stdout: object } = await gitExec(
     params.slotId,
@@ -685,7 +698,14 @@ export async function gitBranchDiff(
   params: GitBranchDiffParams,
   deps: GitExecDeps = {},
 ): Promise<GitBranchDiffResult> {
-  if (params.runId) deps = await workspaceReviewGit({ ...params, runId: params.runId });
+  if (params.runId)
+    deps = await workspaceReviewGit({
+      runId: params.runId,
+      slotId: params.slotId,
+      base: params.base,
+      head: params.head,
+      target: params.target,
+    });
   if (params.head && !params.base) {
     throw new Error('An exact review head requires a base ref');
   }

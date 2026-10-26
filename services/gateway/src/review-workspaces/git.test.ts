@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { GitDiffParams, Run } from '@farmslot/protocol';
 
 import { makeRun } from '../methods/run/test-fixtures.js';
 
@@ -26,7 +26,7 @@ mock.module('../runners/native/node.js', {
   },
 });
 const { workspaceReviewGit } = await import('./git.js');
-const { gitShow, gitShowBatch } = await import('../methods/git.js');
+const { gitDiff, gitShow, gitShowBatch } = await import('../methods/git.js');
 
 test('review Git returns all 570 frozen lines, including finding 479, after the head changes', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'review-git-source-'));
@@ -181,9 +181,14 @@ test('run-scoped batched git.show reads only the frozen head and the derived mer
     const have = [git('rev-parse', `${ref}:shared.txt`)];
     await assert.rejects(read(ref, have), /frozen review commits/);
   }
-  // Single-path reads keep today's head-only rule.
+  // Single-path reads keep today's head-only rule, even when the client asks for the merge-base.
+  for (const params of [
+    { slotId: '', runId: run.id, ref: mergeBase, path: 'shared.txt' },
+    { slotId: '', runId: run.id, ref: mergeBase, path: 'shared.txt', mergeBaseRef: true },
+  ])
+    await assert.rejects(gitShow(params), /frozen review commits/);
   await assert.rejects(
-    gitShow({ slotId: '', runId: run.id, ref: mergeBase, path: 'shared.txt' }),
+    gitDiff({ slotId: '', runId: run.id, ref: mergeBase, mergeBaseRef: true } as GitDiffParams),
     /frozen review commits/,
   );
   assert.deepEqual(await gitShow({ slotId: '', runId: run.id, ref: headSha, path: 'shared.txt' }), {
