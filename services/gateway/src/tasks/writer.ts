@@ -773,7 +773,7 @@ export async function writeTaskFile(
   // Inject mode preamble after first heading line (# Worker: Dev, # Session Context, etc.)
   const modePreamble =
     run.mode === 'autonomous'
-      ? '> Autonomous execution: complete the authorized work. Respect task and repository approval requirements; missing authority is a blocker. This mode grants no additional permission.'
+      ? '> Autonomous execution: complete the authorized work. Respect task and repository approval requirements.'
       : run.flowType === 'pr-complete' && run.mode === 'interactive'
         ? '> Interactive PR-complete — reload prior PR/run context and perform the PR-complete work, then stop before terminal SIGNAL.json so the operator can take over.'
         : isLightweightInteractiveDevRun(run)
