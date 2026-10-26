@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Preserve gateway-authored acceptance version and claim-review support during hosted task initialization while still checking the node's configured terminal policy.
+
 - Treat slots without declared fixtures as current in fleet summaries.
 
 - Require explicit --attest-evidence consent when accepting review findings together with evidence-policy gaps.
