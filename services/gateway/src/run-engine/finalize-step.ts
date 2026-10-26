@@ -27,6 +27,10 @@ import {
   publishCompletionPackage,
 } from '../run-completion/orchestrator.js';
 import {
+  assertPublicationRemoteHead,
+  BRANCH_PUBLICATION_FLOWS,
+} from '../run-completion/publication-push.js';
+import {
   assertLiveHeadMatchesPackage,
   packageChangedError,
   readyGateCurrentDescription,
@@ -76,9 +80,6 @@ export interface FinalizeStepContext {
 }
 
 const S = PipelineSteps;
-
-/** Flows whose rounds push to the farm's own PR and therefore re-request review. */
-const REREQUEST_REVIEW_FLOWS = new Set<string>(['pr-complete', 'dev', 'fix-bug', 'update-branch']);
 
 /**
  * Records on the Ready gate decision the title and body publication posted, so
@@ -325,6 +326,8 @@ export async function executeFinalizeStep(
   let publishedPrNumber: number | null = current.prNumber ?? null;
   let publishPackageHash: string | undefined;
   let publishBodyPostProcessed = false;
+  let publishedHeadSha: string | undefined;
+  let publishedBranch = current.branch;
   if (adoption) {
     // The external publication is complete. Do not approve or republish the older package.
     emitWithBroadcast('substep', {
@@ -446,6 +449,8 @@ export async function executeFinalizeStep(
     publishedPrNumber = published.prNumber;
     publishPackageHash = published.packageHash;
     publishBodyPostProcessed = published.bodyPostProcessed;
+    publishedHeadSha = approvedPackage.headSha;
+    publishedBranch = approvedPackage.branch;
     emitWithBroadcast('substep', { name: 'refresh-links', detail: 'Refreshing PR run links' });
     await refreshRunLinks(runId);
   }
@@ -483,7 +488,7 @@ export async function executeFinalizeStep(
     !noCodeDisposition &&
     ciRepo &&
     prNumber &&
-    REREQUEST_REVIEW_FLOWS.has(current.flowType)
+    BRANCH_PUBLICATION_FLOWS.has(current.flowType)
   ) {
     emitWithBroadcast('substep', {
       name: 'rerequest-review',
@@ -494,6 +499,27 @@ export async function executeFinalizeStep(
       prNumber,
       `[run-engine] run ${runId.slice(0, 8)} —`,
     );
+  }
+
+  if (
+    !artifactOnly &&
+    !adoption &&
+    !noCodeDisposition &&
+    resolvedAction !== CLOSE_AS_SHIPPED_ACTION &&
+    ciRepo &&
+    prNumber &&
+    BRANCH_PUBLICATION_FLOWS.has(current.flowType)
+  ) {
+    const completedHead = current.steps.find((step) => step.name === S.COMPLETE)?.outputs
+      ?.publishedHeadSha;
+    publishedHeadSha ??= typeof completedHead === 'string' ? completedHead : undefined;
+    if (!publishedHeadSha)
+      throw new Error('Completion publication HEAD missing; replay complete before finalize');
+    emitWithBroadcast('substep', {
+      name: 'verify-remote-head',
+      detail: `Verifying origin contains published ${publishedHeadSha.slice(0, 8)}`,
+    });
+    await assertPublicationRemoteHead(current, publishedHeadSha, publishedBranch);
   }
 
   const cliCommand = `farmslot slot release ${current.slotId}`;
@@ -512,6 +538,7 @@ export async function executeFinalizeStep(
       publicationStatus,
       publicationTarget,
       publishedPrNumber,
+      publishedHeadSha,
       packageHash: publishPackageHash,
       bodyPostProcessed: publishBodyPostProcessed,
       subSteps: collector.finish(),
