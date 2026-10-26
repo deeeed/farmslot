@@ -20,12 +20,12 @@ process.env.NODE_TEST_CONTEXT = '1';
 process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
 
 const [
-  { reviewFixTurnIsActive, waitForWorkerSignal },
+  { reviewFixHasActivity, reviewFixTurnIsActive, waitForWorkerSignal },
   { deliverPromptWithRetainedFallback },
   { readLaunchAckSignalSnapshot },
   { readRunnerTurnState },
   { paneHostsRunnerProcess },
-  { createRun, updateRunAgentContexts },
+  { createRun, getRun, updateRunAgentContexts },
   { turnTokenSessionId },
 ] = await Promise.all([
   import('../../../services/gateway/src/review/orchestrator.js'),
@@ -230,14 +230,15 @@ const setFixDelivery = (deliveryStartedAt: string, promptAcceptance?: RunnerProm
         : context,
     ),
   );
-setFixDelivery(fixDeliveryStartedAt, {
+const acceptedFix: RunnerPromptAcceptance = {
   runner,
   deliveryStartedAt: fixDeliveryStartedAt,
   sessionId: turnTokenSessionId(acceptedTurnToken),
   sessionPath: '',
   observedAt: Date.now(),
   turnToken: acceptedTurnToken,
-});
+};
+setFixDelivery(fixDeliveryStartedAt, acceptedFix);
 
 let lifecycleLeaseProbe: {
   preCompact: boolean;
@@ -264,11 +265,20 @@ if (runner === 'claude') {
   lifecycleLeaseProbe = { preCompact, compactSessionStart, postCompact };
 }
 
+// Retained legacy fixes can have their own progress signal without a delivery token.
+setFixDelivery(fixDeliveryStartedAt);
+const tokenlessAcceptanceAbsent = !getRun(validationRun.id)?.agentContexts?.find(
+  (context) => context.role === 'review-fix',
+)?.promptAcceptance;
 const startedAt = Date.now();
-const [baselineResult, leasedResult] = await Promise.all([
+const [baselineResult, leasedResult, tokenlessResult] = await Promise.all([
   waitForWorkerSignal(vars, 'task', idleTimeoutMs, ''),
   waitForWorkerSignal(vars, 'task', idleTimeoutMs, '', turnActive(acceptedTurnToken)),
+  waitForWorkerSignal(vars, 'task', idleTimeoutMs, '', () =>
+    reviewFixHasActivity(vars, validationRun.id, runner),
+  ),
 ]);
+setFixDelivery(fixDeliveryStartedAt, acceptedFix);
 
 const idleDeadline = Date.now() + 20_000;
 let workerReachedIdle = false;
@@ -338,6 +348,8 @@ writeFileSync(
       fixTurnSeparatedFromBusyTurn: acceptedTurnToken !== busyTurnToken,
       lifecycleLeaseProbe,
       leasedSignalStatus: leasedResult?.status ?? null,
+      tokenlessSignalStatus: tokenlessResult?.status ?? null,
+      tokenlessAcceptanceAbsent,
       activeTurnObserved: turnReadings.some((reading) => reading.active),
       supersedingTurnProbe,
       turnReadings,

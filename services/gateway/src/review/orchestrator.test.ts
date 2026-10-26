@@ -1758,7 +1758,11 @@ test(
     });
     deps.waitForWorkerSignal = async (_vars, _taskDir, _timeout, baseline, turnActive) => {
       assert.equal(baseline, '');
-      assert.equal(turnActive, undefined, 'uncertain delivery cannot claim an accepted turn');
+      assert.equal(
+        typeof turnActive,
+        'function',
+        'the inactivity watch must observe worker activity even without a delivery token',
+      );
       watching();
       return signal;
     };

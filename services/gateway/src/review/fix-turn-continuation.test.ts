@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test, type TestContext } from 'node:test';
 
-import type { AgentContext, Run } from '@farmslot/protocol';
+import type { AgentContext, Run, WorkerSignal } from '@farmslot/protocol';
 
 const core = await import('../core/exec.js');
 
@@ -14,6 +14,8 @@ type Turn = { from: number; to: number; token: string };
 let turns: Turn[] = [];
 let signal: { at: number; raw: string } | null = null;
 let current: Run | undefined;
+let workerPresent = true;
+let omitTurnToken = false;
 const baseline = JSON.stringify({
   attemptId: 'attempt-1',
   step: '2. Read full feedback',
@@ -27,7 +29,8 @@ mock.module('../core/exec.js', {
       // The grok process runs under the pane's shell (pid 4242).
       if (command.includes('display-message')) return { exitCode: 0, stdout: 'zsh\n', stderr: '' };
       if (command.includes('list-panes')) return { exitCode: 0, stdout: '4242\n', stderr: '' };
-      if (command.includes('4242')) return { exitCode: 0, stdout: '4243\n', stderr: '' };
+      if (command.includes('4242'))
+        return { exitCode: 0, stdout: workerPresent ? '4243\n' : '', stderr: '' };
       if (command.includes('REVIEW-FIX-SIGNAL.json')) {
         const raw = signal && Date.now() >= signal.at ? signal.raw : baseline;
         return { exitCode: 0, stdout: raw, stderr: '' };
@@ -41,7 +44,8 @@ const store = await import('../runs/store.js');
 mock.module('../runs/store.js', { namedExports: { ...store, getRun: () => current } });
 const { makeRun } = await import('../run-engine/test-fixtures.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
-const { reviewFixTurnIsActive, waitForWorkerSignal } = await import('./orchestrator.js');
+const { reviewFixHasActivity, reviewFixTurnIsActive, waitForWorkerSignal } =
+  await import('./orchestrator.js');
 const { getRunnerObservability } = await import('../runners/registry.js');
 // Grok reports its pane session's latest turn, whatever turn the caller leased.
 getRunnerObservability('grok')!.getTurnState = async () => {
@@ -54,7 +58,7 @@ getRunnerObservability('grok')!.getTurnState = async () => {
     sessionId: session,
   } as const;
   return turn
-    ? { ...reading, value: 'active', turnToken: turn.token }
+    ? { ...reading, value: 'active', turnToken: omitTurnToken ? undefined : turn.token }
     : { ...reading, value: 'idle' };
 };
 
@@ -86,16 +90,20 @@ const fixContext = (
 });
 
 // Drive the 2 s poll loop on mocked time; each step lets the loop's slot reads settle.
-async function waitOnTimeline(t: TestContext, minutes: number) {
+async function waitOnTimeline(
+  t: TestContext,
+  minutes: number,
+  activity = () => reviewFixTurnIsActive(vars, 'run-1', 'grok', acceptedToken),
+) {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
   let settled = false;
-  let value: unknown;
-  const pending = waitForWorkerSignal(vars, 'tasks/run-1', 30 * MINUTE, baseline, () =>
-    reviewFixTurnIsActive(vars, 'run-1', 'grok', acceptedToken),
-  ).then((result) => {
-    settled = true;
-    value = result;
-  });
+  let value: WorkerSignal | undefined;
+  const pending = waitForWorkerSignal(vars, 'tasks/run-1', 30 * MINUTE, baseline, activity).then(
+    (result) => {
+      settled = true;
+      value = result;
+    },
+  );
   for (let elapsed = 0; !settled && elapsed < minutes * MINUTE; elapsed += 2000) {
     t.mock.timers.tick(2000);
     for (let flush = 0; flush < 6; flush += 1)
@@ -120,8 +128,55 @@ test('a fix wait follows the worker into its next turn in the same session', asy
   turns = grokTimeline(`${session}:1792317219448`);
   signal = { at: 45 * MINUTE, raw: complete };
   const { value, at } = await waitOnTimeline(t, 80);
-  assert.equal((value as { status?: string } | undefined)?.status, 'complete');
+  assert.equal(value?.status, 'complete');
   assert.ok(at >= 45 * MINUTE && at < 46 * MINUTE, `signal taken at ${at / MINUTE} min`);
+});
+
+test('a busy fix without delivery or observed turn tokens survives 95 minutes without a new signal', async (t) => {
+  current = {
+    ...makeRun({ id: 'run-1' }),
+    agentContexts: [{ ...fixContext(), promptAcceptance: undefined }],
+  };
+  omitTurnToken = true;
+  t.after(() => {
+    omitTurnToken = false;
+  });
+  turns = [{ from: 0, to: 96 * MINUTE, token: acceptedToken }];
+  signal = { at: 95 * MINUTE, raw: complete };
+  const { value, at } = await waitOnTimeline(t, 100, () =>
+    reviewFixHasActivity(vars, 'run-1', 'grok'),
+  );
+  assert.equal(value?.status, 'complete');
+  assert.ok(at >= 95 * MINUTE && at < 96 * MINUTE);
+});
+
+test('a fix without a delivery token still times out after its worker becomes idle', async (t) => {
+  current = {
+    ...makeRun({ id: 'run-1' }),
+    agentContexts: [{ ...fixContext(), promptAcceptance: undefined }],
+  };
+  turns = [{ from: 0, to: 35 * MINUTE, token: acceptedToken }];
+  signal = null;
+  const { value, at } = await waitOnTimeline(t, 70, () =>
+    reviewFixHasActivity(vars, 'run-1', 'grok'),
+  );
+  assert.equal(value, undefined);
+  assert.ok(at > 64 * MINUTE && at <= 65 * MINUTE, `idle timeout at ${at / MINUTE} min`);
+});
+
+test('a stale active reading from an exited worker cannot postpone the fix timeout', async (t) => {
+  current = { ...makeRun({ id: 'run-1' }), agentContexts: [fixContext()] };
+  turns = [{ from: 0, to: 95 * MINUTE, token: acceptedToken }];
+  signal = null;
+  workerPresent = false;
+  t.after(() => {
+    workerPresent = true;
+  });
+  const { value, at } = await waitOnTimeline(t, 35, () =>
+    reviewFixHasActivity(vars, 'run-1', 'grok'),
+  );
+  assert.equal(value, undefined);
+  assert.equal(at, 30 * MINUTE);
 });
 
 test('a turn in another session, or after a newer delivery, does not hold the fix lease', async (t) => {
