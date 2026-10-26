@@ -107,9 +107,10 @@ function terminalContract(value: unknown): value is WorkerTerminalContractDocume
         ),
     ) &&
     stringFields(value, ['mode']) &&
-    ['claimReviewGate', 'publicationReview'].every((key) =>
+    ['claimReviewGate', 'publicationReview', 'claimReviewSupported'].every((key) =>
       optional(value[key], (entry) => typeof entry === 'boolean'),
     ) &&
+    optional(value.acceptanceContractVersion, (entry) => entry === 1) &&
     optional(value.recordedEvidenceContractVersion, (entry) => Number.isInteger(entry)) &&
     optional(
       value.deterministicChecks,
@@ -275,11 +276,14 @@ export function hostedTerminalPolicy(
   configured: WorkerTerminalContractDocument,
 ): WorkerTerminalContractDocument {
   if (task.authored) return task.terminalContract ?? configured;
+  // Gateway run projections do not change the node's configured terminal gates.
   const identity = ({
     resolvedAt: _time,
     claimReviewGate: _gate,
     publicationReview: _review,
     recordedEvidenceContractVersion: _version,
+    acceptanceContractVersion: _acceptanceVersion,
+    claimReviewSupported: _claimReviewSupported,
     ...policy
   }: WorkerTerminalContractDocument): unknown => JSON.parse(JSON.stringify(policy));
   if (
@@ -295,6 +299,8 @@ export function hostedTerminalPolicy(
     claimReviewGate: task.terminalContract?.claimReviewGate,
     publicationReview: task.terminalContract?.publicationReview,
     recordedEvidenceContractVersion: task.terminalContract?.recordedEvidenceContractVersion,
+    acceptanceContractVersion: task.terminalContract?.acceptanceContractVersion,
+    claimReviewSupported: task.terminalContract?.claimReviewSupported,
   };
 }
 
