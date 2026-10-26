@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Stop unchanged empty review-fix cycles and accept completed evidence-only fixes or fixes of at most 50 source lines without another review, retaining the original review and fix provenance.
+
 - Ignore unrelated closed PRs on reused branch names during discovery and publication retries, preserving open, merged and run-owned PRs.
 - Keep static re-reviews warm across unrelated pool tool updates and reconcile retained handoff recovery before fallback, and keep farm-caused replacements free under the same admission.
 

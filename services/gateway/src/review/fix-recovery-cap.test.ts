@@ -43,6 +43,32 @@ mock.module('./native-review-agent.js', {
   },
 });
 
+const snapshots = await import('./snapshots.js');
+let capturedFixOverride: Awaited<ReturnType<typeof snapshots.captureFixDeltaSnapshot>> | undefined;
+mock.module('./snapshots.js', {
+  namedExports: {
+    ...snapshots,
+    captureFixDeltaSnapshot: (...args: Parameters<typeof snapshots.captureFixDeltaSnapshot>) =>
+      capturedFixOverride
+        ? Promise.resolve(capturedFixOverride)
+        : snapshots.captureFixDeltaSnapshot(...args),
+    captureCurrentReviewSnapshot: (
+      ...args: Parameters<typeof snapshots.captureCurrentReviewSnapshot>
+    ) =>
+      capturedFixOverride
+        ? Promise.resolve({
+            snapshot: {
+              source: 'local-git' as const,
+              capturedAt: new Date().toISOString(),
+              baseSha: 'c'.repeat(40),
+              headSha: capturedFixOverride.snapshot.fixHeadSha,
+              diffHash: 'fixed-contribution',
+            },
+          })
+        : snapshots.captureCurrentReviewSnapshot(...args),
+  },
+});
+
 const { executeReview } = await import('./orchestrator.js');
 const {
   admitReviewRound,
@@ -74,6 +100,7 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
       slots: [...(current?.slots ?? []).filter((entry) => entry.slot !== vars.slotId), ...rows],
     }));
   t.after(async () => {
+    capturedFixOverride = undefined;
     resetWarmReviewerSessionsForTest();
     nativeReviewer = async () => ({ verdict: 'pass', issues: [] });
     await slotRow([]);
@@ -96,6 +123,31 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
   updateRun(run.id, {
     status: 'reviewing',
     taskFile: path.join(config.getOrchestratorTaskRoot(project, projectJson), 'review', 'TASK.md'),
+    ...(capturedFixOverride
+      ? {
+          engineState: {
+            publishGate: {
+              reviews: [
+                {
+                  id: 'refusal-lineage',
+                  source: 'pipeline' as const,
+                  mode: 'cold' as const,
+                  loopNumber: 1,
+                  verdict: 'issues' as const,
+                  unresolvedCount: 1,
+                  issues: [{ file: 'a.ts', line: 1, description: 'fix the finding' }],
+                  reviewSnapshot: {
+                    source: 'local-git' as const,
+                    capturedAt: new Date().toISOString(),
+                    baseSha: 'c'.repeat(40),
+                    headSha: 'a'.repeat(40),
+                  },
+                },
+              ],
+            },
+          },
+        }
+      : {}),
     agentContexts: [
       {
         id: 'review-fix',
@@ -107,7 +159,7 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
         runner: 'claude',
         taskFile: checklist,
         signalFile: signal,
-        artifactScope: null,
+        artifactScope: capturedFixOverride ? 'refusal-lineage' : null,
         signalAttemptId: 'fix-attempt',
         attemptStartedAt: new Date(Date.now() - 60_000).toISOString(),
         updatedAt: new Date().toISOString(),
@@ -122,7 +174,7 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
     ownerPrincipalId: null,
     transport: 'native' as const,
     taskDir,
-    artifactScope: null,
+    artifactScope: capturedFixOverride ? 'refusal-lineage' : null,
     runner: 'claude',
     model: 'opus',
     effort: null,
@@ -143,6 +195,7 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
     reviewRunner: 'claude',
     validationDepth: 'static-code',
     reviewId: 'refusal-lineage',
+    artifactScope: capturedFixOverride ? 'refusal-lineage' : null,
   });
   return { run, result, launches: reviewerLaunches - launchesBefore, retainedScope };
 }
@@ -161,6 +214,35 @@ test('a fix recovered after a restart at the no-verdict cap is not re-reviewed a
     'complete',
   );
 });
+
+for (const sourceLinesChanged of [0, 50]) {
+  test(`a recovered completed ${sourceLinesChanged}-line fix applies the review limit`, async (t) => {
+    capturedFixOverride = {
+      snapshot: {
+        source: 'local-git',
+        capturedAt: new Date().toISOString(),
+        fixBaseSha: 'a'.repeat(40),
+        fixHeadSha: (sourceLinesChanged === 0 ? 'a' : 'b').repeat(40),
+        diffStat: {
+          files: sourceLinesChanged === 0 ? 0 : 1,
+          additions: sourceLinesChanged,
+          deletions: 0,
+        },
+      },
+      artifactPaths: ['artifacts/fix-delta.diff'],
+      sourceLinesChanged,
+    };
+    const { result, launches } = await recoveredFixAtCap(t, { status: 'complete' }, false);
+    assert.equal(launches, 0);
+    assert.equal(result.verdict, sourceLinesChanged === 0 ? 'issues' : 'pass');
+    assert.equal(result.issues?.length, sourceLinesChanged === 0 ? 1 : 0);
+    assert.equal(result.attempts?.length, sourceLinesChanged === 0 ? 1 : 2);
+    assert.equal(result.attempts?.[0]?.verdict, 'issues');
+    assert.equal(result.feedbackSent, true);
+    assert.equal(result.recoveryContinuationPending, false);
+    assert.equal(result.fixDelta?.source, 'local-git');
+  });
+}
 
 test('a recovered fix the worker blocked keeps its block at the no-verdict cap', async (t) => {
   const { result, launches } = await recoveredFixAtCap(t, {
