@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Store content by identity in schema 3 (`resource_content` and `resource_content_aliases`), with blob binding through the browser worker and the native adapter.
+
 - Forward foreground and background changes to shared collector interests without replacing the selected cache or renewing interest through reads.
 
 - Share workspace snapshot retention and access recency across readers, reset outdated cache schemas, and preserve saved observation age and drafts.

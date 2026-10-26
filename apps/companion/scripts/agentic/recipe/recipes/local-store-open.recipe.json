@@ -42,7 +42,7 @@
         "action": "assert_output",
         "source": "conformance",
         "stream": "stdout",
-        "match": "\"checks\":18",
+        "match": "\"checks\":20",
         "intent": "Require every native conformance check to pass.",
         "proves": ["native-conformance"],
         "next": "settings"

@@ -11,6 +11,6 @@ test(
   { timeout: 4000 },
   async () => {
     const checks = await runResourceStoreConformance(createMemoryResourceStore);
-    assert.equal(checks.length, 18);
+    assert.equal(checks.length, 20);
   },
 );

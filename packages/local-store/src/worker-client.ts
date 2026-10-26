@@ -2,6 +2,7 @@ import {
   type ResourceStore,
   type ResourceStoreScope,
   resourceStoreScopeId,
+  type StoredResourceContent,
   type StoredResourceQuery,
 } from '@farmslot/protocol/client-cache';
 
@@ -151,6 +152,54 @@ export class ResourceStoreWorkerClient {
         const value = available()
           ? await request<Awaited<ReturnType<ResourceStore['listQueries']>>>({
               operation: 'listQueries',
+              handle,
+            })
+          : [];
+        return available() ? value : [];
+      },
+      async hasContent(key) {
+        const value = available()
+          ? await request<boolean>({ operation: 'hasContent', handle, key })
+          : false;
+        return available() && value;
+      },
+      async putContentAlias(alias, key) {
+        if (available()) await request({ operation: 'putContentAlias', handle, alias, key });
+      },
+      async getContentByAlias(alias) {
+        const value = available()
+          ? await request<StoredResourceContent | undefined>({
+              operation: 'getContentByAlias',
+              handle,
+              alias,
+            })
+          : undefined;
+        return available() ? value : undefined;
+      },
+      async getContent(key) {
+        const value = available()
+          ? await request<StoredResourceContent | undefined>({
+              operation: 'getContent',
+              handle,
+              key,
+            })
+          : undefined;
+        return available() ? value : undefined;
+      },
+      async putContent(entry) {
+        if (available()) await request({ operation: 'putContent', handle, entry });
+      },
+      async touchContent(key, accessedAt, origin) {
+        if (available())
+          await request({ operation: 'touchContent', handle, key, accessedAt, origin });
+      },
+      async deleteContent(key) {
+        if (available()) await request({ operation: 'deleteContent', handle, key });
+      },
+      async listContent() {
+        const value = available()
+          ? await request<Awaited<ReturnType<ResourceStore['listContent']>>>({
+              operation: 'listContent',
               handle,
             })
           : [];

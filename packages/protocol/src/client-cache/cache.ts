@@ -3,6 +3,11 @@ import { Methods } from '../rpc/registry.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
 import { ResourceCollectorAdmission } from './collector-admission.js';
+import {
+  resourceBudgetEvictions,
+  resourceContentWithinLimits,
+  verifyResourceContent,
+} from './content.js';
 import { RESOURCE_PUBLISH_INTERVAL_MS, resourceKeyId, type ResourceReadStamp } from './keys.js';
 import {
   nativeHistoryStorageId,
@@ -11,12 +16,14 @@ import {
 } from './native-history.js';
 import type { ResourceQuery } from './registry.js';
 import {
+  type ContentKey,
   createMemoryResourceStore,
   normalizeResourceStoreScope,
   type ResourceStore,
   type ResourceStoreMetadata,
   resourceStoreScopeId,
   sameResourceAuthority,
+  type StoredResourceContent,
   type StoredResourceQuery,
 } from './store.js';
 import type {
@@ -24,11 +31,16 @@ import type {
   GatewayResourceCacheOptions,
   ResourceCacheConnection,
   ResourceConnectionReason,
+  ResourceContentInput,
+  ResourceContentWriteToken,
   ResourceQueryError,
   ResourceQueryState,
 } from './types.js';
 import { isUpstreamStoredQuery, upstreamRetentionEvictions } from './upstream-retention.js';
-import { workspaceRetentionEvictions } from './workspace-retention.js';
+import {
+  workspaceRetentionEvictions,
+  workspaceRetentionMembership,
+} from './workspace-retention.js';
 
 interface PendingRead {
   version: number;
@@ -94,6 +106,10 @@ function normalizeConnection(connection: ResourceCacheConnection): ResourceCache
         : scope,
   };
 }
+
+const defaultContentBudgetBytes = 500 * 1024 * 1024;
+// Only the identity crosses the store seam, never a caller's other fields.
+const contentKey = ({ kind, id }: ContentKey): ContentKey => ({ kind, id });
 
 function profileId(connection: ResourceCacheConnection): string {
   return resourceStoreScopeId({
@@ -751,23 +767,24 @@ export function createGatewayResourceCache(
               return;
             }
             if (retention?.cohort === 'workspace') {
-              const contentBytes = (await writingStore.byteTotals()).content;
-              const budget = options.contentBudgetBytes ?? 500 * 1024 * 1024;
-              if (!current()) return;
-              if (saved.bytes + contentBytes > budget) {
-                await writingStore.deleteQuery(saved.id);
-                return;
-              }
               const victims = workspaceRetentionEvictions(
                 entry.query,
                 saved,
                 await writingStore.listQueries(),
-                budget,
-                contentBytes,
+                options.contentBudgetBytes ?? defaultContentBudgetBytes,
+                await writingStore.listContent(),
               );
               if (!current()) return;
-              for (const id of victims) {
+              if (!victims) {
+                await writingStore.deleteQuery(saved.id);
+                return;
+              }
+              for (const id of victims.queries) {
                 await writingStore.deleteQuery(id);
+                if (!current()) return;
+              }
+              for (const key of victims.content) {
+                await writingStore.deleteContent(key);
                 if (!current()) return;
               }
             } else if (retention) {
@@ -856,6 +873,122 @@ export function createGatewayResourceCache(
     return pending.promise;
   }
 
+  /** Content reads follow hydration's owner and incarnation fences; offline reads are allowed. */
+  async function readStoredContent<T>(
+    read: (target: ResourceStore) => Promise<T | undefined>,
+    open?: (target: ResourceStore, value: T) => Promise<void>,
+  ): Promise<T | undefined> {
+    const ownerVersion = hydrationOwnerVersion;
+    await barrier;
+    const readingStore = store;
+    const incarnation = storeVersion;
+    const current = () =>
+      !disposed &&
+      ownerVersion === hydrationOwnerVersion &&
+      incarnation === storeVersion &&
+      readingStore === store &&
+      !readingStore.deleted;
+    if (!current()) return undefined;
+    const value = await read(readingStore).catch(async (error: unknown) => {
+      await recoverStore(error, readingStore);
+      return undefined;
+    });
+    if (value === undefined || !current()) return undefined;
+    if (open) await updateStore(readingStore, current, () => open(readingStore, value));
+    return current() ? value : undefined;
+  }
+
+  async function readContentBytes(
+    lookup: (target: ResourceStore) => Promise<StoredResourceContent | undefined>,
+    open: boolean,
+  ): Promise<Uint8Array | undefined> {
+    const saved = await readStoredContent(
+      lookup,
+      open
+        ? (target, { kind, id }) => target.touchContent({ kind, id }, Date.now(), 'opened')
+        : undefined,
+    );
+    return saved?.data;
+  }
+
+  /** Writes accept only bytes from the current connection's owner, verified and within budget. */
+  async function storeContent(input: ResourceContentInput): Promise<boolean> {
+    const key = contentKey(input.key);
+    const { data, origin, cohort, token } = input;
+    if (disposed || !connection.connected) return false;
+    const ownerVersion = token?.ownerVersion ?? hydrationOwnerVersion;
+    const connectionId = token?.connectionId ?? connection.id;
+    if (
+      !resourceContentWithinLimits(key, data) ||
+      !verifyResourceContent(key, data, input.untrackedFiles)
+    )
+      return false;
+    await barrier;
+    const writingStore = store;
+    const incarnation = token?.storeVersion ?? storeVersion;
+    const current = () =>
+      !disposed &&
+      connection.connected &&
+      connection.id === connectionId &&
+      ownerVersion === hydrationOwnerVersion &&
+      incarnation === storeVersion &&
+      writingStore === store &&
+      !writingStore.deleted;
+    let stored = false;
+    await updateStore(writingStore, current, async () => {
+      const accessedAt = Date.now();
+      const content = await writingStore.listContent();
+      const held = content.find((row) => row.kind === key.kind && row.id === key.id);
+      if (held) {
+        // The same identity holds the same bytes; keep the stronger origin and cohort.
+        const kept = {
+          origin: held.origin === 'opened' ? held.origin : origin,
+          cohort: held.cohort === 'gate' ? held.cohort : cohort,
+        };
+        if (!current()) return;
+        if (kept.cohort !== held.cohort)
+          await writingStore.putContent({
+            ...key,
+            data,
+            bytes: data.byteLength,
+            accessedAt,
+            ...kept,
+          });
+        else await writingStore.touchContent(key, accessedAt, kept.origin);
+      } else {
+        const victims = resourceBudgetEvictions(
+          { bytes: data.byteLength, origin, cohort },
+          content,
+          (await writingStore.listQueries()).filter(
+            (row) => workspaceRetentionMembership(row.id) !== undefined,
+          ),
+          options.contentBudgetBytes ?? defaultContentBudgetBytes,
+        );
+        if (!victims || !current()) return;
+        for (const id of victims.queries) {
+          await writingStore.deleteQuery(id);
+          if (!current()) return;
+        }
+        for (const victim of victims.content) {
+          await writingStore.deleteContent(victim);
+          if (!current()) return;
+        }
+        await writingStore.putContent({
+          ...key,
+          data,
+          bytes: data.byteLength,
+          origin,
+          cohort,
+          accessedAt,
+        });
+      }
+      if (input.alias !== undefined && current())
+        await writingStore.putContentAlias(input.alias, key);
+      stored = current();
+    });
+    return stored;
+  }
+
   return {
     observe<T>(query: ResourceQuery<T>, listener: (state: ResourceQueryState<T>) => void) {
       if (disposed) throw new Error('Resource cache is disposed');
@@ -924,6 +1057,21 @@ export function createGatewayResourceCache(
       await fetchEntry(entry);
       return entry.state as ResourceQueryState<T>;
     },
+    async hasContent(key) {
+      return (await readStoredContent((target) => target.hasContent(contentKey(key)))) ?? false;
+    },
+    readContent: (key) => readContentBytes((target) => target.getContent(contentKey(key)), false),
+    openContent: (key) => readContentBytes((target) => target.getContent(contentKey(key)), true),
+    readContentByAlias: (alias) =>
+      readContentBytes((target) => target.getContentByAlias(alias), false),
+    openContentByAlias: (alias) =>
+      readContentBytes((target) => target.getContentByAlias(alias), true),
+    storeContent,
+    contentWriteToken: (): ResourceContentWriteToken => ({
+      connectionId: connection.id,
+      ownerVersion: hydrationOwnerVersion,
+      storeVersion,
+    }),
     async dispose(reason?: ResourceConnectionReason) {
       if (disposed) return;
       const withdrawing = collectors.close();

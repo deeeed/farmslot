@@ -1,3 +1,4 @@
+import type { ReviewDiffSnapshot } from '../contracts/runs.js';
 import type { GatewayAuthConnectResult, GatewayAuthMode } from '../rpc/auth.js';
 import type {
   ResourceObserversReplaceParams,
@@ -9,6 +10,9 @@ import type { ResourceChangedPayload } from '../transport/events.js';
 import type { ResourceReadStamp } from './keys.js';
 import type { ResourceQuery, ResourceReadMethod } from './registry.js';
 import type {
+  ContentKey,
+  ResourceContentCohort,
+  ResourceContentOrigin,
   ResourceStore,
   ResourceStoreAuthority,
   ResourceStoreMetadata,
@@ -90,9 +94,40 @@ export interface GatewayResourceCacheOptions {
   contentBudgetBytes?: number;
 }
 
+/** Opaque: the connection, owner and store incarnation a content read started under. */
+export interface ResourceContentWriteToken {
+  readonly connectionId: number | string;
+  readonly ownerVersion: number;
+  readonly storeVersion: number;
+}
+
+export interface ResourceContentInput {
+  key: ContentKey;
+  data: Uint8Array;
+  origin: ResourceContentOrigin;
+  cohort: ResourceContentCohort;
+  /** A diff's untracked-file manifest, which its `diffHash` fingerprints. */
+  untrackedFiles?: ReviewDiffSnapshot['untrackedFiles'];
+  /** Captured before the fetch; the write is refused if any part has changed since. */
+  token?: ResourceContentWriteToken;
+  /** Also finds the content by this name, such as a frozen review diff; the latest store wins. */
+  alias?: string;
+}
+
 export interface GatewayResourceCache {
   observe<T>(query: ResourceQuery<T>, listener: (state: ResourceQueryState<T>) => void): () => void;
   read<T>(query: ResourceQuery<T>): ResourceQueryState<T>;
   retry<T>(query: ResourceQuery<T>): Promise<ResourceQueryState<T>>;
+  /** Presence for this owner, without loading the bytes or changing their recency. */
+  hasContent(key: ContentKey): Promise<boolean>;
+  /** Stored bytes for this owner, without changing their recency. */
+  readContent(key: ContentKey): Promise<Uint8Array | undefined>;
+  /** Stored bytes the user opened: refreshes recency and protects them from prefetch eviction. */
+  openContent(key: ContentKey): Promise<Uint8Array | undefined>;
+  readContentByAlias(alias: string): Promise<Uint8Array | undefined>;
+  openContentByAlias(alias: string): Promise<Uint8Array | undefined>;
+  /** Verifies, applies the caps and the shared budget, and returns false when refused. */
+  storeContent(input: ResourceContentInput): Promise<boolean>;
+  contentWriteToken(): ResourceContentWriteToken;
   dispose(reason?: ResourceConnectionReason): Promise<void>;
 }

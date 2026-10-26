@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
@@ -11,14 +14,14 @@ import {
 import { createExpoSqliteDriver } from '../src/native.js';
 import {
   createSqliteResourceStore,
+  deleteSqliteResourceStoreScope,
   readSqliteResourceQueryInfo,
   RESOURCE_STORE_SCHEMA_VERSION,
   type ResourceSqliteDatabase,
   type SqliteValue,
 } from '../src/sqlite-store.js';
 
-function database() {
-  const sqlite = new DatabaseSync(':memory:');
+function database(sqlite = new DatabaseSync(':memory:')) {
   const adapter: ResourceSqliteDatabase = {
     async run(sql, params = []) {
       sqlite.prepare(sql).run(...params);
@@ -95,7 +98,7 @@ test('SQL store runs the exported cache/store conformance against real SQLite', 
     const passed = await runResourceStoreConformance((identity) =>
       createSqliteResourceStore({ database: adapter, scope: identity }),
     );
-    assert.equal(passed.length, 18);
+    assert.equal(passed.length, 20);
     assert.equal(sqlite.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
   } finally {
     sqlite.close();
@@ -116,7 +119,7 @@ test('the Expo adapter runs the portable conformance contract through real SQLit
     const passed = await runResourceStoreConformance((identity) =>
       createSqliteResourceStore({ database: adapter, scope: identity }),
     );
-    assert.equal(passed.length, 18);
+    assert.equal(passed.length, 20);
   } finally {
     sqlite.close();
   }
@@ -164,5 +167,80 @@ test('sixth scope evicts the least recently used store including read access', a
   } finally {
     for (const store of stores) await store.close();
     sqlite.close();
+  }
+});
+
+test('schema 3 rebuilds a schema 2 store and keeps content as exact SQLite blobs', async () => {
+  const { sqlite, adapter } = database();
+  const old = await createSqliteResourceStore({
+    database: adapter,
+    scope: scope('blob'),
+    schemaVersion: 2,
+  });
+  await old.putQuery({ id: 'q', data: { value: 'schema 2' }, observedAt: 1, bytes: 20 });
+  const store = await createSqliteResourceStore({ database: adapter, scope: scope('blob') });
+  try {
+    assert.equal(RESOURCE_STORE_SCHEMA_VERSION, 3);
+    assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 3);
+    assert(old.deleted);
+    assert.equal(await store.getQuery('q'), undefined);
+    const data = new Uint8Array(1024 * 1024 + 256).map((_, index) => index % 256);
+    await store.putContent({
+      kind: 'artifact',
+      id: 'binary',
+      data,
+      bytes: data.byteLength,
+      origin: 'prefetch',
+      cohort: 'gate',
+      accessedAt: 7,
+    });
+    const saved = await store.getContent({ kind: 'artifact', id: 'binary' });
+    assert.deepEqual(saved?.data, data);
+    assert.equal(
+      sqlite.prepare('SELECT typeof(data) AS type FROM resource_content').get()?.type,
+      'blob',
+    );
+    assert.deepEqual(await store.byteTotals(), { queries: 0, content: data.byteLength });
+    const aliases = () =>
+      sqlite.prepare('SELECT COUNT(*) AS count FROM resource_content_aliases').get()?.count;
+    await store.putContentAlias('frozen-diff:run:base:head', { kind: 'artifact', id: 'binary' });
+    assert.equal(await store.hasContent({ kind: 'artifact', id: 'binary' }), true);
+    assert.deepEqual((await store.getContentByAlias('frozen-diff:run:base:head'))?.data, data);
+    assert.equal(aliases(), 1);
+    await store.deleteContent({ kind: 'artifact', id: 'binary' });
+    assert.equal(aliases(), 0);
+    assert.equal(await store.hasContent({ kind: 'artifact', id: 'binary' }), false);
+  } finally {
+    await old.close();
+    await store.close();
+    sqlite.close();
+  }
+});
+
+test('deleting a scope from a connection that never opened a store removes its content blobs', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'local-store-content-'));
+  const filename = join(directory, 'resources.sqlite');
+  const first = database(new DatabaseSync(filename));
+  const store = await createSqliteResourceStore({ database: first.adapter, scope: scope('scope') });
+  await store.putContent({
+    kind: 'blob',
+    id: 'held',
+    data: new Uint8Array([1, 2, 3]),
+    bytes: 3,
+    origin: 'opened',
+    cohort: 'run',
+    accessedAt: 1,
+  });
+  await store.putContentAlias('alias', { kind: 'blob', id: 'held' });
+  await store.close();
+  first.sqlite.close();
+  const second = database(new DatabaseSync(filename, { enableForeignKeyConstraints: false }));
+  try {
+    await deleteSqliteResourceStoreScope(second.adapter, resourceStoreScopeId(scope('scope')));
+    for (const table of ['resource_content', 'resource_content_aliases'])
+      assert.equal(second.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count, 0);
+  } finally {
+    second.sqlite.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 });

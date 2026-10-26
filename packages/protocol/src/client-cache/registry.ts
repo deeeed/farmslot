@@ -196,6 +196,7 @@ function workspaceParams(params: unknown): Record<string, unknown> {
     'base',
     'head',
     'target',
+    'includeUntracked',
     'oldPath',
     'ref',
     'sessionId',
@@ -239,8 +240,14 @@ function workspaceParams(params: unknown): Record<string, unknown> {
       value.path.replace(/\\/g, '/').split('/').includes('..'))
   )
     throw new Error('Workspace path must stay relative');
+  if (value.includeUntracked !== undefined && typeof value.includeUntracked !== 'boolean')
+    throw new Error('includeUntracked must be a boolean');
+  if (value.includeUntracked && value.target !== 'worktree')
+    throw new Error('includeUntracked requires a worktree diff');
   return {
     ...value,
+    // Absent and false read the same diff, so they share one identity.
+    includeUntracked: value.includeUntracked || undefined,
     ...(value.sessionId ? { executionNodeId: value.executionNodeId ?? 'local' } : {}),
   };
 }

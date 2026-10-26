@@ -20,8 +20,7 @@ test('opened file/directory snapshots share slot and run bounds across methods; 
     { id: query.id, observedAt: 201, bytes: 100 },
     [...entries, { id: other.id, observedAt: 0, bytes: 100 }],
   );
-  assert.deepEqual(victims, [entries[0].id]);
-  assert.ok(!victims.includes(other.id));
+  assert.deepEqual(victims, { queries: [entries[0].id], content: [] });
   assert.equal(query.persisted, true);
 });
 test('slot reuse cannot bypass the slot cap, and one run across slots cannot bypass its run cap', () => {
@@ -37,7 +36,8 @@ test('slot reuse cannot bypass the slot cap, and one run across slots cannot byp
     }));
     const query = resourceQuery('fs.list', { slotId: 'shared', runId: 'shared', path: 'new' });
     assert.deepEqual(
-      workspaceRetentionEvictions(query, { id: query.id, observedAt: 999, bytes: 10 }, entries),
+      workspaceRetentionEvictions(query, { id: query.id, observedAt: 999, bytes: 10 }, entries)
+        ?.queries,
       [entries[0].id],
     );
   }
@@ -53,7 +53,7 @@ test('content bytes share a single portable-store budget across slot and native 
   assert.deepEqual(
     workspaceRetentionEvictions(query, { id: query.id, observedAt: 2, bytes: 8 * 1024 * 1024 }, [
       { id: previous.id, observedAt: 1, bytes: budget - 1 },
-    ]),
+    ])?.queries,
     [previous.id],
   );
 });
@@ -95,7 +95,7 @@ test('reopening old saved bytes changes LRU order without claiming a newer obser
     ],
     20,
   );
-  assert.deepEqual(victims, [next.id]);
+  assert.deepEqual(victims?.queries, [next.id]);
 });
 
 test('native workspace dependencies require the real reader and retain exact worker pin', () => {
@@ -125,8 +125,22 @@ test('native workspace dependencies require the real reader and retain exact wor
   ]);
   assert.equal(Reflect.has(query.params as object, 'ownerId'), false);
 });
-test('an entry larger than the remaining shared content budget is memory-only', () => {
+test('an opened snapshot evicts older content in the shared budget, unless it exceeds the budget', () => {
   const query = resourceQuery('fs.read', { slotId: 'slot', path: 'opened' });
   const saved = { id: query.id, observedAt: 10, accessedAt: 20, bytes: 11 };
-  assert.deepEqual(workspaceRetentionEvictions(query, saved, [], 20, 10), [query.id]);
+  const content = [
+    {
+      kind: 'blob' as const,
+      id: 'old',
+      bytes: 10,
+      origin: 'opened' as const,
+      cohort: 'gate' as const,
+      accessedAt: 5,
+    },
+  ];
+  assert.deepEqual(workspaceRetentionEvictions(query, saved, [], 20, content), {
+    queries: [],
+    content: [{ kind: 'blob', id: 'old' }],
+  });
+  assert.equal(workspaceRetentionEvictions(query, { ...saved, bytes: 21 }, [], 20), undefined);
 });

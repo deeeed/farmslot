@@ -34,17 +34,11 @@ function transport() {
 
 test('oversized workspace observation stays in memory without persisting beyond shared content budget', async () => {
   const connection = transport();
-  const backing = createMemoryResourceStore();
-  const store = {
-    ...backing,
-    async byteTotals() {
-      return { ...(await backing.byteTotals()), content: 99 };
-    },
-  };
+  const store = createMemoryResourceStore();
   const cache = createGatewayResourceCache({
     transport: connection,
     store,
-    contentBudgetBytes: 100,
+    contentBudgetBytes: 20,
   });
   const query = resourceQuery<{ value: string }>('fs.read', { slotId: 'slot', path: 'opened' });
   try {

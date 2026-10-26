@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add content by identity to the resource store and cache (verified diffs, git blobs and artifacts, size caps, one byte budget shared with workspace snapshots, fetch-time write tokens and aliases) and `createContentPrefetcher`, which prefetches pending gates and active runs with an exact unified-diff applier. Observed `git.diff` accepts `includeUntracked`.
+
 - Export the review-diff identity functions (`reviewDiffHash`, `verifiedReviewDiffHash`, `reviewSnapshotIdentityText`) for clients and the gateway, and add `GitShowResult.id`, batched `git.show` types, `GitDiffParams.includeUntracked` and `GitDiffResult.mergeBaseSha`/`headSha`.
 
 - Persist only approved gateway-status update fields with fixed error text, and accept explicit local or unsupported answers from upstream collectors without inventing a source time.

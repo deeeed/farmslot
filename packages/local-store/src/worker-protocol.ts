@@ -1,6 +1,9 @@
 import type {
+  ContentKey,
+  ResourceContentOrigin,
   ResourceStoreMetadata,
   ResourceStoreScope,
+  StoredResourceContent,
   StoredResourceQuery,
 } from '@farmslot/protocol/client-cache';
 
@@ -16,13 +19,36 @@ export type StoreWorkerRequest =
   | { id: number; operation: 'deleteScope'; scopeId: string; databaseName?: string }
   | {
       id: number;
-      operation: 'getMetadata' | 'listQueries' | 'byteTotals' | 'deleteAll' | 'close';
+      operation:
+        | 'getMetadata'
+        | 'listQueries'
+        | 'listContent'
+        | 'byteTotals'
+        | 'deleteAll'
+        | 'close';
       handle: number;
     }
   | { id: number; operation: 'getQuery' | 'deleteQuery'; handle: number; key: string }
   | { id: number; operation: 'touchQuery'; handle: number; key: string; accessedAt: number }
   | { id: number; operation: 'setMetadata'; handle: number; metadata: ResourceStoreMetadata }
-  | { id: number; operation: 'putQuery'; handle: number; entry: StoredResourceQuery };
+  | { id: number; operation: 'putQuery'; handle: number; entry: StoredResourceQuery }
+  | {
+      id: number;
+      operation: 'hasContent' | 'getContent' | 'deleteContent';
+      handle: number;
+      key: ContentKey;
+    }
+  | { id: number; operation: 'putContentAlias'; handle: number; alias: string; key: ContentKey }
+  | { id: number; operation: 'getContentByAlias'; handle: number; alias: string }
+  | {
+      id: number;
+      operation: 'touchContent';
+      handle: number;
+      key: ContentKey;
+      accessedAt: number;
+      origin?: ResourceContentOrigin;
+    }
+  | { id: number; operation: 'putContent'; handle: number; entry: StoredResourceContent };
 
 export type StoreWorkerResponse =
   | { id: number; ok: true; value: unknown }

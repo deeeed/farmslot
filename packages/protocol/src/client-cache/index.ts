@@ -2,8 +2,11 @@
 export { createGatewayResourceCache } from './cache.js';
 export * from './command-method.js';
 export { runResourceStoreConformance } from './conformance.js';
+export * from './content.js';
+export * from './diff-apply.js';
 export * from './keys.js';
 export * from './native-history.js';
+export * from './prefetch.js';
 export * from './registry.js';
 export * from './store.js';
 export {

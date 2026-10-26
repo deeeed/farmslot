@@ -61,6 +61,27 @@ test('a retained invocation rereads progress and evidence and refuses replaced c
     retry() {
       throw new Error('not retried in this invocation test');
     },
+    hasContent() {
+      throw new Error('content is not checked in this invocation test');
+    },
+    readContent() {
+      throw new Error('content is not read in this invocation test');
+    },
+    openContent() {
+      throw new Error('content is not opened in this invocation test');
+    },
+    readContentByAlias() {
+      throw new Error('content is not read in this invocation test');
+    },
+    openContentByAlias() {
+      throw new Error('content is not opened in this invocation test');
+    },
+    storeContent() {
+      throw new Error('content is not stored in this invocation test');
+    },
+    contentWriteToken() {
+      throw new Error('content is not fetched in this invocation test');
+    },
     async dispose() {
       states.clear();
     },

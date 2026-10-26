@@ -43,7 +43,7 @@ test('the browser worker adapter runs portable conformance against real SQLite W
   const { client, worker } = fixture();
   try {
     const passed = await runResourceStoreConformance((scope) => client.open(scope));
-    assert.equal(passed.length, 18);
+    assert.equal(passed.length, 20);
     const diagnostics = await client.diagnostics();
     assert.equal(diagnostics.storage, 'memory-test');
     assert.equal(diagnostics.integrity, 'ok');
@@ -65,6 +65,42 @@ test('a different tab deleting a scope seals existing proxies and removes its SQ
     const fresh = await client.open(scope);
     assert.equal(await fresh.getQuery('q'), undefined);
     await old.close();
+    await fresh.close();
+  } finally {
+    client.close();
+    await worker.terminate();
+  }
+});
+
+test('content blobs cross the worker boundary intact and leave with their scope', async () => {
+  const { client, worker } = fixture();
+  const scope = { gatewayUrl: 'ws://content.invalid/', principalId: 'p', principalGeneration: 0 };
+  try {
+    const store = await client.open(scope);
+    const data = new Uint8Array(1024 * 1024).map((_, index) => (index * 7) % 256);
+    const key = { kind: 'blob' as const, id: 'binary' };
+    await store.putContent({
+      ...key,
+      data,
+      bytes: data.byteLength,
+      origin: 'prefetch',
+      cohort: 'run',
+      accessedAt: 1,
+    });
+    await store.touchContent(key, 2, 'opened');
+    await store.putContentAlias('frozen-diff:run:base:head', key);
+    assert.equal(await store.hasContent(key), true);
+    assert.deepEqual((await store.getContentByAlias('frozen-diff:run:base:head'))?.data, data);
+    const saved = await store.getContent(key);
+    assert.deepEqual(saved?.data, data);
+    assert.equal(saved?.origin, 'opened');
+    assert.equal(saved?.accessedAt, 2);
+    assert.equal((await store.byteTotals()).content, data.byteLength);
+    await client.deleteScope(resourceStoreScopeId(scope));
+    const fresh = await client.open(scope);
+    assert.deepEqual(await fresh.listContent(), []);
+    assert.equal(await fresh.getContentByAlias('frozen-diff:run:base:head'), undefined);
+    await store.close();
     await fresh.close();
   } finally {
     client.close();

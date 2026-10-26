@@ -1,10 +1,11 @@
+import { type ResourceBudgetEvictions, resourceBudgetEvictions } from './content.js';
 import {
   RESOURCE_QUERY_DEFINITIONS,
   type ResourceQuery,
   type ResourceQueryDefinition,
   type ResourceReadMethod,
 } from './registry.js';
-import type { StoredResourceQueryInfo } from './store.js';
+import type { StoredResourceContentInfo, StoredResourceQueryInfo } from './store.js';
 
 /** Reconstruct only registered identities; malformed/foreign rows do not gain workspace membership. */
 export function workspaceRetentionMembership(id: string): readonly string[] | undefined {
@@ -26,26 +27,25 @@ export function workspaceRetentionEvictions(
   saved: StoredResourceQueryInfo,
   stored: StoredResourceQueryInfo[],
   budget = query.retention?.maxBytes ?? 0,
-  contentBytes = 0,
-): string[] {
+  content: readonly StoredResourceContentInfo[] = [],
+): ResourceBudgetEvictions | undefined {
   const retention = query.retention;
-  if (retention?.cohort !== 'workspace') return [];
-  if (saved.bytes + contentBytes > budget) return [saved.id];
+  if (retention?.cohort !== 'workspace') return { queries: [], content: [] };
   const rows = [...stored.filter((row) => row.id !== saved.id), saved]
     .filter((row) => workspaceRetentionMembership(row.id) !== undefined)
     .sort(
       (a, b) =>
         (a.accessedAt || a.observedAt) - (b.accessedAt || b.observedAt) || a.id.localeCompare(b.id),
     );
-  const removed = new Set<string>();
-  // One byte budget across every workspace family in this authenticated portable store.
-  let total = rows.reduce((sum, row) => sum + row.bytes, 0);
-  for (const row of rows) {
-    if (total + contentBytes <= budget) break;
-    if (row.id === saved.id) continue;
-    removed.add(row.id);
-    total -= row.bytes;
-  }
+  // One byte budget across content and every workspace family in this authenticated portable store.
+  const budgeted = resourceBudgetEvictions(
+    { bytes: saved.bytes, origin: 'opened' },
+    content,
+    rows.filter((row) => row.id !== saved.id),
+    budget,
+  );
+  if (!budgeted) return undefined;
+  const removed = new Set(budgeted.queries);
   for (const group of retention.groups ?? []) {
     const members = rows.filter(
       (row) => !removed.has(row.id) && workspaceRetentionMembership(row.id)?.includes(group),
@@ -58,5 +58,5 @@ export function workspaceRetentionEvictions(
       excess--;
     }
   }
-  return [...removed];
+  return { queries: [...removed], content: budgeted.content };
 }

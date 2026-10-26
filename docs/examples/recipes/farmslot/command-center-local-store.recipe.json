@@ -38,7 +38,7 @@
         "action": "assert_output",
         "source": "browser",
         "stream": "stdout",
-        "match": "\"checks\":18",
+        "match": "\"checks\":20",
         "intent": "Require OPFS conformance and the helper's ownership assertions.",
         "proves": ["browser-store"],
         "next": "reload-proof"

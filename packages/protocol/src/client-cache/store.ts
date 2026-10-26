@@ -42,6 +42,26 @@ export interface ResourceStoreByteTotals {
   content: number;
 }
 
+/** Content by identity: a review `diffHash`, a git blob id, or an artifact manifest `sha256`. */
+export interface ContentKey {
+  kind: 'diff' | 'blob' | 'artifact';
+  id: string;
+}
+export type ResourceContentOrigin = 'opened' | 'prefetch';
+/** Pending-gate content outranks active-run prefetch in eviction. */
+export type ResourceContentCohort = 'gate' | 'run';
+
+export interface StoredResourceContentInfo extends ContentKey {
+  bytes: number;
+  origin: ResourceContentOrigin;
+  cohort: ResourceContentCohort;
+  accessedAt: number;
+}
+
+export interface StoredResourceContent extends StoredResourceContentInfo {
+  data: Uint8Array;
+}
+
 /** Experimental store seam. deleteAll seals this incarnation against late reads and writes. */
 export interface ResourceStore {
   readonly persistent: boolean;
@@ -55,6 +75,17 @@ export interface ResourceStore {
   /** Access recency never changes observation age. Optional for older custom stores. */
   touchQuery?(id: string, accessedAt: number): Promise<void>;
   listQueries(): Promise<StoredResourceQueryInfo[]>;
+  /** Presence only, without loading the bytes. */
+  hasContent(key: ContentKey): Promise<boolean>;
+  getContent(key: ContentKey): Promise<StoredResourceContent | undefined>;
+  putContent(entry: StoredResourceContent): Promise<void>;
+  /** Points an alias at held content, replacing its previous target; deleting the content drops it. */
+  putContentAlias(alias: string, key: ContentKey): Promise<void>;
+  getContentByAlias(alias: string): Promise<StoredResourceContent | undefined>;
+  /** Recency only, plus an optional origin change; the bytes are never rewritten. */
+  touchContent(key: ContentKey, accessedAt: number, origin?: ResourceContentOrigin): Promise<void>;
+  deleteContent(key: ContentKey): Promise<void>;
+  listContent(): Promise<StoredResourceContentInfo[]>;
   byteTotals(): Promise<ResourceStoreByteTotals>;
   deleteAll(): Promise<void>;
   close(): Promise<void>;
@@ -63,6 +94,21 @@ export interface ResourceStore {
 function copy<T>(value: T): T {
   // Registered query results are JSON replies, including on React Native without structuredClone.
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export function resourceContentId(key: ContentKey): string {
+  return `${key.kind}:${key.id}`;
+}
+
+function contentInfo({
+  kind,
+  id,
+  bytes,
+  origin,
+  cohort,
+  accessedAt,
+}: StoredResourceContentInfo): StoredResourceContentInfo {
+  return { kind, id, bytes, origin, cohort, accessedAt };
 }
 
 export function resourceStoreScopeId(scope: ResourceStoreScope): string {
@@ -92,6 +138,8 @@ export function sameResourceAuthority(
 
 export function createMemoryResourceStore(): ResourceStore {
   const entries = new Map<string, StoredResourceQuery>();
+  const contents = new Map<string, StoredResourceContent>();
+  const aliases = new Map<string, string>();
   let metadata: ResourceStoreMetadata | undefined;
   let deleted = false;
   let closed = false;
@@ -141,18 +189,56 @@ export function createMemoryResourceStore(): ResourceStore {
           }))
         : [];
     },
+    async hasContent(key) {
+      return available() && contents.has(resourceContentId(key));
+    },
+    async getContent(key) {
+      const entry = available() ? contents.get(resourceContentId(key)) : undefined;
+      return entry ? { ...contentInfo(entry), data: new Uint8Array(entry.data) } : undefined;
+    },
+    async putContentAlias(alias, key) {
+      if (available() && contents.has(resourceContentId(key)))
+        aliases.set(alias, resourceContentId(key));
+    },
+    async getContentByAlias(alias) {
+      const id = available() ? aliases.get(alias) : undefined;
+      const entry = id === undefined ? undefined : contents.get(id);
+      return entry ? { ...contentInfo(entry), data: new Uint8Array(entry.data) } : undefined;
+    },
+    async putContent(entry) {
+      if (available())
+        contents.set(resourceContentId(entry), {
+          ...contentInfo(entry),
+          data: new Uint8Array(entry.data),
+        });
+    },
+    async touchContent(key, accessedAt, origin) {
+      const entry = available() ? contents.get(resourceContentId(key)) : undefined;
+      if (entry) {
+        entry.accessedAt = accessedAt;
+        if (origin) entry.origin = origin;
+      }
+    },
+    async deleteContent(key) {
+      if (!available()) return;
+      const id = resourceContentId(key);
+      contents.delete(id);
+      for (const [alias, target] of aliases) if (target === id) aliases.delete(alias);
+    },
+    async listContent() {
+      return available() ? [...contents.values()].map(contentInfo) : [];
+    },
     async byteTotals() {
-      return {
-        queries: available()
-          ? [...entries.values()].reduce((sum, entry) => sum + entry.bytes, 0)
-          : 0,
-        content: 0,
-      };
+      const sum = (values: Iterable<{ bytes: number }>) =>
+        available() ? [...values].reduce((total, entry) => total + entry.bytes, 0) : 0;
+      return { queries: sum(entries.values()), content: sum(contents.values()) };
     },
     async deleteAll() {
       if (deleted) return;
       deleted = true;
       entries.clear();
+      contents.clear();
+      aliases.clear();
       metadata = undefined;
       for (const listener of deletionListeners) listener();
     },

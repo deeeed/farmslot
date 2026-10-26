@@ -75,6 +75,30 @@ export function createStoreWorkerHandler(
           case 'listQueries':
             value = await store.listQueries();
             break;
+          case 'hasContent':
+            value = await store.hasContent(request.key);
+            break;
+          case 'getContent':
+            value = await store.getContent(request.key);
+            break;
+          case 'putContentAlias':
+            value = await store.putContentAlias(request.alias, request.key);
+            break;
+          case 'getContentByAlias':
+            value = await store.getContentByAlias(request.alias);
+            break;
+          case 'putContent':
+            value = await store.putContent(request.entry);
+            break;
+          case 'touchContent':
+            value = await store.touchContent(request.key, request.accessedAt, request.origin);
+            break;
+          case 'deleteContent':
+            value = await store.deleteContent(request.key);
+            break;
+          case 'listContent':
+            value = await store.listContent();
+            break;
           case 'byteTotals':
             value = await store.byteTotals();
             break;

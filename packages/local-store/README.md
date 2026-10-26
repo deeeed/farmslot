@@ -7,8 +7,8 @@ portable contract and never imports this package.
 
 ## Source layout
 
-- `src/sqlite-store.ts` owns scoped query rows, atomic replacement, schema resets,
-  deletion fencing and the five-store limit.
+- `src/sqlite-store.ts` owns scoped query rows, content blobs by identity, atomic
+  replacement, schema resets, deletion fencing and the five-store limit.
 - `src/native.ts` adapts Expo SQLite.
 - `src/browser.ts` owns the worker, tab ownership and deletion coordination.
 - `src/browser-worker.ts` opens the browser database and serves store operations.
