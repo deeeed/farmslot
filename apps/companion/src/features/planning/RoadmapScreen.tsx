@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
-  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
@@ -124,14 +123,16 @@ export default function RoadmapScreen({ screen }: { screen: RoadmapScreenModel }
           ))}
         </View>
       </View>
-      <ResourceReadStatus observation={state.observation} label="roadmap" />
+      <ResourceReadStatus
+        observation={state.observation}
+        label="roadmap"
+        onRetry={() => void actions.refresh()}
+        retryDisabled={!state.connected}
+      />
       <FlatList
         data={state.deliveryView.undelivered}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.list, { paddingBottom: state.bottomPadding }]}
-        refreshControl={
-          <RefreshControl refreshing={state.loading} onRefresh={() => void actions.refresh()} />
-        }
         ListEmptyComponent={
           state.loading ? (
             <ActivityIndicator color={colors.accent} />

@@ -43,10 +43,14 @@ export function useBacklogDetailController(itemId: string | undefined) {
     preview.path === specPath &&
     preview.authorityEpoch === authorityEpoch;
   const spec = matching ? preview.result : null;
+  const specError = matching ? preview.error : null;
+  const retryBacklog = Boolean(
+    observation.error || (itemId && observation.status === 'ready' && !item),
+  );
   const error = !itemId
     ? 'Backlog item id is required.'
     : (observation.error?.message ??
-      (matching ? preview.error : null) ??
+      specError ??
       (observation.status === 'ready' && !item ? `Backlog item ${itemId} was not found.` : null));
   useEffect(() => {
     setSpecOpen(false);
@@ -82,9 +86,10 @@ export function useBacklogDetailController(itemId: string | undefined) {
     };
   }, [client, connected, itemId, specPath, authorityEpoch, specRetry]);
   const refresh = useCallback(async () => {
-    await getResourceCache()?.retry(backlogPlanningQuery);
-    setSpecRetry((value) => value + 1);
-  }, []);
+    if (!connected) return;
+    if (retryBacklog) await getResourceCache()?.retry(backlogPlanningQuery);
+    if (specError) setSpecRetry((value) => value + 1);
+  }, [connected, retryBacklog, specError]);
   return {
     state: {
       bottomPadding: insets.bottom + spacing.xxxl,
@@ -94,6 +99,8 @@ export function useBacklogDetailController(itemId: string | undefined) {
       spec,
       specOpen,
       observation,
+      connected,
+      canRetry: retryBacklog || Boolean(specError),
       ready: connected && observation.status === 'ready',
     },
     actions: {

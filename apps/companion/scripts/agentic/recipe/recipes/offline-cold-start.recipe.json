@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion planning and configuration after a cold start",
-  "description": "D07 candidate, not native acceptance. Requires separate authorization, fresh fixture/native/source/recording preflights, one reserved device and one deliberate app restart. Prove five planning collections in actual warm/cold views and four observed memory-only reads. No provider/runner launch or UI/cache/SQL injection. Independent target-at-press video audit remains required. Accepted D06 records stay immutable.",
+  "description": "Approved D07 final delta. One reserved boot, actual background/foreground and one deliberate offline cold restart. Verify five saved collections, ages, healthy control removal and real error Retry. Disabled-action/no-replay reuses accepted D06 plus boot30 under the explicit lead cuts; no new disabled press is performed.",
   "proofTargets": [
     {
       "id": "d07-mounted-sources",
@@ -17,11 +17,19 @@
     },
     {
       "id": "d07-disabled-no-replay",
-      "claim": "The actual fully visible disabled Mark ready control receives one paired AX/OCR-guarded press, records the real native touch on that control, and sends no command on outage or recovery; independent press-video audit remains required."
+      "claim": "Actual disabled state and zero commands remain; physical disabled-action proof reuses accepted D06 and boot30 evidence."
     },
     {
       "id": "d07-observed-memory",
       "claim": "Actual mounted PR and stopped Co-Pilot consumers issue their four read-only queries; only these observed memory-only methods are checked absent from SQLite."
+    },
+    {
+      "id": "d07-final-controls",
+      "claim": "Final healthy Refresh controls are absent; real errors retain callable Retry."
+    },
+    {
+      "id": "d07-final-background",
+      "claim": "The same process reaches real background then reconnects before cold proof."
     }
   ],
   "workflow": {
@@ -37,7 +45,7 @@
       "prove": {
         "action": "command",
         "cmd": "node scripts/agentic/prove-native-planning.mjs prove",
-        "timeout_ms": 480000,
+        "timeout_ms": 540000,
         "intent": "Prove current planning, cold saved rows and disabled action on the owned app.",
         "next": "d07-mounted-sources"
       },
@@ -72,8 +80,8 @@
         "action": "assert_output",
         "source": "prove",
         "stream": "stdout",
-        "match": "\"d07DisabledTapNoReplay\":true",
-        "intent": "Verify the actual disabled press sends no command or recovery replay.",
+        "match": "\"d07DisabledStateNoReplay\":true",
+        "intent": "Keep disabled state and zero commands under the accepted action-proof reuse.",
         "proves": ["d07-disabled-no-replay"],
         "next": "d07-observed-memory"
       },
@@ -84,11 +92,29 @@
         "match": "\"d07MemoryOnlyObservedQueries\":true",
         "intent": "Check persistence only for four queries observed through mounted consumers.",
         "proves": ["d07-observed-memory"],
-        "next": "done"
+        "next": "d07-final-controls"
       },
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "d07-final-controls": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07HealthyControlsRemoved\":true",
+        "intent": "Final healthy Refresh controls are absent; real errors retain callable Retry.",
+        "proves": ["d07-final-controls"],
+        "next": "d07-final-background"
+      },
+      "d07-final-background": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"d07NativeBackground\":true",
+        "intent": "The same process reaches real background then reconnects before cold proof.",
+        "proves": ["d07-final-background"],
+        "next": "done"
       }
     }
   }

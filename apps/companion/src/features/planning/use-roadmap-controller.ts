@@ -19,6 +19,7 @@ import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQue
 import { getResourceCache } from '../../lib/resource-cache';
 import { spacing } from '../../lib/theme';
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
+import { useConnectionStore } from '../../store/connection';
 import { useFilterStore } from '../../store/filters';
 
 import { roadmapPlanningQuery } from './planning-resources';
@@ -31,6 +32,9 @@ export function useRoadmapController() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const access = useWorkspaceRenderAccess();
+  const connected = useConnectionStore(
+    (state) => state.status === 'connected' && state.workspaceAccess === 'farm',
+  );
   const observation = useResourceQuery(access === 'farm' ? roadmapPlanningQuery : undefined);
   const selectedProjects = useFilterStore((state) => state.filters.projects);
   const items = observation.data?.items ?? EMPTY_ITEMS;
@@ -39,7 +43,9 @@ export function useRoadmapController() {
   const [deliveryFilter, setDeliveryFilter] = useState<RoadmapDeliveryFilter>('all');
   const [deliveredExpanded, setDeliveredExpanded] = useState(false);
   const [search, setSearch] = useState('');
-  const refresh = useCallback(() => getResourceCache()?.retry(roadmapPlanningQuery), []);
+  const refresh = useCallback(() => {
+    if (connected && observation.error) return getResourceCache()?.retry(roadmapPlanningQuery);
+  }, [connected, observation.error]);
 
   const visibleItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -95,6 +101,7 @@ export function useRoadmapController() {
       deliveredLoading,
       deliveredError,
       observation,
+      connected,
       error: observation.error?.message ?? null,
       loading: observation.status === 'loading',
       search,

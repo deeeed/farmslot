@@ -84,14 +84,17 @@ export function CopilotScreen({
       >
         <Text style={styles.buttonText}>Native conversations</Text>
       </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        disabled={vm.loading || !vm.connected}
-        style={[styles.button, (vm.loading || !vm.connected) && styles.buttonDisabled]}
-        onPress={() => void actions.refresh()}
-      >
-        <Text style={styles.buttonText}>{vm.loading ? 'Checking…' : 'Refresh status'}</Text>
-      </Pressable>
+      {vm.error ? (
+        <Pressable
+          testID="companion-copilot-retry"
+          accessibilityRole="button"
+          disabled={vm.loading || !vm.connected}
+          style={[styles.button, (vm.loading || !vm.connected) && styles.buttonDisabled]}
+          onPress={() => void actions.refresh()}
+        >
+          <Text style={styles.buttonText}>{vm.loading ? 'Checking…' : 'Retry status'}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

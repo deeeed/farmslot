@@ -384,6 +384,11 @@ async function prove() {
       'Actual background must close the app transport before the source write',
     );
     await save('d07-background-closed.json', { at: Date.now(), backgroundClosed });
+    await until(
+      observe,
+      (state) => !state.online && state.appStateHistory.at(-1)?.state === 'background',
+      'Wait for actual background, not the earlier inactive socket pause',
+    );
     const backgroundWriter = await writer('backlog-background');
     await open('backlog');
     const resumed = await until(

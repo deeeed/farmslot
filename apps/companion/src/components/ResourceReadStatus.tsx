@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 
 import { sourceObservationAge } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -9,9 +9,13 @@ import { baseStyles, colors, spacing } from '../lib/theme';
 export function ResourceReadStatus({
   observation,
   label,
+  onRetry,
+  retryDisabled = false,
 }: {
   observation: ResourceQueryState;
   label: string;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
 }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -38,9 +42,22 @@ export function ResourceReadStatus({
         </Text>
       ) : null}
       {observation.error ? (
-        <Text accessibilityRole="alert" style={baseStyles.textSecondary}>
-          Could not read {label}: {observation.error.message}
-        </Text>
+        <>
+          <Text accessibilityRole="alert" style={baseStyles.textSecondary}>
+            Could not read {label}: {observation.error.message}
+          </Text>
+          {onRetry ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Retry reading ${label}`}
+              disabled={retryDisabled}
+              onPress={onRetry}
+              style={{ paddingVertical: spacing.sm }}
+            >
+              <Text style={[baseStyles.textSecondary, { color: colors.accent }]}>Retry</Text>
+            </Pressable>
+          ) : null}
+        </>
       ) : null}
     </View>
   );

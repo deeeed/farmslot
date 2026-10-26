@@ -58,7 +58,9 @@ export function useBacklogController() {
         ),
     [observation.data, selectedProjects],
   );
-  const refresh = useCallback(() => getResourceCache()?.retry(backlogPlanningQuery), []);
+  const refresh = useCallback(() => {
+    if (connected && observation.error) return getResourceCache()?.retry(backlogPlanningQuery);
+  }, [connected, observation.error]);
   const runAction = useCallback(
     async (item: BacklogItem, action: 'ready' | 'enqueue') => {
       const ticket = Symbol();
@@ -116,6 +118,7 @@ export function useBacklogController() {
       busyItemId,
       error,
       observation,
+      connected,
       ready,
       loading: observation.status === 'loading',
     },

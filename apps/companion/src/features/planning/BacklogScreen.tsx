@@ -1,14 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { BacklogItem, BacklogStatus } from '@farmslot/protocol';
 
@@ -57,15 +49,17 @@ export default function BacklogScreen({
           <Text style={styles.secondaryText}>Dispatch queue</Text>
         </Pressable>
       </View>
-      <ResourceReadStatus observation={state.observation} label="backlog" />
+      <ResourceReadStatus
+        observation={state.observation}
+        label="backlog"
+        onRetry={() => void actions.refresh()}
+        retryDisabled={!state.connected}
+      />
       {state.error ? <Text style={styles.error}>{state.error}</Text> : null}
       <FlatList
         data={state.visibleItems}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.list, { paddingBottom: state.bottomPadding }]}
-        refreshControl={
-          <RefreshControl refreshing={state.loading} onRefresh={() => void actions.refresh()} />
-        }
         ListEmptyComponent={
           state.loading ? (
             <ActivityIndicator color={colors.accent} />

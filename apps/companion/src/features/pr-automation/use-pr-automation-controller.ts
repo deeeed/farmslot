@@ -22,7 +22,7 @@ import {
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 import { type ReviewDispatchViewModel, reviewLineagesForPR } from '@farmslot/review-dispatch';
 
 import { useConfigurationProjects } from '../../hooks/useConfigurationProjects';
@@ -219,14 +219,18 @@ export function usePRAutomationController(
   useEffect(() => {
     const cache = getResourceCache();
     refreshRef.current = async () => {
-      if (cache)
-        await Promise.all([
-          cache.retry(watchesQuery),
-          cache.retry(rulesQuery),
-          cache.retry(queueQuery),
-          cache.retry(pushQuery),
-          readConfiguration<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}),
-        ]);
+      if (!cache || connection !== 'connected') return;
+      const retryFailed = <T>(query: ResourceQuery<T>) =>
+        cache.read(query).error ? cache.retry(query) : undefined;
+      await Promise.all([
+        retryFailed(watchesQuery),
+        retryFailed(rulesQuery),
+        retryFailed(queueQuery),
+        retryFailed(pushQuery),
+        configurationRef.current.error
+          ? readConfiguration<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
+          : undefined,
+      ]);
     };
     return () => {
       refreshRef.current = async () => {};

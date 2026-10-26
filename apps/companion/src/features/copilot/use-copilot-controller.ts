@@ -15,10 +15,10 @@ export function useCopilotController() {
   const renderAccess = useWorkspaceRenderAccess();
   const state = useResourceQuery(renderAccess === 'farm' ? runtimeQuery : undefined);
   const refresh = useCallback(async () => {
-    if (useConnectionStore.getState().status !== 'connected') return;
+    if (!state.error || useConnectionStore.getState().status !== 'connected') return;
     if (useConnectionStore.getState().workspaceAccess !== 'farm') return;
     await getResourceCache()?.retry(runtimeQuery);
-  }, []);
+  }, [state.error]);
   return {
     viewModel: {
       runtime: state.data?.session ?? null,

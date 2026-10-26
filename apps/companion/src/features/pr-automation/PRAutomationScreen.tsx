@@ -28,11 +28,14 @@ export function PRAutomationScreen(screen: PRAutomationController) {
       >
         <View style={styles.row}>
           <Text style={styles.title}>PR monitoring and reviews</Text>
-          <PRButton
-            label={vm.loading ? 'Refreshing…' : 'Refresh queue'}
-            disabled={!vm.connected || vm.loading || vm.busy}
-            onPress={actions.refresh}
-          />
+          {vm.error ? (
+            <PRButton
+              testID="companion-pr-retry"
+              label={vm.loading ? 'Retrying…' : 'Retry queue'}
+              disabled={!vm.connected || vm.loading || vm.busy}
+              onPress={actions.refresh}
+            />
+          ) : null}
         </View>
         {!vm.connected && (
           <Text style={styles.attention}>Reconnect to the gateway to load current PR work.</Text>

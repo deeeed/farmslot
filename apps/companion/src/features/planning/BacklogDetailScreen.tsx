@@ -37,7 +37,11 @@ export default function BacklogDetailScreen({ screen }: { screen: BacklogDetailS
         </Text>
         <ResourceReadStatus observation={state.observation} label="backlog" />
         {state.error ? (
-          <Pressable style={styles.secondaryButton} onPress={() => void actions.refresh()}>
+          <Pressable
+            style={styles.secondaryButton}
+            disabled={!state.connected || !state.canRetry}
+            onPress={() => void actions.refresh()}
+          >
             <Text style={styles.secondaryText}>Retry</Text>
           </Pressable>
         ) : null}
@@ -94,7 +98,10 @@ export default function BacklogDetailScreen({ screen }: { screen: BacklogDetailS
       {state.error ? (
         <View style={styles.errorBanner}>
           <Text style={styles.error}>{state.error}</Text>
-          <Pressable onPress={() => void actions.refresh()}>
+          <Pressable
+            disabled={!state.connected || !state.canRetry}
+            onPress={() => void actions.refresh()}
+          >
             <Text style={styles.secondaryText}>Retry</Text>
           </Pressable>
         </View>
@@ -157,9 +164,6 @@ export default function BacklogDetailScreen({ screen }: { screen: BacklogDetailS
             <Text style={styles.primaryText}>Open active run</Text>
           </Pressable>
         ) : null}
-        <Pressable style={styles.secondaryButton} onPress={() => void actions.refresh()}>
-          <Text style={styles.secondaryText}>{state.loading ? 'Refreshing…' : 'Refresh'}</Text>
-        </Pressable>
       </View>
 
       <DocumentViewer

@@ -334,7 +334,9 @@ export function assertMountedPlanningChange(plan, kind, before, after, writer, p
 }
 
 async function prove() {
-  await authorizePlanningProof();
+  const authorization = await authorizePlanningProof();
+  assert.equal(authorization.budgetCase, 'D07-GO-Boot-2');
+  assert.equal(authorization.reuseCuts?.disabledAction, 'accepted');
   const plan = await resolveNativePlanningInputs(process.env, source);
   const saved = JSON.parse(await readFile(process.env.FARMSLOT_D07_NATIVE_PLAN, 'utf8'));
   assert.equal(plan.inputHash, saved.inputHash, 'No stale plan reuse');
@@ -541,6 +543,142 @@ async function prove() {
       }
       assert.fail(`Mounted ${kind} change was not persisted from its observed reply`);
     };
+    async function untilNative(read, accepts, label) {
+      const deadline = Date.now() + 15000;
+      do {
+        const value = await read();
+        if (accepts(value)) return value;
+        await delay(100);
+      } while (Date.now() < deadline);
+      assert.fail(label);
+    }
+    async function settledCounts() {
+      let previous;
+      let since = Date.now();
+      return untilNative(
+        counts,
+        (value) => {
+          const signature = JSON.stringify(value.counts);
+          if (signature !== previous) since = Date.now();
+          previous = signature;
+          return Date.now() - since >= 400;
+        },
+        'Actual app read counts must settle before the input',
+      );
+    }
+    async function pullWithoutRefresh(name, method) {
+      const screen = await capture(name + '-before');
+      const scroll = screen.nodes
+        .filter((node) => node.type === 'ScrollView' && node.rect?.height > 120)
+        .sort((a, b) => b.rect.height - a.rect.height)[0];
+      assert(scroll, 'Require the current native list scroll view');
+      const before = await settledCounts();
+      const gesture = nativeScrollViewGesture(
+        {
+          ...screen,
+          nodes: screen.nodes.filter(
+            (node) => node.type !== 'ScrollView' || node.index === scroll.index,
+          ),
+        },
+        'up',
+      );
+      await save(name + '-gesture.json', gesture);
+      await device.interactions.swipe({ ...selection, ...gesture });
+      const deadline = Date.now() + 650;
+      do {
+        assert.equal(
+          (await counts()).counts[method],
+          before.counts[method],
+          'Healthy pull must not force a query read',
+        );
+        await delay(80);
+      } while (Date.now() < deadline);
+      await capture(name + '-after');
+      await save(name + '-counts.json', { before, after: await counts() });
+    }
+    async function finalErrorRetry(kind, method, label, healthyLabel) {
+      const configFile = await realpath(process.env.FARMSLOT_D07_INTEGRATION_CONFIG);
+      assert.equal(digest(await readFile(configFile)), authorization.configSha256);
+      const helper = path.join(path.dirname(configFile), 'source-runtime.mjs');
+      assert.equal(
+        digest(await readFile(helper)),
+        authorization.driverHashes['source-runtime.mjs'],
+      );
+      const write = async (action) => {
+        const result = await execute(
+          process.execPath,
+          ['--import', 'tsx', helper, `integration-write:${action}`, configFile],
+          { cwd: source, env: process.env, timeout: 30000, maxBuffer: 8 * 1024 * 1024 },
+        );
+        const receipt = JSON.parse(result.stdout);
+        await save(`d07-final-${action}.json`, receipt);
+        return receipt;
+      };
+      await write(kind + '-error');
+      const failed = await untilNative(
+        observe,
+        (state) =>
+          !!state.domainObservations[method]?.errorCode &&
+          (kind !== 'pr' || !!state.domainObservations['prPush.list']?.errorCode),
+        'Real source errors must reach the final controls',
+      );
+      const screen = await view(kind + '-final-error', [healthyLabel, label]);
+      const targets = screen.nodes.filter(
+        (node) => node.type === 'Button' && node.label === label && node.enabled !== false,
+      );
+      assert.equal(
+        targets.length,
+        1,
+        'Actual error-only Retry must be enabled on a live transport',
+      );
+      const target = targets[0];
+      assert.equal(
+        target.identifier,
+        kind === 'pr' ? 'companion-pr-retry' : 'companion-copilot-retry',
+      );
+      const viewport = screen.nodes.find(
+        (node) => ['Application', 'Window'].includes(node.type) && node.rect?.height > 0,
+      )?.rect;
+      assert(
+        viewport &&
+          target.rect.x >= viewport.x &&
+          target.rect.y >= viewport.y &&
+          target.rect.x + target.rect.width <= viewport.x + viewport.width &&
+          target.rect.y + target.rect.height <= viewport.y + viewport.height,
+        'Require the actual Retry control fully inside the current native viewport',
+      );
+      const before = await settledCounts();
+      const point = {
+        x: target.rect.x + target.rect.width / 2,
+        y: target.rect.y + target.rect.height / 2,
+      };
+      const press = { target, point, startedAt: Date.now() };
+      press.result = await device.interactions.press({ ...selection, ...point });
+      press.completedAt = Date.now();
+      await save(kind + '-final-retry-press.json', press);
+      const retried = await untilNative(
+        counts,
+        (value) => value.counts[method] > before.counts[method],
+        'Actual Retry must request its failed source',
+      );
+      if (kind === 'pr')
+        for (const healthy of ['prWatch.list', 'dispatch.queue.list', 'config.projects'])
+          assert.equal(
+            retried.counts[healthy],
+            before.counts[healthy],
+            'Error Retry must leave healthy queries alone',
+          );
+      await write(kind + '-repair');
+      const recovered = await untilNative(
+        observe,
+        (state) =>
+          state.domainObservations[method]?.status === 'ready' &&
+          !state.domainObservations[method]?.errorCode,
+        'Final error control must recover after the owning repair',
+      );
+      await view(kind + '-final-recovered', [healthyLabel], [label]);
+      await save(kind + '-final-error-retry.json', { failed, before, retried, recovered });
+    }
     await waitForSimulatorRecipeBridge({ platform: 'ios', simulator });
     const initial = await counts();
     for (const method of forbiddenPlanningMethods)
@@ -556,10 +694,18 @@ async function prove() {
     assert.equal(beforeBacklog.nodes.find((node) => node.identifier === selector)?.enabled, true);
     await writePlanningSource(plan, 'backlog', artifacts);
     await view('backlog-after', [plan.expected.backlog.after], [plan.expected.backlog.before]);
+    await pullWithoutRefresh('backlog-healthy-pull', 'backlog.list');
+    await open(`backlog/${plan.expected.backlog.id}`);
+    await view(
+      'backlog-detail-final',
+      [plan.expected.backlog.after, 'Dispatch configuration'],
+      ['Refresh'],
+    );
     await open('roadmap');
     await view('roadmap-before', [plan.expected.roadmap.before]);
     await writePlanningSource(plan, 'roadmap', artifacts);
     await view('roadmap-after', [plan.expected.roadmap.after], [plan.expected.roadmap.before]);
+    await pullWithoutRefresh('roadmap-healthy-pull', 'roadmap.list');
     await open('backlog/create');
     await view('projects-before', [plan.project]);
     await writePlanningSource(plan, 'newProject', artifacts);
@@ -580,7 +726,7 @@ async function prove() {
     const prScreen = await view(
       'pr-read-only',
       ['PR monitoring and reviews', 'Monitors'],
-      ['Reconnect to the gateway'],
+      ['Reconnect to the gateway', 'Refresh queue', 'Retry queue'],
     );
     assert(
       !prScreen.nodes.some((node) => node.identifier === 'companion-pr-error'),
@@ -591,9 +737,60 @@ async function prove() {
       'prRules.list',
       'prPush.list',
     ]);
+    await finalErrorRetry('pr', 'prRules.list', 'Retry queue', 'PR monitoring and reviews');
     await open('copilot');
-    await view('copilot-read-only', ['Operator Co-Pilot', 'Co-Pilot is stopped']);
+    await view(
+      'copilot-read-only',
+      ['Operator Co-Pilot', 'Co-Pilot is stopped'],
+      ['Refresh status', 'Retry status'],
+    );
     await currentMemory('d07-copilot-canonical-readiness.json', ['copilot.status']);
+    await finalErrorRetry('copilot', 'copilot.status', 'Retry status', 'Co-Pilot is stopped');
+    const beforeBackground = await observe();
+    const backgroundStartedAt = Date.now();
+    await execute('xcrun', ['simctl', 'launch', simulator, 'com.apple.Preferences'], {
+      timeout: 15000,
+    });
+    const background = await untilNative(
+      observe,
+      (state) => !state.online && state.appStateHistory.at(-1)?.state === 'background',
+      'Wait for the actual background lifecycle state',
+    );
+    assert.equal((await counts()).connections, 0);
+    await execute(
+      'xcrun',
+      [
+        'simctl',
+        'io',
+        simulator,
+        'screenshot',
+        path.join(artifacts, 'final-actual-background.png'),
+      ],
+      { timeout: 15000 },
+    );
+    await open('backlog');
+    const foreground = await untilNative(
+      observe,
+      (state) => state.online && state.appStateHistory.at(-1)?.state === 'active',
+      'The same process must resume from actual background',
+    );
+    for (const key of ['startedAt', 'workspaceKey', 'connectionProfileId'])
+      assert.equal(foreground[key], beforeBackground[key]);
+    assert(foreground.connectionGeneration > beforeBackground.connectionGeneration);
+    await untilNative(
+      observe,
+      (state) => state.backlogObservation?.status === 'ready',
+      'Foreground Backlog must complete a current read',
+    );
+    await view('final-background-recovered', [plan.expected.backlog.after], ['Saved backlog,']);
+    assert((await counts()).lastObservedReads['backlog.list'].completedAt >= backgroundStartedAt);
+    await save('d07-final-native-background.json', {
+      beforeBackground,
+      backgroundStartedAt,
+      background,
+      foreground,
+      counts: await counts(),
+    });
     const warmCounts = await counts();
     const warm = await sqlite('d07-warm');
     assertPlanningReadsFromRuntime(warm.state, warmCounts, [
@@ -702,19 +899,15 @@ async function prove() {
         workspaceKey: cold.state.workspaceKey,
         targetRect: pairedTarget.rect,
         ocr,
-        videoAuditRequired: true,
+        pairedImageAuditRequired: true,
       };
-      const beforeTap = await counts();
-      const beforeInput = await observe();
-      press.startedAt = Date.now();
-      press.sdkResult = await device.interactions.press({ ...selection, ...point });
-      press.completedAt = Date.now();
-      await save('d07-disabled-target-press.json', press);
-      const afterInput = await observe();
-      const nativeTouch = assertNativeBacklogReadyTouch(beforeInput, afterInput, press);
-      await save('d07-disabled-native-touch.json', { inputHash: plan.inputHash, nativeTouch });
-      await view('backlog-after-disabled-tap', [plan.expected.backlog.after, 'Saved backlog,']);
-      unchangedCommands(beforeTap, await counts());
+      await save('d07-disabled-target-state.json', {
+        ...press,
+        actualPressPerformed: false,
+        acceptedReuseAuthority: authorization.authoritySha256,
+        acceptedReference: 'D06 disabled-action/no-replay and boot30 disabled AX/OCR',
+      });
+      unchangedCommands(initial, await counts());
       await open('roadmap');
       await view('roadmap-cold', [plan.expected.roadmap.after, 'Saved roadmap,']);
       await open('backlog/create');
@@ -803,11 +996,13 @@ async function prove() {
       observedMemoryMethods,
       workGraphNativeUi: 'warm-and-cold',
       queueColdUi: 'warm-and-cold',
-      independentPressVideoAudit: 'required',
+      disabledActionProof: 'accepted D06/boot30 reuse; current AX/OCR and command checks retained',
+      healthyControlsRemoved: true,
+      nativeBackground: true,
       coldStartedAt,
     });
     process.stdout.write(
-      `${JSON.stringify({ d07ExternalMountedChanges: true, d07ColdExactRows: true, d07VisibleSavedAge: true, d07DisabledTapNoReplay: true, d07MemoryOnlyObservedQueries: true })}\n`,
+      `${JSON.stringify({ d07ExternalMountedChanges: true, d07ColdExactRows: true, d07VisibleSavedAge: true, d07DisabledStateNoReplay: true, d07MemoryOnlyObservedQueries: true, d07HealthyControlsRemoved: true, d07NativeBackground: true })}\n`,
     );
   } catch (error) {
     await save('d07-first-failure.json', {
