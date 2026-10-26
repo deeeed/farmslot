@@ -524,3 +524,20 @@ A provider rollout changed unused reviewer environment and invalidated a saved l
 ### Public surface
 
 `@farmslot/protocol` 0.71.1 adds optional `AgentContext.reviewValidationDepth` for the gateway's retained launch policy and optional `ReviewRoundSettlement.kind = 'infrastructure-fallback'` for the gateway-owned settlement. Existing budget projections subtract the same settled admission and retain the failed-launch cap. No new CLI action, RPC, shared renderer policy or native runtime field is introduced. Wire protocol 0.63.0 is unchanged.
+
+## Amendment 8: stop empty and small-fix re-reviews, 2026-10-26
+
+**Status:** Accepted by the lead, approved by Arthur 2026-10-26.
+**Specification:** [Automatic re-review limits](../reference/review-modes-warm-cold.md#automatic-re-review-limits).
+
+A fix that changes no source files and leaves the reviewer's findings unchanged
+ends the automatic loop at the gate with those findings open. A completed fix
+that touches only evidence or at most 50 source lines skips the warm re-review
+and resolves those findings for the gate. The original reviewer attempt remains
+unchanged; gateway acceptance records the completed fix and current inputs.
+Unknown deltas retain
+the existing review path. Restart recovery applies the same limits.
+
+Repeated empty cycles and small rechecks consumed reviewer rounds without new
+findings. These limits remove automatic launches without another reviewer
+verdict or round admission. There is no new public API or package field.

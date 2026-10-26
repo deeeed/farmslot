@@ -48,6 +48,27 @@ fingerprint MUST continue to cover author recipe attempts, their evidence and
 The private gateway contract adds no public API or harness configuration. It uses
 the existing recipe CLI flag and environment variables named above.
 
+## Automatic re-review limits
+
+**Status:** Accepted under ADR-063 Amendment 8, approved by Arthur 2026-10-26.
+
+After a worker fix, the gateway MUST stop the automatic loop when a captured
+delta contains zero source files and the finding set is unchanged. It MUST
+retain the findings as open at the gate and MUST NOT automatically redeliver
+them after restart.
+
+A completed fix that changes only evidence/artifacts or at most 50 source lines
+MUST skip the automatic warm re-review and resolve the prior findings for gate
+eligibility. Source lines are additions plus deletions under the project's
+existing source filter. The original reviewer attempt MUST remain unchanged.
+The gateway MUST record acceptance of the worker fix, its current contribution
+snapshot and reviewed-input fingerprint without launching or charging a reviewer.
+Evidence-only changes at the same HEAD MUST be distinguished from an empty fix
+using the existing reviewed-input fingerprint. Failed or blocked fixes,
+unavailable captures, missing original review baselines and unmeasured source
+changes MUST retain the existing review path. Normal and recovered fixes MUST
+use the same limits.
+
 ## Round budget
 
 Except for the update-branch budget below, the gateway MUST default to at most

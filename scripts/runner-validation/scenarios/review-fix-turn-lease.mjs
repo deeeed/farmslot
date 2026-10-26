@@ -243,6 +243,8 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
           report.result.lifecycleLeaseProbe?.compactSessionStart === true &&
           report.result.lifecycleLeaseProbe?.postCompact === true)) &&
       report.result.leasedSignalStatus === 'complete' &&
+      report.result.tokenlessSignalStatus === 'complete' &&
+      report.result.tokenlessAcceptanceAbsent === true &&
       report.result.activeTurnObserved === true &&
       report.result.supersedingTurnProbe.originalLeaseActive === true &&
       report.result.supersedingTurnProbe.originalLeaseAfterNewerDelivery === false &&

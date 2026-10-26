@@ -1901,6 +1901,7 @@ export async function executeCompleteStep(
     outputs: {
       prNumber: completion.prNumber,
       ciRepo: completion.ciRepo,
+      publishedHeadSha: completion.publishedHeadSha,
       artifactsCopied: completion.artifactsCopied,
       prCommentPosted: completion.prCommentPosted,
       prTitleUpdated: completion.prTitleUpdated,

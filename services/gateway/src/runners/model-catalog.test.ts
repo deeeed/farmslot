@@ -313,3 +313,121 @@ test('visible preferences expand the configured home directory', () => {
     else process.env.FARMSLOT_HOME = previous;
   }
 });
+
+for (const builtins of [false, true]) {
+  test(`pi discovers configured LiteLLM models ${builtins ? 'with its built-in catalog' : 'without a cached catalog'}`, async (t) => {
+    const home = mkdtempSync(join(tmpdir(), 'pi-custom-catalog-'));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const agent = join(home, '.pi', 'agent');
+    mkdirSync(agent, { recursive: true });
+    if (builtins)
+      writeFileSync(
+        join(agent, 'models-store.json'),
+        JSON.stringify({
+          anthropic: { models: [{ id: 'claude-sonnet-5' }] },
+          xai: { models: [{ id: 'grok-4.6', thinkingLevelMap: { off: null } }] },
+          openai: { models: [{ id: 'openai/gpt-4o' }] },
+        }),
+      );
+    writeFileSync(
+      join(agent, 'models.json'),
+      JSON.stringify({
+        providers: {
+          litellm: {
+            apiKey: '$LITELLM_API_KEY',
+            models: [
+              { id: 'DeepSeek-V4-Flash' },
+              { id: 'glm-5p3', thinkingLevelMap: { high: 'high' } },
+              { id: 'openai/gpt-4o' },
+            ],
+          },
+          xai: { models: [{ id: 'grok-4.6', thinkingLevelMap: { high: 'high' } }] },
+        },
+      }),
+    );
+    const result = await queryRunnerModelCatalog(
+      'pi',
+      getRunnerDefinition('pi').modelCatalog,
+      home,
+    );
+    assert.equal(result.status, 'ready');
+    assert.equal(
+      result.models.some((m) => m.id === 'anthropic/claude-sonnet-5'),
+      builtins,
+    );
+    assert.ok(result.models.some((m) => m.id === 'litellm/DeepSeek-V4-Flash'));
+    assert.ok(result.models.some((m) => m.id === 'litellm/openai/gpt-4o'));
+    assert.equal(
+      result.models.some((m) => m.id === 'openai/gpt-4o'),
+      builtins,
+    );
+    assert.deepEqual(result.models.find((m) => m.id === 'litellm/glm-5p3')?.reasoningModes, [
+      'high',
+    ]);
+    assert.deepEqual(
+      result.models.filter((m) => m.id === 'xai/grok-4.6'),
+      [{ id: 'xai/grok-4.6', reasoningModes: ['high'], listed: true }],
+    );
+  });
+}
+
+test('pi keeps built-in models when custom configuration is absent or only overrides a provider', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'pi-optional-config-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const agent = join(home, '.pi', 'agent');
+  mkdirSync(agent, { recursive: true });
+  writeFileSync(
+    join(agent, 'models-store.json'),
+    JSON.stringify({ xai: { models: [{ id: 'grok-4.6' }] } }),
+  );
+  const source = getRunnerDefinition('pi').modelCatalog;
+  const original = await queryRunnerModelCatalog('pi', source, home);
+  assert.equal(original.status, 'ready');
+  writeFileSync(
+    join(agent, 'models.json'),
+    JSON.stringify({ providers: { xai: { apiKey: 'XAI_API_KEY' } } }),
+  );
+  assert.deepEqual(await queryRunnerModelCatalog('pi', source, home), original);
+  writeFileSync(join(agent, 'models.json'), '{');
+  assert.equal((await queryRunnerModelCatalog('pi', source, home)).status, 'unavailable');
+});
+
+test('pi merges an empty native cache and reports unavailable only when the merged catalog is empty', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'pi-empty-catalog-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const agent = join(home, '.pi', 'agent');
+  mkdirSync(agent, { recursive: true });
+  const source = getRunnerDefinition('pi').modelCatalog;
+  for (const cache of [{}, { anthropic: { models: [], checkedAt: 1 } }]) {
+    writeFileSync(join(agent, 'models-store.json'), JSON.stringify(cache));
+    writeFileSync(
+      join(agent, 'models.json'),
+      JSON.stringify({ providers: { litellm: { models: [{ id: 'DeepSeek-V4-Flash' }] } } }),
+    );
+    const result = await queryRunnerModelCatalog('pi', source, home);
+    assert.equal(result.status, 'ready');
+    assert.deepEqual(
+      result.models.map((model) => model.id),
+      ['litellm/DeepSeek-V4-Flash'],
+    );
+    writeFileSync(join(agent, 'models.json'), '{"providers":{}}');
+    assert.equal((await queryRunnerModelCatalog('pi', source, home)).status, 'unavailable');
+  }
+});
+
+test('pi accepts its native BOM, line comments and trailing commas without stripping string contents', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'pi-commented-catalog-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const agent = join(home, '.pi', 'agent');
+  mkdirSync(agent, { recursive: true });
+  writeFileSync(
+    join(agent, 'models.json'),
+    '\uFEFF{ // configured providers\n"providers": { "litellm": { "baseUrl": "https://proxy.test/path,}", "models": [{"id": "DeepSeek-V4-Flash",},],},},}',
+  );
+  const result = await queryRunnerModelCatalog('pi', getRunnerDefinition('pi').modelCatalog, home);
+  assert.equal(result.status, 'ready');
+  assert.deepEqual(
+    result.models.map((model) => model.id),
+    ['litellm/DeepSeek-V4-Flash'],
+  );
+});

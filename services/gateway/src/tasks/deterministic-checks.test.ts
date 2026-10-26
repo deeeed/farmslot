@@ -49,6 +49,71 @@ test('legacy tasks without declarations retain their package behavior', async (t
   assert.deepEqual(await validateDeterministicChecksForRun(run), []);
 });
 
+for (const role of ['review-fix', 'ci-fix'] as const) {
+  for (const declaresCheck of [false, true]) {
+    test(`${role} validates its own frozen declarations after cleanup: declares=${declaresCheck}`, async (t) => {
+      const { root, run } = await task(t);
+      const checklist = role === 'review-fix' ? 'REVIEW-FIX.md' : 'CI-FIX.md';
+      const parent = JSON.stringify({
+        ...resolveWorkerTerminalContract(null, 'fix-bug'),
+        deterministicChecks: [
+          {
+            checklist: 'CHECKLIST.md',
+            stepNumber: 1,
+            reference: 'ci.local_check',
+            command: 'printf frozen-parent',
+          },
+        ],
+      });
+      await writeFile(path.join(root, 'inputs/worker-terminal-contract.json'), parent);
+      await writeFile(
+        path.join(root, 'CHECKLIST.md'),
+        declaresCheck ? '- [x] Parent work\n' : '- [x] CI [DETERMINISTIC: ci.local_check]\n',
+      );
+      const scoped = JSON.stringify(resolveWorkerTerminalContract(null, role));
+      await writeFile(
+        path.join(root, 'inputs', `worker-terminal-contract.${role.toUpperCase()}.json`),
+        scoped,
+      );
+      await writeFile(
+        path.join(root, checklist),
+        declaresCheck
+          ? '- [x] CI [DETERMINISTIC: ci.local_check]\n'
+          : '- [x] Source fix complete\n',
+      );
+      run.flowType = 'fix-bug';
+      run.activeTaskFile = undefined;
+      run.agentContexts = [
+        {
+          id: role,
+          role,
+          status: 'complete',
+          label: role,
+          runId: 'fixture-run',
+          slotId: 'fixture-slot',
+          taskFile: path.join(root, checklist),
+          updatedAt: '2026-01-01T10:00:00Z',
+          completedAt: '2026-01-01T10:00:00Z',
+        },
+      ];
+      if (declaresCheck)
+        await assert.rejects(validateDeterministicChecksForRun(run), /no frozen task contract/);
+      else assert.deepEqual(await validateDeterministicChecksForRun(run), []);
+      assert.equal(
+        await readFile(path.join(root, 'inputs/worker-terminal-contract.json'), 'utf8'),
+        parent,
+      );
+      assert.equal(
+        await readFile(
+          path.join(root, 'inputs', `worker-terminal-contract.${role.toUpperCase()}.json`),
+          'utf8',
+        ),
+        scoped,
+      );
+    });
+  }
+}
+
 test('publication uses the last completed source-fix checklist after role cleanup', () => {
   const run = {
     taskFile: '/tasks/proof/TASK.md',
