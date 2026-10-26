@@ -36,11 +36,34 @@ function isTicketCurrent(view: SlotView, ticket: BranchDiffRequestTicket): boole
   });
 }
 
+/**
+ * A read outcome failed. The cache keeps retained data and adds the read's error; a hydrated
+ * row's own error is its source observation's error object.
+ */
+function readFailed(state: ResourceQueryState<unknown>): boolean {
+  return state.error !== undefined && state.error !== state.sourceObservation?.error;
+}
+
+/** A reply read on this connection since `since`; a failed read keeps the older read time. */
+function currentSuccess(state: ResourceQueryState<unknown>, since: number): boolean {
+  return state.status === 'ready' || (state.status === 'stale' && (state.observedAt ?? 0) >= since);
+}
+
+interface SlotPRAnswer {
+  state: ResourceQueryState<PRForSlotResult>;
+  failed: boolean;
+}
+
 /** The slot's PR and its review threads, observed through the shared cache. */
 class SlotPRReads {
   slotId = '';
+  /**
+   * Set when recovery settled on a failed lookup. The first later current success takes the
+   * diff base, unless the operator picked a base meanwhile.
+   */
+  deferredBase?: { since: number; base: string };
   private commentsBound = false;
-  /** Pending recoveries; each returns true once it has taken a current answer. */
+  /** Pending recoveries; each returns true once it has taken a read outcome. */
   private answered: Array<() => boolean> = [];
   readonly comments: ResourceQueryController<PRReviewCommentsResult>;
   readonly forSlot: ResourceQueryController<PRForSlotResult>;
@@ -51,21 +74,22 @@ class SlotPRReads {
   }
 
   /**
-   * The first answer read on this connection since `since`. A saved row hydrated before the
-   * network read is not one, so recovery never fixes the diff base from an older PR.
+   * The first read outcome: a success read since `since`, or a failed read. A saved row hydrated
+   * before the network read is neither, so recovery never fixes the diff base from an older PR.
    */
-  answer(since: number): Promise<ResourceQueryState<PRForSlotResult>> {
+  answer(since: number): Promise<SlotPRAnswer> {
     return new Promise((resolve) => {
       const settle = () => {
         const state = this.forSlot.state;
-        const current =
-          !this.forSlot.belongsToWorkspace ||
-          state.status === 'ready' ||
-          state.status === 'error' ||
-          state.status === 'unsupported' ||
-          (state.status === 'stale' && (state.observedAt ?? 0) >= since);
-        if (current) resolve(state);
-        return current;
+        if (!this.forSlot.belongsToWorkspace) {
+          resolve({ state, failed: false });
+          return true;
+        }
+        if (currentSuccess(state, since)) resolve({ state, failed: false });
+        else if (state.status === 'error' || state.status === 'unsupported' || readFailed(state))
+          resolve({ state, failed: true });
+        else return false;
+        return true;
       };
       if (!settle()) this.answered.push(settle);
     });
@@ -97,6 +121,14 @@ class SlotPRReads {
       this.view._prRepo = null;
     }
     this.bindComments();
+    const deferred = this.deferredBase;
+    if (deferred && state.data && currentSuccess(state, deferred.since)) {
+      this.deferredBase = undefined;
+      if (this.view._branchDiffBase === deferred.base && state.data.baseRef !== deferred.base) {
+        this.view._branchDiffBase = state.data.baseRef;
+        void this.view._loadBranchDiff();
+      }
+    }
     this.answered = this.answered.filter((settle) => !settle());
   }
 
@@ -130,11 +162,19 @@ export async function detectSlotViewPR(view: SlotView) {
   const since = Date.now();
   const reads = prReads(view);
   reads.slotId = view.slotId;
+  reads.deferredBase = undefined;
   reads.forSlot.setQuery(
     resourceQuery<PRForSlotResult>(Methods.PR_FOR_SLOT, { slotId: view.slotId }),
   );
-  const state = await reads.answer(since);
+  const { state, failed } = await reads.answer(since);
   if (!isCurrentReviewResult(view, epoch) || reads.slotId !== view.slotId) return;
+  if (failed) {
+    // The slot view has no PR error surface; the lookup failure is reported as before.
+    console.warn('[slot-view] PR detection failed:', state.error?.message);
+    // Keep the current base; retained PR data may be from an older branch.
+    reads.deferredBase = { since, base: view._branchDiffBase };
+    return;
+  }
   // Resolve the diff base once per recovery; later PR updates keep the viewer's chosen base.
   if (state.data) view._branchDiffBase = state.data.baseRef;
 }
@@ -204,6 +244,9 @@ export async function loadSlotViewBranchList(view: SlotView) {
 }
 
 export function handleSlotViewBranchDiffBaseChange(view: SlotView, base: string) {
+  // An explicit choice ends any base correction deferred by a failed lookup.
+  const reads = slotPRReads.get(view);
+  if (reads) reads.deferredBase = undefined;
   view._branchDiffBase = base;
   view._saveLayout();
   view._loadBranchDiff();

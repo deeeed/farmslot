@@ -1415,6 +1415,7 @@ export class FleetCanvas extends LitElement {
           undefined}
           .providerAccountsFetching=${this.providerAccountsQuery.state.status === 'loading' ||
           this.providerAccountsRefreshing.has(g.key)}
+          .providerAccountsActionable=${gateway.connectionState === 'connected'}
           @provider-accounts-refresh=${(e: CustomEvent<{ machine?: string; force?: boolean }>) =>
             void this._refreshProviderAccounts(e.detail?.machine, e.detail?.force === true)}
           @slot-selected=${(e: CustomEvent) => {

@@ -640,7 +640,7 @@ export class ConfigPanel extends LitElement {
             <button
               class="cp-action-btn"
               data-testid="config-seats-refresh"
-              ?disabled=${fetching}
+              ?disabled=${fetching || gateway.connectionState !== 'connected'}
               @click=${() => void this._refreshSeats(machine)}
             >
               Refresh

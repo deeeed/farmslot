@@ -22,6 +22,8 @@ interface ObservedState {
   status: 'loading' | 'ready' | 'stale' | 'error' | 'unsupported';
   data?: unknown;
   observedAt?: number;
+  sourceObservation?: { status: string; observedAt?: number; error?: unknown };
+  error?: { code: string; message: string };
 }
 class FakeQueryController {
   static all: FakeQueryController[] = [];
@@ -46,8 +48,12 @@ mock.module('../shared/resource-query-controller.js', {
   namedExports: { ResourceQueryController: FakeQueryController },
 });
 
-const { detectSlotViewPR, loadSlotViewBranchDiff, loadSlotViewBranchList } =
-  await import('./slot-view-review-effects.js');
+const {
+  detectSlotViewPR,
+  handleSlotViewBranchDiffBaseChange,
+  loadSlotViewBranchDiff,
+  loadSlotViewBranchList,
+} = await import('./slot-view-review-effects.js');
 
 class DeferredWorkspaceReads {
   private adopt?: (value: unknown) => void;
@@ -219,6 +225,7 @@ function slotPR(view: FakeView) {
 
 function makePRView() {
   return Object.assign(makeView(), {
+    _saveLayout: () => {},
     _prNumber: null as number | null,
     _prRepo: null as string | null,
     _prThreads: [] as unknown[],
@@ -285,4 +292,91 @@ test('a slot switch recovers the new slot base from its own current answer', asy
   await Promise.all([first, second]);
   assert.equal(view._branchDiffBase, 'release');
   assert.equal(view._prNumber, 4);
+});
+
+// The cache's shapes: a hydrated row carries its saved observation's own error object; a failed
+// read keeps the retained row and its older read time, and adds the read's error.
+function hydratedRow(baseRef: string): ObservedState {
+  return {
+    status: 'stale',
+    data: { pr: 7, repo: 'org/app', baseRef },
+    observedAt: 1,
+    sourceObservation: { status: 'ready', observedAt: 1 },
+  };
+}
+const readFailure = { code: 'UPSTREAM_UNAVAILABLE', message: 'GitHub could not be read.' };
+
+async function settles(promise: Promise<unknown>): Promise<boolean> {
+  let settled = false;
+  void promise.then(() => {
+    settled = true;
+  });
+  await turn();
+  await turn();
+  return settled;
+}
+
+test('a failed lookup after a hydrated row settles recovery on the default base', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const view = makePRView();
+  view.slotId = 'slot-fail';
+  const recovering = detectSlotViewPR(asView(view));
+  const forSlot = slotPR(view);
+  forSlot.publish(hydratedRow('develop'));
+  assert.equal(await settles(recovering), false, 'a hydrated row alone does not settle recovery');
+  forSlot.publish({ ...hydratedRow('develop'), error: readFailure });
+  assert.equal(await settles(recovering), true, 'recovery continues so changed files load');
+  assert.equal(view._branchDiffBase, 'main', 'the hydrated base is not adopted');
+  assert.equal(view._prNumber, 7, 'retained PR data stays readable');
+  assert.ok(
+    warn.mock.calls.some((call) => (call.arguments as unknown[]).includes(readFailure.message)),
+    'the lookup failure is reported',
+  );
+
+  const reloads = view.branchDiffReloads;
+  forSlot.publish({
+    status: 'ready',
+    data: { pr: 11, repo: 'org/app', baseRef: 'release' },
+    observedAt: Date.now(),
+  });
+  assert.equal(view._branchDiffBase, 'release', 'the first later success takes the base');
+  assert.equal(view.branchDiffReloads, reloads + 1);
+  forSlot.publish({
+    status: 'ready',
+    data: { pr: 11, repo: 'org/app', baseRef: 'hotfix' },
+    observedAt: Date.now(),
+  });
+  assert.equal(view._branchDiffBase, 'release', 'only that first success corrects the base');
+});
+
+test('a base the operator picks after a failed lookup is kept', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const view = makePRView();
+  view.slotId = 'slot-pick';
+  const recovering = detectSlotViewPR(asView(view));
+  const forSlot = slotPR(view);
+  forSlot.publish({ status: 'error', error: readFailure });
+  await recovering;
+  handleSlotViewBranchDiffBaseChange(asView(view), 'operator-choice');
+  const reloads = view.branchDiffReloads;
+  forSlot.publish({
+    status: 'ready',
+    data: { pr: 11, repo: 'org/app', baseRef: 'release' },
+    observedAt: Date.now(),
+  });
+  assert.equal(view._branchDiffBase, 'operator-choice');
+  assert.equal(view.branchDiffReloads, reloads);
+});
+
+test('a lookup that failed before recovery started settles the next recovery at once', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const view = makePRView();
+  view.slotId = 'slot-early';
+  const first = detectSlotViewPR(asView(view));
+  const forSlot = slotPR(view);
+  forSlot.publish(hydratedRow('develop'));
+  forSlot.publish({ ...hydratedRow('develop'), error: readFailure });
+  await first;
+  assert.equal(await settles(detectSlotViewPR(asView(view))), true);
+  assert.equal(view._branchDiffBase, 'main');
 });
