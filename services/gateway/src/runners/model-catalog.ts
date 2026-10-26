@@ -12,6 +12,8 @@ export class ModelCatalogFormatError extends Error {}
 export interface RunnerModelCatalogFileSource {
   /** Catalog files relative to the operator's home directory, merged in order. */
   relativePath: string | readonly string[];
+  /** Decode the runner's file syntax; strict JSON is the default. */
+  decode?: (raw: string) => unknown;
   parse: (data: unknown) => RunnerCatalogModel[];
 }
 
@@ -148,7 +150,8 @@ export function readRunnerModelCatalog(
       throw err;
     }
     try {
-      for (const model of source.parse(JSON.parse(raw))) models.set(model.id, model);
+      for (const model of source.parse((source.decode ?? JSON.parse)(raw)))
+        models.set(model.id, model);
     } catch (err) {
       if (err instanceof SyntaxError)
         return unavailable(runner, 'Structured model catalog is not valid JSON.');
@@ -213,23 +216,38 @@ export function parseGrokModelCatalog(data: unknown): RunnerCatalogModel[] {
   return parsed;
 }
 
+/** Pi permits a BOM, line comments and trailing commas, preserving string literals. */
+export function decodePiModelCatalog(raw: string): unknown {
+  return JSON.parse(
+    raw
+      .replace(/^\uFEFF/, '')
+      .replace(/"(?:\\.|[^"\\])*"|\/\/[^\n]*/g, (match) => (match[0] === '"' ? match : ''))
+      .replace(
+        /"(?:\\.|[^"\\])*"|,(\s*[}\]])/g,
+        (match, tail: string | undefined) => tail ?? match,
+      ),
+  );
+}
+
 export function parsePiModelCatalog(data: unknown): RunnerCatalogModel[] {
   if (!isRecord(data))
     throw new ModelCatalogFormatError('Structured model catalog is not an object.');
   const parsed: RunnerCatalogModel[] = [];
-  const providers = isRecord(data.providers) ? data.providers : data;
+  const configuredProviders = isRecord(data.providers) ? data.providers : null;
+  const providers = configuredProviders ?? data;
   for (const [provider, value] of Object.entries(providers)) {
     if (!isRecord(value) || !Array.isArray(value.models)) continue;
     for (const model of value.models) {
       if (!isRecord(model) || typeof model.id !== 'string' || !model.id.trim()) continue;
-      const id = model.id.includes('/') ? model.id : `${provider}/${model.id}`;
+      const id =
+        !configuredProviders && model.id.includes('/') ? model.id : `${provider}/${model.id}`;
       const map = isRecord(model.thinkingLevelMap) ? model.thinkingLevelMap : null;
       // Only modes the store actually names. A boolean reasoning flag is not a mode list.
       const reasoningModes = map ? Object.keys(map) : [];
       parsed.push({ id, reasoningModes, listed: true });
     }
   }
-  if (parsed.length === 0 && !isRecord(data.providers))
+  if (parsed.length === 0 && !configuredProviders && Object.keys(data).length > 0)
     throw new ModelCatalogFormatError('Structured model catalog listed no models.');
   return parsed;
 }

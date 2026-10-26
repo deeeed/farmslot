@@ -57,6 +57,7 @@ import { codexSessionObservability } from './codex-observability.js';
 import { createCursorLogObservability } from './cursor-observability.js';
 import { grokLogObservability } from './grok-observability.js';
 import {
+  decodePiModelCatalog,
   parseCodexModelCatalog,
   parseCursorModelCatalog,
   parseGrokModelCatalog,
@@ -586,6 +587,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: DEFAULT_PI_MODEL,
     modelCatalog: {
       relativePath: ['.pi/agent/models-store.json', '.pi/agent/models.json'],
+      decode: decodePiModelCatalog,
       parse: parsePiModelCatalog,
     },
     acceptsEffort: (_model, effort) => isPiThinkingLevel(effort.trim().toLowerCase()),
