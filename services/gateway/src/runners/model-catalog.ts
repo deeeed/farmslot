@@ -10,8 +10,8 @@ export class ModelCatalogFormatError extends Error {}
 
 /** A runner that can read a structured model catalog. Absent means the capability is unsupported. */
 export interface RunnerModelCatalogFileSource {
-  /** Path relative to the operator's home directory. Not runner stdout. */
-  relativePath: string;
+  /** Catalog files relative to the operator's home directory, merged in order. */
+  relativePath: string | readonly string[];
   parse: (data: unknown) => RunnerCatalogModel[];
 }
 
@@ -130,40 +130,40 @@ export function readRunnerModelCatalog(
       models: [],
     };
   }
-  const file = join(home, source.relativePath);
-  let raw: string;
-  try {
-    raw = readFileSync(file, 'utf8');
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    // A missing or unreadable catalog is an expected offline state. Other
-    // filesystem failures are not, and must surface.
-    if (code === 'ENOENT' || code === 'EACCES' || code === 'ENOTDIR') {
-      return unavailable(runner, `Structured model catalog is not readable (${code}).`);
+  const relativePaths =
+    typeof source.relativePath === 'string' ? [source.relativePath] : source.relativePath;
+  const models = new Map<string, RunnerCatalogModel>();
+  let foundFile = false;
+  for (const relativePath of relativePaths) {
+    let raw: string;
+    try {
+      raw = readFileSync(join(home, relativePath), 'utf8');
+      foundFile = true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // Catalog files may be optional; report unavailable if every file is absent.
+      if (code === 'ENOENT') continue;
+      if (code === 'EACCES' || code === 'ENOTDIR')
+        return unavailable(runner, `Structured model catalog is not readable (${code}).`);
+      throw err;
     }
-    throw err;
+    try {
+      for (const model of source.parse(JSON.parse(raw))) models.set(model.id, model);
+    } catch (err) {
+      if (err instanceof SyntaxError)
+        return unavailable(runner, 'Structured model catalog is not valid JSON.');
+      if (err instanceof ModelCatalogFormatError) return unavailable(runner, err.message);
+      throw err;
+    }
   }
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-    // The file exists but is not JSON. Treat that as unavailable rather than
-    // guessing models from any other runner output.
-    return unavailable(runner, 'Structured model catalog is not valid JSON.');
-  }
-  try {
-    return {
+  if (!models.size)
+    return unavailable(
       runner,
-      status: 'ready',
-      source: 'structured-file',
-      models: source.parse(data),
-    };
-  } catch (err) {
-    // The parser rejects a file that is not this runner's catalog shape.
-    if (!(err instanceof ModelCatalogFormatError)) throw err;
-    return unavailable(runner, err.message);
-  }
+      foundFile
+        ? 'Structured model catalog listed no models.'
+        : 'Structured model catalog is not readable (ENOENT).',
+    );
+  return { runner, status: 'ready', source: 'structured-file', models: [...models.values()] };
 }
 
 function unavailable(runner: string, detail: string): RunnerModelCatalogResult {
@@ -217,7 +217,8 @@ export function parsePiModelCatalog(data: unknown): RunnerCatalogModel[] {
   if (!isRecord(data))
     throw new ModelCatalogFormatError('Structured model catalog is not an object.');
   const parsed: RunnerCatalogModel[] = [];
-  for (const [provider, value] of Object.entries(data)) {
+  const providers = isRecord(data.providers) ? data.providers : data;
+  for (const [provider, value] of Object.entries(providers)) {
     if (!isRecord(value) || !Array.isArray(value.models)) continue;
     for (const model of value.models) {
       if (!isRecord(model) || typeof model.id !== 'string' || !model.id.trim()) continue;
@@ -228,7 +229,7 @@ export function parsePiModelCatalog(data: unknown): RunnerCatalogModel[] {
       parsed.push({ id, reasoningModes, listed: true });
     }
   }
-  if (parsed.length === 0)
+  if (parsed.length === 0 && !isRecord(data.providers))
     throw new ModelCatalogFormatError('Structured model catalog listed no models.');
   return parsed;
 }

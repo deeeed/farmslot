@@ -585,7 +585,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_PI_MODEL,
     modelCatalog: {
-      relativePath: '.pi/agent/models-store.json',
+      relativePath: ['.pi/agent/models-store.json', '.pi/agent/models.json'],
       parse: parsePiModelCatalog,
     },
     acceptsEffort: (_model, effort) => isPiThinkingLevel(effort.trim().toLowerCase()),
