@@ -100,3 +100,5 @@ Review-fix and CI-fix roles freeze the engine's pre-fix commit in their CI comma
 ### Public surface and consequences
 
 The existing `ci.local_check`, frozen command and schema-version-1 receipt remain the contract. The gateway binds fix context; `@farmslot/agent-runtime` owns validation and reuse, and `@farmslot/recipe-cli` delegates to it. `FARMSLOT_CI_BASE_REF` is consumed by the Terminal pack's CI script. No CLI flag or SDK export is added; harnesses inherit the behavior. The [task directory contract](../reference/task-directory-contract.md#mark-and-receipt-rules) owns the rules.
+
+## Amendment 3 (2026-10-26, Accepted): Local CI parity is no longer a worker step or completion/publication receipt requirement; other deterministic checks remain enforced.

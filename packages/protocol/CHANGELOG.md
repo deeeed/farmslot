@@ -22,6 +22,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.73.1 - 2026-10-26
+
+- Remove the local CI-parity worker step and its completion receipt requirement.
+
 ## 0.73.0 - 2026-10-26
 
 - Expose slot workspace publication, ownership and recovery identity with shared eligibility for guarded fleet release and update.
