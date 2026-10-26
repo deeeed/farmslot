@@ -4,11 +4,13 @@ import { html, LitElement, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
-import type { ImprovementFileChange } from '@farmslot/protocol';
+import type { ImprovementFileChange, LLMConfigGetResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import 'diff2html/bundles/css/diff2html.min.css';
 
+import { ResourceQueryController } from '../components/shared/resource-query-controller.js';
 import { gateway } from '../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../styles/theme-tokens.js';
 import { adoptDocumentCss } from '../utils/shadow-css.js';
@@ -87,6 +89,12 @@ export class ImprovementDev extends LitElement {
   @state() private _generating = false;
   @state() private _viewMode: 'side-by-side' | 'line-by-line' = 'side-by-side';
   @state() private _customLearning = '';
+  private readonly _configQuery = new ResourceQueryController<LLMConfigGetResult>(this);
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this._configQuery.setQuery(resourceQuery<LLMConfigGetResult>(Methods.LLM_CONFIG_GET));
+  }
 
   // Light DOM for diff2html CSS
   protected override createRenderRoot() {
@@ -119,10 +127,10 @@ export class ImprovementDev extends LitElement {
     this._chatMessages = [];
 
     try {
-      // Call the real LLM via gateway — use llm.auth.test pattern to verify connectivity first
-      const testRes = (await gateway.request(Methods.LLM_CONFIG_GET, {})) as any;
-      const provider = testRes.defaultProvider;
-      const model = testRes.improvementModel ?? 'standard';
+      // Read the configured provider from the shared cache, then verify it with llm.auth.test
+      const config = this._configQuery.requireReady();
+      const provider = config.defaultProvider;
+      const model = config.improvementModel ?? 'standard';
 
       // We can't call improvement.analyze directly (it needs a real run),
       // so we'll use the chat method with a system prompt that simulates it

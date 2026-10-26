@@ -6,6 +6,7 @@ import type { ReactiveControllerHost } from 'lit';
 import type { ResourceQuery, ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 const requests: string[] = [];
+const accountParams: unknown[] = [];
 let epoch = 1;
 let owner = 'first';
 let complete: ((value: object) => void) | undefined;
@@ -21,9 +22,12 @@ const gateway = {
       connectionListeners.delete(listener);
     };
   },
-  request(method: string) {
+  request(method: string, params?: unknown) {
     requests.push(method);
-    if (method === 'config.githubAccounts') return Promise.resolve({ accounts: [] });
+    if (method === 'config.githubAccounts') {
+      accountParams.push(params);
+      return Promise.resolve({ accounts: [] });
+    }
     return new Promise((resolve) => {
       complete = resolve;
     });
@@ -104,7 +108,7 @@ test('PR consumers observe canonical reads; stale actions and previous-owner com
 
 test('configuration Retry targets only failed reads on a live transport', async () => {
   const controller = new PRAutomationController(host);
-  const observations = Observation.all.slice(-5);
+  const observations = Observation.all.slice(-6);
   controller.hostConnected();
   const watches = observations.find((value) => value.query?.method === 'prWatch.list');
   const rules = observations.find((value) => value.query?.method === 'prRules.list');
@@ -130,7 +134,7 @@ test('configuration Retry targets only failed reads on a live transport', async 
 
 test('transport loss preserves observed PR data, while an observer owner reset removes it', () => {
   const controller = new PRAutomationController(host);
-  const observations = Observation.all.slice(-5);
+  const observations = Observation.all.slice(-6);
   controller.hostConnected();
   const watches = observations.find((value) => value.query?.method === 'prWatch.list');
   assert(watches);
@@ -143,4 +147,36 @@ test('transport loss preserves observed PR data, while an observer owner reset r
   assert.deepEqual(controller.monitors, { monitors: [] });
   controller.hostDisconnected();
   gateway.connectionState = 'connected';
+});
+
+test('accounts render from the shared observation; only explicit verification asks the gateway', async () => {
+  const controller = new PRAutomationController(host);
+  const observations = Observation.all.slice(-6);
+  const before = requests.length;
+  controller.hostConnected();
+  const accounts = observations.find((value) => value.query?.method === 'config.githubAccounts');
+  assert(accounts);
+  assert(!requests.slice(before).includes('config.githubAccounts'));
+  accounts.publish({
+    status: 'stale',
+    data: {
+      accounts: [{ host: 'github.com', login: 'reader', active: true }],
+      checkedAt: '2026-10-26T00:00:00.000Z',
+      error: 'Cannot verify gateway GitHub accounts.',
+    },
+  });
+  assert.equal(controller.githubAccounts[0]?.login, 'reader');
+  assert.equal(controller.accountsError, 'Cannot verify gateway GitHub accounts.');
+  await controller.refreshAccounts();
+  assert.deepEqual(requests.slice(before), ['config.githubAccounts']);
+  assert.deepEqual(accountParams.at(-1), { refresh: true });
+  assert.equal(
+    controller.githubAccounts[0]?.login,
+    'reader',
+    'The notice, not the reply, replaces accounts',
+  );
+  accounts.publish({ status: 'loading' });
+  assert.deepEqual(controller.githubAccounts, []);
+  assert.equal(controller.accountsError, '');
+  controller.hostDisconnected();
 });

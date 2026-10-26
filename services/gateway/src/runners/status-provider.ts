@@ -49,6 +49,31 @@ export type RunnerSubscriptionSource =
   | 'unsupported'
   | 'error';
 
+/**
+ * Source outcome of one retained subscription component. A fulfilled probe that
+ * reports an error is `failed`; a missing runner or empty login is `absent`.
+ */
+export type RunnerComponentOutcome = 'observed' | 'absent' | 'failed';
+
+// Fixed leaf tokens for an uninstalled CLI/CodexBar or a definitively empty account store.
+const ABSENT_PROBE_ERRORS = new Set([
+  'no-codexbar-provider',
+  'codexbar not found',
+  'claude not found',
+  'codex not found',
+  'cursor-agent not found',
+  'auth-file-missing',
+  'not-logged-in',
+  'Runner executable unavailable',
+]);
+
+function probeOutcome(error: string | undefined): RunnerComponentOutcome {
+  if (!error) return 'observed';
+  return ABSENT_PROBE_ERRORS.has(error) || /command not found|^exit[ -]127$/.test(error)
+    ? 'absent'
+    : 'failed';
+}
+
 /** Active subscription for one runner on one execution host. */
 export interface RunnerActiveSubscription {
   runner: string;
@@ -67,6 +92,8 @@ export interface RunnerActiveSubscription {
   supportsAccountBinding: boolean;
   codexBarProviderId: string | null;
   error?: string;
+  /** Identity: label/email/login method/inventory. Quota: usage percentages and reset. */
+  outcome: { identity: RunnerComponentOutcome; quota: RunnerComponentOutcome };
 }
 
 export interface ResolveAccountForSlotOptions {
@@ -235,6 +262,10 @@ const claudeStatusProvider: RunnerStatusProvider = {
       supportsAccountBinding: false,
       codexBarProviderId: RUNNER_TO_CODEXBAR_PROVIDER.claude ?? null,
       ...(error ? { error } : {}),
+      outcome: {
+        identity: auth.loggedIn || accountEmail ? 'observed' : probeOutcome(auth.error),
+        quota: probeOutcome(usage.error),
+      },
     };
   },
 };
@@ -310,6 +341,14 @@ const codexStatusProvider: RunnerStatusProvider = {
       supportsAccountBinding: true,
       codexBarProviderId: RUNNER_TO_CODEXBAR_PROVIDER.codex ?? null,
       ...(error ? { error } : {}),
+      outcome: {
+        identity: bindError
+          ? 'failed'
+          : native.loggedIn || accountEmail
+            ? 'observed'
+            : probeOutcome(native.error),
+        quota: probeOutcome(usage.error),
+      },
     };
   },
 
@@ -392,6 +431,10 @@ const grokStatusProvider: RunnerStatusProvider = {
       supportsAccountBinding: false,
       codexBarProviderId: RUNNER_TO_CODEXBAR_PROVIDER.grok ?? null,
       ...(error ? { error } : {}),
+      outcome: {
+        identity: auth.loggedIn || accountEmail ? 'observed' : probeOutcome(auth.error),
+        quota: probeOutcome(usage.error),
+      },
     };
   },
 };
@@ -447,6 +490,10 @@ const cursorStatusProvider: RunnerStatusProvider = {
       supportsAccountBinding: false,
       codexBarProviderId: RUNNER_TO_CODEXBAR_PROVIDER.cursor ?? null,
       ...(error ? { error } : {}),
+      outcome: {
+        identity: auth.loggedIn || accountEmail ? 'observed' : probeOutcome(auth.error),
+        quota: probeOutcome(usage.error),
+      },
     };
   },
 };
@@ -482,6 +529,8 @@ function inventoryStatusProvider(
         source: 'unsupported',
         supportsAccountBinding: false,
         codexBarProviderId: null,
+        // getHostRunnerSubscriptions derives identity from the inventory probe.
+        outcome: { identity: 'absent', quota: 'absent' },
       };
     },
   };
@@ -597,6 +646,7 @@ export async function getHostRunnerSubscriptions(
           source: 'unsupported' as const,
           supportsAccountBinding: false,
           codexBarProviderId: null,
+          outcome: { identity: 'absent' as const, quota: 'absent' as const },
         };
       }
       const [sub, inventory] = await Promise.all([
@@ -613,6 +663,19 @@ export async function getHostRunnerSubscriptions(
           ? { source: 'runner-inventory' as const }
           : {}),
         inventory: resolvedInventory,
+        ...(inventory
+          ? {
+              outcome: {
+                ...sub.outcome,
+                identity:
+                  inventory.status === 'available'
+                    ? ('observed' as const)
+                    : inventory.status === 'unsupported'
+                      ? ('absent' as const)
+                      : probeOutcome(inventory.error ?? 'Account inventory unavailable'),
+              },
+            }
+          : {}),
       };
     }),
   );

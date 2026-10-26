@@ -250,6 +250,7 @@ import {
 } from '../fleet/resource-manager.js';
 import { slotCleanup } from '../fleet/slot-cleanup.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { forgetGitHubAccountsClientInterest } from '../integrations/github-accounts.js';
 import {
   machinePauseExecute,
   machinePausePreview,
@@ -403,7 +404,8 @@ import {
 } from '../methods/llm-auth.js';
 import { llmConfigGet, llmConfigSet, llmTiers } from '../methods/llm-config.js';
 import { nativeSessionRoute } from '../methods/native-session.js';
-import { prForSlot, prList, prMonitor, prStatus } from '../methods/pr.js';
+import { prList, prMonitor, readPRForSlot, readPRStatus } from '../methods/pr.js';
+import { forgetPRDetailClientInterest } from '../methods/pr/detail-observations.js';
 import { forgetPRListClientInterest } from '../methods/pr/list-cache.js';
 import {
   prAddComment,
@@ -428,7 +430,10 @@ import {
   principalReuseRetiredId,
   principalRevokeRole,
 } from '../methods/principal.js';
-import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
+import {
+  forgetProviderAccountsClientInterest,
+  providerAccountsSnapshot,
+} from '../methods/provider-accounts.js';
 import {
   recipeCancel,
   recipeCommand,
@@ -673,8 +678,15 @@ export async function routeMethod(
       const result = replacement.commit();
       if (result.applied) {
         if (upstreamObservers.manages(state, Methods.PR_LIST)) forgetPRListClientInterest(state.id);
+        for (const detail of [Methods.PR_STATUS, Methods.PR_FOR_SLOT, Methods.PR_REVIEW_COMMENTS])
+          if (upstreamObservers.manages(state, detail))
+            forgetPRDetailClientInterest(state.id, detail);
         if (upstreamObservers.manages(state, Methods.GATEWAY_STATUS))
           forgetGatewayUpdateClientInterest(state.id);
+        if (upstreamObservers.manages(state, Methods.CONFIG_GITHUB_ACCOUNTS))
+          forgetGitHubAccountsClientInterest(state.id);
+        if (upstreamObservers.manages(state, Methods.PROVIDER_ACCOUNTS_SNAPSHOT))
+          forgetProviderAccountsClientInterest(state.id);
       }
       return result;
     }
@@ -781,7 +793,9 @@ async function routeAuthorizedMethod(
     case Methods.GATEWAY_DOCTOR:
       return gatewayDoctor(p as GatewayDoctorParams, authRuntime);
     case Methods.RUNNER_MODEL_CATALOG:
-      return runnerModelCatalog(p);
+      return runnerModelCatalog(p, {
+        legacyInterest: !upstreamObservers.manages(state, Methods.RUNNER_MODEL_CATALOG),
+      });
     case Methods.RUNNER_VISIBLE_MODELS_GET:
       return runnerVisibleModelsGet(p);
     case Methods.RUNNER_VISIBLE_MODELS_SET:
@@ -849,7 +863,10 @@ async function routeAuthorizedMethod(
     case Methods.FLEET_PR_SUMMARY:
       return fleetPrSummary(p as FleetPrSummaryParams);
     case Methods.PROVIDER_ACCOUNTS_SNAPSHOT:
-      return providerAccountsSnapshot(p as ProviderAccountsSnapshotParams);
+      return providerAccountsSnapshot(p as ProviderAccountsSnapshotParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PROVIDER_ACCOUNTS_SNAPSHOT),
+      });
     case Methods.SLOT_OPEN_EDITOR:
       return slotOpenEditor(p as { slotId: string; editor: string });
     case Methods.SLOT_ACTION_LIST:
@@ -1180,7 +1197,10 @@ async function routeAuthorizedMethod(
     case Methods.PR_WATCH_PROJECT_POLICY_SET:
       return (await routePRWatchMethod(method, p)).value;
     case Methods.PR_STATUS:
-      return prStatus(p as PRStatusParams);
+      return readPRStatus(p as PRStatusParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PR_STATUS),
+      });
     case Methods.PR_LIST:
       return prList(p as PRListParams, undefined, {
         legacyClientId: state.id,
@@ -1189,7 +1209,10 @@ async function routeAuthorizedMethod(
     case Methods.PR_MONITOR:
       return prMonitor(p as PRStatusParams | undefined, emit);
     case Methods.PR_REVIEW_COMMENTS:
-      return prReviewComments(p as PRReviewCommentsParams);
+      return prReviewComments(p as PRReviewCommentsParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PR_REVIEW_COMMENTS),
+      });
     case Methods.PR_ADD_COMMENT:
       return prAddComment(p as PRAddCommentParams);
     case Methods.PR_EDIT_COMMENT:
@@ -1201,7 +1224,10 @@ async function routeAuthorizedMethod(
     case Methods.PR_RESOLVE_THREAD:
       return prResolveThread(p as PRResolveThreadParams);
     case Methods.PR_FOR_SLOT:
-      return prForSlot(p as PRForSlotParams);
+      return readPRForSlot(p as PRForSlotParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PR_FOR_SLOT),
+      });
 
     // Advisory acceptance-evidence assessment
     case Methods.ACCEPTANCE_EVIDENCE_GET:
@@ -1484,7 +1510,10 @@ async function routeAuthorizedMethod(
     case Methods.CONFIG_PROJECTS:
       return configProjects();
     case Methods.CONFIG_GITHUB_ACCOUNTS:
-      return configGitHubAccounts(params);
+      return configGitHubAccounts(params, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.CONFIG_GITHUB_ACCOUNTS),
+      });
     case Methods.CONFIG_PROJECT:
       return configProject(p as ConfigProjectParams);
     case Methods.CONFIG_TEMPLATES:

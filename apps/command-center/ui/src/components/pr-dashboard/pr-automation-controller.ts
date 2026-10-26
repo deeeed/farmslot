@@ -9,7 +9,11 @@ import {
   type PRRulesListResult,
   type PRWatchListResult,
 } from '@farmslot/protocol';
-import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
+import {
+  type CommandMethod,
+  resourceQuery,
+  type ResourceQueryState,
+} from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
@@ -37,7 +41,16 @@ export class PRAutomationController implements ReactiveController {
   private domainStates: ResourceQueryState<unknown>[] = [];
   private readonly configurationProjects: ResourceQueryController<ConfigProjectsResult>;
   private readonly configurationPools: ResourceQueryController<ConfigPoolsResult>;
+  private readonly accountResources: ResourceQueryController<ConfigGitHubAccountsResult>;
+  private verifyingAccounts = false;
   constructor(private readonly host: ReactiveControllerHost) {
+    this.accountResources = new ResourceQueryController<ConfigGitHubAccountsResult>(
+      host,
+      (state) => {
+        this.githubAccounts = state.data?.accounts ?? [];
+        this.accountsError = state.error?.message ?? state.data?.error ?? '';
+      },
+    );
     this.configurationProjects = new ResourceQueryController<ConfigProjectsResult>(
       host,
       (state) => {
@@ -105,17 +118,10 @@ export class PRAutomationController implements ReactiveController {
     this.watchResources.setQuery(resourceQuery<PRWatchListResult>(Methods.PR_WATCH_LIST));
     this.ruleResources.setQuery(resourceQuery<PRRulesListResult>(Methods.PR_RULES_LIST));
     this.pushResources.setQuery(resourceQuery<PRPushListResult>(Methods.PR_PUSH_LIST));
-    this.unsubscribers = [
-      subscribe(() => this.host.requestUpdate()),
-      gateway.onConnectionChange(() => {
-        // Query observers retain stale data on transport loss and clear it on owner/authority loss.
-        this.githubAccounts = [];
-        this.accountsError = '';
-        this.host.requestUpdate();
-        if (gateway.connectionState === 'connected') void this.refreshAccounts();
-      }),
-    ];
-    if (gateway.connectionState === 'connected') void this.refreshAccounts();
+    this.accountResources.setQuery(
+      resourceQuery<ConfigGitHubAccountsResult>(Methods.CONFIG_GITHUB_ACCOUNTS),
+    );
+    this.unsubscribers = [subscribe(() => this.host.requestUpdate())];
   }
   hostDisconnected(): void {
     this.active = false;
@@ -133,25 +139,27 @@ export class PRAutomationController implements ReactiveController {
         .map((resource) => resource.retry()),
     );
   }
-  async refreshAccounts(refresh = false): Promise<void> {
+  /** Explicit gh verification. Its source notification owns the canonical account list. */
+  async refreshAccounts(): Promise<void> {
+    if (this.verifyingAccounts || gateway.connectionState !== 'connected') return;
+    const owner = getResourceWorkspaceKey();
     const epoch = gateway.connectionEpoch;
+    this.verifyingAccounts = true;
     try {
-      const result = await gateway.request<ConfigGitHubAccountsResult>(
+      await gateway.request<ConfigGitHubAccountsResult>(
         Methods.CONFIG_GITHUB_ACCOUNTS,
-        { refresh },
+        { refresh: true },
         30_000,
       );
-      if (epoch !== gateway.connectionEpoch) return;
-      this.githubAccounts = result.accounts;
-      this.accountsError = result.error ?? '';
     } catch (error) {
-      if (epoch !== gateway.connectionEpoch) return;
-      this.githubAccounts = [];
-      this.accountsError = error instanceof Error ? error.message : String(error);
+      if (owner === getResourceWorkspaceKey() && epoch === gateway.connectionEpoch)
+        this.accountsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.verifyingAccounts = false;
+      this.host.requestUpdate();
     }
-    this.host.requestUpdate();
   }
-  async mutate<T>(method: string, params: unknown): Promise<T | undefined> {
+  async mutate<T>(method: CommandMethod, params: unknown): Promise<T | undefined> {
     if (this.busy || !this.connected) return undefined;
     const owner = getResourceWorkspaceKey();
     const epoch = gateway.connectionEpoch;

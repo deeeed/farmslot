@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 
 import {
   createSourceCommandClient,
+  type PreparedSourceCommand,
   SOURCE_VIEW_ACTION_LABELS,
   sourceObservationAge,
   SourceStatusController,
@@ -24,19 +25,22 @@ export class SourceStatusPanel extends LitElement {
     actions: ['sync', 'pin', 'unpin'],
   };
   private controller = new SourceStatusController(
-    createSourceCommandClient(async <T>(method: string, params: unknown): Promise<T> => {
-      const epoch = gateway.connectionEpoch;
-      const principal = gateway.authenticatedPrincipalId;
-      const url = gateway.gatewayUrl;
-      const result = await gateway.request<T>(method, params, 120_000);
-      if (
-        epoch !== gateway.connectionEpoch ||
-        principal !== gateway.authenticatedPrincipalId ||
-        url !== gateway.gatewayUrl
-      )
-        throw new Error('Source connection changed before acknowledgement.');
-      return result;
-    }, getResourceCache),
+    createSourceCommandClient(
+      async <T>(method: PreparedSourceCommand['method'], params: unknown): Promise<T> => {
+        const epoch = gateway.connectionEpoch;
+        const principal = gateway.authenticatedPrincipalId;
+        const url = gateway.gatewayUrl;
+        const result = await gateway.request<T>(method, params, 120_000);
+        if (
+          epoch !== gateway.connectionEpoch ||
+          principal !== gateway.authenticatedPrincipalId ||
+          url !== gateway.gatewayUrl
+        )
+          throw new Error('Source connection changed before acknowledgement.');
+        return result;
+      },
+      getResourceCache,
+    ),
     this.context,
   );
   private unsubscribe?: () => void;

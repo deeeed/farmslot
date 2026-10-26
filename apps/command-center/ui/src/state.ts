@@ -1,4 +1,4 @@
-// Reactive view state. Shared cache observations own run and decision facts.
+// Reactive view state. Shared cache observations own gateway collection facts.
 
 import type {
   BacklogItem,
@@ -13,12 +13,9 @@ import type {
   MonitorViolationPayload,
   PendingDecision,
   PRListResult,
-  PRListUpdatedPayload,
   PRStatus,
-  PRUpdatedPayload,
   QueueItem,
   Run,
-  RunDeletedPayload,
   RunFamilyReadinessSummary,
   RunListResult,
   RunListSummaryMeta,
@@ -108,12 +105,11 @@ export interface AppState {
   fleet: FleetStatus | null;
   fleetObservation: ResourceQueryState<FleetStatusResult>;
   prs: PRStatus[];
+  prsObservation: ResourceQueryState<PRListResult>;
   decisions: PendingDecision[];
   runs: Run[];
   runsObservation: ResourceQueryState<RunListResult>;
   decisionsObservation: ResourceQueryState<DecisionListResult>;
-  /** Moves for every RUN_DELETED event, including ids outside the paginated run list. */
-  runDeletionsRevision: number;
   runSummaryMeta: RunListSummaryMeta | null;
   runFamilySummaries: RunFamilyReadinessSummary[];
   runProjectAnalytics: RunProjectAnalyticsSummary[];
@@ -121,12 +117,6 @@ export interface AppState {
   backlogItems: BacklogItem[];
   workGraphs: WorkGraphProjection[];
   violations: MonitorViolation[];
-  /** When the served PR list was fetched from GitHub (gateway `fetchedAt`), else receipt time. */
-  prsUpdatedAt: number;
-  /** True while the gateway answered from its warm list and is refreshing from GitHub. */
-  prsRefreshing: boolean;
-  /** Why the gateway's last background PR refresh failed; null once one succeeds. */
-  prsRefreshError: string | null;
   globalFilters: GlobalFilters;
   projectDefaultBranches: Record<string, string>;
   projectSlotTracking: Record<
@@ -144,8 +134,8 @@ export type AppStateSliceSnapshot = Pick<
   AppState,
   | 'fleet'
   | 'prs'
+  | 'prsObservation'
   | 'runs'
-  | 'runDeletionsRevision'
   | 'runSummaryMeta'
   | 'runFamilySummaries'
   | 'runProjectAnalytics'
@@ -197,11 +187,11 @@ const state: AppState = {
   fleet: null,
   fleetObservation: { status: 'loading' },
   prs: [],
+  prsObservation: { status: 'loading' },
   decisions: [],
   runs: [],
   runsObservation: { status: 'loading' },
   decisionsObservation: { status: 'loading' },
-  runDeletionsRevision: 0,
   runSummaryMeta: null,
   runFamilySummaries: [],
   runProjectAnalytics: [],
@@ -209,9 +199,6 @@ const state: AppState = {
   backlogItems: [],
   workGraphs: [],
   violations: [],
-  prsUpdatedAt: 0,
-  prsRefreshing: false,
-  prsRefreshError: null,
   globalFilters: loadGlobalFilters(),
   projectDefaultBranches: {},
   projectSlotTracking: {},
@@ -224,6 +211,7 @@ function clearWorkspaceState(): void {
     fleet: null,
     fleetObservation: { status: 'loading' },
     prs: [],
+    prsObservation: { status: 'loading' },
     decisions: [],
     runs: [],
     runsObservation: { status: 'loading' },
@@ -235,16 +223,12 @@ function clearWorkspaceState(): void {
     backlogItems: [],
     workGraphs: [],
     violations: [],
-    prsUpdatedAt: 0,
-    prsRefreshing: false,
-    prsRefreshError: null,
     globalFilters: { projects: [], machines: [] },
     projectDefaultBranches: {},
     projectSlotTracking: {},
     githubQuota: null,
     workspaceAccess: 'none',
   });
-  state.runDeletionsRevision += 1;
 }
 
 interface WorkspaceOwner {
@@ -336,9 +320,7 @@ export function updateProjectSlotTracking(
   notify();
 }
 
-// pr.list fans out into several gh calls per candidate PR; cold/reconnect
-// runs routinely exceed the 15s default. Used by both the shared bootstrap
-// in fetchInitialState and pr-board's manual/poll refresh.
+// Explicit GitHub checks and selected PR detail reads can exceed the default request budget.
 export const PR_LIST_TIMEOUT_MS = 30_000;
 
 // Flow types that are expected to produce a PR. `dev` runs are exploratory
@@ -412,14 +394,6 @@ function newBootstrapState(epoch: number): BootstrapState {
   };
 }
 
-function deferEvent(slice: HydratedSlice, fn: () => void): void {
-  if (!activeBootstrap || activeBootstrap.ready.has(slice)) {
-    fn();
-    return;
-  }
-  activeBootstrap.buffer[slice].push(fn);
-}
-
 // Coalesce notifies during a batch (e.g. per-slice drain) so N upserts
 // fire one listener sweep instead of N. `notify()` no-ops while
 // `notifyDepth > 0`; the outermost `coalesceNotify` fires a single
@@ -471,6 +445,7 @@ export const workGraphsQuery = resourceQuery<WorkGraphListResult>(Methods.WORK_G
 });
 export const queueQuery = resourceQuery<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST);
 export const projectsQuery = resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS);
+export const prsQuery = resourceQuery<PRListResult>(Methods.PR_LIST);
 
 let collectionCache: GatewayResourceCache | undefined;
 let collectionWorkspaceKey: string | undefined;
@@ -498,8 +473,10 @@ function bindFarmCollections(): void {
   state.runsObservation = { status: 'loading' };
   state.decisionsObservation = { status: 'loading' };
   state.fleetObservation = { status: 'loading' };
+  state.prsObservation = { status: 'loading' };
   state.fleet = null;
   state.runs = [];
+  state.prs = [];
   state.decisions = [];
   state.backlogItems = [];
   state.workGraphs = [];
@@ -512,6 +489,16 @@ function bindFarmCollections(): void {
   }
   if (gateway.connectionState !== 'connected') state.workspaceAccess = 'farm';
   const current = () => collectionCache === cache && collectionWorkspaceKey === workspaceKey;
+  collectionObservers.push(
+    cache.observe(prsQuery, (result) => {
+      if (!current()) return;
+      state.prsObservation = result;
+      state.prs = result.data?.prs ?? [];
+      state.hydrated = { ...state.hydrated, prs: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, prs: Boolean(result.error) };
+      notify();
+    }),
+  );
   collectionObservers.push(
     cache.observe(fleetQuery, (result) => {
       if (!current()) return;
@@ -635,8 +622,8 @@ export function captureStateSlices(): AppStateSliceSnapshot {
   return {
     fleet: state.fleet,
     prs: state.prs,
+    prsObservation: state.prsObservation,
     runs: state.runs,
-    runDeletionsRevision: state.runDeletionsRevision,
     runSummaryMeta: state.runSummaryMeta,
     runFamilySummaries: state.runFamilySummaries,
     runProjectAnalytics: state.runProjectAnalytics,
@@ -650,8 +637,8 @@ export function captureStateSlices(): AppStateSliceSnapshot {
 export function restoreStateSlices(snapshot: AppStateSliceSnapshot): void {
   state.fleet = snapshot.fleet;
   state.prs = snapshot.prs;
+  state.prsObservation = snapshot.prsObservation;
   state.runs = snapshot.runs;
-  state.runDeletionsRevision = snapshot.runDeletionsRevision;
   state.runSummaryMeta = snapshot.runSummaryMeta;
   state.runFamilySummaries = snapshot.runFamilySummaries;
   state.runProjectAnalytics = snapshot.runProjectAnalytics;
@@ -692,51 +679,11 @@ export function requireCurrentFleet(): FleetStatus {
   return getResourceCache()!.read(fleetQuery).data!.fleet;
 }
 
-export function updatePRs(
-  prs: PRStatus[],
-  meta: { fetchedAt?: string; refreshing?: boolean } = {},
-): void {
+/** Dev-harness fixtures only. Production PR projections are written by the shared observer. */
+export function updatePRs(prs: PRStatus[]): void {
   state.prs = prs;
-  const fetched = meta.fetchedAt ? Date.parse(meta.fetchedAt) : NaN;
-  state.prsUpdatedAt = Number.isFinite(fetched) ? fetched : Date.now();
-  state.prsRefreshing = meta.refreshing ?? false;
-  state.prsRefreshError = null;
+  state.prsObservation = { status: 'ready', data: { prs } };
   state.bootstrapFailed = { ...state.bootstrapFailed, prs: false };
-  notify();
-}
-
-function samePRKey(a: Pick<PRStatus, 'repo' | 'pr'>, b: Pick<PRStatus, 'repo' | 'pr'>): boolean {
-  return a.repo === b.repo && a.pr === b.pr;
-}
-
-export function updatePR(pr: PRStatus): void {
-  const idx = state.prs.findIndex((p) => samePRKey(p, pr));
-  // Replace the array ref so `this._prs = s.prs` in subscribers triggers
-  // Lit's reactive comparison; in-place mutation would be missed.
-  state.prs = idx >= 0 ? state.prs.map((p, i) => (i === idx ? pr : p)) : [...state.prs, pr];
-  // One patched row does not make the whole list freshly fetched; prsUpdatedAt stays.
-  state.bootstrapFailed = { ...state.bootstrapFailed, prs: false };
-  notify();
-}
-
-/** A gateway refresh finished with no list change. */
-export function markPRsRefreshed(fetchedAt: string | undefined): void {
-  const fetched = fetchedAt ? Date.parse(fetchedAt) : NaN;
-  if (Number.isFinite(fetched) && fetched > state.prsUpdatedAt) state.prsUpdatedAt = fetched;
-  state.prsRefreshing = false;
-  state.prsRefreshError = null;
-  state.bootstrapFailed = { ...state.bootstrapFailed, prs: false };
-  notify();
-}
-
-/**
- * A PR refresh failed; keep the list, flag it. `gatewayError` carries the
- * gateway's own background-refresh message, absent when our request failed.
- */
-export function markPRsRefreshFailed(gatewayError?: string): void {
-  state.prsRefreshing = false;
-  state.prsRefreshError = gatewayError ?? null;
-  state.bootstrapFailed = { ...state.bootstrapFailed, prs: true };
   notify();
 }
 
@@ -920,35 +867,6 @@ export function initState(): void {
     if (conn === 'connected' && gateway.workspaceAccess === 'farm') {
       const epoch = gateway.connectionEpoch;
       void fetchInitialState(epoch);
-    }
-  });
-
-  // PR events
-  gateway.subscribe<PRUpdatedPayload>(Events.PR_UPDATED, (p) => {
-    if (p.pr) deferEvent('prs', () => updatePR(p.pr!));
-  });
-  // The gateway refreshed its warm PR list from GitHub: a changed list
-  // replaces ours; an unchanged one only clears the refreshing flag.
-  gateway.subscribe<PRListUpdatedPayload>(Events.PR_LIST_UPDATED, (p) => {
-    deferEvent('prs', () => {
-      if (p.error) markPRsRefreshFailed(p.error);
-      else if (p.prs) updatePRs(p.prs, { fetchedAt: p.fetchedAt });
-      else markPRsRefreshed(p.fetchedAt);
-    });
-  });
-
-  // Decision events (file-based + run-based).
-  // The emitter shape is two flavors: either { decision, slotId, runId } or the decision fields
-  // spread directly onto the root. Normalize both here.
-  //
-  // Used by both NEW and UPDATED handlers so a placeholder card swapped in
-  // place keeps its runMeta + slotId + context (Apply/Chat need runId).
-  // Cache observations own run/decision facts. This counter only bridges views
-  // whose slot-derived projections are migrated in the following slice.
-  gateway.subscribe<RunDeletedPayload>(Events.RUN_DELETED, (p) => {
-    if (p.runId) {
-      state.runDeletionsRevision++;
-      notify();
     }
   });
 
@@ -1154,27 +1072,7 @@ async function runFetchInitialState(
     .catch(() => markFailed('projects'))
     .finally(() => markReady('projects'));
 
-  // PR_LIST fans out across multiple gh calls per candidate PR; cold runs
-  // routinely exceed the 15s default. Keep the 30s budget but gate
-  // `waitForCoreHydration` on the five core slices only — workspace recovery
-  // (slot-view, ready/review workspaces) has no PR dependency and must not
-  // wait up to 30s on GitHub latency. The prs job still participates in
-  // the bootstrap lifecycle (awaited before activeBootstrap is cleared) so
-  // `markReady('prs')` lands under the correct identity guard, the buffer
-  // drains, and hydrated.prs flips.
-  const prsJob = gateway
-    .request<PRListResult>(Methods.PR_LIST, undefined, PR_LIST_TIMEOUT_MS)
-    .then((r) => {
-      if (stillCurrent() && r.prs)
-        updatePRs(r.prs, { fetchedAt: r.fetchedAt, refreshing: r.refreshing });
-    })
-    .catch(() => markFailed('prs'))
-    .finally(() => markReady('prs'));
-
-  // Gate `waitForCoreHydration` on the five core slices. Any caller awaiting
-  // it after this point sees lastHydratedEpoch bumped even if PR_LIST is
-  // still in flight, which is what spares workspace recovery from the
-  // PR_LIST timeout.
+  // PRs recover independently through their cache observer; core workspaces do not await GitHub.
   await Promise.allSettled([
     fleetJob,
     decisionsJob,
@@ -1189,7 +1087,4 @@ async function runFetchInitialState(
     notify();
   }
   resolveCoreHydration();
-  // Keep activeBootstrap alive until PR_LIST settles too, so its
-  // markReady/markFailed run under the correct identity guard.
-  await prsJob;
 }

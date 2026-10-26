@@ -100,7 +100,7 @@ const warm = await until(
 assert.equal(warm.scope.principalId, fixture.actorId);
 assert.equal(warm.data.update.updateAvailable, true);
 assert.equal(warm.sourceObservation.status, 'ready');
-assert.deepEqual(warm.collectorMethods, ['gateway.status']);
+assert(warm.collectorMethods.includes('gateway.status'));
 assert(!Object.hasOwn(warm.stored.data, 'githubQuerySpend'));
 assert(!Object.hasOwn(warm.stored.data, 'listen'));
 await save('warm', warm);

@@ -15,6 +15,7 @@ import { RUNNER_PICKER_MODELS, type RunnerVisibleModelState } from '@farmslot/pr
 
 import { GatewayMethodError } from '../core/method-error.js';
 import {
+  NativeCatalogChanges,
   nativeCatalogChanges,
   NativeCatalogPreferenceSource,
   type NativeCatalogSourceReceipt,
@@ -106,15 +107,8 @@ export function readVisibleModelFile(home = visibleModelsHome()): VisibleModelFi
 export function writeVisibleModelFile(file: VisibleModelFile, home = visibleModelsHome()): void {
   const path = join(home, 'runner-visible-models.json');
   const identity = preferenceIdentity(home);
-  let before: string | undefined;
-  if (identity) {
-    try {
-      before = nativeCatalogPreferenceFingerprint(home);
-    } catch (error) {
-      // A durable write can repair malformed preferences. Other filesystem errors still propagate.
-      if (!(error instanceof GatewayMethodError && error.code === 'INVALID_STATE')) throw error;
-    }
-  }
+  const nativeBefore = identity && fingerprintBeforeWrite(nativeCatalogProjection, home);
+  const visibleBefore = identity && fingerprintBeforeWrite(visibleModelProjection, home);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
   const fd = openSync(tmp, 'w', 0o600);
@@ -133,10 +127,11 @@ export function writeVisibleModelFile(file: VisibleModelFile, home = visibleMode
   }
   // Notification follows the durable rename. Explicit unrelated homes keep their existing behavior.
   if (identity) {
-    const source = preferenceSources.get(identity.key)?.source;
-    if (source) source.sample();
-    else if (before !== nativeCatalogPreferenceFingerprint(home))
-      nativeCatalogChanges.preferencesChanged(identity.ownerId, identity.ownerGeneration);
+    try {
+      notifyPreferenceWriter(nativeCatalogProjection, identity, home, nativeBefore);
+    } finally {
+      notifyPreferenceWriter(visibleModelProjection, identity, home, visibleBefore);
+    }
   }
 }
 
@@ -222,7 +217,52 @@ interface SharedPreferenceSource {
   source: NativeCatalogPreferenceSource;
   references: number;
 }
-const preferenceSources = new Map<string, SharedPreferenceSource>();
+interface PreferenceProjection {
+  label: string;
+  sources: Map<string, SharedPreferenceSource>;
+  fingerprint(home: string): string;
+  changes: NativeCatalogChanges;
+}
+
+/** Owner/generation notices for every runner's visible-model read, including non-native runners. */
+export const visibleModelPreferenceChanges = new NativeCatalogChanges();
+
+const nativeCatalogProjection: PreferenceProjection = {
+  label: 'Native catalog',
+  sources: new Map(),
+  fingerprint: nativeCatalogPreferenceFingerprint,
+  changes: nativeCatalogChanges,
+};
+const visibleModelProjection: PreferenceProjection = {
+  label: 'Visible model preference',
+  sources: new Map(),
+  fingerprint: visibleModelPreferenceFingerprint,
+  changes: visibleModelPreferenceChanges,
+};
+
+function fingerprintBeforeWrite(
+  projection: PreferenceProjection,
+  home: string,
+): string | undefined {
+  try {
+    return projection.fingerprint(home);
+  } catch (error) {
+    // A durable write can repair malformed preferences. Other filesystem errors still propagate.
+    if (!(error instanceof GatewayMethodError && error.code === 'INVALID_STATE')) throw error;
+  }
+}
+
+function notifyPreferenceWriter(
+  projection: PreferenceProjection,
+  identity: PreferenceIdentity,
+  home: string,
+  before: string | undefined,
+): void {
+  const source = projection.sources.get(identity.key)?.source;
+  if (source) source.sample();
+  else if (before !== projection.fingerprint(home))
+    projection.changes.preferencesChanged(identity.ownerId, identity.ownerGeneration);
+}
 
 function preferenceIdentity(home: string): PreferenceIdentity | undefined {
   const originator = currentSessionOriginator();
@@ -259,6 +299,15 @@ function nativeCatalogPreferenceFingerprint(home: string): string {
   );
 }
 
+/** Full projection of every runner's read. JSON formatting and unrelated files stay quiet. */
+function visibleModelPreferenceFingerprint(home: string): string {
+  return JSON.stringify(
+    Object.keys(KNOWN_RUNNERS)
+      .sort()
+      .map((runner) => describeVisibleModels(runner, undefined, home)),
+  );
+}
+
 export interface NativeCatalogPreferenceLease {
   sample(): NativeCatalogSourceReceipt;
   dispose(): void;
@@ -269,28 +318,39 @@ export interface NativeCatalogPreferenceLease {
 export function observeNativeCatalogPreferences(
   home = visibleModelsHome(),
 ): NativeCatalogPreferenceLease {
+  return observePreferences(nativeCatalogProjection, home);
+}
+
+/** Same lease contract for runner.visibleModels.get observers. Notices arrive through
+ * visibleModelPreferenceChanges with the reader's owner and generation. */
+export function observeVisibleModelPreferences(
+  home = visibleModelsHome(),
+): NativeCatalogPreferenceLease {
+  return observePreferences(visibleModelProjection, home);
+}
+
+function observePreferences(
+  projection: PreferenceProjection,
+  home: string,
+): NativeCatalogPreferenceLease {
   const identity = preferenceIdentity(home);
   if (!identity)
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
-      'Native catalog source requires its authenticated preference home',
+      `${projection.label} source requires its authenticated preference home`,
     );
-  let shared = preferenceSources.get(identity.key);
+  let shared = projection.sources.get(identity.key);
   if (!shared) {
     shared = {
       source: new NativeCatalogPreferenceSource(
         join(resolve(home), 'runner-visible-models.json'),
-        () => nativeCatalogPreferenceFingerprint(home),
+        () => projection.fingerprint(home),
         (reason) =>
-          nativeCatalogChanges.preferencesChanged(
-            identity.ownerId,
-            identity.ownerGeneration,
-            reason,
-          ),
+          projection.changes.preferencesChanged(identity.ownerId, identity.ownerGeneration, reason),
       ),
       references: 0,
     };
-    preferenceSources.set(identity.key, shared);
+    projection.sources.set(identity.key, shared);
   }
   shared.references++;
   const owned = shared;
@@ -298,7 +358,7 @@ export function observeNativeCatalogPreferences(
   return {
     sample: () => {
       if (disposed)
-        throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native catalog connection ended');
+        throw new GatewayMethodError('AUTH_FORBIDDEN', `${projection.label} connection ended`);
       return owned.source.sample();
     },
     dispose: () => {
@@ -306,7 +366,7 @@ export function observeNativeCatalogPreferences(
       disposed = true;
       if (--owned.references === 0) {
         owned.source.close();
-        preferenceSources.delete(identity.key);
+        projection.sources.delete(identity.key);
       }
     },
   };

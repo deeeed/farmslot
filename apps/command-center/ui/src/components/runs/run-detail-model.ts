@@ -671,34 +671,6 @@ export function persistedCiStatusFromRun(run: Run): CiCheckUpdatedPayload | null
   };
 }
 
-export function currentRunCiStatus(
-  run: Run,
-  liveStatus: CiCheckUpdatedPayload | null,
-): CiCheckUpdatedPayload | null {
-  const persisted = persistedCiStatusFromRun(run);
-  if (!liveStatus) return persisted;
-  if (!persisted) return liveStatus;
-  return {
-    ...persisted,
-    ...liveStatus,
-    phase: persisted.phase ?? liveStatus.phase,
-    fixInProgress: persisted.fixInProgress ?? liveStatus.fixInProgress,
-    fixTrigger: persisted.fixTrigger !== undefined ? persisted.fixTrigger : liveStatus.fixTrigger,
-    fixProgress: persisted.fixProgress ?? liveStatus.fixProgress,
-    activeTaskFile:
-      persisted.activeTaskFile !== undefined ? persisted.activeTaskFile : liveStatus.activeTaskFile,
-    nextPollAt: persisted.nextPollAt !== undefined ? persisted.nextPollAt : liveStatus.nextPollAt,
-    lastSignalAt:
-      persisted.lastSignalAt !== undefined ? persisted.lastSignalAt : liveStatus.lastSignalAt,
-    dedupReason:
-      persisted.dedupReason !== undefined ? persisted.dedupReason : liveStatus.dedupReason,
-    lastFixCommitSha:
-      persisted.lastFixCommitSha !== undefined
-        ? persisted.lastFixCommitSha
-        : liveStatus.lastFixCommitSha,
-  };
-}
-
 /**
  * `run.list` leaves large decision payload values out and names them in
  * `payloadTrimmed`, and omits the output manifest. The run page gets both

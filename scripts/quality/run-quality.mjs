@@ -20,6 +20,11 @@ export const STEPS = [
   ['workspace structure', ['yarn', 'quality:structure']],
   ['workspace changelogs', ['yarn', 'quality:changelogs']],
   ['import boundaries', ['yarn', 'quality:imports']],
+  ['cached panel reads', ['yarn', 'quality:cached-panel-reads']],
+  [
+    'cached panel read guard tests',
+    ['node', '--test', 'scripts/quality/check-cached-panel-reads.test.mjs'],
+  ],
   ['large-file warning', ['yarn', 'quality:large-files']],
   ['type-escape lint', ['yarn', 'lint:type-escapes']],
   ['review-loop validation contract', ['yarn', 'quality:review-loop']],

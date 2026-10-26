@@ -5,7 +5,6 @@ import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
-  CiCheckUpdatedPayload,
   PRStatus,
   RecipeRunArtifactGroup,
   Run,
@@ -42,7 +41,6 @@ export abstract class RunDetailState extends LitElement {
   @state() acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null = null;
   /** Why the evidence manifest behind that fallback could not be read. */
   @state() acceptanceEvidenceLinksError: string | null = null;
-  @state() ciStatus: CiCheckUpdatedPayload | null = null;
   @state() liveTimeoutPrStatus: PRStatus | null = null;
   @state() liveTimeoutPrStatusRefreshing = false;
   @state() liveTimeoutPrStatusFailed = false;
@@ -112,7 +110,6 @@ export abstract class RunDetailState extends LitElement {
   _jumpTimer?: ReturnType<typeof setTimeout>;
   _pendingRecipeRunSelectionId = '';
   unsub?: () => void;
-  unsubCI?: () => void;
   _clock?: ReturnType<typeof setInterval>;
   _suppressHashSync = false;
   _lastRequestedRunId = '';

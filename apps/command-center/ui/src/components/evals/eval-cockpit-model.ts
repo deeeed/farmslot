@@ -18,7 +18,7 @@ import {
   isRestorableModelId,
   runnerLabel,
 } from '../../utils/runner-options.js';
-import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
+import { visibleReviewDispatchCatalog } from '../../utils/runner-visible-models.js';
 
 import type { CandidateRow, EvalReviewMode } from './eval-cockpit-url-state.js';
 import {
@@ -153,8 +153,7 @@ export function defaultRows(): CandidateRow[] {
       reviewVersion: '',
       runner: DEFAULT_EVAL_CANDIDATE_RUNNER,
       model:
-        defaultModelForRunner(DEFAULT_EVAL_CANDIDATE_RUNNER, rememberedReviewDispatchCatalog()) ??
-        '',
+        defaultModelForRunner(DEFAULT_EVAL_CANDIDATE_RUNNER, visibleReviewDispatchCatalog()) ?? '',
       repeat: false,
     },
   ];
@@ -178,7 +177,7 @@ export function sanitizeCandidateRows(rows: unknown): CandidateRow[] {
     const model =
       runnerRestored && isRestorableModelId(record.model)
         ? record.model
-        : defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) || fallback.model;
+        : defaultModelForRunner(runner, visibleReviewDispatchCatalog()) || fallback.model;
     const rawLabel = typeof record.label === 'string' ? record.label.trim() : '';
     const label = rawLabel === 'Replay candidate' || rawLabel === id ? '' : rawLabel;
     const reviewMode =
@@ -428,14 +427,10 @@ export function candidateTemplateChoices(
 
 /** Visible models for a runner. A selected model outside the visible set stays listed. */
 export function candidateModelOptions(runner: string, selected?: string): string[] {
-  const models = modelsForRunner(runner, selected, rememberedReviewDispatchCatalog());
+  const models = modelsForRunner(runner, selected, visibleReviewDispatchCatalog());
   return models.length > 0
     ? models
-    : [
-        runner
-          ? 'default'
-          : (defaultModelForRunner('codex', rememberedReviewDispatchCatalog()) ?? ''),
-      ];
+    : [runner ? 'default' : (defaultModelForRunner('codex', visibleReviewDispatchCatalog()) ?? '')];
 }
 
 export function applyCandidateRunner(row: CandidateRow, runner: string): CandidateRow {
@@ -446,9 +441,7 @@ export function applyCandidateRunner(row: CandidateRow, runner: string): Candida
     model:
       runner === row.runner && models.includes(row.model)
         ? row.model
-        : defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ||
-          models[0] ||
-          row.model,
+        : defaultModelForRunner(runner, visibleReviewDispatchCatalog()) || models[0] || row.model,
   };
 }
 

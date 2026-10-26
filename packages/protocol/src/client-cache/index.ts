@@ -1,5 +1,6 @@
 /** Experimental ADR-071 client cache; Command Center and Companion are its consumers. */
 export { createGatewayResourceCache } from './cache.js';
+export * from './command-method.js';
 export { runResourceStoreConformance } from './conformance.js';
 export * from './keys.js';
 export * from './native-history.js';

@@ -54,6 +54,11 @@ const EDITORS: EditorOption[] = [
 
 const EDITOR_PREF_KEY = 'farmslot:preferred-editor';
 
+type SlotDetailActionMethod =
+  | typeof Methods.SLOT_PREPARE
+  | typeof Methods.SLOT_RELEASE
+  | typeof Methods.SLOT_RECYCLE;
+
 @customElement('slot-detail')
 export class SlotDetail extends LitElement {
   @property({ type: String }) slotId = '';
@@ -227,7 +232,7 @@ export class SlotDetail extends LitElement {
     }
   }
 
-  private async _runAction(method: string, params: Record<string, unknown>) {
+  private async _runAction(method: SlotDetailActionMethod, params: Record<string, unknown>) {
     const current = this._captureScope();
     const requestId = `slot-action-${crypto.randomUUID()}`;
     this._actionOutput = [];

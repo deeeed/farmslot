@@ -24,8 +24,11 @@ import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import { KNOWN_RUNNERS } from './registry.js';
 import {
+  describeVisibleModels,
   observeNativeCatalogPreferences,
+  observeVisibleModelPreferences,
   readVisibleModelFile,
+  visibleModelPreferenceChanges,
   visibleModelsHome,
   writeVisibleModelFile,
 } from './visible-models.js';
@@ -58,11 +61,15 @@ function setup(t: TestContext) {
   return home;
 }
 
-function nextOwnerChange(ownerId: string, reason: 'updated' | 'failed' | 'recovered') {
+function nextOwnerChange(
+  ownerId: string,
+  reason: 'updated' | 'failed' | 'recovered',
+  changes = nativeCatalogChanges,
+) {
   let stop: () => void = () => undefined;
   let timer!: ReturnType<typeof setTimeout>;
   const promise = new Promise<NativeCatalogChange>((resolve, reject) => {
-    stop = nativeCatalogChanges.subscribe((change) => {
+    stop = changes.subscribe((change) => {
       if (change.scope !== 'owner' || change.ownerId !== ownerId || change.reason !== reason)
         return;
       clearTimeout(timer);
@@ -257,4 +264,78 @@ test('unexpected notification authorization errors propagate after the real file
     join(visibleModelsHome(), 'runner-visible-models.json'),
   );
   assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), file('committed'));
+});
+
+test('full visible-model preferences notify non-native runner writes and external edits per owner generation', async (t) => {
+  setup(t);
+  const nonNative = Object.values(KNOWN_RUNNERS).find(
+    (definition) => !definition.nativeTransport && definition.modelCatalog,
+  )!.id;
+  const preferences = (models: string[], defaultModel?: string) => ({
+    version: 1 as const,
+    byRunner: { [nonNative]: models },
+    ...(defaultModel ? { defaults: { [nonNative]: defaultModel } } : {}),
+  });
+  const native: NativeCatalogChange[] = [];
+  const visible: NativeCatalogChange[] = [];
+  const stops = [
+    nativeCatalogChanges.subscribe((change) => native.push(change)),
+    visibleModelPreferenceChanges.subscribe((change) => visible.push(change)),
+  ];
+  t.after(() => stops.forEach((stop) => stop()));
+
+  runWithSessionOriginator(ownerA, () =>
+    writeVisibleModelFile(preferences(['anthropic/claude-opus-5'])),
+  );
+  runWithSessionOriginator({ ...ownerA, generation: 2 }, () =>
+    writeVisibleModelFile(preferences(['anthropic/claude-opus-5', 'anthropic/claude-sonnet-5'])),
+  );
+  assert.deepEqual(native, []);
+  assert.deepEqual(
+    visible.map((change) => change.scope === 'owner' && [change.ownerId, change.ownerGeneration]),
+    [
+      [ownerA.id, 0],
+      [ownerA.id, 2],
+    ],
+  );
+  const home = runWithSessionOriginator(ownerA, () => visibleModelsHome());
+  const retained = describeVisibleModels(nonNative, 'anthropic/claude-haiku-4-5', home);
+  assert.equal(retained.retainedModel, 'anthropic/claude-haiku-4-5');
+
+  const lease = runWithSessionOriginator(ownerA, () => observeVisibleModelPreferences());
+  t.after(() => lease.dispose());
+  lease.sample();
+  const path = join(home, 'runner-visible-models.json');
+  let next = nextOwnerChange(ownerA.id, 'updated', visibleModelPreferenceChanges);
+  try {
+    writeFileSync(`${path}.external`, JSON.stringify(preferences([], 'anthropic/claude-opus-5')));
+    renameSync(`${path}.external`, path);
+    await next.promise;
+  } finally {
+    next.cancel();
+  }
+  assert.deepEqual(native, []);
+  assert.equal(
+    describeVisibleModels(nonNative, undefined, home).defaultModel,
+    'anthropic/claude-opus-5',
+  );
+
+  next = nextOwnerChange(ownerA.id, 'failed', visibleModelPreferenceChanges);
+  try {
+    writeFileSync(path, '{');
+    await next.promise;
+  } finally {
+    next.cancel();
+  }
+  next = nextOwnerChange(ownerA.id, 'recovered', visibleModelPreferenceChanges);
+  try {
+    writeFileSync(path, JSON.stringify(preferences(['anthropic/claude-opus-5'])));
+    await next.promise;
+  } finally {
+    next.cancel();
+  }
+  assert.equal(lease.sample().ready, true);
+  assert.ok(visible.every((change) => change.scope === 'owner' && change.ownerId === ownerA.id));
+  lease.dispose();
+  assert.throws(() => lease.sample(), /Visible model preference connection ended/);
 });

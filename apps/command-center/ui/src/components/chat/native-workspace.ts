@@ -19,8 +19,18 @@ import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { WorkspaceReads } from '../workspace/workspace-reads.js';
 
+/** Commands a native view sends. Its reads come from the shared resource cache. */
+export type NativeSessionCommand =
+  | typeof Methods.NATIVE_SESSION_CREATE
+  | typeof Methods.NATIVE_SESSION_SEND
+  | typeof Methods.NATIVE_SESSION_RESPOND
+  | typeof Methods.NATIVE_SESSION_INTERRUPT
+  | typeof Methods.NATIVE_SESSION_CLOSE
+  | typeof Methods.NATIVE_PROFILE_ADD
+  | typeof Methods.NATIVE_PROFILE_REMOVE;
+
 export interface NativeSessionApi {
-  request<T = unknown>(method: string, params?: unknown): Promise<T>;
+  request<T = unknown>(method: NativeSessionCommand, params?: unknown): Promise<T>;
 }
 
 @customElement('native-workspace')

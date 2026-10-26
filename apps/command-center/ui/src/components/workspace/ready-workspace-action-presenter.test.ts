@@ -43,9 +43,7 @@ mock.module('../../gateway-client.js', {
           return resolveReply();
         }
         if (method === Methods.RUN_GET) assert.fail('The shared observation owns run reads');
-        if (method === Methods.GIT_BRANCH_DIFF) return { files: branchFiles[params.slotId] ?? [] };
-        fileDiffRequests.push(`${params.slotId}:${params.path}`);
-        return { diff: `diff from ${params.slotId}` };
+        assert.fail(`The shared workspace observation owns ${method} reads (${params.slotId})`);
       },
     },
   },
@@ -80,6 +78,24 @@ function makePresenter(fields: Partial<Presenter> = {}): Presenter {
   });
   Object.defineProperty(view, '_usesMockData', { value: false });
   Object.assign(view, {
+    _reads: {
+      async read<T>(
+        method: string,
+        params: { slotId: string; path?: string },
+        apply: (value: T) => void,
+      ) {
+        const value = (
+          method === Methods.GIT_BRANCH_DIFF
+            ? { files: branchFiles[params.slotId] ?? [] }
+            : (fileDiffRequests.push(`${params.slotId}:${params.path}`),
+              { diff: `diff from ${params.slotId}` })
+        ) as T;
+        apply(value);
+        return value;
+      },
+      releaseMethods: () => undefined,
+      clear: () => undefined,
+    },
     _queries: {
       get decision() {
         return view.decision;

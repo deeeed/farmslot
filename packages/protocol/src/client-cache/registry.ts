@@ -1,6 +1,27 @@
+import {
+  providerAccountsDependencies,
+  providerAccountsObservationParams,
+  providerAccountsStoredData,
+} from '../contracts/provider-accounts.js';
+import type { ConfigGitHubAccountsResult } from '../rpc/config.js';
 import type { GatewayStatusResult } from '../rpc/gateway.js';
+import {
+  prForSlotObservationParams,
+  prForSlotStoredData,
+  prReviewCommentsObservationParams,
+  prReviewCommentsStoredData,
+  prStatusObservationParams,
+  prStatusStoredData,
+} from '../rpc/pr-observations.js';
 import { Methods } from '../rpc/registry.js';
 import type { UpstreamObservation } from '../rpc/resource-observers.js';
+import {
+  runnerModelCatalogObservationParams,
+  runnerModelCatalogResourceKey,
+  runnerModelCatalogStoredData,
+  runnerVisibleModelsObservationParams,
+  runnerVisibleModelsStoredData,
+} from '../rpc/runner-models.js';
 
 import {
   analyticsParams,
@@ -34,7 +55,7 @@ export interface ResourceQueryDefinition {
   /** Becomes true only when the slice's writers and read stamps are implemented. */
   live: boolean;
   /** Gateway-owned upstream collection, enabled only after stamped reads are implemented. */
-  collector?: 'github' | 'gateway-update';
+  collector?: 'github' | 'gateway-update' | 'providers';
   sourceObservation?(data: unknown): UpstreamObservation | undefined;
   /** Optional durable projection for replies that also carry live-only diagnostics. */
   persistedData?(data: unknown): unknown;
@@ -301,7 +322,7 @@ function prListObservationParams(params: unknown): Record<string, unknown> {
   return { project };
 }
 
-function gatewayStatusObservationParams(params: unknown): Record<string, never> {
+function upstreamRefreshObservationParams(params: unknown): Record<string, never> {
   if (params == null) return {};
   if (
     typeof params !== 'object' ||
@@ -309,8 +330,18 @@ function gatewayStatusObservationParams(params: unknown): Record<string, never> 
     Object.keys(params).some((key) => key !== 'refresh') ||
     (Reflect.get(params, 'refresh') !== undefined && Reflect.get(params, 'refresh') !== false)
   )
-    throw new Error('Gateway status observations cannot force a remote check');
+    throw new Error('Upstream observations cannot force a remote check');
   return {};
+}
+
+function githubAccountsStoredData(data: unknown): ConfigGitHubAccountsResult {
+  const status = data as ConfigGitHubAccountsResult;
+  return {
+    accounts: status.accounts.map(({ host, login, active }) => ({ host, login, active })),
+    checkedAt: status.checkedAt,
+    error: status.error,
+    observation: upstreamSourceObservation(status),
+  };
 }
 
 function gatewayStatusStoredData(data: unknown): GatewayStatusResult {
@@ -323,6 +354,49 @@ function gatewayStatusStoredData(data: unknown): GatewayStatusResult {
     observation: status.observation,
   };
 }
+
+/**
+ * Legacy reads are stamped too: identity fields are picked so `force` never names another
+ * observation, and an identity the observation refuses reads without its upstream key.
+ */
+function prDetailDependencies(
+  method: string,
+  identity: () => unknown,
+  local: ResourceKey[],
+): ResourceKey[] {
+  let normalized: unknown;
+  try {
+    normalized = identity();
+  } catch {
+    return local;
+  }
+  return [
+    {
+      family: 'upstream',
+      integration: 'github',
+      queryId: `${method}:${canonicalResourceJson(normalized)}`,
+    },
+    ...local,
+  ];
+}
+
+function paramField(params: unknown, field: string): unknown {
+  return params && typeof params === 'object' ? Reflect.get(params, field) : undefined;
+}
+
+const prDetailDefinition = {
+  persisted: true,
+  maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+  retention: {
+    maxEntries: Number.MAX_SAFE_INTEGER,
+    maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+    cohort: 'upstream',
+  },
+  timeoutMs: 30_000,
+  live: true,
+  collector: 'github',
+  sourceObservation: upstreamSourceObservation,
+} as const;
 
 export function upstreamSourceObservation(data: unknown): UpstreamObservation | undefined {
   const observation =
@@ -366,8 +440,30 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     collector: 'gateway-update',
     sourceObservation: upstreamSourceObservation,
     persistedData: gatewayStatusStoredData,
-    normalizeParams: gatewayStatusObservationParams,
+    normalizeParams: upstreamRefreshObservationParams,
     dependencies: () => [{ family: 'gateway-update', scope: 'gateway' }],
+  },
+  [Methods.CONFIG_GITHUB_ACCOUNTS]: {
+    persisted: true,
+    maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+    retention: {
+      maxEntries: Number.MAX_SAFE_INTEGER,
+      maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+      cohort: 'upstream',
+    },
+    timeoutMs: 30_000,
+    live: true,
+    collector: 'github',
+    sourceObservation: upstreamSourceObservation,
+    persistedData: githubAccountsStoredData,
+    normalizeParams: upstreamRefreshObservationParams,
+    dependencies: () => [
+      {
+        family: 'upstream',
+        integration: 'github',
+        queryId: `${Methods.CONFIG_GITHUB_ACCOUNTS}:{}`,
+      },
+    ],
   },
   [Methods.PR_LIST]: {
     persisted: true,
@@ -378,8 +474,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       cohort: 'upstream',
     },
     timeoutMs: 30_000,
-    // Matching read freshness/error projections and local overlays must land before client cutover.
-    live: false,
+    live: true,
     collector: 'github',
     sourceObservation: upstreamSourceObservation,
     normalizeParams: prListObservationParams,
@@ -399,6 +494,103 @@ export const RESOURCE_QUERY_DEFINITIONS = {
         { family: 'configuration', scope: 'farm' },
         { family: 'sources', scope: 'farm' },
       ];
+    },
+  },
+  // PR detail observations; `force` stays an explicit read of the same observation.
+  [Methods.PR_STATUS]: {
+    ...prDetailDefinition,
+    persistedData: prStatusStoredData,
+    normalizeParams: prStatusObservationParams,
+    dependencies: (params: unknown) =>
+      prDetailDependencies(
+        Methods.PR_STATUS,
+        () =>
+          prStatusObservationParams({
+            pr: paramField(params, 'pr'),
+            project: paramField(params, 'project'),
+          }),
+        [
+          { family: 'runs', scope: 'farm' },
+          { family: 'configuration', scope: 'farm' },
+          { family: 'sources', scope: 'farm' },
+        ],
+      ),
+  },
+  [Methods.PR_FOR_SLOT]: {
+    ...prDetailDefinition,
+    persistedData: prForSlotStoredData,
+    normalizeParams: prForSlotObservationParams,
+    dependencies: (params: unknown) =>
+      prDetailDependencies(
+        Methods.PR_FOR_SLOT,
+        () => prForSlotObservationParams({ slotId: paramField(params, 'slotId') }),
+        [
+          { family: 'slots', scope: 'farm' },
+          { family: 'configuration', scope: 'farm' },
+          { family: 'sources', scope: 'farm' },
+        ],
+      ),
+  },
+  [Methods.PR_REVIEW_COMMENTS]: {
+    ...prDetailDefinition,
+    persistedData: prReviewCommentsStoredData,
+    normalizeParams: prReviewCommentsObservationParams,
+    dependencies: (params: unknown) =>
+      prDetailDependencies(
+        Methods.PR_REVIEW_COMMENTS,
+        () =>
+          prReviewCommentsObservationParams({
+            pr: paramField(params, 'pr'),
+            repo: paramField(params, 'repo'),
+          }),
+        [],
+      ),
+  },
+  [Methods.RUNNER_MODEL_CATALOG]: {
+    persisted: true,
+    maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+    retention: {
+      maxEntries: Number.MAX_SAFE_INTEGER,
+      maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+      cohort: 'upstream',
+    },
+    timeoutMs: 30_000,
+    live: true,
+    collector: 'providers',
+    sourceObservation: upstreamSourceObservation,
+    persistedData: runnerModelCatalogStoredData,
+    normalizeParams: runnerModelCatalogObservationParams,
+    dependencies: (params: unknown) => [runnerModelCatalogResourceKey(params)],
+  },
+  // Per-machine runner seats; forceRefresh stays an imperative read.
+  [Methods.PROVIDER_ACCOUNTS_SNAPSHOT]: {
+    persisted: true,
+    maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+    retention: {
+      maxEntries: Number.MAX_SAFE_INTEGER,
+      maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+      cohort: 'upstream',
+    },
+    timeoutMs: 45_000,
+    live: true,
+    collector: 'providers',
+    sourceObservation: upstreamSourceObservation,
+    persistedData: providerAccountsStoredData,
+    normalizeParams: providerAccountsObservationParams,
+    dependencies: providerAccountsDependencies,
+  },
+  // Principal-scoped preferences share the reader's owner profile key; SET stays imperative.
+  [Methods.RUNNER_VISIBLE_MODELS_GET]: {
+    persisted: true,
+    maxBytes: 1 * mb,
+    retention: { maxEntries: 16, maxBytes: 1 * mb },
+    live: true,
+    requiresObservedRead: true,
+    persistedData: runnerVisibleModelsStoredData,
+    normalizeParams: runnerVisibleModelsObservationParams,
+    dependencies: (_params: unknown, readerId?: string) => {
+      if (!readerId) throw new Error('Visible model preferences require the authenticated reader');
+      return [{ family: 'profiles', scope: 'owner', ownerId: readerId }];
     },
   },
   // D07 observations. Their imperative siblings are deliberately absent.
@@ -891,7 +1083,7 @@ export interface ResourceQuery<T = unknown> {
   readonly maxBytes: number;
   readonly retention?: ResourceQueryRetention;
   readonly live: boolean;
-  readonly collector?: 'github' | 'gateway-update';
+  readonly collector?: 'github' | 'gateway-update' | 'providers';
   readonly sourceObservation?: (data: unknown) => UpstreamObservation | undefined;
   readonly persistedData?: (data: unknown) => unknown;
   readonly requiresObservedRead?: boolean;

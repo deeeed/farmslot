@@ -103,10 +103,14 @@ export class ResourceQueryController<T> implements ReactiveController {
     this.cache = cache;
     this.workspaceKey = key;
     this.publish({ status: 'loading' });
-    if (cache && this.query) {
-      this.stopQuery = cache.observe(this.query, (state) => {
+    if (cache && this.query && version === this.version && key === getResourceWorkspaceKey()) {
+      const stop = cache.observe(this.query, (state) => {
         if (version === this.version && key === getResourceWorkspaceKey()) this.publish(state);
       });
+      // An immediate cached reply may retire or replace this query from its callback.
+      if (version === this.version && cache === this.cache && key === getResourceWorkspaceKey())
+        this.stopQuery = stop;
+      else stop();
     }
   }
 

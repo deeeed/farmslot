@@ -192,7 +192,7 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
       removeItem: (key: string) => fake.store.delete(key),
     },
     location: { protocol: 'http:', host: 'localhost:1234', hash: '', hostname: 'localhost' },
-    document: { cookie: '' },
+    document: Object.assign(new EventTarget(), { cookie: '', visibilityState: 'visible' }),
     history: { replaceState: () => {} },
     WebSocket: Socket,
     BroadcastChannel: undefined,

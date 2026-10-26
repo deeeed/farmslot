@@ -13,6 +13,11 @@ import type {
 import { type SourcePinTarget, validateSourceSelection } from './pins.js';
 
 export type SourceRpcRequest = <T>(method: string, params: unknown) => Promise<T>;
+/** A cache-backed client's transport: status comes from the shared cache, never this request. */
+export type SourceCommandRequest = <T>(
+  method: PreparedSourceCommand['method'],
+  params: unknown,
+) => Promise<T>;
 export type SourcePinInput = Omit<
   SourcesPinParams,
   'operationId' | 'expectedDeclarationRevision' | 'expectedPinRevision'
@@ -72,27 +77,30 @@ function newOperationId(): string {
   return `sources-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+async function cachedSourceStatus(
+  resourceCache: () => GatewayResourceCache | undefined,
+  params: SourcesStatusParams,
+): Promise<SourcesStatusResult> {
+  const cache = resourceCache();
+  if (!cache) throw new Error('Wait for source facts from the selected gateway.');
+  const state = await cache.retry(sourceStatusQuery(params));
+  if (state.status !== 'ready' || !state.data)
+    throw Object.assign(
+      new Error(state.error?.message ?? 'Connect to refresh source facts before this action.'),
+      { code: state.error?.code ?? 'RESOURCE_STALE' },
+    );
+  return state.data;
+}
+
 /** Existing authenticated transports own connectivity. This client never resolves refs. */
 export class SourceCommandClient {
   constructor(
-    private readonly request: SourceRpcRequest,
-    private readonly resourceCache?: () => GatewayResourceCache | undefined,
+    private readonly request: SourceCommandRequest,
+    private readonly readStatus: (params: SourcesStatusParams) => Promise<SourcesStatusResult>,
   ) {}
 
-  async status(params: SourcesStatusParams = {}): Promise<SourcesStatusResult> {
-    if (this.resourceCache) {
-      const cache = this.resourceCache();
-      if (!cache) throw new Error('Wait for source facts from the selected gateway.');
-      const state = await cache.retry(sourceStatusQuery(params));
-      if (state.status !== 'ready' || !state.data)
-        throw Object.assign(
-          new Error(state.error?.message ?? 'Connect to refresh source facts before this action.'),
-          { code: state.error?.code ?? 'RESOURCE_STALE' },
-        );
-      return state.data;
-    }
-    // CLI commands remain direct readers; only the two UI clients supply the shared cache.
-    return this.request(Methods.SOURCES_STATUS, params);
+  status(params: SourcesStatusParams = {}): Promise<SourcesStatusResult> {
+    return this.readStatus(params);
   }
 
   private async revisions(
@@ -168,9 +176,20 @@ export class SourceCommandClient {
   }
 }
 
+/** The two UI clients supply the shared cache, so their transport carries commands only. */
 export function createSourceCommandClient(
-  request: SourceRpcRequest,
+  request: SourceCommandRequest,
+  resourceCache: () => GatewayResourceCache | undefined,
+): SourceCommandClient;
+/** CLI commands have no cache provider and remain direct status readers. */
+export function createSourceCommandClient(request: SourceRpcRequest): SourceCommandClient;
+export function createSourceCommandClient(
+  request: SourceCommandRequest,
   resourceCache?: () => GatewayResourceCache | undefined,
 ): SourceCommandClient {
-  return new SourceCommandClient(request, resourceCache);
+  if (resourceCache)
+    return new SourceCommandClient(request, (params) => cachedSourceStatus(resourceCache, params));
+  // Only the overload without a cache provider accepts a transport that reads status.
+  const direct = request as SourceRpcRequest;
+  return new SourceCommandClient(request, (params) => direct(Methods.SOURCES_STATUS, params));
 }

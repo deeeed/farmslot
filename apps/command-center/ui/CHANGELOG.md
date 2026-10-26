@@ -4,7 +4,13 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- PR details, slot PR links, review threads, runner seats, model catalogs and visible models update from shared gateway observations; Check GitHub, seat Refresh and CI-timeout checks stay explicit, and the page-local seat and visible-model caches are removed.
+
 - Observe gateway versions and checkout progress through the shared cache, retaining explicit remote checks and current-state update guards.
+
+- Share PR dashboard, GitHub account, terminal-run and dispatch-profile observations, preserving explicit upstream checks, selections and current-owner validation.
+
+- Read review and ready-workspace diffs, review history and finding source through the shared workspace cache; saved reviews keep their frozen commit reads. CI watch status and terminal slot facts come from shared observations instead of event payloads.
 
 - Show derived acceptance sources, inherited proof and pending instructions, and retain message identities across steering retries.
 

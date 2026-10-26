@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 
 import {
   createSourceCommandClient,
+  type PreparedSourceCommand,
   type SourceSelection,
   SourceStatusController,
   type SourceStatusViewContext,
@@ -36,13 +37,16 @@ export function useSourceStatusController(
   const controller = useMemo(
     () =>
       new SourceStatusController(
-        createSourceCommandClient(async <T>(method: string, params: unknown): Promise<T> => {
-          if (!client) throw new Error('Connect to the farm to inspect sources.');
-          const current = currentFarmConnection(client, () => useConnectionStore.getState());
-          const result = await client.request<T>(method, params, 120_000);
-          if (!current()) throw new Error('Source connection changed before acknowledgement.');
-          return result;
-        }, getResourceCache),
+        createSourceCommandClient(
+          async <T>(method: PreparedSourceCommand['method'], params: unknown): Promise<T> => {
+            if (!client) throw new Error('Connect to the farm to inspect sources.');
+            const current = currentFarmConnection(client, () => useConnectionStore.getState());
+            const result = await client.request<T>(method, params, 120_000);
+            if (!current()) throw new Error('Source connection changed before acknowledgement.');
+            return result;
+          },
+          getResourceCache,
+        ),
         { actions: [] },
       ),
     [client],

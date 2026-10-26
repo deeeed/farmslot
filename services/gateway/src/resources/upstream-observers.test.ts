@@ -139,6 +139,63 @@ test('collector admission rechecks authority and closes only a revoked observer'
   assert.equal(observers.hasInterest(Methods.PR_LIST), false);
 });
 
+test('active queries list reauthorized normalized selectors once and release revoked ones', () => {
+  const observers = new GatewayUpstreamObservers();
+  const one = actor();
+  const two = actor();
+  const three = actor();
+  let notices = 0;
+  observers.subscribe(() => {
+    notices++;
+  });
+  observers
+    .prepareReplacement(
+      one.client,
+      replacement(1, [
+        { method: Methods.PR_LIST, params: { project: 'a', force: false } },
+        { method: Methods.GATEWAY_STATUS },
+      ]),
+      one.authority,
+    )
+    .commit();
+  observers
+    .prepareReplacement(
+      two.client,
+      replacement(1, [
+        { method: Methods.PR_LIST, params: { project: 'a' } },
+        { method: Methods.PR_LIST },
+      ]),
+      two.authority,
+    )
+    .commit();
+  observers
+    .prepareReplacement(
+      three.client,
+      replacement(1, [{ method: Methods.PR_LIST, params: { project: 'c' } }]),
+      three.authority,
+    )
+    .commit();
+  const selectors = () =>
+    observers
+      .activeQueries(Methods.PR_LIST)
+      .map((query) => JSON.stringify(query.params))
+      .sort();
+  assert.deepEqual(selectors(), ['{"project":"a"}', '{"project":"c"}', '{}']);
+  assert.deepEqual(
+    observers.activeQueries(Methods.GATEWAY_STATUS).map((query) => query.params),
+    [{}],
+  );
+  notices = 0;
+  three.revoke();
+  two.pause();
+  assert.deepEqual(selectors(), ['{"project":"a"}']);
+  assert.equal(three.refusals.length, 1);
+  assert.equal(two.refusals.length, 0);
+  assert.equal(notices, 2, 'Each released membership wakes collector owners once');
+  assert.equal(observers.hasInterest(Methods.PR_LIST, { project: 'a' }), true);
+  assert.equal(observers.hasInterest(Methods.PR_LIST, {}), false);
+});
+
 test('replacements reject unregistered selectors and bound their per-connection size', () => {
   const observers = new GatewayUpstreamObservers();
   const one = actor();

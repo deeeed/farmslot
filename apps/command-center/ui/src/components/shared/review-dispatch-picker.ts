@@ -7,9 +7,10 @@ import {
   type ReviewSelection,
   type ReviewSequence,
   type RunnerModelCatalogResult,
-  type RunnerVisibleModelsGetResult,
   type RunnerVisibleModelsSetResult,
+  type RunnerVisibleModelState,
 } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import {
   catalogWithRunnerModels,
   createReviewDispatchCatalog,
@@ -22,13 +23,15 @@ import './choice-picker.js';
 import { gateway } from '../../gateway-client.js';
 import {
   onVisibleModelsChange,
-  rememberedReviewDispatchCatalog,
-  rememberedVisibleModels,
-  rememberRunnerVisibleState,
-} from '../../utils/runner-visible-cache.js';
+  visibleModelIds,
+  visibleModelsObserved,
+  visibleReviewDispatchCatalog,
+} from '../../utils/runner-visible-models.js';
+import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 
 import type { ChoicePicker } from './choice-picker.js';
 import { planningChoiceStyles, renderChoiceButtons } from './planning-controls.js';
+import { ResourceQueryController } from './resource-query-controller.js';
 
 export interface ReviewDispatchChangeDetail {
   selection: ReviewSelection | undefined;
@@ -50,10 +53,15 @@ export class ReviewDispatchPicker extends LitElement {
   @state() private modelFilters: Record<number, string> = {};
   @state() private otherModels: Record<number, boolean> = {};
   @state() private modelCatalog?: RunnerModelCatalogResult;
+  /** A SET reply until the shared observation reflects it, so rapid toggles do not drop edits. */
+  @state() private saved?: RunnerVisibleModelState;
   private unsubscribe?: () => void;
   private unsubscribeModel?: () => void;
   private unsubscribePreferences?: () => void;
-  private catalogGeneration = 0;
+  private readonly catalogQuery = new ResourceQueryController<RunnerModelCatalogResult>(
+    this,
+    (state) => this.catalogChanged(state),
+  );
 
   static styles = css`
     ${planningChoiceStyles}
@@ -142,21 +150,24 @@ export class ReviewDispatchPicker extends LitElement {
     this.unsubscribeModel?.();
     this.unsubscribeModel = this.viewModel?.subscribe(() => this.requestUpdate());
     this.unsubscribePreferences = onVisibleModelsChange(() => {
+      this.saved = undefined;
       if (this.discover && this.viewModel)
-        this.viewModel.setCatalog(rememberedReviewDispatchCatalog());
+        this.viewModel.setCatalog(visibleReviewDispatchCatalog());
     });
-    this.unsubscribe = gateway.onConnectionChange((state) => {
-      if (state === 'connected' && this.discover) void this.loadCatalog();
-      else this.catalogGeneration++;
-    });
-    if (gateway.connectionState === 'connected' && this.discover) void this.loadCatalog();
+    if (this.discover) {
+      if (this.viewModel && visibleModelsObserved())
+        this.viewModel.setCatalog(visibleReviewDispatchCatalog());
+      this.unsubscribe = watchVisibleModels((error) => {
+        this.error = error;
+      });
+    }
   }
 
   override disconnectedCallback() {
     this.unsubscribe?.();
+    this.unsubscribe = undefined;
     this.unsubscribeModel?.();
     this.unsubscribePreferences?.();
-    this.catalogGeneration++;
     super.disconnectedCallback();
   }
 
@@ -169,41 +180,30 @@ export class ReviewDispatchPicker extends LitElement {
     }
   }
 
-  private async loadCatalog() {
-    const generation = ++this.catalogGeneration;
-    try {
-      const result = await gateway.request<RunnerVisibleModelsGetResult>(
-        Methods.RUNNER_VISIBLE_MODELS_GET,
-        {},
-      );
-      if (generation !== this.catalogGeneration || !this.viewModel) return;
-      result.runners.forEach(rememberRunnerVisibleState);
-      this.viewModel.setCatalog(rememberedReviewDispatchCatalog());
-      this.error = '';
-      this.requestUpdate();
-    } catch (error) {
-      if (generation !== this.catalogGeneration) return;
-      this.error = error instanceof Error ? error.message : String(error);
-    }
+  private catalogChanged(state: ResourceQueryState<RunnerModelCatalogResult>) {
+    const result = state.data;
+    this.modelCatalog = result;
+    if (result?.status === 'ready' && this.viewModel)
+      this.viewModel.setCatalog(catalogWithRunnerModels(this.viewModel.catalog, result));
+    if (state.error) this.error = state.error.message;
+    else if (result)
+      this.error = result.status === 'ready' ? '' : (result.detail ?? 'Model catalog unavailable.');
   }
 
-  private async loadModels(runner: string) {
-    try {
-      const result = await gateway.request<RunnerModelCatalogResult>(Methods.RUNNER_MODEL_CATALOG, {
-        runner,
-      });
-      this.modelCatalog = result;
-      if (result.status === 'ready')
-        this.viewModel.setCatalog(catalogWithRunnerModels(this.viewModel.catalog, result));
-      this.error = result.status === 'ready' ? '' : (result.detail ?? 'Model catalog unavailable.');
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
-    }
+  /** Explicit: showing a runner's catalog admits its gateway collector for this picker. */
+  private loadModels(runner: string) {
+    this.catalogQuery.setQuery(
+      resourceQuery<RunnerModelCatalogResult>(Methods.RUNNER_MODEL_CATALOG, { runner }),
+    );
+  }
+
+  private visibleIds(runner: string): string[] | null {
+    return this.saved?.runner === runner ? [...this.saved.models] : visibleModelIds(runner);
   }
 
   private async setVisible(runner: string, model: string, visible: boolean) {
     const current =
-      rememberedVisibleModels(runner) ??
+      this.visibleIds(runner) ??
       this.viewModel.catalog.runners
         .find((option) => option.id === runner)
         ?.models.map((option) => option.id) ??
@@ -218,8 +218,8 @@ export class ReviewDispatchPicker extends LitElement {
             : current.filter((id) => id !== model),
         },
       );
-      rememberRunnerVisibleState(result.runner);
-      this.viewModel.setCatalog(rememberedReviewDispatchCatalog());
+      // The gateway's owner-key notice refreshes the shared observation and the catalog.
+      this.saved = result.runner;
       this.error = '';
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
@@ -235,8 +235,7 @@ export class ReviewDispatchPicker extends LitElement {
           defaultModel: reset ? null : row.selection.model,
         },
       );
-      rememberRunnerVisibleState(result.runner);
-      this.viewModel.setCatalog(rememberedReviewDispatchCatalog());
+      this.saved = result.runner;
       this.error = '';
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
@@ -419,7 +418,7 @@ export class ReviewDispatchPicker extends LitElement {
                               type="checkbox"
                               ?disabled=${this.disabled}
                               .checked=${(
-                                rememberedVisibleModels(selected.runner) ??
+                                this.visibleIds(selected.runner) ??
                                 runner?.models.map((option) => option.id) ??
                                 []
                               ).includes(model.id)}

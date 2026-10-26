@@ -11,6 +11,7 @@ import type {
   PoolConfig,
   ProjectConfig,
   ProjectLearningsDocument,
+  ProviderAccountsSnapshotResult,
   SlotStatus,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
@@ -23,7 +24,6 @@ import '../flow-graph/flow-graph.js';
 import '../shared/source-status-panel.js';
 
 import { gateway } from '../../gateway-client.js';
-import { providerAccountsStore } from '../../provider-accounts-store.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { getState, type GlobalFilters, subscribe } from '../../state.js';
 import { getAlphaFeaturesEnabled, setAlphaFeaturesEnabled } from '../../utils/alpha-features.js';
@@ -167,6 +167,10 @@ export class ConfigPanel extends LitElement {
   private get configurationCurrent(): boolean {
     return this._poolsQuery.ready && this._projectsQuery.ready;
   }
+  /** The selected machine's runner seats, shared with the fleet map's Setup modal. */
+  private readonly _seatsQuery = new ResourceQueryController<ProviderAccountsSnapshotResult>(this);
+  @state() private _seatsRefreshing = false;
+  @state() private _seatsRefreshError = '';
   private get configurationAge(): string {
     const state = this._projectsQuery.state;
     if (state.status !== 'stale' || !state.observedAt) return '';
@@ -176,7 +180,6 @@ export class ConfigPanel extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this._seatsUnsub = providerAccountsStore.subscribe(() => this.requestUpdate());
     const s = getState();
     this._filters = s.globalFilters;
     this._fleetSlots = s.fleet?.slots ?? [];
@@ -190,10 +193,21 @@ export class ConfigPanel extends LitElement {
   }
 
   disconnectedCallback() {
-    this._seatsUnsub?.();
-    this._seatsUnsub = null;
     super.disconnectedCallback();
     this._stateUnsub?.();
+  }
+
+  willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('_selection')) this._seatsRefreshError = '';
+    // Observe seats only while a machine's pool page is selected.
+    const machine = this._selection?.kind === 'pool' ? this._selection.machine : undefined;
+    this._seatsQuery.setQuery(
+      machine
+        ? resourceQuery<ProviderAccountsSnapshotResult>(Methods.PROVIDER_ACCOUNTS_SNAPSHOT, {
+            machines: [machine],
+          })
+        : undefined,
+    );
   }
 
   updated(changed: Map<string, unknown>) {
@@ -250,16 +264,28 @@ export class ConfigPanel extends LitElement {
     return this._projects.filter((p) => this._filters.projects.includes(p.name));
   }
 
-  private _seatsUnsub: (() => void) | null = null;
-
-  private async _fetchSeats(machine: string, forceRefresh = false) {
-    await providerAccountsStore.fetch([machine], forceRefresh);
+  private async _refreshSeats(machine: string) {
+    const owner = getResourceWorkspaceKey();
+    this._seatsRefreshing = true;
+    this._seatsRefreshError = '';
+    try {
+      // Explicit live probe (~20s). Its source notification refreshes the shared observation.
+      await gateway.request<ProviderAccountsSnapshotResult>(
+        Methods.PROVIDER_ACCOUNTS_SNAPSHOT,
+        { machines: [machine], forceRefresh: true },
+        45_000,
+      );
+    } catch (err) {
+      if (owner === getResourceWorkspaceKey())
+        this._seatsRefreshError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this._seatsRefreshing = false;
+    }
   }
 
   private selectPool(machine: string) {
     this.leavePoolEditor();
     this._selection = { kind: 'pool', machine };
-    void this._fetchSeats(machine);
     this._poolViewMode = 'structured';
     this._editorDirty = false;
     this._editorError = '';
@@ -596,9 +622,10 @@ export class ConfigPanel extends LitElement {
 
   /** Same seat data as the fleet map's Setup modal, in the machine's config page. */
   private renderRunnerSeats(machine: string) {
-    const snap = providerAccountsStore.get(machine);
+    const snap = this._seatsQuery.state.data?.machines.find((row) => row.machine === machine);
     const runners = snap?.runners ?? [];
-    const fetching = providerAccountsStore.isFetching(machine);
+    const fetching = this._seatsQuery.state.status === 'loading' || this._seatsRefreshing;
+    const error = this._seatsRefreshError || this._seatsQuery.state.error?.message;
     return html`
       <div class="cp-pool-info" data-testid="config-runner-seats">
         <div class="cp-info-row">
@@ -614,7 +641,7 @@ export class ConfigPanel extends LitElement {
               class="cp-action-btn"
               data-testid="config-seats-refresh"
               ?disabled=${fetching}
-              @click=${() => void this._fetchSeats(machine, true)}
+              @click=${() => void this._refreshSeats(machine)}
             >
               Refresh
             </button>
@@ -626,10 +653,10 @@ export class ConfigPanel extends LitElement {
             >Default host configuration; running sessions may use other accounts.</span
           >
         </div>
-        ${providerAccountsStore.error() && !runners.length
+        ${error && !runners.length
           ? html`<div class="cp-info-row">
               <span class="cp-info-label"></span>
-              <span class="cp-info-value">fetch failed: ${providerAccountsStore.error()}</span>
+              <span class="cp-info-value">fetch failed: ${error}</span>
             </div>`
           : nothing}
         ${runners.map(

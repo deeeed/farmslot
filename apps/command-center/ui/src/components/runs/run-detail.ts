@@ -8,7 +8,6 @@ import {
   runEvidencePending,
 } from '@farmslot/adapter-sdk/evidence';
 import type {
-  CiCheckUpdatedPayload,
   DevInteractiveCompletionAction,
   FamilyObservabilityArtifact,
   PRStatus,
@@ -32,7 +31,6 @@ import { validVisualJudgmentReason } from '@farmslot/protocol';
 import {
   buildRunResolveDecisionParams,
   cancelledRunSlotChoices,
-  Events,
   liveGateParkView,
   Methods,
   sortRunsForFamilyView,
@@ -103,11 +101,11 @@ import {
   acceptanceEvidenceSelection,
   buildRerunAlongsideHref,
   buildRunDiagnosisPrompt,
-  currentRunCiStatus,
   type EvidenceLightboxSelection,
   isLiveTimeoutPrStatusAllGreen,
   isRunWorking,
   pendingCITimeoutDecision,
+  persistedCiStatusFromRun,
   readCiWatchOutputs,
   resolveEvidenceLightboxLink,
   runArtifactsWithOperationLogs,
@@ -283,12 +281,6 @@ export class RunDetail extends RunDetailState {
     this._syncState(getState());
     window.addEventListener('hashchange', this._onHashChange);
     this.unsub = subscribe((s) => this._syncState(s));
-    this.unsubCI = gateway.subscribe<CiCheckUpdatedPayload>(Events.CI_CHECK_UPDATED, (p) => {
-      if (p.runId === this.runId) {
-        this.ciStatus = p;
-        this._ciPoke.observePoll(p.runId, p.pollCount);
-      }
-    });
     this._clock = setInterval(() => {
       this._now = Date.now();
       this._maybeRefreshLiveTimeoutPrStatus();
@@ -317,6 +309,12 @@ export class RunDetail extends RunDetailState {
       changed.has('_taskProgressLoading')
     )
       this._applyEvidenceArtifactFromHash(true);
+    // The CI watcher persists each poll on the run before announcing it; the shared run owns it.
+    if (changed.has('run') && this.run) {
+      const ciStep = this.run.steps.find((step) => step.name === 'ci-watch');
+      const pollCount = readCiWatchOutputs(ciStep?.outputs)?.pollCount;
+      this._ciPoke.observePoll(this.run.id, typeof pollCount === 'number' ? pollCount : null);
+    }
   }
 
   disconnectedCallback() {
@@ -324,7 +322,6 @@ export class RunDetail extends RunDetailState {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this._onHashChange);
     this.unsub?.();
-    this.unsubCI?.();
     if (this._clock) clearInterval(this._clock);
     if (this._jumpTimer) clearTimeout(this._jumpTimer);
     this._ciPoke.dispose();
@@ -407,7 +404,6 @@ export class RunDetail extends RunDetailState {
       this.acceptanceEvidenceLinks = null;
       this.acceptanceEvidenceLinksError = null;
       this.selectedStepProgress = null;
-      this.ciStatus = null;
       this.siblings = [];
       this._resetRecipeRuns();
       this._handoffSignalCheckBusy = false;
@@ -1796,11 +1792,11 @@ export class RunDetail extends RunDetailState {
           resolveInteractiveDev: (targetRun, action) =>
             this._resolveInteractiveDev(targetRun, action),
         }),
-      _currentCiStatus: (run) => currentRunCiStatus(run, this.ciStatus),
+      _currentCiStatus: (run) => persistedCiStatusFromRun(run),
       _shouldShowCiStatus: (run) => this._shouldShowCiStatus(run),
       _renderCiStatus: (run) =>
         renderRunCiStatus(run, {
-          ci: currentRunCiStatus(run, this.ciStatus),
+          ci: persistedCiStatusFromRun(run),
           timeoutDecision: pendingCITimeoutDecision(run),
           liveTimeoutPrStatus: this.liveTimeoutPrStatus,
           prStatus: this.prStatus,
@@ -2015,8 +2011,7 @@ export class RunDetail extends RunDetailState {
   private async _pokeCIWatch(runId: string): Promise<void> {
     if (!this.detailQuery.ready || this.runId !== runId) return;
     const ciStep = this.run?.steps.find((step) => step.name === 'ci-watch');
-    const outputPollCount = readCiWatchOutputs(ciStep?.outputs)?.pollCount;
-    const beforePoll = this.ciStatus?.pollCount ?? outputPollCount;
+    const beforePoll = readCiWatchOutputs(ciStep?.outputs)?.pollCount;
     await this._ciPoke.poke(runId, typeof beforePoll === 'number' ? beforePoll : null);
   }
 

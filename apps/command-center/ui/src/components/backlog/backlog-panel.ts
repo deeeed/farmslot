@@ -77,7 +77,7 @@ import {
 } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
-import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
+import { visibleReviewDispatchCatalog } from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
@@ -320,7 +320,7 @@ function defaultCandidate(role: DraftLaunchCandidate['role'], index: number): Dr
   const model =
     role === 'baseline'
       ? 'opus'
-      : (defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '');
+      : (defaultModelForRunner(runner, visibleReviewDispatchCatalog()) ?? '');
   return {
     id: role === 'baseline' ? 'baseline' : `comparison-${index}`,
     role,
@@ -2048,10 +2048,7 @@ export class BacklogPanel extends LitElement {
           runner: candidate.runner ?? 'claude',
           model:
             candidate.model ??
-            defaultModelForRunner(
-              candidate.runner ?? 'claude',
-              rememberedReviewDispatchCatalog(),
-            ) ??
+            defaultModelForRunner(candidate.runner ?? 'claude', visibleReviewDispatchCatalog()) ??
             '',
           effort: candidate.effort ?? '',
           variant: candidate.variant ?? '',
@@ -2236,7 +2233,7 @@ export class BacklogPanel extends LitElement {
             backlogCandidateExecution(
               candidate,
               { runner, model: model ?? null, effort: effort ?? null },
-              rememberedReviewDispatchCatalog(),
+              visibleReviewDispatchCatalog(),
             ),
             item,
           );

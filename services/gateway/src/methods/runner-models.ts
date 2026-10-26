@@ -1,20 +1,28 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type {
-  RunnerModelCatalogResult,
-  RunnerVisibleModelsGetResult,
-  RunnerVisibleModelsSetResult,
+import {
+  runnerModelCatalogResourceKey,
+  type RunnerModelCatalogResult,
+  type RunnerVisibleModelsGetResult,
+  type RunnerVisibleModelsSetResult,
 } from '@farmslot/protocol';
 
 import { loadMachinePool } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { loadPoolConfigs } from '../fleet/state.js';
-import { queryRunnerModelCatalog } from '../runners/model-catalog.js';
+import { resourceRevisions } from '../resources/revisions.js';
+import type { RunnerModelCatalogSource } from '../runners/model-catalog.js';
+import {
+  RUNNER_MODEL_CATALOG_TICK_MS,
+  RunnerModelCatalogObservation,
+  type RunnerModelCatalogReadInterest,
+} from '../runners/model-catalog-observation.js';
 import {
   getRunnerDefinition,
   isKnownRunner,
+  KNOWN_RUNNERS,
   normalizeRunner,
   runnerArgumentValueIsSafe,
   runnerSupportsModel,
@@ -28,10 +36,10 @@ import {
   writeVisibleModelFile,
 } from '../runners/visible-models.js';
 
-export async function runnerModelCatalog(params: unknown): Promise<RunnerModelCatalogResult> {
-  const runner = runnerParam(params);
-  const definition = getRunnerDefinition(runner);
-  let source = definition.modelCatalog;
+async function selectRunnerModelCatalogSource(
+  runner: string,
+): Promise<RunnerModelCatalogSource | undefined> {
+  let source = getRunnerDefinition(runner).modelCatalog;
   if (source && 'command' in source && source.poolPathKey) {
     const pools = await loadPoolConfigs();
     for (const pool of pools.filter((entry) => isLocal(entry.host, entry.machine))) {
@@ -45,7 +53,51 @@ export async function runnerModelCatalog(params: unknown): Promise<RunnerModelCa
       }
     }
   }
-  return queryRunnerModelCatalog(runner, source);
+  return source;
+}
+
+let hasCatalogInterest: (runner: string) => boolean = () => false;
+let activeCatalogObservation: object | undefined;
+const catalogObservation = new RunnerModelCatalogObservation({
+  runners: () =>
+    Object.values(KNOWN_RUNNERS)
+      .filter((definition) => definition.modelCatalog)
+      .map((definition) => definition.id),
+  select: selectRunnerModelCatalogSource,
+  hasInterest: (runner) => hasCatalogInterest(runner),
+  changed: (runner) => resourceRevisions.advance(runnerModelCatalogResourceKey({ runner })),
+});
+
+export async function runnerModelCatalog(
+  params: unknown,
+  interest?: RunnerModelCatalogReadInterest,
+): Promise<RunnerModelCatalogResult> {
+  return catalogObservation.read(runnerParam(params), interest);
+}
+
+export function wakeRunnerModelCatalogObservation(): Promise<void> {
+  return catalogObservation.tick();
+}
+
+/** `hasInterest` answers for one canonical runner's admitted catalog observers. */
+export function startRunnerModelCatalogObservation(options: {
+  hasInterest(runner: string): boolean;
+}): () => Promise<void> {
+  if (activeCatalogObservation)
+    throw new Error('Runner model catalog observation is already running');
+  const owner = {};
+  activeCatalogObservation = owner;
+  hasCatalogInterest = options.hasInterest;
+  catalogObservation.start();
+  const timer = setInterval(() => void catalogObservation.tick(), RUNNER_MODEL_CATALOG_TICK_MS);
+  timer.unref();
+  return async () => {
+    if (activeCatalogObservation !== owner) return;
+    clearInterval(timer);
+    hasCatalogInterest = () => false;
+    await catalogObservation.stop();
+    if (activeCatalogObservation === owner) activeCatalogObservation = undefined;
+  };
 }
 
 export function runnerVisibleModelsGet(params: unknown): RunnerVisibleModelsGetResult {

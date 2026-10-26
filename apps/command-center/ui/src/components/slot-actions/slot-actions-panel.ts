@@ -39,6 +39,12 @@ import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import { runSlotPrepare } from '../shared/slot-prepare-client.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
+type BuiltInSlotActionMethod =
+  | typeof Methods.SLOT_RELEASE
+  | typeof Methods.SLOT_RECYCLE
+  | typeof Methods.SLOT_REFRESH
+  | typeof Methods.SLOT_CLEANUP;
+
 @customElement('slot-actions-panel')
 export class SlotActionsPanel extends LitElement {
   protected override createRenderRoot() {
@@ -218,7 +224,7 @@ export class SlotActionsPanel extends LitElement {
   // ── Built-in actions ──
 
   private async _runAction<T extends { requestId?: string }>(
-    method: string,
+    method: BuiltInSlotActionMethod,
     params: Record<string, unknown>,
     actionId: string,
     timeoutMs = SLOT_OPERATION_TIMEOUT_MS,

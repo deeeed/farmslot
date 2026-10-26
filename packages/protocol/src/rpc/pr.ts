@@ -2,6 +2,8 @@ import type { PRStatus } from '../contracts/index.js';
 
 import type { UpstreamObservation } from './resource-observers.js';
 
+export * from './pr-observations.js';
+
 export interface PRStatusParams {
   pr: number;
   project?: string;
@@ -23,6 +25,7 @@ export interface PRReviewCommentsParams {
 export interface PRReviewCommentsResult {
   threads: import('../contracts/index.js').PRReviewThread[];
   currentUser: string;
+  observation?: UpstreamObservation;
 }
 
 export interface PRAddCommentParams {
@@ -89,9 +92,12 @@ export interface PRForSlotResult {
   repo: string | null;
   /** Pull request base branch, or the project's configured default when no PR exists. */
   baseRef: string;
+  /** Present when the answer came from the slot's shared GitHub lookup, not local slot state alone. */
+  observation?: UpstreamObservation;
 }
 export interface PRStatusResult {
   pr: PRStatus;
+  observation?: UpstreamObservation;
 }
 
 export interface PRListResult {

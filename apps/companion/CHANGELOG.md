@@ -4,6 +4,12 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Decision CI context and the review dispatch picker observe shared PR, model catalog and visible-model observations; Refresh stays an explicit GitHub check.
+
+- Read review history task files, recorded diffs and finding source through the shared workspace cache; slotless review runs keep their frozen commit reads.
+
+- Share PR dashboard observations and revalidate native profiles and terminal targets through the current owner's cache; keep explicit upstream checks and stale-action guards.
+
 - Share observed project and template choices and restore bounded projects, backlog, roadmap, work graphs and dispatch queue offline with readable saved-age captions. Graph details and queue rows are read-only; read failures offer Retry. Observe PR automation and the shared copilot in memory. Source notices replace healthy planning, PR-queue and copilot Refresh controls; error Retry reads only failed queries. Actions require current observations and authority; commands stay live-only.
 
 - Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls.

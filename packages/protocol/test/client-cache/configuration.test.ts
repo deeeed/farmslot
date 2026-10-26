@@ -62,8 +62,6 @@ test('configuration identities contain only declared selectors; commands and D08
     'llm.auth.add',
     'llm.auth.refresh',
     'llm.auth.test',
-    'providerAccounts.snapshot',
-    'config.githubAccounts',
     'doctor.run',
   ])
     assert.equal(resourceDependenciesForRead(method, {}), undefined, method);

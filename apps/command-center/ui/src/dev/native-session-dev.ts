@@ -5,7 +5,11 @@ import { Methods, type NativeSessionInfo, type NativeSessionReadResult } from '@
 
 import '../components/chat/native-session-view.js';
 
-import type { NativeSessionApi } from '../components/chat/native-workspace.js';
+import type { NativeSessionFixture } from '../components/chat/native-session-view.js';
+import type {
+  NativeSessionApi,
+  NativeSessionCommand,
+} from '../components/chat/native-workspace.js';
 import { getHashParam } from '../utils/url-state.js';
 
 import { createNativeReplayFixture } from './native-session-replay-dev.js';
@@ -96,58 +100,30 @@ const page: NativeSessionReadResult = {
 };
 
 /** Setup-time fixture client, never a production gateway or mid-flow state injection. */
-const fixtureApi: NativeSessionApi = {
-  async request<T>(method: string, params?: unknown): Promise<T> {
-    const p = params as { after?: number; path?: string };
-    let result: unknown;
-    switch (method) {
-      case Methods.NATIVE_SESSION_CATALOG:
-        result = {
-          runners: [
-            {
-              runner: 'sample',
-              models: ['sample-model'],
-              defaultModel: 'sample-model',
-              modes: ['default'],
-            },
-          ],
-          contexts: [{ cwd: session.cwd, label: 'Sample project' }],
-        };
-        break;
-      case Methods.NATIVE_SESSION_LIST:
-        result = { sessions: [session] };
-        break;
-      case Methods.NATIVE_SESSION_CREATE:
-        result = { session };
-        break;
-      case Methods.NATIVE_SESSION_READ:
-        result = {
-          ...page,
-          events: page.events.filter((event) => event.sequence > (p.after ?? 0)),
-        };
-        break;
-      case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
-        result = { files: [{ path: 'greeting.ts', status: ' M' }] };
-        break;
-      case Methods.NATIVE_SESSION_WORKSPACE_LIST:
-        result = {
-          entries: [{ path: 'greeting.ts', name: 'greeting.ts', directory: false }],
-          truncated: false,
-        };
-        break;
-      case Methods.NATIVE_SESSION_WORKSPACE_READ:
-        result = { path: 'greeting.ts', content: 'export const greeting = "Hello Farmslot";\n' };
-        break;
-      case Methods.NATIVE_SESSION_WORKSPACE_DIFF:
-        result = {
-          path: 'greeting.ts',
-          diff: 'diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-export const greeting = "Hello";\n+export const greeting = "Hello Farmslot";\n',
-        };
-        break;
-      default:
-        throw new Error('This preview is read-only. Use a real session to send or answer.');
-    }
-    return result as T;
+const fixtureApi: NativeSessionApi & NativeSessionFixture = {
+  async catalog() {
+    return {
+      runners: [
+        {
+          runner: 'sample',
+          models: ['sample-model'],
+          defaultModel: 'sample-model',
+          modes: ['default'],
+        },
+      ],
+      contexts: [{ cwd: session.cwd, label: 'Sample project' }],
+    };
+  },
+  async list() {
+    return { sessions: [session] };
+  },
+  async read({ after = 0 }) {
+    return { ...page, events: page.events.filter((event) => event.sequence > after) };
+  },
+  async request<T>(method: NativeSessionCommand): Promise<T> {
+    if (method !== Methods.NATIVE_SESSION_CREATE)
+      throw new Error('This preview is read-only. Use a real session to send or answer.');
+    return { session } as T;
   },
 };
 
@@ -167,6 +143,9 @@ export class NativeSessionDev extends LitElement {
           height: 80vh;
           flex-direction: column;
         }</style
-      ><native-session-view .api=${this.previewApi} .fixture=${true}></native-session-view>`;
+      ><native-session-view
+        .api=${this.previewApi}
+        .fixture=${this.previewApi}
+      ></native-session-view>`;
   }
 }

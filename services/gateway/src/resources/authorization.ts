@@ -20,6 +20,26 @@ export function canReadResourceKey(
     case 'gateway-update':
       method = Methods.GATEWAY_STATUS;
       break;
+    case 'upstream':
+      // These observations have the same farm-wide authority as their owning read.
+      if (key.integration === 'providers') {
+        if (key.queryId.startsWith(`${Methods.RUNNER_MODEL_CATALOG}:`))
+          method = Methods.RUNNER_MODEL_CATALOG;
+        else if (key.queryId.startsWith(`${Methods.PROVIDER_ACCOUNTS_SNAPSHOT}:`))
+          method = Methods.PROVIDER_ACCOUNTS_SNAPSHOT;
+        else return false;
+        break;
+      }
+      if (key.integration !== 'github') return false;
+      if (key.queryId === `${Methods.CONFIG_GITHUB_ACCOUNTS}:{}`)
+        method = Methods.CONFIG_GITHUB_ACCOUNTS;
+      else if (key.queryId.startsWith(`${Methods.PR_LIST}:`)) method = Methods.PR_LIST;
+      else if (key.queryId.startsWith(`${Methods.PR_STATUS}:`)) method = Methods.PR_STATUS;
+      else if (key.queryId.startsWith(`${Methods.PR_FOR_SLOT}:`)) method = Methods.PR_FOR_SLOT;
+      else if (key.queryId.startsWith(`${Methods.PR_REVIEW_COMMENTS}:`))
+        method = Methods.PR_REVIEW_COMMENTS;
+      else return false;
+      break;
     case 'runs':
       method = Methods.RUN_LIST;
       break;
@@ -101,6 +121,28 @@ export function canReadResourceKey(
   try {
     authorizeGatewayMethod(runtime, state, method);
     return true;
+  } catch (error) {
+    if (
+      error instanceof GatewayMethodError &&
+      ['AUTH_REQUIRED', 'AUTH_FORBIDDEN'].includes(error.code)
+    )
+      return false;
+    throw error;
+  }
+}
+
+/** runner.visibleModels.get shares the owner profile key. Only that principal receives it,
+ * with or without a native reader identity. */
+export function canReadVisibleModelPreferenceKey(
+  runtime: GatewayAuthRuntime,
+  state: ClientState,
+  key: ResourceKey,
+): boolean {
+  if (key.family !== 'profiles' || !('scope' in key)) return false;
+  try {
+    return (
+      authorizeGatewayMethod(runtime, state, Methods.RUNNER_VISIBLE_MODELS_GET).id === key.ownerId
+    );
   } catch (error) {
     if (
       error instanceof GatewayMethodError &&

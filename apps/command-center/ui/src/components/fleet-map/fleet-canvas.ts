@@ -19,6 +19,7 @@ import type {
   PressureAdmissionControlState,
   PressureAdmissionGetResult,
   PressureAdmissionSetEnabledResult,
+  ProviderAccountsSnapshotResult,
   ResourceCleanupResult,
   ResourceListResult,
   ResourcePressureCleanupCandidate,
@@ -48,8 +49,7 @@ import '../slot-actions/fleet-refresh-modal.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
-import { providerAccountsStore } from '../../provider-accounts-store.js';
-import { getResourceCache } from '../../resource-cache.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import {
   type AppState,
   fleetQuery,
@@ -143,8 +143,9 @@ export class FleetCanvas extends LitElement {
   @state() private machinePauseBusy: MachinePauseBusyAction = null;
   @state() private machinePauseActionError = '';
   @state() private machinePauseConnectionStale = false;
-  /** machine → provider subscription snapshot (labels only). */
-  private _providerAccountsUnsub: (() => void) | null = null;
+  /** Machines with an explicit live seat probe in flight. */
+  @state() private providerAccountsRefreshing = new Set<string>();
+  @state() private providerAccountsRefreshError = '';
   private _resourceFetched = false;
   private _resourcePressureFetchEpoch = 0;
   private _machinePauseFetchEpoch = 0;
@@ -155,13 +156,14 @@ export class FleetCanvas extends LitElement {
   private _resourcePressureRecoveryTimer?: ReturnType<typeof setTimeout>;
   private unsub?: () => void;
   private _unsubConnState?: () => void;
-  private _unsubRunUpdated?: () => void;
-  private _unsubRunCreated?: () => void;
   private _unsubNodeHealth?: () => void;
   private _unsubResourceStatus?: () => void;
   private _unsubThumbnails?: () => void;
   private _unsubMachinePauseUpdated?: () => void;
   private _onHashChange = () => this._readUrlParams();
+  /** Every fleet machine's runner seats; the config page shares the same cached owners. */
+  private readonly providerAccountsQuery =
+    new ResourceQueryController<ProviderAccountsSnapshotResult>(this);
   private readonly nodeQuery = new ResourceQueryController<NodesListResult>(this, (result) => {
     const nodes = result.data?.nodes ?? [];
     const changed = nodes.some((node) => this.nodeInfo.get(node.machine)?.pid !== node.pid);
@@ -317,11 +319,13 @@ export class FleetCanvas extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this._providerAccountsUnsub = providerAccountsStore.subscribe(() => this.requestUpdate());
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
 
     this.nodeQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
+    this.providerAccountsQuery.setQuery(
+      resourceQuery<ProviderAccountsSnapshotResult>(Methods.PROVIDER_ACCOUNTS_SNAPSHOT),
+    );
     this._unsubConnState = gateway.onConnectionChange((s) => {
       if (s === 'connected') {
         this.scheduleResourcePressureRecoveryRefresh();
@@ -333,10 +337,6 @@ export class FleetCanvas extends LitElement {
         this.machinePauseConnectionStale = true;
       }
     });
-    // Rebuild slotRuns when runs change
-    this._unsubRunUpdated = gateway.subscribe(Events.RUN_UPDATED, () => this.buildSlotRuns());
-    this._unsubRunCreated = gateway.subscribe(Events.RUN_CREATED, () => this.buildSlotRuns());
-
     // Track node health updates
     this._unsubNodeHealth = gateway.subscribe(Events.NODE_HEALTH_UPDATED, () => {
       // Keep pressure charts current on health beats with the LIGHTWEIGHT
@@ -441,8 +441,6 @@ export class FleetCanvas extends LitElement {
     this.fleetAgeTimer = undefined;
     this.clearPressureHistoryRefresh();
     this.clearResourcePressureRecoveryRefresh();
-    this._providerAccountsUnsub?.();
-    this._providerAccountsUnsub = null;
     super.disconnectedCallback();
     this.unsub?.();
     this._unsubConnState?.();
@@ -455,8 +453,6 @@ export class FleetCanvas extends LitElement {
     this.progressObservations = new Map();
     clearInterval(this.progressAgeTimer);
     this.progressAgeTimer = undefined;
-    this._unsubRunUpdated?.();
-    this._unsubRunCreated?.();
     this._unsubNodeHealth?.();
     this._unsubResourceStatus?.();
     this._unsubThumbnails?.();
@@ -465,10 +461,30 @@ export class FleetCanvas extends LitElement {
     window.removeEventListener('hashchange', this._onHashChange);
   }
 
-  private async _fetchProviderAccounts(only?: string[], forceRefresh = false) {
-    const machines = only ?? [...new Set(this.slots.map((s) => s.machine))];
-    if (machines.length === 0) return;
-    await providerAccountsStore.fetch(machines, forceRefresh);
+  /** The observation stays live; only the operator's Refresh waits for a new probe. */
+  private async _refreshProviderAccounts(machine?: string, force = false) {
+    if (!force || !machine) {
+      await this.providerAccountsQuery.retry();
+      return;
+    }
+    const owner = getResourceWorkspaceKey();
+    this.providerAccountsRefreshing = new Set(this.providerAccountsRefreshing).add(machine);
+    this.providerAccountsRefreshError = '';
+    try {
+      // Explicit live probe (~20s). Its source notification refreshes the shared observation.
+      await gateway.request<ProviderAccountsSnapshotResult>(
+        Methods.PROVIDER_ACCOUNTS_SNAPSHOT,
+        { machines: [machine], forceRefresh: true },
+        45_000,
+      );
+    } catch (err) {
+      if (owner === getResourceWorkspaceKey())
+        this.providerAccountsRefreshError = err instanceof Error ? err.message : String(err);
+    } finally {
+      const refreshing = new Set(this.providerAccountsRefreshing);
+      refreshing.delete(machine);
+      this.providerAccountsRefreshing = refreshing;
+    }
   }
 
   private syncState(s: AppState) {
@@ -499,16 +515,6 @@ export class FleetCanvas extends LitElement {
     this.machineHealthMap = new Map(
       (s.fleet?.machines ?? []).map((health) => [health.machine, health]),
     );
-    // Refresh provider subscription chips when fleet machines change
-    const prevMachines = new Set(prev.map((sl) => sl.machine));
-    const nextMachines = new Set(this.slots.map((sl) => sl.machine));
-    if (
-      prevMachines.size !== nextMachines.size ||
-      [...nextMachines].some((m) => !prevMachines.has(m)) ||
-      ([...nextMachines].some((m) => !providerAccountsStore.get(m)) && nextMachines.size > 0)
-    ) {
-      void this._fetchProviderAccounts();
-    }
     this.syncProgressQueries();
     // Fetch resource data when slots arrive and we're in resource view
     if (
@@ -1401,14 +1407,16 @@ export class FleetCanvas extends LitElement {
           .nodeInfoMap=${this.nodeInfo}
           .gatewayProtocolVersion=${this.gatewayProtocolVersion}
           .viewMode=${this.viewMode}
-          .providerAccounts=${providerAccountsStore.get(g.key)}
-          .providerAccountsError=${providerAccountsStore.error() ?? undefined}
-          .providerAccountsFetching=${providerAccountsStore.isFetching(g.key)}
+          .providerAccounts=${this.providerAccountsQuery.state.data?.machines.find(
+            (snapshot) => snapshot.machine === g.key,
+          )}
+          .providerAccountsError=${this.providerAccountsRefreshError ||
+          this.providerAccountsQuery.state.error?.message ||
+          undefined}
+          .providerAccountsFetching=${this.providerAccountsQuery.state.status === 'loading' ||
+          this.providerAccountsRefreshing.has(g.key)}
           @provider-accounts-refresh=${(e: CustomEvent<{ machine?: string; force?: boolean }>) =>
-            void this._fetchProviderAccounts(
-              e.detail?.machine ? [e.detail.machine] : undefined,
-              e.detail?.force === true,
-            )}
+            void this._refreshProviderAccounts(e.detail?.machine, e.detail?.force === true)}
           @slot-selected=${(e: CustomEvent) => {
             location.hash = `slot/${e.detail.slotId}`;
           }}

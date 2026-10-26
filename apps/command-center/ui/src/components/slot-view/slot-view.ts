@@ -10,6 +10,7 @@ import type {
   TaskProgressResult,
 } from '@farmslot/protocol';
 import { Methods, sourceObservationAge } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../workspace/file-tree.js';
 import '../progress-tracker/progress-tracker.js';
@@ -90,6 +91,7 @@ import {
   runSlotViewGitAction,
   saveSlotViewFile,
   setSlotViewEditor,
+  type SlotViewGitActionMethod,
 } from './slot-view-file-command-effects.js';
 import {
   handleSlotViewGlyphClick,
@@ -220,6 +222,9 @@ import {
 @customElement('slot-view')
 export class SlotView extends SlotViewRecipePresenter {
   readonly _runQueries = new SlotViewRunQueries(this);
+  private readonly gatewayStatusQuery = new ResourceQueryController<GatewayStatusResult>(this, () =>
+    this._applyWorkerHistoryCapability(),
+  );
   private progressAgeTimer?: ReturnType<typeof setInterval>;
   readonly _progressQuery = new ResourceQueryController<TaskProgressResult>(this, (state) => {
     this._progressObservation = state;
@@ -313,17 +318,21 @@ export class SlotView extends SlotViewRecipePresenter {
     handleSlotViewUpdated(this, changed);
   }
 
-  async _refreshWorkerHistoryCapability() {
-    try {
-      const status = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {}, 5_000);
-      this._workerHistoryEnabled = Boolean(status.capabilities?.experimentalWorkerHistory);
-      if (!this._workerHistoryEnabled && this._bottomTab === 'history') {
-        this._bottomTab = 'terminal';
-      }
-    } catch (err) {
-      console.warn(`[slot-view] worker history capability check failed: ${(err as Error).message}`);
-      this._workerHistoryEnabled = false;
-    }
+  _refreshWorkerHistoryCapability(): void {
+    this.gatewayStatusQuery.setQuery(resourceQuery<GatewayStatusResult>(Methods.GATEWAY_STATUS));
+    this._applyWorkerHistoryCapability();
+  }
+
+  private _applyWorkerHistoryCapability(): void {
+    const state = this.gatewayStatusQuery.state;
+    // Remote update freshness is separate from this installed, read-only history capability.
+    this._workerHistoryEnabled = Boolean(
+      this.gatewayStatusQuery.belongsToWorkspace &&
+      state.status !== 'unsupported' &&
+      (!state.error || state.error.code === state.sourceObservation?.error?.code) &&
+      state.data?.capabilities?.experimentalWorkerHistory,
+    );
+    if (!this._workerHistoryEnabled && this._bottomTab === 'history') this._bottomTab = 'terminal';
   }
 
   /** Set after initial file-from-URL restore is complete (prevents clearing ?file= before it's read) */
@@ -599,7 +608,7 @@ export class SlotView extends SlotViewRecipePresenter {
 
   // --- Git actions ---
 
-  async _gitAction(method: string, path: string) {
+  async _gitAction(method: SlotViewGitActionMethod, path: string) {
     await runSlotViewGitAction(this, method, path);
   }
 

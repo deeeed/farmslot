@@ -89,6 +89,7 @@ import {
 } from './ready-workspace-selection-model.js';
 import { ReadyWorkspaceState } from './ready-workspace-state.js';
 import { recipeRunArtifactUrl, workspaceArtifactBasename } from './workspace-artifacts.js';
+import { WorkspaceReads } from './workspace-reads.js';
 import {
   parseReadyWorkspaceHashState,
   type ReadyWorkspaceHashWriteState,
@@ -119,6 +120,8 @@ type DecisionOutcome =
 
 export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState {
   readonly _queries = new ReadyWorkspaceQueries(this);
+  // Slot diffs are shared observations, unpinned because gate slots may drop currentRunId.
+  readonly _reads = new WorkspaceReads(this);
   private _commandRequest: object | undefined;
   private _fileDiffRequest?: object;
 
@@ -166,6 +169,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._evidenceAttestationReason = '';
     this._publicationTarget = 'ready';
     this._fileDiffRequest = undefined;
+    this._reads.clear();
     this._selectedFile = '';
     this._diffError = '';
     this._diffTestPatterns = null;
@@ -618,14 +622,20 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     const current = () =>
       captured.current() && this._payload?.prPackage?.packageHash === packageHash;
     this._diffLoading = true;
+    this._reads.releaseMethods([Methods.GIT_BRANCH_DIFF]);
     try {
-      const result = await gateway.request<GitBranchDiffResult>(
+      const result = await this._reads.read<GitBranchDiffResult>(
         Methods.GIT_BRANCH_DIFF,
         committedReviewBranchDiffRequest(
           this.slotId,
           this._payload?.prPackage?.reviewSnapshot?.baseRef,
           this._payload?.prPackage?.reviewSnapshot,
         ),
+        (next) => {
+          if (!current()) return;
+          this._diffFiles = next.files;
+          this._diffTestPatterns = next.testFilePatterns ?? null;
+        },
       );
       if (!current() || epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffError = '';
@@ -707,8 +717,16 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._syncViewStateToHash();
     this._fileDiffLoading = true;
     this._fileDiff = '';
+    const show = (diff: string) => {
+      this._fileDiff = diff;
+      if (this._diffModalOpen && !this._diffModalUrl) {
+        this._diffModalTitle = `${workspaceArtifactBasename(filePath)} diff`;
+        this._diffModalText = diff;
+      }
+    };
+    this._reads.releaseMethods([Methods.GIT_DIFF]);
     try {
-      const result = await gateway.request<GitDiffResult>(
+      const result = await this._reads.read<GitDiffResult>(
         Methods.GIT_DIFF,
         committedReviewFileDiffRequest(
           this.slotId,
@@ -716,13 +734,12 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           this._payload?.prPackage?.reviewSnapshot?.baseRef,
           this._payload?.prPackage?.reviewSnapshot,
         ),
+        (next) => {
+          if (current()) show(next.diff);
+        },
       );
       if (!current()) return;
-      this._fileDiff = result.diff;
-      if (this._diffModalOpen && !this._diffModalUrl) {
-        this._diffModalTitle = `${workspaceArtifactBasename(filePath)} diff`;
-        this._diffModalText = result.diff;
-      }
+      show(result.diff);
     } catch (err) {
       if (!current()) return;
       this._diffError = err instanceof Error ? err.message : String(err);

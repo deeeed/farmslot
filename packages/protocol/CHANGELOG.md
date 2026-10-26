@@ -4,6 +4,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Register PR detail, slot PR, review-thread, runner-seat and runner model catalog reads as upstream collectors and runner visible models as an owner-scoped observation, with pure normalizers, sanitized stored-data projections and `observation` on their results.
+
+- Add `CommandMethod` and `PersonSessionMethod`. `releaseCancelledRunSlot` and cache-backed source clients take command-only transports; those source clients read status only from the shared cache.
+
+- Advertise passive PR list and GitHub account observations; observer identities refuse forced checks and persist only verified account fields.
+
 - Add shared upstream collector admission, source observation age/error metadata and an aggregate offline retention limit, with mixed-version refusal instead of client polling.
 
 - Register memory-only PR automation, assessment, analytics and shared copilot observations with canonical selectors and scoped change dependencies.

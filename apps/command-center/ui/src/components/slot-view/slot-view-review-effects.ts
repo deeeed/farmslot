@@ -5,9 +5,10 @@ import type {
   PRReviewThread,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
-import { gateway } from '../../gateway-client.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import type { SlotView } from './slot-view.js';
 import {
@@ -35,53 +36,96 @@ function isTicketCurrent(view: SlotView, ticket: BranchDiffRequestTicket): boole
   });
 }
 
-export async function detectSlotViewPR(view: SlotView) {
-  if (!view._isLive) return;
-  const epoch = view._recoveryEpoch;
-  try {
-    const result = await gateway.request<PRForSlotResult>(Methods.PR_FOR_SLOT, {
-      slotId: view.slotId,
-    });
-    if (!isCurrentReviewResult(view, epoch)) return;
-    view._prNumber = result.pr;
-    view._prRepo = result.repo;
-    view._branchDiffBase = result.baseRef;
-    if (result.pr && result.repo) {
-      view._loadPRComments();
+/** The slot's PR and its review threads, observed through the shared cache. */
+class SlotPRReads {
+  slotId = '';
+  private commentsBound = false;
+  private answered: Array<() => void> = [];
+  readonly comments: ResourceQueryController<PRReviewCommentsResult>;
+  readonly forSlot: ResourceQueryController<PRForSlotResult>;
+
+  constructor(private readonly view: SlotView) {
+    this.comments = new ResourceQueryController(view, (state) => this.applyComments(state));
+    this.forSlot = new ResourceQueryController(view, (state) => this.applyPR(state));
+  }
+
+  /** The current answer, or the next one while the first read is pending. */
+  answer(): Promise<ResourceQueryState<PRForSlotResult>> {
+    if (!this.forSlot.belongsToWorkspace || this.forSlot.state.status !== 'loading')
+      return Promise.resolve(this.forSlot.state);
+    return new Promise((resolve) => this.answered.push(() => resolve(this.forSlot.state)));
+  }
+
+  bindComments(): void {
+    const pr = this.view._prNumber;
+    const repo = this.view._prRepo;
+    this.commentsBound = Boolean(pr && repo);
+    if (!this.commentsBound) {
+      this.view._prThreads = [];
+      this.view._prCommentsLoading = false;
     }
-  } catch (err) {
-    console.warn(
-      '[slot-view] PR detection failed:',
-      err instanceof Error ? err.message : String(err),
+    this.comments.setQuery(
+      pr && repo
+        ? resourceQuery<PRReviewCommentsResult>(Methods.PR_REVIEW_COMMENTS, { pr, repo })
+        : undefined,
     );
-    if (!isCurrentReviewResult(view, epoch)) return;
-    view._prNumber = null;
-    view._prRepo = null;
+  }
+
+  private applyPR(state: ResourceQueryState<PRForSlotResult>): void {
+    if (state.status === 'loading' || this.slotId !== this.view.slotId) return;
+    if (state.data) {
+      this.view._prNumber = state.data.pr;
+      this.view._prRepo = state.data.repo;
+    } else {
+      console.warn('[slot-view] PR detection failed:', state.error?.message);
+      this.view._prNumber = null;
+      this.view._prRepo = null;
+    }
+    this.bindComments();
+    for (const answered of this.answered.splice(0)) answered();
+  }
+
+  private applyComments(state: ResourceQueryState<PRReviewCommentsResult>): void {
+    this.view._prCommentsLoading = this.commentsBound && state.status === 'loading';
+    if (!this.commentsBound || state.status === 'loading') return;
+    if (state.data) {
+      this.view._prThreads = state.data.threads;
+      this.view._prCurrentUser = state.data.currentUser;
+    } else {
+      console.warn('[slot-view] PR comments load failed:', state.error?.message);
+      this.view._prThreads = [];
+    }
   }
 }
 
-export async function loadSlotViewPRComments(view: SlotView) {
-  if (!view._prNumber || !view._prRepo) return;
-  const epoch = view._recoveryEpoch;
-  view._prCommentsLoading = true;
-  try {
-    const result = await gateway.request<PRReviewCommentsResult>(Methods.PR_REVIEW_COMMENTS, {
-      pr: view._prNumber,
-      repo: view._prRepo,
-    });
-    if (!isCurrentReviewResult(view, epoch)) return;
-    view._prThreads = result.threads;
-    view._prCurrentUser = result.currentUser;
-  } catch (err) {
-    console.warn(
-      '[slot-view] PR comments load failed:',
-      err instanceof Error ? err.message : String(err),
-    );
-    if (!isCurrentReviewResult(view, epoch)) return;
-    view._prThreads = [];
-  } finally {
-    view._prCommentsLoading = false;
+const slotPRReads = new WeakMap<SlotView, SlotPRReads>();
+
+function prReads(view: SlotView): SlotPRReads {
+  let reads = slotPRReads.get(view);
+  if (!reads) {
+    reads = new SlotPRReads(view);
+    slotPRReads.set(view, reads);
   }
+  return reads;
+}
+
+export async function detectSlotViewPR(view: SlotView) {
+  if (!view._isLive) return;
+  const epoch = view._recoveryEpoch;
+  const reads = prReads(view);
+  reads.slotId = view.slotId;
+  reads.forSlot.setQuery(
+    resourceQuery<PRForSlotResult>(Methods.PR_FOR_SLOT, { slotId: view.slotId }),
+  );
+  const state = await reads.answer();
+  if (!isCurrentReviewResult(view, epoch) || reads.slotId !== view.slotId) return;
+  // Resolve the diff base once per recovery; later PR updates keep the viewer's chosen base.
+  if (state.data) view._branchDiffBase = state.data.baseRef;
+}
+
+/** Thread mutations re-collect on the gateway; their notification refreshes these threads. */
+export async function loadSlotViewPRComments(view: SlotView) {
+  prReads(view).bindComments();
 }
 
 export async function loadSlotViewBranchDiff(view: SlotView) {

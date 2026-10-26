@@ -50,9 +50,12 @@ import {
   startResourcePolling,
 } from './fleet/resource-manager.js';
 import { loadFleetStatus, onStateChange } from './fleet/state.js';
+import { forgetGitHubAccountsClientInterest } from './integrations/github-accounts.js';
 import { forgetGatewayUpdateClientInterest } from './methods/gateway-status.js';
 import { resolveObservedNativeWorkspace } from './methods/native-workspace.js';
+import { forgetPRDetailClientInterest } from './methods/pr/detail-observations.js';
 import { forgetPRListClientInterest } from './methods/pr/list-cache.js';
+import { forgetProviderAccountsClientInterest } from './methods/provider-accounts.js';
 import { resetClientResourceIndex, streamUnsubscribe } from './methods/stream-feed.js';
 import { taskProgress } from './methods/task.js';
 import { parseTerminalKey } from './methods/terminal.js';
@@ -60,7 +63,7 @@ import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
 import { tmuxWorkerObservedList } from './methods/tmux-workers.js';
 import { metroUnsubscribeAll } from './methods/workspace.js';
 import { initThumbnailCache, unsubscribeThumbnails } from './observability/thumbnail-cache.js';
-import { canReadResourceKey } from './resources/authorization.js';
+import { canReadResourceKey, canReadVisibleModelPreferenceKey } from './resources/authorization.js';
 import { nativeCatalogChanges } from './resources/native-catalog-changes.js';
 import {
   NATIVE_OBSERVED_READS,
@@ -434,7 +437,10 @@ export function createWebSocketServer(
 
       upstreamObservers.disconnect(state);
       forgetPRListClientInterest(state.id);
+      forgetPRDetailClientInterest(state.id);
       forgetGatewayUpdateClientInterest(state.id);
+      forgetGitHubAccountsClientInterest(state.id);
+      forgetProviderAccountsClientInterest(state.id);
 
       // Cleanup terminal subscriptions for this client and invalidate any
       // terminal.subscribe RPC that is still awaiting target resolution.
@@ -866,9 +872,11 @@ async function handleMessage(
         'Unsupported observed-read version',
       );
     // One typed adapter validates all marked reads. Domain params do not carry view flags.
-    const reader = frame.method.startsWith('native.')
-      ? authorizeGatewayMethod(authRuntime, state, frame.method)
-      : undefined;
+    // Visible-model preferences are principal-scoped too; their key needs the reader identity.
+    const reader =
+      frame.method.startsWith('native.') || frame.method === Methods.RUNNER_VISIBLE_MODELS_GET
+        ? authorizeGatewayMethod(authRuntime, state, frame.method)
+        : undefined;
     // Real history cursor pages keep after/limit on the route; durable query identity excludes them.
     const nativeInterests =
       observed && reader ? nativeReadInterests(frame.method, frame.params, reader.id) : undefined;
@@ -877,6 +885,8 @@ async function handleMessage(
         ? resourceQuery(frame.method as ResourceReadMethod, frame.params, reader?.id)
         : undefined;
     const params = query?.params ?? frame.params;
+    if (query && reader && frame.method === Methods.RUNNER_VISIBLE_MODELS_GET)
+      nativeObservations.observeVisibleModels(state.ws, reader);
     const workspace =
       observed &&
       (workspaceReadMethods.includes(frame.method) ||
@@ -1092,7 +1102,12 @@ async function deliverResourceChanges(
       const allowed = await Promise.all(
         payload.changes.map(({ key }) =>
           key.family === 'native-session' || key.family === 'profiles'
-            ? nativeObservations.canReadKey(ws, key)
+            ? nativeObservations
+                .canReadKey(ws, key)
+                .then(
+                  (native) =>
+                    native || canReadVisibleModelPreferenceKey(activeAuthRuntime!, state, key),
+                )
             : key.family === 'workspace'
               ? canReadWorkspaceResourceKey(activeAuthRuntime!, state, key)
               : canReadResourceKey(activeAuthRuntime!, state, key),

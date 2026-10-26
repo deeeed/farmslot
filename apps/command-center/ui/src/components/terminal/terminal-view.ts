@@ -3,7 +3,6 @@ import { customElement, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type {
-  SlotStatus,
   TaskProgressResult,
   TerminalData,
   TerminalExitedPayload,
@@ -24,7 +23,7 @@ import '../progress-tracker/progress-tracker.js';
 import '../chat/native-session-view.js';
 
 import { gateway } from '../../gateway-client.js';
-import { getState } from '../../state.js';
+import { getState, subscribe } from '../../state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
@@ -59,6 +58,7 @@ import {
   renderTerminalChrome,
   renderTmuxToolbar,
   type TerminalMode,
+  type TmuxActionMethod,
 } from './terminal-view-renderers.js';
 import { TerminalViewState } from './terminal-view-state.js';
 import { syncTerminalRunnerAccent, terminalViewStyles } from './terminal-view-styles.js';
@@ -584,20 +584,11 @@ export class TerminalView extends TerminalViewState {
       }
     });
 
-    if (!worker) {
-      this._unsubSlot = gateway.subscribe(Events.SLOT_CHANGED, (payload: unknown) => {
-        if (subscribeSeq !== this._subscribeSeq) return;
-        const slot = payload as SlotStatus;
-        if (slot.slot === this.slotId) {
-          this._lifecycle = slot.lifecycle;
-          this._agent = slot.agent;
-          this._runner = slot.runner ?? '';
-          this._model = slot.model ?? '';
-          this._taskId = slot.taskId || '';
-          this._syncRunSummary();
-        }
+    // Slot facts come from the shared fleet observation, never from event payloads.
+    if (!worker)
+      this._unsubSlot = subscribe(() => {
+        if (subscribeSeq === this._subscribeSeq) this._syncRunSummary();
       });
-    }
 
     this._unsubExit = gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
       if (subscribeSeq !== this._subscribeSeq) return;
@@ -1057,7 +1048,7 @@ export class TerminalView extends TerminalViewState {
 
   // --- Tmux control ---
 
-  private async _tmuxAction(method: string, params: Record<string, unknown> = {}) {
+  private async _tmuxAction(method: TmuxActionMethod, params: Record<string, unknown> = {}) {
     try {
       const target =
         method === Methods.TMUX_SELECT_WINDOW

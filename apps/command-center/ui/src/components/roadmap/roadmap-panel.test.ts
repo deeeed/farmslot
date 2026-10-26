@@ -20,7 +20,6 @@ import {
   deliveryInputRevision,
   deliverySummaryFor,
   roadmapDeliveryBacklinks,
-  roadmapDeliveryRefreshRevision,
   sortRoadmapItems,
 } from './roadmap-panel-model.js';
 
@@ -507,30 +506,5 @@ test('delivery revision tracks backlog rows reachable only through promotion', (
     deliveryInputRevision([], promotionOnly),
     deliveryInputRevision([], [{ id: 'bk_promo', updatedAt: stamp, status: 'done' }]),
     'and without the promotion set it is correctly treated as unreachable',
-  );
-});
-
-test('delivery refresh revision moves for an off-page run deletion', () => {
-  const runs = [
-    {
-      id: 'visible-run',
-      updatedAt: '2026-08-03T00:00:00.000Z',
-      status: 'done',
-      backlogItemId: 'visible-backlog',
-    },
-  ];
-  const backlog = [
-    {
-      id: 'visible-backlog',
-      updatedAt: '2026-08-03T00:00:00.000Z',
-      status: 'done',
-      roadmapItemId: 'ri-visible',
-    },
-  ];
-
-  assert.notEqual(
-    roadmapDeliveryRefreshRevision(0, runs, backlog),
-    roadmapDeliveryRefreshRevision(1, runs, backlog),
-    'RUN_DELETED must invalidate even when the paginated run rows are unchanged',
   );
 });

@@ -14,8 +14,11 @@ import {
   derivePRMergeState,
   isSlotRefreshStaleBranch,
   isTerminalRunStatus,
+  Methods,
   type MonitoredPRIdentity,
   normalizeCICheckDetail,
+  type PRForSlotObservationParams,
+  prForSlotObservationParams,
   type PRForSlotParams,
   type PRForSlotResult,
   type PRListParams,
@@ -24,6 +27,8 @@ import {
   type ProjectConfig,
   type PRReviewVerdict,
   type PRStatus,
+  type PRStatusObservationParams,
+  prStatusObservationParams,
   type PRStatusParams,
   type PRStatusResult,
   type Run,
@@ -34,6 +39,7 @@ import {
 } from '@farmslot/protocol';
 
 import { isLocal } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { findFamilyStateSummaryForPR, sortRunsByFreshness } from '../family-observability/state.js';
 import {
   farmslotRoot,
@@ -55,9 +61,11 @@ import {
 } from '../integrations/github-query-budget.js';
 import { getAllRuns } from '../runs/store.js';
 
+import { PRDetailCollector, type PRDetailReadInterest } from './pr/detail-collector.js';
 import { type PRListClientInterest, servePRList } from './pr/list-cache.js';
 import {
   getPRRawData,
+  onPRRawObservation,
   parseJsonLines,
   peekRetainedPRRawData,
   prefetchPRBatchViaGraphQL,
@@ -178,6 +186,102 @@ export async function prStatus(params: PRStatusParams): Promise<PRStatusResult> 
     includeCheckSnapshot: true,
   });
   return { pr };
+}
+
+interface PRStatusObservationValue {
+  repo: string;
+  raw: PRRawSnapshot;
+}
+
+function complete(raw: PRRawSnapshot | undefined): raw is PRRawSnapshot {
+  return Boolean(raw?.prStateStdout.trim() && !raw.errors?.length && !raw.partial);
+}
+
+/**
+ * One shared upstream observation per `{ pr, project }`. It keeps the complete raw GitHub read
+ * and its source completion time; local run/config facts are projected on every read.
+ */
+export const prStatusObservation = new PRDetailCollector<
+  PRStatusObservationParams,
+  PRStatusObservationValue
+>({
+  method: Methods.PR_STATUS,
+  normalize: prStatusObservationParams,
+  async fetch({ pr, project }, force) {
+    const { repo } = await resolveProjectRepo(project);
+    const raw = await getPRRawData(repo, pr, force);
+    if (!raw.prStateStdout.trim()) {
+      if (PR_GONE_PATTERN.test(raw.prStateError ?? ''))
+        throw new GatewayMethodError('NOT_FOUND', `${repo}#${pr} is not visible on GitHub`);
+      throw new GatewayMethodError(
+        'UPSTREAM_UNAVAILABLE',
+        `GitHub returned no state for ${repo}#${pr}`,
+      );
+    }
+    if (raw.errors?.length)
+      throw new GatewayMethodError(
+        'UPSTREAM_INCOMPLETE',
+        `GitHub returned an incomplete observation for ${repo}#${pr}`,
+      );
+    return { value: { repo, raw }, observedAt: raw.fetchedAt };
+  },
+  // The dashboard batch, active CI monitoring and restored warm lists already hold these bytes.
+  async seed({ pr, project }) {
+    const repo = (await loadProjectConfig(project))?.ci?.repo;
+    const raw = repo ? peekRetainedPRRawData(repo, pr) : undefined;
+    return repo && complete(raw) ? { value: { repo, raw }, observedAt: raw.fetchedAt } : undefined;
+  },
+});
+
+onPRRawObservation((repo, pr) => {
+  const raw = peekRetainedPRRawData(repo, pr);
+  if (!complete(raw)) return;
+  // Another owner's newer read of the same PR updates this observation without a second fetch.
+  prStatusObservation.observe((params, value) =>
+    params.pr === pr && value?.repo.toLowerCase() === repo.toLowerCase()
+      ? { value: { repo: value.repo, raw }, observedAt: raw.fetchedAt }
+      : undefined,
+  );
+});
+
+/**
+ * Gateway-owned `pr.status`. Active CI monitoring keeps calling `prStatus` with its own policy.
+ * Readers without observer admission keep the released reply whenever the shared observation
+ * cannot answer as current: a placeholder or partial row, never a new error.
+ */
+export async function readPRStatus(
+  params: PRStatusParams,
+  interest: PRDetailReadInterest = {},
+): Promise<PRStatusResult> {
+  const managed = interest.legacyInterest === false;
+  let shared: Awaited<ReturnType<typeof prStatusObservation.read>>;
+  try {
+    shared = await prStatusObservation.read(
+      { pr: params.pr, project: params.project },
+      { ...interest, force: params.force === true },
+    );
+  } catch (error) {
+    // Configuration and quota failures were already errors for every reader.
+    if (managed || !(error instanceof GatewayMethodError)) throw error;
+    // The raw cache already holds the attempt just made, so this adds no forced GitHub read.
+    return prStatus({ ...params, force: false });
+  }
+  if (!managed && shared.observation.error) return prStatus({ ...params, force: false });
+  const { value, observation } = shared;
+  const project = params.project!;
+  const pr = projectPRData(
+    value.raw,
+    { prNum: params.pr, runs: getAllRuns(), project, repo: value.repo, includeCheckSnapshot: true },
+    await loadProjectConfig(project),
+  );
+  return { pr, observation };
+}
+
+/** A completed PR command re-collects observed statuses for that PR, bypassing source caches. */
+export function refreshPRStatusObservations(repo: string, pr: number): void {
+  prStatusObservation.refreshWhere(
+    (params, value) => params.pr === pr && value?.repo.toLowerCase() === repo.toLowerCase(),
+  );
 }
 
 // ─── prList — native TS ───
@@ -1343,9 +1447,18 @@ export function prMonitor(
   return { requestId };
 }
 
-export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResult> {
+interface SlotPRLookup {
+  slotId: string;
+  project: string;
+  branch: string;
+  repo: string | null;
+  defaultBranch: string;
+}
+
+/** Local slot facts decide whether GitHub is asked at all; this performs no upstream I/O. */
+async function slotPRLookup(slotId: string): Promise<SlotPRLookup | PRForSlotResult> {
   const fleet = await loadFleetStatus();
-  const slot = fleet.slots.find((s) => s.slot === params.slotId);
+  const slot = fleet.slots.find((s) => s.slot === slotId);
   if (!slot || !slot.branch) {
     return { pr: null, repo: null, baseRef: DEFAULT_BRANCH };
   }
@@ -1361,12 +1474,27 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
   if (!slotBranchHasPrLookupContext(slot, projectConfigs)) {
     return { pr: null, repo: null, baseRef: defaultBranch };
   }
-  const repo = projectConfig?.ci?.repo ?? null;
+  return {
+    slotId: slot.slot,
+    project: slot.project,
+    branch: slot.branch,
+    repo: projectConfig?.ci?.repo ?? null,
+    defaultBranch,
+  };
+}
+
+function slotPRLookupIdentity(lookup: SlotPRLookup): string {
+  return JSON.stringify([lookup.project, lookup.branch, lookup.repo, lookup.defaultBranch]);
+}
+
+/** A `collected` lookup fails visibly instead of reporting "no PR" for an unreadable upstream. */
+async function lookupSlotPR(lookup: SlotPRLookup, collected: boolean): Promise<PRForSlotResult> {
+  const { branch, repo, defaultBranch } = lookup;
   // Project has no ci.repo configured — fall back to `gh pr list` inside the
   // slot's local repo (no ETag cache, but preserves discovery for projects
   // like farmslot that only carry the remote in the slot checkout).
   if (!repo) {
-    const fallback = await findPRViaSlotRepo(slot.slot, slot.branch);
+    const fallback = await findPRViaSlotRepo(lookup.slotId, branch, collected);
     if (!fallback) return { pr: null, repo: null, baseRef: defaultBranch };
     return {
       pr: fallback.pr,
@@ -1375,7 +1503,7 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
     };
   }
 
-  const cached = getBinding(slot.branch, repo);
+  const cached = getBinding(branch, repo);
   if (cached !== null) {
     // Reused branch names can keep pointing at a merged/closed PR. Verify
     // state+head before trusting the cache; mirrors `findPRForBranch`.
@@ -1391,12 +1519,13 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
         head?: string;
         base?: string;
       };
-      if (parsed.state === 'open' && parsed.head === slot.branch) {
+      if (parsed.state === 'open' && parsed.head === branch) {
         return { pr: cached, repo, baseRef: parsed.base || defaultBranch };
       }
-      invalidateBinding(slot.branch, repo);
-    } catch {
-      invalidateBinding(slot.branch, repo);
+      invalidateBinding(branch, repo);
+    } catch (error) {
+      if (collected && error instanceof GitHubQueryBudgetError) throw error;
+      invalidateBinding(branch, repo);
     }
   }
 
@@ -1407,7 +1536,7 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
       '--repo',
       repo,
       '--head',
-      slot.branch,
+      branch,
       '--json',
       'number,baseRefName',
       '--jq',
@@ -1415,9 +1544,64 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
     ]);
     const result = JSON.parse(stdout || '{}') as { pr?: number; baseRef?: string };
     if (!result.pr) return { pr: null, repo, baseRef: defaultBranch };
-    setBinding(slot.branch, repo, result.pr);
+    setBinding(branch, repo, result.pr);
     return { pr: result.pr, repo, baseRef: result.baseRef || defaultBranch };
-  } catch {
+  } catch (error) {
+    if (collected) throw error;
     return { pr: null, repo, baseRef: defaultBranch };
   }
+}
+
+export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResult> {
+  const lookup = await slotPRLookup(params.slotId);
+  return 'pr' in lookup ? lookup : lookupSlotPR(lookup, false);
+}
+
+interface PRForSlotObservationValue {
+  /** The local branch context this answer belongs to; `null` when no GitHub lookup applied. */
+  lookup: string | null;
+  result: PRForSlotResult;
+}
+
+/** The open PR for a slot's current branch: a shared upstream observation per `{ slotId }`. */
+export const prForSlotObservation = new PRDetailCollector<
+  PRForSlotObservationParams,
+  PRForSlotObservationValue
+>({
+  method: Methods.PR_FOR_SLOT,
+  normalize: prForSlotObservationParams,
+  async fetch({ slotId }) {
+    const lookup = await slotPRLookup(slotId);
+    return {
+      value:
+        'pr' in lookup
+          ? { lookup: null, result: lookup }
+          : { lookup: slotPRLookupIdentity(lookup), result: await lookupSlotPR(lookup, true) },
+    };
+  },
+});
+
+/**
+ * Gateway-owned `pr.forSlot`. Slots without a PR lookup context answer from local state alone;
+ * otherwise the retained GitHub answer is served only for the slot's current branch context.
+ * Readers without observer admission keep the released tolerant lookup when it cannot answer.
+ */
+export async function readPRForSlot(
+  params: PRForSlotParams,
+  interest: PRDetailReadInterest = {},
+): Promise<PRForSlotResult> {
+  const lookup = await slotPRLookup(params.slotId);
+  if ('pr' in lookup) return lookup;
+  const identity = slotPRLookupIdentity(lookup);
+  const managed = interest.legacyInterest === false;
+  try {
+    const { value, observation } = await prForSlotObservation.read(
+      { slotId: params.slotId },
+      { ...interest, accept: (current) => current.lookup === identity },
+    );
+    if (managed || !observation.error) return { ...value.result, observation };
+  } catch (error) {
+    if (managed) throw error;
+  }
+  return lookupSlotPR(lookup, false);
 }

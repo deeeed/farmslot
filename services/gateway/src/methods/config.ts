@@ -59,6 +59,7 @@ import {
 } from '../fleet/state.js';
 import { gatewayGitHubAccounts } from '../integrations/github-accounts.js';
 import { publishConfigurationResources } from '../resources/configuration-changes.js';
+import type { GitHubAccountsReadInterest } from '../resources/github-account-observation.js';
 import {
   configuredExecutionTemplateOptions,
   projectUsesExecutionTemplateCatalog,
@@ -593,11 +594,14 @@ export async function configProjectAutoRecoveryUpdate(
   return { ok: true, backup: backupPath, project: clientProjectConfig(project) };
 }
 
-export async function configGitHubAccounts(params: unknown): Promise<ConfigGitHubAccountsResult> {
+export async function configGitHubAccounts(
+  params: unknown,
+  interest?: GitHubAccountsReadInterest,
+): Promise<ConfigGitHubAccountsResult> {
   if (!params || typeof params !== 'object' || Array.isArray(params))
     throw new Error('Parameters must be an object');
   const refresh = (params as { refresh?: unknown }).refresh;
   if (refresh !== undefined && typeof refresh !== 'boolean')
     throw new Error('refresh must be boolean');
-  return gatewayGitHubAccounts(refresh === true);
+  return gatewayGitHubAccounts(refresh === true, interest);
 }

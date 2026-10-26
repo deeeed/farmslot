@@ -18,8 +18,10 @@ import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
-import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
-import { rememberedDefaultModel } from '../../utils/runner-visible-cache.js';
+import {
+  visibleDefaultModel,
+  visibleReviewDispatchCatalog,
+} from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
@@ -95,12 +97,12 @@ export class EvalCockpit extends EvalCockpitState {
   private _applyInitialModelDefaults(): void {
     if (
       !this._initialModelsPending ||
-      this._candidateRows.some((row) => rememberedDefaultModel(row.runner) === undefined)
+      this._candidateRows.some((row) => visibleDefaultModel(row.runner) === undefined)
     )
       return;
     this._candidateRows = this._candidateRows.map((row) => ({
       ...row,
-      model: defaultModelForRunner(row.runner, rememberedReviewDispatchCatalog()) ?? '',
+      model: defaultModelForRunner(row.runner, visibleReviewDispatchCatalog()) ?? '',
     }));
     this._initialModelsPending = false;
   }

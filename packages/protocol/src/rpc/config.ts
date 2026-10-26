@@ -13,6 +13,7 @@ import type {
 } from '../contracts/index.js';
 
 import { Methods } from './registry.js';
+import type { UpstreamObservation } from './resource-observers.js';
 
 export const ConfigMethods = {
   pools: Methods.CONFIG_POOLS,
@@ -156,6 +157,7 @@ export interface ConfigGitHubAccountsResult {
   accounts: Array<PRSourceAccount & { active: boolean }>;
   checkedAt: string;
   error?: string;
+  observation?: UpstreamObservation;
 }
 export interface ConfigGitHubAccountsParams {
   refresh?: boolean;

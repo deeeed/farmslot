@@ -18,6 +18,8 @@ import { authorizeNativeWorkerHistory } from '../runners/native/worker-history.j
 import {
   type NativeCatalogPreferenceLease,
   observeNativeCatalogPreferences,
+  observeVisibleModelPreferences,
+  visibleModelPreferenceChanges,
 } from '../runners/visible-models.js';
 import { loadCredentialStore } from '../security/credential-store.js';
 import { nativeOwnerAssignedMachines } from '../security/native-node.js';
@@ -205,6 +207,8 @@ interface NativeConnection {
   catalogPreferences?: NativeCatalogPreferenceLease;
   catalogInterest?: NativeInterest;
   catalogReader?: { id: string; generation: number };
+  visiblePreferences?: NativeCatalogPreferenceLease;
+  visibleReader?: { id: string; generation: number };
 }
 interface RemoteSource {
   connection: object;
@@ -224,10 +228,51 @@ export class GatewayNativeObservations {
   private poolCatalogRevision = 0;
 
   private readonly stopCatalogNotices: () => void;
+  private readonly stopVisibleNotices: () => void;
   constructor(private readonly invalidate: (key: NativeObservationKey) => void) {
     this.stopCatalogNotices = nativeCatalogChanges.subscribe((change) =>
       this.catalogChanged(change),
     );
+    this.stopVisibleNotices = visibleModelPreferenceChanges.subscribe((change) =>
+      this.visibleModelsChanged(change),
+    );
+  }
+  /** Advances the owner profile key only for a current reader of that principal generation. */
+  visibleModelsChanged(change: NativeCatalogChange): void {
+    if (change.scope !== 'owner') return;
+    for (const client of this.clients.values())
+      if (
+        client.visibleReader?.id === change.ownerId &&
+        client.visibleReader.generation === change.ownerGeneration
+      ) {
+        this.invalidate({ family: 'profiles', scope: 'owner', ownerId: change.ownerId });
+        return;
+      }
+  }
+  /** Arms one shared preference watcher per connection before its observed visible-model read. */
+  observeVisibleModels(connection: object, reader: Principal): void {
+    const client = this.clients.get(connection);
+    if (!client)
+      throw new GatewayMethodError('AUTH_FORBIDDEN', 'Visible model read connection ended');
+    const generation = reader.generation ?? 0;
+    if (
+      !client.visiblePreferences ||
+      client.visibleReader?.id !== reader.id ||
+      client.visibleReader.generation !== generation
+    ) {
+      client.visiblePreferences?.dispose();
+      client.visiblePreferences = undefined;
+      client.visiblePreferences = runWithSessionOriginator(reader, () =>
+        observeVisibleModelPreferences(),
+      );
+      client.visibleReader = { id: reader.id, generation };
+    }
+    try {
+      client.visiblePreferences.sample();
+    } catch (error) {
+      // The failed sample published its failure notice; the read reports the file error itself.
+      if (!(error instanceof NativeCatalogSourceUnavailable)) throw error;
+    }
   }
   catalogChanged(change: NativeCatalogChange): void {
     if (change.scope === 'all') this.poolCatalogRevision++;
@@ -328,10 +373,12 @@ export class GatewayNativeObservations {
   }
   attachClient(connection: object, principal: () => Principal): void {
     this.clients.get(connection)?.catalogPreferences?.dispose();
+    this.clients.get(connection)?.visiblePreferences?.dispose();
     this.clients.set(connection, { principal, interests: new Map() });
   }
   detachClient(connection: object): void {
     this.clients.get(connection)?.catalogPreferences?.dispose();
+    this.clients.get(connection)?.visiblePreferences?.dispose();
     this.clients.delete(connection);
   }
 
@@ -547,7 +594,11 @@ export class GatewayNativeObservations {
   }
   dispose(): void {
     this.stopCatalogNotices();
-    for (const client of this.clients.values()) client.catalogPreferences?.dispose();
+    this.stopVisibleNotices();
+    for (const client of this.clients.values()) {
+      client.catalogPreferences?.dispose();
+      client.visiblePreferences?.dispose();
+    }
     this.local?.stop();
     this.clients.clear();
     this.remote.clear();

@@ -87,6 +87,9 @@ export class TerminalSplitView extends LitElement {
   @state() private _workerPaneFilter: WorkerPaneFilter = 'adhoc';
 
   private _unsubState?: () => void;
+  private readonly activeRunsQuery = new ResourceQueryController<RunListResult>(this, () => {
+    this._syncRuns(getState());
+  });
   @state() private _workerObservation: ResourceQueryState<TmuxWorkerListResult> = {
     status: 'loading',
   };
@@ -449,7 +452,7 @@ export class TerminalSplitView extends LitElement {
     this._loadSaved();
     this._applyRouteWorker();
     this._fetchSlots();
-    void this._fetchRuns();
+    this.activeRunsQuery.setQuery(resourceQuery<RunListResult>(Methods.RUN_LIST, { active: true }));
     this.workerQuery.setQuery(
       resourceQuery<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, { includeDisconnected: true }),
     );
@@ -458,11 +461,11 @@ export class TerminalSplitView extends LitElement {
       : [];
     const initial = getState();
     this._globalFilters = initial.globalFilters;
-    this._runs = initial.runs;
+    this._syncRuns(initial);
     this._hydrating = isHydrating(initial, 'fleet');
     this._unsubState = subscribe((s: AppState) => {
       this._globalFilters = s.globalFilters;
-      this._runs = s.runs;
+      this._syncRuns(s);
       this._hydrating = isHydrating(s, 'fleet');
       this._availableSlots = this._applyFilters(s.fleet?.slots ?? []).map((slot) => slot.slot);
     });
@@ -535,19 +538,25 @@ export class TerminalSplitView extends LitElement {
     localStorage.setItem(WORKER_WATCHLIST_KEY, JSON.stringify(items));
   }
 
-  /** Every active run, over the runs this view already holds; the views below list only active runs. */
-  private async _refreshActiveRuns(): Promise<Run[]> {
-    const result = await gateway.request<RunListResult>(Methods.RUN_LIST, { active: true });
-    this._runs = mergeRunsById(this._runs, result.runs ?? []);
-    return result.runs ?? [];
+  private _syncRuns(state: AppState): void {
+    this._runs = mergeRunsById(
+      state.runs,
+      this.activeRunsQuery.belongsToWorkspace ? (this.activeRunsQuery.state.data?.runs ?? []) : [],
+    );
   }
 
-  private async _fetchRuns() {
-    try {
-      await this._refreshActiveRuns();
-    } catch (error) {
-      this._workerListError = `Could not load worktree reviews: ${error instanceof Error ? error.message : String(error)}`;
-    }
+  /** Explicit selection uses the current canonical list, never a prior connection's reply. */
+  private async _refreshActiveRuns(): Promise<Run[]> {
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    await this.activeRunsQuery.retry();
+    if (
+      !this.isConnected ||
+      owner !== getResourceWorkspaceKey() ||
+      connection !== gateway.resourceConnectionId
+    )
+      throw new Error('The terminal workspace changed. Select its current runs again.');
+    return this.activeRunsQuery.requireReady().runs ?? [];
   }
 
   private _openRun(runId: string) {
@@ -1165,6 +1174,16 @@ export class TerminalSplitView extends LitElement {
           )}
         </div>
       </div>
+      ${this.activeRunsQuery.state.error
+        ? html`<div class="worker-error">
+            Could not load worktree reviews: ${this.activeRunsQuery.state.error.message}
+          </div>`
+        : nothing}
+      ${this.activeRunsQuery.state.status === 'stale' && this.activeRunsQuery.state.data
+        ? html`<div>
+            Saved worktree reviews, ${sourceObservationAge(this.activeRunsQuery.state.observedAt)}.
+          </div>`
+        : nothing}
       ${selectWorkspaceRuns(this._runs, this._globalFilters).length
         ? html`<div class="worker-panel" data-testid="workspace-terminals">
             <div class="worker-panel-title">Worktree reviews</div>

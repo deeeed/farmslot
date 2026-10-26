@@ -31,6 +31,11 @@ export async function revealSlotViewArtifacts(view: SlotView): Promise<void> {
   }
 }
 
+export type SlotViewGitActionMethod =
+  | typeof Methods.GIT_STAGE
+  | typeof Methods.GIT_UNSTAGE
+  | typeof Methods.GIT_DISCARD;
+
 export function setSlotViewEditor(view: SlotView, id: EditorId): void {
   view._editor = id;
   localStorage.setItem(EDITOR_PREF_KEY, id);
@@ -38,7 +43,7 @@ export function setSlotViewEditor(view: SlotView, id: EditorId): void {
 
 export async function runSlotViewGitAction(
   view: SlotView,
-  method: string,
+  method: SlotViewGitActionMethod,
   path: string,
 ): Promise<void> {
   if (!view._isLive || view._isRecoveryBlocked || !view._workspaceReads.ready) return;

@@ -74,6 +74,39 @@ test('panel observers share reads, refuse stale actions and drop old filters and
   );
   assert.equal(first.requireReady().totalCount, 1);
   assert.equal(second.state, first.state);
+  first.hostDisconnected();
+  second.hostDisconnected();
+  const oneShot = new ResourceQueryController<RunListResult>(host, (state) => {
+    if (state.status === 'ready') oneShot.setQuery(undefined);
+  });
+  oneShot.setQuery(query);
+  oneShot.hostConnected();
+  assert.equal(oneShot.ready, false);
+  const filterReads = () =>
+    fake.requests.filter(
+      ({ method, params }) =>
+        method === 'run.list' &&
+        params &&
+        typeof params === 'object' &&
+        Reflect.get(params, 'familyId') === 'old-filter',
+    ).length;
+  const retiredReads = filterReads();
+  revision++;
+  socket.event('resource.changed', {
+    version: 1,
+    epoch: fake.resourceEpoch,
+    changes: [{ key: { family: 'runs', scope: 'farm' }, revision, kind: 'updated' }],
+  });
+  await flush();
+  assert.equal(
+    filterReads(),
+    retiredReads,
+    'A query retired by an immediate reply must not retain interest',
+  );
+  oneShot.hostDisconnected();
+  first.hostConnected();
+  second.hostConnected();
+  await flush();
   hold = true;
   revision++;
   socket.event('resource.changed', {

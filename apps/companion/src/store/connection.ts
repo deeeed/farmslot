@@ -8,8 +8,6 @@ import {
   type MonitorViolationPayload,
   type PersonDeviceSession,
   type PersonSessionAuth,
-  type PRListUpdatedPayload,
-  type PRUpdatedPayload,
   type Run,
   signOutAccount,
 } from '@farmslot/protocol';
@@ -61,7 +59,6 @@ import {
 import { notifyRunCompleted, notifyViolation } from '../lib/notifications';
 import type { WorkspaceAccess } from '../lib/workspace-access';
 
-import { usePRStore } from './prs';
 import { resetFarmState } from './reset-farm-state';
 
 const SIGNED_OUT_KEY = '@farmslot:signedOut';
@@ -181,26 +178,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           });
       });
 
-      client.subscribe(Events.PR_UPDATED, (payload) => {
-        const data = payload as PRUpdatedPayload;
-        if (data.pr) usePRStore.getState().upsertPR(data.pr);
-      });
-
-      // The gateway serves pr.list from a warm copy and refreshes it in the
-      // background; a changed list arrives here, a failed refresh flags the
-      // copy we hold as possibly old.
-      client.subscribe(Events.PR_LIST_UPDATED, (payload) => {
-        const data = payload as PRListUpdatedPayload;
-        const prs = usePRStore.getState();
-        if (data.error) {
-          prs.setError(`PR refresh failed on the gateway: ${data.error}`);
-          return;
-        }
-        // A successful refresh, changed list or not, clears an earlier failure.
-        prs.setError(null);
-        if (data.prs) prs.setPRs(data.prs);
-      });
-
       client.subscribe(Events.MONITOR_VIOLATION, (payload) => {
         notifyViolation(payload as MonitorViolationPayload);
       });
@@ -233,18 +210,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           ...livenessPatch(liveness),
           lastConnectedAt: status === 'connected' ? Date.now() : get().lastConnectedAt,
         });
-        if (status !== 'connected') {
-          usePRStore.getState().setLoading(false);
-        }
-
-        // Fetch all state on connect/reconnect
         if (status === 'connected') {
           void livenessController?.probeFresh();
-          if (workspaceAccess !== 'farm') return;
-
-          // PR_LIST fans out through GitHub and can legitimately outlive a cold
-          // connect. Keep it lazy on the PR screen so a slow PR refresh does not
-          // turn the whole app connection banner into a warning.
         }
       });
 

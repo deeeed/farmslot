@@ -9,14 +9,13 @@ interface PRStore {
   lastError: string | null;
   setPRs: (prs: PRStatus[]) => void;
   upsertPR: (pr: PRStatus) => void;
-  setLoading: (loading: boolean) => void;
-  setError: (error: string | null) => void;
 }
 
 function samePRKey(left: Pick<PRStatus, 'repo' | 'pr'>, right: Pick<PRStatus, 'repo' | 'pr'>) {
   return left.repo === right.repo && left.pr === right.pr;
 }
 
+/** Store-screenshot and isolated test fixtures only; gateway replies/events never write here. */
 export const usePRStore = create<PRStore>((set, get) => ({
   prs: [],
   updatedAt: null,
@@ -36,8 +35,4 @@ export const usePRStore = create<PRStore>((set, get) => ({
       lastError: null,
     });
   },
-
-  setLoading: (loading) => set({ loading }),
-
-  setError: (error) => set(error ? { lastError: error, loading: false } : { lastError: null }),
 }));

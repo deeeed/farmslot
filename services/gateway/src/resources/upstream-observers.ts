@@ -155,7 +155,24 @@ export class GatewayUpstreamObservers {
 
   hasInterest(method: ResourceCollectorQuery['method'], params?: unknown): boolean {
     const target = params === undefined ? undefined : resourceCollectorQuery(method, params).id;
-    let interested = false;
+    return this.authorizedSessions().some((session) =>
+      session.queries.some(
+        (query) => query.method === method && (target === undefined || query.id === target),
+      ),
+    );
+  }
+
+  /** Reauthorized, normalized selectors for one collector, deduplicated by query identity. */
+  activeQueries(method: ResourceCollectorQuery['method']): ResourceCollectorQuery[] {
+    const queries = new Map<string, ResourceCollectorQuery>();
+    for (const session of this.authorizedSessions())
+      for (const query of session.queries)
+        if (query.method === method) queries.set(query.id, query);
+    return [...queries.values()];
+  }
+
+  private authorizedSessions(): ObserverSession[] {
+    const sessions: ObserverSession[] = [];
     for (const [client, session] of this.sessions) {
       if (!session.authority.isActive()) {
         this.sessions.delete(client);
@@ -171,14 +188,9 @@ export class GatewayUpstreamObservers {
         session.authority.refuse(error);
         continue;
       }
-      if (
-        session.queries.some(
-          (query) => query.method === method && (target === undefined || query.id === target),
-        )
-      )
-        interested = true;
+      sessions.push(session);
     }
-    return interested;
+    return sessions;
   }
 
   disconnect(client: object): void {

@@ -14,6 +14,7 @@ export function resetFarmState() {
     historyLoading: false,
     historyLoaded: false,
   });
+  // Production PRs retire with ResourceCacheOwner. Clear the separate screenshot/test fixture too.
   usePRStore.setState({ prs: [], updatedAt: null, loading: false, lastError: null });
   useDecisionStore.setState({ decisions: [], observation: { status: 'loading' } });
   useFilterStore.setState((state) => ({

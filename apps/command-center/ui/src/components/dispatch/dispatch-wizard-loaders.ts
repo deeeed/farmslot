@@ -14,9 +14,11 @@ import type {
   RunListResult,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { readConfiguration } from '../../configuration-resources.js';
 import { gateway } from '../../gateway-client.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 
 import { filterRunsByExactTicket } from './dispatch-wizard-helpers.js';
 import {
@@ -131,10 +133,28 @@ export async function lookupPriorRunsForDispatchWizard(
   if (input.mockMode) {
     return filterRunsByExactTicket(input.stateRuns, input.search, input.normalizedTicket);
   }
-  const res = await gateway.request<RunListResult>(Methods.RUN_LIST, {
+  const cache = getResourceCache();
+  const owner = getResourceWorkspaceKey();
+  const connection = gateway.resourceConnectionId;
+  if (!cache || gateway.connectionState !== 'connected' || gateway.workspaceAccess !== 'farm')
+    throw new Error('Wait for current runs before looking up prior work');
+  const query = resourceQuery<RunListResult>(Methods.RUN_LIST, {
     search: input.search,
     limit: 50,
   } satisfies RunListParams);
+  let state = cache.read(query);
+  if (state.status !== 'ready') state = await cache.retry(query);
+  if (
+    cache !== getResourceCache() ||
+    owner !== getResourceWorkspaceKey() ||
+    connection !== gateway.resourceConnectionId ||
+    gateway.connectionState !== 'connected' ||
+    gateway.workspaceAccess !== 'farm'
+  )
+    throw new Error('Run lookup owner changed during read');
+  if (state.status !== 'ready' || !state.data)
+    throw new Error(state.error?.message ?? 'Wait for current runs before looking up prior work');
+  const res = state.data;
   // run.list `search` is substring match against ticketOrPr OR summary — narrow
   // to exact ticketOrPr matches so the banner doesn't surface unrelated families.
   return filterRunsByExactTicket(res.runs, input.search, input.normalizedTicket);

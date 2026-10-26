@@ -108,11 +108,7 @@ export class NativeProfiles extends LitElement {
   `;
 
   protected updated(changed: Map<PropertyKey, unknown>) {
-    if (
-      changed.has('executionNodeId') ||
-      changed.has('api') ||
-      (this.runnerOnly && changed.has('runner'))
-    ) {
+    if (changed.has('executionNodeId') || (this.runnerOnly && changed.has('runner'))) {
       this.selected = '';
       this.selectedContextId = '';
       this.status = undefined;
@@ -123,14 +119,13 @@ export class NativeProfiles extends LitElement {
   }
   connectedCallback() {
     super.connectedCallback();
-    if (this.api === gateway)
-      this.ownerStop = subscribeResourceCache(() => {
-        this.revision++;
-        this.listCurrent = false;
-        this.status = undefined;
-        this.selection(undefined, false);
-        void this.refresh();
-      });
+    this.ownerStop = subscribeResourceCache(() => {
+      this.revision++;
+      this.listCurrent = false;
+      this.status = undefined;
+      this.selection(undefined, false);
+      void this.refresh();
+    });
   }
   disconnectedCallback() {
     clearTimeout(this.selectionTimer);
@@ -150,7 +145,6 @@ export class NativeProfiles extends LitElement {
     );
   }
   private async retryProfiles() {
-    if (this.api !== gateway) return this.refresh();
     const owner = getResourceNativeOwnerId();
     const cache = getResourceCache();
     if (!owner || !cache) return;
@@ -175,62 +169,37 @@ export class NativeProfiles extends LitElement {
     );
   }
   private async refresh() {
-    if (this.api === gateway) {
-      this.listStop?.();
-      this.statusStop?.();
-      const owner = getResourceNativeOwnerId();
-      if (!owner) {
-        this.profiles = [];
-        this.selection(undefined, false);
-        return;
-      }
-      const node = this.executionNodeId;
-      const query = nativeObservationQuery<NativeProfileListResult>(
-        Methods.NATIVE_PROFILE_LIST,
-        { executionNodeId: node },
-        owner,
-      );
-      this.listStop = observeNativeResource(query, (state) => {
-        if (node !== this.executionNodeId || !this.isConnected) return;
-        this.revision++;
-        this.statusStop?.();
-        this.status = undefined;
-        this.listCurrent = state.status === 'ready';
-        this.profiles = (state.data?.profiles ?? []).filter(
-          (profile) => !this.runnerOnly || profile.runner === this.runner,
-        );
-        this.error = state.error?.message ?? '';
-        this.selection(
-          this.profiles.find((profile) => profile.id === this.selected),
-          false,
-        );
-        this.busy = state.status === 'loading';
-        if (this.listCurrent) void this.choose(this.selected, this.selectedContextId);
-      });
+    this.listStop?.();
+    this.statusStop?.();
+    const owner = getResourceNativeOwnerId();
+    if (!owner) {
+      this.profiles = [];
+      this.selection(undefined, false);
       return;
     }
-    clearTimeout(this.selectionTimer);
-    const revision = ++this.revision;
-    this.busy = true;
-    this.error = '';
-    this.selection(
-      this.profiles.find((profile) => profile.id === this.selected),
-      false,
+    const node = this.executionNodeId;
+    const query = nativeObservationQuery<NativeProfileListResult>(
+      Methods.NATIVE_PROFILE_LIST,
+      { executionNodeId: node },
+      owner,
     );
-    try {
-      const result = await this.api.request<NativeProfileListResult>(Methods.NATIVE_PROFILE_LIST, {
-        executionNodeId: this.executionNodeId,
-      });
-      if (!this.isConnected || revision !== this.revision) return;
-      this.profiles = this.runnerOnly
-        ? result.profiles.filter((profile) => profile.runner === this.runner)
-        : result.profiles;
-      await this.choose(this.selected, this.selectedContextId);
-    } catch (error) {
-      if (revision === this.revision) this.error = (error as Error).message;
-    } finally {
-      if (revision === this.revision) this.busy = false;
-    }
+    this.listStop = observeNativeResource(query, (state) => {
+      if (node !== this.executionNodeId || !this.isConnected) return;
+      this.revision++;
+      this.statusStop?.();
+      this.status = undefined;
+      this.listCurrent = state.status === 'ready';
+      this.profiles = (state.data?.profiles ?? []).filter(
+        (profile) => !this.runnerOnly || profile.runner === this.runner,
+      );
+      this.error = state.error?.message ?? '';
+      this.selection(
+        this.profiles.find((profile) => profile.id === this.selected),
+        false,
+      );
+      this.busy = state.status === 'loading';
+      if (this.listCurrent) void this.choose(this.selected, this.selectedContextId);
+    });
   }
   private chooseAfterNavigation(id: string) {
     clearTimeout(this.selectionTimer);
@@ -255,7 +224,7 @@ export class NativeProfiles extends LitElement {
     this.status = undefined;
     this.error = '';
     const profile = this.profiles.find((item) => item.id === id);
-    this.selection(profile, !id && (this.api !== gateway || this.listCurrent));
+    this.selection(profile, !id && this.listCurrent);
     if (!profile) {
       if (id)
         this.error = 'Profile is unavailable. Choose another profile or the node default account.';
@@ -276,62 +245,39 @@ export class NativeProfiles extends LitElement {
       return;
     }
     this.busy = true;
-    if (this.api === gateway) {
-      this.statusStop?.();
-      const owner = getResourceNativeOwnerId();
-      if (!owner) {
-        this.selection(profile, false);
-        return;
-      }
-      const query = nativeObservationQuery<NativeProfileStatusResult>(
-        Methods.NATIVE_PROFILE_STATUS,
-        { executionNodeId: this.executionNodeId, profileId: id },
-        owner,
-      );
-      this.statusStop = observeNativeResource(query, (state) => {
-        if (!this.isConnected || revision !== this.revision) return;
-        const status = state.data;
-        const matches =
-          status &&
-          status.profile.id === profile.id &&
-          status.profile.accountContextId === profile.accountContextId &&
-          status.profile.runner === profile.runner &&
-          status.profile.state === 'active';
-        this.status = matches ? status : undefined;
-        this.busy = state.status === 'loading';
-        this.error =
-          state.error?.message ??
-          (status && !matches ? 'Profile changed. Select it explicitly again.' : '');
-        this.selection(
-          profile,
-          this.listCurrent &&
-            state.status === 'ready' &&
-            !!matches &&
-            status.account.login === 'authenticated',
-        );
-      });
+    this.statusStop?.();
+    const owner = getResourceNativeOwnerId();
+    if (!owner) {
+      this.selection(profile, false);
       return;
     }
-    try {
-      const status = await this.api.request<NativeProfileStatusResult>(
-        Methods.NATIVE_PROFILE_STATUS,
-        { executionNodeId: this.executionNodeId, profileId: id },
-      );
+    const query = nativeObservationQuery<NativeProfileStatusResult>(
+      Methods.NATIVE_PROFILE_STATUS,
+      { executionNodeId: this.executionNodeId, profileId: id },
+      owner,
+    );
+    this.statusStop = observeNativeResource(query, (state) => {
       if (!this.isConnected || revision !== this.revision) return;
-      if (
-        status.profile.accountContextId !== profile.accountContextId ||
-        status.profile.id !== profile.id ||
-        status.profile.runner !== profile.runner ||
-        status.profile.state !== 'active'
-      )
-        throw new Error('Profile changed. Refresh profiles and choose it again.');
-      this.status = status;
-      this.selection(profile, status.account.login === 'authenticated');
-    } catch (error) {
-      if (revision === this.revision) this.error = (error as Error).message;
-    } finally {
-      if (revision === this.revision) this.busy = false;
-    }
+      const status = state.data;
+      const matches =
+        status &&
+        status.profile.id === profile.id &&
+        status.profile.accountContextId === profile.accountContextId &&
+        status.profile.runner === profile.runner &&
+        status.profile.state === 'active';
+      this.status = matches ? status : undefined;
+      this.busy = state.status === 'loading';
+      this.error =
+        state.error?.message ??
+        (status && !matches ? 'Profile changed. Select it explicitly again.' : '');
+      this.selection(
+        profile,
+        this.listCurrent &&
+          state.status === 'ready' &&
+          !!matches &&
+          status.account.login === 'authenticated',
+      );
+    });
   }
   private async add() {
     this.mutating = true;
@@ -416,13 +362,13 @@ export class NativeProfiles extends LitElement {
         </select></label
       >
       <div class="row">
-        ${this.api !== gateway || this.error
+        ${this.error
           ? html`<button
               data-testid="native-profile-refresh"
               ?disabled=${disabled}
               @click=${() => void this.retryProfiles()}
             >
-              ${this.api === gateway ? 'Retry reading profiles' : 'Refresh profiles'}
+              Retry reading profiles
             </button>`
           : nothing}
         ${profile

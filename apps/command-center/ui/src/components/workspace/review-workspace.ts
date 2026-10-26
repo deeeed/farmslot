@@ -10,6 +10,7 @@ import type {
   GitBranchDiffResult,
   GitDiffResult,
   GitShowResult,
+  GitStatusResult,
   ReviewGatePayload,
   ReviewLineComment,
   RunDecision,
@@ -81,15 +82,22 @@ import {
   dedupeWorkspaceEvidenceArtifacts,
   renderWorkspaceEvidencePreview,
 } from './workspace-evidence-preview.js';
+import { WorkspaceReads } from './workspace-reads.js';
 import {
   parseReviewWorkspaceHashState,
   type ReviewWorkspaceTab,
   writeReviewWorkspaceHashState,
 } from './workspace-url-state.js';
 
+const UNRECORDED_REVIEW =
+  'The reviewed revision was not recorded. Source for this review is unavailable.';
+
 @customElement('review-workspace')
 export class ReviewWorkspace extends ReviewWorkspaceState {
   readonly _queries = new ReviewWorkspaceQueries(this);
+  // Live slot sources are shared observations. Review-gate slots may drop currentRunId after
+  // handoff, so these reads stay unpinned like their former requests; commands check the slot.
+  private readonly _reads = new WorkspaceReads(this);
   private _commandRequest?: object;
   private _recoveryRequest?: object;
   private _restoreReviewSource = false;
@@ -105,6 +113,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   _retireReviewScope(): void {
     this._commandRequest = undefined;
+    this._reads.clear();
     this._recoveryRequest = undefined;
     this._posting = false;
     this._refreshing = false;
@@ -480,9 +489,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       if (this.slotId && this.branch && !this._payload?.reviewSnapshot?.headSha) {
         let currentBranch = opts.forceRefreshSlotBranch ? '' : this.slotBranch;
         if (!currentBranch) {
-          const status = await gateway.request<{ branch: string }>(Methods.GIT_STATUS, {
-            slotId: this.slotId,
-          });
+          const status = await this._reads.read<GitStatusResult>(
+            Methods.GIT_STATUS,
+            { slotId: this.slotId },
+            (next) => this._slotStatusChanged(next.branch),
+          );
           if (!current()) return;
           currentBranch = status.branch;
         }
@@ -498,14 +509,22 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         }
       }
 
-      const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
-        ...committedReviewBranchDiffRequest(
-          this.slotId,
-          this._baseRef,
-          this._payload?.reviewSnapshot,
-        ),
-        ...(this.workspaceView ? { runId: this.runId } : {}),
-      });
+      this._reads.releaseMethods([Methods.GIT_BRANCH_DIFF]);
+      const result = this.workspaceView
+        ? await this._readSavedRange<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF)
+        : await this._reads.read<GitBranchDiffResult>(
+            Methods.GIT_BRANCH_DIFF,
+            committedReviewBranchDiffRequest(
+              this.slotId,
+              this._baseRef,
+              this._payload?.reviewSnapshot,
+            ),
+            (next) => {
+              if (!current()) return;
+              this._diffFiles = next.files;
+              this._diffTestPatterns = next.testFilePatterns ?? null;
+            },
+          );
       if (!current()) return;
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
@@ -547,6 +566,36 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         `[review-workspace] branchDiff ${(performance.now() - t0).toFixed(0)}ms (files=${this._diffFiles.length})`,
       );
     }
+  }
+
+  /** Saved review workspaces read only their frozen commits; the gateway refuses any other range. */
+  private _readSavedRange<T>(
+    method: typeof Methods.GIT_BRANCH_DIFF | typeof Methods.GIT_DIFF,
+    path = '',
+  ): Promise<T> {
+    const runId = this.runId;
+    const base = this._payload?.reviewSnapshot?.baseSha ?? '';
+    const head = this._payload?.reviewSnapshot?.headSha ?? '';
+    if (!runId || !base || !head) throw new Error(UNRECORDED_REVIEW);
+    return gateway.request<T>(
+      method,
+      path
+        ? { slotId: '', runId, base, head, path, target: 'head' }
+        : { slotId: '', runId, base, head },
+    );
+  }
+
+  private _readSavedSource(ref: string, path: string): Promise<GitShowResult> {
+    const runId = this.runId;
+    if (!runId || !ref || !path) throw new Error(UNRECORDED_REVIEW);
+    return gateway.request<GitShowResult>(Methods.GIT_SHOW, { slotId: '', runId, ref, path });
+  }
+
+  /** A newer slot status settles a branch mismatch, including after a checkout. */
+  private _slotStatusChanged(branch: string) {
+    this._slotBranch = branch;
+    if (this._branchMismatch && (branch === this.branch || branch.endsWith(this.branch)))
+      void this._loadBranchDiff();
   }
 
   private async _checkoutBranch() {
@@ -610,17 +659,24 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     if (syncHash) this._syncSourceToHash();
     this._fileDiffLoading = true;
     this._fileDiff = '';
+    const current = () => captured.current() && epoch === this._sourceLoadEpoch;
+    this._reads.releaseMethods([Methods.GIT_DIFF]);
     try {
-      const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
-        ...committedReviewFileDiffRequest(
-          this.slotId,
-          path,
-          this._baseRef,
-          this._payload?.reviewSnapshot,
-        ),
-        ...(this.workspaceView ? { runId: this.runId } : {}),
-      });
-      if (captured.current() && epoch === this._sourceLoadEpoch) this._fileDiff = result.diff;
+      const result = this.workspaceView
+        ? await this._readSavedRange<GitDiffResult>(Methods.GIT_DIFF, path)
+        : await this._reads.read<GitDiffResult>(
+            Methods.GIT_DIFF,
+            committedReviewFileDiffRequest(
+              this.slotId,
+              path,
+              this._baseRef,
+              this._payload?.reviewSnapshot,
+            ),
+            (next) => {
+              if (current()) this._fileDiff = next.diff;
+            },
+          );
+      if (current()) this._fileDiff = result.diff;
     } catch (err) {
       if (captured.current() && epoch === this._sourceLoadEpoch) {
         this._fileDiff = '';
@@ -1228,13 +1284,16 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._commentFileLoading = false;
       return;
     }
+    this._reads.releaseMethods([Methods.GIT_SHOW]);
     try {
-      const result = await gateway.request<GitShowResult>(Methods.GIT_SHOW, {
-        slotId: this.slotId,
-        ...(this.workspaceView ? { runId: this.runId } : {}),
-        ref: reviewedHead,
-        path: c.path,
-      });
+      const result = this.workspaceView
+        ? await this._readSavedSource(reviewedHead, c.path)
+        : // The reviewed head is immutable; later workspace notices carry the same content.
+          await this._reads.read<GitShowResult>(
+            Methods.GIT_SHOW,
+            { slotId: this.slotId, ref: reviewedHead, path: c.path },
+            () => {},
+          );
       if (!captured.current() || epoch !== this._sourceLoadEpoch) return;
       this._commentFileContent = result.content;
       const context = reviewedFindingContext(result.content, c.line);

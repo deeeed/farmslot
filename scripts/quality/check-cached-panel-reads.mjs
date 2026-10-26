@@ -120,6 +120,7 @@ export function readCachedMethods(repoRoot = defaultRoot) {
   }
   const registry = parse(path.join(repoRoot, 'packages/protocol/src/client-cache/registry.ts'));
   const cached = new Set();
+  const workspaceMethods = new Set();
   for (const property of objectVariable(registry, 'RESOURCE_QUERY_DEFINITIONS').properties) {
     if (!ts.isPropertyAssignment(property))
       throw new Error('Cached query registration must remain closed');
@@ -132,6 +133,17 @@ export function readCachedMethods(repoRoot = defaultRoot) {
     )
       throw new Error(`Unresolved cached method: ${key.getText(registry)}`);
     cached.add(methods.get(key.expression.name.text));
+    const definition = unwrap(property.initializer);
+    if (
+      (ts.isIdentifier(definition) && definition.text === 'workspaceDefinition') ||
+      (ts.isObjectLiteralExpression(definition) &&
+        definition.properties.some(
+          (entry) =>
+            ts.isSpreadAssignment(entry) &&
+            entry.expression.getText(registry) === 'workspaceDefinition',
+        ))
+    )
+      workspaceMethods.add(methods.get(key.expression.name.text));
   }
   if (!cached.size) throw new Error('Cached query registry is empty');
   const imperative = new Map();
@@ -148,7 +160,7 @@ export function readCachedMethods(repoRoot = defaultRoot) {
       throw new Error(`Imperative contract changed: ${relative} ${name}.${flag}`);
     imperative.set(methods.get(constant), flag);
   }
-  return { cached, methods, imperative };
+  return { cached, methods, imperative, workspaceMethods };
 }
 
 export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) {
@@ -163,7 +175,7 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
     .map((file) => path.resolve(repoRoot, file))
     .filter((file) => !ignored(file))
     .sort();
-  const { cached, methods, imperative } = readCachedMethods(repoRoot);
+  const { cached, methods, imperative, workspaceMethods } = readCachedMethods(repoRoot);
   const program = ts.createProgram({
     rootNames: inputs,
     options: {
@@ -188,9 +200,19 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
   const checker = program.getTypeChecker();
   const findings = new Map();
   const unresolved = new Map();
+  const classified = new Map();
+  const imperativeCalls = new Map();
   const modified = new Set();
+  const modifiedProperties = new Set();
   const symbol = (node) => {
-    let result = node && checker.getSymbolAtLocation(node);
+    const shorthand =
+      node?.parent && ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+        ? node.parent
+        : undefined;
+    // A shorthand property's own symbol differs from the local value that flow facts bind.
+    let result = shorthand
+      ? checker.getShorthandAssignmentValueSymbol(shorthand)
+      : node && checker.getSymbolAtLocation(node);
     if (result?.flags & ts.SymbolFlags.Alias) result = checker.getAliasedSymbol(result);
     return result;
   };
@@ -205,17 +227,26 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
       node = unwrap(node.expression);
     return ts.isIdentifier(node) ? symbol(node) : undefined;
   };
-  for (const file of inputs) {
-    const source = program.getSourceFile(file);
-    if (!source) throw new Error(`TypeScript did not include ${file}`);
-    if (source.parseDiagnostics.length) throw new Error(`Cannot parse ${file}`);
+  for (const file of inputs)
+    if (!program.getSourceFile(file)) throw new Error(`TypeScript did not include ${file}`);
+  for (const source of program.getSourceFiles()) {
+    if (
+      source.isDeclarationFile ||
+      relative(source.fileName).startsWith('../') ||
+      source.fileName.includes('/node_modules/')
+    )
+      continue;
+    if (source.parseDiagnostics.length) throw new Error(`Cannot parse ${source.fileName}`);
     each(source, (node) => {
       if (
         ts.isBinaryExpression(node) &&
         node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
         node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-      )
+      ) {
         modified.add(rootSymbol(node.left));
+        const left = unwrap(node.left);
+        if (ts.isPropertyAccessExpression(left)) modifiedProperties.add(symbol(left.name));
+      }
       if (
         (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
         [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator)
@@ -235,6 +266,32 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
     };
     return values(checker.getTypeAtLocation(node));
   }
+  // Member reads must not expand unrelated, repeatedly shared object subtrees.
+  class Fields extends Map {
+    get(key) {
+      const value = super.get(key);
+      if (typeof value !== 'function') return value;
+      const evaluated = value();
+      super.set(key, evaluated);
+      return evaluated;
+    }
+  }
+  // The closed enum was already validated above; identify its symbol, including import aliases.
+  const registrySource = program.getSourceFile(
+    path.join(repoRoot, 'packages/protocol/src/rpc/registry.ts'),
+  );
+  const registryDeclaration = registrySource?.statements
+    .filter(ts.isVariableStatement)
+    .flatMap((statement) => [...statement.declarationList.declarations])
+    .find(
+      (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'Methods',
+    );
+  const registryReference = registryDeclaration && symbol(registryDeclaration.name);
+  const registryValue = {
+    fields: new Map([...methods].map(([name, method]) => [name, [method]])),
+    open: false,
+    identity: registryReference,
+  };
   function member(values, keys) {
     return values.flatMap((value) =>
       keys.flatMap((key) => {
@@ -243,9 +300,131 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
       }),
     );
   }
+  function key(node) {
+    node = unwrap(node);
+    if (!node) return undefined;
+    if (ts.isIdentifier(node)) return symbol(node);
+    if (ts.isPropertyAccessExpression(node) && node.expression.kind === ts.SyntaxKind.ThisKeyword)
+      return symbol(node.name);
+    return undefined;
+  }
+  function truth(value) {
+    if (value === unknown) return undefined;
+    if (value?.notReceiver) return undefined;
+    if (value?.stringConstraint) return value.nonempty ? true : undefined;
+    return Boolean(value);
+  }
+  function assume(node, positive, bindings) {
+    node = unwrap(node);
+    const result = new Map(bindings);
+    if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken)
+      return assume(node.operand, !positive, result);
+    const reference = key(node);
+    if (reference) {
+      const current = evaluate(node, bindings);
+      if (!current.includes(unknown))
+        result.set(
+          reference,
+          current.filter((value) => truth(value) === undefined || truth(value) === positive),
+        );
+      const type = checker.getTypeAtLocation(node);
+      if (type.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral))
+        result.set(reference, positive ? [{ stringConstraint: true, nonempty: true }] : ['']);
+      else if (
+        type.flags &
+        (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral | ts.TypeFlags.Union)
+      ) {
+        const parts = type.isUnion() ? type.types : [type];
+        if (
+          parts.every((entry) => entry.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral))
+        )
+          result.set(reference, [positive]);
+      }
+    }
+    if (ts.isBinaryExpression(node)) {
+      const operator = node.operatorToken.kind;
+      if (
+        [
+          ts.SyntaxKind.EqualsEqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ].includes(operator)
+      ) {
+        const equal = positive === (operator === ts.SyntaxKind.EqualsEqualsEqualsToken);
+        const left = evaluate(node.left, bindings),
+          right = evaluate(node.right, bindings);
+        const leftKey = key(node.left),
+          rightKey = key(node.right);
+        if (equal && right.length === 1 && right[0] !== unknown && leftKey)
+          result.set(leftKey, right);
+        else if (equal && left.length === 1 && left[0] !== unknown && rightKey)
+          result.set(rightKey, left);
+        else if (!equal) {
+          if (right.length === 1 && right[0] === '' && leftKey)
+            result.set(leftKey, [{ stringConstraint: true, nonempty: true }]);
+          if (left.length === 1 && left[0] === '' && rightKey)
+            result.set(rightKey, [{ stringConstraint: true, nonempty: true }]);
+          if (right.length === 1 && right[0]?.identity && leftKey)
+            result.set(leftKey, [{ notReceiver: right[0].identity }]);
+          if (left.length === 1 && left[0]?.identity && rightKey)
+            result.set(rightKey, [{ notReceiver: left[0].identity }]);
+        }
+      }
+      if (
+        (operator === ts.SyntaxKind.AmpersandAmpersandToken && positive) ||
+        (operator === ts.SyntaxKind.BarBarToken && !positive)
+      )
+        return assume(node.right, positive, assume(node.left, positive, result));
+    }
+    if (
+      positive &&
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'startsWith' &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteralLike(node.arguments[0]) &&
+      node.arguments[0].text === '/'
+    ) {
+      const reference = key(node.expression.expression);
+      if (reference)
+        result.set(reference, [{ stringConstraint: true, nonempty: true, absolute: true }]);
+    }
+    return result;
+  }
+  function returns(fn) {
+    if (!ts.isBlock(fn.body)) return [fn.body];
+    const result = [];
+    const visit = (node) => {
+      if (functionNode(node) && node !== fn) return;
+      if (ts.isReturnStatement(node)) result.push(node.expression);
+      else ts.forEachChild(node, visit);
+    };
+    visit(fn.body);
+    return result;
+  }
+  function invocation(fn, args, bindings) {
+    const next = new Map(bindings);
+    fn.parameters.forEach((parameter, index) =>
+      bindParameter(
+        parameter.name,
+        evaluate(args[index] ?? parameter.initializer, bindings),
+        next,
+        bindings,
+      ),
+    );
+    return next;
+  }
   function evaluate(node, bindings, seen = new Set()) {
+    const alternatives = evaluateValue(node, bindings, seen);
+    return alternatives.length > 1 ? [...new Set(alternatives)] : alternatives;
+  }
+  function evaluateValue(node, bindings, seen) {
     node = unwrap(node);
     if (!node) return [undefined];
+    if (seen.size > 24) return typed(node);
+    const bound = key(node);
+    if (bound && bindings.has(bound)) return bindings.get(bound);
+    if (node.kind === ts.SyntaxKind.ThisKeyword) return bindings.get('this') ?? [unknown];
+    if (functionNode(node)) return [{ function: node }];
     if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node))
       return [ts.isNumericLiteral(node) ? Number(node.text) : node.text];
     if (node.kind === ts.SyntaxKind.TrueKeyword) return [true];
@@ -254,18 +433,22 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
     if (ts.isIdentifier(node) && node.text === 'undefined') return [undefined];
     if (ts.isConditionalExpression(node)) {
       const condition = evaluate(node.condition, bindings, seen);
-      if (condition.length === 1 && condition[0] !== unknown)
-        return evaluate(condition[0] ? node.whenTrue : node.whenFalse, bindings, seen);
+      if (condition.length === 1 && truth(condition[0]) !== undefined)
+        return evaluate(truth(condition[0]) ? node.whenTrue : node.whenFalse, bindings, seen);
       return [
-        ...evaluate(node.whenTrue, bindings, seen),
-        ...evaluate(node.whenFalse, bindings, seen),
+        ...evaluate(node.whenTrue, assume(node.condition, true, bindings), seen),
+        ...evaluate(node.whenFalse, assume(node.condition, false, bindings), seen),
       ];
     }
     if (ts.isIdentifier(node)) {
       const reference = symbol(node);
       if (bindings.has(reference)) return bindings.get(reference);
+      if (registryReference && reference === registryReference && !modified.has(registryReference))
+        return [registryValue];
       if (!reference || seen.has(reference)) return [unknown];
       const next = new Set([...seen, reference]);
+      const functions = callable(node);
+      if (functions.length) return functions.map((fn) => ({ function: fn }));
       if (!modified.has(reference))
         for (const declaration of reference.declarations ?? []) {
           if (
@@ -273,7 +456,11 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
             declaration.initializer &&
             declaration.parent.flags & ts.NodeFlags.Const
           )
-            return evaluate(declaration.initializer, bindings, next);
+            return evaluate(declaration.initializer, bindings, next).map((value) =>
+              value && typeof value === 'object' && !value.stringConstraint && !value.identity
+                ? { ...value, identity: reference }
+                : value,
+            );
           if (ts.isBindingElement(declaration) && ts.isObjectBindingPattern(declaration.parent)) {
             const variable = declaration.parent.parent;
             if (
@@ -289,7 +476,7 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
       return typed(node);
     }
     if (ts.isObjectLiteralExpression(node)) {
-      const object = { fields: new Map(), open: false };
+      const object = { fields: new Fields(), open: false };
       for (const property of node.properties) {
         if (ts.isSpreadAssignment(property)) {
           const spread = evaluate(property.expression, bindings, seen);
@@ -299,6 +486,8 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
             object.open = true;
             for (const key of object.fields.keys()) object.fields.set(key, [unknown]);
           }
+        } else if (ts.isMethodDeclaration(property)) {
+          object.fields.set(property.name.text, [{ function: property }]);
         } else if (
           ts.isPropertyAssignment(property) ||
           ts.isShorthandPropertyAssignment(property)
@@ -306,11 +495,12 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
           const keys = ts.isComputedPropertyName(property.name)
             ? evaluate(property.name.expression, bindings, seen)
             : [property.name.text];
-          const value = evaluate(
-            ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer,
-            bindings,
-            seen,
-          );
+          const value = () =>
+            evaluate(
+              ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer,
+              bindings,
+              seen,
+            );
           if (keys.length === 1 && keys[0] !== unknown) object.fields.set(String(keys[0]), value);
           else object.open = true;
         }
@@ -320,10 +510,10 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
     if (ts.isArrayLiteralExpression(node))
       return [
         {
-          fields: new Map(
+          fields: new Fields(
             node.elements.map((element, index) => [
               String(index),
-              ts.isSpreadElement(element) ? [unknown] : evaluate(element, bindings, seen),
+              ts.isSpreadElement(element) ? [unknown] : () => evaluate(element, bindings, seen),
             ]),
           ),
           open: node.elements.some(ts.isSpreadElement),
@@ -334,7 +524,78 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
         ? [node.name.text]
         : evaluate(node.argumentExpression, bindings, seen);
       const result = member(evaluate(node.expression, bindings, seen), keys);
+      if (
+        result.every((value) => value === unknown) &&
+        node.expression.kind === ts.SyntaxKind.ThisKeyword &&
+        ts.isPropertyAccessExpression(node)
+      ) {
+        const declaration = symbol(node.name)?.valueDeclaration;
+        const modifiers =
+          declaration && ts.canHaveModifiers(declaration)
+            ? (ts.getModifiers(declaration) ?? [])
+            : [];
+        if (
+          declaration?.initializer &&
+          !modifiedProperties.has(symbol(node.name)) &&
+          modifiers.some((modifier) =>
+            [ts.SyntaxKind.PrivateKeyword, ts.SyntaxKind.ReadonlyKeyword].includes(modifier.kind),
+          ) &&
+          !seen.has(declaration)
+        )
+          return evaluate(declaration.initializer, bindings, new Set([...seen, declaration]));
+      }
       return result.every((value) => value === unknown) ? typed(node) : result;
+    }
+    if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken)
+      return evaluate(node.operand, bindings, seen).map((value) =>
+        truth(value) === undefined ? unknown : !truth(value),
+      );
+    if (
+      ts.isBinaryExpression(node) &&
+      [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(
+        node.operatorToken.kind,
+      )
+    ) {
+      const rightValues = evaluate(node.right, bindings, seen);
+      return evaluate(node.left, bindings, seen).flatMap((left) =>
+        rightValues.map((right) =>
+          left === unknown ||
+          right === unknown ||
+          left?.stringConstraint ||
+          right?.stringConstraint ||
+          left?.notReceiver ||
+          right?.notReceiver
+            ? unknown
+            : (typeof left === 'object' && left !== null) ||
+                (typeof right === 'object' && right !== null)
+              ? left?.identity && right?.identity && left.identity === right.identity
+                ? node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+                : unknown
+              : node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+                ? left === right
+                : left !== right,
+        ),
+      );
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      [
+        ts.SyntaxKind.QuestionQuestionToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.AmpersandAmpersandToken,
+      ].includes(node.operatorToken.kind)
+    ) {
+      let rightValues;
+      return evaluate(node.left, bindings, seen).flatMap((left) => {
+        const fallback = () => (rightValues ??= evaluate(node.right, bindings, seen));
+        if (left === unknown) return [unknown, ...fallback()];
+        if (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
+          return left == null ? fallback() : [left];
+        if (truth(left) === undefined) return [left, ...fallback()];
+        return truth(left) === (node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken)
+          ? fallback()
+          : [left];
+      });
     }
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
       const left = evaluate(node.left, bindings, seen),
@@ -353,6 +614,44 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
       node.expression.getText() === 'Object.freeze'
     )
       return evaluate(node.arguments[0], bindings, seen);
+    if (ts.isNewExpression(node)) {
+      const declaration = symbol(node.expression)?.valueDeclaration;
+      if (declaration && ts.isClassDeclaration(declaration)) {
+        const constructor = declaration.members.find(ts.isConstructorDeclaration);
+        const fields = new Map();
+        constructor?.parameters.forEach((parameter, index) => {
+          if (ts.isIdentifier(parameter.name) && ts.getModifiers(parameter)?.length)
+            fields.set(
+              parameter.name.text,
+              evaluate(node.arguments?.[index] ?? parameter.initializer, bindings, seen),
+            );
+        });
+        return [{ instance: declaration, fields, open: true }];
+      }
+    }
+    if (ts.isCallExpression(node)) {
+      const reference = checker.getSymbolAtLocation(node.expression);
+      if (
+        reference?.declarations?.some(
+          (entry) =>
+            ts.isImportSpecifier(entry) &&
+            (entry.propertyName ?? entry.name).text === 'useMemo' &&
+            entry.parent.parent.parent.moduleSpecifier?.text === 'react',
+        )
+      ) {
+        const factory = unwrap(node.arguments[0]);
+        if (functionNode(factory))
+          return returns(factory).flatMap((expression) => evaluate(expression, bindings, seen));
+      }
+      const functions = callable(node.expression).filter((fn) => fn.body && !seen.has(fn));
+      if (functions.length)
+        return functions.flatMap((fn) => {
+          const next = invocation(fn, node.arguments, bindings);
+          return returns(fn).flatMap((expression) =>
+            evaluate(expression, next, new Set([...seen, fn])),
+          );
+        });
+    }
     return typed(node);
   }
   function callable(node, seen = new Set()) {
@@ -460,6 +759,76 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
       )
     );
   }
+  function excludedVariant(method, parameters) {
+    if (!parameters.length) return undefined;
+    const field = (value, name) => value?.fields?.get(name);
+    const nonempty = (values) =>
+      values?.length &&
+      values.every(
+        (value) =>
+          (typeof value === 'string' && value.length > 0) ||
+          (value?.stringConstraint && value.nonempty),
+      );
+    if (
+      method === methods.get('ROADMAP_LIST') &&
+      parameters.every((value) => nonempty(field(value, 'search')))
+    )
+      return 'Nonempty roadmap search is excluded by roadmapListObservationParams';
+    if (workspaceMethods.has(method)) {
+      if (
+        method === methods.get('FS_READ') &&
+        parameters.every(
+          (value) =>
+            value?.fields?.has('slotId') &&
+            field(value, 'path')?.every((entry) =>
+              typeof entry === 'string'
+                ? entry.startsWith('/')
+                : entry?.stringConstraint && entry.absolute,
+            ),
+        )
+      )
+        return 'Absolute artifact path is outside registered workspace observations';
+      const frozenFields =
+        method === methods.get('GIT_SHOW')
+          ? ['ref', 'path']
+          : [methods.get('GIT_DIFF'), methods.get('GIT_BRANCH_DIFF')].includes(method)
+            ? ['base', 'head']
+            : undefined;
+      if (
+        frozenFields &&
+        parameters.every(
+          (value) =>
+            value?.fields &&
+            !value.open &&
+            field(value, 'slotId')?.length === 1 &&
+            field(value, 'slotId')[0] === '' &&
+            nonempty(field(value, 'runId')) &&
+            !value.fields.has('sessionId') &&
+            frozenFields.every((name) => nonempty(field(value, name))),
+        )
+      )
+        return 'Frozen run-only legacy source is outside registered workspace selectors';
+    }
+    return undefined;
+  }
+  function workerOperation(call) {
+    const signature = checker.getResolvedSignature(call);
+    const parameter = signature?.parameters[0];
+    if (!parameter) return false;
+    const type = checker.getTypeOfSymbolAtLocation(parameter, call);
+    const parts = type.isUnion() ? type.types : [type];
+    return (
+      parts.length > 0 &&
+      parts.every((part) => {
+        const operation = part.getProperty('operation');
+        if (!operation || part.getProperty('method') || part.flags & ts.TypeFlags.StringLike)
+          return false;
+        const discriminator = checker.getTypeOfSymbolAtLocation(operation, call);
+        const alternatives = discriminator.isUnion() ? discriminator.types : [discriminator];
+        return alternatives.every((entry) => entry.flags & ts.TypeFlags.StringLiteral);
+      })
+    );
+  }
   function bindParameter(name, values, bindings, callerBindings) {
     if (ts.isIdentifier(name)) {
       bindings.set(symbol(name), values);
@@ -476,50 +845,205 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
       bindParameter(element.name, selected, bindings, callerBindings);
     }
   }
+  // Follow helpers that can reach transport calls; pure rendering/model helpers cannot add findings.
+  const functions = new Set();
+  for (const source of program.getSourceFiles()) {
+    if (
+      source.isDeclarationFile ||
+      relative(source.fileName).startsWith('../') ||
+      source.fileName.includes('/node_modules/') ||
+      ignored(source.fileName)
+    )
+      continue;
+    each(source, (node) => {
+      if (functionNode(node) && node.body) functions.add(node);
+    });
+  }
+  // TypeScript bounds every caller's value, so a closed union of uncached method types is a
+  // command whatever the bindings; open, generic or cached-including types stay possible reads.
+  function typedCommand(call) {
+    const args = requestArguments(call.expression, [...call.arguments]);
+    return Boolean(
+      args?.length && typed(args[0]).every((name) => typeof name === 'string' && !cached.has(name)),
+    );
+  }
+  const transportFunctions = new Set();
+  // Helpers that can reach a transport call whose method is not a typed command.
+  const readCapable = new Set();
+  const dependents = new Map();
+  for (const fn of functions)
+    each(fn.body, (node) => {
+      if (!ts.isCallExpression(node)) return;
+      if (sink(node.expression)) {
+        transportFunctions.add(fn);
+        if (!typedCommand(node)) readCapable.add(fn);
+      }
+      for (const target of callable(node.expression)) {
+        if (!functions.has(target)) continue;
+        if (!dependents.has(target)) dependents.set(target, new Set());
+        dependents.get(target).add(fn);
+      }
+    });
+  for (const reached of [transportFunctions, readCapable]) {
+    const pendingFunctions = [...reached];
+    while (pendingFunctions.length) {
+      const target = pendingFunctions.pop();
+      for (const caller of dependents.get(target) ?? [])
+        if (!reached.has(caller)) {
+          reached.add(caller);
+          pendingFunctions.push(caller);
+        }
+    }
+  }
   function inspect(call, bindings, origin, chain) {
     if (sink(call.expression)) {
       const args = requestArguments(call.expression, [...call.arguments]);
       const names = args ? evaluate(args[0], bindings) : [unknown];
       const parameters = args ? evaluate(args[1], bindings) : [unknown];
       const here = position(origin);
-      if (names.includes(unknown))
+      const implementations = evaluate(call.expression, bindings).filter(
+        (value) =>
+          value?.function &&
+          value.function.body &&
+          !ignored(value.function.getSourceFile().fileName) &&
+          !chain.has(value.function),
+      );
+      if (implementations.length) {
+        for (const value of implementations) {
+          const fn = value.function;
+          walk(
+            fn.body,
+            invocation(fn, args ?? call.arguments, bindings),
+            origin,
+            new Set([...chain, fn]),
+          );
+        }
+        classified.set(`${here.file}:${here.line}:${here.column}:implementation`, {
+          ...here,
+          transport: position(call),
+          reason: 'Concrete request implementation analyzed instead of assuming gateway transport',
+        });
+        return;
+      }
+      if (workerOperation(call)) {
+        classified.set(`${here.file}:${here.line}:${here.column}:worker`, {
+          ...here,
+          transport: position(call),
+          reason: 'Object-discriminated worker operation, not a gateway method parameter',
+        });
+        return;
+      }
+      if (names.some((name) => name === unknown || name?.stringConstraint))
         unresolved.set(`${here.file}:${here.line}:${here.column}`, {
           ...here,
           transport: position(call),
         });
       for (const method of new Set(names.filter((name) => cached.has(name)))) {
-        if (command(method, parameters)) continue;
+        const exclusion = excludedVariant(method, parameters);
+        if (exclusion || command(method, parameters)) {
+          classified.set(`${here.file}:${here.line}:${here.column}:${method}`, {
+            ...here,
+            method,
+            transport: position(call),
+            reason: exclusion ?? 'Parameter-proven imperative variant',
+          });
+          continue;
+        }
         findings.set(`${here.file}:${here.line}:${here.column}:${method}`, {
           ...here,
           method,
           transport: position(call),
           message: `Use the shared resource cache for ${method}`,
+          receiverConstraints: [...bindings.entries()].flatMap(([reference, values]) => {
+            if (reference?.name === 'api' && values.some((value) => value?.notReceiver))
+              return [
+                'Alternate API differs from the singleton gateway; concrete transport remains unsealed',
+              ];
+            if (reference?.name === 'fixture' && values.length === 1 && values[0] === true)
+              return ['Fixture flag is true; this does not prove a non-gateway receiver'];
+            return [];
+          }),
         });
       }
+      const commands = names.filter((name) => typeof name === 'string' && !cached.has(name));
+      if (commands.length && !names.some((name) => name === unknown || name?.stringConstraint))
+        imperativeCalls.set(`${here.file}:${here.line}:${here.column}`, {
+          ...here,
+          transport: position(call),
+          methods: [...new Set(commands)].sort(),
+        });
       return;
     }
     for (const fn of callable(call.expression)) {
-      if (!fn.body || ignored(fn.getSourceFile().fileName) || chain.has(fn) || chain.size >= 12)
+      if (
+        !fn.body ||
+        !transportFunctions.has(fn) ||
+        ignored(fn.getSourceFile().fileName) ||
+        chain.has(fn)
+      )
         continue;
-      const next = new Map(bindings);
-      fn.parameters.forEach((parameter, index) => {
-        const argument = call.arguments[index] ?? parameter.initializer;
-        bindParameter(parameter.name, evaluate(argument, bindings), next, bindings);
-      });
+      if (chain.size >= 12) {
+        // The bound stays fail-closed only where a deeper call could still reach a read.
+        if (!readCapable.has(fn)) continue;
+        const here = position(origin);
+        unresolved.set(`${here.file}:${here.line}:${here.column}`, {
+          ...here,
+          transport: position(call),
+          reason: 'Transport helper traversal exceeded its depth bound',
+        });
+        continue;
+      }
+      const next = invocation(fn, call.arguments, bindings);
+      if (ts.isPropertyAccessExpression(call.expression) && !ts.isArrowFunction(fn))
+        next.set('this', evaluate(call.expression.expression, bindings));
       walk(fn.body, next, origin, new Set([...chain, fn]));
     }
   }
   function walk(node, bindings, origin, chain) {
+    if (functionNode(node) && node.body && !transportFunctions.has(node)) return false;
+    if (ts.isBlock(node) || ts.isSourceFile(node)) {
+      let current = bindings;
+      for (const statement of node.statements) {
+        if (walk(statement, current, origin, chain)) return true;
+        if (ts.isIfStatement(statement)) {
+          if (terminates(statement.thenStatement))
+            current = assume(statement.expression, false, current);
+          else if (statement.elseStatement && terminates(statement.elseStatement))
+            current = assume(statement.expression, true, current);
+        }
+      }
+      return false;
+    }
     if (ts.isIfStatement(node)) {
       const condition = evaluate(node.expression, bindings);
-      if (condition.length === 1 && condition[0] !== unknown) {
-        const branch = condition[0] ? node.thenStatement : node.elseStatement;
-        if (branch) walk(branch, bindings, origin, chain);
-        return;
+      if (condition.length === 1 && truth(condition[0]) !== undefined) {
+        const branch = truth(condition[0]) ? node.thenStatement : node.elseStatement;
+        return branch
+          ? walk(branch, assume(node.expression, truth(condition[0]), bindings), origin, chain)
+          : false;
       }
+      walk(node.expression, bindings, origin, chain);
+      const yes = walk(node.thenStatement, assume(node.expression, true, bindings), origin, chain);
+      const no = node.elseStatement
+        ? walk(node.elseStatement, assume(node.expression, false, bindings), origin, chain)
+        : false;
+      return yes && no;
     }
     if (ts.isCallExpression(node)) inspect(node, bindings, origin ?? node, chain);
-    ts.forEachChild(node, (child) => walk(child, bindings, origin, chain));
+    ts.forEachChild(node, (child) => {
+      walk(child, bindings, origin, chain);
+    });
+    return ts.isReturnStatement(node) || ts.isThrowStatement(node);
+  }
+  function terminates(node) {
+    if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) return true;
+    if (ts.isBlock(node)) return node.statements.some(terminates);
+    return (
+      ts.isIfStatement(node) &&
+      node.elseStatement &&
+      terminates(node.thenStatement) &&
+      terminates(node.elseStatement)
+    );
   }
   for (const file of inputs) walk(program.getSourceFile(file), new Map(), undefined, new Set());
   return {
@@ -533,6 +1057,8 @@ export function analyzeCachedPanelReads({ repoRoot = defaultRoot, files } = {}) 
         a.method.localeCompare(b.method),
     ),
     unresolvedTransports: [...unresolved.values()],
+    classifiedTransports: [...classified.values()],
+    imperativeTransports: [...imperativeCalls.values()],
   };
 }
 
@@ -553,5 +1079,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       `Cached panel reads: ${result.findings.length} violation(s), ${result.scannedFiles} files, ${result.registeredMethods.length} registered methods; ${result.unresolvedTransports.length} unresolved transport call(s).`,
     );
   }
-  if (result.findings.length) process.exitCode = 1;
+  if (result.findings.length || result.unresolvedTransports.length) process.exitCode = 1;
 }

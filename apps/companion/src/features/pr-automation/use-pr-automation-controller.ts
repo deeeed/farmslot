@@ -22,7 +22,11 @@ import {
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
-import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
+import {
+  type CommandMethod,
+  type ResourceQuery,
+  resourceQuery,
+} from '@farmslot/protocol/client-cache';
 import { type ReviewDispatchViewModel, reviewLineagesForPR } from '@farmslot/review-dispatch';
 
 import { useConfigurationProjects } from '../../hooks/useConfigurationProjects';
@@ -260,7 +264,7 @@ export function usePRAutomationController(
       : [];
   }, [runs, requestDraft.url]);
   const mutate = useCallback(
-    async <T>(method: string, params: unknown): Promise<T | undefined> => {
+    async <T>(method: CommandMethod, params: unknown): Promise<T | undefined> => {
       if (!client || mutation.current || client.connectionState !== 'connected' || !resourcesReady)
         return;
       const cache = getResourceCache();

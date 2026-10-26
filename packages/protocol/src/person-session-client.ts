@@ -24,10 +24,17 @@ export interface InteractiveGatewayCredentials {
   personSessionRequired?: boolean;
 }
 
+/** The device sign-in commands; none is a cached resource read. */
+export type PersonSessionMethod =
+  | typeof Methods.AUTH_SESSION_EXCHANGE
+  | typeof Methods.AUTH_SESSION_REFRESH
+  | typeof Methods.AUTH_SESSION_LIST
+  | typeof Methods.AUTH_SESSION_REVOKE;
+
 export interface PersonSessionClientOptions {
   storage: PersonSessionStorage;
   /** The optional access token authenticates this request, never the refresh token. */
-  request(method: string, params: unknown, accessToken?: string): Promise<unknown>;
+  request(method: PersonSessionMethod, params: unknown, accessToken?: string): Promise<unknown>;
   now?: () => number;
   /** Connected clients re-authenticate their socket and update HTTP credentials here. */
   onAccess?: (grant: PersonSessionGrant) => Promise<void>;
@@ -237,7 +244,7 @@ export class PersonSessionClient {
     return result;
   }
 
-  private requestWithAccess(method: string, params: unknown): Promise<unknown> {
+  private requestWithAccess(method: PersonSessionMethod, params: unknown): Promise<unknown> {
     return this.withAccess((accessToken) => this.options.request(method, params, accessToken));
   }
 

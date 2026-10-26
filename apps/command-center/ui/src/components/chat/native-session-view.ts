@@ -13,6 +13,7 @@ import {
   type NativeSessionEvent,
   type NativeSessionInfo,
   type NativeSessionListResult,
+  type NativeSessionReadParams,
   type NativeSessionReadResult,
   type NativeSessionResponse,
   type NativeSessionSendResult,
@@ -71,11 +72,18 @@ type LocalCommand = {
   text: string;
 };
 
+/** Static preview reads that dev harnesses inject in place of the shared resource cache. */
+export interface NativeSessionFixture {
+  catalog(): Promise<NativeSessionCatalogResult>;
+  list(): Promise<NativeSessionListResult>;
+  read(params: NativeSessionReadParams): Promise<NativeSessionReadResult>;
+}
+
 @customElement('native-session-view')
 export class NativeSessionView extends LitElement {
   @property({ attribute: false }) api: NativeSessionApi = gateway;
-  /** Fixture clients are supplied before connection; production always follows gateway authentication. */
-  @property({ type: Boolean }) fixture = false;
+  /** Fixture reads are supplied before connection; production always follows gateway authentication. */
+  @property({ attribute: false }) fixture?: NativeSessionFixture;
   @property({ attribute: false }) worker?: NativeWorkerViewTarget;
   private catalogCurrent = false;
   @state() private catalog?: NativeSessionCatalogResult;
@@ -273,7 +281,7 @@ export class NativeSessionView extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     document.addEventListener('fullscreenchange', this.fullscreenChanged);
-    this.connected = this.fixture || gateway.connectionState === 'connected';
+    this.connected = Boolean(this.fixture) || gateway.connectionState === 'connected';
     if (!this.fixture) {
       this.ownerStop = subscribeResourceCache(() => {
         void this.connect();
@@ -449,10 +457,7 @@ export class NativeSessionView extends LitElement {
     const storageScope = this.storageScope;
     const inventoryRevision = ++this.inventoryRevision;
     try {
-      const [catalog, result] = await Promise.all([
-        this.api.request<NativeSessionCatalogResult>(Methods.NATIVE_SESSION_CATALOG, {}),
-        this.api.request<NativeSessionListResult>(Methods.NATIVE_SESSION_LIST, {}),
-      ]);
+      const [catalog, result] = await Promise.all([this.fixture.catalog(), this.fixture.list()]);
       if (
         !this.isConnected ||
         !this.connected ||
@@ -502,6 +507,8 @@ export class NativeSessionView extends LitElement {
   }
 
   private async poll() {
+    const fixture = this.fixture;
+    if (!fixture) return;
     if (this.polling || !this.selectedId || !this.connected) {
       this.schedule();
       return;
@@ -510,7 +517,7 @@ export class NativeSessionView extends LitElement {
     this.polling = true;
     try {
       for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
-        const page = await this.api.request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, {
+        const page = await fixture.read({
           sessionId: this.selectedId,
           executionNodeId: this.selectedNodeId,
           ...(this.worker ? { worker: nativeWorkerViewPin(this.worker) } : {}),
@@ -723,7 +730,9 @@ export class NativeSessionView extends LitElement {
     }
   }
 
-  private async sessionAction(method: string) {
+  private async sessionAction(
+    method: typeof Methods.NATIVE_SESSION_INTERRUPT | typeof Methods.NATIVE_SESSION_CLOSE,
+  ) {
     if (!this.session || this.busy || !this.connected || !this.inputAllowed) return;
     const revision = this.revision;
     this.busy = true;

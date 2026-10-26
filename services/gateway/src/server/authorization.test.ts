@@ -884,6 +884,19 @@ test('resource capabilities and principal generations reach farm, node and nativ
         versionLists: false,
         observedReads: 1,
         workspaceReads: 1,
+        upstreamObservers: {
+          version: 1,
+          methods: [
+            'gateway.status',
+            'config.githubAccounts',
+            'pr.list',
+            'pr.status',
+            'pr.forSlot',
+            'pr.reviewComments',
+            'runner.modelCatalog',
+            'providerAccounts.snapshot',
+          ],
+        },
       });
       assert.equal(auth.capabilities.batchedContent, false);
       if (subject.access === 'native') {

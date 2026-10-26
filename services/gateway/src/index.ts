@@ -14,7 +14,13 @@ import { createServer as createHttpsServer } from 'node:https';
 import os from 'node:os';
 import { dirname, resolve } from 'node:path';
 
-import { type EvalTrialStartParams, Events, Methods, primaryRoleForFlow } from '@farmslot/protocol';
+import {
+  type EvalTrialStartParams,
+  Events,
+  Methods,
+  primaryRoleForFlow,
+  providerAccountsChangedKeys,
+} from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { setTriagePilotObservationGuard } from './assessment/failure-triage/pilot-evidence.js';
@@ -70,6 +76,10 @@ import {
   startFileWatcher,
   statusFile,
 } from './fleet/state.js';
+import {
+  startGitHubAccountsObservation,
+  wakeGitHubAccountsObservation,
+} from './integrations/github-accounts.js';
 import { loadBindingsCache } from './integrations/github-bindings-cache.js';
 import { initGitHubClient } from './integrations/github-client.js';
 import { initPrLinkage } from './integrations/pr-linkage.js';
@@ -88,6 +98,10 @@ import {
 } from './methods/gateway-status.js';
 import { fetchPRList } from './methods/pr.js';
 import {
+  startPRDetailObservations,
+  wakePRDetailObservations,
+} from './methods/pr/detail-observations.js';
+import {
   loadPRListCache,
   notifyPRListInterest,
   startPRListRefresher,
@@ -95,9 +109,17 @@ import {
 import { initPRPush } from './methods/pr-push.js';
 import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
 import { initPRMonitorDispatch, initPRMonitoring, monitorsSnapshot } from './methods/pr-watch.js';
+import {
+  startProviderAccountsObservation,
+  wakeProviderAccountsObservation,
+} from './methods/provider-accounts.js';
 import { resolveCreateSafetyTier } from './methods/run.js';
 import { resumeBlockedRunWhoseWorkerContinued } from './methods/run/replay-step.js';
 import { startRunRetention } from './methods/run/retention.js';
+import {
+  startRunnerModelCatalogObservation,
+  wakeRunnerModelCatalogObservation,
+} from './methods/runner-models.js';
 import {
   getRuntimeCapabilityRegistry,
   initRuntimeCapabilities,
@@ -106,6 +128,7 @@ import { initRuntimePosture } from './methods/runtime-posture.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
+import { resourceRevisions } from './resources/revisions.js';
 import { upstreamObservers } from './resources/upstream-observers.js';
 import { initReview } from './review/orchestrator.js';
 import { roadmapRoot, setRoadmapObservationGuard } from './roadmap/store.js';
@@ -240,6 +263,10 @@ async function main(): Promise<void> {
   let stopPRListCollection = (): void => {};
   let stopUpstreamInterest = (): void => {};
   let stopGatewayUpdateCollection = async (): Promise<void> => {};
+  let stopGitHubAccountsCollection = async (): Promise<void> => {};
+  let stopPRDetailCollection = async (): Promise<void> => {};
+  let stopRunnerModelCatalogCollection = async (): Promise<void> => {};
+  let stopProviderAccountsCollection = async (): Promise<void> => {};
   let shuttingDown = false;
   const releaseIdentityResources = (): void => {
     stopUpstreamInterest();
@@ -257,7 +284,13 @@ async function main(): Promise<void> {
     stopUpstreamInterest();
     stopPRListCollection();
     try {
-      await stopGatewayUpdateCollection();
+      await Promise.all([
+        stopGatewayUpdateCollection(),
+        stopGitHubAccountsCollection(),
+        stopPRDetailCollection(),
+        stopRunnerModelCatalogCollection(),
+        stopProviderAccountsCollection(),
+      ]);
     } catch (error) {
       console.error('[gateway] Upstream observation shutdown failed:', error);
       code = 1;
@@ -406,10 +439,35 @@ async function main(): Promise<void> {
   stopGatewayUpdateCollection = await startGatewayUpdateObservation({
     hasInterest: () => upstreamObservers.hasInterest(Methods.GATEWAY_STATUS),
   });
+  stopGitHubAccountsCollection = startGitHubAccountsObservation({
+    hasInterest: () => upstreamObservers.hasInterest(Methods.CONFIG_GITHUB_ACCOUNTS),
+  });
+  stopPRDetailCollection = startPRDetailObservations({
+    hasInterest: (method, params) => upstreamObservers.hasInterest(method, params),
+  });
+  stopRunnerModelCatalogCollection = startRunnerModelCatalogObservation({
+    hasInterest: (runner) =>
+      upstreamObservers.hasInterest(Methods.RUNNER_MODEL_CATALOG, { runner }),
+  });
+  stopProviderAccountsCollection = startProviderAccountsObservation({
+    // An omitted machine selector observes every fleet machine, including later joiners.
+    hasInterest: (machine) =>
+      upstreamObservers.activeQueries(Methods.PROVIDER_ACCOUNTS_SNAPSHOT).some(({ params }) => {
+        const machines = (params as { machines?: string[] }).machines;
+        return !machines || machines.includes(machine);
+      }),
+    changed: (machine) => {
+      for (const key of providerAccountsChangedKeys(machine)) resourceRevisions.advance(key);
+    },
+  });
   stopUpstreamInterest = upstreamObservers.subscribe(() => {
     notifyPRListInterest();
     // Expected source failures become retained error observations in the owning integration.
     void wakeGatewayUpdateObservation();
+    void wakeGitHubAccountsObservation();
+    void wakePRDetailObservations();
+    void wakeRunnerModelCatalogObservation();
+    void wakeProviderAccountsObservation();
   });
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();

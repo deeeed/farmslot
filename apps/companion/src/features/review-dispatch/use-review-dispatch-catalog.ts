@@ -1,58 +1,66 @@
-import { useEffect, useReducer, useState } from 'react';
+import { useEffect, useMemo, useReducer, useState, useSyncExternalStore } from 'react';
 
 import {
   Methods,
   type RunnerModelCatalogResult,
   type RunnerVisibleModelsGetResult,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   createReviewDispatchCatalog,
   type ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
 
-import { useConnectionStore } from '../../store/connection';
+import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQuery';
+import { getResourceNativeOwnerId, subscribeResourceCache } from '../../lib/resource-cache';
+import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 
 export function useReviewDispatchCatalog(
   model: ReviewDispatchViewModel,
   onChange?: () => void,
   discover = true,
 ) {
-  const client = useConnectionStore((state) => state.client);
-  const status = useConnectionStore((state) => state.status);
+  const access = useWorkspaceRenderAccess();
+  const owner = useSyncExternalStore(
+    subscribeResourceCache,
+    getResourceNativeOwnerId,
+    getResourceNativeOwnerId,
+  );
   const [, refresh] = useReducer((revision: number) => revision + 1, 0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => model.subscribe(refresh), [model]);
 
+  // Shared observations: gateway notices refresh preferences and catalogs; no per-view reads.
+  const visibleQuery = useMemo(
+    () =>
+      discover && access === 'farm' && owner
+        ? resourceQuery<RunnerVisibleModelsGetResult>(Methods.RUNNER_VISIBLE_MODELS_GET, {}, owner)
+        : undefined,
+    [access, discover, owner],
+  );
+  const visible = useResourceQuery(visibleQuery);
+  const runnerIds = visible.data?.runners.map(({ runner }) => runner).join('\0') ?? '';
+  const catalogQueries = useMemo(
+    () =>
+      (runnerIds ? runnerIds.split('\0') : []).map((runner) =>
+        resourceQuery<RunnerModelCatalogResult>(Methods.RUNNER_MODEL_CATALOG, { runner }),
+      ),
+    [runnerIds],
+  );
+  const catalogs = useResourceQueries(catalogQueries);
+
   useEffect(() => {
-    if (!discover || !client || status !== 'connected') return;
-    let active = true;
-    const generation = client.connectionGeneration;
-    void client
-      .request<RunnerVisibleModelsGetResult>(Methods.RUNNER_VISIBLE_MODELS_GET, {})
-      .then(async (visible) => {
-        const catalogs = await Promise.all(
-          visible.runners.map(({ runner }) =>
-            client.request<RunnerModelCatalogResult>(Methods.RUNNER_MODEL_CATALOG, { runner }),
-          ),
-        );
-        if (!active || generation !== client.connectionGeneration) return;
-        model.setCatalog(
-          createReviewDispatchCatalog({
-            runnerIds: visible.runners.map(({ runner }) => runner),
-            visibleModels: visible.runners,
-            runnerModels: catalogs,
-          }),
-        );
-        setError(null);
-      })
-      .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : String(reason));
-      });
-    return () => {
-      active = false;
-    };
-  }, [client, model, status, discover]);
+    const runners = visible.data?.runners;
+    if (!runners) return;
+    model.setCatalog(
+      createReviewDispatchCatalog({
+        runnerIds: runners.map(({ runner }) => runner),
+        visibleModels: runners,
+        runnerModels: catalogs.flatMap((state) => (state.data ? [state.data] : [])),
+      }),
+    );
+  }, [catalogs, model, visible.data]);
 
   const change = (edit: () => void) => {
     try {
@@ -63,5 +71,7 @@ export function useReviewDispatchCatalog(
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
-  return { error, change };
+  const readError =
+    visible.error?.message ?? catalogs.find((state) => state.error)?.error?.message ?? null;
+  return { error: error ?? readError, change };
 }

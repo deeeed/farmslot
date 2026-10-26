@@ -15,7 +15,11 @@ import {
   nativeProfileReference,
   validateNativeProfileStatus,
 } from '../../lib/native-profile';
-import { getResourceCache, getResourceNativeOwnerId } from '../../lib/resource-cache';
+import {
+  getResourceCache,
+  getResourceNativeOwnerId,
+  getResourceWorkspaceKey,
+} from '../../lib/resource-cache';
 import { useConnectionStore } from '../../store/connection';
 
 import { readNativeProfileSelection } from './native-profile-queries';
@@ -176,11 +180,19 @@ export function useNativeProfileSelection(input: {
         if (!current(key, connectionGeneration, revision.current))
           throw new Error('Gateway identity changed before launch.');
         if (!selected) return undefined;
+        const cache = getResourceCache();
+        const workspaceKey = getResourceWorkspaceKey();
+        if (!cache || !nativeOwner)
+          throw new Error('The current runner profile store is unavailable.');
         const version = ++revision.current;
         const generation = client.connectionGeneration;
-        const isCurrent = () => current(key, generation, version);
+        const isCurrent = () =>
+          current(key, generation, version) &&
+          cache === getResourceCache() &&
+          workspaceKey === getResourceWorkspaceKey() &&
+          nativeOwner === getResourceNativeOwnerId();
         const result = await readNativeProfileSelection(
-          client,
+          { cache, nativeOwnerId: nativeOwner },
           input.node,
           input.runner,
           selected,

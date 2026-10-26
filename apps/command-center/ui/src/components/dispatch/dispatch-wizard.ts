@@ -26,7 +26,7 @@ import {
   sourceObservationAge,
   workspacePolicyMachines,
 } from '@farmslot/protocol';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { nativeObservationQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   defaultModelForRunner,
   resolveReviewDispatchDefaults,
@@ -41,11 +41,16 @@ import './dispatch-native-profiles.js';
 import './recipe-compatibility-panel.js';
 
 import { gateway } from '../../gateway-client.js';
-import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
+import {
+  getResourceCache,
+  getResourceNativeOwnerId,
+  getResourceWorkspaceKey,
+  subscribeResourceCache,
+} from '../../resource-cache.js';
 import { activeRunsQuery, runHistoryQuery } from '../../state.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { COMPARISON_LANE_RUNNERS, RUNNER_OPTIONS } from '../../utils/runner-options.js';
-import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
+import { visibleReviewDispatchCatalog } from '../../utils/runner-visible-models.js';
 import {
   deriveExecutionTemplatePickerView,
   pickCompatibleExecutionTemplateId,
@@ -140,6 +145,12 @@ export class DispatchWizard extends DispatchWizardState {
   private readonly baselineQuery = new ResourceQueryController<RunGetResult>(this, () =>
     this._runReadsChanged(),
   );
+  private readonly nativeCatalogQuery = new ResourceQueryController<NativeSessionCatalogResult>(
+    this,
+    () => this._nativeCatalogChanged(),
+  );
+  private _nativeCatalogReaderId?: string;
+  private _nativeCatalogOwnerStop?: () => void;
   private _runOwnerKey?: string;
   private _runAgeClock?: number;
   private _runActionRequest?: symbol;
@@ -306,6 +317,7 @@ export class DispatchWizard extends DispatchWizardState {
       ['_comparePickerOpen', '_comparisonParentRunId', 'mockMode'].some((key) => changed.has(key))
     )
       this._observeRunReads();
+    if (changed.has('mockMode')) void this._loadNativeWorkers();
     if (this.mockMode && changed.has('mockInitial')) {
       this._applyMockInitial();
       this._syncFleet(getState());
@@ -353,7 +365,10 @@ export class DispatchWizard extends DispatchWizardState {
     this._parseHashParams();
     this._applyMockInitial();
     this._syncFleet(getState());
-    if (!this.mockMode && gateway.connectionState === 'connected') void this._loadNativeWorkers();
+    this._nativeCatalogOwnerStop = subscribeResourceCache(() => {
+      if (!this.mockMode) void this._loadNativeWorkers();
+    });
+    if (!this.mockMode) void this._loadNativeWorkers();
     if (this.mockMode && this.mockProjectConfigs) {
       this._projectConfigs = this.mockProjectConfigs;
       this._syncSelectedAppForProject(this._project);
@@ -387,6 +402,10 @@ export class DispatchWizard extends DispatchWizardState {
     document.removeEventListener('keydown', this._onComparePickerKeydown);
     this._unsubConn?.();
     this._unsubState?.();
+    this._nativeCatalogOwnerStop?.();
+    this._nativeCatalogOwnerStop = undefined;
+    this._nativeCatalogGeneration++;
+    this._nativeCatalogReady = false;
     window.clearInterval(this._runAgeClock);
     this._runAgeClock = undefined;
     this._runActionRequest = undefined;
@@ -395,42 +414,90 @@ export class DispatchWizard extends DispatchWizardState {
     if (this._scoringFetchTimer) clearTimeout(this._scoringFetchTimer);
   }
 
-  private async _loadNativeWorkers(): Promise<void> {
+  private _nativeWorkersCurrent(): boolean {
+    return (
+      this.nativeCatalogQuery.ready && this._nativeCatalogReaderId === getResourceNativeOwnerId()
+    );
+  }
+
+  private _nativeCatalogChanged(): void {
+    if (this.mockMode) return;
+    const previous = this._nativeCatalog;
+    const wasReady = this._nativeCatalogReady;
+    const currentOwner = this._nativeCatalogReaderId === getResourceNativeOwnerId();
+    const state = this.nativeCatalogQuery.state;
+    const readable = currentOwner && this.nativeCatalogQuery.belongsToWorkspace;
+    const result = readable ? state.data : undefined;
+    this._nativeCatalog = result;
+    this._nativeCatalogReady = this._nativeWorkersCurrent();
+    this._nativeWorkerRunners = this._nativeCatalogReady
+      ? (result?.runners
+          .filter((runner) => runner.supportsWorkers)
+          .map((runner) => runner.runner) ?? [])
+      : [];
+    this._nativeQueueRunners = this._nativeCatalogReady
+      ? (result?.runners
+          .filter((runner) => runner.supportsWorkers && runner.supportsQueuedWorkers)
+          .map((runner) => runner.runner) ?? [])
+      : [];
+    this._nativeCatalogError = !readable
+      ? ''
+      : state.error
+        ? `Native worker choices unavailable: ${state.error.message}`
+        : state.status === 'unsupported'
+          ? 'Native worker choices are unavailable on this gateway.'
+          : '';
+    if (this._nativeCatalogReady && (!wasReady || result !== previous))
+      this._nativeProfileRefreshVersion++;
+  }
+
+  private async _loadNativeWorkers(refresh = false): Promise<void> {
+    if (this.mockMode) {
+      this.nativeCatalogQuery.setQuery(undefined);
+      return;
+    }
     const generation = ++this._nativeCatalogGeneration;
     const epoch = gateway.connectionEpoch;
-    const scope = `${gateway.gatewayUrl}:${gateway.authenticatedPrincipalId}`;
+    const owner = getResourceNativeOwnerId();
+    const scope = JSON.stringify([
+      gateway.gatewayUrl,
+      gateway.authenticatedPrincipalId,
+      getResourceWorkspaceKey(),
+      owner,
+    ]);
     if (scope !== this._nativeProfileScope) {
       this._nativeProfileScope = scope;
       this._nativeProfileSelection = null;
       this._nativeCatalog = undefined;
+      // Query IDs omit the owner, while dependencies include it. Clear before rebinding a new reader.
+      this.nativeCatalogQuery.setQuery(undefined);
     }
+    this._nativeCatalogReaderId = owner;
+    this.nativeCatalogQuery.setQuery(
+      owner
+        ? nativeObservationQuery<NativeSessionCatalogResult>(
+            Methods.NATIVE_SESSION_CATALOG,
+            {},
+            owner,
+          )
+        : undefined,
+    );
+    this._nativeCatalogChanged();
+    if (!owner && gateway.connectionState === 'connected')
+      this._nativeCatalogError = 'Wait for a verified native owner before choosing a worker.';
+    if (!owner || !refresh || gateway.connectionState !== 'connected') return;
     this._nativeCatalogReady = false;
     this._nativeWorkerRunners = [];
     this._nativeQueueRunners = [];
     try {
-      const result = await gateway.request<NativeSessionCatalogResult>(
-        Methods.NATIVE_SESSION_CATALOG,
-        {},
-      );
-      if (
-        !this.isConnected ||
-        gateway.connectionState !== 'connected' ||
-        epoch !== gateway.connectionEpoch ||
-        generation !== this._nativeCatalogGeneration
-      )
-        return;
-      this._nativeCatalog = result;
-      this._nativeCatalogReady = true;
-      this._nativeProfileRefreshVersion++;
-      this._nativeWorkerRunners = result.runners
-        .filter((runner) => runner.supportsWorkers)
-        .map((runner) => runner.runner);
-      this._nativeCatalogError = '';
-      this._nativeQueueRunners = result.runners
-        .filter((runner) => runner.supportsWorkers && runner.supportsQueuedWorkers)
-        .map((runner) => runner.runner);
+      await this.nativeCatalogQuery.retry();
     } catch (error) {
-      if (this.isConnected && generation === this._nativeCatalogGeneration)
+      if (
+        this.isConnected &&
+        generation === this._nativeCatalogGeneration &&
+        epoch === gateway.connectionEpoch &&
+        owner === getResourceNativeOwnerId()
+      )
         this._nativeCatalogError = `Native worker choices unavailable: ${(error as Error).message}`;
     }
   }
@@ -876,7 +943,7 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _refreshDispatchSnapshot(): void {
-    if (!this.mockMode) void this._loadNativeWorkers();
+    if (!this.mockMode) void this._loadNativeWorkers(true);
     this._templateOptionsCache.clear();
     this._allCandidates = [];
     void this._fetchTemplateOptions();
@@ -1231,7 +1298,7 @@ export class DispatchWizard extends DispatchWizardState {
       if (runner && COMPARISON_LANE_RUNNERS.has(runner)) {
         this._runner = runner;
         this._model =
-          model || (defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '');
+          model || (defaultModelForRunner(runner, visibleReviewDispatchCatalog()) ?? '');
       }
       if (this._comparisonHashPinnedEngine) {
         this._comparisonParentEngineHydrated = true;
@@ -1386,7 +1453,8 @@ export class DispatchWizard extends DispatchWizardState {
             ...profileContext,
             selection: this._nativeProfileSelection,
             catalog: this._nativeCatalog,
-            catalogReady: this._nativeCatalogReady,
+            catalogReady:
+              this._nativeCatalogReady && (this.mockMode || this._nativeWorkersCurrent()),
           })
         : null;
     const node =
@@ -1433,6 +1501,13 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _dispatchPayloadDraft() {
+    if (this._transport === 'native' && !this.mockMode) {
+      if (!this._nativeCatalogReady || !this._nativeWorkersCurrent()) return null;
+      if (this.nativeCatalogQuery.requireReady() !== this._nativeCatalog)
+        throw new Error(
+          'Native worker choices changed. Review the selected profile before dispatching.',
+        );
+    }
     if (
       this._configurationError ||
       !this._executionPicker.canInvoke('dispatch') ||
