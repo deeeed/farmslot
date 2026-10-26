@@ -4,7 +4,7 @@ import {
   providerAccountsStoredData,
 } from '../contracts/provider-accounts.js';
 import type { ConfigGitHubAccountsResult } from '../rpc/config.js';
-import type { GatewayStatusResult } from '../rpc/gateway.js';
+import type { CheckoutUpdateOperation, GatewayStatusResult } from '../rpc/gateway.js';
 import {
   prForSlotObservationParams,
   prForSlotStoredData,
@@ -56,7 +56,11 @@ export interface ResourceQueryDefinition {
   live: boolean;
   /** Gateway-owned upstream collection, enabled only after stamped reads are implemented. */
   collector?: 'github' | 'gateway-update' | 'providers';
-  sourceObservation?(data: unknown): UpstreamObservation | undefined;
+  /**
+   * The reply's upstream source state. `null` marks an explicit answer that is not an upstream
+   * observation; `undefined` means the gateway omitted one and the reply is refused.
+   */
+  sourceObservation?(data: unknown): UpstreamObservation | null | undefined;
   /** Optional durable projection for replies that also carry live-only diagnostics. */
   persistedData?(data: unknown): unknown;
   /** Requires the experimental server observed-read dispatch contract. */
@@ -344,15 +348,86 @@ function githubAccountsStoredData(data: unknown): ConfigGitHubAccountsResult {
   };
 }
 
+const STORED_UPDATE_ERROR = 'The gateway could not check its source for updates.';
+const STORED_UPDATE_OBSERVATION_ERROR = 'The last gateway update check did not complete.';
+const STORED_OPERATION_MESSAGE: Record<CheckoutUpdateOperation['phase'], string> = {
+  running: 'Gateway update in progress.',
+  complete: 'Gateway update finished.',
+  error: 'Gateway update did not complete.',
+};
+
+/** Durable update facts only: Git/process diagnostics, paths and PIDs stay in the live reply. */
 function gatewayStatusStoredData(data: unknown): GatewayStatusResult {
   const status = data as GatewayStatusResult;
+  const { update, observation } = status;
+  const operation = update.operation;
   return {
     version: status.version,
-    update: status.update,
+    update: {
+      ...(update.canUpdate === undefined ? {} : { canUpdate: update.canUpdate }),
+      updateAvailable: update.updateAvailable,
+      commitsBehind: update.commitsBehind,
+      commitsAhead: update.commitsAhead,
+      branch: update.branch,
+      localSha: update.localSha,
+      remoteSha: update.remoteSha,
+      lastChecked: update.lastChecked,
+      updateCommand: update.updateCommand,
+      error: update.error ? STORED_UPDATE_ERROR : null,
+      ...(operation
+        ? {
+            operation: {
+              id: operation.id,
+              phase: operation.phase,
+              message: STORED_OPERATION_MESSAGE[operation.phase],
+              updatedAt: operation.updatedAt,
+              localSha: operation.localSha,
+              targetSha: operation.targetSha,
+              ...(operation.desktopRebuildRequired === undefined
+                ? {}
+                : { desktopRebuildRequired: operation.desktopRebuildRequired }),
+              ...(operation.gatewayRestartRequired === undefined
+                ? {}
+                : { gatewayRestartRequired: operation.gatewayRestartRequired }),
+            },
+          }
+        : {}),
+    },
     releaseNotes: status.releaseNotes,
     capabilities: status.capabilities,
-    observation: status.observation,
+    ...(observation
+      ? {
+          observation: {
+            status: observation.status,
+            ...(observation.observedAt === undefined ? {} : { observedAt: observation.observedAt }),
+            ...(observation.error
+              ? {
+                  error: { code: observation.error.code, message: STORED_UPDATE_OBSERVATION_ERROR },
+                }
+              : {}),
+          },
+        }
+      : {}),
   };
+}
+
+/** A local slot answer (no PR lookup applies) is explicit, not a missing upstream observation. */
+function prForSlotSourceObservation(data: unknown): UpstreamObservation | null | undefined {
+  return data && typeof data === 'object' && Reflect.get(data, 'source') === 'local'
+    ? null
+    : upstreamSourceObservation(data);
+}
+
+/** Only a runner with no catalog source answers without an observation; collected sources never do. */
+function runnerModelCatalogSourceObservation(
+  data: unknown,
+): UpstreamObservation | null | undefined {
+  const observation = upstreamSourceObservation(data);
+  if (observation !== undefined || !data || typeof data !== 'object') return observation;
+  return Reflect.get(data, 'status') === 'unsupported' &&
+    Reflect.get(data, 'source') === 'unsupported'
+    ? null
+    : undefined;
 }
 
 /**
@@ -518,6 +593,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
   },
   [Methods.PR_FOR_SLOT]: {
     ...prDetailDefinition,
+    sourceObservation: prForSlotSourceObservation,
     persistedData: prForSlotStoredData,
     normalizeParams: prForSlotObservationParams,
     dependencies: (params: unknown) =>
@@ -557,7 +633,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     timeoutMs: 30_000,
     live: true,
     collector: 'providers',
-    sourceObservation: upstreamSourceObservation,
+    sourceObservation: runnerModelCatalogSourceObservation,
     persistedData: runnerModelCatalogStoredData,
     normalizeParams: runnerModelCatalogObservationParams,
     dependencies: (params: unknown) => [runnerModelCatalogResourceKey(params)],
@@ -1084,7 +1160,7 @@ export interface ResourceQuery<T = unknown> {
   readonly retention?: ResourceQueryRetention;
   readonly live: boolean;
   readonly collector?: 'github' | 'gateway-update' | 'providers';
-  readonly sourceObservation?: (data: unknown) => UpstreamObservation | undefined;
+  readonly sourceObservation?: (data: unknown) => UpstreamObservation | null | undefined;
   readonly persistedData?: (data: unknown) => unknown;
   readonly requiresObservedRead?: boolean;
   readonly requiresWorkspaceRead?: boolean;

@@ -17,7 +17,36 @@ mock.module('../../utils/reconnect.js', {
   },
 });
 
-const { loadSlotViewBranchDiff, loadSlotViewBranchList } =
+// Shared-cache port: the test delivers each observed state the way the cache would.
+interface ObservedState {
+  status: 'loading' | 'ready' | 'stale' | 'error' | 'unsupported';
+  data?: unknown;
+  observedAt?: number;
+}
+class FakeQueryController {
+  static all: FakeQueryController[] = [];
+  state: ObservedState = { status: 'loading' };
+  query?: { method: string; params: unknown };
+  readonly belongsToWorkspace = true;
+  constructor(
+    _host: unknown,
+    private readonly onChange?: (state: ObservedState) => void,
+  ) {
+    FakeQueryController.all.push(this);
+  }
+  setQuery(query?: { method: string; params: unknown }) {
+    this.query = query;
+  }
+  publish(state: ObservedState) {
+    this.state = state;
+    this.onChange?.(state);
+  }
+}
+mock.module('../shared/resource-query-controller.js', {
+  namedExports: { ResourceQueryController: FakeQueryController },
+});
+
+const { detectSlotViewPR, loadSlotViewBranchDiff, loadSlotViewBranchList } =
   await import('./slot-view-review-effects.js');
 
 class DeferredWorkspaceReads {
@@ -176,4 +205,84 @@ test('a later canonical branch snapshot updates the view without a manual reload
   ]);
   assert.equal(view._branchDiffTotalAdd, 2);
   assert.equal(view.branchDiffReloads, 0);
+});
+
+function slotPR(view: FakeView) {
+  return [...FakeQueryController.all]
+    .reverse()
+    .find(
+      (controller) =>
+        controller.query?.method === 'pr.forSlot' &&
+        (controller.query.params as { slotId: string }).slotId === view.slotId,
+    )!;
+}
+
+function makePRView() {
+  return Object.assign(makeView(), {
+    _prNumber: null as number | null,
+    _prRepo: null as string | null,
+    _prThreads: [] as unknown[],
+    _prCurrentUser: '',
+    _prCommentsLoading: false,
+  });
+}
+
+const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test('recovery takes the diff base from a current PR answer, never a hydrated saved row', async () => {
+  const view = makePRView();
+  const recovering = detectSlotViewPR(asView(view));
+  const forSlot = slotPR(view);
+  // A return visit paints the saved row before the network read.
+  forSlot.publish({
+    status: 'stale',
+    data: { pr: 7, repo: 'org/app', baseRef: 'develop' },
+    observedAt: 1,
+  });
+  await turn();
+  assert.equal(view._branchDiffBase, 'main', 'the saved base is not adopted');
+  assert.equal(view._prNumber, 7);
+  forSlot.publish({
+    status: 'ready',
+    data: { pr: 11, repo: 'org/app', baseRef: 'release' },
+    observedAt: Date.now(),
+  });
+  await recovering;
+  assert.equal(view._branchDiffBase, 'release');
+  assert.equal(view._prNumber, 11);
+
+  view._branchDiffBase = 'operator-choice';
+  forSlot.publish({
+    status: 'ready',
+    data: { pr: 12, repo: 'org/app', baseRef: 'hotfix' },
+    observedAt: Date.now(),
+  });
+  assert.equal(view._branchDiffBase, 'operator-choice', 'a later PR update keeps the chosen base');
+  assert.equal(view._prNumber, 12);
+});
+
+test('a slot switch recovers the new slot base from its own current answer', async () => {
+  const view = makePRView();
+  view.slotId = 'slot-old';
+  const first = detectSlotViewPR(asView(view));
+  view.slotId = 'slot-new';
+  view._branchDiffBase = 'main';
+  const second = detectSlotViewPR(asView(view));
+  const forSlot = slotPR(view);
+  forSlot.publish({
+    status: 'stale',
+    data: { pr: 3, repo: 'org/app', baseRef: 'develop' },
+    observedAt: 1,
+  });
+  await turn();
+  assert.equal(view._branchDiffBase, 'main');
+  // An uncovered network reply is still current for this recovery.
+  forSlot.publish({
+    status: 'stale',
+    data: { pr: 4, repo: 'org/app', baseRef: 'release' },
+    observedAt: Date.now(),
+  });
+  await Promise.all([first, second]);
+  assert.equal(view._branchDiffBase, 'release');
+  assert.equal(view._prNumber, 4);
 });

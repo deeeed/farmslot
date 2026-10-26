@@ -138,6 +138,7 @@ export function prForSlotStoredData(data: unknown): PRForSlotResult {
     pr: result.pr,
     repo: result.repo,
     baseRef: result.baseRef,
+    ...(result.source === 'local' ? { source: 'local' as const } : {}),
     ...storedObservation(result.observation),
   };
 }

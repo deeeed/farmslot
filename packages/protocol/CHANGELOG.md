@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Persist only approved gateway-status update fields with fixed error text, and accept explicit local or unsupported answers from upstream collectors without inventing a source time.
+
 - Register PR detail, slot PR, review-thread, runner-seat and runner model catalog reads as upstream collectors and runner visible models as an owner-scoped observation, with pure normalizers, sanitized stored-data projections and `observation` on their results.
 
 - Add `CommandMethod` and `PersonSessionMethod`. `releaseCancelledRunSlot` and cache-backed source clients take command-only transports; those source clients read status only from the shared cache.

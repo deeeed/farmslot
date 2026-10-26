@@ -139,11 +139,38 @@ test('gateway status retains source facts but excludes live diagnostics from the
   transport.setConnection({ connected: true, id: 1 });
   const store = createMemoryResourceStore();
   const cache = createGatewayResourceCache({ transport, store });
+  const update = {
+    checkoutPath: '/Users/private/farmslot',
+    canUpdate: true,
+    updateAvailable: true,
+    commitsBehind: 2,
+    commitsAhead: 0,
+    branch: 'main',
+    localSha: 'aaaaaaa',
+    remoteSha: 'bbbbbbb',
+    lastChecked: '2026-10-26T00:00:00.000Z',
+    updateCommand: 'farmslot update',
+    error: 'fatal: unable to access https://token@github.com/org/repo.git: stderr',
+    operation: {
+      id: 'op-1',
+      phase: 'error',
+      message: 'git pull failed: run `GH_TOKEN=secret git pull` in /Users/private/farmslot',
+      updatedAt: '2026-10-26T00:00:01.000Z',
+      localSha: 'aaaaaaa',
+      targetSha: 'bbbbbbb',
+      pid: 4242,
+      gatewayRestartRequired: true,
+    },
+  };
   const data = {
     value: 'fixture',
     version: '1',
-    update: { localSha: 'aaaaaaa' },
-    observation: { status: 'ready', observedAt: 1000 },
+    update,
+    observation: {
+      status: 'stale',
+      observedAt: 1000,
+      error: { code: 'GATEWAY_UPDATE_UNAVAILABLE', message: update.error },
+    },
     githubQuerySpend: { points: 8 },
     listen: { host: 'private-listener' },
     futureDiagnostics: { value: 'ephemeral' },
@@ -160,12 +187,42 @@ test('gateway status retains source facts but excludes live diagnostics from the
     (await transport.nextRead()).resolve(data);
     await done;
     assert.deepEqual(cache.read(query).data, data);
-    assert.deepEqual((await store.getQuery(query.id))?.data, {
+    const stored = (await store.getQuery(query.id))?.data;
+    assert.deepEqual(stored, {
       version: '1',
-      update: data.update,
-      observation: data.observation,
+      update: {
+        canUpdate: true,
+        updateAvailable: true,
+        commitsBehind: 2,
+        commitsAhead: 0,
+        branch: 'main',
+        localSha: 'aaaaaaa',
+        remoteSha: 'bbbbbbb',
+        lastChecked: '2026-10-26T00:00:00.000Z',
+        updateCommand: 'farmslot update',
+        error: 'The gateway could not check its source for updates.',
+        operation: {
+          id: 'op-1',
+          phase: 'error',
+          message: 'Gateway update did not complete.',
+          updatedAt: '2026-10-26T00:00:01.000Z',
+          localSha: 'aaaaaaa',
+          targetSha: 'bbbbbbb',
+          gatewayRestartRequired: true,
+        },
+      },
+      observation: {
+        status: 'stale',
+        observedAt: 1000,
+        error: {
+          code: 'GATEWAY_UPDATE_UNAVAILABLE',
+          message: 'The last gateway update check did not complete.',
+        },
+      },
     });
+    assert.doesNotMatch(JSON.stringify(stored), /token|secret|stderr|private|4242/);
     assert.equal(data.githubQuerySpend.points, 8, 'Persistence must not mutate the live reply');
+    assert.equal(data.update.operation.pid, 4242, 'Persistence must not mutate the live reply');
   } finally {
     await cache.dispose();
   }

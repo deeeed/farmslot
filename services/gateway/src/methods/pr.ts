@@ -207,6 +207,8 @@ export const prStatusObservation = new PRDetailCollector<
 >({
   method: Methods.PR_STATUS,
   normalize: prStatusObservationParams,
+  // Every sample has a new fetch time; only the observed PR bytes decide a change.
+  signature: ({ repo, raw }) => JSON.stringify([repo, { ...raw, fetchedAt: undefined }]),
   async fetch({ pr, project }, force) {
     const { repo } = await resolveProjectRepo(project);
     const raw = await getPRRawData(repo, pr, force);
@@ -478,9 +480,16 @@ async function loadPRList(
     activeSlots.map((s) =>
       (opts.retained
         ? findKnownPRForBranch(s, projectList, opts.storedRows ?? [])
-        : findPRForBranch(s.branch!, s.project, s.slot)
+        : findPRForBranch(s.branch!, s.project, s.slot).catch((error: unknown) => {
+            if (error instanceof GitHubQueryBudgetError) throw error;
+            // Unread, not "no PR": the list stays readable and its observation reports it incomplete.
+            console.warn(
+              `[pr.list] discovery for ${s.slot} unavailable: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
+            );
+            return undefined;
+          })
       ).then((found) => {
-        if (!opts.retained)
+        if (!opts.retained && found !== undefined)
           observedSlotBranches.set(s.slot, {
             project: s.project,
             branch: s.branch!,
@@ -670,9 +679,14 @@ async function loadPRList(
       }
     }),
   );
-  if (!opts.retained && isListReadOutage({ candidates: prInfo.size, failed: failed.length, gone }))
+  // Pending slot discovery is reported as incomplete; only candidate reads decide an outage.
+  const candidateFailures = failed.length - pendingDiscovery.length;
+  if (
+    !opts.retained &&
+    isListReadOutage({ candidates: prInfo.size, failed: candidateFailures, gone })
+  )
     throw new Error(
-      `GitHub unavailable: ${failed.length} of ${prInfo.size} PR reads failed and ${gone} returned 404`,
+      `GitHub unavailable: ${candidateFailures} of ${prInfo.size} PR reads failed and ${gone} returned 404`,
     );
 
   if (!opts.retained)
@@ -1460,7 +1474,7 @@ async function slotPRLookup(slotId: string): Promise<SlotPRLookup | PRForSlotRes
   const fleet = await loadFleetStatus();
   const slot = fleet.slots.find((s) => s.slot === slotId);
   if (!slot || !slot.branch) {
-    return { pr: null, repo: null, baseRef: DEFAULT_BRANCH };
+    return { pr: null, repo: null, baseRef: DEFAULT_BRANCH, source: 'local' };
   }
   const projectConfig = await loadProjectConfig(slot.project);
   const defaultBranch = projectConfig?.defaultBranch || DEFAULT_BRANCH;
@@ -1472,7 +1486,7 @@ async function slotPRLookup(slotId: string): Promise<SlotPRLookup | PRForSlotRes
     },
   };
   if (!slotBranchHasPrLookupContext(slot, projectConfigs)) {
-    return { pr: null, repo: null, baseRef: defaultBranch };
+    return { pr: null, repo: null, baseRef: defaultBranch, source: 'local' };
   }
   return {
     slotId: slot.slot,

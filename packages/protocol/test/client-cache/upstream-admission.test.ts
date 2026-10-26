@@ -111,6 +111,34 @@ test('PR detail reads are GitHub collectors whose forced checks stay explicit re
   assert.notEqual(stored.observation.error.message, 'gh stderr');
 });
 
+test('only explicit non-upstream answers may omit a source observation', () => {
+  const slot = resourceQuery('pr.forSlot', { slotId: 's1' });
+  assert.equal(
+    slot.sourceObservation?.({ pr: null, repo: null, baseRef: 'main', source: 'local' }),
+    null,
+  );
+  assert.equal(slot.sourceObservation?.({ pr: 7, repo: 'org/one', baseRef: 'main' }), undefined);
+  const stored = slot.persistedData?.({ pr: null, repo: null, baseRef: 'main', source: 'local' });
+  assert.equal((stored as { source?: string }).source, 'local');
+  const catalog = resourceQuery('runner.modelCatalog', { runner: 'claude' });
+  const answer = { runner: 'claude', models: [] };
+  assert.equal(
+    catalog.sourceObservation?.({ ...answer, status: 'unsupported', source: 'unsupported' }),
+    null,
+  );
+  for (const [status, source] of [
+    ['ready', 'structured-file'],
+    ['ready', 'catalog-command'],
+    ['unavailable', 'unavailable'],
+    ['unsupported', 'structured-file'],
+  ])
+    assert.equal(catalog.sourceObservation?.({ ...answer, status, source }), undefined);
+  assert.equal(
+    resourceQuery('pr.status', { pr: 1, project: 'one' }).sourceObservation?.({}),
+    undefined,
+  );
+});
+
 test('gateway status uses the same admission/retention contract and excludes force checks', () => {
   const query = resourceCollectorQuery('gateway.status', { refresh: false });
   assert.equal(query.id, resourceCollectorQuery('gateway.status').id);

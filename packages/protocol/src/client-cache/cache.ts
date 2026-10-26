@@ -669,8 +669,9 @@ export function createGatewayResourceCache(
           (!entry.query.collector || collectors.has(entry.query)) &&
           entry.unknownGeneration === unknownGeneration;
         const observedAt = Date.now();
+        // `null` is an explicit non-upstream answer: its status follows coverage, with no source time.
         const sourceObservation = entry.query.sourceObservation?.(reply.data);
-        if (entry.query.sourceObservation && !sourceObservation)
+        if (entry.query.sourceObservation && sourceObservation === undefined)
           throw Object.assign(new Error('The gateway supplied no upstream source observation.'), {
             code: 'RESOURCE_SOURCE_STATE_MISSING',
           });

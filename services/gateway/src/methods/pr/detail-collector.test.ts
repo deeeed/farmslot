@@ -7,6 +7,7 @@ import { resourceRevisions } from '../../resources/revisions.js';
 
 import {
   PR_DETAIL_CLIENT_INTEREST_MS,
+  PR_DETAIL_READY_MS,
   PR_DETAIL_STALE_MS,
   PRDetailCollector,
   type UpstreamSample,
@@ -30,6 +31,7 @@ function gate(): { wait: Promise<void>; open(): void } {
 function harness(
   fetch: (force: boolean) => Promise<UpstreamSample<string>>,
   seed?: () => Promise<UpstreamSample<string> | undefined>,
+  signature?: (value: string) => string,
 ) {
   const clock = { now: 1_000 };
   const forces: boolean[] = [];
@@ -47,6 +49,7 @@ function harness(
       return fetch(force);
     },
     ...(seed ? { seed } : {}),
+    ...(signature ? { signature } : {}),
   });
   const revision = () => resourceRevisions.revision(collector.resourceKey({ id: 'a' }));
   return { clock, collector, forces, revision };
@@ -242,6 +245,58 @@ describe('PR detail collector', () => {
       clock.now += 10 * PR_DETAIL_STALE_MS;
       await collector.tick();
       assert.equal(forces.length, 1);
+    } finally {
+      await stop();
+    }
+  });
+
+  test('identical samples that differ only in fetch time neither publish nor reset backoff', async () => {
+    let sample = 0;
+    const { clock, collector, forces, revision } = harness(
+      async () => ({ value: `same-pr@fetch-${++sample}` }),
+      undefined,
+      (value) => value.split('@')[0]!,
+    );
+    const stop = collector.start({ hasInterest: () => true });
+    try {
+      await collector.read({ id: 'a' }, managed);
+      const before = revision();
+      clock.now += PR_DETAIL_STALE_MS;
+      await collector.tick();
+      assert.equal(forces.length, 2);
+      assert.equal(revision(), before, 'a new fetch time alone is not published');
+      clock.now += PR_DETAIL_STALE_MS;
+      await collector.tick();
+      assert.equal(forces.length, 2, 'the unchanged streak slows the next collection');
+      clock.now += PR_DETAIL_STALE_MS;
+      await collector.tick();
+      assert.equal(forces.length, 3);
+      assert.equal(revision(), before);
+      const read = await collector.read({ id: 'a' }, managed);
+      assert.equal(read.observation.observedAt, clock.now, 'source age stays in the observation');
+    } finally {
+      await stop();
+    }
+  });
+
+  test('freshness expiry is published while a reserved budget defers collection', async () => {
+    const { clock, collector, forces, revision } = harness(async () => ({ value: 'v1' }));
+    const stop = collector.start({ hasInterest: () => true });
+    try {
+      await collector.read({ id: 'a' }, managed);
+      const before = revision();
+      githubQueryBudget.observe('credential', {
+        remaining: 0,
+        cost: 1,
+        resetAt: new Date(Date.now() + 120_000).toISOString(),
+      });
+      clock.now += PR_DETAIL_READY_MS;
+      await collector.tick();
+      assert.equal(forces.length, 1, 'the reserved budget still defers collection');
+      assert.equal(revision(), before + 1, 'ready to stale is published');
+      assert.equal((await collector.read({ id: 'a' }, managed)).observation.status, 'stale');
+      await collector.tick();
+      assert.equal(revision(), before + 1, 'an unchanged state is not published again');
     } finally {
       await stop();
     }

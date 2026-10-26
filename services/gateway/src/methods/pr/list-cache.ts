@@ -348,6 +348,7 @@ function runRefresh(
   fetch: PRListFetcher,
   force: boolean,
   now: number,
+  clock: () => number = Date.now,
 ): Promise<PRListSnapshot> {
   state.attemptedAt = now;
   const previous = state.snapshot;
@@ -378,7 +379,8 @@ function runRefresh(
         JSON.stringify(previous.prs) !== JSON.stringify(prs) ||
         previous.truncated !== next.truncated;
       state.snapshot = next;
-      if (!failed.length) state.successfulObservedAt = now;
+      // Source age starts when this collection completed, not when it was attempted.
+      if (!failed.length) state.successfulObservedAt = clock();
       state.incomplete = failed.length > 0 || fetched.truncated;
       state.failure = failed.length
         ? {
@@ -415,8 +417,9 @@ function refresh(
   fetch: PRListFetcher,
   force: boolean,
   now: number,
+  clock?: () => number,
 ): Promise<PRListSnapshot> {
-  if (!state.inflight) return runRefresh(state, fetch, force, now);
+  if (!state.inflight) return runRefresh(state, fetch, force, now, clock);
   if (!force || state.inflight.forced) return state.inflight.promise;
   state.queuedForced ??= state.inflight.promise
     .then(
@@ -463,7 +466,9 @@ export async function servePRList(
   }
   if (!opts.force && !state.snapshot && !state.inflight && !eligible(state, now) && state.failure)
     throw state.failure.cause;
-  if (opts.force || !state.snapshot) await refresh(state, fetch, opts.force === true, now);
+  // An explicit test clock fixes completion time too; otherwise completion is read when it happens.
+  const clock = opts.now === undefined ? Date.now : () => now;
+  if (opts.force || !state.snapshot) await refresh(state, fetch, opts.force === true, now, clock);
   else if (
     opts.legacyInterest !== false &&
     now - Date.parse(state.snapshot.fetchedAt) > delayMs(state) &&
@@ -471,7 +476,7 @@ export async function servePRList(
     eligible(state, now) &&
     !budgetReserved(now)
   )
-    refresh(state, fetch, false, now).catch(backgroundFailure);
+    refresh(state, fetch, false, now, clock).catch(backgroundFailure);
   const snapshot = state.snapshot!;
   return {
     prs: snapshot.prs,

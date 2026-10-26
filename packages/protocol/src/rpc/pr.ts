@@ -94,6 +94,8 @@ export interface PRForSlotResult {
   baseRef: string;
   /** Present when the answer came from the slot's shared GitHub lookup, not local slot state alone. */
   observation?: UpstreamObservation;
+  /** `local`: the slot has no PR lookup context, so no GitHub observation applies. */
+  source?: 'local';
 }
 export interface PRStatusResult {
   pr: PRStatus;

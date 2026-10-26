@@ -17,6 +17,7 @@ import type { Principal } from '@farmslot/protocol';
 import {
   changedNativeCatalogKeys,
   type NativeCatalogChange,
+  type NativeCatalogChanges,
   nativeCatalogChanges,
   type NativeCatalogInterest,
 } from '../resources/native-catalog-changes.js';
@@ -61,6 +62,37 @@ function setup(t: TestContext) {
   return home;
 }
 
+// Real fs watchers: waits end on the actual notice. The ceiling only reports a hang.
+const HANG_GUARD_MS = 20_000;
+
+/** macOS arms fs.watch asynchronously. Repeat a distinct real change until it is reported. */
+async function untilWatcherReports(
+  ownerId: string,
+  changes: NativeCatalogChanges,
+  change: (attempt: number) => void,
+): Promise<void> {
+  let reported = false;
+  const stop = changes.subscribe((notice) => {
+    if (notice.scope === 'owner' && notice.ownerId === ownerId && notice.reason === 'updated')
+      reported = true;
+  });
+  try {
+    const deadline = Date.now() + HANG_GUARD_MS;
+    for (let attempt = 0; !reported; attempt++) {
+      if (Date.now() > deadline) throw new Error('The real watcher never reported a change');
+      change(attempt);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  } finally {
+    stop();
+  }
+}
+
+function replaceFile(path: string, value: unknown): void {
+  writeFileSync(`${path}.external`, JSON.stringify(value));
+  renameSync(`${path}.external`, path);
+}
+
 function nextOwnerChange(
   ownerId: string,
   reason: 'updated' | 'failed' | 'recovered',
@@ -78,8 +110,8 @@ function nextOwnerChange(
     });
     timer = setTimeout(() => {
       stop();
-      reject(new Error('Preference source notice did not arrive'));
-    }, 750);
+      reject(new Error('Preference source notice hung'));
+    }, HANG_GUARD_MS);
   });
   return {
     promise,
@@ -140,11 +172,14 @@ test('shared owning watcher observes actual external replace/removal and explici
   t.after(() => lease.dispose());
   lease.sample();
   const path = join(home, 'runner-visible-models.json');
+  // Only the watcher samples until each awaited notice, so every notice below is its own.
+  await untilWatcherReports(ownerA.id, nativeCatalogChanges, (attempt) =>
+    replaceFile(path, file(`warm-${attempt}`)),
+  );
 
   let next = nextOwnerChange(ownerA.id, 'updated');
   try {
-    writeFileSync(`${path}.external`, JSON.stringify(file('external')));
-    renameSync(`${path}.external`, path);
+    replaceFile(path, file('external'));
     await next.promise;
   } finally {
     next.cancel();
@@ -306,10 +341,12 @@ test('full visible-model preferences notify non-native runner writes and externa
   t.after(() => lease.dispose());
   lease.sample();
   const path = join(home, 'runner-visible-models.json');
+  await untilWatcherReports(ownerA.id, visibleModelPreferenceChanges, (attempt) =>
+    replaceFile(path, preferences([`warm-${attempt}`])),
+  );
   let next = nextOwnerChange(ownerA.id, 'updated', visibleModelPreferenceChanges);
   try {
-    writeFileSync(`${path}.external`, JSON.stringify(preferences([], 'anthropic/claude-opus-5')));
-    renameSync(`${path}.external`, path);
+    replaceFile(path, preferences([], 'anthropic/claude-opus-5'));
     await next.promise;
   } finally {
     next.cancel();

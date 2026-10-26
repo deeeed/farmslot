@@ -36,6 +36,8 @@ export interface PRDetailCollectorOptions<P, V> {
   fetch(params: P, force: boolean): Promise<UpstreamSample<V>>;
   /** Another owner's retained observation of the same source. It never performs I/O upstream. */
   seed?(params: P): Promise<UpstreamSample<V> | undefined>;
+  /** The observed result without volatile fetch metadata; source age stays in the observation. */
+  signature?(value: V): string;
   now?: () => number;
 }
 
@@ -59,7 +61,8 @@ interface Entry<P, V> {
   legacyInterest: Map<string | symbol, number>;
   streak: number;
   lastUsed: number;
-  published?: string;
+  publishedMeta?: string;
+  publishedValue?: string;
 }
 
 function failureCode(error: unknown): string {
@@ -97,6 +100,10 @@ export class PRDetailCollector<P, V> {
         error instanceof Error ? error.message : 'Invalid upstream observation',
       );
     }
+  }
+
+  private signature(value: V): string {
+    return this.options.signature ? this.options.signature(value) : JSON.stringify(value);
   }
 
   queryId(params: P): string {
@@ -183,6 +190,8 @@ export class PRDetailCollector<P, V> {
   async tick(): Promise<void> {
     if (this.stopped) return;
     const now = this.now();
+    // Freshness expiry is published even while a reserved GitHub budget defers collection.
+    for (const entry of this.entries.values()) this.publish(entry);
     if (this.budgetReserved(now)) return;
     const pending: Promise<Outcome>[] = [];
     for (const entry of this.entries.values()) {
@@ -314,7 +323,7 @@ export class PRDetailCollector<P, V> {
     // A newer absence is not overturned by an older retained value.
     if (entry.failure?.code === 'NOT_FOUND' && entry.failure.at >= observedAt) return false;
     entry.value = sample.value;
-    entry.valueSignature = JSON.stringify(sample.value);
+    entry.valueSignature = this.signature(sample.value);
     entry.observedAt = observedAt;
     if (entry.failure && entry.failure.at <= observedAt) entry.failure = undefined;
     return true;
@@ -359,7 +368,7 @@ export class PRDetailCollector<P, V> {
       const observedAt = sample.observedAt ?? this.now();
       if (entry.observedAt === undefined || observedAt >= entry.observedAt) {
         entry.value = sample.value;
-        entry.valueSignature = JSON.stringify(sample.value);
+        entry.valueSignature = this.signature(sample.value);
         entry.observedAt = observedAt;
       }
       entry.failure = undefined;
@@ -391,17 +400,18 @@ export class PRDetailCollector<P, V> {
     }
   }
 
-  /** Publish when the observed result, its freshness or its error changes; never while stopped. */
+  /** Publish when the observed result, its readiness or its error changes; never while stopped. */
   private publish(entry: Entry<P, V>): void {
     if (this.stopped || this.entries.get(entry.id) !== entry) return;
-    const signature = JSON.stringify([
-      entry.observedAt,
+    // A newer success time alone is not a change; the reply's observation carries source age.
+    const meta = JSON.stringify([
       entry.failure?.code,
       entry.failure?.message,
-      entry.valueSignature,
+      this.observation(entry).status,
     ]);
-    if (signature === entry.published) return;
-    entry.published = signature;
+    if (meta === entry.publishedMeta && entry.valueSignature === entry.publishedValue) return;
+    entry.publishedMeta = meta;
+    entry.publishedValue = entry.valueSignature;
     resourceRevisions.advance(this.resourceKey(entry.params));
   }
 }

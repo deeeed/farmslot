@@ -40,7 +40,8 @@ function isTicketCurrent(view: SlotView, ticket: BranchDiffRequestTicket): boole
 class SlotPRReads {
   slotId = '';
   private commentsBound = false;
-  private answered: Array<() => void> = [];
+  /** Pending recoveries; each returns true once it has taken a current answer. */
+  private answered: Array<() => boolean> = [];
   readonly comments: ResourceQueryController<PRReviewCommentsResult>;
   readonly forSlot: ResourceQueryController<PRForSlotResult>;
 
@@ -49,11 +50,25 @@ class SlotPRReads {
     this.forSlot = new ResourceQueryController(view, (state) => this.applyPR(state));
   }
 
-  /** The current answer, or the next one while the first read is pending. */
-  answer(): Promise<ResourceQueryState<PRForSlotResult>> {
-    if (!this.forSlot.belongsToWorkspace || this.forSlot.state.status !== 'loading')
-      return Promise.resolve(this.forSlot.state);
-    return new Promise((resolve) => this.answered.push(() => resolve(this.forSlot.state)));
+  /**
+   * The first answer read on this connection since `since`. A saved row hydrated before the
+   * network read is not one, so recovery never fixes the diff base from an older PR.
+   */
+  answer(since: number): Promise<ResourceQueryState<PRForSlotResult>> {
+    return new Promise((resolve) => {
+      const settle = () => {
+        const state = this.forSlot.state;
+        const current =
+          !this.forSlot.belongsToWorkspace ||
+          state.status === 'ready' ||
+          state.status === 'error' ||
+          state.status === 'unsupported' ||
+          (state.status === 'stale' && (state.observedAt ?? 0) >= since);
+        if (current) resolve(state);
+        return current;
+      };
+      if (!settle()) this.answered.push(settle);
+    });
   }
 
   bindComments(): void {
@@ -82,7 +97,7 @@ class SlotPRReads {
       this.view._prRepo = null;
     }
     this.bindComments();
-    for (const answered of this.answered.splice(0)) answered();
+    this.answered = this.answered.filter((settle) => !settle());
   }
 
   private applyComments(state: ResourceQueryState<PRReviewCommentsResult>): void {
@@ -112,12 +127,13 @@ function prReads(view: SlotView): SlotPRReads {
 export async function detectSlotViewPR(view: SlotView) {
   if (!view._isLive) return;
   const epoch = view._recoveryEpoch;
+  const since = Date.now();
   const reads = prReads(view);
   reads.slotId = view.slotId;
   reads.forSlot.setQuery(
     resourceQuery<PRForSlotResult>(Methods.PR_FOR_SLOT, { slotId: view.slotId }),
   );
-  const state = await reads.answer();
+  const state = await reads.answer(since);
   if (!isCurrentReviewResult(view, epoch) || reads.slotId !== view.slotId) return;
   // Resolve the diff base once per recovery; later PR updates keep the viewer's chosen base.
   if (state.data) view._branchDiffBase = state.data.baseRef;

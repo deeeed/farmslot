@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  watch,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -265,27 +273,47 @@ test('stop drains in-flight work and blocks late publication and new samples', a
   assert.equal(calls, 2);
 });
 
+// Real fs watchers: waits end on the actual event. The ceiling only reports a hang.
+const HANG_GUARD_MS = 20_000;
+const pace = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+/** macOS arms fs.watch asynchronously. Repeat a distinct real change until it is reported. */
+async function untilReported(reported: () => boolean, change: (attempt: number) => void) {
+  const deadline = Date.now() + HANG_GUARD_MS;
+  for (let attempt = 0; !reported(); attempt++) {
+    if (Date.now() > deadline) throw new Error('The real watcher never reported a change');
+    change(attempt);
+    await pace();
+  }
+}
+
 test('an interested structured catalog observes replacement, removal, malformed data and recovery', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'runner-catalog-watch-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const source = getRunnerDefinition('codex').modelCatalog!;
-  const path = join(home, '.codex', 'models_cache.json');
+  const directory = join(home, '.codex');
+  const path = join(directory, 'models_cache.json');
   const catalog = (slug: string) => JSON.stringify({ models: [{ slug, visibility: 'list' }] });
-  mkdirSync(join(home, '.codex'));
+  mkdirSync(directory);
   writeFileSync(path, catalog('one'));
   let interested = true;
+  let notices = 0;
   let waiter: (() => void) | undefined;
   const owner = new RunnerModelCatalogObservation({
     runners: () => ['codex'],
     select: async () => source,
     hasInterest: () => interested,
-    changed: () => waiter?.(),
+    changed: () => {
+      notices++;
+      waiter?.();
+    },
     home,
   });
   t.after(() => owner.stop());
+  // Nothing else samples here: reads are warm and no tick runs, so each notice is the watcher's.
   const nextNotice = (change: () => void) =>
     new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Catalog notice did not arrive')), 1500);
+      const timer = setTimeout(() => reject(new Error('Catalog notice hung')), HANG_GUARD_MS);
       waiter = () => {
         clearTimeout(timer);
         waiter = undefined;
@@ -293,17 +321,22 @@ test('an interested structured catalog observes replacement, removal, malformed 
       };
       change();
     });
+  const replace = (slug: string) => {
+    writeFileSync(`${path}.external`, catalog(slug));
+    renameSync(`${path}.external`, path);
+  };
 
   await owner.tick();
-  const first = await owner.read('codex', managed);
-  assert.deepEqual(ids(first), ['one']);
-  const observedAt = first.observation?.observedAt;
+  assert.deepEqual(ids(await owner.read('codex', managed)), ['one']);
+  const armed = notices;
+  await untilReported(
+    () => notices > armed,
+    (attempt) => replace(`warm-${attempt}`),
+  );
 
-  await nextNotice(() => {
-    writeFileSync(`${path}.external`, catalog('two'));
-    renameSync(`${path}.external`, path);
-  });
-  assert.deepEqual(ids(await owner.read('codex', managed)), ['two']);
+  await nextNotice(() => replace('two'));
+  const two = await owner.read('codex', managed);
+  assert.deepEqual(ids(two), ['two']);
 
   await nextNotice(() => unlinkSync(path));
   const removed = await owner.read('codex', managed);
@@ -311,7 +344,7 @@ test('an interested structured catalog observes replacement, removal, malformed 
   assert.match(removed.detail ?? '', /ENOENT/);
   assert.deepEqual(ids(removed), ['two']);
   assert.equal(removed.observation?.status, 'stale');
-  assert.ok((removed.observation?.observedAt ?? 0) >= (observedAt ?? Infinity));
+  assert.equal(removed.observation?.observedAt, two.observation?.observedAt);
   assert.equal(JSON.stringify(removed).includes(home), false);
 
   await nextNotice(() => writeFileSync(path, '{'));
@@ -322,10 +355,24 @@ test('an interested structured catalog observes replacement, removal, malformed 
   assert.equal(recovered.status, 'ready');
   assert.deepEqual(ids(recovered), ['three']);
 
+  // No interest closes the watcher. A live barrier watcher on the same directory proves the
+  // catalog change and later events were delivered to this process without a refresh.
   interested = false;
   await owner.tick();
+  const seen = new Set<string>();
+  const barrier = watch(directory, (_event, name) => seen.add(String(name)));
+  t.after(() => barrier.close());
+  const marker = (name: string) =>
+    untilReported(
+      () => seen.has(name),
+      (attempt) => writeFileSync(join(directory, name), String(attempt)),
+    );
+  await marker('barrier-armed');
+  const quiet = notices;
   writeFileSync(path, catalog('four'));
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await marker('barrier-after-change');
+  await settle();
+  assert.equal(notices, quiet);
   assert.deepEqual(ids(await owner.read('codex', managed)), ['three']);
 });
 
