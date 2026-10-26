@@ -199,7 +199,7 @@ const signal = JSON.stringify({
 const fixSignalPath = path.join(repo, 'task', 'REVIEW-FIX-SIGNAL.json');
 const fixSignalBaseline = await readLaunchAckSignalSnapshot(vars, fixSignalPath);
 const fixDeliveryStartedAt = new Date().toISOString();
-const command = `sleep 14; printf '%s\\n' '${signal}' > task/REVIEW-FIX-SIGNAL.json`;
+const command = `sleep 20; printf '%s\\n' '${signal}' > task/REVIEW-FIX-SIGNAL.json`;
 const prompt = `Use the shell tool exactly once to run this command, and do nothing else: ${command}`;
 const acceptedDelivery = await deliverPromptWithRetainedFallback({
   vars,
@@ -240,6 +240,20 @@ const acceptedFix: RunnerPromptAcceptance = {
 };
 setFixDelivery(fixDeliveryStartedAt, acceptedFix);
 
+// Retained legacy fixes can have their own progress signal without a delivery token.
+setFixDelivery(fixDeliveryStartedAt);
+const tokenlessAcceptanceAbsent = !getRun(validationRun.id)?.agentContexts?.find(
+  (context) => context.role === 'review-fix',
+)?.promptAcceptance;
+const startedAt = Date.now();
+const waitingForFix = Promise.all([
+  waitForWorkerSignal(vars, 'task', idleTimeoutMs, ''),
+  waitForWorkerSignal(vars, 'task', idleTimeoutMs, '', turnActive(acceptedTurnToken)),
+  waitForWorkerSignal(vars, 'task', idleTimeoutMs, '', () =>
+    reviewFixHasActivity(vars, validationRun.id, runner),
+  ),
+]);
+
 let lifecycleLeaseProbe: {
   preCompact: boolean;
   compactSessionStart: boolean;
@@ -265,19 +279,7 @@ if (runner === 'claude') {
   lifecycleLeaseProbe = { preCompact, compactSessionStart, postCompact };
 }
 
-// Retained legacy fixes can have their own progress signal without a delivery token.
-setFixDelivery(fixDeliveryStartedAt);
-const tokenlessAcceptanceAbsent = !getRun(validationRun.id)?.agentContexts?.find(
-  (context) => context.role === 'review-fix',
-)?.promptAcceptance;
-const startedAt = Date.now();
-const [baselineResult, leasedResult, tokenlessResult] = await Promise.all([
-  waitForWorkerSignal(vars, 'task', idleTimeoutMs, ''),
-  waitForWorkerSignal(vars, 'task', idleTimeoutMs, '', turnActive(acceptedTurnToken)),
-  waitForWorkerSignal(vars, 'task', idleTimeoutMs, '', () =>
-    reviewFixHasActivity(vars, validationRun.id, runner),
-  ),
-]);
+const [baselineResult, leasedResult, tokenlessResult] = await waitingForFix;
 setFixDelivery(fixDeliveryStartedAt, acceptedFix);
 
 const idleDeadline = Date.now() + 20_000;
