@@ -64,10 +64,11 @@ mock.module('../tasks/checklist-target.js', {
   },
 });
 const native = await import('./native-fix.js');
+const tokenlessDelivery: typeof native.deliverNativeFix = async () => ({ status: 'deferred' });
 mock.module('./native-fix.js', {
   namedExports: {
     ...native,
-    deliverNativeFix: async () => ({ status: 'delivered' }), // retained receipt has no delivery token
+    deliverNativeFix: tokenlessDelivery,
     nativeFixTurnIsActive: async (_runId: string, command: string) => {
       assert.equal(command, 'owned-command');
       activityReads++;
@@ -198,6 +199,7 @@ test('recovered tokenless fix waits invoke activity observation without a new re
       'recovery must pass an activity callback even without delivery.turnToken',
     );
     assert.equal(getRun(run.id)?.agentContexts?.[0]?.status, 'working');
+    assert.equal(getRun(run.id)?.status, 'reconciling');
   } finally {
     ended = true;
     t.mock.timers.tick(2000);
