@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Stop unchanged empty review-fix cycles and accept completed evidence-only fixes or fixes of at most 50 source lines without another review, retaining the original review and fix provenance.
 - Validate nested review-fix and CI-fix declarations against their selected contract, preserving the primary checklist checks.
 
 - Ignore unrelated closed PRs on reused branch names during discovery and publication retries, preserving open, merged and run-owned PRs.

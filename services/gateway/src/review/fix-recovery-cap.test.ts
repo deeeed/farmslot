@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test, type TestContext } from 'node:test';
+
+import { isQualifyingReview } from '@farmslot/protocol';
 
 import type { runNativeReviewAgent } from './native-review-agent.js';
 import type { ReviewAgentResult } from './review-agent.js';
@@ -43,7 +46,34 @@ mock.module('./native-review-agent.js', {
   },
 });
 
+const snapshots = await import('./snapshots.js');
+let capturedFixOverride: Awaited<ReturnType<typeof snapshots.captureFixDeltaSnapshot>> | undefined;
+mock.module('./snapshots.js', {
+  namedExports: {
+    ...snapshots,
+    captureFixDeltaSnapshot: (...args: Parameters<typeof snapshots.captureFixDeltaSnapshot>) =>
+      capturedFixOverride
+        ? Promise.resolve(capturedFixOverride)
+        : snapshots.captureFixDeltaSnapshot(...args),
+    captureCurrentReviewSnapshot: (
+      ...args: Parameters<typeof snapshots.captureCurrentReviewSnapshot>
+    ) =>
+      capturedFixOverride
+        ? Promise.resolve({
+            snapshot: {
+              source: 'local-git' as const,
+              capturedAt: new Date().toISOString(),
+              baseSha: 'c'.repeat(40),
+              headSha: capturedFixOverride.snapshot.fixHeadSha ?? undefined,
+              diffHash: 'fixed-contribution',
+            },
+          })
+        : snapshots.captureCurrentReviewSnapshot(...args),
+  },
+});
+
 const { executeReview } = await import('./orchestrator.js');
+const { readReviewedInputs } = await import('./reviewed-inputs.js');
 const {
   admitReviewRound,
   reviewLaunchStartedAt,
@@ -57,7 +87,14 @@ const { rewriteStatusFile } = await import('../core/state.js');
 const { REVIEW_FIX_CHECKLIST_TARGET, taskDirRelPath } =
   await import('../tasks/checklist-target.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
-const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js');
+const { deleteTestRunIfPresent, makeReadyGatePackage } =
+  await import('../run-engine/test-fixtures.js');
+const {
+  assertPublicationReviewPolicySatisfied,
+  buildPublishGateReviewStatus,
+  publicationReviewMatchesPreparedPackage,
+  reviewFinalSnapshotMatchesPreparedPackage,
+} = await import('../run-engine/gate-policy.js');
 
 async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, string>, atCap = true) {
   const run = createRun({
@@ -74,6 +111,7 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
       slots: [...(current?.slots ?? []).filter((entry) => entry.slot !== vars.slotId), ...rows],
     }));
   t.after(async () => {
+    capturedFixOverride = undefined;
     resetWarmReviewerSessionsForTest();
     nativeReviewer = async () => ({ verdict: 'pass', issues: [] });
     await slotRow([]);
@@ -96,6 +134,61 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
   updateRun(run.id, {
     status: 'reviewing',
     taskFile: path.join(config.getOrchestratorTaskRoot(project, projectJson), 'review', 'TASK.md'),
+    ...(capturedFixOverride
+      ? {
+          engineState: {
+            reviewInputsAtLaunch: 'known-inputs',
+            publishGate: {
+              reviews: [
+                {
+                  id: 'refusal-lineage',
+                  source: 'pipeline' as const,
+                  mode: 'cold' as const,
+                  loopNumber: 1,
+                  verdict: 'issues' as const,
+                  unresolvedCount: 1,
+                  issues: [{ file: 'a.ts', line: 1, description: 'fix the finding' }],
+                  reviewerSessionId: 'original-reviewer',
+                  session: {
+                    mode: 'cold' as const,
+                    continuity: 'fresh' as const,
+                    reviewId: 'refusal-lineage',
+                    sessionId: 'original-reviewer',
+                    lastReviewedHeadSha: 'a'.repeat(40),
+                  },
+                  usage: {
+                    runnerSessionId: 'original-reviewer',
+                    source: 'runner-transcript' as const,
+                    measuredAt: '2026-10-26T00:00:00Z',
+                  },
+                  attempts: [
+                    {
+                      mode: 'cold' as const,
+                      loopNumber: 1,
+                      verdict: 'issues' as const,
+                      unresolvedCount: 1,
+                      issues: [{ file: 'a.ts', line: 1, description: 'fix the finding' }],
+                      artifactPaths: ['artifacts/original-review.json'],
+                      reviewSnapshot: {
+                        source: 'local-git' as const,
+                        capturedAt: '2026-10-26T00:00:00Z',
+                        baseSha: 'c'.repeat(40),
+                        headSha: 'a'.repeat(40),
+                      },
+                    },
+                  ],
+                  reviewSnapshot: {
+                    source: 'local-git' as const,
+                    capturedAt: new Date().toISOString(),
+                    baseSha: 'c'.repeat(40),
+                    headSha: 'a'.repeat(40),
+                  },
+                },
+              ],
+            },
+          },
+        }
+      : {}),
     agentContexts: [
       {
         id: 'review-fix',
@@ -107,13 +200,40 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
         runner: 'claude',
         taskFile: checklist,
         signalFile: signal,
-        artifactScope: null,
+        artifactScope: capturedFixOverride ? 'refusal-lineage' : null,
         signalAttemptId: 'fix-attempt',
         attemptStartedAt: new Date(Date.now() - 60_000).toISOString(),
         updatedAt: new Date().toISOString(),
       },
     ],
   });
+  if (capturedFixOverride?.sourceLinesChanged === 0) {
+    execFileSync('git', ['-C', repo, 'init', '-q']);
+    execFileSync('git', [
+      '-C',
+      repo,
+      '-c',
+      'core.hooksPath=/dev/null',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '--allow-empty',
+      '-qm',
+      'test: seed fingerprint',
+    ]);
+    const fingerprint = await readReviewedInputs(getRun(run.id)!);
+    assert.ok(fingerprint);
+    updateRun(run.id, {
+      engineState: {
+        ...getRun(run.id)!.engineState,
+        reviewInputsAtLaunch: fingerprint.fingerprint,
+      },
+    });
+  }
   const retainedScope = {
     runId: run.id,
     reviewId: 'refusal-lineage',
@@ -122,7 +242,7 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
     ownerPrincipalId: null,
     transport: 'native' as const,
     taskDir,
-    artifactScope: null,
+    artifactScope: capturedFixOverride ? 'refusal-lineage' : null,
     runner: 'claude',
     model: 'opus',
     effort: null,
@@ -143,6 +263,7 @@ async function recoveredFixAtCap(t: TestContext, fixSignal: Record<string, strin
     reviewRunner: 'claude',
     validationDepth: 'static-code',
     reviewId: 'refusal-lineage',
+    artifactScope: capturedFixOverride ? 'refusal-lineage' : null,
   });
   return { run, result, launches: reviewerLaunches - launchesBefore, retainedScope };
 }
@@ -161,6 +282,68 @@ test('a fix recovered after a restart at the no-verdict cap is not re-reviewed a
     'complete',
   );
 });
+
+for (const sourceLinesChanged of [0, 50]) {
+  test(`a recovered completed ${sourceLinesChanged}-line fix applies the review limit`, async (t) => {
+    capturedFixOverride = {
+      snapshot: {
+        source: 'local-git',
+        capturedAt: new Date().toISOString(),
+        fixBaseSha: 'a'.repeat(40),
+        fixHeadSha: (sourceLinesChanged === 0 ? 'a' : 'b').repeat(40),
+        diffStat: {
+          files: sourceLinesChanged === 0 ? 0 : 1,
+          additions: sourceLinesChanged,
+          deletions: 0,
+        },
+      },
+      artifactPaths: ['artifacts/fix-delta.diff'],
+      sourceLinesChanged,
+    };
+    const { run, result, launches } = await recoveredFixAtCap(t, { status: 'complete' }, false);
+    assert.equal(launches, 0);
+    assert.equal(result.verdict, sourceLinesChanged === 0 ? 'issues' : 'pass');
+    assert.equal(result.issues?.length, sourceLinesChanged === 0 ? 1 : 0);
+    assert.equal(result.attempts?.length, sourceLinesChanged === 0 ? 1 : 2);
+    assert.equal(result.attempts?.[0]?.verdict, 'issues');
+    assert.equal(result.feedbackSent, true);
+    assert.equal(result.recoveryContinuationPending, false);
+    assert.equal(result.fixDelta?.source, 'local-git');
+    assert.equal(result.reviewerSessionId, 'original-reviewer');
+    assert.equal(result.usage?.runnerSessionId, 'original-reviewer');
+    assert.deepEqual(
+      result.attempts?.[0]?.artifactPaths,
+      sourceLinesChanged === 0
+        ? ['artifacts/original-review.json', 'artifacts/fix-delta.diff']
+        : ['artifacts/original-review.json'],
+    );
+    const prepared = makeReadyGatePackage({
+      headSha: capturedFixOverride.snapshot.fixHeadSha ?? undefined,
+      reviewSnapshot: result.reviewSnapshot,
+    });
+    const gateReview = buildPublishGateReviewStatus({
+      source: 'dispatch',
+      priorReviewCount: 0,
+      reviewId: 'refusal-lineage',
+      reviewResult: result,
+      requestedRunner: 'claude',
+      reviewedPackage: prepared,
+    });
+    assert.equal(isQualifyingReview(gateReview), true);
+    assert.equal(
+      reviewFinalSnapshotMatchesPreparedPackage(gateReview, prepared),
+      sourceLinesChanged > 0,
+    );
+    assert.equal(publicationReviewMatchesPreparedPackage(gateReview, prepared), true);
+    const publication = () =>
+      assertPublicationReviewPolicySatisfied(
+        { ...run, engineState: { publishGate: { reviews: [gateReview] } } },
+        prepared,
+      );
+    if (sourceLinesChanged === 0) assert.throws(publication, /requires passing reviews/);
+    else assert.doesNotThrow(publication);
+  });
+}
 
 test('a recovered fix the worker blocked keeps its block at the no-verdict cap', async (t) => {
   const { result, launches } = await recoveredFixAtCap(t, {
