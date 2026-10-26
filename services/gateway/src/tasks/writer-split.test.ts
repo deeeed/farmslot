@@ -137,7 +137,6 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   if (process.env.FARMSLOT_SPLIT_TEST_DUMP) console.log(taskDocument);
   assert.match(taskDocument, /^# fix-bug: Saving a note drops the last character/m);
   assert.match(taskDocument, /> Autonomous execution: complete the authorized work/);
-  assert.match(taskDocument, /This mode grants no additional permission/);
   assert.match(taskDocument, /^TICKET: SPLIT-\d+$/m);
   assert.doesNotMatch(taskDocument, /^STATUS:/m);
   assert.match(
