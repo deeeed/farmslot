@@ -17,6 +17,9 @@ export function canReadResourceKey(
     case 'sources':
       method = Methods.SOURCES_STATUS;
       break;
+    case 'gateway-update':
+      method = Methods.GATEWAY_STATUS;
+      break;
     case 'runs':
       method = Methods.RUN_LIST;
       break;

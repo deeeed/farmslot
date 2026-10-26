@@ -8,6 +8,7 @@ import {
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 /**
@@ -18,20 +19,27 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 @customElement('update-banner')
 export class UpdateBanner extends LitElement {
   @property({ attribute: false }) status: GatewayUpdateStatus | null = null;
+  @property({ type: Boolean }) current = false;
+  @property({ type: Boolean }) checking = false;
+  @property() age = '';
+  @property() readError = '';
 
   @state() private confirming = false;
   @state() private submitting = false;
   @state() private error = '';
   private requestedTarget = '';
   private priorOperationId?: string;
-  private pollTimer?: ReturnType<typeof setInterval>;
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    clearInterval(this.pollTimer);
-  }
+  private confirmationKey = '';
 
   protected updated() {
+    if (
+      this.confirming &&
+      (!this.current ||
+        this.confirmationKey !== `${this.status?.localSha}:${this.status?.remoteSha}`)
+    ) {
+      this.confirming = false;
+      this.confirmationKey = '';
+    }
     if (
       this.status?.operation &&
       this.requestedTarget &&
@@ -43,39 +51,41 @@ export class UpdateBanner extends LitElement {
       // progress is authoritative once the client reconnects.
       this.error = '';
     }
-    if (this.status?.operation?.phase === 'running' && !this.pollTimer) {
-      this.pollTimer = setInterval(() => this.refresh(false), 2_000);
-    } else if (this.status?.operation?.phase !== 'running') {
-      clearInterval(this.pollTimer);
-      this.pollTimer = undefined;
-    }
   }
 
-  private refresh(force = true) {
-    this.dispatchEvent(
-      new CustomEvent('refresh', { detail: force, bubbles: true, composed: true }),
-    );
+  private recheck() {
+    this.dispatchEvent(new CustomEvent('recheck', { bubbles: true, composed: true }));
   }
 
   private async updateCheckout() {
     const s = this.status;
-    if (!s?.remoteSha || !s.canUpdate || this.submitting) return;
+    if (
+      !s?.remoteSha ||
+      !s.canUpdate ||
+      !this.current ||
+      this.submitting ||
+      gateway.connectionState !== 'connected' ||
+      this.confirmationKey !== `${s.localSha}:${s.remoteSha}`
+    )
+      return;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    const sameOwner = () =>
+      owner === getResourceWorkspaceKey() && connection === gateway.resourceConnectionId;
     this.submitting = true;
     this.requestedTarget = s.remoteSha;
     this.priorOperationId = s.operation?.id;
     this.error = '';
     try {
-      const operation = await gateway.request<CheckoutUpdateOperation>(Methods.GATEWAY_UPDATE, {
+      await gateway.request<CheckoutUpdateOperation>(Methods.GATEWAY_UPDATE, {
         localSha: s.localSha,
         targetSha: s.remoteSha,
       });
-      this.status = { ...s, operation };
-      this.confirming = false;
+      if (sameOwner()) this.confirming = false;
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (sameOwner()) this.error = error instanceof Error ? error.message : String(error);
     } finally {
       this.submitting = false;
-      this.refresh(false);
     }
   }
 
@@ -164,15 +174,15 @@ export class UpdateBanner extends LitElement {
 
   render() {
     const s = this.status;
-    if (!s || (!s.updateAvailable && !s.operation)) return nothing;
+    if (!s || (!s.updateAvailable && !s.operation && !this.readError)) return nothing;
     const operation = s.operation;
     const running = this.submitting || operation?.phase === 'running';
     return html`
       <div class="banner" role="status">
         <span class="dot"></span>
         <span class="text">
-          ${!s.updateAvailable && operation
-            ? operation.message
+          ${!s.updateAvailable
+            ? (operation?.message ?? 'Gateway update status is unavailable.')
             : html`Checkout update available:
                 <strong
                   >${s.commitsBehind} commit${s.commitsBehind === 1 ? '' : 's'} behind</strong
@@ -181,17 +191,24 @@ export class UpdateBanner extends LitElement {
             >${operation?.localSha || s.localSha || '?'} → ${s.remoteSha || '?'}</span
           >
         </span>
-        <button class="refresh" ?disabled=${running} @click=${() => this.refresh()}>
-          Check again
+        <button
+          class="refresh"
+          ?disabled=${running || this.checking || gateway.connectionState !== 'connected'}
+          @click=${() => this.recheck()}
+        >
+          ${this.checking ? 'Checking upstream…' : 'Recheck upstream'}
         </button>
         ${s.canUpdate && s.updateAvailable
           ? html`
               <button
                 class="update"
-                ?disabled=${running}
+                ?disabled=${running || this.checking || !this.current}
                 @click=${() => {
                   if (this.confirming) void this.updateCheckout();
-                  else this.confirming = true;
+                  else {
+                    this.confirmationKey = `${s.localSha}:${s.remoteSha}`;
+                    this.confirming = true;
+                  }
                 }}
               >
                 ${running ? 'Updating…' : this.confirming ? 'Confirm update' : 'Update checkout'}
@@ -240,6 +257,23 @@ export class UpdateBanner extends LitElement {
             </div>`
           : nothing}
         ${this.error ? html`<div class="details error" role="alert">${this.error}</div>` : nothing}
+        ${this.age
+          ? html`<div class="details">
+              Saved gateway update, ${this.age}. Updating waits for a current source check.
+            </div>`
+          : nothing}
+        ${this.readError
+          ? html`<div class="details error" role="alert">
+              ${this.readError}
+              <button
+                ?disabled=${gateway.connectionState !== 'connected'}
+                @click=${() =>
+                  this.dispatchEvent(new CustomEvent('retry', { bubbles: true, composed: true }))}
+              >
+                Retry failed read
+              </button>
+            </div>`
+          : nothing}
       </div>
     `;
   }

@@ -362,7 +362,7 @@ export const RESOURCE_QUERY_DEFINITIONS = {
       cohort: 'upstream',
     },
     timeoutMs: 60_000,
-    live: false,
+    live: true,
     collector: 'gateway-update',
     sourceObservation: upstreamSourceObservation,
     persistedData: gatewayStatusStoredData,
@@ -844,6 +844,16 @@ export type ResourceCollectorReadMethod = {
     ? Method
     : never;
 }[ResourceReadMethod];
+
+/** Advertise only collectors whose owning read and notification contract are enabled. */
+export function resourceCollectorReadMethods(): ResourceCollectorReadMethod[] {
+  return Object.entries(RESOURCE_QUERY_DEFINITIONS)
+    .filter(([, definition]) => {
+      const query: ResourceQueryDefinition = definition;
+      return query.live && query.collector !== undefined;
+    })
+    .map(([method]) => method as ResourceCollectorReadMethod);
+}
 
 export interface ResourceCollectorQuery {
   id: string;

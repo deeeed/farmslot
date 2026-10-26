@@ -30,6 +30,7 @@ test('domain notifications use owning method authorization and reveal no private
   t.after(() => rm(home, { recursive: true, force: true }));
   const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
   const keys: ResourceKey[] = [
+    { family: 'gateway-update', scope: 'gateway' },
     { family: 'pr-automation', scope: 'farm' },
     { family: 'assessment', scope: 'farm' },
     { family: 'analytics', scope: 'farm' },
@@ -38,6 +39,7 @@ test('domain notifications use owning method authorization and reveal no private
   ];
   for (const key of keys) assert.equal(canReadResourceKey(runtime, state, key), true);
   assert.deepEqual(methods, [
+    'gateway.status',
     'prWatch.list',
     'assessment.list',
     'analytics.query',

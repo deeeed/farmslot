@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   resourceCollectorQuery,
+  resourceCollectorReadMethods,
   resourceDependenciesForRead,
   resourceQuery,
 } from '../../src/client-cache/index.js';
@@ -63,7 +64,8 @@ test('gateway status uses the same admission/retention contract and excludes for
   assert.throws(() => resourceCollectorQuery('gateway.status', { refresh: true }));
   assert.throws(() => resourceCollectorQuery('gateway.status', { token: 'private' }));
   const status = resourceQuery('gateway.status');
-  assert.equal(status.live, false);
+  assert.equal(status.live, true);
+  assert.deepEqual(resourceCollectorReadMethods(), ['gateway.status']);
   assert.equal(status.retention?.cohort, resourceQuery('pr.list').retention?.cohort);
   assert.deepEqual(status.dependencies, [{ family: 'gateway-update', scope: 'gateway' }]);
 });

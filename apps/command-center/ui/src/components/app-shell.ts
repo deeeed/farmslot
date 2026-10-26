@@ -76,7 +76,7 @@ import {
 } from '../build-info.js';
 import { getDesktopConnection, isDesktopClient } from '../desktop-connection.js';
 import type { ConnectionState } from '../gateway-client.js';
-import { gateway, gatewayStatusMessage } from '../gateway-client.js';
+import { gateway } from '../gateway-client.js';
 import {
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_SOURCE_STORAGE_KEY,
@@ -85,7 +85,11 @@ import {
   readGatewayAuth,
   resolveGatewayConnectionSource,
 } from '../gateway-url.js';
-import { getResourceWorkspaceAccess, subscribeResourceCache } from '../resource-cache.js';
+import {
+  getResourceWorkspaceAccess,
+  getResourceWorkspaceKey,
+  subscribeResourceCache,
+} from '../resource-cache.js';
 import {
   type AppState,
   getState,
@@ -196,8 +200,6 @@ const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
 // Remembers which remote SHA the operator dismissed, so a newer update re-shows.
 const UPDATE_DISMISS_KEY = 'farmslot:update-banner-dismissed-sha';
 const WHATS_NEW_SEEN_VERSION_KEY = 'farmslot:whats-new-seen-version';
-// Local pulls should be reflected promptly; remote fetches remain cached by the gateway.
-const UPDATE_POLL_MS = 30_000;
 const ALPHA_COPY = 'Alpha surface — early, under-tested, and subject to change.';
 type PairingTarget = Pick<PairingCandidate, 'gatewayUrl' | 'kind' | 'profileName'>;
 
@@ -224,6 +226,22 @@ export class FarmApp extends LitElement {
   @state() private versionDetailsLoading = false;
   @state() private versionDetailsError = '';
   @state() private versionDetailsStatus: GatewayStatusResult | null = null;
+  private updateAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly updateQuery = new ResourceQueryController<GatewayStatusResult>(
+    this,
+    (result) => {
+      this.versionDetailsStatus = this.updateQuery.belongsToWorkspace
+        ? (result.data ?? null)
+        : null;
+      this.updateStatus = this.versionDetailsStatus?.update ?? null;
+      if (result.status === 'stale' && result.data && !this.updateAgeTimer)
+        this.updateAgeTimer = setInterval(() => this.requestUpdate(), 1000);
+      else if (result.status !== 'stale' || !result.data) {
+        clearInterval(this.updateAgeTimer);
+        this.updateAgeTimer = undefined;
+      }
+    },
+  );
   @state() private versionDetailsNodes: NodesListResult | null = null;
   private readonly nodeQuery = new ResourceQueryController<NodesListResult>(this, (result) => {
     this.versionDetailsNodes = result.data ?? null;
@@ -306,8 +324,6 @@ export class FarmApp extends LitElement {
   private unsubResourceCache?: () => void;
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
-  private unsubConnForUpdate?: () => void;
-  private updatePollTimer?: ReturnType<typeof setInterval>;
 
   constructor() {
     super();
@@ -336,15 +352,7 @@ export class FarmApp extends LitElement {
     window.addEventListener(ATTENTION_ALERT_EVENT, this.onAttentionAlert as EventListener);
     this.pinnedSlots = listPinnedSlotPreferences();
     this.bindWorkerInventory();
-    // Update freshness needs an open socket, so check on each (re)connect plus a
-    // slow background poll. checkForUpdate tolerates a closed socket on its own.
-    this.unsubConnForUpdate = gateway.onConnectionChange((s) => {
-      if (s === 'connected') void this.checkForUpdate();
-    });
-    void this.checkForUpdate();
-    this.updatePollTimer = setInterval(() => {
-      void this.checkForUpdate();
-    }, UPDATE_POLL_MS);
+    this.updateQuery.setQuery(resourceQuery<GatewayStatusResult>(Methods.GATEWAY_STATUS));
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
     this.unsubResourceCache = subscribeResourceCache(() => {
@@ -372,8 +380,8 @@ export class FarmApp extends LitElement {
     window.removeEventListener(ATTENTION_ALERT_EVENT, this.onAttentionAlert as EventListener);
     clearInterval(this.workerAgeTimer);
     this.workerAgeTimer = undefined;
-    if (this.updatePollTimer) clearInterval(this.updatePollTimer);
-    this.unsubConnForUpdate?.();
+    clearInterval(this.updateAgeTimer);
+    this.updateAgeTimer = undefined;
     this.unsub?.();
     this.unsubResourceCache?.();
   }
@@ -462,26 +470,31 @@ export class FarmApp extends LitElement {
     `;
   }
 
-  private async checkForUpdate(refresh = false): Promise<void> {
-    if (gateway.workspaceAccess !== 'farm') return;
+  private async recheckUpdateSource(): Promise<void> {
+    if (
+      gateway.workspaceAccess !== 'farm' ||
+      gateway.connectionState !== 'connected' ||
+      this.versionDetailsLoading
+    )
+      return;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    this.versionDetailsLoading = true;
+    this.versionDetailsError = '';
     try {
-      const result = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {
-        refresh,
-      });
-      this.updateStatus = result.update;
+      // Explicit remote recheck. Its source notification owns the canonical result.
+      await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true }, 30_000);
     } catch (err) {
-      // Advisory only: a closed socket or timeout just means no fresh reading this
-      // cycle. We deliberately keep the last updateStatus rather than clearing it —
-      // an update that was available is still available while the gateway is briefly
-      // unreachable, and nulling it would flicker the banner on every reconnect. The
-      // next connect/poll re-checks and replaces it; never block the shell on this.
-      console.warn('[app-shell] gateway update status unavailable', err);
+      if (owner === getResourceWorkspaceKey() && connection === gateway.resourceConnectionId)
+        this.versionDetailsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.versionDetailsLoading = false;
     }
   }
 
   private renderUpdateBanner() {
     const s = this.updateStatus;
-    if (!s || (!s.updateAvailable && !s.operation)) return nothing;
+    if (!s || (!s.updateAvailable && !s.operation && !this.updateQuery.state.error)) return nothing;
     const dismissalKey = s.operation
       ? `${s.remoteSha}:${s.operation.id}:${s.operation.phase}`
       : s.remoteSha;
@@ -489,9 +502,15 @@ export class FarmApp extends LitElement {
       return nothing;
     return html`<update-banner
       .status=${s}
-      @refresh=${(event: CustomEvent<boolean>) => {
-        void this.checkForUpdate(event.detail);
-      }}
+      .current=${this.updateQuery.ready &&
+      this.updateQuery.state.sourceObservation?.status === 'ready'}
+      .checking=${this.versionDetailsLoading}
+      .age=${this.updateQuery.state.status === 'stale'
+        ? sourceObservationAge(this.updateQuery.state.sourceObservation?.observedAt)
+        : ''}
+      .readError=${this.updateQuery.state.error?.message ?? this.versionDetailsError}
+      @recheck=${() => void this.recheckUpdateSource()}
+      @retry=${() => void this.updateQuery.retry()}
       @dismiss=${() => this.dismissUpdateBanner()}
     ></update-banner>`;
   }
@@ -554,9 +573,10 @@ export class FarmApp extends LitElement {
     `;
   }
 
-  private async openVersionDetails(): Promise<void> {
+  private openVersionDetails(): void {
     this.versionDetailsOpen = true;
-    await this.refreshVersionDetails();
+    this.versionDetailsError = '';
+    this.nodeQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
   }
 
   protected override updated(changed: Map<string, unknown>): void {
@@ -564,27 +584,13 @@ export class FarmApp extends LitElement {
       this.nodeQuery.setQuery(undefined);
   }
 
-  private async refreshVersionDetails(): Promise<void> {
-    this.nodeQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
-    if (gateway.connectionState !== 'connected') {
-      this.versionDetailsError = gatewayStatusMessage(gateway);
-      return;
-    }
-    this.versionDetailsLoading = true;
-    this.versionDetailsError = '';
-    this.versionDetailsCopied = false;
-    try {
-      const [status, nodes] = await Promise.all([
-        gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true }, 30_000),
-        this.nodeQuery.retry(),
-      ]);
-      this.versionDetailsStatus = status;
-      if (nodes.error) throw nodes.error;
-    } catch (error) {
-      this.versionDetailsError = error instanceof Error ? error.message : String(error);
-    } finally {
-      this.versionDetailsLoading = false;
-    }
+  private async retryVersionReadErrors(): Promise<void> {
+    if (gateway.connectionState !== 'connected') return;
+    await Promise.all(
+      [this.updateQuery, this.nodeQuery]
+        .filter((query) => query.state.error)
+        .map((query) => query.retry()),
+    );
   }
 
   private async copyVersionDiagnostics(): Promise<void> {
@@ -629,11 +635,19 @@ export class FarmApp extends LitElement {
           </div>
           <div class="fa-version-actions">
             <button
-              @click=${() => this.refreshVersionDetails()}
-              ?disabled=${this.versionDetailsLoading}
+              @click=${() => this.recheckUpdateSource()}
+              ?disabled=${this.versionDetailsLoading || gateway.connectionState !== 'connected'}
             >
-              ${this.versionDetailsLoading ? 'Refreshing…' : 'Refresh'}
+              ${this.versionDetailsLoading ? 'Checking upstream…' : 'Recheck upstream'}
             </button>
+            ${this.updateQuery.state.error || this.nodeQuery.state.error
+              ? html`<button
+                  @click=${() => void this.retryVersionReadErrors()}
+                  ?disabled=${gateway.connectionState !== 'connected'}
+                >
+                  Retry failed read
+                </button>`
+              : nothing}
             <button
               @click=${() => this.copyVersionDiagnostics()}
               ?disabled=${this.versionDetailsLoading}
@@ -654,6 +668,18 @@ export class FarmApp extends LitElement {
           </div>
           ${this.nodeQuery.state.status === 'stale' && this.nodeQuery.state.data
             ? html`<p>Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt)}.</p>`
+            : nothing}
+          ${this.updateQuery.state.status === 'stale' && this.updateQuery.state.data
+            ? html`<p>
+                Saved gateway update,
+                ${sourceObservationAge(this.updateQuery.state.sourceObservation?.observedAt)}.
+                Updating waits for a current source check.
+              </p>`
+            : nothing}
+          ${this.updateQuery.state.error
+            ? html`<p role="alert">
+                Could not check gateway updates: ${this.updateQuery.state.error.message}
+              </p>`
             : nothing}
           ${this.nodeQuery.state.error
             ? html`<p role="alert">Could not read nodes: ${this.nodeQuery.state.error.message}</p>`
@@ -1203,9 +1229,20 @@ export class FarmApp extends LitElement {
 
   private async refreshPairingListenWarning() {
     this.pairingListenLoading = true;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
     try {
-      const status = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {}, 5_000);
-      this.pairingListenWarning = pairingListenWarning(status.listen);
+      if (gateway.connectionState !== 'connected') throw new Error('Gateway is disconnected.');
+      const read = await this.updateQuery.retry();
+      if (owner !== getResourceWorkspaceKey() || connection !== gateway.resourceConnectionId)
+        return;
+      // Listen metadata is a live gateway fact. An origin-fetch error cannot disable LAN pairing;
+      // a transport/read failure still refuses the older retained listen snapshot.
+      if (!read.data || (read.error && read.error.code !== read.data.observation?.error?.code))
+        throw new Error(
+          read.error?.message ?? 'Current gateway listen information is unavailable.',
+        );
+      this.pairingListenWarning = pairingListenWarning(read.data.listen);
     } catch (err) {
       this.pairingListenWarning = `Could not read gateway listen address (${err instanceof Error ? err.message : 'unknown error'}). Retry before generating a LAN pairing QR.`;
     } finally {

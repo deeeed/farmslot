@@ -1,0 +1,166 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Gateway update observations follow their real sources",
+  "description": "Use private Git repositories and a fixture actor to observe source failures, repair, atomic operation files, installed HEAD, and offline SQLite restoration with source age. Recover the same cold browser runtime. No provider, native or checkout-update command execution.",
+  "proofTargets": [
+    {
+      "id": "gatewaySourceErrorsRetainAge",
+      "claim": "A real Git source failure retains last successful source time and remote facts."
+    },
+    {
+      "id": "gatewaySourceRecovery",
+      "claim": "An explicit source repair/recheck updates the same mounted runtime."
+    },
+    {
+      "id": "gatewayOperationNotification",
+      "claim": "An independent atomic checkout-operation record appears in the mounted panel."
+    },
+    {
+      "id": "gatewayInstalledNotification",
+      "claim": "A real private Git checkout updates installed state without Refresh."
+    },
+    {
+      "id": "gatewayLocalNoRemoteRead",
+      "claim": "Local operation and Git changes cause zero additional remote checks."
+    },
+    {
+      "id": "gatewayDurableFactsOnly",
+      "claim": "Actual SQLite retains source facts and excludes live diagnostics."
+    },
+    {
+      "id": "gatewayColdSqlite",
+      "claim": "A new offline browser runtime restores the exact scoped SQLite source facts."
+    },
+    {
+      "id": "gatewayColdSourceAge",
+      "claim": "Cold facts retain their original source success time and show saved age."
+    },
+    {
+      "id": "gatewayColdRecovery",
+      "claim": "The same cold browser runtime recovers after the owned gateway restarts."
+    },
+    {
+      "id": "gatewaySharedViewers",
+      "claim": "Two mounted browser viewers share one upstream sample and one persistent owner."
+    },
+    {
+      "id": "gatewayNoIdlePoll",
+      "claim": "A settled mounted gateway-status panel emits zero reads over its former 30-second polling interval."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-gateway-update-observations.mjs",
+        "timeout_ms": 180000,
+        "intent": "Observe real gateway source changes and recovery in the browser.",
+        "next": "gatewaySourceErrorsRetainAge"
+      },
+      "gatewaySourceErrorsRetainAge": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewaySourceErrorsRetainAge\":true",
+        "intent": "A real Git source failure retains last successful source time and remote facts.",
+        "proves": ["gatewaySourceErrorsRetainAge"],
+        "next": "gatewaySourceRecovery"
+      },
+      "gatewaySourceRecovery": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewaySourceRecovery\":true",
+        "intent": "An explicit source repair/recheck updates the same mounted runtime.",
+        "proves": ["gatewaySourceRecovery"],
+        "next": "gatewayOperationNotification"
+      },
+      "gatewayOperationNotification": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewayOperationNotification\":true",
+        "intent": "An independent atomic checkout-operation record appears in the mounted panel.",
+        "proves": ["gatewayOperationNotification"],
+        "next": "gatewayInstalledNotification"
+      },
+      "gatewayInstalledNotification": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewayInstalledNotification\":true",
+        "intent": "A real private Git checkout updates installed state without Refresh.",
+        "proves": ["gatewayInstalledNotification"],
+        "next": "gatewayLocalNoRemoteRead"
+      },
+      "gatewayLocalNoRemoteRead": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewayLocalNoRemoteRead\":true",
+        "intent": "Local operation and Git changes cause zero additional remote checks.",
+        "proves": ["gatewayLocalNoRemoteRead"],
+        "next": "gatewayDurableFactsOnly"
+      },
+      "gatewayDurableFactsOnly": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewayDurableFactsOnly\":true",
+        "intent": "Actual SQLite retains source facts and excludes live diagnostics.",
+        "proves": ["gatewayDurableFactsOnly"],
+        "next": "gatewayColdSqlite"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "gatewayColdSqlite": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewayColdSqlite\":true",
+        "intent": "A new offline browser runtime restores the exact scoped SQLite source facts.",
+        "proves": ["gatewayColdSqlite"],
+        "next": "gatewayColdSourceAge"
+      },
+      "gatewayColdSourceAge": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewayColdSourceAge\":true",
+        "intent": "Cold facts retain their original source success time and show saved age.",
+        "proves": ["gatewayColdSourceAge"],
+        "next": "gatewayColdRecovery"
+      },
+      "gatewayColdRecovery": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewayColdRecovery\":true",
+        "intent": "The same cold browser runtime recovers after the owned gateway restarts.",
+        "proves": ["gatewayColdRecovery"],
+        "next": "gatewaySharedViewers"
+      },
+      "gatewaySharedViewers": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewaySharedViewers\":true",
+        "intent": "Two mounted browser viewers share one upstream sample and one persistent owner.",
+        "proves": ["gatewaySharedViewers"],
+        "next": "gatewayNoIdlePoll"
+      },
+      "gatewayNoIdlePoll": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gatewayNoIdlePoll\":true",
+        "intent": "A settled mounted gateway-status panel emits zero reads over its former 30-second polling interval.",
+        "proves": ["gatewayNoIdlePoll"],
+        "next": "done"
+      }
+    }
+  }
+}

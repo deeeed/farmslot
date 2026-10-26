@@ -23,6 +23,7 @@ import {
   ReviewQaConfigurationError,
 } from '@farmslot/protocol';
 import {
+  resourceCollectorReadMethods,
   resourceDependenciesForRead,
   resourceQuery,
   type ResourceReadMethod,
@@ -757,6 +758,7 @@ async function handleMessage(
       gatewayPing = false;
     }
     console.log(`[auth] ${clientKind} authenticated using ${state.authMode}`);
+    const collectorMethods = resourceCollectorReadMethods();
     sendResponse(state.ws, frame.id, true, {
       ok: true,
       clientKind,
@@ -773,6 +775,9 @@ async function handleMessage(
           versionLists: false,
           observedReads: 1,
           workspaceReads: 1,
+          ...(collectorMethods.length
+            ? { upstreamObservers: { version: 1, methods: collectorMethods } }
+            : {}),
         },
         batchedContent: false,
         workspaceAccess: gatewayWorkspaceAccess(

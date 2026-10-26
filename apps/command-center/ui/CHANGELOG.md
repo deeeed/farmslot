@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Observe gateway versions and checkout progress through the shared cache, retaining explicit remote checks and current-state update guards.
+
 - Show derived acceptance sources, inherited proof and pending instructions, and retain message identities across steering retries.
 
 - Keep expected inherited modes from triggering a baseline warning on CI-watch follow-ups.
