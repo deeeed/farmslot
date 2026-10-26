@@ -232,10 +232,7 @@ for (const [stepName, retainedFix] of [
           'utf8',
         ),
       );
-      assert.equal(
-        contract.deterministicChecks[0].command,
-        `export FARMSLOT_CI_BASE_REF='${'a'.repeat(40)}'\nyarn ci:local`,
-      );
+      assert.equal(contract.deterministicChecks, undefined);
     }
     if (stepName === PS.HUMAN_GATE || retainedFix) {
       assert.equal(await readFile(path.join(taskDirOnSlot, fix.checklist), 'utf8'), fixChecklist);
