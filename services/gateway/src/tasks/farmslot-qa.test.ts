@@ -42,7 +42,7 @@ test('Farmslot QA intake selects the local validation checklist on every support
   assert.deepEqual(validatePackPortability(pack), []);
 });
 
-test('Farmslot QA checklist renders CI parity before evidence and terminal completion', () => {
+test('Farmslot QA checklist retains evidence and terminal completion without local parity', () => {
   const markdown = readFileSync(path.join(pack, 'templates/worker/qa.md'), 'utf8');
   const vars: Record<string, string> = {
     TASK_DIR: '.task/qa',
@@ -57,10 +57,10 @@ test('Farmslot QA checklist renders CI parity before evidence and terminal compl
     vars[key] = renderTemplatePlaceholders(String(value), vars);
   const rendered = renderTemplatePlaceholders(markdown, vars);
   const steps = enumerateChecklistCheckboxes(rendered);
-  assert.equal(steps.length, 7);
-  assert.match(steps[4].rawLabel, /DETERMINISTIC: ci.local_check/);
-  assert.match(steps[5].rawLabel, /qa-result.json/);
-  assert.match(steps[6].rawLabel, /mark complete --mark-last/);
+  assert.equal(steps.length, 6);
+  assert.doesNotMatch(rendered, /CI_PARITY_STEP|DETERMINISTIC: ci\.local_check/);
+  assert.match(steps[4].rawLabel, /qa-result.json/);
+  assert.match(steps[5].rawLabel, /mark complete --mark-last/);
 });
 
 test('enabling Farmslot QA preserves the existing local flow selections and defaults', () => {

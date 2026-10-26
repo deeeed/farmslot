@@ -98,7 +98,7 @@ test('a checker PASS without declared CI results fails closed with the selected 
           {
             checklist: 'CHECKLIST.md',
             stepNumber: 17,
-            reference: 'ci.local_check',
+            reference: 'checks.unit',
             command: 'true',
           },
         ],
@@ -218,5 +218,31 @@ test('without the opt-in the current checker owns unreadable handoff refusal', a
     assert.doesNotMatch(execCalls[1], /--require-acceptance-status/);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('terminal artifact success needs no local parity projection for a retained contract', async () => {
+  for (const projection of ['', '\nTASK_DETERMINISTIC_CHECKS []']) {
+    const root = writeTaskDir({ require: false });
+    writeFileSync(
+      path.join(taskDir, 'inputs/worker-terminal-contract.json'),
+      JSON.stringify({
+        deterministicChecks: [
+          {
+            checklist: 'CHECKLIST.md',
+            stepNumber: 1,
+            reference: 'ci.local_check',
+            command: 'exit 91',
+          },
+        ],
+      }),
+    );
+    checkerStdout = `TASK_ARTIFACT_CONTRACT_PASS${projection}`;
+    try {
+      assert.equal((await validate()).ok, true);
+    } finally {
+      checkerStdout = 'TASK_ARTIFACT_CONTRACT_PASS';
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });

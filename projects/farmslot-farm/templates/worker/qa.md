@@ -24,10 +24,6 @@ failed smoke must remain a failure with retained evidence.
 - [ ] Author `artifacts/recipe.json` using the existing Recipe v1 manifest at `{{recipe_manifest_path}}`. Run a non-financial smoke through `{{recipe_validate_wrapper}}` with `FARMSLOT_SLOT_REPO={{REPO}}`, this slot's ports and a fresh task artifact directory. Inspect assertions, trace and captures; UI evidence must show the recipe HUD. CLI/RPC proof must assert the resulting state, not just a successful call. Retain a failed smoke and stop before broader validation.
 - [ ] Freeze the selected cases and criterion mapping, then execute each attainable case through the same wrapper. Keep separate complete packages and cleanup evidence for each case. Use the existing `@farmslot/recipe-runner` exports `freezeRecipeSuiteScope` and `finalizeRecipeSuite` to retain the standard suite scope/result. Reuse these writers rather than creating another suite format. Record uncovered criteria and unavailable surfaces explicitly; an empty suite cannot pass.
 
-### Deterministic checks
-
-{{CI_PARITY_STEP}}
-
 ### Results
 
 - [ ] Assess the frozen criteria as PASS, FAIL or UNTESTABLE against executed assertions and inspected evidence. Write `artifacts/recipe-coverage.md`, `artifacts/evidence-manifest.json` and `artifacts/report.html`, including source/provider revisions, failed attempts, coverage gaps and cleanup. Write `artifacts/qa-result.json` exactly as the generated TASK.md QA-input contract requires, binding the admitted profile/inputs, source, packages, smoke proof target and scope/suite digests. Use the installed protocol's `digestRecipeDocument` for digests; do not invent evidence or counters.

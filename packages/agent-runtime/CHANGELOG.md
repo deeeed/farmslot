@@ -8,6 +8,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.2 - 2026-10-26
+
+- Remove the local CI-parity worker step and its completion receipt requirement.
+
 ## 0.39.1 - 2026-10-25
 
 - Include the acceptance-contract declaration so typed consumers can resolve the exported helper.

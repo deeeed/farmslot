@@ -11,7 +11,7 @@ let taskDir = '';
 const declared = {
   checklist: 'CHECKLIST.md',
   stepNumber: 9,
-  reference: 'ci.local_check',
+  reference: 'checks.unit',
   command: 'true',
 };
 let status: 'passed' | 'stale' = 'passed';

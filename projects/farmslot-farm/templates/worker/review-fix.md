@@ -65,8 +65,6 @@ TICKET: {{TICKET}}
   (some packages emit into source paths); use each workspace's own scripts.
   If you touched `scripts/*.sh`, run `bash -n` on each edited script and
   `yarn test:project-hooks` from the repo root.
-  {{CI_PARITY_STEP}}
-
 - [ ] **5. Artifact contract gate:**
   ```bash
   cd {{REPO}}
