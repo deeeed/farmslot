@@ -496,7 +496,11 @@ export async function captureFixDeltaSnapshot(
   loopNumber: number,
   fixBaseSha: string | null,
   artifactScope?: string | null,
-): Promise<{ snapshot: ReviewFixDeltaSnapshot; artifactPaths: string[] }> {
+): Promise<{
+  snapshot: ReviewFixDeltaSnapshot;
+  artifactPaths: string[];
+  sourceLinesChanged?: number;
+}> {
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
   const diffRel = `${artifactDir}/fix-delta.diff`;
   const statRel = `${artifactDir}/fix-delta-stat.json`;
@@ -574,6 +578,7 @@ export async function captureFixDeltaSnapshot(
     }
     const untrackedFiles = parseUntrackedFileManifest(untrackedManifest.stdout);
     const fixDiffIdentity = reviewSnapshotIdentityText(diff.stdout, untrackedFiles);
+    const diffStat = parseGitNumstat(numstat.stdout);
     const snapshot: ReviewFixDeltaSnapshot = {
       source: 'local-git',
       baseSha: fixBaseSha,
@@ -582,13 +587,20 @@ export async function captureFixDeltaSnapshot(
       fixHeadSha,
       diffPath: diffRel,
       diffHash: reviewDiffHash(fixDiffIdentity),
-      diffStat: parseGitNumstat(numstat.stdout),
+      diffStat,
       ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
       capturedAt: new Date().toISOString(),
     };
     await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, diff.stdout);
     await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
-    return { snapshot, artifactPaths: [diffRel, statRel] };
+    return {
+      snapshot,
+      artifactPaths: [diffRel, statRel],
+      ...(untrackedFiles.length === 0 &&
+      !numstat.stdout.split('\n').some((line) => line.startsWith('-\t-\t'))
+        ? { sourceLinesChanged: diffStat.additions + diffStat.deletions }
+        : {}),
+    };
   } catch (err) {
     const snapshot: ReviewFixDeltaSnapshot = {
       ...unavailableReviewSnapshot('slot-exec-error', (err as Error).message),

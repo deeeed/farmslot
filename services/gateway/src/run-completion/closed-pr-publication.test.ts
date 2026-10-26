@@ -45,7 +45,15 @@ mock.module('../core/config.js', {
 const execution = await import('../core/exec.js');
 const execute = async (_vars: SlotVars, command: string) => {
   commands.push(command);
-  return { stdout: command.includes('rev-parse HEAD') ? head : '', stderr: '', exitCode: 0 };
+  return {
+    stdout: command.includes('rev-parse HEAD')
+      ? head
+      : command.includes('ls-remote')
+        ? `${head}\trefs/heads/fix/reused\n`
+        : '',
+    stderr: '',
+    exitCode: 0,
+  };
 };
 mock.module('../core/exec.js', {
   namedExports: {

@@ -521,11 +521,11 @@ export async function validateDeterministicChecksForRun(
   const contract: WorkerTerminalContractDocument | null = content ? JSON.parse(content) : null;
   const declaredChecks = requiredDeterministicChecks(contract);
   if (!declaredChecks.length) {
-    for (const checklist of new Set([
-      'CHECKLIST.md',
-      'TASK.md',
-      ...(taskFile ? [path.basename(taskFile)] : []),
-    ])) {
+    const checklists =
+      checklist === 'REVIEW-FIX.md' || checklist === 'CI-FIX.md'
+        ? [checklist]
+        : ['CHECKLIST.md', 'TASK.md', ...(taskFile ? [path.basename(taskFile)] : [])];
+    for (const checklist of new Set(checklists)) {
       const markdown = (await readTaskFile(checklist)) ?? '';
       if (deterministicChecks.declarations(markdown, checklist).length) {
         throw new Error(

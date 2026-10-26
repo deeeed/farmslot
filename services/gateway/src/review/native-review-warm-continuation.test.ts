@@ -231,7 +231,11 @@ mock.module('./review-agent.js', {
   },
 });
 mock.module('./reviewed-inputs.js', {
-  namedExports: { noteReviewInputsAtLaunch: noop, recordReviewedInputs: noop },
+  namedExports: {
+    noteReviewInputsAtLaunch: noop,
+    recordReviewedInputs: noop,
+    readReviewedInputs: async () => null,
+  },
 });
 mock.module('./snapshots.js', {
   namedExports: {

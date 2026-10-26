@@ -183,6 +183,12 @@ test('one combined approval accepts findings and attests only the accompanying e
         allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
       },
       { ...policy.reasons[0]!, evidencePolicy: 'claim-verdict' },
+      {
+        code: 'review-result-required',
+        prerequisite: 'review',
+        message: 'A current review result with accepted findings is required.',
+        allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
+      },
     ],
     findings: [
       { reviewId: 'review', file: 'evidence-manifest.json', description: 'Missing state proof' },

@@ -49,7 +49,6 @@ function combinedFindingsEvidenceAvailable(readiness?: RunGateReadiness): boolea
     return false;
   const reviewReason = (reason: RunGatePrerequisiteReason) =>
     reason.prerequisite === 'review' &&
-    reason.code === 'review-fix-required' &&
     reason.allowedReviewOverrides?.includes(APPROVE_PUBLISH_UNRESOLVED_ACTION);
   return (
     readiness.reasons.some(reviewReason) &&
