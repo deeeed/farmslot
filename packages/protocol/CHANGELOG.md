@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Export the review-diff identity functions (`reviewDiffHash`, `verifiedReviewDiffHash`, `reviewSnapshotIdentityText`) for clients and the gateway, and add `GitShowResult.id`, batched `git.show` types, `GitDiffParams.includeUntracked` and `GitDiffResult.mergeBaseSha`/`headSha`.
+
 - Persist only approved gateway-status update fields with fixed error text, and accept explicit local or unsupported answers from upstream collectors without inventing a source time.
 
 - Register PR detail, slot PR, review-thread, runner-seat and runner model catalog reads as upstream collectors and runner visible models as an owner-scoped observation, with pure normalizers, sanitized stored-data projections and `observation` on their results.

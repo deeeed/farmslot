@@ -74,6 +74,14 @@ test('workspace identities never accept client owner keys, command controls or e
   assert.equal(a.id, b.id);
 });
 
+test('batched git.show is a direct read, never an observed workspace query', () => {
+  assert.ok(resourceQuery('git.show', { slotId: 'slot', ref: 'HEAD', path: 'file' }));
+  assert.throws(
+    () => resourceQuery('git.show', { slotId: 'slot', ref: 'HEAD', paths: ['file'] }),
+    /do not accept/,
+  );
+});
+
 test('reopening old saved bytes changes LRU order without claiming a newer observation', () => {
   const old = resourceQuery('fs.read', { slotId: 'same', runId: 'same', path: 'old-open-again' });
   const next = resourceQuery('fs.read', { slotId: 'same', runId: 'same', path: 'new' });

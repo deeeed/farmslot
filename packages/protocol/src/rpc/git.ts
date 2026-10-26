@@ -24,6 +24,8 @@ export interface GitDiffParams {
    * the branch, committed or not.
    */
   target?: 'head' | 'worktree';
+  /** With `target: 'worktree'`: append new-file diffs for untracked files git does not ignore. */
+  includeUntracked?: boolean;
 }
 
 export interface GitLogParams {
@@ -36,6 +38,25 @@ export interface GitShowParams {
   runId?: string;
   ref: string;
   path: string;
+}
+
+/**
+ * Batched `git.show`: several paths at one commit, in pages. A run-scoped read
+ * accepts only the run's frozen head and the merge-base of its frozen commits.
+ */
+export interface GitShowBatchParams {
+  slotId: string;
+  runId?: string;
+  ref: string;
+  paths: string[];
+  /** Object ids the client holds. They only suppress transfers, never authorize a read. */
+  have?: string[];
+  /** A previous page's `cursor`, sent with the same `paths`. */
+  after?: string;
+  /** Raw content bytes per page. Defaults to 4 MB, at most 10 MB. */
+  maxBytes?: number;
+  /** Raw bytes per file. Defaults to 1 MB. Files over this or `maxBytes` are `too-large`. */
+  maxFileBytes?: number;
 }
 export interface TmuxSplitParams extends TmuxTargetParams {
   direction: 'h' | 'v';
@@ -149,6 +170,9 @@ export interface GitStatusResult {
 
 export interface GitDiffResult {
   diff: string;
+  /** Commits the diff compared, when `base` is set. Omitted by older gateways. */
+  mergeBaseSha?: string;
+  headSha?: string;
 }
 
 export interface GitLogResult {
@@ -157,6 +181,28 @@ export interface GitLogResult {
 
 export interface GitShowResult {
   content: string;
+  /** Git object id of the returned content. Omitted by older gateways. */
+  id?: string;
+}
+
+export type GitShowBatchStatus = 'ok' | 'held' | 'missing' | 'not-blob' | 'too-large';
+
+export interface GitShowBatchEntry {
+  path: string;
+  status: GitShowBatchStatus;
+  id?: string;
+  /** Raw blob size in bytes. */
+  size?: number;
+  /** Base64 of the raw bytes. Only `ok` carries content. */
+  content?: string;
+}
+
+export interface GitShowBatchResult {
+  /** At least one entry per page, in request order. */
+  entries: GitShowBatchEntry[];
+  /** Pass as `after` to read the next page. */
+  cursor: string;
+  hasMore: boolean;
 }
 
 // ─── Branch diff param/result types ───

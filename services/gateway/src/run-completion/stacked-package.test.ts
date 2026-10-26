@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import type { ReviewStatus, Run, RunStack } from '@farmslot/protocol';
+import {
+  reviewDiffHash,
+  reviewSnapshotIdentityText,
+  type ReviewStatus,
+  type Run,
+  type RunStack,
+} from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
@@ -311,6 +317,38 @@ test('standalone publication keeps the default 18-file package', async () => {
   assert.equal(standalone.reviewSnapshot?.baseRef, 'origin/main');
   assert.deepEqual(standalone.reviewSnapshot?.diffStat, fullDiff);
   assert.equal(templateBases.at(-1), 'main');
+});
+
+test('package preparation retains the exact diff and untracked manifest its diffHash fingerprints', async (t) => {
+  resetRun();
+  const untracked = path.join(repo, 'src', 'child', 'nouveau-café.ts');
+  await writeFile(path.join(repo, 'src', 'child', '0.ts'), 'déjà vu 日本\n', { flag: 'a' });
+  await writeFile(untracked, 'export const café = "☕";\n');
+  t.after(async () => {
+    git('checkout', '--', 'src/child/0.ts');
+    await rm(untracked, { force: true });
+  });
+  const { prPackage } = await prepareCompletionPackage(run.id, {
+    diffStat: fullDiff,
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  const taskDir = path.dirname(taskFile);
+  const retained = JSON.parse(
+    await readFile(path.join(taskDir, prPackage.artifactPath), 'utf8'),
+  ) as typeof prPackage;
+  const snapshot = retained.reviewSnapshot!;
+  assert.equal(snapshot.diffPath, prPackage.artifactPath.replace(/\.json$/, '.diff'));
+  assert.deepEqual(
+    snapshot.untrackedFiles?.map((file) => file.path),
+    ['src/child/nouveau-café.ts'],
+  );
+  const diff = await readFile(path.join(taskDir, snapshot.diffPath!), 'utf8');
+  assert.match(diff, /déjà vu 日本/);
+  assert.equal(
+    reviewDiffHash(reviewSnapshotIdentityText(diff, snapshot.untrackedFiles ?? [])),
+    snapshot.diffHash,
+  );
+  assert.notEqual(reviewDiffHash(diff), snapshot.diffHash, 'the manifest is part of the identity');
 });
 
 test('attachment at unchanged HEAD refuses the old publication base at approval and publication', async () => {

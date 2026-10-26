@@ -1,5 +1,5 @@
 // methods/git.ts — git.status, git.diff, git.log, git.show, git.files, git.stage, git.unstage, git.discard
-import { gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+import { GIT_DIFF_COMMAND, gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type BranchDiffStatus,
   classifyDiffFile,
@@ -16,6 +16,9 @@ import {
   type GitFilesResult,
   type GitLogParams,
   type GitLogResult,
+  type GitShowBatchEntry,
+  type GitShowBatchParams,
+  type GitShowBatchResult,
   type GitShowParams,
   type GitShowResult,
   type GitStageParams,
@@ -29,6 +32,7 @@ import {
 import {
   execArgvOnSlot,
   getProjectFieldRaw,
+  isLocal,
   loadSlotVars,
   type RawProjectJson,
 } from '../core/index.js';
@@ -60,6 +64,8 @@ export interface GitExecDeps {
   /** Project config for diff-view test patterns; null falls back to the defaults. */
   loadProjectJson?: (project: string) => Promise<RawProjectJson | null>;
   runOnSlot?: typeof execArgvOnSlot;
+  /** Git with stdin `input`; stdout leaves the host process as base64 and returns as raw bytes. */
+  runBytes?: (args: string[], input: string, maxBuffer: number) => Promise<Buffer>;
 }
 
 export async function gitExec(
@@ -89,6 +95,60 @@ export async function gitExec(
     throw new Error(result.stderr.trim() || `git exited with code ${result.exitCode}`);
   }
   return { stdout: result.stdout, stderr: result.stderr };
+}
+
+// Exec paths decode stdout as text, so raw bytes leave the slot's host as base64.
+const HOST_GIT_BYTES = `const cp=require('node:child_process');const p=JSON.parse(process.argv[1]);
+const r=cp.spawnSync('git',p.args,{input:p.input,maxBuffer:p.maxBuffer});
+if(r.error)throw r.error;process.stdout.write(r.stdout.toString('base64'));process.stderr.write(r.stderr);process.exitCode=r.status??1;`;
+
+async function gitBytes(
+  slotId: string,
+  args: string[],
+  input: string,
+  maxBuffer: number,
+  deps: GitExecDeps,
+): Promise<Buffer> {
+  if (deps.runBytes) return deps.runBytes(args, input, maxBuffer);
+  const repoPath = await (deps.resolveRepo ?? resolveRepoPath)(slotId);
+  const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
+  const node = isLocal(slotVars.host, slotVars.machine) ? process.execPath : 'node';
+  const result = await (deps.runOnSlot ?? execArgvOnSlot)(
+    slotVars,
+    [node, '-e', HOST_GIT_BYTES, JSON.stringify({ args, input, maxBuffer })],
+    { cwd: repoPath, maxBuffer: Math.ceil(maxBuffer / 3) * 4 + 64 * 1024 },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `git exited with code ${result.exitCode}`);
+  }
+  return Buffer.from(result.stdout, 'base64');
+}
+
+// Untracked files diff as new files. `--no-index` exits 1 when the sides differ.
+const UNTRACKED_DIFF_SCRIPT = [
+  'set -euo pipefail',
+  `git -c core.quotePath=false ls-files --others --exclude-standard -z -- "$@" | while IFS= read -r -d '' file; do`,
+  '  [ -f "$file" ] || continue',
+  `  ${GIT_DIFF_COMMAND} --no-index -- /dev/null "$file" || [ $? -eq 1 ]`,
+  'done',
+].join('\n');
+
+async function gitUntrackedDiff(
+  slotId: string,
+  path: string | undefined,
+  deps: GitExecDeps,
+): Promise<string> {
+  const repoPath = await (deps.resolveRepo ?? resolveRepoPath)(slotId);
+  const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
+  const result = await (deps.runOnSlot ?? execArgvOnSlot)(
+    slotVars,
+    ['bash', '-c', UNTRACKED_DIFF_SCRIPT, 'git-untracked-diff', ...(path ? [path] : [])],
+    { cwd: repoPath, maxBuffer: 10 * 1024 * 1024 },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `git exited with code ${result.exitCode}`);
+  }
+  return result.stdout;
 }
 
 const VALID_STATUSES: GitChangeStatus[] = ['M', 'A', 'D', '?', 'R'];
@@ -350,7 +410,11 @@ export async function gitDiff(
   if (params.head && !params.base) {
     throw new Error('An exact review head requires a base ref');
   }
+  if (params.includeUntracked && params.target !== 'worktree') {
+    throw new Error('includeUntracked requires a worktree diff');
+  }
   const args = ['diff'];
+  let commits: Pick<GitDiffResult, 'mergeBaseSha' | 'headSha'> = {};
 
   if (params.base) {
     // `git.diff` is also a public RPC/chat tool and cannot assume a preceding
@@ -363,18 +427,40 @@ export async function gitDiff(
       if (params.target === 'worktree') {
         throw new Error('An exact review head cannot be combined with a worktree diff');
       }
-      await ensureExactReviewRangeAvailable(params.slotId, baseRef, params.head, deps);
-      args.push(`${baseRef}...${params.head}`);
-    } else {
+      const headResult = await ensureExactReviewRangeAvailable(
+        params.slotId,
+        baseRef,
+        params.head,
+        deps,
+      );
       const { stdout: mergeBase } = await gitExec(
         params.slotId,
-        ['merge-base', baseRef, 'HEAD'],
+        ['merge-base', baseRef, params.head],
         undefined,
         deps,
       );
+      commits = { mergeBaseSha: mergeBase.trim(), headSha: headResult.stdout.trim() };
+      args.push(`${baseRef}...${params.head}`);
+    } else {
+      // Pin HEAD once so the reported commits are the ones diffed.
+      const { stdout: head } = await gitExec(
+        params.slotId,
+        ['rev-parse', '--verify', 'HEAD^{commit}'],
+        undefined,
+        deps,
+      );
+      const headSha = head.trim();
+      const { stdout: mergeBase } = await gitExec(
+        params.slotId,
+        ['merge-base', baseRef, headSha],
+        undefined,
+        deps,
+      );
+      const mergeBaseSha = mergeBase.trim();
+      commits = { mergeBaseSha, headSha };
       // 'worktree' diffs merge-base against the working tree (committed +
       // uncommitted); default diffs committed history only.
-      args.push(params.target === 'worktree' ? mergeBase.trim() : `${mergeBase.trim()}..HEAD`);
+      args.push(params.target === 'worktree' ? mergeBaseSha : `${mergeBaseSha}..${headSha}`);
     }
   }
 
@@ -386,7 +472,10 @@ export async function gitDiff(
   }
 
   const { stdout } = await gitExec(params.slotId, args, { maxBuffer: 10 * 1024 * 1024 }, deps);
-  return { diff: stdout };
+  const untracked = params.includeUntracked
+    ? await gitUntrackedDiff(params.slotId, params.path, deps)
+    : '';
+  return { diff: stdout + untracked, ...commits };
 }
 
 export async function gitLog(params: GitLogParams): Promise<GitLogResult> {
@@ -409,17 +498,144 @@ export async function gitLog(params: GitLogParams): Promise<GitLogResult> {
   return { entries };
 }
 
-export async function gitShow(params: GitShowParams): Promise<GitShowResult> {
-  const deps = params.runId ? await workspaceReviewGit({ ...params, runId: params.runId }) : {};
+export async function gitShow(
+  params: GitShowParams,
+  deps: GitExecDeps = {},
+): Promise<GitShowResult> {
+  if (params.runId) deps = await workspaceReviewGit({ ...params, runId: params.runId });
+  // Show the resolved object so the content is exactly the object `id` names.
+  const { stdout: object } = await gitExec(
+    params.slotId,
+    ['rev-parse', '--verify', `${params.ref}:${params.path}`],
+    undefined,
+    deps,
+  );
+  const id = object.trim();
   const { stdout } = await gitExec(
     params.slotId,
-    ['show', `${params.ref}:${params.path}`],
+    ['show', id],
     {
       maxBuffer: 10 * 1024 * 1024,
     },
     deps,
   );
-  return { content: stdout };
+  return { content: stdout, id };
+}
+
+const MB = 1024 * 1024;
+/** A batched page never carries more than one `git.show` may return. */
+const MAX_SHOW_PAGE_BYTES = 10 * MB;
+/** Host commands take their object list as one argv element, which Linux caps at 128 KiB. */
+const MAX_SHOW_INPUT_BYTES = 64 * 1024;
+
+function pageLimit(value: number | undefined, fallback: number, name: string): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value < 1)
+    throw new Error(`${name} must be a positive integer`);
+  return value;
+}
+
+export async function gitShowBatch(
+  params: GitShowBatchParams,
+  deps: GitExecDeps = {},
+): Promise<GitShowBatchResult> {
+  const { ref } = params;
+  if (params.runId)
+    deps = await workspaceReviewGit({
+      runId: params.runId,
+      slotId: params.slotId,
+      ref,
+      mergeBaseRef: true,
+    });
+  if ((params as { path?: unknown }).path !== undefined)
+    throw new Error('git.show takes path or paths, not both');
+  if (!Array.isArray(params.paths) || params.paths.length === 0)
+    throw new Error('git.show paths must list at least one path');
+  // Object names travel one per line to `git cat-file`.
+  if ([ref, ...params.paths].some((name) => typeof name !== 'string' || /[\n\r\0]/.test(name)))
+    throw new Error('git.show ref and paths must be single-line strings');
+  const paths = [...new Set(params.paths)];
+  const maxBytes = Math.min(pageLimit(params.maxBytes, 4 * MB, 'maxBytes'), MAX_SHOW_PAGE_BYTES);
+  // A file larger than a page could never be returned, so it is too large as well.
+  const maxFileBytes = Math.min(pageLimit(params.maxFileBytes, MB, 'maxFileBytes'), maxBytes);
+  let start = 0;
+  if (params.after !== undefined) {
+    start = paths.indexOf(params.after) + 1;
+    if (start === 0 || start === paths.length) throw new Error('Unknown git.show cursor');
+  }
+
+  const batch: string[] = [];
+  let inputBytes = 0;
+  for (const path of paths.slice(start)) {
+    inputBytes += Buffer.byteLength(JSON.stringify(`${ref}:${path}\n`));
+    if (batch.length > 0 && inputBytes > MAX_SHOW_INPUT_BYTES) break;
+    batch.push(path);
+  }
+  const names = [`${ref}^{commit}`, ...batch.map((path) => `${ref}:${path}`)];
+  const checkInput = `${names.join('\n')}\n`;
+  const checked = (
+    await gitBytes(
+      params.slotId,
+      ['cat-file', '--batch-check'],
+      checkInput,
+      Buffer.byteLength(checkInput) + 128 * names.length,
+      deps,
+    )
+  )
+    .toString()
+    .split('\n');
+  if (!/^[0-9a-f]+ commit \d+$/.test(checked[0])) throw new Error(`Unknown commit ${ref}`);
+
+  const have = new Set(params.have ?? []);
+  const entries: GitShowBatchEntry[] = [];
+  let pageBytes = 0;
+  for (const [index, path] of batch.entries()) {
+    // Missing and ambiguous names echo the request instead of an object line.
+    const object = /^([0-9a-f]+) (\S+) (\d+)$/.exec(checked[index + 1] ?? '');
+    if (!object) {
+      entries.push({ path, status: 'missing' });
+      continue;
+    }
+    const [, id, type, sizeText] = object;
+    const size = Number(sizeText);
+    if (type !== 'blob') entries.push({ path, status: 'not-blob', id });
+    else if (have.has(id)) entries.push({ path, status: 'held', id, size });
+    else if (size > maxFileBytes) entries.push({ path, status: 'too-large', id, size });
+    else if (entries.length > 0 && pageBytes + size > maxBytes) break;
+    else {
+      pageBytes += size;
+      entries.push({ path, status: 'ok', id, size });
+    }
+  }
+
+  const wanted = entries.filter((entry) => entry.status === 'ok');
+  if (wanted.length > 0) {
+    const stream = await gitBytes(
+      params.slotId,
+      ['cat-file', '--batch'],
+      `${wanted.map((entry) => entry.id).join('\n')}\n`,
+      pageBytes + 128 * wanted.length,
+      deps,
+    );
+    let offset = 0;
+    for (const entry of wanted) {
+      const headerEnd = stream.indexOf(0x0a, offset);
+      const end = headerEnd + 1 + entry.size!;
+      if (
+        headerEnd < 0 ||
+        stream.toString('latin1', offset, headerEnd) !== `${entry.id} blob ${entry.size}` ||
+        stream[end] !== 0x0a
+      )
+        throw new Error(`git.show could not read ${entry.path}`);
+      entry.content = stream.subarray(headerEnd + 1, end).toString('base64');
+      offset = end + 1;
+    }
+  }
+  return {
+    entries,
+    cursor: entries[entries.length - 1].path,
+    hasMore: start + entries.length < paths.length,
+  };
 }
 
 export async function gitFiles(params: GitFilesParams): Promise<GitFilesResult> {

@@ -5,11 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { ReviewStatus } from '@farmslot/protocol';
+import { reviewDiffHash, type ReviewDiffSnapshot, type ReviewStatus } from '@farmslot/protocol';
 
-import { reviewDiffHash } from '../core/review-diff-identity.js';
-
-import { refreshReviewDiffIdentities } from './review-diff-refresh.js';
+import { refreshReviewDiffIdentities, refreshReviewDiffSnapshot } from './review-diff-refresh.js';
 import { makeRun } from './test-fixtures.js';
 
 const patch =
@@ -44,6 +42,33 @@ test('refresh repairs verified legacy review hashes but never missing or tampere
     assert.equal((await refreshReviewDiffIdentities(run, [review]))[0], review);
     await rm(path.join(root, 'artifacts/review.diff'));
     assert.equal((await refreshReviewDiffIdentities(run, [review]))[0], review);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a package verifies its retained diff, else a review capture of the same range', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'package-identity-'));
+  try {
+    await mkdir(path.join(root, 'artifacts/publication-packages'), { recursive: true });
+    await writeFile(path.join(root, 'artifacts/review.diff'), patch);
+    const run = makeRun({ taskFile: path.join(root, 'TASK.md'), slotId: null });
+    const prepared: ReviewDiffSnapshot = {
+      source: 'local-git',
+      capturedAt: '2026-10-27T00:00:00Z',
+      baseSha: 'base',
+      headSha: 'head',
+      diffPath: 'artifacts/publication-packages/pkg-1.diff',
+      diffHash: createHash('sha256').update(patch).digest('hex'),
+    };
+    const captured = { ...prepared, diffPath: 'artifacts/review.diff' };
+    const fromReview = await refreshReviewDiffSnapshot(run, prepared, [captured]);
+    assert.equal(fromReview.diffHash, reviewDiffHash(patch));
+    await writeFile(path.join(root, prepared.diffPath!), patch);
+    await writeFile(path.join(root, captured.diffPath), patch.replace('+b', '+bad'));
+    const retained = await refreshReviewDiffSnapshot(run, prepared, [captured]);
+    assert.equal(retained.diffHash, reviewDiffHash(patch));
+    assert.equal(retained.diffPath, prepared.diffPath);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

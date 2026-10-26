@@ -99,6 +99,7 @@ import {
   type GitDiscardParams,
   type GitFilesParams,
   type GitLogParams,
+  type GitShowBatchParams,
   type GitShowParams,
   type GitStageParams,
   type GitStatusParams,
@@ -388,6 +389,7 @@ import {
   gitFiles,
   gitLog,
   gitShow,
+  gitShowBatch,
   gitStage,
   gitStatus,
   gitUnstage,
@@ -1585,7 +1587,9 @@ async function routeAuthorizedMethod(
     case Methods.GIT_LOG:
       return gitLog(p as GitLogParams);
     case Methods.GIT_SHOW:
-      return gitShow(p as GitShowParams);
+      return (p as { paths?: unknown }).paths !== undefined
+        ? gitShowBatch(p as GitShowBatchParams)
+        : gitShow(p as GitShowParams);
     case Methods.GIT_FILES:
       return gitFiles(p as GitFilesParams);
     case Methods.GIT_STAGE:

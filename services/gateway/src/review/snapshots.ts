@@ -4,15 +4,16 @@ import {
   DEFAULT_BRANCH,
   isReviewerWindowName,
   type ReviewAttempt,
+  reviewDiffHash,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
   type ReviewMode,
+  reviewSnapshotIdentityText,
 } from '@farmslot/protocol';
 import { resolveReviewMode, reviewArtifactDir } from '@farmslot/review-dispatch';
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot, type ExecResult } from '../core/exec.js';
-import { reviewDiffHash } from '../core/review-diff-identity.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
   writeLargeTextFileOnSlot,
@@ -68,22 +69,6 @@ export function parseUntrackedFileManifest(text: string): UntrackedReviewFile[] 
   return files.sort((left, right) =>
     left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
   );
-}
-
-export function reviewSnapshotIdentityText(
-  diffText: string,
-  files: ReadonlyArray<UntrackedReviewFile>,
-): string {
-  if (files.length === 0) return diffText;
-  const separator = diffText && !diffText.endsWith('\n') ? '\n' : '';
-  const manifest = [
-    '# Farmslot untracked file manifest (Git mode, blob SHA, and JSON-encoded path)',
-    ...files.map(
-      ({ path: filePath, blobSha, mode }) => `# ${mode}\t${blobSha}\t${JSON.stringify(filePath)}`,
-    ),
-    '',
-  ].join('\n');
-  return `${diffText}${separator}${manifest}`;
 }
 
 export function unavailableReviewSnapshot(

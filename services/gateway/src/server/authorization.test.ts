@@ -898,7 +898,7 @@ test('resource capabilities and principal generations reach farm, node and nativ
           ],
         },
       });
-      assert.equal(auth.capabilities.batchedContent, false);
+      assert.equal(auth.capabilities.batchedContent, true);
       if (subject.access === 'native') {
         await request(ws, Methods.SOURCES_STATUS, {});
         assert(!events.some((event) => event.event === Events.HELLO));

@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+import { reviewSnapshotIdentityText } from '@farmslot/protocol';
 
 import { makeVars } from '../runners/test-fixtures.js';
 
@@ -16,7 +17,6 @@ import {
   preferredRemoteReviewBaseRef,
   reviewAttemptFromResult,
   reviewDeltaSinceReviewedHead,
-  reviewSnapshotIdentityText,
   tmuxListReviewWindowIdsSnippet,
 } from './snapshots.js';
 

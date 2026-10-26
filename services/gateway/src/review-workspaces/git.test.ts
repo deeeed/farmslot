@@ -12,7 +12,7 @@ import { makeRun } from '../methods/run/test-fixtures.js';
 
 let run: Run;
 mock.module('../runs/store.js', {
-  namedExports: { getRunWithArchived: async () => run },
+  namedExports: { getRunWithArchived: async () => run, getRun: () => run },
 });
 mock.module('../security/native-worker-owner.js', {
   namedExports: { assertNativeRunOwner() {} },
@@ -26,6 +26,7 @@ mock.module('../runners/native/node.js', {
   },
 });
 const { workspaceReviewGit } = await import('./git.js');
+const { gitShow, gitShowBatch } = await import('../methods/git.js');
 
 test('review Git returns all 570 frozen lines, including finding 479, after the head changes', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'review-git-source-'));
@@ -111,4 +112,82 @@ test('review Git returns all 570 frozen lines, including finding 479, after the 
     'diff readers must also drain the complete output',
   );
   assert.equal(diff.stdout, expectedDiff);
+});
+
+test('run-scoped batched git.show reads only the frozen head and the derived merge-base', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'review-git-batch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source');
+  await mkdir(source);
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: source, encoding: 'utf8' }).trim();
+  const commit = async (content: string) => {
+    await writeFile(path.join(source, 'shared.txt'), content);
+    git('add', 'shared.txt');
+    git('commit', '--quiet', '-m', content);
+    return git('rev-parse', 'HEAD');
+  };
+  git('init', '--quiet');
+  git('config', 'user.email', 'fixture@example.test');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'commit.gpgsign', 'false');
+  git('checkout', '--quiet', '-b', 'main');
+  const mergeBase = await commit('branch point\n');
+  git('checkout', '--quiet', '-b', 'feature');
+  const headSha = await commit('reviewed\n');
+  const newerHead = await commit('newer\n');
+  git('checkout', '--quiet', 'main');
+  const baseSha = await commit('base moved\n');
+  const identity = {
+    owner: 'fixture',
+    project: 'fixture',
+    repositoryUrl: 'https://example.test/repo.git',
+  };
+  const key = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+  const cache = path.join(root, 'repositories', key);
+  await mkdir(path.dirname(cache), { recursive: true });
+  execFileSync('git', ['clone', '--quiet', '--bare', source, cache]);
+  await writeFile(cache + '.json', JSON.stringify(identity));
+  run = makeRun({ id: 'review-batch', project: identity.project });
+  run.nativeOwnerPrincipalId = identity.owner;
+  run.reviewWorkspaceSubject = {
+    repository: 'fixture/repo',
+    repositoryUrl: identity.repositoryUrl,
+    headSha,
+    baseSha,
+    branch: 'feature',
+    title: 'Review',
+    body: '',
+    capturedAt: '2026-10-27',
+  };
+  run.reviewWorkspace = {
+    workspaceId: run.id,
+    machine: 'fixture',
+    executionNodeId: 'local',
+    checkoutPath: path.join(root, 'runs', run.id, 'source'),
+    taskPath: '',
+    artifactPath: '',
+  };
+  const read = (ref: string, have?: string[]) =>
+    gitShowBatch({ slotId: '', runId: run.id, ref, paths: ['shared.txt'], have });
+  const content = async (ref: string) =>
+    Buffer.from((await read(ref)).entries[0].content!, 'base64').toString();
+
+  assert.equal(await content(headSha), 'reviewed\n');
+  assert.equal(await content(mergeBase), 'branch point\n');
+  assert.equal((await read(headSha)).entries[0].id, git('rev-parse', `${headSha}:shared.txt`));
+  for (const ref of [baseSha, newerHead]) {
+    // Holding the object id is no authority to read it.
+    const have = [git('rev-parse', `${ref}:shared.txt`)];
+    await assert.rejects(read(ref, have), /frozen review commits/);
+  }
+  // Single-path reads keep today's head-only rule.
+  await assert.rejects(
+    gitShow({ slotId: '', runId: run.id, ref: mergeBase, path: 'shared.txt' }),
+    /frozen review commits/,
+  );
+  assert.deepEqual(await gitShow({ slotId: '', runId: run.id, ref: headSha, path: 'shared.txt' }), {
+    content: 'reviewed\n',
+    id: git('rev-parse', `${headSha}:shared.txt`),
+  });
 });

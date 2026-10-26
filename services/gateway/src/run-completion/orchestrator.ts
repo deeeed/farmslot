@@ -825,7 +825,11 @@ export async function prepareCompletionPackageTransitionLocked(
   if (!headSha) {
     throw new Error('Cannot prepare publishable PR package without a workspace HEAD SHA');
   }
+  const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
+  const artifactPath = `artifacts/publication-packages/${packageId}.json`;
+  const diffArtifactPath = artifactPath.replace(/\.json$/, '.diff');
   let reviewSnapshot = unavailableReviewSnapshot('missing-slot');
+  let diffText: string | undefined;
   if (run.slotId) {
     let vars: Awaited<ReturnType<typeof loadSlotVars>> | null = null;
     try {
@@ -835,15 +839,20 @@ export async function prepareCompletionPackageTransitionLocked(
       // A removed slot must not make the package impossible to inspect.
       reviewSnapshot = unavailableReviewSnapshot('slot-load-error', (error as Error).message);
     }
-    if (vars)
-      reviewSnapshot = (await captureCurrentReviewSnapshot(vars, { baseRef: baseBranch })).snapshot;
+    if (vars) {
+      const captured = await captureCurrentReviewSnapshot(vars, { baseRef: baseBranch });
+      // Retain the exact diff its diffHash fingerprints, next to the package.
+      diffText = taskDir ? captured.diffText : undefined;
+      reviewSnapshot = {
+        ...captured.snapshot,
+        ...(diffText !== undefined ? { diffPath: diffArtifactPath } : {}),
+      };
+    }
   }
   // The target is captured even when Git cannot supply a diff. This does not
   // make the unavailable snapshot a passing review or bypass its explicit override.
   if (reviewSnapshot.source === 'unavailable')
     reviewSnapshot = { ...reviewSnapshot, baseRef: `origin/${baseBranch}` };
-  const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
-  const artifactPath = `artifacts/publication-packages/${packageId}.json`;
   const validSelectedEvidenceKeys = preserveSelectedEvidenceKeys(
     options?.selectedEvidenceKeys,
     evidenceManifest,
@@ -1000,6 +1009,11 @@ export async function prepareCompletionPackageTransitionLocked(
             flag: 'wx',
           });
       }
+      if (diffText !== undefined)
+        await writeFile(path.join(taskDir, diffArtifactPath), diffText, {
+          encoding: 'utf-8',
+          flag: 'wx',
+        });
       await writeFile(path.join(taskDir, artifactPath), JSON.stringify(prPackage, null, 2), {
         encoding: 'utf-8',
         flag: 'wx',

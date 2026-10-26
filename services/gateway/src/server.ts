@@ -785,7 +785,7 @@ async function handleMessage(
             ? { upstreamObservers: { version: 1, methods: collectorMethods } }
             : {}),
         },
-        batchedContent: false,
+        batchedContent: true,
         workspaceAccess: gatewayWorkspaceAccess(
           result.principal,
           authRuntime.store.snapshot().principals,
