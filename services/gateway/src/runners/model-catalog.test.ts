@@ -397,20 +397,22 @@ test('pi merges an empty native cache and reports unavailable only when the merg
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const agent = join(home, '.pi', 'agent');
   mkdirSync(agent, { recursive: true });
-  writeFileSync(join(agent, 'models-store.json'), '{}');
-  writeFileSync(
-    join(agent, 'models.json'),
-    JSON.stringify({ providers: { litellm: { models: [{ id: 'DeepSeek-V4-Flash' }] } } }),
-  );
   const source = getRunnerDefinition('pi').modelCatalog;
-  const result = await queryRunnerModelCatalog('pi', source, home);
-  assert.equal(result.status, 'ready');
-  assert.deepEqual(
-    result.models.map((model) => model.id),
-    ['litellm/DeepSeek-V4-Flash'],
-  );
-  writeFileSync(join(agent, 'models.json'), '{"providers":{}}');
-  assert.equal((await queryRunnerModelCatalog('pi', source, home)).status, 'unavailable');
+  for (const cache of [{}, { anthropic: { models: [], checkedAt: 1 } }]) {
+    writeFileSync(join(agent, 'models-store.json'), JSON.stringify(cache));
+    writeFileSync(
+      join(agent, 'models.json'),
+      JSON.stringify({ providers: { litellm: { models: [{ id: 'DeepSeek-V4-Flash' }] } } }),
+    );
+    const result = await queryRunnerModelCatalog('pi', source, home);
+    assert.equal(result.status, 'ready');
+    assert.deepEqual(
+      result.models.map((model) => model.id),
+      ['litellm/DeepSeek-V4-Flash'],
+    );
+    writeFileSync(join(agent, 'models.json'), '{"providers":{}}');
+    assert.equal((await queryRunnerModelCatalog('pi', source, home)).status, 'unavailable');
+  }
 });
 
 test('pi accepts its native BOM, line comments and trailing commas without stripping string contents', async (t) => {

@@ -247,7 +247,11 @@ export function parsePiModelCatalog(data: unknown): RunnerCatalogModel[] {
       parsed.push({ id, reasoningModes, listed: true });
     }
   }
-  if (parsed.length === 0 && !configuredProviders && Object.keys(data).length > 0)
+  if (
+    parsed.length === 0 &&
+    !configuredProviders &&
+    !Object.values(data).every((value) => isRecord(value) && Array.isArray(value.models))
+  )
     throw new ModelCatalogFormatError('Structured model catalog listed no models.');
   return parsed;
 }
