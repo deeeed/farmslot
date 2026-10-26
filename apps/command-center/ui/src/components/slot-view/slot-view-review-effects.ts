@@ -74,8 +74,9 @@ class SlotPRReads {
   }
 
   /**
-   * The first read outcome: a success read since `since`, or a failed read. A saved row hydrated
-   * before the network read is neither, so recovery never fixes the diff base from an older PR.
+   * The first read outcome: a success read since `since`, an unsupported lookup, or a failed
+   * read. A saved row hydrated before the network read is none of these, so recovery never fixes
+   * the diff base from an older PR.
    */
   answer(since: number): Promise<SlotPRAnswer> {
     return new Promise((resolve) => {
@@ -85,9 +86,9 @@ class SlotPRReads {
           resolve({ state, failed: false });
           return true;
         }
-        if (currentSuccess(state, since)) resolve({ state, failed: false });
-        else if (state.status === 'error' || state.status === 'unsupported' || readFailed(state))
-          resolve({ state, failed: true });
+        if (currentSuccess(state, since) || state.status === 'unsupported')
+          resolve({ state, failed: false });
+        else if (state.status === 'error' || readFailed(state)) resolve({ state, failed: true });
         else return false;
         return true;
       };
@@ -116,7 +117,8 @@ class SlotPRReads {
       this.view._prNumber = state.data.pr;
       this.view._prRepo = state.data.repo;
     } else {
-      console.warn('[slot-view] PR detection failed:', state.error?.message);
+      if (state.status !== 'unsupported')
+        console.warn('[slot-view] PR detection failed:', state.error?.message);
       this.view._prNumber = null;
       this.view._prRepo = null;
     }
@@ -176,7 +178,8 @@ export async function detectSlotViewPR(view: SlotView) {
     return;
   }
   // Resolve the diff base once per recovery; later PR updates keep the viewer's chosen base.
-  if (state.data) view._branchDiffBase = state.data.baseRef;
+  // An unsupported lookup keeps the default base, even over retained data.
+  if (state.data && currentSuccess(state, since)) view._branchDiffBase = state.data.baseRef;
 }
 
 /** Thread mutations re-collect on the gateway; their notification refreshes these threads. */
@@ -184,19 +187,37 @@ export async function loadSlotViewPRComments(view: SlotView) {
   prReads(view).bindComments();
 }
 
+/** Each view's latest branch-diff request; an older base's read never writes after it. */
+const latestBranchDiff = new WeakMap<
+  SlotView,
+  { token: symbol; request: Record<string, unknown> }
+>();
+
 export async function loadSlotViewBranchDiff(view: SlotView) {
   if (!view._isLive) return;
   // The recovery epoch is a global reconnect counter — it does NOT change on
   // slot switch, and slot identity alone is not A→B→A safe. The generation
-  // ticket stales any completion from an earlier visit.
+  // ticket stales any completion from an earlier visit; the token stales an
+  // older base within the same visit.
   const ticket = branchDiffTicket(view);
-  const isCurrent = () => isTicketCurrent(view, ticket);
+  const token = Symbol('branch-diff');
+  const isCurrent = () =>
+    isTicketCurrent(view, ticket) && latestBranchDiff.get(view)?.token === token;
   const reviewSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
+  const request = committedReviewBranchDiffRequest(
+    view.slotId,
+    view._branchDiffBase,
+    reviewSnapshot,
+  );
+  const previous = latestBranchDiff.get(view);
+  latestBranchDiff.set(view, { token, request });
+  // Dropped before this read opens, so it can only retire the previous base or slot.
+  if (previous) view._workspaceReads.drop(Methods.GIT_BRANCH_DIFF, previous.request);
   view._branchDiffLoading = true;
   try {
     await view._workspaceReads.read<GitBranchDiffResult>(
       Methods.GIT_BRANCH_DIFF,
-      committedReviewBranchDiffRequest(view.slotId, view._branchDiffBase, reviewSnapshot),
+      request,
       (result) => {
         if (!isCurrent()) return;
         view._branchDiffBase = result.base;
@@ -211,9 +232,9 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
   } catch (err) {
     // Expected transient failures (node reconnecting, gateway restart). The
     // error is surfaced in the panel; the shared query exposes Retry.
+    if (!isCurrent()) return;
     const message = err instanceof Error ? err.message : String(err);
     console.warn('[slot-view] branch diff files load failed:', message);
-    if (!isCurrent()) return;
     view._branchDiffFiles = [];
     view._branchDiffTestPatterns = null;
     view._branchDiffHead = '';

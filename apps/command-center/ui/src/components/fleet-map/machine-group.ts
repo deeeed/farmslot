@@ -424,9 +424,13 @@ export class MachineGroup extends LitElement {
       cursor: pointer;
       flex-shrink: 0;
     }
-    .setup-close:hover {
+    .setup-close:hover:not(:disabled) {
       color: ${unsafeCSS(colors.textPrimary)};
       border-color: ${unsafeCSS(colors.accent)};
+    }
+    .setup-close:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
     }
     .setup-body {
       padding: 8px 10px 12px;

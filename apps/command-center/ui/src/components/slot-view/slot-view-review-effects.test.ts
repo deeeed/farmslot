@@ -54,6 +54,7 @@ const {
   loadSlotViewBranchDiff,
   loadSlotViewBranchList,
 } = await import('./slot-view-review-effects.js');
+const { committedReviewBranchDiffRequest } = await import('./slot-view-branch-model.js');
 
 class DeferredWorkspaceReads {
   private adopt?: (value: unknown) => void;
@@ -72,6 +73,7 @@ class DeferredWorkspaceReads {
   publish(value: unknown): void {
     this.adopt?.(value);
   }
+  drop(): void {}
 }
 
 interface FakeView {
@@ -379,4 +381,137 @@ test('a lookup that failed before recovery started settles the next recovery at 
   await first;
   assert.equal(await settles(detectSlotViewPR(asView(view))), true);
   assert.equal(view._branchDiffBase, 'main');
+});
+
+/** Per-query subscriptions like WorkspaceReads: a later cache state re-applies until dropped. */
+class KeyedWorkspaceReads {
+  private subscriptions = new Map<
+    string,
+    { apply(value: unknown): void; settle(value: unknown): void; fail(error: Error): void }
+  >();
+  read<T>(_method: string, params: unknown, apply: (value: T) => void): Promise<T> {
+    const key = JSON.stringify(params);
+    this.subscriptions.get(key)?.fail(new Error('Workspace read superseded'));
+    return new Promise<T>((resolve, reject) => {
+      this.subscriptions.set(key, {
+        apply: (value) => apply(value as T),
+        settle: (value) => resolve(value as T),
+        fail: reject,
+      });
+    });
+  }
+  drop(_method: string, params: Record<string, unknown>): void {
+    const key = JSON.stringify(params);
+    this.subscriptions.get(key)?.fail(new Error('Workspace read superseded'));
+    this.subscriptions.delete(key);
+  }
+  subscribed(params: unknown): boolean {
+    return this.subscriptions.has(JSON.stringify(params));
+  }
+  publish(params: unknown, value: unknown): void {
+    const subscription = this.subscriptions.get(JSON.stringify(params));
+    subscription?.apply(value);
+    subscription?.settle(value);
+  }
+}
+
+function diffResult(base: string, path: string) {
+  return {
+    base,
+    head: 'feat/x',
+    files: [{ path, status: 'M', additions: 1, deletions: 0 }],
+    totalAdditions: 1,
+    totalDeletions: 0,
+  };
+}
+
+function diffView(slotId: string) {
+  const reads = new KeyedWorkspaceReads();
+  const view = Object.assign(makePRView(), { _workspaceReads: reads });
+  view.slotId = slotId;
+  view._loadBranchDiff = () => void loadSlotViewBranchDiff(asView(view));
+  const request = (base: string) => committedReviewBranchDiffRequest(slotId, base);
+  return { reads, view, request };
+}
+
+test('a corrected or chosen base retires the older diff read and its later publications', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const { reads, view, request } = diffView('slot-diff');
+  const recovering = detectSlotViewPR(asView(view));
+  const forSlot = slotPR(view);
+  forSlot.publish({ status: 'error', error: readFailure });
+  await recovering;
+  const fallback = loadSlotViewBranchDiff(asView(view));
+  assert.ok(reads.subscribed(request('main')));
+
+  forSlot.publish({
+    status: 'ready',
+    data: { pr: 11, repo: 'org/app', baseRef: 'release' },
+    observedAt: Date.now(),
+  });
+  assert.equal(reads.subscribed(request('main')), false, 'the fallback read is retired');
+  reads.publish(request('release'), diffResult('release', 'release.ts'));
+  reads.publish(request('main'), diffResult('main', 'main.ts'));
+  await fallback;
+  reads.publish(request('main'), diffResult('main', 'main-again.ts'));
+  await turn();
+  assert.equal(view._branchDiffBase, 'release');
+  assert.deepEqual(
+    view._branchDiffFiles.map((file) => (file as { path: string }).path),
+    ['release.ts'],
+  );
+  assert.equal(view._branchDiffError, null, 'the superseded read sets no error');
+  assert.equal(view._branchDiffLoading, false);
+
+  handleSlotViewBranchDiffBaseChange(asView(view), 'develop');
+  assert.equal(reads.subscribed(request('release')), false);
+  reads.publish(request('release'), diffResult('release', 'release-again.ts'));
+  reads.publish(request('develop'), diffResult('develop', 'develop.ts'));
+  await turn();
+  assert.equal(view._branchDiffBase, 'develop');
+  assert.deepEqual(
+    view._branchDiffFiles.map((file) => (file as { path: string }).path),
+    ['develop.ts'],
+  );
+});
+
+test('the first diff load after a slot switch retires only the previous slot read', async () => {
+  const { reads, view } = diffView('slot-one');
+  void loadSlotViewBranchDiff(asView(view));
+  view.slotId = 'slot-two';
+  view._branchDiffGeneration += 1;
+  const second = loadSlotViewBranchDiff(asView(view));
+  assert.equal(reads.subscribed(committedReviewBranchDiffRequest('slot-one', 'main')), false);
+  const own = committedReviewBranchDiffRequest('slot-two', 'main');
+  assert.ok(reads.subscribed(own), 'the new slot keeps its own read');
+  reads.publish(own, diffResult('main', 'two.ts'));
+  await second;
+  assert.deepEqual(
+    view._branchDiffFiles.map((file) => (file as { path: string }).path),
+    ['two.ts'],
+  );
+});
+
+test('an unsupported PR lookup settles recovery without a failure or base correction', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const view = makePRView();
+  view.slotId = 'slot-unsupported';
+  const recovering = detectSlotViewPR(asView(view));
+  const forSlot = slotPR(view);
+  forSlot.publish({
+    ...hydratedRow('develop'),
+    status: 'unsupported',
+    error: { code: 'RESOURCE_OBSERVATION_UNSUPPORTED', message: 'Not observable here.' },
+  });
+  assert.equal(await settles(recovering), true);
+  assert.equal(view._branchDiffBase, 'main', 'retained data does not choose the base');
+  assert.equal(warn.mock.callCount(), 0);
+  const reloads = view.branchDiffReloads;
+  forSlot.publish({
+    status: 'ready',
+    data: { pr: 11, repo: 'org/app', baseRef: 'release' },
+    observedAt: Date.now(),
+  });
+  assert.equal(view._branchDiffBase, 'main');
+  assert.equal(view.branchDiffReloads, reloads);
 });
