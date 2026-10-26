@@ -486,7 +486,7 @@ run "mkdir -p $REMOTE_DIR/pool"
 rsync -a "$REPO_ROOT/pool/" "${RSYNC_PREFIX}$REMOTE_DIR/pool/"
 
 # Project dirs referenced by hooks via {{farmslot_dir}}/projects/<name>/
-# Syncs project.json plus hook helper dirs used through {{farmslot_dir}}.
+# Syncs project.json, templates and hook helper dirs used through {{farmslot_dir}}.
 echo "[deploy] syncing project configs and hook scripts..."
 for proj_dir in "$REPO_ROOT"/projects/*/; do
   proj_name=$(basename "$proj_dir")
@@ -504,6 +504,11 @@ for proj_dir in "$REPO_ROOT"/projects/*/; do
   [[ -d "$proj_dir/scripts" ]] && {
     run "mkdir -p $REMOTE_DIR/projects/$proj_name/scripts"
     rsync -a "$proj_dir/scripts/" "${RSYNC_PREFIX}$REMOTE_DIR/projects/$proj_name/scripts/"
+  }
+  # Mirror template removals so hosted task-init cannot read stale task contracts.
+  [[ -d "$proj_dir/templates" ]] && {
+    run "mkdir -p $REMOTE_DIR/projects/$proj_name/templates"
+    rsync -a --delete "${proj_dir}templates/" "${RSYNC_PREFIX}$REMOTE_DIR/projects/$proj_name/templates/"
   }
   echo "  → $proj_name"
 done
