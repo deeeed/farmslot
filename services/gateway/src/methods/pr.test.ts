@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import type { ProjectCICheckGroup, PRStatus, Run } from '@farmslot/protocol';
 
+import type { PRRawSnapshot } from './pr/raw-cache.js';
 import {
   computePRRecommendation,
   derivePRFamilyContext,
@@ -10,6 +11,7 @@ import {
   isPassiveMergeWaitCandidate,
   matchBotComments,
   matchCheckGroups,
+  projectPRData,
   shouldIncludePRInDashboard,
   summarizeAllChecks,
 } from './pr.js';
@@ -744,4 +746,82 @@ test('matchBotComments marks review comments handled once replied in-thread', ()
 
   assert.equal(botComments.length, 1);
   assert.equal(botComments[0].workerResponded, true);
+});
+
+test('retained raw projection follows current local owner, summary and check config without a fetch', () => {
+  const raw: PRRawSnapshot = {
+    prStateStdout:
+      'OPEN\tMERGEABLE\tCLEAN\tAPPROVED\tfeat/retained\t2026-01-01\t2026-01-02\t\t\tRetained upstream title',
+    checksStdout: 'unit\tpass\t\t\tSUCCESS\thttps://example.test/check\n',
+    checksAvailable: true,
+    commentsStdout: '',
+    reviewCommentsStdout: '',
+    latestCommitStdout: '',
+    reviewMetaStdout: '',
+    fetchedAt: 1_000,
+  };
+  const before = JSON.stringify(raw);
+  const opts = {
+    prNum: 42,
+    project: 'example-mobile-farm',
+    repo: 'owner/repo',
+    slot: 'slot-one',
+    summary: 'first local summary',
+    runs: [] as Run[],
+  };
+  const config = {
+    ci: {
+      checkGroups: [
+        { name: 'Unit', match: 'unit', matchMode: 'exact' as const, aggregate: 'all' as const },
+      ],
+      botPatterns: [],
+    },
+  };
+  const initial = projectPRData(raw, { ...opts, workerActive: true }, config);
+  const changed = projectPRData(
+    raw,
+    { ...opts, slot: 'slot-two', summary: 'new local summary', workerActive: false },
+    config,
+  );
+  assert.equal(initial.workerActive, true);
+  assert.equal(changed.workerActive, false);
+  assert.equal(changed.slot, 'slot-two');
+  assert.equal(changed.summary, 'new local summary');
+  assert.equal(changed.title, 'Retained upstream title');
+  assert.deepEqual(changed.checkSummary, {
+    passed: 1,
+    failed: 0,
+    pending: 0,
+    skipped: 0,
+    total: 1,
+  });
+  const reconfigured = projectPRData(raw, opts, {
+    ci: {
+      ...config.ci,
+      checkGroups: [
+        { name: 'New required job', match: 'new-job', matchMode: 'exact', aggregate: 'all' },
+      ],
+    },
+  });
+  assert.equal(
+    reconfigured.checkSummary.pending,
+    1,
+    'Project configuration reprojects old raw checks',
+  );
+  assert.equal(raw.fetchedAt, 1_000, 'Local reprojection never changes upstream observation age');
+  assert.equal(JSON.stringify(raw), before, 'Projection does not rewrite retained source bytes');
+  assert.throws(
+    () =>
+      projectPRData(
+        { ...raw, errors: ['Review threads unavailable'] },
+        { ...opts, rejectIncomplete: true },
+        config,
+      ),
+    /incomplete observation/,
+  );
+  assert.equal(
+    projectPRData({ ...raw, errors: ['Review threads unavailable'] }, opts, config).title,
+    raw.prStateStdout.split('\t').at(-1),
+    'The existing active CI reader keeps its established incomplete-read policy',
+  );
 });

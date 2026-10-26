@@ -40,11 +40,109 @@ export interface PRRawSnapshot {
   fetchedAt: number;
   /** True when GraphQL first-page connections still have more nodes. */
   partial?: boolean;
+  /** Component read failures are distinct from the last complete retained value. */
+  errors?: string[];
 }
 
 export const PR_RAW_TTL_MS = 60 * 1000;
 const prRawCache = new Map<string, PRRawSnapshot>();
 const prRawInflight = new Map<string, Promise<PRRawSnapshot>>();
+const retainedPRRaw = new Map<string, PRRawSnapshot>();
+const observationListeners = new Set<(repo: string, pr: number) => void>();
+
+export interface RetainedPRRawObservation {
+  repo: string;
+  pr: number;
+  raw: PRRawSnapshot;
+}
+
+function rawKey(repo: string, pr: number): string {
+  return `${repo.toLowerCase()}#${pr}`;
+}
+
+/** Reads the last observed upstream value without a TTL refresh or GitHub I/O. */
+export function peekRetainedPRRawData(repo: string, pr: number): PRRawSnapshot | undefined {
+  return retainedPRRaw.get(rawKey(repo, pr));
+}
+
+export function onPRRawObservation(listener: (repo: string, pr: number) => void): () => void {
+  observationListeners.add(listener);
+  return () => observationListeners.delete(listener);
+}
+
+function recordPRRawData(repo: string, pr: number, raw: PRRawSnapshot): void {
+  prRawCache.set(rawKey(repo, pr), raw);
+  // An outage's empty PR state is not a successful value for passive projections.
+  if (!raw.prStateStdout.trim() || raw.errors?.length) return;
+  retainedPRRaw.set(rawKey(repo, pr), raw);
+  for (const listener of observationListeners) listener(repo, pr);
+}
+
+export function retainPRRawNotFound(repo: string, pr: number): void {
+  const raw = prRawCache.get(rawKey(repo, pr));
+  if (
+    raw &&
+    !raw.prStateStdout.trim() &&
+    /HTTP 404|Could not resolve to a PullRequest/i.test(raw.prStateError ?? '')
+  )
+    retainedPRRaw.set(rawKey(repo, pr), raw);
+}
+
+export function retainedPRRawObservations(
+  identities: readonly { repo: string; pr: number }[],
+): RetainedPRRawObservation[] {
+  const entries = new Map(
+    identities.flatMap(({ repo, pr }) => {
+      const raw = peekRetainedPRRawData(repo, pr);
+      return raw ? [[rawKey(repo, pr), { repo, pr, raw }] as const] : [];
+    }),
+  );
+  // Keep known absences too, so an older project snapshot cannot resurrect a removed PR.
+  for (const [key, raw] of retainedPRRaw) {
+    if (
+      raw.prStateStdout.trim() ||
+      !/HTTP 404|Could not resolve to a PullRequest/i.test(raw.prStateError ?? '')
+    )
+      continue;
+    const split = key.lastIndexOf('#');
+    entries.set(key, { repo: key.slice(0, split), pr: Number(key.slice(split + 1)), raw });
+  }
+  return [...entries.values()];
+}
+
+/** Restore already observed bytes; this never makes them fresh or emits a new observation. */
+export function restoreRetainedPRRawObservations(value: unknown): void {
+  if (!Array.isArray(value)) return;
+  for (const entry of value) {
+    const raw = entry?.raw;
+    if (
+      typeof entry?.repo !== 'string' ||
+      !Number.isSafeInteger(entry?.pr) ||
+      entry.pr < 1 ||
+      !raw ||
+      typeof raw !== 'object' ||
+      !Number.isFinite(raw.fetchedAt) ||
+      (raw.errors !== undefined &&
+        (!Array.isArray(raw.errors) ||
+          !raw.errors.every((error: unknown) => typeof error === 'string'))) ||
+      ![
+        'checksStdout',
+        'prStateStdout',
+        'commentsStdout',
+        'reviewCommentsStdout',
+        'latestCommitStdout',
+        'reviewMetaStdout',
+      ].every((field) => typeof raw[field] === 'string') ||
+      (raw.prStateStdout.trim() && raw.errors?.length) ||
+      (!raw.prStateStdout.trim() &&
+        !/HTTP 404|Could not resolve to a PullRequest/i.test(raw.prStateError ?? ''))
+    )
+      continue;
+    const previous = peekRetainedPRRawData(entry.repo, entry.pr);
+    if (!previous || raw.fetchedAt > previous.fetchedAt)
+      retainedPRRaw.set(rawKey(entry.repo, entry.pr), raw as PRRawSnapshot);
+  }
+}
 
 export function isUsablePRRawSnapshot(
   cached: PRRawSnapshot | undefined,
@@ -58,14 +156,14 @@ export function isUsablePRRawSnapshot(
 }
 
 function swallowGh(label: string) {
-  return (err: unknown): CommandOutput => {
+  return (err: unknown): CommandOutput & { observationError: string } => {
     // A paused GraphQL read is not empty PR data. Fail the refresh without replacing the cache.
     if (err instanceof GitHubQueryBudgetError) throw err;
     const message = err instanceof Error ? err.message : String(err);
     if (/rate limit|API rate limit exceeded|secondary rate limit/i.test(message)) {
       console.error(`[gh-rate-limit] ${label}: ${message.slice(0, 400)}`);
     }
-    return { stdout: '', stderr: message };
+    return { stdout: '', stderr: message, observationError: `${label}: ${message}` };
   };
 }
 
@@ -91,7 +189,7 @@ export async function getPRRawData(
   force?: boolean,
   opts?: { allowPartial?: boolean },
 ): Promise<PRRawSnapshot> {
-  const key = `${ghRepo}#${prNum}`;
+  const key = rawKey(ghRepo, prNum);
   if (!force) {
     const cached = prRawCache.get(key);
     if (isUsablePRRawSnapshot(cached, Date.now(), { allowPartial: opts?.allowPartial }))
@@ -211,9 +309,15 @@ export async function getPRRawData(
       reviewCommentsStdout: reviewComments.stdout,
       latestCommitStdout: latestCommit.stdout,
       reviewMetaStdout: reviewMeta.stdout,
+      errors: [checks, prState, comments, reviewComments, latestCommit, reviewMeta].flatMap(
+        (result) =>
+          'observationError' in result && typeof result.observationError === 'string'
+            ? [result.observationError]
+            : [],
+      ),
       fetchedAt: Date.now(),
     };
-    prRawCache.set(key, snap);
+    recordPRRawData(ghRepo, prNum, snap);
     return snap;
   })();
   prRawInflight.set(key, fetchPromise);
@@ -225,11 +329,11 @@ export async function getPRRawData(
 }
 
 export function invalidatePRRawCache(ghRepo: string, prNum: number): void {
-  prRawCache.delete(`${ghRepo}#${prNum}`);
+  prRawCache.delete(rawKey(ghRepo, prNum));
 }
 
 export function shouldPrefetchPRRawData(ghRepo: string, prNum: number, now = Date.now()): boolean {
-  const key = `${ghRepo}#${prNum}`;
+  const key = rawKey(ghRepo, prNum);
   const cached = prRawCache.get(key);
   if (cached && now - cached.fetchedAt < PR_RAW_TTL_MS) return false;
   if (prRawInflight.has(key)) return false;
@@ -687,7 +791,7 @@ async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Prom
     }
     const snap = synthesizeRawSnapshotFromGraphQL(prNode);
     if (truncated) snap.partial = true;
-    prRawCache.set(`${chunk.repo}#${prNum}`, snap);
+    recordPRRawData(chunk.repo, prNum, snap);
     // Complete pages can satisfy force/pr.status. Partial pages are list-only.
     if (!truncated) seeded.add(`${chunk.repo}#${prNum}`);
   }

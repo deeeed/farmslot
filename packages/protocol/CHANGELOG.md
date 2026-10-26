@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add shared upstream collector admission, source observation age/error metadata and an aggregate offline retention limit, with mixed-version refusal instead of client polling.
+
 - Register memory-only PR automation, assessment, analytics and shared copilot observations with canonical selectors and scoped change dependencies.
 
 - Expose current CI-watch progress and total deadlines so clients use the monitor’s configured windows.

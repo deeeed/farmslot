@@ -11,6 +11,8 @@ import {
   PersonSessionClient,
   PersonSessionEndedError,
   type RequestFrame,
+  type ResourceObserversReplaceParams,
+  type ResourceObserversReplaceResult,
   type ResponseFrame,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
@@ -428,6 +430,13 @@ export class GatewayClient {
         signal,
       },
     );
+  }
+
+  replaceResourceObservers(
+    params: ResourceObserversReplaceParams,
+    signal?: AbortSignal,
+  ): Promise<ResourceObserversReplaceResult> {
+    return this.request(Methods.RESOURCE_OBSERVERS_REPLACE, params, DEFAULT_TIMEOUT, { signal });
   }
 
   private async requestRaw<T = unknown>(

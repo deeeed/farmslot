@@ -27,6 +27,7 @@ export * from './pr-watch.js';
 export * from './principal.js';
 export * from './provider-accounts.js';
 export * from './registry.js';
+export * from './resource-observers.js';
 export * from './resource-posture.js';
 export * from './resource-pressure-selection.js';
 export * from './resources.js';

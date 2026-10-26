@@ -280,6 +280,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `resource.device.inventory`             | resource         | read-only     | —      | —      | Resource Device Inventory gateway method.             |
 | `resource.health`                       | resource         | bounded-write | —      | —      | Resource Health gateway method.                       |
 | `resource.list`                         | resource         | read-only     | —      | —      | Resource List gateway method.                         |
+| `resource.observers.replace`            | resource         | bounded-write | —      | —      | Resource Observers Replace gateway method.            |
 | `resource.pressure.history`             | resource         | read-only     | —      | —      | Resource Pressure History gateway method.             |
 | `resource.pressure.snapshot`            | resource         | bounded-write | —      | —      | Resource Pressure Snapshot gateway method.            |
 | `resource.watch.setEnabled`             | resource         | bounded-write | —      | —      | Resource Watch SetEnabled gateway method.             |

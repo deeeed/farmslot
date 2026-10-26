@@ -6,6 +6,8 @@ import type {
   GatewayAuthConnectResult,
   PersonDeviceSession,
   RequestFrame,
+  ResourceObserversReplaceParams,
+  ResourceObserversReplaceResult,
   ResponseFrame,
   SelfPrincipalSummary,
 } from '@farmslot/protocol';
@@ -746,6 +748,13 @@ export class GatewayClient {
       includeResourceState: true,
       signal,
     });
+  }
+
+  replaceResourceObservers(
+    params: ResourceObserversReplaceParams,
+    signal?: AbortSignal,
+  ): Promise<ResourceObserversReplaceResult> {
+    return this.request(Methods.RESOURCE_OBSERVERS_REPLACE, params, { signal });
   }
 
   private async rawRequest<T = unknown>(

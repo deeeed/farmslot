@@ -1,4 +1,9 @@
 import type { GatewayAuthConnectResult, GatewayAuthMode } from '../rpc/auth.js';
+import type {
+  ResourceObserversReplaceParams,
+  ResourceObserversReplaceResult,
+  UpstreamObservation,
+} from '../rpc/resource-observers.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
 import type { ResourceReadStamp } from './keys.js';
@@ -19,6 +24,7 @@ export interface ResourceQueryState<T = unknown> {
   status: ResourceQueryStatus;
   data?: T;
   observedAt?: number;
+  sourceObservation?: UpstreamObservation;
   resourceState?: ResourceReadStamp;
   error?: ResourceQueryError;
   storageNotice?: string;
@@ -65,6 +71,10 @@ export interface ResourceCacheTransport {
     params: unknown,
     signal: AbortSignal,
   ): Promise<ResourceReadResult<T>>;
+  replaceObservers?(
+    params: ResourceObserversReplaceParams,
+    signal: AbortSignal,
+  ): Promise<ResourceObserversReplaceResult>;
   /** A changed epoch or broken change feed requires the transport's normal reconnect path. */
   resynchronize(): void;
 }

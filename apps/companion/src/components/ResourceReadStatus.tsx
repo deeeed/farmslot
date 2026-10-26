@@ -25,15 +25,17 @@ export function ResourceReadStatus({
     return () => clearInterval(timer);
   }, [observation.status, observation.data]);
   if (observation.status === 'ready' || observation.status === 'loading') return null;
+  const observedAt = observation.sourceObservation
+    ? observation.sourceObservation.observedAt
+    : observation.observedAt;
   return (
     <View style={{ padding: spacing.md }}>
-      {observation.status === 'stale' && observation.observedAt !== undefined ? (
+      {observation.status === 'stale' && observedAt !== undefined ? (
         <Text
-          accessibilityLabel={`Saved ${label}, ${sourceObservationAge(observation.observedAt, now)}. Actions wait for a current read.`}
+          accessibilityLabel={`Saved ${label}, ${sourceObservationAge(observedAt, now)}. Actions wait for a current read.`}
           style={[baseStyles.textSecondary, { color: colors.statusWarn }]}
         >
-          Saved {label}, {sourceObservationAge(observation.observedAt, now)}. Actions wait for a
-          current read.
+          Saved {label}, {sourceObservationAge(observedAt, now)}. Actions wait for a current read.
         </Text>
       ) : null}
       {observation.status === 'unsupported' ? (

@@ -1,4 +1,6 @@
+import type { GatewayStatusResult } from '../rpc/gateway.js';
 import { Methods } from '../rpc/registry.js';
+import type { UpstreamObservation } from '../rpc/resource-observers.js';
 
 import {
   analyticsParams,
@@ -31,6 +33,11 @@ export interface ResourceQueryDefinition {
   timeoutMs?: number;
   /** Becomes true only when the slice's writers and read stamps are implemented. */
   live: boolean;
+  /** Gateway-owned upstream collection, enabled only after stamped reads are implemented. */
+  collector?: 'github' | 'gateway-update';
+  sourceObservation?(data: unknown): UpstreamObservation | undefined;
+  /** Optional durable projection for replies that also carry live-only diagnostics. */
+  persistedData?(data: unknown): unknown;
   /** Requires the experimental server observed-read dispatch contract. */
   requiresObservedRead?: boolean;
   requiresWorkspaceRead?: boolean;
@@ -41,6 +48,7 @@ export interface ResourceQueryDefinition {
 }
 
 const mb = 1024 * 1024;
+export const UPSTREAM_QUERY_MAX_BYTES = 2 * mb;
 function requiredId(params: unknown, field: string): string {
   const value = params && typeof params === 'object' ? Reflect.get(params, field) : undefined;
   if (typeof value !== 'string' || !value) throw new Error(`Resource query requires ${field}`);
@@ -268,8 +276,131 @@ const assessmentDefinition: ResourceQueryDefinition = {
   dependencies: assessmentDependencies,
 };
 
+function prListObservationParams(params: unknown): Record<string, unknown> {
+  if (params == null) return {};
+  if (typeof params !== 'object' || Array.isArray(params))
+    throw new Error('PR list observations require an object');
+  const record = params as Record<string, unknown>;
+  if (
+    Object.keys(record).some((key) => !['project', 'force'].includes(key)) ||
+    (record.force !== undefined && record.force !== false)
+  )
+    throw new Error('PR list observations cannot force a check or supply unregistered selectors');
+  const project = record.project;
+  if (project === undefined) return {};
+  if (
+    typeof project !== 'string' ||
+    !project ||
+    project.trim() !== project ||
+    project.length > 256 ||
+    /[/\\]/.test(project) ||
+    project === '.' ||
+    project === '..'
+  )
+    throw new Error('PR list observations require a valid project identifier');
+  return { project };
+}
+
+function gatewayStatusObservationParams(params: unknown): Record<string, never> {
+  if (params == null) return {};
+  if (
+    typeof params !== 'object' ||
+    Array.isArray(params) ||
+    Object.keys(params).some((key) => key !== 'refresh') ||
+    (Reflect.get(params, 'refresh') !== undefined && Reflect.get(params, 'refresh') !== false)
+  )
+    throw new Error('Gateway status observations cannot force a remote check');
+  return {};
+}
+
+function gatewayStatusStoredData(data: unknown): GatewayStatusResult {
+  const status = data as GatewayStatusResult;
+  return {
+    version: status.version,
+    update: status.update,
+    releaseNotes: status.releaseNotes,
+    capabilities: status.capabilities,
+    observation: status.observation,
+  };
+}
+
+export function upstreamSourceObservation(data: unknown): UpstreamObservation | undefined {
+  const observation =
+    data && typeof data === 'object' ? Reflect.get(data, 'observation') : undefined;
+  if (observation === undefined) return undefined;
+  if (
+    !observation ||
+    typeof observation !== 'object' ||
+    !['ready', 'stale', 'error'].includes(observation.status) ||
+    (observation.observedAt !== undefined &&
+      (!Number.isFinite(observation.observedAt) || observation.observedAt <= 0)) ||
+    (observation.status === 'ready' && observation.observedAt === undefined) ||
+    (observation.status === 'ready' && observation.error !== undefined) ||
+    (observation.error !== undefined &&
+      (!observation.error ||
+        typeof observation.error.code !== 'string' ||
+        typeof observation.error.message !== 'string'))
+  )
+    throw new Error('The gateway supplied an invalid upstream observation');
+  return {
+    status: observation.status,
+    ...(observation.observedAt === undefined ? {} : { observedAt: observation.observedAt }),
+    ...(observation.error
+      ? { error: { code: observation.error.code, message: observation.error.message } }
+      : {}),
+  };
+}
+
 /** Closed to runtime registration. Each migration changes its owning definition here. */
 export const RESOURCE_QUERY_DEFINITIONS = {
+  [Methods.GATEWAY_STATUS]: {
+    persisted: true,
+    maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+    retention: {
+      maxEntries: Number.MAX_SAFE_INTEGER,
+      maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+      cohort: 'upstream',
+    },
+    timeoutMs: 60_000,
+    live: false,
+    collector: 'gateway-update',
+    sourceObservation: upstreamSourceObservation,
+    persistedData: gatewayStatusStoredData,
+    normalizeParams: gatewayStatusObservationParams,
+    dependencies: () => [{ family: 'gateway-update', scope: 'gateway' }],
+  },
+  [Methods.PR_LIST]: {
+    persisted: true,
+    maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+    retention: {
+      maxEntries: Number.MAX_SAFE_INTEGER,
+      maxBytes: UPSTREAM_QUERY_MAX_BYTES,
+      cohort: 'upstream',
+    },
+    timeoutMs: 30_000,
+    // Matching read freshness/error projections and local overlays must land before client cutover.
+    live: false,
+    collector: 'github',
+    sourceObservation: upstreamSourceObservation,
+    normalizeParams: prListObservationParams,
+    dependencies: (params: unknown) => {
+      const project =
+        params && typeof params === 'object' ? Reflect.get(params, 'project') : undefined;
+      const normalized = prListObservationParams(project === undefined ? {} : { project });
+      return [
+        {
+          family: 'upstream',
+          integration: 'github',
+          queryId: `${Methods.PR_LIST}:${canonicalResourceJson(normalized)}`,
+        },
+        { family: 'runs', scope: 'farm' },
+        { family: 'slots', scope: 'farm' },
+        { family: 'workers', scope: 'farm' },
+        { family: 'configuration', scope: 'farm' },
+        { family: 'sources', scope: 'farm' },
+      ];
+    },
+  },
   // D07 observations. Their imperative siblings are deliberately absent.
   [Methods.PR_WATCH_LIST]: domainDefinition,
   [Methods.PR_WATCH_GET]: {
@@ -706,6 +837,34 @@ export const RESOURCE_QUERY_DEFINITIONS = {
 
 export type ResourceReadMethod = keyof typeof RESOURCE_QUERY_DEFINITIONS;
 
+export type ResourceCollectorReadMethod = {
+  [Method in ResourceReadMethod]: (typeof RESOURCE_QUERY_DEFINITIONS)[Method] extends {
+    collector: string;
+  }
+    ? Method
+    : never;
+}[ResourceReadMethod];
+
+export interface ResourceCollectorQuery {
+  id: string;
+  method: ResourceCollectorReadMethod;
+  params: unknown;
+}
+
+/** Collector selectors use exactly the same closed normalization as client query identities. */
+export function resourceCollectorQuery(
+  method: unknown,
+  params: unknown = {},
+): ResourceCollectorQuery {
+  if (typeof method !== 'string' || !Object.hasOwn(RESOURCE_QUERY_DEFINITIONS, method))
+    throw new Error('Provide a registered collector read');
+  const definition: ResourceQueryDefinition =
+    RESOURCE_QUERY_DEFINITIONS[method as ResourceReadMethod];
+  if (!definition.collector) throw new Error('Provide a registered collector read');
+  const query = resourceQuery(method as ResourceCollectorReadMethod, params);
+  return { id: query.id, method: method as ResourceCollectorReadMethod, params: query.params };
+}
+
 export function resourceReadTimeout(method: ResourceReadMethod): number | undefined {
   const definition: ResourceQueryDefinition = RESOURCE_QUERY_DEFINITIONS[method];
   return definition.timeoutMs;
@@ -722,6 +881,9 @@ export interface ResourceQuery<T = unknown> {
   readonly maxBytes: number;
   readonly retention?: ResourceQueryRetention;
   readonly live: boolean;
+  readonly collector?: 'github' | 'gateway-update';
+  readonly sourceObservation?: (data: unknown) => UpstreamObservation | undefined;
+  readonly persistedData?: (data: unknown) => unknown;
   readonly requiresObservedRead?: boolean;
   readonly requiresWorkspaceRead?: boolean;
   readonly [queryData]?: T;
@@ -757,6 +919,9 @@ export function resourceQuery<T = unknown>(
         }
       : {}),
     live: definition.live,
+    ...(definition.collector ? { collector: definition.collector } : {}),
+    ...(definition.sourceObservation ? { sourceObservation: definition.sourceObservation } : {}),
+    ...(definition.persistedData ? { persistedData: definition.persistedData } : {}),
     ...(definition.requiresWorkspaceRead ? { requiresWorkspaceRead: true } : {}),
     ...(definition.requiresObservedRead ? { requiresObservedRead: true } : {}),
   };

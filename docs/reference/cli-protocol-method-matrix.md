@@ -422,6 +422,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 | Method                       | Surface       | CLI command                  | TUI | Note                                                                                                                                                        |
 | ---------------------------- | ------------- | ---------------------------- | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resource.observers.replace` | na            |                              |     | Connection-bound collector interest replacement, sent by the shared client cache on its existing authenticated socket.                                      |
 | `resource.list`              | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                              |
 | `resource.control`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                              |
 | `resource.health`            | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                              |

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setImmediate as turn } from 'node:timers/promises';
 
 import {
   createMemoryResourceStore,
@@ -20,6 +21,61 @@ const scope = { gatewayUrl: url, principalId: 'old', principalGeneration: 0 };
 const authority = { roles: [], workspaceAccess: 'farm' as const };
 const saved: ResourceStoreIdentity = { authMode: 'token', metadata: { scope, authority } };
 const query = { ...resourceQuery<{ value: string }>('sources.status'), persisted: true };
+
+test('owner visibility changes reach collector admission without a socket event or a cache replacement', async () => {
+  const source = fixture();
+  const authentication = auth('old');
+  authentication.capabilities!.resourceChanges!.upstreamObservers = {
+    version: 1,
+    methods: ['pr.list'],
+  };
+  const sets: unknown[][] = [];
+  source.client.replaceResourceObservers = async (params) => {
+    sets.push(params.queries);
+    return { version: 1, sequence: params.sequence, applied: true };
+  };
+  const owner = new ResourceCacheOwner({
+    identities: () => ({ load: async () => null, save: async () => {} }),
+    openStore: async () => createMemoryResourceStore(),
+    onNotice() {},
+    onError(error) {
+      throw error;
+    },
+  });
+  const connection = { id: 1, gatewayUrl: url, connected: true, foreground: true, authentication };
+  owner.update({ client: source.client, connection });
+  const cache = owner.cache!;
+  // Exercise owner/session forwarding with the existing stamped fixture, before PR read cutover.
+  const collectorQuery = {
+    ...resourceQuery('pr.list'),
+    live: true,
+    sourceObservation: undefined,
+    dependencies: query.dependencies,
+  };
+  const stop = cache.observe(collectorQuery, () => {});
+  const until = async (check: () => boolean) => {
+    const deadline = performance.now() + 1500;
+    while (!check()) {
+      assert(performance.now() < deadline);
+      await turn();
+    }
+  };
+  try {
+    await until(() => cache.read(collectorQuery).status === 'ready');
+    assert.equal(sets.length, 1);
+    owner.update({ client: source.client, connection: { ...connection, foreground: false } });
+    await until(() => sets.length === 2);
+    assert.deepEqual(sets[1], []);
+    assert.equal(owner.cache, cache);
+    assert.equal(cache.read(collectorQuery).status, 'stale');
+    owner.update({ client: source.client, connection });
+    await until(() => sets.length === 3 && cache.read(collectorQuery).status === 'ready');
+    assert.equal(owner.cache, cache);
+  } finally {
+    stop();
+    await owner.dispose();
+  }
+});
 
 function auth(principalId: string): GatewayAuthConnectResult {
   return {

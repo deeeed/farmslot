@@ -2,6 +2,7 @@ import type { NativeSessionReadResult, NativeSessionTargetParams } from '../rpc/
 import { Methods } from '../rpc/registry.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
+import { ResourceCollectorAdmission } from './collector-admission.js';
 import { RESOURCE_PUBLISH_INTERVAL_MS, resourceKeyId, type ResourceReadStamp } from './keys.js';
 import {
   nativeHistoryStorageId,
@@ -26,6 +27,7 @@ import type {
   ResourceQueryError,
   ResourceQueryState,
 } from './types.js';
+import { isUpstreamStoredQuery, upstreamRetentionEvictions } from './upstream-retention.js';
 import { workspaceRetentionEvictions } from './workspace-retention.js';
 
 interface PendingRead {
@@ -121,12 +123,24 @@ export function createGatewayResourceCache(
   const entries = new Map<string, QueryEntry>();
   const revisions = new Map<string, number>();
   const encoder = new TextEncoder();
+  const collectors = new ResourceCollectorAdmission(transport);
   let retiringStore = false;
+  let retentionSweptStore: ResourceStore | undefined;
   let unsubscribeStore = store.onDeleted(storeDeleted);
+
+  function updateCollectors(): void {
+    collectors.update(
+      { ...connection, foreground: usable && connection.foreground !== false },
+      usable
+        ? [...entries.values()].filter((entry) => entry.listeners.size).map((entry) => entry.query)
+        : [],
+    );
+  }
 
   function storeDeleted(): void {
     if (disposed || retiringStore) return;
     usable = false;
+    updateCollectors();
     hydrationOwnerVersion++;
     version++;
     for (const entry of entries.values()) invalidate(entry, true);
@@ -299,6 +313,7 @@ export function createGatewayResourceCache(
     if (revoke || scopeChanged || authorityChanged) hydrationOwnerVersion++;
     connection = next;
     usable = false;
+    updateCollectors();
     revisions.clear();
     for (const entry of entries.values()) {
       entry.lastRequestedAt = undefined;
@@ -373,13 +388,25 @@ export function createGatewayResourceCache(
             }
           }
         }
+        if (store.persistent && retentionSweptStore !== store) {
+          const target = store;
+          try {
+            for (const id of upstreamRetentionEvictions(await target.listQueries()))
+              await target.deleteQuery(id);
+            retentionSweptStore = target;
+          } catch (error) {
+            await recoverStore(error, target);
+          }
+        }
         if (disposed || ticket !== version) return;
         usable = next.connected && next.foreground !== false && !revoke;
+        updateCollectors();
         if (usable) for (const entry of entries.values()) schedule(entry);
       })
       .catch((error: unknown) => {
         // An authority deletion failure must not admit reads or render the old principal's data.
         usable = false;
+        updateCollectors();
         for (const entry of entries.values()) {
           entry.state = {
             status: 'error',
@@ -395,6 +422,7 @@ export function createGatewayResourceCache(
     const epoch = connection.capabilities?.resourceChanges?.epoch;
     if (payload.version !== 1 || payload.epoch !== epoch) {
       usable = false;
+      updateCollectors();
       version++;
       for (const entry of entries.values()) invalidate(entry);
       transport.resynchronize();
@@ -403,6 +431,7 @@ export function createGatewayResourceCache(
     for (const change of payload.changes) {
       if (!Number.isSafeInteger(change.revision) || change.revision < 0) {
         usable = false;
+        updateCollectors();
         for (const entry of entries.values()) invalidate(entry);
         transport.resynchronize();
         return;
@@ -481,7 +510,13 @@ export function createGatewayResourceCache(
           (query.method !== Methods.NATIVE_SESSION_READ ||
             storedNativeHistoryMatches(query.params as NativeSessionTargetParams, saved.data))
         ) {
-          entry.state = { status: 'stale', data: saved.data, observedAt: saved.observedAt };
+          const sourceObservation = query.sourceObservation?.(saved.data);
+          entry.state = {
+            status: 'stale',
+            data: saved.data,
+            observedAt: saved.observedAt,
+            ...(sourceObservation ? { sourceObservation, error: sourceObservation.error } : {}),
+          };
           notify(entry);
         }
       } catch (error) {
@@ -593,6 +628,10 @@ export function createGatewayResourceCache(
     pending.promise = (async () => {
       try {
         if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
+        if (entry.query.collector) {
+          await collectors.require(entry.query, !observedOnly);
+          if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
+        }
         entry.lastRequestedAt = performance.now();
         const reply =
           entry.query.method === Methods.NATIVE_SESSION_READ
@@ -627,13 +666,39 @@ export function createGatewayResourceCache(
         const covered =
           supported &&
           stampCovers(entry, reply.resourceState) &&
+          (!entry.query.collector || collectors.has(entry.query)) &&
           entry.unknownGeneration === unknownGeneration;
         const observedAt = Date.now();
+        const sourceObservation = entry.query.sourceObservation?.(reply.data);
+        if (entry.query.sourceObservation && !sourceObservation)
+          throw Object.assign(new Error('The gateway supplied no upstream source observation.'), {
+            code: 'RESOURCE_SOURCE_STATE_MISSING',
+          });
+        if (
+          sourceObservation &&
+          sourceObservation.observedAt === undefined &&
+          entry.state.sourceObservation?.observedAt !== undefined
+        )
+          throw Object.assign(
+            new Error(
+              sourceObservation.error?.message ?? 'The gateway has not observed an upstream value.',
+            ),
+            {
+              code: sourceObservation.error?.code ?? 'UPSTREAM_UNOBSERVED',
+            },
+          );
         entry.state = {
-          status: covered ? 'ready' : supported ? 'stale' : 'unsupported',
+          status: covered
+            ? sourceObservation && sourceObservation.status !== 'ready'
+              ? 'stale'
+              : 'ready'
+            : supported
+              ? 'stale'
+              : 'unsupported',
           data: reply.data,
           observedAt,
           resourceState: reply.resourceState,
+          ...(sourceObservation ? { sourceObservation, error: sourceObservation.error } : {}),
           ...(!reply.resourceState && supported
             ? {
                 error: {
@@ -647,7 +712,11 @@ export function createGatewayResourceCache(
         entry.dirty = supported && !covered && entry.dirty;
         entry.lastUsed = ++lastUsed;
         const persistResult = entry.query.persisted && canPersist(connection);
-        const serialized = persistResult ? JSON.stringify(reply.data) : undefined;
+        const serialized = persistResult
+          ? JSON.stringify(
+              entry.query.persistedData ? entry.query.persistedData(reply.data) : reply.data,
+            )
+          : undefined;
         const bytes = serialized === undefined ? 0 : encoder.encode(serialized).byteLength;
         const retention = entry.query.retention;
         const saved: StoredResourceQuery | undefined =
@@ -703,7 +772,11 @@ export function createGatewayResourceCache(
             } else if (retention) {
               const previous = (await writingStore.listQueries())
                 .filter(
-                  (value) => value.id !== saved.id && value.id.startsWith(`${entry.query.method}:`),
+                  (value) =>
+                    value.id !== saved.id &&
+                    (retention.cohort === 'upstream'
+                      ? isUpstreamStoredQuery(value.id)
+                      : value.id.startsWith(`${entry.query.method}:`)),
                 )
                 .sort(
                   (a, b) =>
@@ -788,6 +861,7 @@ export function createGatewayResourceCache(
       const entry = entryFor(query);
       const receive = (state: ResourceQueryState) => listener(state as ResourceQueryState<T>);
       entry.listeners.add(receive);
+      updateCollectors();
       if (query.retention?.cohort === 'workspace') {
         const bindingVersion = version;
         const sessionId = connection.id;
@@ -830,6 +904,7 @@ export function createGatewayResourceCache(
       if (entry.state.status !== 'ready' || entry.dirty) schedule(entry);
       return () => {
         entry.listeners.delete(receive);
+        updateCollectors();
         if (!entry.listeners.size) {
           cancelScheduledRead(entry);
           if (entry.pending) invalidate(entry);
@@ -850,6 +925,7 @@ export function createGatewayResourceCache(
     },
     async dispose(reason?: ResourceConnectionReason) {
       if (disposed) return;
+      const withdrawing = collectors.close();
       disposed = true;
       version++;
       unsubscribeChanges();
@@ -863,8 +939,12 @@ export function createGatewayResourceCache(
       }
       entries.clear();
       await barrier;
-      if (reason && deletionReasons.has(reason)) await store.deleteAll();
-      await store.close();
+      try {
+        if (reason && deletionReasons.has(reason)) await store.deleteAll();
+        await withdrawing;
+      } finally {
+        await store.close();
+      }
     },
   };
 }

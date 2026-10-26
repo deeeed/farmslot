@@ -12,8 +12,11 @@ import {
   isPRBatchTruncated,
   isUsablePRRawSnapshot,
   parseJsonLines,
+  peekRetainedPRRawData,
   prefetchPRBatchViaGraphQL,
   type PRRawSnapshot,
+  restoreRetainedPRRawObservations,
+  retainedPRRawObservations,
   synthesizeRawSnapshotFromGraphQL,
 } from './raw-cache.js';
 
@@ -604,4 +607,62 @@ test('buildBatchQuery includes pageInfo on both connection caps so truncation is
     /reviewThreads\(first:\s*100\)\s*\{[^}]*pageInfo\s*\{\s*hasNextPage\s*\}/,
   );
   assert.ok(threadsMatch, 'reviewThreads must request pageInfo.hasNextPage');
+});
+
+test('retained upstream values remain available past the network TTL without changing their age', () => {
+  const raw: PRRawSnapshot = {
+    checksStdout: '',
+    prStateStdout: 'OPEN\tMERGEABLE',
+    commentsStdout: '',
+    reviewCommentsStdout: '',
+    latestCommitStdout: '',
+    reviewMetaStdout: '',
+    fetchedAt: 1_000,
+  };
+  restoreRetainedPRRawObservations([{ repo: 'retained-test/Only', pr: 87, raw }]);
+  assert.equal(isUsablePRRawSnapshot(raw, 70_000), false);
+  assert.deepEqual(peekRetainedPRRawData('RETAINED-TEST/only', 87), raw);
+  assert.equal(peekRetainedPRRawData('retained-test/only', 87)?.fetchedAt, 1_000);
+  const exported = retainedPRRawObservations([{ repo: 'retained-test/only', pr: 87 }]);
+  assert(
+    exported.some(
+      (entry) =>
+        entry.repo === 'retained-test/only' && entry.pr === 87 && entry.raw.fetchedAt === 1_000,
+    ),
+  );
+  restoreRetainedPRRawObservations([
+    {
+      repo: 'retained-test/only',
+      pr: 87,
+      raw: { ...raw, fetchedAt: 999, prStateStdout: 'CLOSED' },
+    },
+  ]);
+  assert.equal(
+    peekRetainedPRRawData('retained-test/only', 87)?.prStateStdout,
+    raw.prStateStdout,
+    'An older saved query cannot replace newer retained bytes',
+  );
+});
+
+test('a retained authorized absence cannot be resurrected by an older project snapshot', () => {
+  const raw: PRRawSnapshot = {
+    checksStdout: '',
+    prStateStdout: '',
+    prStateError: 'HTTP 404: Not Found',
+    commentsStdout: '',
+    reviewCommentsStdout: '',
+    latestCommitStdout: '',
+    reviewMetaStdout: '',
+    fetchedAt: 2_000,
+  };
+  restoreRetainedPRRawObservations([{ repo: 'retained-test/gone', pr: 88, raw }]);
+  restoreRetainedPRRawObservations([
+    {
+      repo: 'retained-test/gone',
+      pr: 88,
+      raw: { ...raw, prStateStdout: 'OPEN', fetchedAt: 1_000 },
+    },
+  ]);
+  assert.equal(peekRetainedPRRawData('retained-test/gone', 88)?.prStateStdout, '');
+  assert.equal(peekRetainedPRRawData('retained-test/gone', 88)?.fetchedAt, 2_000);
 });

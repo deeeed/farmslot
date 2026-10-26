@@ -49,7 +49,9 @@ import {
   startResourcePolling,
 } from './fleet/resource-manager.js';
 import { loadFleetStatus, onStateChange } from './fleet/state.js';
+import { forgetGatewayUpdateClientInterest } from './methods/gateway-status.js';
 import { resolveObservedNativeWorkspace } from './methods/native-workspace.js';
+import { forgetPRListClientInterest } from './methods/pr/list-cache.js';
 import { resetClientResourceIndex, streamUnsubscribe } from './methods/stream-feed.js';
 import { taskProgress } from './methods/task.js';
 import { parseTerminalKey } from './methods/terminal.js';
@@ -69,6 +71,7 @@ import {
   revokeNodeFileObservations,
 } from './resources/node-file-observations.js';
 import { readWithResourceState, resourceRevisions } from './resources/revisions.js';
+import { upstreamObservers } from './resources/upstream-observers.js';
 import { acceptWorkerObservation } from './resources/worker-observations.js';
 import {
   canReadWorkspaceResourceKey,
@@ -427,6 +430,10 @@ export function createWebSocketServer(
             );
           });
       }
+
+      upstreamObservers.disconnect(state);
+      forgetPRListClientInterest(state.id);
+      forgetGatewayUpdateClientInterest(state.id);
 
       // Cleanup terminal subscriptions for this client and invalidate any
       // terminal.subscribe RPC that is still awaiting target resolution.

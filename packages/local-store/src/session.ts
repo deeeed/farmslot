@@ -61,6 +61,9 @@ export function createStoredResourceCache(
         return client.resourceConnectionReason;
       },
       requestResource: (method, params, signal) => client.requestResource(method, params, signal),
+      ...(client.replaceResourceObservers
+        ? { replaceResourceObservers: client.replaceResourceObservers.bind(client) }
+        : {}),
       subscribe: (event, listener) => client.subscribe(event, listener),
       reconnect: () => client.reconnect(),
       onConnectionChange(listener) {

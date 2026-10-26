@@ -14,7 +14,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import os from 'node:os';
 import { dirname, resolve } from 'node:path';
 
-import { type EvalTrialStartParams, Events, primaryRoleForFlow } from '@farmslot/protocol';
+import { type EvalTrialStartParams, Events, Methods, primaryRoleForFlow } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { setTriagePilotObservationGuard } from './assessment/failure-triage/pilot-evidence.js';
@@ -82,8 +82,16 @@ import { assertDispatchPressureAdmissionEnvValid } from './methods/dispatch/pres
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
+import {
+  startGatewayUpdateObservation,
+  wakeGatewayUpdateObservation,
+} from './methods/gateway-status.js';
 import { fetchPRList } from './methods/pr.js';
-import { loadPRListCache, startPRListRefresher } from './methods/pr/list-cache.js';
+import {
+  loadPRListCache,
+  notifyPRListInterest,
+  startPRListRefresher,
+} from './methods/pr/list-cache.js';
 import { initPRPush } from './methods/pr-push.js';
 import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
 import { initPRMonitorDispatch, initPRMonitoring, monitorsSnapshot } from './methods/pr-watch.js';
@@ -98,6 +106,7 @@ import { initRuntimePosture } from './methods/runtime-posture.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
+import { upstreamObservers } from './resources/upstream-observers.js';
 import { initReview } from './review/orchestrator.js';
 import { roadmapRoot, setRoadmapObservationGuard } from './roadmap/store.js';
 import { watchRoadmapItems } from './roadmap/watcher.js';
@@ -228,7 +237,13 @@ async function main(): Promise<void> {
   const releaseGatewaySingletonLock = acquireGatewaySingletonLock();
   let releaseGatewayPresence = (): void => {};
   let stopCredentialFreshnessPolling = (): void => {};
+  let stopPRListCollection = (): void => {};
+  let stopUpstreamInterest = (): void => {};
+  let stopGatewayUpdateCollection = async (): Promise<void> => {};
+  let shuttingDown = false;
   const releaseIdentityResources = (): void => {
+    stopUpstreamInterest();
+    stopPRListCollection();
     stopCredentialFreshnessPolling();
     releaseGatewayPresence();
     stopSourceReconciliation();
@@ -236,13 +251,26 @@ async function main(): Promise<void> {
     releaseGatewaySingletonLock();
   };
   process.once('exit', releaseIdentityResources);
+  const shutdown = async (code: number): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    stopUpstreamInterest();
+    stopPRListCollection();
+    try {
+      await stopGatewayUpdateCollection();
+    } catch (error) {
+      console.error('[gateway] Upstream observation shutdown failed:', error);
+      code = 1;
+    } finally {
+      releaseIdentityResources();
+      process.exit(code);
+    }
+  };
   process.once('SIGINT', () => {
-    releaseIdentityResources();
-    process.exit(130);
+    void shutdown(130);
   });
   process.once('SIGTERM', () => {
-    releaseIdentityResources();
-    process.exit(143);
+    void shutdown(143);
   });
 
   // Load env files from farmslot root — force-override existing env vars
@@ -371,9 +399,17 @@ async function main(): Promise<void> {
   // Warm PR dashboard list: serve the last snapshot immediately, refresh in
   // the background while a client is connected, push changes as pr.list.updated.
   loadPRListCache();
-  startPRListRefresher((force) => fetchPRList({ force }), {
+  stopPRListCollection = startPRListRefresher((force) => fetchPRList({ force }), {
     broadcast: observedBroadcast,
     hasClients: hasConnectedViewers,
+  });
+  stopGatewayUpdateCollection = await startGatewayUpdateObservation({
+    hasInterest: () => upstreamObservers.hasInterest(Methods.GATEWAY_STATUS),
+  });
+  stopUpstreamInterest = upstreamObservers.subscribe(() => {
+    notifyPRListInterest();
+    // Expected source failures become retained error observations in the owning integration.
+    void wakeGatewayUpdateObservation();
   });
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();

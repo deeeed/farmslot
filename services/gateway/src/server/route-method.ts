@@ -378,7 +378,7 @@ import {
   fleetRefreshSlotsCancel,
 } from '../methods/fleet-refresh.js';
 import { gatewayDoctor } from '../methods/gateway-doctor.js';
-import { gatewayStatus } from '../methods/gateway-status.js';
+import { forgetGatewayUpdateClientInterest, gatewayStatus } from '../methods/gateway-status.js';
 import { gatewayUpdate } from '../methods/gateway-update.js';
 import {
   gitBranchDiff,
@@ -404,6 +404,7 @@ import {
 import { llmConfigGet, llmConfigSet, llmTiers } from '../methods/llm-config.js';
 import { nativeSessionRoute } from '../methods/native-session.js';
 import { prForSlot, prList, prMonitor, prStatus } from '../methods/pr.js';
+import { forgetPRListClientInterest } from '../methods/pr/list-cache.js';
 import {
   prAddComment,
   prDeleteComment,
@@ -564,6 +565,7 @@ import { metroSubscribe, metroUnsubscribe } from '../methods/workspace.js';
 import { getAllThumbnails, subscribeThumbnails } from '../observability/thumbnail-cache.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import { nativeObservations } from '../resources/native-observations.js';
+import { upstreamObservers } from '../resources/upstream-observers.js';
 import { rememberNativeExecutionNode } from '../runners/native/execution-nodes.js';
 import { unsubscribePty } from '../runtime/pty-stream.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
@@ -638,6 +640,44 @@ export async function routeMethod(
   } catch (error) {
     if (error instanceof GatewayMethodError) throw error;
     throw new GatewayInternalError('RPC authorization resolution failed', error);
+  }
+  // Reserve/commit observer replacement before any asynchronous family dispatch.
+  switch (method) {
+    case Methods.RESOURCE_OBSERVERS_REPLACE: {
+      if (state.clientKind !== 'ui' && state.clientKind !== 'companion')
+        throw new GatewayMethodError(
+          'AUTH_FORBIDDEN',
+          'Collector observers require a viewer connection',
+        );
+      const ownerId = actingPrincipal.id;
+      const ownerGeneration = actingPrincipal.generation ?? 0;
+      const clientKind = state.clientKind;
+      const replacement = upstreamObservers.prepareReplacement(state, params, {
+        isActive: () => context.isActiveClient(state) && state.clientKind === clientKind,
+        assertRead: (query) => {
+          const current = authorizeGatewayMethod(authRuntime, state, query.method);
+          if (current.id !== ownerId || (current.generation ?? 0) !== ownerGeneration)
+            throw new GatewayMethodError('AUTH_FORBIDDEN', 'Collector observer owner changed');
+        },
+        refuse: (error) => {
+          const denied =
+            error instanceof GatewayMethodError &&
+            ['AUTH_REQUIRED', 'AUTH_FORBIDDEN'].includes(error.code);
+          if (!denied) console.error('[upstream-observers] Read authorization failed:', error);
+          state.ws.close(
+            denied ? 1008 : 1011,
+            'Collector observation authority requires reconnect',
+          );
+        },
+      });
+      const result = replacement.commit();
+      if (result.applied) {
+        if (upstreamObservers.manages(state, Methods.PR_LIST)) forgetPRListClientInterest(state.id);
+        if (upstreamObservers.manages(state, Methods.GATEWAY_STATUS))
+          forgetGatewayUpdateClientInterest(state.id);
+      }
+      return result;
+    }
   }
   return runWithSessionOriginator(actingPrincipal, async () => {
     await assertNativeWorkerRpcAccess(method, params);
@@ -734,7 +774,10 @@ async function routeAuthorizedMethod(
     case Methods.GATEWAY_UPDATE:
       return gatewayUpdate(p as GatewayUpdateParams);
     case Methods.GATEWAY_STATUS:
-      return gatewayStatus(p as GatewayStatusParams);
+      return gatewayStatus(p as GatewayStatusParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.GATEWAY_STATUS),
+      });
     case Methods.GATEWAY_DOCTOR:
       return gatewayDoctor(p as GatewayDoctorParams, authRuntime);
     case Methods.RUNNER_MODEL_CATALOG:
@@ -1139,7 +1182,10 @@ async function routeAuthorizedMethod(
     case Methods.PR_STATUS:
       return prStatus(p as PRStatusParams);
     case Methods.PR_LIST:
-      return prList(p as PRListParams);
+      return prList(p as PRListParams, undefined, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PR_LIST),
+      });
     case Methods.PR_MONITOR:
       return prMonitor(p as PRStatusParams | undefined, emit);
     case Methods.PR_REVIEW_COMMENTS:

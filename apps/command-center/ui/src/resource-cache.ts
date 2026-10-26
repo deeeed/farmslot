@@ -49,6 +49,7 @@ function sync(): void {
       id: gateway.resourceConnectionId,
       gatewayUrl: gateway.gatewayUrl,
       connected,
+      foreground: document.visibilityState !== 'hidden',
       authentication: connected ? gateway.authenticatedConnection : undefined,
       reason: gateway.resourceConnectionReason,
     },
@@ -77,6 +78,7 @@ export function initializeResourceCache(): void {
   suspended = false;
   window.addEventListener('pagehide', suspendForNavigation);
   window.addEventListener('pageshow', resumeFromNavigation);
+  document.addEventListener('visibilitychange', sync);
   stopConnection = gateway.onConnectionChange(sync);
   sync();
 }
@@ -108,6 +110,7 @@ export async function disposeResourceCache(): Promise<void> {
   stopConnection = undefined;
   window.removeEventListener('pagehide', suspendForNavigation);
   window.removeEventListener('pageshow', resumeFromNavigation);
+  document.removeEventListener('visibilitychange', sync);
   suspended = false;
   const retiring = owner.dispose();
   closeBrowserResourceStores();

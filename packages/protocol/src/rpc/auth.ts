@@ -2,6 +2,7 @@ import { isRecord } from '../recipe/common.js';
 
 import type { RoleBinding, SelfPrincipalSummary } from './principal.js';
 import { Methods } from './registry.js';
+import type { ResourceObserversCapability } from './resource-observers.js';
 
 export const AuthMethods = {
   connect: Methods.AUTH_CONNECT,
@@ -23,6 +24,8 @@ export interface GatewayResourceChangesCapability {
   version: 1;
   epoch: string;
   versionLists: boolean;
+  /** Advertise only once the named read stamps, collector writers and admission work together. */
+  upstreamObservers?: ResourceObserversCapability;
 }
 
 export interface GatewayAuthConnectParams {

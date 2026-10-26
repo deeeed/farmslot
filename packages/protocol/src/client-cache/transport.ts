@@ -1,4 +1,8 @@
 import { type GatewayAuthConnectResult, workspaceAccessFromAuth } from '../rpc/auth.js';
+import type {
+  ResourceObserversReplaceParams,
+  ResourceObserversReplaceResult,
+} from '../rpc/resource-observers.js';
 import { Events } from '../transport/events.js';
 
 import type { ResourceReadMethod } from './registry.js';
@@ -17,6 +21,10 @@ export interface ResourceClientConnection {
     params: unknown,
     signal?: AbortSignal,
   ): Promise<ResourceReadResult<T>>;
+  replaceResourceObservers?(
+    params: ResourceObserversReplaceParams,
+    signal?: AbortSignal,
+  ): Promise<ResourceObserversReplaceResult>;
   subscribe(event: string, listener: (payload: unknown) => void): () => void;
   onConnectionChange(listener: () => void): () => void;
   reconnect(): void;
@@ -88,6 +96,12 @@ export function createResourceCacheTransport(
         listener(payload as import('../transport/events.js').ResourceChangedPayload),
       ),
     request: (method, params, signal) => client.requestResource(method, params, signal),
+    ...(client.replaceResourceObservers
+      ? {
+          replaceObservers: (params: ResourceObserversReplaceParams, signal: AbortSignal) =>
+            client.replaceResourceObservers!(params, signal),
+        }
+      : {}),
     resynchronize: () => client.reconnect(),
   };
 }

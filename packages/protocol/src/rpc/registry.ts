@@ -6,6 +6,9 @@ export const Methods = {
   GATEWAY_UPDATE: 'gateway.update',
   GATEWAY_DOCTOR: 'gateway.doctor',
 
+  // Connection-bound shared collector observers
+  RESOURCE_OBSERVERS_REPLACE: 'resource.observers.replace',
+
   // Fleet
   FLEET_STATUS: 'fleet.status',
   FLEET_REFRESH: 'fleet.refresh',

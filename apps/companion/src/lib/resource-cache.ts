@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState } from 'react-native';
 
 import { ResourceCacheOwner, resourceIdentityStorageKey } from '@farmslot/local-store';
 import { createNativeSqliteResourceStore } from '@farmslot/local-store/native';
@@ -8,6 +9,7 @@ import { useConnectionStore } from '../store/connection';
 
 let notice: string | undefined;
 let stopStore: (() => void) | undefined;
+let stopAppState: (() => void) | undefined;
 const listeners = new Set<() => void>();
 const notify = () => {
   for (const listener of listeners) listener();
@@ -47,6 +49,7 @@ function sync(): void {
     connection: {
       id: client?.connectionGeneration ?? 0,
       connected,
+      foreground: AppState.currentState === 'active',
       gatewayUrl: state.gatewayUrl,
       profileId: state.activeProfileId || undefined,
       authentication: connected ? client?.authenticatedConnection : undefined,
@@ -58,10 +61,14 @@ function sync(): void {
 export function initializeNativeResourceCache(): () => void {
   if (stopStore) return () => {};
   stopStore = useConnectionStore.subscribe(sync);
+  const appState = AppState.addEventListener('change', sync);
+  stopAppState = () => appState.remove();
   sync();
   return () => {
     stopStore?.();
     stopStore = undefined;
+    stopAppState?.();
+    stopAppState = undefined;
     void owner.dispose().catch((error: unknown) => {
       notice = `Offline storage could not close: ${error instanceof Error ? error.message : String(error)}`;
       notify();

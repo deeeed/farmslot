@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { watch } from 'chokidar';
+
 import type { CheckoutUpdateOperation, GatewayUpdateParams } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../core/index.js';
@@ -21,6 +23,94 @@ async function recordPath(root = farmslotRoot): Promise<string> {
 async function writeOperation(path: string, operation: CheckoutUpdateOperation): Promise<void> {
   await writeFile(`${path}.tmp`, JSON.stringify(operation), { mode: 0o600 });
   await rename(`${path}.tmp`, path);
+}
+
+export type CheckoutObservationChange = 'operation' | 'checkout';
+
+/** Atomic worker records and Git refs own progress; viewers never sample them on a timer. */
+export async function watchCheckoutUpdateChanges(
+  changed: (kind: CheckoutObservationChange) => void,
+  failed: (error: unknown) => void,
+  root = farmslotRoot,
+): Promise<() => Promise<void>> {
+  const versionFiles = [
+    resolve(root, 'services/gateway/package.json'),
+    resolve(root, 'services/gateway/release-notes.json'),
+  ];
+  let operationFile: string | undefined;
+  const paths = [...versionFiles];
+  try {
+    operationFile = await recordPath(root);
+  } catch (error) {
+    // A packaged gateway outside Git still observes its version; the source reports unavailability.
+    failed(error);
+  }
+  if (operationFile) {
+    paths.push(operationFile);
+    for (const name of ['HEAD', 'refs/heads', 'refs/remotes', 'packed-refs']) {
+      const { stdout } = await exec('git', ['rev-parse', '--git-path', name], {
+        cwd: root,
+        timeout: 8000,
+      });
+      paths.push(resolve(root, stdout.trim()));
+    }
+  }
+  let stopped = false;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  let watchdogVersion = 0;
+  const armWatchdog = async (afterDeadline = false): Promise<void> => {
+    const version = ++watchdogVersion;
+    clearTimeout(watchdog);
+    if (!operationFile || stopped) return;
+    let operation: CheckoutUpdateOperation;
+    try {
+      operation = JSON.parse(await readFile(operationFile, 'utf8')) as CheckoutUpdateOperation;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    if (stopped || version !== watchdogVersion || operation.phase !== 'running') return;
+    const untilDeadline = Date.parse(operation.updatedAt) + 120_001 - Date.now();
+    if (!Number.isFinite(untilDeadline)) throw new Error('Invalid checkout operation deadline');
+    watchdog = setTimeout(
+      () => {
+        if (stopped) return;
+        changed('operation');
+        // A worker still alive after its deadline is checked by this service, never each viewer.
+        void armWatchdog(true).catch(failed);
+      },
+      Math.max(afterDeadline ? 120_000 : 1, untilDeadline),
+    );
+    watchdog.unref();
+  };
+  const watcher = watch(paths, { ignoreInitial: true });
+  watcher.on('all', (event, file) => {
+    if (stopped || !['add', 'change', 'unlink'].includes(event)) return;
+    if (operationFile && resolve(file) === operationFile) {
+      changed('operation');
+      void armWatchdog().catch(failed);
+    } else changed('checkout');
+  });
+  watcher.on('error', failed);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      watcher.once('ready', resolve);
+      watcher.once('error', reject);
+    });
+    await armWatchdog();
+  } catch (error) {
+    stopped = true;
+    watchdogVersion++;
+    clearTimeout(watchdog);
+    await watcher.close();
+    throw error;
+  }
+  return async () => {
+    stopped = true;
+    watchdogVersion++;
+    clearTimeout(watchdog);
+    await watcher.close();
+  };
 }
 
 export async function readCheckoutUpdate(

@@ -39,6 +39,7 @@ interface OwnedCache {
   renderIdentity?: ResourceStoreIdentity;
   authentication?: ResourceConnectionInputs['authentication'];
   cache: GatewayResourceCache;
+  inputChanges: Set<() => void>;
 }
 
 const terminal = new Set<ResourceConnectionReason>([
@@ -164,9 +165,11 @@ export class ResourceCacheOwner {
       return;
     this.pendingBinding = undefined;
     if (this.owned) {
+      const foregroundChanged = this.owned.input.connection.foreground !== connection.foreground;
       this.owned.input = input;
       if (identity !== undefined) this.owned.identity = identity;
       if (auth) this.owned.authentication = auth;
+      if (foregroundChanged) for (const listener of this.owned.inputChanges) listener();
       return;
     }
     const before = this.retirement;
@@ -178,6 +181,7 @@ export class ResourceCacheOwner {
       input,
       identity,
       authentication: auth,
+      inputChanges: new Set(),
       get cache() {
         return cache;
       },
@@ -187,7 +191,25 @@ export class ResourceCacheOwner {
     };
     cache = createStoredResourceCache({
       contentBudgetBytes: this.options.contentBudgetBytes,
-      client,
+      client: {
+        get resourceConnectionReason() {
+          return client.resourceConnectionReason;
+        },
+        requestResource: (method, params, signal) => client.requestResource(method, params, signal),
+        ...(client.replaceResourceObservers
+          ? { replaceResourceObservers: client.replaceResourceObservers.bind(client) }
+          : {}),
+        subscribe: (event, listener) => client.subscribe(event, listener),
+        reconnect: () => client.reconnect(),
+        onConnectionChange(listener) {
+          owned.inputChanges.add(listener);
+          const stop = client.onConnectionChange(listener);
+          return () => {
+            owned.inputChanges.delete(listener);
+            stop();
+          };
+        },
+      },
       snapshot: () => owned.input.connection,
       identities: {
         load: async () => {

@@ -1,5 +1,7 @@
 import type { PRStatus } from '../contracts/index.js';
 
+import type { UpstreamObservation } from './resource-observers.js';
+
 export interface PRStatusParams {
   pr: number;
   project?: string;
@@ -94,6 +96,7 @@ export interface PRStatusResult {
 
 export interface PRListResult {
   prs: PRStatus[];
+  observation?: UpstreamObservation;
   /** ISO time the served list was fetched from GitHub. Absent only when no list exists yet. */
   fetchedAt?: string;
   /** True when the gateway answered from its warm list while a GitHub refresh is still running. */

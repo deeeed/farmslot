@@ -34,10 +34,7 @@ import {
 } from '@farmslot/protocol';
 
 import { isLocal } from '../core/exec.js';
-import {
-  buildLatestRunByPrNumber,
-  findFamilyStateSummaryForPR,
-} from '../family-observability/state.js';
+import { findFamilyStateSummaryForPR, sortRunsByFreshness } from '../family-observability/state.js';
 import {
   farmslotRoot,
   loadFleetStatus,
@@ -58,12 +55,15 @@ import {
 } from '../integrations/github-query-budget.js';
 import { getAllRuns } from '../runs/store.js';
 
-import { servePRList } from './pr/list-cache.js';
+import { type PRListClientInterest, servePRList } from './pr/list-cache.js';
 import {
   getPRRawData,
   parseJsonLines,
+  peekRetainedPRRawData,
   prefetchPRBatchViaGraphQL,
   type PRJsonLine,
+  type PRRawSnapshot,
+  retainPRRawNotFound,
   shouldPrefetchPRRawData,
 } from './pr/raw-cache.js';
 
@@ -124,6 +124,10 @@ interface FetchPRDataOptions {
 type EventEmitter = (event: string, payload: unknown) => void;
 const MAX_PR_DASHBOARD_CANDIDATES = 200;
 const PR_DASHBOARD_TERMINAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const observedSlotBranches = new Map<
+  string,
+  { project: string; branch: string; found: BranchPRBinding | null }
+>();
 
 type PrSlotProjectConfig = {
   defaultBranch: string;
@@ -184,38 +188,56 @@ export async function prStatus(params: PRStatusParams): Promise<PRStatusResult> 
  * copy is older than PR_LIST_STALE_MS. Project scoping filters the warm list so
  * every caller shares one fetch.
  */
+export type PRListProjector = (
+  rows: readonly PRStatus[],
+  project?: string,
+) => Promise<PRListFetchResult>;
+
 export async function prList(
   params?: PRListParams,
   fetchList: (opts: {
     force?: boolean;
     project?: string;
   }) => Promise<PRListFetchResult> = fetchPRList,
+  interest: PRListClientInterest = {},
+  projectRows: PRListProjector = projectRetainedPRList,
 ): Promise<PRListResult> {
-  const { truncated, ...served } = await servePRList((force) => fetchList({ force }), {
-    force: params?.force,
-  });
-  if (!params?.project) return served;
-  if (truncated) {
-    // The shared copy hit MAX_PR_DASHBOARD_CANDIDATES before it could reach
-    // every run of this project, so filtering it could hide this project's
-    // PRs. Discover per project instead: uncached (bounded by the 60s raw
-    // cache), as every project-scoped call was before the warm list existed.
-    const scoped = await fetchList({ project: params.project, force: params.force });
-    if (scoped.truncated)
-      console.warn(
-        `[pr.list] project ${params.project} alone exceeds ${MAX_PR_DASHBOARD_CANDIDATES} candidates; list is incomplete`,
-      );
-    return {
-      prs: scoped.prs.filter((p) => p.project === params.project),
-      fetchedAt: new Date().toISOString(),
-      refreshing: false,
-    };
-  }
-  // Match on the PR's resolved project (PRStatus.project), not repo slug.
-  // Projects whose internal name differs from their GitHub owner/name
-  // (e.g. my-app-farm → owner/my-app) would drop out of the
-  // project-filtered dashboard if we substring-matched on repo.
-  return { ...served, prs: served.prs.filter((p) => p.project === params.project) };
+  const project = params?.project;
+  const served = await servePRList(
+    (force) => fetchList({ force, ...(project === undefined ? {} : { project }) }),
+    {
+      force: params?.force,
+      project,
+      ...interest,
+    },
+  );
+  const projected = await projectRows(served.prs, project);
+  const { truncated: _truncated, ...result } = served;
+  const incomplete = projected.failed.length > 0 || projected.truncated;
+  return {
+    ...result,
+    prs: projected.prs.filter((row) => project === undefined || row.project === project),
+    ...(incomplete
+      ? {
+          observation: {
+            ...result.observation,
+            status: 'stale',
+            error: result.observation?.error ?? {
+              code: 'UPSTREAM_INCOMPLETE',
+              message: 'Some current PR identities have no retained upstream observation',
+            },
+          },
+        }
+      : {}),
+  };
+}
+
+/** Reads only gateway/node-owned local facts and retained raw observations. Never invokes GitHub. */
+export async function projectRetainedPRList(
+  rows: readonly PRStatus[],
+  project?: string,
+): Promise<PRListFetchResult> {
+  return loadPRList({ project, retained: true, storedRows: rows });
 }
 
 /** GitHub says the PR no longer exists or is no longer visible to this token. */
@@ -299,10 +321,15 @@ export async function fetchPRList(
 }
 
 async function loadPRList(
-  opts: { force?: boolean; project?: string } = {},
+  opts: {
+    force?: boolean;
+    project?: string;
+    retained?: boolean;
+    storedRows?: readonly PRStatus[];
+  } = {},
 ): Promise<PRListFetchResult> {
   // Discover PRs from active slots + runs
-  const fleet = await loadFleetStatus();
+  const fleet = await loadFleetStatus(false, true);
   // Keyed by `repo#number`: PR numbers repeat across repos, and a farm can
   // track the same number in two of them.
   const prInfo = new Map<string, PRDashboardEntry>();
@@ -311,8 +338,13 @@ async function loadPRList(
   // Preload runs for summary + active detection
   const runs = getAllRuns();
   // Index: prNumber → most recent run with that PR
-  const runByPR = buildLatestRunByPrNumber(runs);
-  const projectList = await loadProjectConfigs();
+  const runByPR = new Map<string, Run>();
+  for (const run of sortRunsByFreshness(runs)) {
+    if (run.prNumber == null) continue;
+    const key = `${run.project}#${run.prNumber}`;
+    if (!runByPR.has(key)) runByPR.set(key, run);
+  }
+  const projectList = await loadProjectConfigs(true);
   const projectConfigs = Object.fromEntries(
     projectList.map((p) => [
       p.name,
@@ -330,17 +362,34 @@ async function loadPRList(
   const activeSlots = fleet.slots.filter(
     (s) =>
       s.enabled &&
+      (!opts.project || s.project === opts.project) &&
       (s.agent === 'working' || s.lifecycle === 'busy') &&
       slotBranchHasPrLookupContext(s, projectConfigs),
   );
+  const pendingDiscovery: string[] = [];
+  const liveSlots = new Set(fleet.slots.map((entry) => entry.slot));
+  for (const id of observedSlotBranches.keys())
+    if (!liveSlots.has(id)) observedSlotBranches.delete(id);
   const slotBindings = await Promise.all(
     activeSlots.map((s) =>
-      findPRForBranch(s.branch!, s.project, s.slot).then((found) => ({ slot: s, found })),
+      (opts.retained
+        ? findKnownPRForBranch(s, projectList, opts.storedRows ?? [])
+        : findPRForBranch(s.branch!, s.project, s.slot)
+      ).then((found) => {
+        if (!opts.retained)
+          observedSlotBranches.set(s.slot, {
+            project: s.project,
+            branch: s.branch!,
+            found: found ?? null,
+          });
+        return { slot: s, found };
+      }),
     ),
   );
   for (const { slot, found } of slotBindings) {
+    if (found === undefined) pendingDiscovery.push(`slot:${slot.slot}`);
     if (!found) continue;
-    const run = runByPR.get(found.pr);
+    const run = runByPR.get(`${slot.project}#${found.pr}`);
     prInfo.set(candidateKey(found.repo, found.pr), {
       pr: found.pr,
       slot: slot.slot,
@@ -409,7 +458,7 @@ async function loadPRList(
 
   // Slots alone can fill the cap too, so decide after both discovery passes.
   const truncated = prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES;
-  if (prInfo.size === 0) return { prs: [], truncated, failed: [] };
+  if (prInfo.size === 0) return { prs: [], truncated, failed: pendingDiscovery };
 
   // ADR-028: collapse the per-PR REST fan-out into one aliased GraphQL request
   // per repo. Synthesized snapshots seed `prRawCache`, so the fetchPRData loop
@@ -423,48 +472,70 @@ async function loadPRList(
   // Refresh) prefetches every candidate so the answer is what GitHub says now;
   // the fetchPRData loop then reads those fresh snapshots without its own
   // force, which would discard them and fan out over REST a second time.
-  const prefetchNow = Date.now();
-  const prsByRepo = new Map<string, number[]>();
-  for (const info of prInfo.values()) {
-    const repo = info.repo ?? (await loadProjectConfig(info.project))?.ci?.repo;
-    if (!repo) continue;
-    info.repo = repo;
-    if (!opts.force && !shouldPrefetchPRRawData(repo, info.pr, prefetchNow)) continue;
-    const list = prsByRepo.get(repo);
-    if (list) list.push(info.pr);
-    else prsByRepo.set(repo, [info.pr]);
-  }
   let seeded = new Set<string>();
-  try {
-    seeded = await withGitHubQueryCaller('pr.list:prefetch', () =>
-      prefetchPRBatchViaGraphQL(prsByRepo),
-    );
-  } catch (err) {
-    if (err instanceof GitHubQueryBudgetError) throw err;
-    console.warn(
-      `[pr.batch] prefetch_failed err=${err instanceof Error ? err.message.slice(0, 200) : String(err)}`,
-    );
-  }
-  const spend = githubQueryBudget.spendSnapshot();
-  if (spend.hourQueries > 0 || (spend.remaining !== null && spend.remaining < 100)) {
-    console.log(
-      `[github-query-spend] hourCost=${spend.hourCost} hourQueries=${spend.hourQueries} remaining=${spend.remaining ?? 'n/a'} top=${
-        spend.callers
-          .slice(0, 4)
-          .map((row) => `${row.caller}:${row.cost}/${row.queries}`)
-          .join(',') || 'none'
-      }`,
-    );
+  if (!opts.retained) {
+    const prefetchNow = Date.now();
+    const prsByRepo = new Map<string, number[]>();
+    for (const info of prInfo.values()) {
+      const repo = info.repo ?? (await loadProjectConfig(info.project))?.ci?.repo;
+      if (!repo) continue;
+      info.repo = repo;
+      if (!opts.force && !shouldPrefetchPRRawData(repo, info.pr, prefetchNow)) continue;
+      const list = prsByRepo.get(repo);
+      if (list) list.push(info.pr);
+      else prsByRepo.set(repo, [info.pr]);
+    }
+    try {
+      seeded = await withGitHubQueryCaller('pr.list:prefetch', () =>
+        prefetchPRBatchViaGraphQL(prsByRepo),
+      );
+    } catch (err) {
+      if (err instanceof GitHubQueryBudgetError) throw err;
+      console.warn(
+        `[pr.batch] prefetch_failed err=${err instanceof Error ? err.message.slice(0, 200) : String(err)}`,
+      );
+    }
+    const spend = githubQueryBudget.spendSnapshot();
+    if (spend.hourQueries > 0 || (spend.remaining !== null && spend.remaining < 100)) {
+      console.log(
+        `[github-query-spend] hourCost=${spend.hourCost} hourQueries=${spend.hourQueries} remaining=${spend.remaining ?? 'n/a'} top=${
+          spend.callers
+            .slice(0, 4)
+            .map((row) => `${row.caller}:${row.cost}/${row.queries}`)
+            .join(',') || 'none'
+        }`,
+      );
+    }
   }
 
   // Fetch all PRs in parallel. Under `force`, a PR the batch did not fully
   // seed (failed chunk, or truncated first page) still has to reach GitHub.
-  const failed: string[] = [];
+  const failed: string[] = [...pendingDiscovery];
   let gone = 0;
+  const absent: Array<{ repo: string; pr: number }> = [];
   const prs = await Promise.all(
     Array.from(prInfo.values()).map(async (info) => {
       const prNum = info.pr;
       try {
+        if (opts.retained) {
+          if (!info.repo) throw new Error('No retained repository identity');
+          const raw = peekRetainedPRRawData(info.repo, prNum);
+          if (!raw) throw new Error('No retained upstream observation');
+          return projectPRData(
+            raw,
+            {
+              prNum,
+              runs,
+              project: info.project,
+              repo: info.repo,
+              slot: info.slot,
+              workerActive: info.workerActive,
+              summary: info.summary,
+              rejectIncomplete: true,
+            },
+            await loadProjectConfig(info.project),
+          );
+        }
         return await fetchPRData({
           prNum,
           runs,
@@ -475,29 +546,33 @@ async function loadPRList(
           repoOverride: info.repo,
           force: opts.force === true && !seeded.has(`${info.repo}#${prNum}`),
           rejectIncomplete: true,
-          allowPartial: true,
+          allowPartial: false,
         });
       } catch (error) {
         if (error instanceof GitHubQueryBudgetError) throw error;
         if (error instanceof PRGoneError) {
           // Deleted or no longer visible: drop the row, do not carry it.
           gone += 1;
-          console.warn(`[pr.list] ${error.message}`);
+          if (info.repo) absent.push({ repo: info.repo, pr: prNum });
+          if (!opts.retained) console.warn(`[pr.list] ${error.message}`);
           return null;
         }
         failed.push(`${info.repo}#${prNum}`);
-        console.warn(
-          `[pr.list] ${info.repo}#${prNum} unavailable: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
-        );
+        if (!opts.retained)
+          console.warn(
+            `[pr.list] ${info.repo}#${prNum} unavailable: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
+          );
         return null;
       }
     }),
   );
-  if (isListReadOutage({ candidates: prInfo.size, failed: failed.length, gone }))
+  if (!opts.retained && isListReadOutage({ candidates: prInfo.size, failed: failed.length, gone }))
     throw new Error(
       `GitHub unavailable: ${failed.length} of ${prInfo.size} PR reads failed and ${gone} returned 404`,
     );
 
+  if (!opts.retained)
+    for (const identity of absent) retainPRRawNotFound(identity.repo, identity.pr);
   return {
     prs: prs.filter((p): p is PRStatus => p !== null).filter(shouldIncludePRInDashboard),
     truncated,
@@ -507,35 +582,55 @@ async function loadPRList(
 
 // ─── Core PR fetch logic ───
 
+export interface PRDataProjectionConfig {
+  ci: Pick<ProjectConfig['ci'], 'checkGroups' | 'botPatterns'>;
+}
+
+export interface PRDataProjectionOptions {
+  prNum: number;
+  runs: Run[];
+  project: string;
+  repo: string;
+  slot?: string;
+  workerActive?: boolean;
+  summary?: string | null;
+  rejectIncomplete?: boolean;
+  includeCheckSnapshot?: boolean;
+}
+
 async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
+  const { project, repo } = await resolveProjectRepo(opts.project, opts.repoOverride);
+  const config = await loadProjectConfig(project);
+  const raw = await getPRRawData(repo, opts.prNum, opts.force, { allowPartial: opts.allowPartial });
+  return projectPRData(raw, { ...opts, project, repo }, config);
+}
+
+/** Pure projection of already observed upstream bytes and the current local ownership facts. */
+export function projectPRData(
+  raw: PRRawSnapshot,
+  opts: PRDataProjectionOptions,
+  projectConfig: PRDataProjectionConfig | null,
+): PRStatus {
   const {
     prNum,
     runs,
-    project,
+    project: resolvedProject,
+    repo: ghRepo,
     slot,
     workerActive,
     summary,
-    force,
-    repoOverride,
     rejectIncomplete,
-    allowPartial,
   } = opts;
-  const { project: resolvedProject, repo: ghRepo } = await resolveProjectRepo(
-    project,
-    repoOverride,
-  );
-  const projectConfig = await loadProjectConfig(resolvedProject);
-
-  // Raw GitHub data is served from the 60s cache (see getPRRawData) so repeated
-  // callers in the same minute — UI polls, ci-monitor tick, pr.list refetch —
-  // share one network round-trip. force=true bypasses both caches.
-  const raw = await getPRRawData(ghRepo, prNum, force, { allowPartial });
   if (rejectIncomplete && raw.prStateStdout.trim() === '') {
     const why = raw.prStateError ?? 'empty response';
     if (PR_GONE_PATTERN.test(why))
       throw new PRGoneError(`${ghRepo}#${prNum} is gone: ${why.slice(0, 120)}`);
     throw new Error(`GitHub returned no state for ${ghRepo}#${prNum}: ${why.slice(0, 120)}`);
   }
+  if (rejectIncomplete && raw.errors?.length)
+    throw new Error(
+      `GitHub returned an incomplete observation for ${ghRepo}#${prNum}: ${raw.errors.join('; ').slice(0, 200)}`,
+    );
 
   // Parse checks
   const checkGroups = projectConfig?.ci?.checkGroups ?? [];
@@ -1034,6 +1129,26 @@ function toBotComment(bc: BotCommentInternal) {
   };
 }
 
+async function findKnownPRForBranch(
+  slot: SlotStatus,
+  projects: readonly ProjectConfig[],
+  storedRows: readonly PRStatus[],
+): Promise<BranchPRBinding | null | undefined> {
+  const observed = observedSlotBranches.get(slot.slot);
+  if (observed?.project === slot.project && observed.branch === slot.branch) return observed.found;
+  const repo = projects.find((project) => project.name === slot.project)?.ci?.repo;
+  const row = storedRows.find(
+    (entry) =>
+      entry.project === slot.project && entry.slot === slot.slot && entry.headRef === slot.branch,
+  );
+  const pr = (repo && slot.branch ? getBinding(slot.branch, repo) : null) ?? row?.pr;
+  const ghRepo = repo ?? row?.repo;
+  if (!pr || !ghRepo) return undefined;
+  const raw = peekRetainedPRRawData(ghRepo, pr);
+  const [state, , , , head] = raw?.prStateStdout.trim().split('\t') ?? [];
+  return state === 'OPEN' && head === slot.branch ? { pr, repo: ghRepo } : null;
+}
+
 async function findPRForBranch(
   branch: string,
   project: string,
@@ -1046,7 +1161,7 @@ async function findPRForBranch(
   // slot's working tree — no ETag cache, but correct results.
   if (!repo) {
     if (!slotId) return null;
-    return findPRViaSlotRepo(slotId, branch);
+    return findPRViaSlotRepo(slotId, branch, true);
   }
   const cached = getBinding(branch, repo);
   if (cached !== null) {
@@ -1062,31 +1177,28 @@ async function findPRForBranch(
       const parsed = JSON.parse(verify.stdout || '{}') as { state?: string; head?: string };
       if (parsed.state === 'open' && parsed.head === branch) return { pr: cached, repo };
       invalidateBinding(branch, repo);
-    } catch {
+    } catch (error) {
+      if (error instanceof GitHubQueryBudgetError) throw error;
+      // A failed verification does not make the cached binding current; rediscovery below must succeed.
       invalidateBinding(branch, repo);
     }
   }
-  try {
-    const { stdout } = await ghRequest([
-      'pr',
-      'list',
-      '--repo',
-      repo,
-      '--head',
-      branch,
-      '--json',
-      'number',
-      '--jq',
-      '.[0].number',
-    ]);
-    const num = parseInt(stdout.trim(), 10);
-    if (isNaN(num)) return null;
-    setBinding(branch, repo, num);
-    return { pr: num, repo };
-  } catch (error) {
-    if (error instanceof GitHubQueryBudgetError) throw error;
-    return null;
-  }
+  const { stdout } = await ghRequest([
+    'pr',
+    'list',
+    '--repo',
+    repo,
+    '--head',
+    branch,
+    '--json',
+    'number',
+    '--jq',
+    '.[0].number',
+  ]);
+  const num = parseInt(stdout.trim(), 10);
+  if (isNaN(num)) return null;
+  setBinding(branch, repo, num);
+  return { pr: num, repo };
 }
 
 // Locate a slot's on-disk repo path from the pool configs.
@@ -1141,7 +1253,35 @@ async function resolveSlotRepoSlug(slotId: string): Promise<string | null> {
 // still resolve their PR. Bypasses ghRequest (no --repo flag, cwd-scoped) and
 // pairs the result with the remote-derived slug so callers can skip a second
 // resolveProjectRepo lookup.
-async function findPRViaSlotRepo(slotId: string, branch: string): Promise<BranchPRBinding | null> {
+async function findPRViaSlotRepo(
+  slotId: string,
+  branch: string,
+  collected = false,
+): Promise<BranchPRBinding | null> {
+  if (collected) {
+    const repo = await resolveSlotRepoSlug(slotId);
+    if (!repo) throw new Error(`Cannot resolve repository for upstream discovery on ${slotId}`);
+    // Passive discovery uses the same concurrency, request sharing and rate-limit owner as PR data.
+    const { stdout } = await ghRequest(
+      [
+        'pr',
+        'list',
+        '--repo',
+        repo,
+        '--head',
+        branch,
+        '--json',
+        'number,baseRefName',
+        '--jq',
+        '.[0]',
+      ],
+      { caller: 'pr.list:discovery' },
+    );
+    const found = JSON.parse(stdout || 'null') as { number?: number; baseRefName?: string } | null;
+    return found?.number
+      ? { pr: found.number, repo, ...(found.baseRefName ? { baseRef: found.baseRefName } : {}) }
+      : null;
+  }
   const repoPath = await findSlotRepoPath(slotId);
   if (!repoPath) return null;
 
