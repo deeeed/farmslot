@@ -82,7 +82,7 @@ for (const role of ['review-fix', 'ci-fix'] as const) {
           : '- [x] Source fix complete\n',
       );
       run.flowType = 'fix-bug';
-      run.activeTaskFile = null;
+      run.activeTaskFile = undefined;
       run.agentContexts = [
         {
           id: role,
