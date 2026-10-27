@@ -720,6 +720,57 @@ test('same-run clean baseline freezes as before evidence without supplying head 
   await assert.rejects(verifyFrozenPublicationEvidence(f.run, inventory, keys), /hash mismatch/);
 });
 
+test('before evidence keeps its full-review base after dispatch replay advances HEAD', async (t) => {
+  const f = await baselineFixture(t);
+  const headSha = 'b'.repeat(40);
+  const review = f.run.steps.find((step) => step.name === 'review');
+  assert.ok(review);
+  review.outputs = {
+    mode: 'cold',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha: f.provenance.git_ref,
+      headRef: f.run.branch,
+      headSha,
+      capturedAt: '2026-10-27T14:17:16.731Z',
+    },
+  };
+  // The retained regression package has a clean before capture at the review
+  // base, while a later dispatch records the already-fixed worktree HEAD.
+  f.run.worktreeHeadAtDispatch = headSha;
+  await retainRunFixture(f.run);
+  const effective = await readEvidenceManifest(f.run);
+  assert.equal(effective?.before_after_pairs?.[0]?.before, `${f.baselineRoot}/proof.png`);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    effective,
+    1,
+    publicationBaselineContext(f.run),
+  );
+  assert.ok(inventory.some((entry) => entry.path === `artifacts/${f.baselineRoot}/proof.png`));
+});
+
+test('a warm review delta cannot replace the before-evidence baseline', async (t) => {
+  const f = await baselineFixture(t);
+  const review = f.run.steps.find((step) => step.name === 'review');
+  assert.ok(review);
+  review.outputs = {
+    mode: 'warm',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'c'.repeat(40),
+      baseSha: 'c'.repeat(40),
+      headSha: 'b'.repeat(40),
+      capturedAt: '2026-10-27T14:17:16.731Z',
+    },
+  };
+  await retainRunFixture(f.run);
+  assert.equal(publicationBaselineContext(f.run).baseSha, f.provenance.git_ref);
+  assert.ok(await readEvidenceManifest(f.run));
+});
+
 test('a clean detached baseline at the dispatch head remains valid before evidence', async (t) => {
   const f = await baselineFixture(t, undefined, 'detached');
   assert.equal(f.provenance.git_ref, f.run.worktreeHeadAtDispatch);

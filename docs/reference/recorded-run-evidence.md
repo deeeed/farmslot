@@ -351,8 +351,9 @@ to the run's branch or its detached checkout, and retain its full validated
 closure with captured digests. The gateway MUST recheck that identity against
 the approved package head before publication and refresh. Foreign or uncaptured
 attempts, missing provenance/dependencies, tracked changes, stale revisions and
-substituted bytes MUST refuse. Before-only media from additional attempts MUST retain the existing clean,
-unchanged dispatch-baseline qualification. Captures keep their original attempt
+substituted bytes MUST refuse. Before-only media from additional attempts MUST be clean
+at the frozen full-review base, falling back to the dispatch baseline when no full
+review snapshot is available. A warm review delta MUST NOT supply that base. Captures keep their original attempt
 paths; no copies are relabelled as another execution.
 
 The selected successful attempt remains the sole claim-verdict source. Additional
