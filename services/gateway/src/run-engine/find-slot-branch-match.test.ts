@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import * as promiseTimers from 'node:timers/promises';
 
-import type { PressureAdmissionDecision, Run, SlotStatus } from '@farmslot/protocol';
+import type { PoolConfig, PressureAdmissionDecision, Run, SlotStatus } from '@farmslot/protocol';
+import { sourceLockDigest } from '@farmslot/slot-config/sources';
+
+import type { RunSlotSourcePlans } from '../sources/slot-planning.js';
+import { sourceTestLock, sourceTestMaterialization } from '../sources/source.test-support.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const { makeRun } = await import('./test-fixtures.js');
@@ -93,6 +97,9 @@ const originalSlots = structuredClone(slots);
 const reclaims: string[] = [];
 let prHead = branch;
 const claims: string[] = [];
+let pools: PoolConfig[] = [];
+let candidateSourcePlans: (() => RunSlotSourcePlans) | undefined;
+const sourceAdmissions: string[] = [];
 const finishedReclaims: string[] = [];
 let finishedRefusal: string | undefined;
 mock.module('../runs/store.js', {
@@ -122,7 +129,26 @@ mock.module('../fleet/state.js', {
     loadFleetStatus: async () => ({ slots }),
     loadProjectConfig: async () => null,
     loadProjectConfigs: async () => [{ name: project, defaultBranch: 'main' }],
-    loadPoolConfigs: async () => [],
+    loadPoolConfigs: async () => pools,
+  },
+});
+const sourceRuntime = await import('../sources/runtime.js');
+const withRunSources: typeof sourceRuntime.withRunSources = (current, operation, options) =>
+  candidateSourcePlans ? operation() : sourceRuntime.withRunSources(current, operation, options);
+mock.module('../sources/runtime.js', {
+  namedExports: {
+    ...sourceRuntime,
+    planRunSourceSlots: (...args: Parameters<typeof sourceRuntime.planRunSourceSlots>) =>
+      candidateSourcePlans
+        ? Promise.resolve(candidateSourcePlans())
+        : sourceRuntime.planRunSourceSlots(...args),
+    admitRunSources: async (...args: Parameters<typeof sourceRuntime.admitRunSources>) => {
+      if (!candidateSourcePlans) return sourceRuntime.admitRunSources(...args);
+      assert.equal(args[0], run.id);
+      assert.equal(args[1].slotId, expectedSlot);
+      sourceAdmissions.push(args[1].nodeId);
+    },
+    withRunSources,
   },
 });
 const claim: typeof core.claimSlotStatusIf = async (id, predicate) => {
@@ -271,6 +297,9 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
     steps: [{ name: 'find-slot', status: 'running' }],
   });
   claims.length = 0;
+  pools = [];
+  candidateSourcePlans = undefined;
+  sourceAdmissions.length = 0;
   prHead = branch;
   pressureDecisions = new Map();
   loadWaits.length = 0;
@@ -499,6 +528,97 @@ test('find-slot wakes when a cool allowed slot becomes free while the original n
   assert.deepEqual(claims, [newlyFree.slot]);
   assert.deepEqual(loadWaits, [5_000]);
   assert.deepEqual(refreshedSlots, [newlyFree.slot]);
+});
+
+test('find-slot replans a recovered same-ref source while the original node stays hot', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const hot = slots[0]!;
+  const cool = slots[2]!;
+  cool.lifecycle = 'ready';
+  cool.branch = 'main';
+  run.allowedSlots = [hot.slot, cool.slot];
+  expectedSlot = cool.slot;
+  pressureDecisions = new Map([
+    [hot.machine, loadDecision(hot.machine, 83 / 16)],
+    [cool.machine, loadDecision(cool.machine, 0.4)],
+  ]);
+  const lockFor = (nodeId?: string) => {
+    const { digest, ...content } = sourceTestLock(nodeId, run.id);
+    const rebound = {
+      ...content,
+      context: { ...content.context, project },
+      packBindings: { [project]: content.packBindings.demo! },
+    };
+    const lock = { ...rebound, digest: sourceLockDigest(rebound) };
+    assert.notEqual(lock.digest, digest);
+    return lock;
+  };
+  const lock = lockFor();
+  run.sourcePlan = {
+    state: 'planned',
+    lock,
+    workerLock: lock,
+    bindings: [lock.packBindings[project]!],
+  };
+  const originalPlan = structuredClone(run.sourcePlan);
+  let recovered = false;
+  let plans = 0;
+  candidateSourcePlans = () => {
+    plans++;
+    return new Map(
+      [hot, cool].map((slot) => [
+        slot.slot,
+        slot === cool && !recovered
+          ? { refusal: 'Source main is temporarily unavailable' }
+          : {
+              run,
+              params: { project, flowType: run.flowType, ticketOrPr: run.ticketOrPr },
+              sources: {
+                project,
+                pack: lock.packBindings[project]!,
+                packs: lock.packBindings,
+                materialization: sourceTestMaterialization(lockFor(slot.machine), 'gateway'),
+              },
+              projectConfigs: { [project]: { defaultBranch: 'main' } },
+            },
+      ]),
+    );
+  };
+  pools = [hot, cool].map((slot) => ({
+    machine: slot.machine,
+    project,
+    platform: 'web',
+    os: 'test',
+    host: slot.machine,
+    sshUser: 'fixture',
+    slots: [
+      {
+        id: slot.slot,
+        enabled: true,
+        mode: 'dispatch',
+        project,
+        repo: '/fixture/repo',
+        session: slot.slot,
+      },
+    ],
+  }));
+  afterLoadWait = () => {
+    assert.equal(loadWaits.length, 1, 'recovered source must be replanned on the next poll');
+    assert.deepEqual(claims, []);
+    recovered = true;
+  };
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, cool.slot);
+  assert.equal(plans, 2);
+  assert.deepEqual(claims, [cool.slot]);
+  assert.deepEqual(sourceAdmissions, [cool.machine]);
+  assert.deepEqual(loadWaits, [5_000]);
+  assert.deepEqual(
+    run.sourcePlan,
+    originalPlan,
+    'recovery does not require selecting a new source',
+  );
+  assert.match(String(result.inputs?.hostLoadWaitReason), /5.19 >= 1.50/);
 });
 
 test('an operator affinity-card pick retains explicit pressure policy on an overloaded alternative', async () => {

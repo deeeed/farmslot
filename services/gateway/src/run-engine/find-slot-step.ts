@@ -123,6 +123,10 @@ interface StepIO {
   outputs?: Record<string, unknown>;
 }
 
+interface FindSlotAttempt extends StepIO {
+  hostLoadWait?: { reason: string; slotId: string };
+}
+
 type BroadcastFn = (event: string, payload: unknown) => void;
 
 interface RunEngineFlags {
@@ -693,6 +697,35 @@ export async function executeFindSlotStep(
   generation: number,
   context: FindSlotStepContext,
 ): Promise<StepIO> {
+  let hostLoadWaitReason: string | undefined;
+  for (;;) {
+    const result = await findSlotAttempt(runId, run, generation, context);
+    if (!result.hostLoadWait)
+      return hostLoadWaitReason
+        ? { ...result, inputs: { ...result.inputs, hostLoadWaitReason } }
+        : result;
+    const { reason, slotId } = result.hostLoadWait;
+    hostLoadWaitReason = reason;
+    updateRunStep(runId, 'find-slot', {
+      inputs: { ...result.inputs, hostLoadWaitReason },
+    });
+    if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+    await awaitAsQueueTime(runId, 'find-slot', async () => {
+      await delay(5_000);
+      if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+    });
+    // Retry full selection so source refusals, capabilities and fleet eligibility
+    // recover together, without retaining a snapshot across load waits.
+    run = getRun(runId)!;
+  }
+}
+
+async function findSlotAttempt(
+  runId: string,
+  run: Run,
+  generation: number,
+  context: FindSlotStepContext,
+): Promise<FindSlotAttempt> {
   if (run.sourcePlan && run.slotId) {
     const pool = (await loadPoolConfigs()).find((pool) =>
       pool.slots.some((slot) => slot.id === run.slotId),
@@ -1409,46 +1442,7 @@ export async function executeFindSlotStep(
   });
   if (!run.slotId && eligibleFreeSlots.length === 0 && loadBlockedSlots.length > 0) {
     const reason = `Waiting for node load: ${[...new Set(loadBlockedSlots.map((slot) => automaticSlotLoadBlocker(slot, selectionOptions)))].join(' ')}`;
-    inputs.hostLoadWaitReason = reason;
-    updateRunStep(runId, 'find-slot', { inputs });
-    await awaitAsQueueTime(runId, 'find-slot', async () => {
-      for (;;) {
-        await delay(5_000);
-        if (runSupersededSince(getRun(runId), generation))
-          throw runChangedError(runId, loadBlockedSlots[0]!.slot);
-        const currentFleet = await loadFleetStatus(true);
-        if (runSupersededSince(getRun(runId), generation))
-          throw runChangedError(runId, loadBlockedSlots[0]!.slot);
-        const currentFree = currentFleet.slots.filter(
-          (slot) =>
-            slot.project === run.project &&
-            (!allowSet || allowSet.has(slot.slot)) &&
-            isFreeSlot(slot),
-        );
-        const usable = currentFree.filter((slot) => {
-          const selected = optionsFor(slot);
-          return (
-            selected &&
-            !validateSlotForDispatch(slot, currentFleet.slots, {
-              ...selected,
-              automaticLoads: undefined,
-            })
-          );
-        });
-        const loads = automaticSlotLoads(
-          capturePressureAdmissionDecisionsLightweight([
-            ...new Set(usable.map((slot) => slot.machine)),
-          ]),
-        );
-        if (
-          usable.length === 0 ||
-          usable.some((slot) => !automaticSlotLoadBlocker(slot, { automaticLoads: loads }))
-        )
-          break;
-      }
-    });
-    const result = await executeFindSlotStep(runId, getRun(runId)!, generation, context);
-    return { ...result, inputs: { ...result.inputs, hostLoadWaitReason: reason } };
+    return { inputs, hostLoadWait: { reason, slotId: loadBlockedSlots[0]!.slot } };
   }
 
   // Human intervention when no good candidates exist
