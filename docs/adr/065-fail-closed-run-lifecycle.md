@@ -798,9 +798,12 @@ The existing dispatch owner checks the chosen execution context before every
 worker launch, including a replay that starts a worker. Check exactly three
 things: selected pack and skills bytes plus CLI/protocol compatibility, the
 slot's actual declared toolchains, and leases or sessions from the run's prior
-attempt. Replay releases its own leftovers through existing lifecycle cleanup
-before launching again. Never release another run's resources or a current
-admitted review.
+attempt. A leftover excludes resources assigned to this replay by an accepted
+retention contract. Preserve ADR-054's cancel replay hold, refused-completion
+retention and review-fix reattachment. Replay releases only its remaining
+leftovers through existing cleanup before launch. Foreign resources and needed
+reviews remain protected. Reattachment through `run.resume` alone starts no
+worker and is not a new launch trigger.
 
 Bind observations to the current run generation, slot, source selection and
 launch shell. Recheck those identities before launch. A mismatch, unavailable
@@ -825,9 +828,12 @@ interrupting needed reviews.
 
 ### Public surface
 
-Existing dispatch and replay RPCs and CLI commands inherit this check. The
-existing run-step failure and command error carry its diagnosis; Command Center,
-Companion and the CLI display that same result. No new command, flag, SDK export,
-package contract or harness hook is proposed. Harnesses inherit launch admission
+`run.create` through `farmslot run` and `run.replayStep` through `farmslot rpc`
+inherit the shared launch check. `run.resume` through `farmslot run resume`
+checks only if it reaches a new worker launch. Synchronous callers receive a
+command error; deferred failures use existing run events, `Run.error` and
+`RunStep.detail`. Command Center and Companion consume the protocol's existing
+`runStepDisplayDetail`; the CLI reads the same run records. No new command, flag,
+SDK export, package contract or harness hook is proposed. Harnesses inherit launch admission
 and keep their existing setup commands. A future implementation records its PR
 and any required owning-package release separately.

@@ -760,16 +760,21 @@ implementation or activation.
 ### Admission point and binding
 
 The existing worker-launch owner MUST run preflight before every dispatch and
-before every replay path that starts or resumes a worker. Replay MUST first
-release that run's prior-attempt leftovers through the canonical lifecycle
-owner. Preflight MUST NOT add a second cleanup path. Paths that only read or
-reconcile an existing result MUST NOT launch a worker to perform this check.
+before every replay path that starts a worker. Replay MUST first release that
+run's leftovers, defined below, through the canonical lifecycle owner. Preflight
+MUST NOT add a second cleanup path. `run.resume` reattachment alone is not a
+trigger; any subsequent worker launch uses the shared check. Read-only result
+reconciliation MUST NOT launch a worker to perform this check.
 
 Bind the check to run id, generation, chosen slot, admitted source identity and
 actual launch environment. Recheck the binding after asynchronous probes and
 immediately before starting the worker. Cancellation, pause, replay, a changed
 owner or changed launch inputs MUST prevent an obsolete check from launching.
-A pass MUST NOT be reused for another launch or generation.
+A pass MUST NOT be reused for another launch or generation. Current attempt
+means the launch owner's current `Run.engineState.generation`. Replay uses its
+new generation; resume observes the existing owner rather than inventing a new
+attempt. Retained-resource admission follows the existing lifecycle records,
+even when the resource was originally created by an older attempt.
 
 ### Exactly three checks
 
@@ -782,17 +787,22 @@ A pass MUST NOT be reused for another launch or generation.
 2. **Toolchain.** In the chosen slot, use the worker's launch shell and wrappers
    to observe Node, Yarn and Yarn's child Node, plus Ruby when the pack declares
    it. Compare with the product checkout's `.nvmrc` and `engines`, and declared
-   pack pins. An override naming a valid binary does not establish which
+   pack pins. Check Yarn against `packageManager`, `engines.yarn` or its pack
+   pin where declared; otherwise check its child Node without inventing a Yarn
+   version requirement. An override naming a valid binary does not establish which
    runtime Yarn or the worker actually runs. Conflicting declarations, missing
    required tools and unavailable observations MUST refuse. An undeclared Ruby
    requirement MUST NOT be invented. Probes MUST NOT install tools, change
    defaults, edit tracked files or mutate managed fixtures.
 3. **Prior-attempt leftovers.** Inspect existing lease and session registries
-   using run and attempt ownership. Any remaining resource from this run's
-   prior attempt MUST prevent launch until canonical replay cleanup settles.
-   Preserve foreign owners and reviews admitted for the current attempt. Mere
-   process existence does not prove that a session is a leftover. Unknown
-   ownership MUST refuse with a diagnosis rather than terminate a process.
+   using run and attempt ownership. A leftover is owned by an earlier attempt
+   and not assigned to this replay by an existing retention contract. Preserve
+   ADR-054's cancel replay hold, Amendments 6/7's refused-completion worker,
+   slot, checkout and leases, and `run.resume` review-fix reattachment. These
+   retained resources MUST NOT be released or block their admitted continuation.
+   Remaining leftovers MUST prevent launch until canonical cleanup settles.
+   Preserve foreign owners and needed admitted reviews. Process existence alone
+   proves no leftover; unknown ownership refuses without terminating a process.
 
 ### Cost and failure
 
@@ -803,11 +813,14 @@ ownership fences. If it remains unsettled, refuse promptly as cleanup pending;
 never cancel it, start competing cleanup or launch a worker optimistically.
 
 A refusal MUST identify the failed check, slot or node, observed and expected
-values, and the exact supported correction or retry condition. Carry this in
-the existing dispatch/replay command error and run-step failure record. Do not
-invent a successful prepare, dispatch or review receipt. Preserve prior attempts
-and required reviews; correction and retry use the same run through existing
-commands. No new RPC, flag, SDK field or harness extension is proposed.
+values, and the exact supported correction or retry condition. `run.create`
+through `farmslot run` and `run.replayStep` through `farmslot rpc` may return
+before deferred dispatch completes. Synchronous failures use the command error;
+deferred failures use existing run events, `Run.error` and `RunStep.detail` in
+`@farmslot/protocol`. Command Center and Companion consume `runStepDisplayDetail`;
+the CLI reads the same records. Do not fabricate a successful step or review.
+Preserve prior-attempt records and required reviews; correction and retry use
+the same run. No new RPC, flag, SDK field or harness extension is proposed.
 
 ### Acceptance
 
@@ -815,7 +828,9 @@ Regression and disposable scripted dispatch proof MUST cover mismatched selected
 source bytes, CLI/protocol mismatch, a Yarn child selecting the wrong Node,
 declared Ruby mismatch, owned leftover cleanup and foreign/current-review
 preservation. Cover unavailable probes, the total budget, pending cleanup and a
-generation change before launch. Prove failed preflight creates no worker or
+generation change before launch. Simulate the budget with an injected clock;
+each default test stays below five seconds, the suite below five minutes, with
+no fixed wait of one second or more. Prove failed preflight creates no worker or
 fixture mutation, then correct the declared prerequisite through its supported
 owner and retry the same run. The successful path MUST reach real dispatch and
 be cancelled and archived. Wallet and fixture validity remain outside scope.
