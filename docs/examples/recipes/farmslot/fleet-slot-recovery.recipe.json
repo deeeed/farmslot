@@ -17,7 +17,7 @@
     },
     {
       "id": "automatic-reuse",
-      "claim": "The only free clean merged-branch slot recovers before normal write-task/prepare/dispatch without a decision; safe settlement resets it and later-step replay refuses the changed checkout."
+      "claim": "The only free clean merged-branch slot recovers before normal write-task/prepare/dispatch without a decision; safe settlement resets it and preserves the settlement checkout receipt."
     }
   ],
   "workflow": {
@@ -55,7 +55,7 @@
         "action": "command",
         "cmd": "FARMSLOT_SAFE_IDLE_PROOF_OUT=\"${FARMSLOT_WORKSPACE_UI_PROOF_OUT:?Set the proof output}/automatic\" TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/run-lifecycle/safe-idle-slot.live.ts",
         "timeout_ms": 660000,
-        "intent": "Dispatch one owned merged-branch fixture, cancel it, exercise done cleanup on the same run, verify replay refusal and archive. Preserve all foreign tmux sessions and options; the caller removes the retained owned scratch.",
+        "intent": "Dispatch one owned merged-branch fixture, cancel it, exercise done cleanup on the same run, verify the force-complete replay fence and archive. Preserve all foreign tmux sessions and options; the caller removes the retained owned scratch.",
         "proves": ["automatic-reuse"],
         "next": "done"
       }

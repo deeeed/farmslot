@@ -1345,7 +1345,8 @@ async function replayRunStep(
     const { loadSlotVars } = await import('../../core/config.js');
     const vars = await loadSlotVars(idleCheckout.slotId);
     const git = `git -C ${shellQuote(vars.remoteRepo)}`;
-    const actual = await execOnSlot(
+    const { execOnSlot: readCheckout } = await import('../../core/exec.js');
+    const actual = await readCheckout(
       vars,
       `${git} rev-parse --abbrev-ref HEAD && ${git} rev-parse HEAD`,
     );

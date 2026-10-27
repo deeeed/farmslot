@@ -339,7 +339,7 @@ try {
       );
       await assert.rejects(
         client.call('run.replayStep', { runId, stepName: 'dispatch', triggeredBy: 'operator' }),
-        /replay from prepare or earlier/,
+        /force-completed and cannot be replayed/,
       );
       await save('FIXTURE-smoke-archive.json', await client.call('run.archive', { runId }));
       assert.equal(git(repo, 'branch', '--show-current'), 'main');
