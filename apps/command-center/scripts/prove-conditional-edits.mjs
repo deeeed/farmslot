@@ -65,14 +65,15 @@ async function inspect(target, params) {
   await bringToFront(target, value.visibility);
   return cdp(['eval', target, '--file', file]);
 }
+// cdp.mjs prints a string result as plain text, so the state comes back inside an object.
+const visibilityOf = async (target) =>
+  (await cdp(['eval', target, 'return { visibility: document.visibilityState }'])).visibility;
 async function bringToFront(target, visibility) {
   fronted.push({ target, wall: Date.now(), visibility });
   await devtools((call) => call('Page.bringToFront'), target);
-  await waitFor(
-    async () => (await cdp(['eval', target, 'return document.visibilityState'])) === 'visible',
-    `${target} is visible`,
-    { timeout: 15000 },
-  );
+  await waitFor(async () => (await visibilityOf(target)) === 'visible', `${target} is visible`, {
+    timeout: 15000,
+  });
 }
 async function until(check, label, target, { timeout = 30000, interval = 400, params } = {}) {
   const end = Date.now() + timeout;
@@ -95,7 +96,7 @@ async function waitFor(check, label, { timeout = 30000, interval = 250, target }
   const end = Date.now() + timeout;
   while (Date.now() < end) {
     if (target) {
-      const visibility = await cdp(['eval', target, 'return document.visibilityState']);
+      const visibility = await visibilityOf(target);
       if (visibility !== 'visible') await bringToFront(target, visibility);
     }
     const value = await check();
