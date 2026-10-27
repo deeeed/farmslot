@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 
 import {
+  acceptanceClaimLabel,
   type AcceptanceClaimRow,
   canDraftCriterion,
   type CriterionDraftActions,
@@ -61,12 +62,7 @@ function ClaimState({
         alignSelf: 'flex-start',
       }}
     >
-      {claim.state === 'Verified in code' || claim.state === 'Proven in app'
-        ? '✓ '
-        : claim.state === 'Not proven'
-          ? '✕ '
-          : ''}
-      {claim.state}
+      {acceptanceClaimLabel(claim)}
     </Animated.Text>
   );
 }
@@ -220,6 +216,11 @@ export function AcceptanceClaimList({
               )}
               {claim.draft ? (
                 <Text style={{ color: palette.secondary }}>Pending approval</Text>
+              ) : null}
+              {!claim.draft && drafts.skipDisabledReason?.(claim.id) ? (
+                <Text style={{ color: palette.secondary }}>
+                  {drafts.skipDisabledReason(claim.id)}
+                </Text>
               ) : null}
               {claim.draft ? (
                 <TextInput

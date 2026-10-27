@@ -373,7 +373,7 @@ export default function DecisionDetailScreen({
   const draftState = useGateCriterionDrafts({
     runId: sourceRunId,
     decision,
-    evidenceModel: humanGate?.acceptance.evidenceModel,
+    acceptance: humanGate?.acceptance,
     client,
   });
   const [acceptingGateId, setAcceptingGateId] = useState<string | null>(null);

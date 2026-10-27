@@ -199,7 +199,7 @@ export async function prepareCodeReviewGate({
       workerReport: 'Isolated fixture.',
       diffStat: prepared.diffStat,
       prPackage: prepared,
-      acceptanceCriteria: texts,
+      acceptanceCriteria: [...texts, 'The additional criterion has no recorded evidence.'],
       acceptanceStatus: claims,
     },
   };
@@ -317,7 +317,11 @@ export async function prepareCodeReviewGate({
         }),
     },
   });
-  return { texts, runId: run.id, suppressedResumes: () => suppressedResumes };
+  return {
+    texts: decision.payload.acceptanceCriteria,
+    runId: run.id,
+    suppressedResumes: () => suppressedResumes,
+  };
 }
 
 export async function proveCodeReviewGate({
@@ -344,10 +348,20 @@ export async function proveCodeReviewGate({
   const until = Date.now() + 30000;
   do {
     observed = await read();
-    if (observed.rows.length === 4) break;
+    if (
+      expectMissing
+        ? observed.rows.some(({ id }) => id === 'AC-2')
+        : observed.rows.length === fixture.texts.length
+    )
+      break;
     assert(Date.now() < until, 'Criterion rows did not mount');
   } while (Date.now() < until);
-  assert.equal(observed.rows.length, 4, 'Criterion rows did not mount');
+  assert(
+    expectMissing
+      ? observed.rows.some(({ id }) => id === 'AC-2')
+      : observed.rows.length === fixture.texts.length,
+    'Criterion rows did not mount',
+  );
   await save('criteria-before-evidence.json', observed);
   if (expectMissing) {
     assert.equal(
@@ -380,6 +394,18 @@ export async function proveCodeReviewGate({
     assert(Date.now() < readyUntil, 'Draft controls did not become ready');
   }
   const selector = (id) => `ready-workspace [data-testid=${id}]`;
+  const unavailableSkip = await query(
+    `const find=r=>{const g=r.querySelector('ready-workspace');if(g)return g;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const hit=find(e.shadowRoot);if(hit)return hit;}};const g=find(document);return {disabled:g?.querySelector('[data-testid=criterion-skip-AC-5]')?.disabled,text:g?.querySelector('[data-ac-id=AC-5]')?.innerText};`,
+  );
+  assert.equal(
+    unavailableSkip.disabled,
+    true,
+    'An unmatched criterion must not offer an impossible skip',
+  );
+  assert(
+    unavailableSkip.text.includes('This criterion has no recorded evidence that can be skipped.'),
+  );
+  await save('unavailable-skip.json', unavailableSkip);
   await query(
     `window.__criterionPressTimes=[];document.addEventListener('click',event=>{const button=event.composedPath().find(e=>e instanceof HTMLElement && /^criterion-(confirm|skip)-/.test(e.dataset.testid??''));if(!button)return;const row=button.closest('[data-ac-id]');const expected=button.dataset.testid.startsWith('criterion-skip-')?'Skipped':'Verified in code';const start=performance.now();const observer=new MutationObserver(()=>{if(!row.querySelector('.gate-state')?.textContent.includes(expected))return;window.__criterionPressTimes.push({id:row.dataset.acId,ms:performance.now()-start,trusted:event.isTrusted});observer.disconnect();});observer.observe(row,{subtree:true,characterData:true,childList:true});},{capture:true});return {observerReady:true};`,
   );
@@ -387,7 +413,26 @@ export async function proveCodeReviewGate({
     /^run\.(overrideClaim|resolveDecision|reviewVisualClaim)$/.test(method),
   ).length;
   for (const id of ['AC-2', 'AC-4']) await cdp('click', route, selector(`criterion-confirm-${id}`));
+  assert.equal(
+    await query(
+      `const find=r=>{const g=r.querySelector('ready-workspace');if(g)return g;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const hit=find(e.shadowRoot);if(hit)return hit;}};return !!find(document)?.querySelector('[data-testid=criterion-skip-AC-2]');`,
+    ),
+    false,
+    'A verified code criterion must have no Skip action',
+  );
   await cdp('click', route, selector('criterion-skip-AC-3'));
+  const noteSelector = await query(
+    `const find=r=>{const g=r.querySelector('ready-workspace');if(g)return g;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const hit=find(e.shadowRoot);if(hit)return hit;}};const note=find(document)?.querySelector('[data-testid=criterion-note-AC-2]');if(!note)throw Error('Expected the mounted note editor');const parts=['[data-testid=criterion-note-AC-2]'];let root=note.getRootNode();while(root.host){parts.unshift(root.host.localName);root=root.host.getRootNode();}return parts.join(' >>> ');`,
+  );
+  await cdp('fill', route, noteSelector, 'One ');
+  assert.equal(
+    await query(
+      `const find=r=>{const g=r.querySelector('ready-workspace');if(g)return g;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const hit=find(e.shadowRoot);if(hit)return hit;}};return find(document)?.querySelector('[data-testid=criterion-note-AC-2]')?.value;`,
+    ),
+    'One ',
+    'A note edit must retain its trailing space',
+  );
+  await cdp('fill', route, noteSelector, 'One configuration location.');
   observed = await read();
   assert(observed.approve.includes('2 confirmed, 1 skipped'));
   assert(observed.rows.find(({ id }) => id === 'AC-2').text.includes('Verified in code'));
@@ -440,6 +485,7 @@ export async function proveCodeReviewGate({
   assert.equal(saved.claimOverrideReceipts[0].claimId, 'AC-3');
   assert(saved.decisions[0].evidenceAttestation.reason.includes('AC-2: Confirmed in code review.'));
   assert(saved.decisions[0].evidenceAttestation.reason.includes('AC-4: Confirmed in code review.'));
+  assert(saved.decisions[0].evidenceAttestation.reason.includes('One configuration location.'));
   assert.equal(saved.visualJudgmentReceipts?.length ?? 0, 0);
   await save('durable-readback.json', {
     runId: saved.id,

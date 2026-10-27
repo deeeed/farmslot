@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 
-import type { AcceptanceCriterionView } from '@farmslot/protocol';
+import type { AcceptanceCriterionView, ReviewSummary } from '@farmslot/protocol';
 
 import {
+  canDraftCriterion,
   criterionDraftApprovalLabel,
   CriterionDraftModel,
   criterionDraftReason,
@@ -32,6 +33,18 @@ const load = async (
   await setImmediate();
   assert.equal(model.ready, true);
 };
+
+test('a completed code criterion offers no new draft and keeps its proven verdict', async () => {
+  const proven = structuredClone(claim);
+  assert(proven.status);
+  proven.status.verdict = 'proven';
+  assert.equal(canDraftCriterion(proven), false);
+  assert.equal(acceptanceClaimRows({ claims: [proven] })[0].state, 'Verified in code');
+  const model = new CriterionDraftModel({ getItem: () => null, setItem: () => undefined });
+  await load(model);
+  model.choose(proven, 'skip');
+  assert.deepEqual(model.entries, []);
+});
 
 test('Confirm and Skip update immediately, survive reload and Undo without writing an engine verdict', async () => {
   const saved = new Map<string, string>();
@@ -95,6 +108,76 @@ test('a failed draft save reverts the row and retains a visible retry of the int
   await model.settled();
   assert.equal(model.entries.length, 1);
   assert.equal(model.error, null);
+});
+
+test('note editing preserves spaces and empty text across reload, and normalizes only for approval', async () => {
+  const saved = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => saved.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      saved.set(key, value);
+    },
+  };
+  const model = new CriterionDraftModel(storage);
+  await load(model);
+  model.choose(claim, 'confirm');
+  model.choose(claim, 'confirm', 'One ');
+  assert.equal(model.entries[0].note, 'One ');
+  model.choose(claim, 'confirm', 'One config ');
+  assert.equal(model.entries[0].note, 'One config ');
+  await model.settled();
+  const reloaded = new CriterionDraftModel(storage);
+  await load(reloaded);
+  assert.equal(reloaded.entries[0].note, 'One config ');
+  reloaded.choose(claim, 'confirm', '');
+  assert.equal(reloaded.entries[0].note, '');
+  assert.equal(
+    criterionDraftReason(reloaded.entries),
+    'AC-2: Confirmed in code review. Reviewed this criterion.',
+  );
+  reloaded.choose(claim, 'skip');
+  assert.equal(reloaded.entries[0].note, 'Not testable in this run.');
+  reloaded.choose(claim, 'skip', '  ');
+  assert.equal(reloaded.entries[0].note, '  ');
+  assert.equal(
+    criterionDraftReason(reloaded.entries),
+    'AC-2: Skipped as untestable. Not testable in this run.',
+  );
+  await reloaded.settled();
+});
+
+test('only a code criterion receives the passing code review as its suggested note', async () => {
+  const summary: ReviewSummary = {
+    reviews: [
+      {
+        id: 'review',
+        loopNumber: 1,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        feedbackSent: false,
+        triggeredReWork: false,
+        attempts: 1,
+      },
+    ],
+    passingReviews: 1,
+    totalUnresolved: 0,
+    didAnyReviewTriggerReWork: false,
+  };
+  for (const proofMode of ['review', 'state', 'visual'] as const) {
+    const source = structuredClone(claim);
+    assert(source.status);
+    source.status.proofMode = proofMode;
+    const model = new CriterionDraftModel({ getItem: () => null, setItem: () => undefined });
+    await load(model);
+    model.choose(source, 'confirm', undefined, undefined, summary);
+    assert.equal(
+      model.entries[0].note,
+      proofMode === 'review'
+        ? 'The current code review passed with no open findings.'
+        : 'Reviewed this criterion.',
+    );
+    await model.settled();
+  }
 });
 
 test('drafts cannot cross person, run, gate or frozen package boundaries', async () => {

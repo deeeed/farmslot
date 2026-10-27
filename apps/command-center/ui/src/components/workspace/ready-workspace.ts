@@ -21,7 +21,7 @@ import {
 import {
   acceptanceClaimRows,
   anotherReviewRoundParams,
-  codeReviewNoteSuggestion,
+  criterionDraftsAvailable,
   publicationGateBlockers,
   publicationGateCriteria,
   publicationGateView,
@@ -283,10 +283,16 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private _visualReviewControls() {
     return {
       drafts:
-        !this.decision?.resolvedAt && gateway.authenticatedPrincipal?.subjectKind === 'person'
+        criterionDraftsAvailable(this.decision) &&
+        gateway.authenticatedPrincipal?.subjectKind === 'person'
           ? {
               model: this._criterionDrafts,
-              canSkip: () => true,
+              canSkip: (id: string) =>
+                this._evidenceLoading || Boolean(this._evidenceModel?.claimOverrideCandidate(id)),
+              skipDisabledReason: (id: string) =>
+                this._evidenceLoading || this._evidenceModel?.claimOverrideCandidate(id)
+                  ? undefined
+                  : 'This criterion has no recorded evidence that can be skipped.',
               choose: (id: string, choice: 'confirm' | 'skip', note?: string) => {
                 const claim = this._evidenceModel?.claims.find((claim) => claim.id === id);
                 if (!claim || this._actionsPaused || this._acting) return;
@@ -294,11 +300,9 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
                 this._criterionDrafts.choose(
                   claim,
                   choice,
-                  note ??
-                    (choice === 'confirm'
-                      ? codeReviewNoteSuggestion(this._payload?.gateSummary?.review)
-                      : ''),
+                  note,
                   candidate?.recipeRunId,
+                  this._payload?.gateSummary?.review,
                 );
                 this._confirmTimer.clear();
                 this._pendingConfirm = null;

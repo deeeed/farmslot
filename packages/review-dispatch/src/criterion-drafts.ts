@@ -22,6 +22,22 @@ export interface CriterionDraftStorage {
   setItem(key: string, value: string): void | Promise<void>;
 }
 
+export function criterionDraftsAvailable(decision?: RunDecision | null): boolean {
+  return (
+    !decision?.resolvedAt &&
+    decision?.payload?.kind === 'ready' &&
+    Boolean(decision.payload.prPackage) &&
+    decision.actions.some(({ id }) => isPublishApprovalAction(id))
+  );
+}
+
+function draftNote(draft: Pick<CriterionDraft, 'choice' | 'note'>): string {
+  return (
+    draft.note.trim() ||
+    (draft.choice === 'skip' ? 'Not testable in this run.' : 'Reviewed this criterion.')
+  );
+}
+
 export function canDraftCriterion(claim: AcceptanceCriterionView): boolean {
   return (
     !claim.status?.inheritedFrom && !['proven', 'untestable'].includes(claim.status?.verdict ?? '')
@@ -33,7 +49,7 @@ export function criterionDraftReason(drafts: readonly CriterionDraft[], reason =
     reason.trim(),
     ...drafts.map(
       (draft) =>
-        `${draft.claimId}: ${draft.choice === 'skip' ? 'Skipped as untestable' : draft.codeReview ? 'Confirmed in code review' : 'Confirmed after reviewing evidence'}. ${draft.note}`,
+        `${draft.claimId}: ${draft.choice === 'skip' ? 'Skipped as untestable' : draft.codeReview ? 'Confirmed in code review' : 'Confirmed after reviewing evidence'}. ${draftNote(draft)}`,
     ),
   ]
     .filter(Boolean)
@@ -171,8 +187,9 @@ export class CriterionDraftModel {
   choose(
     claim: AcceptanceCriterionView,
     choice: CriterionDraft['choice'],
-    note = '',
+    note?: string,
     recipeRunId?: string,
+    review?: ReviewSummary,
   ): void {
     if (!this.ready || this.submissionToken || !canDraftCriterion(claim)) return;
     const existing = this.entries.find(({ claimId }) => claimId === claim.id);
@@ -180,8 +197,16 @@ export class CriterionDraftModel {
       claimId: claim.id,
       choice,
       note:
-        note.trim() ||
-        (choice === 'skip' ? 'Not testable in this run.' : 'Reviewed this criterion.'),
+        existing?.choice === choice
+          ? (note ?? existing.note)
+          : draftNote({
+              choice,
+              note:
+                note ??
+                (choice === 'confirm' && claim.status?.proofMode === 'review'
+                  ? codeReviewNoteSuggestion(review)
+                  : ''),
+            }),
       codeReview: claim.status?.proofMode === 'review',
       ...(recipeRunId ? { recipeRunId } : {}),
     };
@@ -328,6 +353,7 @@ async function applyCriterionDraftSkips(input: {
     .filter(({ choice }) => choice === 'skip')
     .map((draft) => ({
       ...draft,
+      note: draftNote(draft),
       recipeRunId: draft.recipeRunId ?? input.execution?.(draft.claimId),
     }));
   if (skips.some(({ recipeRunId }) => !recipeRunId))
@@ -379,4 +405,5 @@ export interface CriterionDraftActions {
   model: CriterionDraftModel;
   choose: (claimId: string, choice: CriterionDraft['choice'], note?: string) => void;
   canSkip: (claimId: string) => boolean;
+  skipDisabledReason?: (claimId: string) => string | undefined;
 }

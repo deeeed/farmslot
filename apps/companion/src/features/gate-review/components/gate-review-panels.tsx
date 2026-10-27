@@ -13,6 +13,7 @@ import {
 import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import { type Run, type RunDecision, type RunGateReadiness } from '@farmslot/protocol';
 import {
+  criterionDraftsAvailable,
   type PublicationGateAction,
   type PublicationGateClaim,
   publicationGateCriteria,
@@ -357,7 +358,7 @@ export function GateActions({
               : null}
             <AcceptanceClaimList
               rows={view.claims}
-              drafts={view.attestation ? drafts : undefined}
+              drafts={criterionDraftsAvailable(decision) ? drafts : undefined}
               onFocus={onFocusClaim}
               onRecord={onRecordVisualReview}
               disabled={disabled || judging || sendingActionId !== null}

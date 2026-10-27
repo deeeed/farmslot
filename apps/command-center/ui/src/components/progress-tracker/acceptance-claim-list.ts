@@ -1,6 +1,7 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
 import {
+  acceptanceClaimLabel,
   type AcceptanceClaimRow,
   canDraftCriterion,
   type CriterionDraftActions,
@@ -75,11 +76,7 @@ export function renderAcceptanceClaimList(
           )}
           title=${claim.detail}
           role="status"
-          >${claim.state === 'Verified in code' || claim.state === 'Proven in app'
-            ? '✓ '
-            : claim.state === 'Not proven'
-              ? '✕ '
-              : ''}${claim.state}</span
+          >${acceptanceClaimLabel(claim)}</span
         >`}
         ${actions.canFocus?.(claim.id) === false
           ? nothing
@@ -122,6 +119,7 @@ export function renderAcceptanceClaimList(
                       type="button"
                       class="gate-secondary"
                       data-testid=${`criterion-skip-${claim.id}`}
+                      title=${drafts.skipDisabledReason?.(claim.id) ?? ''}
                       ?disabled=${actions.busy ||
                       Boolean(drafts.model.submissionActionId) ||
                       !drafts.model.ready ||
@@ -130,6 +128,9 @@ export function renderAcceptanceClaimList(
                     >
                       Skip
                     </button>`}
+              ${!claim.draft && drafts.skipDisabledReason?.(claim.id)
+                ? html`<span>${drafts.skipDisabledReason(claim.id)}</span>`
+                : nothing}
               ${claim.draft
                 ? html`<span>Pending approval</span
                     ><label
@@ -191,7 +192,6 @@ export function acceptanceClaimListStyles() {
     .gate-claim-text p { margin: 0; padding: 4px 0; }
     .acceptance-claim-list .gate-state { display: inline-flex; align-items: center; gap: 6px; justify-self: start; color: var(--gate-text); font-size: ${fonts.sizeSm}; font-weight: 600; border: 0; border-radius: 999px; padding: 2px 10px; white-space: nowrap; background: var(--gate-surface); text-transform: none; cursor: default; }
     ${['proven', 'verified', 'checked', 'issue', 'pending', 'untestable'].map((tone) => `.acceptance-claim-list .gate-state[data-state="${tone}"] { color: var(--gate-${tone}); background: var(--gate-${tone}Surface); }`).join('')}
-    .acceptance-claim-list .gate-state[data-review-complete="true"]::before { display: none; }
     .acceptance-claim-list .gate-state[data-state="checked"] { animation: gate-checked 0.25s ease-out; }
     @keyframes gate-checked { from { opacity: 0.5; transform: translateY(3px); } to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) { .acceptance-claim-list .gate-state { animation: none !important; } }

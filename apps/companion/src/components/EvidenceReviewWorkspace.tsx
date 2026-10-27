@@ -325,6 +325,9 @@ export function EvidenceReviewWorkspace({
                 <Text style={styles.railSubtitle}>
                   {acceptanceClaimLabel(acceptanceClaimRows({ claims: [row.claim] })[0])}
                 </Text>
+                {row.claim.reviewLabels?.length ? (
+                  <Text style={styles.railSubtitle}>{row.claim.reviewLabels.join(' · ')}</Text>
+                ) : null}
                 {row.sourceUrl ? (
                   <Pressable onPress={() => Linking.openURL(row.sourceUrl!)}>
                     <Text style={styles.deltaActionText}>Original Jira AC</Text>

@@ -468,6 +468,9 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
           </div>
           <div style="margin:8px 0;color:${colors.textSecondary};">
             ${acceptanceClaimLabel(acceptanceClaimRows({ claims: [row.claim] })[0])}
+            ${row.claim.reviewLabels?.length
+              ? html`<div>${row.claim.reviewLabels.join(' · ')}</div>`
+              : nothing}
           </div>
           ${row.primaryFiles.map(
             (file) =>

@@ -13,6 +13,7 @@ import {
   type RunDecision,
   type RunGateReadiness,
 } from '@farmslot/protocol';
+import { criterionDraftsAvailable } from '@farmslot/review-dispatch';
 import { colors } from '@farmslot/theme';
 
 import {
@@ -505,6 +506,48 @@ test('open findings or a running fix withhold every publish approval, overrides 
     humanGateGuard(fixing, gate, judged).actions.at(-1)?.disabledReason,
     'Review fix in progress.',
   );
+});
+
+test('a cached decision cannot enable any approval until its own run loads', () => {
+  const decision = gateDecision();
+  assert(decision.payload?.kind === 'ready');
+  decision.payload.gateReadiness = {
+    state: 'not-ready',
+    identity: { runId: 'run', generation: 0, packageHash: 'hash' },
+    reasons: [
+      {
+        code: 'evidence-policy-unsatisfied',
+        prerequisite: 'evidence',
+        evidencePolicy: 'criterion-binding',
+        message: 'Claim text differs.',
+      },
+    ],
+  };
+  decision.actions = [
+    { id: APPROVE_PUBLISH_ACTION, label: 'Approve', style: 'primary' },
+    { id: APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION, label: 'Attest', style: 'danger' },
+    { id: APPROVE_PUBLISH_UNRESOLVED_ACTION, label: 'Accept findings', style: 'danger' },
+    { id: 'hold', label: 'Hold', style: 'secondary' },
+  ];
+  const result = humanGateGuard(null, decision, { view: acceptance(['AC-1']), error: null });
+  for (const action of result.actions.slice(0, 3))
+    assert.equal(action.disabledReason, "The gate's run is not loaded.");
+  assert.equal(result.actions[3].disabledReason, null);
+});
+
+test('both native gate locations can draft combined approval but never a non-publication ready decision', () => {
+  const decision = gateDecision();
+  decision.actions = [
+    { id: APPROVE_PUBLISH_UNRESOLVED_ACTION, label: 'Accept findings', style: 'danger' },
+  ];
+  assert.equal(criterionDraftsAvailable(decision), true);
+  decision.resolvedAt = '2026-10-27T00:00:00Z';
+  assert.equal(criterionDraftsAvailable(decision), false);
+  delete decision.resolvedAt;
+  assert(decision.payload?.kind === 'ready');
+  delete decision.payload.prPackage;
+  decision.actions = [{ id: 'ready', label: 'Mark ready', style: 'primary' }];
+  assert.equal(criterionDraftsAvailable(decision), false);
 });
 
 test('combined approval uses the checked mixed reasons without a second acceptance-only block', () => {

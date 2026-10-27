@@ -202,7 +202,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const draftState = useGateCriterionDrafts({
     runId,
     decision,
-    evidenceModel: gate?.acceptance.evidenceModel,
+    acceptance: gate?.acceptance,
     client,
   });
   const {

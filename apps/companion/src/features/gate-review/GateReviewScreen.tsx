@@ -10,7 +10,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { reviewRoundBudgetLabel } from '@farmslot/protocol';
-import { PUBLICATION_GATE_TABS, publicationGateCriteria } from '@farmslot/review-dispatch';
+import {
+  criterionDraftsAvailable,
+  PUBLICATION_GATE_TABS,
+  publicationGateCriteria,
+} from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
@@ -159,10 +163,7 @@ export function GateReviewScreen({
                     viewModel.decision.resolvedAt ? [] : viewModel.draftActions.model.entries
                   }
                   drafts={
-                    viewModel.decision.actions.some(
-                      ({ id }) =>
-                        id === 'approve-publish-evidence-attested' || id === 'approve-publish',
-                    )
+                    criterionDraftsAvailable(viewModel.decision)
                       ? viewModel.draftActions
                       : undefined
                   }

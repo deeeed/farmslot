@@ -16,8 +16,8 @@ import {
 } from '@farmslot/protocol';
 import {
   acceptanceClaimRows,
-  codeReviewNoteSuggestion,
   criterionDraftReason,
+  criterionDraftsAvailable,
   publicationGateCriteria,
 } from '@farmslot/review-dispatch';
 
@@ -26,10 +26,14 @@ import { useConnectionStore } from '../store/connection';
 
 import { useCriterionDrafts } from './useCriterionDrafts';
 
+interface GateCriterionEvidence {
+  evidenceModel?: EvidenceReviewModel | null;
+  loading: boolean;
+}
 interface GateCriterionDraftInput {
   runId?: string | null;
   decision: RunDecision | null;
-  evidenceModel?: EvidenceReviewModel | null;
+  acceptance?: GateCriterionEvidence;
   client: GatewayClient | null;
 }
 interface DraftSubmitInput<T> {
@@ -47,11 +51,12 @@ interface DraftSubmitInput<T> {
 export function useGateCriterionDrafts({
   runId,
   decision,
-  evidenceModel,
+  acceptance,
   client,
 }: GateCriterionDraftInput) {
   const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
   const gatewayUrl = useConnectionStore((state) => state.gatewayUrl);
+  const evidenceModel = acceptance?.evidenceModel;
   const scope = JSON.stringify([
     runId,
     decision?.id,
@@ -67,28 +72,34 @@ export function useGateCriterionDrafts({
   const setReason = (text: string) => setReasonDraft({ scope: reasonScope, text });
   const actions = {
     model,
-    canSkip: () => true,
+    canSkip: (id: string) =>
+      Boolean(acceptance?.loading || evidenceModel?.claimOverrideCandidate(id)),
+    skipDisabledReason: (id: string) =>
+      acceptance?.loading || evidenceModel?.claimOverrideCandidate(id)
+        ? undefined
+        : 'This criterion has no recorded evidence that can be skipped.',
     choose: (id: string, choice: 'confirm' | 'skip', note?: string) => {
-      if (client?.authenticatedPrincipal?.subjectKind !== 'person') return;
+      if (
+        client?.authenticatedPrincipal?.subjectKind !== 'person' ||
+        !criterionDraftsAvailable(decision)
+      )
+        return;
       const claim = acceptanceClaimRows({
         criteria: publicationGateCriteria(payload),
         ledger: payload?.acceptanceStatus ?? undefined,
         claims: evidenceModel?.claims,
       }).find((row) => row.id === id)?.source;
       if (!claim) return;
-      const suggestion =
-        choice === 'confirm' && claim.status?.proofMode === 'review'
-          ? codeReviewNoteSuggestion(payload?.gateSummary?.review)
-          : '';
       model.choose(
         claim,
         choice,
-        note ?? suggestion,
+        note,
         evidenceModel?.claimOverrideCandidate(id)?.recipeRunId,
+        payload?.gateSummary?.review,
       );
     },
   };
-  const submit = <T>(input: DraftSubmitInput<T>): Promise<RunResolveDecisionResult | T> => {
+  const submit = async <T>(input: DraftSubmitInput<T>): Promise<RunResolveDecisionResult | T> => {
     if (!isPublishApprovalAction(input.actionId) || !model.entries.length) {
       if (!input.fallback) throw new Error('No criterion approval is pending.');
       return input.fallback();
