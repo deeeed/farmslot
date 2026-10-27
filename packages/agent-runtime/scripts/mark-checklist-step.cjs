@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const { validateEvidenceManifest } = require('./evidence-manifest.cjs');
+const { validateEvidenceManifest, evidenceManifestArtifacts } = require('./evidence-manifest.cjs');
 const {
   expandedArtifactsForCommand,
   resolveWorkerTerminalContract,
@@ -546,7 +546,13 @@ function assertEvidenceManifests() {
       issues.push(`${file}: invalid JSON: ${error.message}`);
       continue;
     }
-    issues.push(...validateEvidenceManifest(manifest).map((issue) => `${file}: ${issue}`));
+    const manifestIssues =
+      terminalCommand === 'complete' || terminalCommand === 'no-change'
+        ? evidenceManifestArtifacts(manifest, path.posix.dirname(file), (ref) =>
+            taskFileExists(taskDir, ref),
+          ).issues
+        : validateEvidenceManifest(manifest);
+    issues.push(...manifestIssues.map((issue) => `${file}: ${issue}`));
   }
   if (issues.length > 0) {
     console.error(`Invalid evidence manifest:\n${issues.map((issue) => `- ${issue}`).join('\n')}`);
