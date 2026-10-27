@@ -1221,7 +1221,11 @@ export async function runCompletionPipeline(
   ) {
     const headSha = await snapshotHeadSha(updatedRun);
     if (!headSha) throw new Error('Cannot publish completion without a captured HEAD');
-    await pushPublicationBranch(updatedRun, headSha);
+    const baseBranch = await publicationBaseForRun(
+      updatedRun,
+      pv && getProjectField(pv.projectJson, 'default_branch'),
+    );
+    await pushPublicationBranch(updatedRun, headSha, baseBranch);
     flags.publishedHeadSha = headSha;
   }
 
@@ -1387,7 +1391,7 @@ export async function createPrFromApprovedPackage(
   }
   if (!prPackage.branch?.trim()) throw new Error('approved package is missing a branch');
   await assertCommitSignatures(vars, `refs/remotes/origin/${base}`, prPackage.headSha || 'HEAD');
-  await pushPublicationBranch(run, prPackage.headSha, prPackage.branch);
+  await pushPublicationBranch(run, prPackage.headSha, base, prPackage.branch);
 
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
@@ -1575,7 +1579,7 @@ export async function publishCompletionPackage(
       emit('substep', { name: 'create-pr', detail: `Creating draft PR on ${ciRepo}` });
       prNumber = await createPrFromApprovedPackage(run, ciRepo, publicationPackage);
     } else {
-      await pushPublicationBranch(run, approvedPackage.headSha, approvedPackage.branch);
+      await pushPublicationBranch(run, approvedPackage.headSha, baseBranch, approvedPackage.branch);
     }
     if (!prNumber) throw new Error('publication could not resolve or create a PR number');
     flags.prNumber = prNumber;

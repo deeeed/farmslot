@@ -97,7 +97,7 @@ test('formatBranchFreshnessHint prefers merge during open review loops', () => {
 
 test('buildBranchFreshnessProbeScript verifies remote ref and is non-destructive', () => {
   const script = buildBranchFreshnessProbeScript('/tmp/slot-repo', 'main');
-  assert.match(script, /git -C .* fetch origin main/);
+  assert.match(script, /git -C .* fetch origin '\+refs\/heads\/main:refs\/remotes\/origin\/main'/);
   assert.match(script, /fetch_rc=\$\?/);
   assert.match(script, /FETCH_OK:/);
   assert.match(script, /rev-parse --verify --quiet "origin\/main\^\{commit\}"/);

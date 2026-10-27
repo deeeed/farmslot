@@ -27,6 +27,7 @@ import {
   type ProjectVars,
   type RawProjectJson,
   readSlotField,
+  readSlotRow,
   SLOT_PHASE_RELEASING,
   slotFileExists,
   slotReadFile,
@@ -221,12 +222,22 @@ async function returnDetachedSlotToIdle(
   return idle;
 }
 
+async function assertWorkspaceRecoverySettled(
+  slotId: string,
+  duringRelease?: boolean,
+): Promise<void> {
+  // Recovery's internal release path already validates its owner and epoch.
+  if (!duringRelease && (await readSlotRow(slotId))?.workspace_recovery)
+    throw new Error('Slot recovery must be retried through slot.refresh');
+}
+
 export async function slotPrepare(
   params: SlotPrepareParams,
   emit: EventEmitter,
   signal?: AbortSignal,
   opts?: SlotPrepareInternalOptions,
 ): Promise<SlotPrepareResult> {
+  await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
   return withSlotSources(params.slotId, () => slotPrepareWithSources(params, emit, signal, opts));
 }
 
@@ -267,6 +278,7 @@ async function slotPrepareWithSources(
         `Slot ${params.slotId} is being released; prepare it once the release finishes`,
       );
     }
+    await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
     const vars = await loadSlotVars(params.slotId);
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.

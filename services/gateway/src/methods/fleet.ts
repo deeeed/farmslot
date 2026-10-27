@@ -1,6 +1,4 @@
 // methods/fleet.ts — fleet.status, fleet.refresh (native TS)
-import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -32,16 +30,13 @@ import {
   type RawPoolJson,
   type RawProjectJson,
   readSlotField,
-  renderFixtureTemplate,
   rewriteStatusFile,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASING_SINCE,
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
-import { isOptionalFixtureAbsence } from '../fleet/fixture-absence.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { fixtureCheckVars } from '../node-support/ensure.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
@@ -52,6 +47,7 @@ import {
   slotClaimBlockedByRelease,
   slotPinIsRequestOnly,
 } from './dispatch/slot-scoring.js';
+import { checkFixtureSteps } from './slot/check.js';
 import { isLinkedGitWorktreeMarker, probeDefaultBranch } from './slot/slot-tracking.js';
 import { enrichFleetWorkspaces } from './slot/workspace.js';
 
@@ -1091,82 +1087,11 @@ export async function checkFixtures(
   pv: ProjectVars | undefined,
   pj: RawProjectJson,
 ): Promise<string> {
-  if (!pv || !pj.fixtures) return 'not-required';
-
-  const templates = pj.fixtures.templates ?? [];
-  let total = 0;
-  let ok = 0;
-  const extraVars = await fixtureCheckVars(vars, pv, SLOT_CHECK_TIMEOUT_MS);
-
-  for (const tpl of templates) {
-    if (!tpl.src) continue; // compose entries have no src — skip for fixture check
-    const localPath = path.join(pv.projectFixturesDir, tpl.src);
-    if (!existsSync(localPath)) {
-      if (!isOptionalFixtureAbsence(tpl, localPath)) total++;
-      continue;
-    }
-    total++;
-    try {
-      const rendered = await renderFixtureTemplate(localPath, vars, pv, extraVars);
-      const localMd5 = md5(rendered);
-      const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${tpl.dst}`);
-      if (remoteMd5 && localMd5 === remoteMd5) ok++;
-    } catch {
-      /* mismatch */
-    }
-  }
-
-  // Check directories (sentinel-based)
-  const directories = pj.fixtures?.directories ?? [];
-  for (const dir of directories) {
-    total++;
-    try {
-      const dirExists = await execOnSlot(vars, `test -d '${vars.remoteRepo}/${dir.dst}'`, {
-        timeout: SLOT_CHECK_TIMEOUT_MS,
-      });
-      if (dirExists.exitCode !== 0) continue;
-      if (dir.sentinel && pv) {
-        const localSentinel = path.join(pv.projectFixturesDir, dir.src, dir.sentinel);
-        if (existsSync(localSentinel)) {
-          const content = await readFile(localSentinel, 'utf-8');
-          const localMd5 = md5(content);
-          const remoteMd5 = await getRemoteMd5(
-            vars,
-            `${vars.remoteRepo}/${dir.dst}/${dir.sentinel}`,
-          );
-          if (remoteMd5 && localMd5 === remoteMd5) ok++;
-        } else {
-          ok++; // dir exists, no local sentinel to compare
-        }
-      } else {
-        ok++; // dir exists, no sentinel configured
-      }
-    } catch {
-      /* mismatch */
-    }
-  }
-
-  if (total === 0) return 'not-required';
-  if (ok === total) return 'OK';
-  return `${ok}/${total}`;
-}
-
-function md5(content: string): string {
-  return createHash('md5').update(content).digest('hex');
-}
-
-async function getRemoteMd5(vars: SlotVars, remotePath: string): Promise<string | null> {
-  try {
-    let r = await execOnSlot(vars, `md5sum '${remotePath}' 2>/dev/null | awk '{print $1}'`, {
-      timeout: SLOT_CHECK_TIMEOUT_MS,
-    });
-    if (r.exitCode === 0 && r.stdout.trim()) return r.stdout.trim();
-    r = await execOnSlot(vars, `md5 -q '${remotePath}' 2>/dev/null`, {
-      timeout: SLOT_CHECK_TIMEOUT_MS,
-    });
-    if (r.exitCode === 0 && r.stdout.trim()) return r.stdout.trim();
-    return null;
-  } catch {
-    return null;
-  }
+  const steps = await checkFixtureSteps(vars, pv, pj, SLOT_CHECK_TIMEOUT_MS);
+  const fixtures = steps.filter(
+    (step) => step.name.startsWith('fixture:') && step.status !== 'skip',
+  );
+  if (!fixtures.length) return 'not-required';
+  const ok = fixtures.filter((step) => step.status === 'pass').length;
+  return ok === fixtures.length ? 'OK' : `${ok}/${fixtures.length}`;
 }
