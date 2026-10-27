@@ -61,7 +61,9 @@ const closeServer = (server) =>
     : Promise.resolve();
 const events = [],
   sockets = new Set(),
-  held = [];
+  held = [],
+  heldSource = [];
+let holdSource = false;
 let ui, gatewayServer, gatewaySockets, proxyServer, proxySockets, route, run, store;
 let release = false,
   started = Date.now(),
@@ -305,7 +307,9 @@ try {
     assert.equal((await ancestryGit('rev-parse', 'HEAD')).stdout.trim(), input.headSha);
   }
   const { createGatewayAuthRuntime } = await sourceModule('services/gateway/src/security/auth.ts');
-  const { createWebSocketServer } = await sourceModule('services/gateway/src/server.ts');
+  const { createWebSocketServer, broadcastEvent } = await sourceModule(
+    'services/gateway/src/server.ts',
+  );
   const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
   const person = auth.writer.createPrincipal({ type: 'person', displayName: 'Gate proof' }, [
     { role: 'admin', scope: { kind: 'global' } },
@@ -343,11 +347,13 @@ try {
     upstream.on('message', (bytes, binary) => {
       const frame = JSON.parse(bytes.toString());
       const req = requests.get(frame.id);
+      const sourceHeld = holdSource && ['git.branchDiff', 'git.diff'].includes(req?.method);
       const hold =
-        !release &&
-        ((req?.method === 'run.get' && (!req.params?.view || control)) ||
-          (req?.method === 'fleet.status' && holdFleet) ||
-          (frame.type === 'event' && frame.event?.startsWith('run.')));
+        sourceHeld ||
+        (!release &&
+          ((req?.method === 'run.get' && (!req.params?.view || control)) ||
+            (req?.method === 'fleet.status' && holdFleet) ||
+            (frame.type === 'event' && frame.event?.startsWith('run.'))));
       if (req)
         events.push({
           responseTo: req.method,
@@ -370,7 +376,7 @@ try {
             : {}),
         });
       if (hold)
-        held.push(() => {
+        (sourceHeld ? heldSource : held).push(() => {
           if (client.readyState === WebSocket.OPEN) client.send(bytes, { binary });
         });
       else if (client.readyState === WebSocket.OPEN) client.send(bytes, { binary });
@@ -638,7 +644,7 @@ try {
     // Tab clicks update the same run's URL. Keep the owned run identity as the
     // CDP match, rather than the tab parameter it had when first opened.
     route = `runs?run=${run.id}`;
-    const observe = `const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);const gate=all.find(e=>e.localName==='ready-workspace');return {gate:!!gate,text:gate?.innerText??'',buttonCount:gate?.querySelectorAll('.gate-actions button').length??0,measurement:window.__gateProofMeasurement,disabled:gate?Array.from(gate.querySelectorAll('.gate-actions button')).every(e=>e.disabled):null,overlay:!!gate?.querySelector('.rdy-recovery-overlay')};`;
+    const observe = `const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);const gate=all.find(e=>e.localName==='ready-workspace');return {gate:!!gate,text:gate?.innerText??'',buttonCount:gate?.querySelectorAll('.gate-actions button').length??0,measurement:window.__gateProofMeasurement,disabled:gate?Array.from(gate.querySelectorAll('.gate-actions button')).every(e=>e.disabled):null,recoveryStatus:!!gate?.querySelector('.rdy-recovery-status')};`;
     const read = async () => JSON.parse(await cdp('eval', route, observe));
     let observed;
     const deadline = Date.now() + 10000;
@@ -697,7 +703,7 @@ try {
       );
       await save('stored-package.json', packageView);
       assert.equal(observed.disabled, true, 'Stored display data is not action authority');
-      assert.equal(observed.overlay, false, 'Source hydration must not cover the saved gate');
+      assert.equal(observed.recoveryStatus, false, 'Evidence must not show source recovery status');
       assert(
         !events.some((e) => e.method === 'git.branchDiff'),
         'Evidence must not prefetch the live diff',
@@ -725,6 +731,65 @@ try {
         ['source-00.ts', 'source-01.ts'],
       );
       await cdp('screenshot', route, path.join(output, 'source-selection.png'));
+      release = true;
+      for (const send of held.splice(0)) send();
+      const settleSource = async () =>
+        JSON.parse(
+          await cdp(
+            'eval',
+            route,
+            `const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);const gate=all.find(e=>e.localName==='ready-workspace');const end=Date.now()+30000;while(gate?.querySelectorAll('.rdy-ft').length!==51||!gate?.querySelector('diff-review')||gate?.querySelector('.rdy-recovery-status')){if(Date.now()>end)throw Error('Revised package source stayed loading');await new Promise(r=>setTimeout(r,25))}return {files:gate.querySelectorAll('.rdy-ft').length,selected:gate.querySelector('.rdy-ft.selected')?.title};`,
+          ),
+        );
+      for (const [index, method] of ['git.branchDiff', 'git.diff'].entries()) {
+        holdSource = true;
+        if (index === 0) {
+          await cdp('click', route, 'ready-workspace [data-gate-tab=pr-preview]');
+          await cdp('click', route, 'ready-workspace [data-gate-tab=diff]');
+        } else await cdp('click', route, 'ready-workspace .rdy-ft[title="source-02.ts"]');
+        const end = Date.now() + 30000;
+        while (!heldSource.length) {
+          assert(Date.now() < end, 'Expected an actual held source response');
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        const prior = store.getRun(run.id);
+        const decisions = prior.decisions.map((decision) =>
+          decision.id === 'proof-gate'
+            ? {
+                ...decision,
+                payload: {
+                  ...decision.payload,
+                  prPackage: {
+                    ...decision.payload.prPackage,
+                    packageHash: String(index + 2).repeat(64),
+                    draftTitle: `Revised publication ${index}`,
+                  },
+                },
+              }
+            : decision,
+        );
+        store.updateRun(run.id, { decisions });
+        holdSource = false;
+        const requestsBefore = events.filter((event) => event.method === 'git.branchDiff').length;
+        broadcastEvent('run.updated', { run: store.getRun(run.id) });
+        const replacementEnd = Date.now() + 30000;
+        while (
+          events.filter((event) => event.method === 'git.branchDiff').length <= requestsBefore
+        ) {
+          assert(Date.now() < replacementEnd, 'The package revision did not request its source');
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        const current = await settleSource();
+        assert(
+          events.filter((event) => event.method === 'git.branchDiff').length > requestsBefore,
+          'The package revision must start a replacement source read',
+        );
+        for (const send of heldSource.splice(0)) send();
+        const afterStale = await settleSource();
+        assert.equal(afterStale.files, 51);
+        await save(`source-revision-${index}.json`, { method, current, afterStale });
+      }
+      await cdp('screenshot', route, path.join(output, 'source-revised.png'));
     }
     release = true;
     for (const send of held.splice(0)) send();

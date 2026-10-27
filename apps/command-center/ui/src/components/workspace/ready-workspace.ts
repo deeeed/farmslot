@@ -158,13 +158,11 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       }
       return Promise.resolve();
     }
-    const sameScope =
-      sameDecision &&
-      scope.packageHash === this._evidenceScope?.packageHash &&
-      scope.runUpdatedAt === this._evidenceScope?.runUpdatedAt;
-    if (!force && sameScope && this._evidenceRead) return this._evidenceRead;
+    const sameScope = sameDecision && scope.packageHash === this._evidenceScope?.packageHash;
+    const sameRevision = sameScope && scope.runUpdatedAt === this._evidenceScope?.runUpdatedAt;
+    if (!force && sameRevision && this._evidenceRead) return this._evidenceRead;
     // A clock tick or a compact list render is not a new evidence revision.
-    if (!force && sameScope && (this._evidenceLoaded || this._evidenceError))
+    if (!force && sameRevision && (this._evidenceLoaded || this._evidenceError))
       return Promise.resolve();
     const task: Promise<void> = this._readReviewEvidence(scope, sameScope).finally(() => {
       if (this._evidenceRead === task) this._evidenceRead = undefined;
@@ -175,6 +173,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private async _readReviewEvidence(scope: EvidenceReadScope, sameScope: boolean): Promise<void> {
     const request = ++this._evidenceRequest;
     if (!sameScope) this._resetReviewEvidence(scope);
+    else this._evidenceScope = scope;
     if (!this._evidenceLoaded) {
       this._evidenceLoading = true;
       this._evidenceError = '';

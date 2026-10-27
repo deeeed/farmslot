@@ -145,6 +145,7 @@ interface RetainedReadyPayload {
 export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState {
   private _branchRead?: symbol;
   private _fileRead?: symbol;
+  private _loadedSourceIdentity?: string;
   private get sourceIdentity(): string {
     return JSON.stringify([
       this.runId,
@@ -191,6 +192,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._retainedPayload = undefined;
     if (!this._initialized && this.decision && this.slotId) {
       this._initialized = true;
+      this._loadedSourceIdentity = this.sourceIdentity;
       this._hydratePublicationTarget();
       void this._beginRecovery();
     }
@@ -212,7 +214,19 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   override updated(changed: Map<string, unknown>) {
-    if (changed.has('slotId') && this._initialized) {
+    const sourceChanged = this._loadedSourceIdentity !== this.sourceIdentity;
+    this._loadedSourceIdentity = this.sourceIdentity;
+    if (sourceChanged) {
+      this._branchRead = undefined;
+      this._fileRead = undefined;
+      this._diffFiles = [];
+      this._fileDiff = '';
+      this._diffError = '';
+      this._fileDiffError = '';
+      this._diffLoading = false;
+      this._fileDiffLoading = false;
+    }
+    if ((changed.has('slotId') || sourceChanged) && this._initialized) {
       void this._beginRecovery();
     } else if (
       changed.has('_activeTab') &&

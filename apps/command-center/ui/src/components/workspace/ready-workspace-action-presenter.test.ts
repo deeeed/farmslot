@@ -11,6 +11,7 @@ import { DiffTestFilterController } from '../shared/diff-test-filter-controller.
 // stale diff from another run is visible in the assertion.
 const branchFiles: Record<string, GitBranchDiffFile[]> = {};
 const fileDiffRequests: string[] = [];
+let branchDiffReply: (() => Promise<{ files: GitBranchDiffFile[] }>) | undefined;
 let fileDiffReply: ((path?: string) => Promise<{ diff: string }>) | undefined;
 // Decision submission: the reply to run.resolveDecision, its requested window, and the run a
 // later run.get reads.
@@ -37,7 +38,8 @@ mock.module('../../gateway-client.js', {
           if (!runReadable) throw new Error('Not connected');
           return { run: { decisions: [gatewayDecision] } };
         }
-        if (method === Methods.GIT_BRANCH_DIFF) return { files: branchFiles[params.slotId] ?? [] };
+        if (method === Methods.GIT_BRANCH_DIFF)
+          return branchDiffReply ? branchDiffReply() : { files: branchFiles[params.slotId] ?? [] };
         fileDiffRequests.push(`${params.slotId}:${params.path}`);
         if (fileDiffReply) return fileDiffReply(params.path);
         return { diff: `diff from ${params.slotId}` };
@@ -105,6 +107,84 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 const testFile = { path: 'src/gate.test.ts', status: 'M', additions: 3, deletions: 0 } as const;
 const codeFile = { path: 'src/gate.ts', status: 'M', additions: 2, deletions: 1 } as const;
+
+function packageDecision(packageHash: string): RunDecision {
+  return {
+    ...gateDecision(),
+    payload: {
+      kind: 'ready',
+      branch: 'proof',
+      repo: null,
+      prNumber: null,
+      diffStat: { files: 1, additions: 2, deletions: 1 },
+      workerReport: '',
+      prPackage: {
+        id: 'package',
+        packageHash,
+        artifactPath: 'package.json',
+        branch: 'proof',
+        draftTitle: 'Proof',
+        draftBody: '',
+        diffStat: { files: 1, additions: 2, deletions: 1 },
+        reviewArtifactIds: [],
+        gatePolicy: { owner: 'human', publishAuthority: 'human', reason: 'Test' },
+        publicationTarget: 'draft',
+        publicationStatus: 'not_published',
+        createdAt: '2026-10-27T07:00:00Z',
+      },
+    },
+  };
+}
+
+test('a package revision replaces an in-flight branch read and finishes recovery', async (t) => {
+  let finish!: (value: { files: GitBranchDiffFile[] }) => void;
+  branchDiffReply = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  t.after(() => {
+    branchDiffReply = undefined;
+  });
+  const view = makePresenter({ decision: packageDecision('old'), _activeTab: 'diff' });
+  view.updated(new Map());
+  view._initialized = true;
+  view._recoveryPhase = 'rehydrating';
+  const old = view._loadBranchDiff();
+  branchDiffReply = async () => ({ files: [codeFile] });
+  view.decision = packageDecision('new');
+  view.updated(new Map([['decision', undefined]]));
+  await flush();
+  finish({ files: [testFile] });
+  await old;
+  assert.deepEqual(view._diffFiles, [codeFile]);
+  assert.equal(view._diffLoading, false);
+  assert.equal(view._recoveryPhase, 'live');
+});
+
+test('a package revision replaces a pending body without admitting its stale reply', async (t) => {
+  let finish!: (value: { diff: string }) => void;
+  fileDiffReply = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  t.after(() => {
+    fileDiffReply = undefined;
+  });
+  branchFiles['slot-a'] = [codeFile];
+  const view = makePresenter({ decision: packageDecision('old'), _activeTab: 'diff' });
+  view.updated(new Map());
+  view._initialized = true;
+  const old = view._selectFile(codeFile.path);
+  fileDiffReply = async () => ({ diff: 'current package body' });
+  view.decision = packageDecision('new');
+  view.updated(new Map([['decision', undefined]]));
+  await flush();
+  finish({ diff: 'stale package body' });
+  await old;
+  assert.equal(view._fileDiff, 'current package body');
+  assert.equal(view._fileDiffLoading, false);
+  assert.equal(view._diffLoading, false);
+});
 
 test('a slow file reply cannot replace the file selected afterward', async (t) => {
   let finish!: (value: { diff: string }) => void;

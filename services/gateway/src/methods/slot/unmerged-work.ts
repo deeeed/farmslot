@@ -107,7 +107,7 @@ const readPublishedAncestry: PublishedAncestryReader = async (repo, base, head, 
 
 const passiveAncestry = new Map<string, Promise<boolean>>();
 
-/** Published SHA ancestry is immutable. Commands still use a fresh provider read. */
+/** Published SHA ancestry is immutable. Fetch-enabled recovery checks still use a fresh provider read. */
 const readPassivePublishedAncestry: PublishedAncestryReader = (repo, base, head, timeoutMs) => {
   if (![base, head].every((sha) => /^[a-f0-9]{40,64}$/i.test(sha)))
     return readPublishedAncestry(repo, base, head, timeoutMs);

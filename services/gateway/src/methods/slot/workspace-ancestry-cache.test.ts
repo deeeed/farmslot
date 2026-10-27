@@ -48,7 +48,11 @@ test('passive SHA pairs share a compare; changed SHA and command reads still con
   assert.equal(comparisons.length, before + 2);
   assert.equal(await inspect({ ...options, allowFetch: true }), true);
   assert.equal(await inspect({ ...options, allowFetch: true }), true);
-  assert.equal(comparisons.length, before + 4, 'acting reads never use passive ancestry facts');
+  assert.equal(
+    comparisons.length,
+    before + 4,
+    'fetch-enabled recovery checks never use passive ancestry facts',
+  );
 });
 
 test('an unavailable comparison remains a failure and is not retained as an ancestry fact', async (t) => {

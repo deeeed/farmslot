@@ -28,7 +28,7 @@
     },
     {
       "id": "lazy-details",
-      "claim": "The stored Package can be opened without an eager live source diff or a mutating RPC."
+      "claim": "The stored Package opens without eager source reads; pending source reads restart when the captured package changes."
     },
     {
       "id": "causal-control",

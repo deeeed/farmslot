@@ -493,7 +493,7 @@ export class RunDetail extends RunDetailState {
       void this._loadSelectedStepProgress();
     }
     // The shared RUN_LIST is capped and can omit deep-linked historical runs.
-    // Retry the route target directly once the slice is no longer hydrating so
+    // Retry the route target directly once the connection is current so
     // reconnects do not fall through to "not found" prematurely.
     if (!this.run && this.runId && !this._connectionStale && !this._missingRunFetchAttempted) {
       this._missingRunFetchAttempted = true;
