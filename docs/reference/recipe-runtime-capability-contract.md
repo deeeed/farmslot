@@ -747,22 +747,28 @@ No product run or model turn is needed.
 
 ### Cold runtime on reused slots
 
-Status: Proposed F169/F170 supplement to ADR-054 under the lead's 18:10 scope clarification, included in PR #1515.
+Status: Accepted F169/F170 supplement under the lead's frozen #1515 scope, including companion Mobile and Extension pack hooks.
 
-After safe reset and fixture sync, every real run MUST health-check its configured
-managed runtime before starting the worker. Boot down resources through the pack's
-existing hooks, dev-server first, then browser or simulator, and recheck health.
-Reuse healthy resources without restart. Unknown/unavailable observations and
-failed boots MUST refuse launch without claiming health. Preserve owner, successor,
-source, cancellation and device fences; attached resources without boot authority
-retain their existing policy. Capability health polling/release remain read-only.
+Every fresh worker launch MUST check runtime after reset/fixtures, including
+replays and skip-prepare fallback, regardless of the prepare profile's health
+phase. Gate only slot-configured, controllable dev-server/browser/device resources
+with health and boot hooks. Missing-hook and attached resources retain existing
+policy. Retained-worker delivery and nudges do not boot resources.
 
-Shared fixture expansion MUST preserve captured source bindings and otherwise
-prefer the slot's `FARMSLOT_WORKSPACE` over the legacy deployment default for
-`farmslot_dir`. Reopen uses that selected root. No new RPC, CLI flag, SDK field,
-provider declaration or pipeline enum is added. Shared slot-config is private and
-ships with the CLI; roll out matching CLI bytes after merge without a public
-package publication.
+Probe dev servers before browsers or devices. Healthy resources MUST be reused;
+stopped resources use idempotent pack boot hooks followed by a health recheck.
+Error/unknown/unavailable observations or boot failures MUST refuse launch with
+the reason. Boot after claim under dispatch pressure admission and pass the run
+ID for sidecar ownership. Preserve source, owner, successor, device and
+cancellation fences. Companion Mobile/Extension hooks use existing harness launch
+commands. Capability health polling and release remain read-only.
+
+Fixture expansion MUST preserve captured source bindings. Only remote slots
+otherwise prefer the slot pool-env `FARMSLOT_WORKSPACE` to the legacy remote
+deployment default for `farmslot_dir`. This deployment root contains `projects/`
+directly. Do not read the gateway process env; local slots keep repo-root
+resolution. No new RPC, CLI flag, SDK field, provider or pipeline enum. Private
+slot-config ships in the matching CLI rollout without public publication.
 
 Before merge, regress boot ordering, healthy reuse, unavailable observations,
 boot failure and changed owners. The lead explicitly schedules one disposable

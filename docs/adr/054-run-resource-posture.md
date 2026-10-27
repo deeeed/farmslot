@@ -444,25 +444,31 @@ field, provider contract or harness operation. See
 
 ### Cold runtime on reuse, F169/F170 supplement (2026-10-27)
 
-Status: Proposed under the lead's added #1515 scope and 18:10 clarification; independent supplement review precedes implementation.
+Status: Accepted by the lead under the frozen #1515 scope, including companion Mobile and Extension pack hooks. Independent supplement delta review precedes implementation.
 
-After safe reset and fixture sync, every real run health-checks its configured
-runtime before starting its worker. Run the pack's boot hooks for down managed
-resources, dev server first, then browser or simulator, and verify health before
-launch. Reuse healthy resources without restart. An unavailable observation is
-not a stopped resource and cannot authorize boot. Keep owner, successor, device,
-source and run-cancellation fences; attached devices without boot authority keep
-their existing policy. Resource failure refuses worker launch with its reason.
+After safe reset and fixture sync, every fresh worker launch health-checks the
+slot-configured managed runtime, including replay and skip-prepare fallback when
+the prepare profile omitted health. The gate covers controllable dev-server,
+browser and device resources with both health and boot hooks. Missing-hook and
+attached resources retain their existing policy. Delivery to a retained worker
+or a nudge does not boot resources.
 
-This is part of normal run dispatch, not a recurring or scheduled canary. Keep
-capability health reads and release actions read-only; acquiring the now-running
-runtime retains the existing provider contract. No new daemon or pipeline enum.
+Run idempotent pack boot hooks only for stopped resources, dev server first,
+then browser or simulator, and verify health before launch. Reuse healthy
+resources without restart. Error, unknown or unavailable observations refuse
+launch, as do failed boots. Boot only after the slot claim, under dispatch
+pressure admission, passing the run ID for resource ownership. Preserve owner,
+successor, device, source and cancellation fences. Mobile and Extension companion
+packs supply their missing boot hooks through existing harness launch commands.
 
-Resolve reopen/boot fixture paths through captured source bindings, then the
-slot's configured `FARMSLOT_WORKSPACE`; a configured workspace outranks the legacy
-remote deployment default. This uses existing pool environment and resource hooks,
-not a project-specific fallback or new RPC/schema. The private shared slot-config
-helper requires matching CLI distribution rollout after merge.
+This is part of normal dispatch, not a recurring or scheduled canary. Capability
+health reads and release remain read-only. No new daemon or pipeline enum.
+
+Captured source bindings retain priority for reopen/boot fixture paths. Otherwise,
+remote slots use their pool-env `FARMSLOT_WORKSPACE` before the legacy remote
+deployment default. Read no gateway process override. The configured deployment
+root has `projects/` directly beneath it. Local slots retain repo-root resolution.
+The private slot-config helper requires matching CLI rollout after merge.
 
 Use targeted regressions before merge. As the lead directs, after #1515 lands
 and matching source is live, run one disposable proof per Extension, Mobile and
