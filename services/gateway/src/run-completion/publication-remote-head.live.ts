@@ -49,7 +49,7 @@ test(
         name: project,
         task_dir: '.task',
         default_branch: 'main',
-        ci: { repo: 'fixture/publication-proof' },
+        ci: { repo: 'fixture/publication-proof', enabled: false },
         review: { enabled: false },
         scripted: { commands: { proof: { command: 'true' } } },
         hooks: {},
@@ -279,10 +279,36 @@ test(
     assert.equal(refused.steps.find((step) => step.name === 'finalize')?.status, 'failed');
     assert.match(refused.error ?? '', /remote HEAD mismatch/);
     await waitCleanup();
+    // Advance the real base without changing the approved slot HEAD.
+    const advanceBase = (content: string) => {
+      const object = (args: string[], input: string) =>
+        execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', input }).trim();
+      const blob = object(['hash-object', '-w', '--stdin'], content);
+      const tree = object(['mktree'], `100644 blob ${blob}\tproof.txt\n`);
+      const commit = git(
+        'commit-tree',
+        tree,
+        '-p',
+        git('rev-parse', 'origin/main'),
+        '-m',
+        'Move base',
+      );
+      git('push', '-q', 'origin', `${commit}:refs/heads/main`);
+    };
+    advanceBase('conflicting upstream\n');
+    await assert.rejects(
+      pushPublicationBranch(current(), head, 'main'),
+      /PUBLICATION_MERGE_CONFLICT/,
+    );
+    assert.equal(git('ls-remote', 'origin', `refs/heads/${branch}`).split(/\s+/)[0], old);
+    assert.equal(git('rev-parse', 'HEAD'), head);
+    await save('conflict-refused.json', { runId: created.id, head, remote: old, base: 'main' });
+    advanceBase('published proof\n');
+    const hooksBeforePublication = await readFile(hookReceipt, 'utf8');
     // Push exactly the publication HEAD through the production helper and real hook.
     await pushPublicationBranch(current(), head, 'main');
     assert.equal(git('ls-remote', 'origin', `refs/heads/${branch}`).split(/\s+/)[0], head);
-    assert.match(await readFile(hookReceipt, 'utf8'), /hook/);
+    assert.equal(await readFile(hookReceipt, 'utf8'), `${hooksBeforePublication}hook`);
     await client.call('run.replayStep', { runId: created.id, stepName: 'finalize' });
     const published = await untilFinalize();
     await save('remote-current-finalize.json', published);
@@ -298,6 +324,7 @@ test(
       head,
       remote: git('ls-remote', 'origin', `refs/heads/${branch}`),
       hookRan: true,
+      conflictingBaseRefusedBeforePush: true,
       authenticatedReplay: true,
       fixtureBeginsAtFinalize: true,
       githubHostingSubstituted: true,

@@ -249,6 +249,16 @@ test('publication binds the conflict probe to the approved HEAD', async () => {
   assert.deepEqual(mutations, []);
 });
 
+test('an unknown merge-tree result refuses publication before pushing or posting', async () => {
+  mergeExit = undefined;
+  await assert.rejects(
+    publishCompletionPackage(run.id, makeReadyGatePackage({ headSha: head, branch })),
+    /PUBLICATION_MERGEABILITY_UNAVAILABLE/,
+  );
+  assert.ok(!commands.some((command) => command.includes('push -u origin')));
+  assert.deepEqual(mutations, []);
+});
+
 test('base conflicts introduced during push refuse PR mutation', async () => {
   conflictsDuringPush = true;
   await assert.rejects(
@@ -268,7 +278,7 @@ test('legacy completion refuses conflicts before publishing', async () => {
   assert.deepEqual(mutations, []);
 });
 
-test('publication probes its resolved stacked base and permits a clean branch behind it', async () => {
+test('publication probes the given base and permits a clean branch behind it', async () => {
   await pushPublicationBranch(run, head, 'feature/upstream');
   const probes = commands.filter((command) => command.includes('CONFLICT_EXIT:'));
   assert.equal(probes.length, 2);
