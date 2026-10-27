@@ -92,17 +92,43 @@ export function processGroupAlive(pid: number): boolean {
   }
 }
 
-/** PID reuse never counts as the old descendant surviving. */
-export function processIdentityAlive(pid: number, identity: string): boolean {
-  if (!alive(pid)) return false;
+type ProcessMetadataField = 'lstart' | 'command' | 'pgid';
+/** Passive observations only. Control and cleanup checks omit this cache. */
+export type ProcessMetadataCache = Map<number, Partial<Record<ProcessMetadataField, string>>>;
+
+function processMetadata(
+  pid: number,
+  field: ProcessMetadataField,
+  timeout: number,
+  observations?: ProcessMetadataCache,
+): string {
+  const cached = observations?.get(pid);
+  if (cached?.[field] !== undefined) return cached[field];
+  const value = execFileSync('ps', ['-p', String(pid), '-o', `${field}=`], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout,
+  }).trim();
+  observations?.set(pid, { ...cached, [field]: value });
+  return value;
+}
+
+export function processGroupId(pid: number, observations?: ProcessMetadataCache): number {
+  return Number(processMetadata(pid, 'pgid', 5000, observations));
+}
+
+/** Fresh by default: PID reuse never counts as the old descendant surviving. */
+export function processIdentityAlive(
+  pid: number,
+  identity: string,
+  observations?: ProcessMetadataCache,
+): boolean {
+  if (!alive(pid)) {
+    observations?.delete(pid);
+    return false;
+  }
   try {
-    return (
-      execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 5000,
-      }).trim() === identity.trim()
-    );
+    return processMetadata(pid, 'lstart', 5000, observations) === identity.trim();
   } catch (error) {
     if (!alive(pid)) return false;
     // A living but unreadable PID is uncertain, never proof of cleanup.
@@ -116,6 +142,7 @@ export function recordedProcessGroupAlive(
   pid: number,
   identity?: string,
   snapshot?: ReadonlyMap<number, ProcessIdentity>,
+  observations?: ProcessMetadataCache,
 ): boolean {
   if (snapshot) {
     if (![...snapshot.values()].some((entry) => entry.group === pid)) return false;
@@ -124,19 +151,23 @@ export function recordedProcessGroupAlive(
   }
   if (!processGroupAlive(pid)) return false;
   // PID allocation reserves live group IDs. A reused live leader cannot own the old group.
-  if (identity && alive(pid) && !processIdentityAlive(pid, identity) && alive(pid)) return false;
+  if (identity && alive(pid) && !processIdentityAlive(pid, identity, observations) && alive(pid))
+    return false;
   return true;
 }
 
 /** Structured process argv evidence, never runner stdout or a terminal rendering. */
-export function matchesProcess(pid: number, identity: string): boolean {
-  if (!alive(pid)) return false;
+export function matchesProcess(
+  pid: number,
+  identity: string,
+  observations?: ProcessMetadataCache,
+): boolean {
+  if (!alive(pid)) {
+    observations?.delete(pid);
+    return false;
+  }
   try {
-    const argv = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 1_000,
-    });
+    const argv = processMetadata(pid, 'command', 1000, observations);
     return argv.split(/\s+/).includes(identity);
   } catch (error) {
     // The process may exit between the liveness and argv reads. No signal is needed then.

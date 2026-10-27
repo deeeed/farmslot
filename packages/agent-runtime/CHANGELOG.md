@@ -8,6 +8,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.4 - 2026-10-27
+
+- Cache native process metadata during passive polling while keeping fresh identity checks for cleanup and controls.
+
 ## 0.39.3 - 2026-10-27
 
 - Refuse worker completion when either evidence manifest names a missing media file, before changing the checklist or signal.
