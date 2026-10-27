@@ -1021,9 +1021,10 @@ export class FarmApp extends LitElement {
       await confirmAccountSignOut(
         () => this.confirmSignOut(),
         async () => {
-          // Drafts rule 6: the confirmation named the unsaved count; signing out deletes them.
-          if (scopeId && drafts) await retireDraftScope(drafts, scopeId);
-          await gateway.signOut();
+          // Drafts rule 6: the confirmation named the unsaved count; signing out deletes them,
+          // and the scope takes no draft until a connection opened after the sign-out.
+          if (scopeId && drafts) await retireDraftScope(drafts, scopeId, () => gateway.signOut());
+          else await gateway.signOut();
           this.authSecret = '';
           this.pairingOpen = false;
           this.pairingQrDataUrl = '';

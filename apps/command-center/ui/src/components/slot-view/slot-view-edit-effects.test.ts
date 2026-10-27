@@ -953,3 +953,54 @@ test("discarding a draft after the scope changed leaves the new scope's draft sh
   assert.equal(view._fileDrafts.get('src/value.ts')?.scopeId, 'scope-b');
   assert.equal(view._editorRevision, 0);
 });
+
+test('a reconnect while sign-out runs never reopens the scope before sign-out has ended', async (t) => {
+  reset(t);
+  const { store, hold, release } = slowStorage();
+  const other = 'export const other = 1;\n';
+  const view = makeView(store, {
+    _liveFileContents: new Map([
+      ['src/value.ts', base],
+      ['src/other.ts', other],
+    ]),
+    _liveFileHashes: new Map([
+      ['src/value.ts', sha256(base)],
+      ['src/other.ts', sha256(other)],
+    ]),
+  });
+  hold('put');
+  const first = effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 210;\n');
+  await flush();
+  let ended!: () => void;
+  const signingOut = retireDraftScope(
+    store,
+    'scope-a',
+    () =>
+      new Promise<void>((resolve) => {
+        ended = resolve;
+      }),
+  );
+  await flush();
+  // The socket reconnects while the held put keeps sign-out waiting; credentials are still live.
+  gateway.resourceConnectionId++;
+  release();
+  await first;
+  await flush();
+  // After recovery, another file is edited, and again after a second reconnect.
+  await effects.editSlotViewFile(view, 'src/other.ts', 'export const other = 2;\n');
+  gateway.resourceConnectionId++;
+  await effects.editSlotViewFile(view, 'src/other.ts', 'export const other = 3;\n');
+  ended();
+  await signingOut;
+  assert.deepEqual(await store.list('scope-a'), []);
+
+  // The connection sign-out ended on writes nothing; a sign-in on a later one writes again.
+  await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 211;\n');
+  assert.deepEqual(await store.list('scope-a'), []);
+  gateway.resourceConnectionId++;
+  await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 212;\n');
+  assert.deepEqual(
+    (await store.list('scope-a')).map(({ editedContent }) => editedContent),
+    ['export const value = 212;\n'],
+  );
+});
