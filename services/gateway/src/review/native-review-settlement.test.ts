@@ -143,6 +143,12 @@ mock.module('../run-engine/run-monitor.js', {
           },
         };
       }
+      if (ending === 'command-error')
+        return {
+          ok: false,
+          code: 'non_terminal',
+          signal: { status: 'running', timestamp: new Date().toISOString() },
+        };
       return ending === 'timeout' || ending === 'exit' || ending === 'command-failed'
         ? { ok: false, code: 'missing', message: 'no signal' }
         : { ok: true };
@@ -203,7 +209,9 @@ mock.module('../runners/native/worker-control.js', {
     readNativeWorkerCommandError: async () =>
       ending === 'command-error'
         ? new Error('Provider refused this request: cybersecurity policy')
-        : undefined,
+        : ['completion-turn', 'completion-restart'].includes(ending)
+          ? new Error('Provider turn ended after writing valid findings')
+          : undefined,
     readNativeWorkerSnapshot: async (
       _runId: string,
       _role: string,
@@ -289,9 +297,9 @@ mock.module('../runners/native/worker-control.js', {
         session:
           ending === 'exit'
             ? { state: 'closed', processStopped: true, error: 'reviewer process exited' }
-            : { state: 'running', processStopped: false },
+            : { state: ending === 'command-error' ? 'idle' : 'running', processStopped: false },
         commands: ['command-failed', 'command-error'].includes(ending)
-          ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed' }]
+          ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed', accepted: true }]
           : ending === 'timeout' || ending === 'exit'
             ? []
             : [
@@ -304,6 +312,7 @@ mock.module('../runners/native/worker-control.js', {
                 },
               ],
         events: [],
+        pendingRequests: [],
         cursor: 0,
         hasMore: false,
       };
@@ -382,7 +391,7 @@ mock.module('./feedback.js', {
             incomplete: true,
             terminalInvalidReason: 'invalid scoped review result',
           }
-        : ending === 'incomplete'
+        : ['incomplete', 'command-error'].includes(ending)
           ? { verdict: 'pass', issues: [], incomplete: true }
           : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] },
   },

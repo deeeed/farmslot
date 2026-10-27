@@ -238,3 +238,13 @@ test('a replacement command cannot inherit the failed command diagnostic', async
     /command changed during failure observation/,
   );
 });
+
+test('failure diagnostics reject a history cursor that stops advancing', async () => {
+  current.agentContexts![0]!.nativeSession!.generation = 'created-generation';
+  response.hasMore = true;
+  response.cursor = 0;
+  await assert.rejects(
+    readNativeWorkerCommandError(current.id, 'review', 'reviewer'),
+    /failure history cursor did not advance/,
+  );
+});

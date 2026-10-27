@@ -704,22 +704,6 @@ async function ingestRecoveredReviewer(
       (await import('../runners/native/worker-control.js')).readNativeWorkerSnapshot;
     native = await read(runId, 'review', ctx.id);
     if (options.shouldAbort?.()) return null;
-    const commandFailure = native.commands.some(
-      (command) => command.commandId === binding.commandId && command.outcome === 'failed',
-    )
-      ? await (
-          await import('../runners/native/worker-control.js')
-        ).readNativeWorkerCommandError(runId, 'review', ctx.id, read)
-      : undefined;
-    if (commandFailure) {
-      if (
-        await markRecoveredReviewerContext(runId, ctx, 'failed', { error: commandFailure.message })
-      ) {
-        await (await import('../runners/native/worker.js')).cancelNativeWorkerContext(runId, ctx);
-        await settleRecoveredReviewerNoVerdict(runId, ctx, commandFailure.message);
-      }
-      return null;
-    }
     const probe = await probeWorkerSignalForRun(runId, vars.slotId, ctx);
     const { continueNativeReviewCompletion, NativeReviewCompletionError } =
       await import('../review/native-review-completion.js');
@@ -757,13 +741,19 @@ async function ingestRecoveredReviewer(
         native.session.state === 'failed' ||
         native.session.state === 'closed'
       ) {
-        if (await markRecoveredReviewerContext(runId, ctx, 'failed', {})) {
+        const failure =
+          command?.outcome === 'failed'
+            ? await (
+                await import('../runners/native/worker-control.js')
+              ).readNativeWorkerCommandError(runId, 'review', ctx.id, read)
+            : undefined;
+        const reason =
+          failure?.message ??
+          native.session.error ??
+          'Native reviewer stopped without a completed command';
+        if (await markRecoveredReviewerContext(runId, ctx, 'failed', { error: reason })) {
           await (await import('../runners/native/worker.js')).cancelNativeWorkerContext(runId, ctx);
-          await settleRecoveredReviewerNoVerdict(
-            runId,
-            ctx,
-            native.session.error ?? 'Native reviewer stopped without a completed command',
-          );
+          await settleRecoveredReviewerNoVerdict(runId, ctx, reason);
         }
         return null;
       }

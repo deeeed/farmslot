@@ -774,10 +774,6 @@ async function runNativeReviewAttempt(
       const command = snapshot.commands.find(
         (command) => command.commandId === context!.nativeSession!.commandId,
       );
-      if (command?.outcome === 'failed') {
-        const failure = await readNativeWorkerCommandError(runId, 'review', contextId);
-        if (failure) throw failure;
-      }
       const probe = await probeWorkerSignalForRun(runId, vars.slotId, context);
       if (probe.ok || probe.code === 'non_terminal') {
         for (const event of probe.signal?.checklistTiming?.events ?? [])
@@ -810,9 +806,13 @@ async function runNativeReviewAttempt(
         completion !== 'deferred' &&
         (['closed', 'failed'].includes(snapshot.session.state) || command?.outcome === 'failed')
       ) {
+        const failure =
+          command?.outcome === 'failed'
+            ? await readNativeWorkerCommandError(runId, 'review', contextId)
+            : undefined;
         const reason =
           snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
-        throw reviewerExitForNativeSnapshot(snapshot) ?? new Error(reason);
+        throw reviewerExitForNativeSnapshot(snapshot, failure) ?? failure ?? new Error(reason);
       }
       // Drain this lease's history before judging silence; later pages can hold
       // activity that happened while the gateway was offline.

@@ -427,10 +427,23 @@ export function buildGateSummary(
   const review = buildReviewSummary(run, opts?.preparedPackage);
   const tokens = buildTokenSummary(run);
   const checklist = buildChecklist(run);
+  const signal = run.steps.find(
+    (step) => step.name === PipelineSteps.MONITOR && step.status === 'done',
+  )?.outputs?.workerSignal;
+  const capturedOutcome =
+    signal && typeof signal === 'object' && 'outcome' in signal ? signal.outcome : undefined;
+  // A later review can fail the pipeline after its primary worker succeeded.
+  const workerOutcome =
+    capturedOutcome === 'success' ||
+    capturedOutcome === 'failure' ||
+    capturedOutcome === 'partial' ||
+    capturedOutcome === 'cancelled'
+      ? capturedOutcome
+      : run.metrics.outcome;
   const worker = {
     model: workerModel(run),
     turns: run.metrics.sessionTurns ?? null,
-    ...(run.metrics.outcome ? { outcome: run.metrics.outcome } : {}),
+    ...(workerOutcome ? { outcome: workerOutcome } : {}),
   };
 
   return {

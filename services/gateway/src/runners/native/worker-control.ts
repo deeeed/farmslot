@@ -153,6 +153,8 @@ export async function readNativeWorkerCommandError(
         failure = new Error(event.text, { cause: event.data });
     }
     if (!snapshot.hasMore) return failure;
+    if (snapshot.cursor <= (after ?? 0))
+      throw new Error('Native worker failure history cursor did not advance');
     after = snapshot.cursor;
   }
 }

@@ -661,6 +661,32 @@ test('a falsely complete newer native attempt remains collecting while its own c
       data: { error: { codexErrorInfo: 'cyberPolicy' }, willRetry: false },
     },
   ];
+  const completion = await import('../review/native-review-completion.js');
+  let completionCalls = 0;
+  const eligible = t.mock.module('../review/native-review-completion.js', {
+    namedExports: {
+      ...completion,
+      continueNativeReviewCompletion: async () => {
+        completionCalls++;
+        return 'continued';
+      },
+    },
+  });
+  await recoverInflightPublicationReviews(run.id, vars.slotId, {
+    readers: {
+      slot: async () => vars,
+      config: async () => ({ enabled: true }),
+      package: async () => undefined,
+      native: async () => snapshot,
+    },
+  });
+  assert.equal(
+    completionCalls,
+    1,
+    'A failed command with valid findings still reaches its completion turn',
+  );
+  assert.equal(stopped, false);
+  eligible.restore();
   await recoverInflightPublicationReviews(run.id, vars.slotId, {
     readers: {
       slot: async () => vars,
