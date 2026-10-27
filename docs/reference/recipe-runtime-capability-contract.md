@@ -687,12 +687,46 @@ Persist a per-slot recovery ID, epoch/owners, verified completed phases and fail
 
 The same `slot.refresh` release mode, bound to the held recovery ID and a fresh expected workspace, retries from the last verified phase. Recheck owners and work, renew changed-content discard confirmation, and do not blindly repeat verified destructive cleanup. Clear the hold only after all completion checks pass. Preserve evidence and show the failed phase. No new RPC, retry daemon, scheduler or job store.
 
+### Automatic safe reuse
+
+Status: Proposed under ADR-042 Amendment 2 and ADR-054's 2026-10-27 settlement
+amendment; lead-approved policy scope, independent review before implementation.
+
+Before a stale-work decision, automatic find-slot MUST inspect the selected free
+candidate's actual dirt and publication evidence, including default-branch local
+commits. A clean baseline, merged or verified-pushed checkout MUST be safely
+released/reset before the incoming task is written, then revalidated and claimed.
+Use the existing default/tracking branch and owner/epoch fences. A numeric stale
+score MUST NOT substitute for work evidence.
+
+Selection MUST continue past a refused or unavailable candidate and preserve its
+reason. Ask for work-preservation input only when all otherwise eligible free
+candidates have verified dirty or unpublished work. Unknown Git/publication or
+node state MUST NOT grant reset authority; existing admission waits/refusals
+remain truthful. Never clear a held recovery or a protected owner to make a slot
+eligible. Normal prepare retains fixture setup responsibility.
+
+After `done`, explicit output close or archive, existing owned cleanup MUST
+attempt the same safe idle return. Dirty, unpublished or unverified work MUST
+remain intact with a reported reason. Existing cancelled replay, recoverable
+completion, result-decision, successor and provider ownership guards apply.
+Archive MUST NOT imply local-work discard permission. Records, branch refs and
+retained evidence MUST survive checkout normalization. Readiness MUST NOT be
+published across an unconfirmed reset or a changed owner/epoch.
+
+Proof MUST cover one disposable authenticated run whose only free slot has a
+clean merged branch: create, safe recovery, write-task, prepare and dispatch
+succeed without a picker decision, then cancel/archive the owned smoke. Include
+safe terminal return, dirty/unpublished preservation, failed-first-candidate
+fallback, an older parked owner beside a finished successor, deleted publication
+refs, and ownership/epoch-change refusals. No product run or model turn is needed.
+
 ### Acceptance proof
 
 1. Both real fleet renderers show branch, actual owners/holds, publication state and behind-default count, including unknown/error states. Real presses drive actions against the authenticated gateway; screenshots are rendering proof, not a substitute for RPC/slot-row effects.
-2. In a healthy multi-slot fixture, every eligible free slot starts stale. Prove `all_stale` before recovery. Recover one through the fleet UI, then `run.create` without `slotId` or a single-slot `allowedSlots` restriction must select it with `selectionMethod: scored` and no `engine_no_suitable_slot` decision. Assert remote HEAD, fixtures, free ownership and zero stale penalties through real reads.
+2. Cover both explicit fleet recovery and automatic safe reuse. An unpinned `run.create` with one free clean merged-branch fixture MUST recover and select it without `engine_no_suitable_slot`; manual fleet recovery remains separately available. Assert the fetched idle HEAD, ownership and normal prepare fixtures through real reads.
 3. Bulk includes every safe target in its displayed scope, including search, and excludes hidden/unsafe/held rows. Single-slot cancel leaves work intact. Alter a dirty/untracked file at unchanged HEAD to prove confirmation invalidation; change ownership/epoch to prove successor protection.
 4. Cover primary clones, linked worktrees, squash merges/deleted refs, dirty idle branches, unknown publication, absent fixtures and per-slot progress. Fail fixture sync, age/restart the gateway and prove the slot stays held; retry through the same RPC and verify before ready. Real Git/fixtures and a command/scripted engineering runner suffice; no occupied product slot, model turn or `#dev` bypass.
-5. Source-breaking controls must fail the recovery-to-dispatch and failed-recovery guards, followed by exact restoration. Retain one shared model/predicate; do not weaken stale-slot selection or pressure admission to pass.
+5. Source-breaking controls must fail the recovery-to-dispatch and failed-recovery guards, followed by exact restoration. Retain one shared model/predicate; do not weaken work-preservation, ownership or pressure admission to pass.
 
 The reusable [recovery recipe](../examples/recipes/farmslot/fleet-slot-recovery.recipe.json) runs authenticated CC selection, native actions and disposable RPC safety checks with independent Git/status/fixture readbacks. Its caller owns the isolated UI fixture and device teardown. Run it against the final frozen source.

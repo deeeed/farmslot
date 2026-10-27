@@ -402,3 +402,31 @@ reuse may need to boot resources again; another live owner remains protected.
 No new CLI command, RPC, flag, SDK export or project field. Existing terminal
 transitions, slot cleanup outcomes and resource shutdown hooks carry the change.
 Clients and downstream harnesses consume the existing resource and slot contract.
+
+## Amendment: safe checkout return after settlement (2026-10-27)
+
+**Status:** Proposed for independent amendment review. The lead approved this policy's scope on 2026-10-27; implementation follows the review.
+
+### Decision
+
+A run reaching `done`, an explicit output close, or archive attempts to return its
+checkout to the configured idle branch through the existing safe release/reset
+path. The tree must be clean and work must be baseline, merged or verifiably
+pushed. Dirty, unpublished or unverified work stays intact with a visible reason;
+settled resource cleanup does not imply that the checkout was normalized.
+
+Publish-before-cleanup and existing owner, epoch, successor, native, recovery and
+capability guards remain authoritative. Retain run records, branch refs and
+recorded evidence. A cancelled replay hold still lasts until reclamation or an
+explicit close/archive. Recoverable completion and result-decision holds are
+not automatic completion. Archive alone does not authorize discarding local work.
+
+This replaces keep-work-only checkout retention for the named settlement paths;
+the existing resource-shutdown policy remains. Normal prepare owns fixtures.
+
+### Public surface
+
+Existing completion, output-close, archive and safe slot-release paths report
+reset or retention through current cleanup outcomes. No new command, RPC, SDK
+field, provider contract or harness operation. See
+[automatic safe reuse](../reference/recipe-runtime-capability-contract.md#automatic-safe-reuse).

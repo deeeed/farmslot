@@ -255,3 +255,36 @@ Reuse `fleet.status` / `fleet.refresh`, `slot.release`, `slot.refresh` and `flee
 ### Required proof
 
 Use real Git/fixtures and both authenticated fleet renderers. Before recovery, every eligible free fixture slot must be stale and an unpinned selection must show `all_stale`. Recover one through the fleet action; the next unpinned, unrestricted selection must choose it by scoring without a slot-picker decision. Also prove safe bulk scope, content-bound discard, protected-owner refusal and failed-operation retry after restart. No product orders, funds or model worker are needed.
+
+## Amendment 2: automatic safe slot reuse (2026-10-27)
+
+**Status:** Proposed for independent amendment review. The lead approved this policy's scope on 2026-10-27; implementation follows the review.
+**Specification:** [Automatic safe reuse](../reference/recipe-runtime-capability-contract.md#automatic-safe-reuse).
+
+### Decision
+
+Automatic selection uses the existing guarded release and idle reset when a free
+checkout is clean and its work is baseline, merged or verifiably pushed. Inspect
+actual work even on the default branch. A stale score alone cannot require a
+human choice. Preserve the existing default/tracking branch contract.
+
+Try candidates in the existing admission/ranking order. A candidate's unavailable
+Git or node evidence is recorded and does not prevent trying another candidate.
+The work-preservation picker is needed only when every otherwise eligible free
+candidate has verified dirty or unpublished work. Unknown evidence grants no
+reset authority. Load, source, resource and ownership admission still apply.
+
+This supersedes Amendment 1's human stale-slot choice for safe automatic reuse.
+The fleet recovery action and its shared model remain available. Normal prepare
+continues to own task-specific fixture setup.
+
+### Rationale and consequences
+
+Published ticket branches and old default-branch heads must not strand otherwise
+usable capacity. Recovery precedes the incoming task write, preserves run evidence
+and never force-resets local work. A failed recovery retains its existing hold.
+
+### Public surface
+
+Existing find-slot, slot release/refresh and terminal cleanup consume the same
+safety checks. No new RPC, CLI flag, SDK export, harness action or daemon.
