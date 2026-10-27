@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep before captures bound to the recorded full-review base when dispatch replay advances the worktree baseline.
+
 - Before fresh workers start, including pending native reservations, reuse healthy runtime or boot stopped pack resources under launch budgets, ownership and pressure checks.
 
 - Automatically reuse clean published idle slots and return settled checkouts to main while preserving local work, historical replay evidence and stopped runtime.
