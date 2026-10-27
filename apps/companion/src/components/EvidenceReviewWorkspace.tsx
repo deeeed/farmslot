@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Image,
   Linking,
   Pressable,
   ScrollView,
@@ -19,7 +18,6 @@ import { acceptanceVerdictLabel, type SelfPrincipalSummary } from '@farmslot/pro
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
-  artifactSource,
   artifactUrlForEntry,
   classifyArtifact,
   formatBytes,
@@ -35,6 +33,7 @@ import { diffArtifactCandidate } from '../lib/diff';
 import { recordedEvidenceArtifactUrl } from '../lib/evidence-media-items';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
+import { ArtifactImage } from './ArtifactImage';
 import { BeforeAfterPreview, CompareMedia } from './BeforeAfterPreview';
 import { EvidenceReviewSkeleton } from './EvidenceReviewSkeleton';
 import { SkeletonError } from './Skeleton';
@@ -956,8 +955,10 @@ function CompactArtifactPreview({
 }) {
   if (mediaType === 'image') {
     return (
-      <Image
-        source={artifactSource(artifact.url, authHeaders)}
+      <ArtifactImage
+        artifact={artifact}
+        uri={artifact.url}
+        authHeaders={authHeaders}
         style={styles.compactArtifactImage}
         resizeMode="cover"
       />

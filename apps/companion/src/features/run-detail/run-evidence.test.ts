@@ -82,6 +82,9 @@ test('a retained invocation rereads progress and evidence and refuses replaced c
     contentWriteToken() {
       throw new Error('content is not fetched in this invocation test');
     },
+    retainContent() {
+      throw new Error('content is not retained in this invocation test');
+    },
     async dispose() {
       states.clear();
     },

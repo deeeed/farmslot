@@ -528,7 +528,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
           : nothing,
       packagePending: this._packagePending,
       splitPct: this._splitPct,
-      recovering: this._isRecovering,
+      // A held package diff keeps the gate readable offline; its actions still wait.
+      recovering: this._isRecovering && !this._readingHeldDiff,
       recoveryPhase: this._recoveryPhase,
       recoveryMessage: this._recoveryMessage,
       gatewayConnected: gateway.connectionState === 'connected',
@@ -786,7 +787,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       diffFiles: this._diffFiles,
       testFilter: this._testFilter,
       selectedFile: this._selectedFile,
-      recovering: this._isRecovering,
+      recovering: this._isRecovering && !this._readingHeldDiff,
       fileDiffLoading: this._fileDiffLoading,
       fileDiff: this._fileDiff,
       selectFile: (path) => this._selectFile(path),

@@ -10,6 +10,7 @@ import {
 
 import { artifactKind } from '../../utils/artifact-kind.js';
 import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
+import { gatewayContentMediaUrl } from '../shared/gateway-media-src.js';
 export type ArtifactGroup = 'before' | 'after' | 'review' | 'other';
 export type ArtifactFilter = 'all' | ArtifactGroup;
 export type ArtifactTypeFilter =
@@ -65,7 +66,7 @@ export function runArtifactFetchUrl(
   runId: string,
   artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'bundleDigest'>,
 ): string {
-  return gatewayResourceUrl(runArtifactApiPath(runId, artifact));
+  return gatewayContentMediaUrl(gatewayResourceUrl(runArtifactApiPath(runId, artifact)), artifact);
 }
 
 export function runArtifactUrl(
@@ -85,11 +86,14 @@ export function recipeRunArtifactUrl(
   if (artifact.sha256) params.set('v', artifact.sha256.slice(0, 12));
   else if (typeof artifact.sizeBytes === 'number') params.set('v', `s${artifact.sizeBytes}`);
   if (typeof artifact.sizeBytes === 'number') params.set('vsize', String(artifact.sizeBytes));
-  return gatewayResourceUrl(
-    withArtifactBundleDigest(
-      `/api/run-artifact?${params.toString()}`,
-      artifact.bundleDigest ?? group.artifactBundle?.bundleDigest,
+  return gatewayContentMediaUrl(
+    gatewayResourceUrl(
+      withArtifactBundleDigest(
+        `/api/run-artifact?${params.toString()}`,
+        artifact.bundleDigest ?? group.artifactBundle?.bundleDigest,
+      ),
     ),
+    artifact,
   );
 }
 

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Prefetch pending gates, then active runs, into the device store. The gate package diff on the run Diff tab and evidence images up to 2 MB open from held content offline; live reads are verified before they are shown or stored.
+
 - Decision CI context and the review dispatch picker observe shared PR, model catalog and visible-model observations; Refresh stays an explicit GitHub check.
 
 - Read review history task files, recorded diffs and finding source through the shared workspace cache; slotless review runs keep their frozen commit reads.

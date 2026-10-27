@@ -1,7 +1,6 @@
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Image,
   type ImageStyle,
   type LayoutChangeEvent,
   Modal,
@@ -30,6 +29,8 @@ import {
   type VisualArtifactPair,
 } from '../lib/artifact-url';
 import { colors, fonts, radii, spacing } from '../lib/theme';
+
+import { ArtifactImage } from './ArtifactImage';
 
 type CompareSide = 'before' | 'after';
 
@@ -479,8 +480,10 @@ export function CompareMedia<T extends ArtifactManifestEntry>({
   }
   if (mediaType === 'image') {
     return (
-      <Image
-        source={artifactSource(artifact.url, authHeaders)}
+      <ArtifactImage
+        artifact={artifact}
+        uri={artifact.url}
+        authHeaders={authHeaders}
         style={[styles.media, { height }, imageStyle]}
         resizeMode="contain"
       />

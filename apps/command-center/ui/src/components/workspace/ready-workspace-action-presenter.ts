@@ -20,6 +20,7 @@ import {
   reviewLineagesForRun,
 } from '@farmslot/review-dispatch';
 
+import { fetchRunArtifactBytes } from '../../content-prefetch.js';
 import { gateway } from '../../gateway-client.js';
 import {
   DECISION_RESOLVE_SLOW_MS,
@@ -27,6 +28,12 @@ import {
   GatewayRequestTimeoutError,
   transferBoundRequestOptions,
 } from '../../gateway-request-timeout.js';
+import {
+  heldDiffFiles,
+  heldFileDiff,
+  openedContentKeeper,
+  openHeldText,
+} from '../../held-content.js';
 import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { diffSelectionHandOff, visibleDiffSelection } from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
@@ -36,6 +43,7 @@ import {
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { gatewayContentMediaUrl } from '../shared/gateway-media-src.js';
 import { type LightboxItem, type LightboxPair } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import {
@@ -124,6 +132,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   readonly _reads = new WorkspaceReads(this);
   private _commandRequest: object | undefined;
   private _fileDiffRequest?: object;
+  /** The package's retained diff, listed while the slot diff cannot be read. */
+  _heldDiff?: string;
+  /** A diff modal restored from the URL waits for the gate, which names its package diff. */
+  private _restoringDiffModal = '';
 
   get _gateDecision() {
     return this._usesMockData ? this.decision : this._queries.decision;
@@ -150,6 +162,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     return this.actionsBlocked || this._packagePending || !this._queries.ready;
   }
 
+  /** Offline with the package diff held: the gate stays readable while its actions wait. */
+  get _readingHeldDiff(): boolean {
+    return this._recoveryPhase === 'stale' && this._heldDiff !== undefined;
+  }
+
   _sharedWorkspaceQueriesChanged(): void {
     this.requestUpdate();
   }
@@ -169,6 +186,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._evidenceAttestationReason = '';
     this._publicationTarget = 'ready';
     this._fileDiffRequest = undefined;
+    this._heldDiff = undefined;
     this._reads.clear();
     this._selectedFile = '';
     this._diffError = '';
@@ -248,6 +266,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
 
   willUpdate() {
     this._queries.sync();
+    if (this._restoringDiffModal && this._payload) {
+      const path = this._restoringDiffModal;
+      this._restoringDiffModal = '';
+      this._loadDiffModalArtifact({ path });
+    }
     if (!this._initialized && this._gateDecision && this.slotId) {
       this._initialized = true;
       this._hydratePublicationTarget();
@@ -322,7 +345,8 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         this._diffModalArtifactPath = hashState.diffArtifact;
         this._diffModalTitle = workspaceArtifactBasename(hashState.diffArtifact, 'Diff');
         this._diffModalText = '';
-        this._diffModalUrl = this._usesMockData ? '' : this._artifactUrl(hashState.diffArtifact);
+        this._diffModalUrl = '';
+        this._restoringDiffModal = this._usesMockData ? '' : hashState.diffArtifact;
       }
       if (hashState.lightboxIndex !== undefined) this._lightboxIndex = hashState.lightboxIndex;
       this._lightboxRecipeRunId = hashState.lightboxRecipeRunId ?? null;
@@ -378,11 +402,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (artifact?.sha256) params.set('v', artifact.sha256.slice(0, 12));
     else if (typeof artifact?.sizeBytes === 'number') params.set('v', `s${artifact.sizeBytes}`);
     if (typeof artifact?.sizeBytes === 'number') params.set('vsize', String(artifact.sizeBytes));
-    return gatewayResourceUrl(
-      withArtifactBundleDigest(
-        `/api/run-artifact?${params.toString()}`,
-        artifact?.bundleDigest ?? this._payload?.prPackage?.artifactBundle?.bundleDigest,
+    return gatewayContentMediaUrl(
+      gatewayResourceUrl(
+        withArtifactBundleDigest(
+          `/api/run-artifact?${params.toString()}`,
+          artifact?.bundleDigest ?? this._payload?.prPackage?.artifactBundle?.bundleDigest,
+        ),
       ),
+      artifact && { path, ...artifact },
     );
   }
 
@@ -572,11 +599,75 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       : artifact
         ? ''
         : this._fileDiff;
-    this._diffModalUrl =
-      !this._usesMockData && artifact ? this._artifactUrl(artifact.path, artifact) : '';
+    this._diffModalUrl = '';
     this._diffModalArtifactPath = artifact?.path ?? '';
     this._diffModalOpen = true;
     this._syncViewStateToHash();
+    if (!this._usesMockData && artifact) this._loadDiffModalArtifact(artifact);
+  }
+
+  /** The package diff opens from held bytes; the modal reads its URL only when they are missing. */
+  _loadDiffModalArtifact(artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'sizeBytes'>): void {
+    const snapshot = this._payload?.prPackage?.reviewSnapshot;
+    if (!snapshot?.diffHash || artifact.path !== snapshot.diffPath) {
+      this._diffModalUrl = this._artifactUrl(artifact.path, artifact);
+      return;
+    }
+    void this._packageDiffText().then((text) => {
+      if (!this._diffModalOpen || this._diffModalArtifactPath !== artifact.path) return;
+      if (text !== undefined) this._diffModalText = text;
+      else this._diffModalUrl = this._artifactUrl(artifact.path, artifact);
+    });
+  }
+
+  /**
+   * Content rules 1 and 2: the package's retained diff by `diffHash`. Held bytes come first;
+   * while connected, the retained artifact is read and kept as opened.
+   */
+  async _packageDiffText(): Promise<string | undefined> {
+    const prPackage = this._payload?.prPackage;
+    const snapshot = prPackage?.reviewSnapshot;
+    if (!snapshot?.diffHash) return undefined;
+    const key = { kind: 'diff' as const, id: snapshot.diffHash };
+    const held = await openHeldText(key);
+    if (held !== undefined || !snapshot.diffPath || gateway.connectionState !== 'connected')
+      return held;
+    const keep = openedContentKeeper('gate');
+    try {
+      const data = await fetchRunArtifactBytes({
+        runId: this.runId,
+        path: snapshot.diffPath,
+        bundleDigest: prPackage?.artifactBundle?.bundleDigest,
+      });
+      keep(key, data, snapshot.untrackedFiles);
+      return new TextDecoder().decode(data);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Lists the package diff's files in place of the slot diff. False when it is not available. */
+  async _showPackageDiff(): Promise<boolean> {
+    const captured = this._queries.capture();
+    const packageHash = this._payload?.prPackage?.packageHash;
+    const text = await this._packageDiffText();
+    if (
+      text === undefined ||
+      !captured.ownsView() ||
+      this._payload?.prPackage?.packageHash !== packageHash
+    )
+      return false;
+    this._heldDiff = text;
+    this._diffError = '';
+    this._diffFiles = heldDiffFiles(text);
+    const selected = visibleDiffSelection(this._diffSplit().visible, this._selectedFile);
+    if (selected) {
+      void this._selectFile(selected);
+    } else {
+      this._selectedFile = '';
+      this._fileDiff = '';
+    }
+    return true;
   }
 
   _primaryDiffArtifact(payload: ReadyGatePayload): ArtifactRef | undefined {
@@ -602,6 +693,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (!this.slotId || gateway.connectionState !== 'connected') {
       this._recoveryPhase = 'stale';
       this._recoveryMessage = 'Waiting for gateway to restore ready-state data…';
+      void this._showPackageDiff();
       return;
     }
     const epoch = currentRecoveryEpoch();
@@ -633,11 +725,13 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         ),
         (next) => {
           if (!current()) return;
+          this._heldDiff = undefined;
           this._diffFiles = next.files;
           this._diffTestPatterns = next.testFilePatterns ?? null;
         },
       );
       if (!current() || epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      this._heldDiff = undefined;
       this._diffError = '';
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
@@ -654,12 +748,16 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       if (!current() || epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       console.error('[ready-workspace] branch diff failed:', err);
       if (this._payload?.prPackage) {
-        this._diffFiles = [];
-        this._diffTestPatterns = null;
-        this._selectedFile = '';
-        this._fileDiff = '';
-        this._diffError =
-          'Live slot diff is unavailable. Review the immutable package snapshot and artifacts above; retry diff after the slot is reachable.';
+        const shown = await this._showPackageDiff();
+        if (!current() || epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+        if (!shown) {
+          this._diffFiles = [];
+          this._diffTestPatterns = null;
+          this._selectedFile = '';
+          this._fileDiff = '';
+          this._diffError =
+            'Live slot diff is unavailable. Review the immutable package snapshot and artifacts above; retry diff after the slot is reachable.';
+        }
         this._recoveryPhase = 'live';
         this._recoveryMessage = '';
         return;
@@ -719,11 +817,17 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._fileDiff = '';
     const show = (diff: string) => {
       this._fileDiff = diff;
-      if (this._diffModalOpen && !this._diffModalUrl) {
+      // Only a modal showing the selected file follows it; an artifact's modal keeps its diff.
+      if (this._diffModalOpen && !this._diffModalArtifactPath) {
         this._diffModalTitle = `${workspaceArtifactBasename(filePath)} diff`;
         this._diffModalText = diff;
       }
     };
+    if (this._heldDiff !== undefined) {
+      show(heldFileDiff(this._heldDiff, filePath) ?? '');
+      this._fileDiffLoading = false;
+      return;
+    }
     this._reads.releaseMethods([Methods.GIT_DIFF]);
     try {
       const result = await this._reads.read<GitDiffResult>(
@@ -742,7 +846,12 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       show(result.diff);
     } catch (err) {
       if (!current()) return;
-      this._diffError = err instanceof Error ? err.message : String(err);
+      // The file's section of the package diff stands in for an unreadable slot diff.
+      const held = await this._packageDiffText();
+      const section = held === undefined ? undefined : heldFileDiff(held, filePath);
+      if (!current()) return;
+      if (section !== undefined) show(section);
+      else this._diffError = err instanceof Error ? err.message : String(err);
     } finally {
       if (captured.ownsView() && this._fileDiffRequest === request) this._fileDiffLoading = false;
     }

@@ -40,12 +40,14 @@ import {
 
 import { notify as browserNotify } from './utils/notifications.js';
 import { safeLsGet, safeLsRemove } from './utils/storage.js';
+import { contentPrefetchTargets } from './content-prefetch.js';
 import { type ConnectionState, gateway } from './gateway-client.js';
 import {
   getResourceCache,
   getResourceWorkspaceAccess,
   getResourceWorkspaceKey,
   initializeResourceCache,
+  setContentPrefetchTargets,
   subscribeResourceCache,
 } from './resource-cache.js';
 import {
@@ -447,6 +449,13 @@ export const queueQuery = resourceQuery<DispatchQueueListResult>(Methods.DISPATC
 export const projectsQuery = resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS);
 export const prsQuery = resourceQuery<PRListResult>(Methods.PR_LIST);
 
+/** Stacked runs compare with their parent branch, others with the project's default branch. */
+function contentPrefetchSlotBase(run: Run): string | undefined {
+  return (
+    run.stack?.retargetedTo ?? run.stack?.baseBranch ?? state.projectDefaultBranches[run.project]
+  );
+}
+
 let collectionCache: GatewayResourceCache | undefined;
 let collectionWorkspaceKey: string | undefined;
 let collectionFarm = false;
@@ -483,12 +492,18 @@ function bindFarmCollections(): void {
   state.queueItems = [];
   state.projectDefaultBranches = {};
   state.projectSlotTracking = {};
+  setContentPrefetchTargets([]);
   if (!cache || !farm) {
     notify();
     return;
   }
   if (gateway.connectionState !== 'connected') state.workspaceAccess = 'farm';
   const current = () => collectionCache === cache && collectionWorkspaceKey === workspaceKey;
+  const prefetchTargetsChanged = () =>
+    setContentPrefetchTargets(
+      contentPrefetchTargets(state.decisions, cache.read(activeRunsQuery).data?.runs ?? []),
+      contentPrefetchSlotBase,
+    );
   collectionObservers.push(
     cache.observe(prsQuery, (result) => {
       if (!current()) return;
@@ -584,6 +599,7 @@ function bindFarmCollections(): void {
     state.runProjectAnalytics = result.data?.projectAnalytics ?? [];
     state.hydrated = { ...state.hydrated, runs: result.status !== 'loading' };
     state.bootstrapFailed = { ...state.bootstrapFailed, runs: Boolean(result.error) };
+    prefetchTargetsChanged();
     notify();
   };
   collectionObservers.push(cache.observe(runHistoryQuery, observeRuns));
@@ -607,6 +623,7 @@ function bindFarmCollections(): void {
               attention: true,
             });
       }
+      prefetchTargetsChanged();
       notify();
     }),
   );

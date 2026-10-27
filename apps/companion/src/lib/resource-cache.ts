@@ -3,11 +3,19 @@ import { AppState } from 'react-native';
 
 import { ResourceCacheOwner, resourceIdentityStorageKey } from '@farmslot/local-store';
 import { createNativeSqliteResourceStore } from '@farmslot/local-store/native';
-import type { GatewayResourceCache } from '@farmslot/protocol/client-cache';
+import {
+  createResourceCacheTransport,
+  type GatewayResourceCache,
+  type ResourceConnectionInputs,
+} from '@farmslot/protocol/client-cache';
 
 import { useConnectionStore } from '../store/connection';
 
+import { startContentPrefetch } from './content-prefetch';
+import { fetchRunArtifactBytes } from './held-content';
+
 let notice: string | undefined;
+let prefetch: { cache: GatewayResourceCache; stop: () => void } | undefined;
 let stopStore: (() => void) | undefined;
 let stopAppState: (() => void) | undefined;
 const listeners = new Set<() => void>();
@@ -37,25 +45,58 @@ const owner = new ResourceCacheOwner({
   },
 });
 owner.subscribe(notify);
+owner.subscribe(bindPrefetch);
 
-function sync(): void {
+function connectionInputs(): ResourceConnectionInputs {
   const state = useConnectionStore.getState();
   const client = state.client;
   const connected =
     client?.connectionState === 'connected' && client.gatewayUrl === state.gatewayUrl;
+  return {
+    id: client?.connectionGeneration ?? 0,
+    connected,
+    foreground: AppState.currentState === 'active',
+    gatewayUrl: state.gatewayUrl,
+    profileId: state.activeProfileId || undefined,
+    authentication: connected ? client?.authenticatedConnection : undefined,
+    reason: client?.resourceConnectionReason,
+  };
+}
+
+function sync(): void {
+  const state = useConnectionStore.getState();
   owner.update({
-    client,
+    client: state.client,
     signedOut: state.signedOut,
-    connection: {
-      id: client?.connectionGeneration ?? 0,
-      connected,
-      foreground: AppState.currentState === 'active',
-      gatewayUrl: state.gatewayUrl,
-      profileId: state.activeProfileId || undefined,
-      authentication: connected ? client?.authenticatedConnection : undefined,
-      reason: client?.resourceConnectionReason,
-    },
+    connection: connectionInputs(),
   });
+}
+
+/** One content prefetcher per persistent cache; it stops when that cache is retired. */
+function bindPrefetch(): void {
+  const cache = owner.cache;
+  if (prefetch?.cache === cache) return;
+  prefetch?.stop();
+  prefetch = undefined;
+  const client = useConnectionStore.getState().client;
+  if (!cache || !client) return;
+  prefetch = {
+    cache,
+    stop: startContentPrefetch({
+      cache,
+      transport: createResourceCacheTransport(client, connectionInputs),
+      request: (method, params, signal) => client.request(method, params, undefined, { signal }),
+      readArtifact(artifact, signal) {
+        const state = useConnectionStore.getState();
+        return fetchRunArtifactBytes(
+          state.gatewayUrl,
+          state.activeProfileHttpAuthHeaders,
+          artifact,
+          signal,
+        );
+      },
+    }),
+  };
 }
 
 export function initializeNativeResourceCache(): () => void {

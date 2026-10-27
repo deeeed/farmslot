@@ -7,6 +7,7 @@ import { customElement } from 'lit/decorators.js';
 
 import type {
   ArtifactRef,
+  GitBranchDiffFile,
   GitBranchDiffResult,
   GitDiffResult,
   GitShowResult,
@@ -37,7 +38,17 @@ import '../shared/step-artifacts.js';
 import '../shared/diff-viewer-modal.js';
 import './recipe-output-panel.js';
 
+import { fetchRunArtifactBytes } from '../../content-prefetch.js';
 import { gateway } from '../../gateway-client.js';
+import {
+  blobKey,
+  frozenDiffAlias,
+  heldBlobId,
+  heldDiffFiles,
+  heldFileDiff,
+  openedContentKeeper,
+  openHeldText,
+} from '../../held-content.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
 import { renderMarkdown } from '../../utils/markdown.js';
@@ -102,6 +113,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   private _recoveryRequest?: object;
   private _restoreReviewSource = false;
   private _proposeScope?: { current(): boolean };
+  /** The review's held diff, listed while the live or saved source cannot be read. */
+  private _heldDiff?: string;
 
   get _usesMockData(): boolean {
     return window.location.hash.startsWith('#dev/');
@@ -114,6 +127,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   _retireReviewScope(): void {
     this._commandRequest = undefined;
     this._reads.clear();
+    this._heldDiff = undefined;
     this._recoveryRequest = undefined;
     this._posting = false;
     this._refreshing = false;
@@ -140,6 +154,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._commentFileLoading = false;
     this._diffModalOpen = false;
     this._diffModalUrl = '';
+    this._diffModalText = '';
     this._lightboxOpen = false;
     this._artifactLightboxItems = null;
     this._recipeRunning = false;
@@ -148,6 +163,70 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private get _actionsPaused(): boolean {
     return this.readOnly || this._isRecovering || (!this._usesMockData && !this._queries.ready);
+  }
+
+  /** Offline with the review diff held: findings stay readable while actions wait. */
+  private get _readingHeldDiff(): boolean {
+    return this._recoveryPhase === 'stale' && this._heldDiff !== undefined;
+  }
+
+  /**
+   * The review's diff by identity: a saved review's frozen commits by alias, then the retained
+   * input diff by `diffHash`. With `fetch`, a connected client reads the retained diff and keeps
+   * it as opened.
+   */
+  private async _reviewDiffText(fetch: boolean): Promise<string | undefined> {
+    const snapshot = this._payload?.reviewSnapshot;
+    const run = this._queries.run.state.data?.run;
+    const subject = run?.id === this.runId ? run.reviewWorkspaceSubject : undefined;
+    const base = subject?.baseSha ?? snapshot?.baseSha;
+    const head = subject?.headSha ?? snapshot?.headSha;
+    if (this.workspaceView && this.runId && base && head) {
+      const frozen = await openHeldText(frozenDiffAlias(this.runId, base, head));
+      if (frozen !== undefined) return frozen;
+    }
+    if (!snapshot?.diffHash) return undefined;
+    const key = { kind: 'diff' as const, id: snapshot.diffHash };
+    const held = await openHeldText(key);
+    if (held !== undefined || !fetch || !snapshot.diffPath) return held;
+    if (gateway.connectionState !== 'connected') return undefined;
+    const keep = openedContentKeeper('gate');
+    try {
+      const data = await fetchRunArtifactBytes({ runId: this.runId, path: snapshot.diffPath });
+      keep(key, data, snapshot.untrackedFiles);
+      return new TextDecoder().decode(data);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Lists the review's diff from its bytes. False when they are not available. */
+  private async _showReviewDiff(fetch: boolean): Promise<boolean> {
+    const captured = this._queries.capture();
+    const text = await this._reviewDiffText(fetch);
+    if (text === undefined || !captured.ownsView()) return false;
+    this._heldDiff = text;
+    this._diffError = '';
+    this._diffFiles = heldDiffFiles(text);
+    await this._selectListedFile(this._diffFiles);
+    return true;
+  }
+
+  /** The hash's file, else the first listed file with comments, else the first listed file. */
+  private async _selectListedFile(files: GitBranchDiffFile[]): Promise<void> {
+    const visible = this._testFilter.split(files).visible;
+    const { source } = parseReviewWorkspaceHashState();
+    const first =
+      visible.find((f) => f.path === source?.file) ??
+      visible.find((f) => this._commentCountByFile.has(f.path)) ??
+      visible[0];
+    if (first) {
+      await this._selectFile(first.path, false);
+    } else {
+      // Nothing listed: drop a previous selection so showing tests loads this diff's file.
+      this._selectedFile = '';
+      this._fileDiff = '';
+    }
   }
 
   private _beginReviewCommand(actionId?: string) {
@@ -274,11 +353,23 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       );
     if (!diffPath) return;
     this._diffModalTitle = `Review input ${this._payload?.reviewSnapshot?.headSha?.slice(0, 7) ?? 'diff'}`;
-    this._diffModalUrl =
+    const url =
       this._payload?.artifactUrls?.[diffPath] ??
       this._payload?.artifactUrls?.[workspaceArtifactBasename(diffPath)] ??
       runArtifactUrl(this.runId, { path: diffPath });
+    this._diffModalText = '';
     this._diffModalOpen = true;
+    if (diffPath !== this._payload?.reviewSnapshot?.diffPath) {
+      this._diffModalUrl = url;
+      return;
+    }
+    // The retained diff opens from held bytes; the modal reads the URL only when they are missing.
+    this._diffModalUrl = '';
+    void this._reviewDiffText(true).then((text) => {
+      if (!this._diffModalOpen || this._diffModalUrl) return;
+      if (text !== undefined) this._diffModalText = text;
+      else this._diffModalUrl = url;
+    });
   }
 
   /** Map of file path → comments for that file */
@@ -436,6 +527,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     if (gateway.connectionState !== 'connected') {
       this._recoveryPhase = 'stale';
       this._recoveryMessage = 'Waiting for gateway to resume review context…';
+      void this._showReviewDiff(false);
       return;
     }
     // Coalesce double-fire from willUpdate + updated lifecycles so we don't
@@ -509,6 +601,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         }
       }
 
+      // A saved review's frozen diff never changes, so held bytes need no read.
+      if (this.workspaceView && (await this._showReviewDiff(false))) return;
       this._reads.releaseMethods([Methods.GIT_BRANCH_DIFF]);
       const result = this.workspaceView
         ? await this._readSavedRange<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF)
@@ -526,25 +620,15 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
             },
           );
       if (!current()) return;
+      this._heldDiff = undefined;
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
-      // Auto-select the first listed file with comments, or the first listed file
-      const visible = this._testFilter.split(result.files).visible;
-      const { source } = parseReviewWorkspaceHashState();
-      const first =
-        visible.find((f) => f.path === source?.file) ??
-        visible.find((f) => this._commentCountByFile.has(f.path)) ??
-        visible[0];
-      if (first) {
-        await this._selectFile(first.path, false);
-      } else {
-        // Nothing listed: drop a previous selection so showing tests loads this diff's file.
-        this._selectedFile = '';
-        this._fileDiff = '';
-      }
+      await this._selectListedFile(result.files);
     } catch (err) {
       if (!current()) return;
       console.error('[review-workspace] branch diff failed:', err);
+      if (await this._showReviewDiff(true)) return;
+      if (!current()) return;
       if (this.workspaceView) {
         // Saved evidence is independent of the Git source. Keep it readable when the source is unavailable.
         this._diffError = err instanceof Error ? err.message : String(err);
@@ -660,6 +744,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._fileDiffLoading = true;
     this._fileDiff = '';
     const current = () => captured.current() && epoch === this._sourceLoadEpoch;
+    if (this._heldDiff !== undefined) {
+      this._fileDiff = heldFileDiff(this._heldDiff, path) ?? '';
+      this._fileDiffLoading = false;
+      return;
+    }
     this._reads.releaseMethods([Methods.GIT_DIFF]);
     try {
       const result = this.workspaceView
@@ -678,10 +767,13 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
           );
       if (current()) this._fileDiff = result.diff;
     } catch (err) {
-      if (captured.current() && epoch === this._sourceLoadEpoch) {
-        this._fileDiff = '';
-        this._diffError = err instanceof Error ? err.message : String(err);
-      }
+      if (!current()) return;
+      // The file's section of the review diff stands in for an unreadable source.
+      const held = await this._reviewDiffText(true);
+      const section = held === undefined ? undefined : heldFileDiff(held, path);
+      if (!current()) return;
+      this._fileDiff = section ?? '';
+      if (section === undefined) this._diffError = err instanceof Error ? err.message : String(err);
     } finally {
       if (captured.ownsView() && epoch === this._sourceLoadEpoch) this._fileDiffLoading = false;
     }
@@ -1015,6 +1107,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       <diff-viewer-modal
         .open=${this._diffModalOpen}
         .title=${this._diffModalTitle}
+        .diffText=${this._diffModalText}
         .artifactUrl=${this._diffModalUrl}
         .testPatterns=${this._diffTestPatterns}
         @diff-modal-close=${() => {
@@ -1248,7 +1341,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       selectedFile: this._selectedFile,
       findingOpen: this._selectedCommentIdx >= 0 || Boolean(this._commentFileError),
       commentCounts: this._commentCountByFile,
-      recovering: this._isRecovering,
+      recovering: this._isRecovering && !this._readingHeldDiff,
       selectFile: (path) => this._selectFile(path),
       renderCodePanel: () => this._renderCodePanel(),
     });
@@ -1266,7 +1359,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private async _navigateToComment(c: ReviewLineComment, idx: number, syncHash = true) {
-    if (this._isRecovering) return;
+    if (this._isRecovering && !this._readingHeldDiff) return;
     const epoch = ++this._sourceLoadEpoch;
     const captured = this._queries.capture();
     this._selectedCommentIdx = idx;
@@ -1284,7 +1377,25 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._commentFileLoading = false;
       return;
     }
+    const show = (content: string) => {
+      this._commentFileContent = content;
+      const context = reviewedFindingContext(content, c.line);
+      if (context.available) this._revealLine = c.line;
+      else this._commentFileError = context.note;
+    };
+    // The reviewed file by its blob id in the review diff, held on this device.
+    const diff = this._heldDiff ?? (await this._reviewDiffText(false));
+    const id = diff === undefined ? undefined : heldBlobId(diff, c.path, 'head');
+    const held = id ? await openHeldText({ kind: 'blob', id }) : undefined;
+    if (!captured.ownsView() || epoch !== this._sourceLoadEpoch) return;
+    if (held !== undefined || gateway.connectionState !== 'connected') {
+      if (held !== undefined) show(held);
+      else this._commentFileError = 'Reviewed source is not held on this device.';
+      this._commentFileLoading = false;
+      return;
+    }
     this._reads.releaseMethods([Methods.GIT_SHOW]);
+    const keep = openedContentKeeper('gate');
     try {
       const result = this.workspaceView
         ? await this._readSavedSource(reviewedHead, c.path)
@@ -1295,10 +1406,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
             () => {},
           );
       if (!captured.current() || epoch !== this._sourceLoadEpoch) return;
-      this._commentFileContent = result.content;
-      const context = reviewedFindingContext(result.content, c.line);
-      if (context.available) this._revealLine = c.line;
-      else this._commentFileError = context.note;
+      keep(blobKey(result.content), result.content);
+      show(result.content);
     } catch (error) {
       if (captured.current() && epoch === this._sourceLoadEpoch)
         this._commentFileError =

@@ -17,6 +17,7 @@ import { MobileDiffViewer } from '../../components/MobileDiffViewer';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { observeNativeDiffFrame } from '../../farmslot/run-collections-proof';
+import { useGateDiffContent } from '../../hooks/useHeldContent';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   type ArtifactManifestEntry,
@@ -169,12 +170,19 @@ export default function DiffViewerScreen() {
     ? requestedDiffPath
     : (diffArtifact?.path ?? '');
   const focusedFilePath = diffFocusedFilePathFromRequest(requestedDiffPath, manifest);
+  // An open gate shows its retained package diff, held or verified when opened, before any
+  // inferred diff artifact. Without it the screen keeps its artifact and workspace paths.
+  const gateDiff = useGateDiffContent(
+    selectedRecipeRun || requestedPathIsDiffArtifact ? null : run,
+  );
+  const gateDiffText = gateDiff.status === 'ready' ? gateDiff.text : '';
+  const gateDiffActive = Boolean(gateDiffText) || gateDiff.status === 'loading';
   const recipeRunUrlParam =
     selectedRecipeRun && selectedRecipeRun.groupKind !== CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
       ? selectedRecipeRun.id
       : null;
   const diffUrl =
-    runId && diffArtifactPath
+    !gateDiffActive && runId && diffArtifactPath
       ? artifactUrlForEntry(
           gatewayUrl,
           runId,
@@ -185,7 +193,9 @@ export default function DiffViewerScreen() {
           },
         )
       : null;
-  const canLoadWorkspaceDiff = Boolean(!selectedRecipeRun && run?.slotId && !diffUrl);
+  const canLoadWorkspaceDiff = Boolean(
+    !gateDiffActive && !selectedRecipeRun && run?.slotId && !diffUrl,
+  );
   const workspaceDiffQuery = useMemo(
     () =>
       canLoadWorkspaceDiff && run?.slotId
@@ -206,7 +216,9 @@ export default function DiffViewerScreen() {
     : null;
   const recipeAvailable = recipeArtifactCount === null ? undefined : recipeArtifactCount > 0;
   const runArtifactCount = run ? extractRunArtifactManifest(run).length : manifest.length;
-  const diffAvailable = Boolean(diffArtifactPath || canLoadWorkspaceDiff || workspaceDiffSource);
+  const diffAvailable = Boolean(
+    gateDiffActive || diffArtifactPath || canLoadWorkspaceDiff || workspaceDiffSource,
+  );
   const primaryDecision = selectPrimaryWorkspaceDecision(run);
   const readyDecision = selectReadyWorkspaceDecision(run);
   const reviewGateDecision = selectReviewGateWorkspaceDecision(run);
@@ -311,7 +323,15 @@ export default function DiffViewerScreen() {
           readyDecisionId={readyDecision?.id ?? null}
           reviewDecisionId={reviewGateDecision?.id ?? null}
           retroDecisionId={retroDecision?.id ?? null}
-          diffSource={diffUrl ? 'artifact' : canLoadWorkspaceDiff ? 'live workspace' : 'missing'}
+          diffSource={
+            gateDiffText
+              ? 'gate package'
+              : diffUrl
+                ? 'artifact'
+                : canLoadWorkspaceDiff
+                  ? 'live workspace'
+                  : 'missing'
+          }
           workspaceRouteContext={workspaceRouteContext}
         />
         <ResourceReadStatus observation={workspaceDiffObservation} label="workspace diff" />
@@ -333,7 +353,16 @@ export default function DiffViewerScreen() {
           </Pressable>
         ) : null}
         {pathParamError ? <Text style={styles.errorText}>{pathParamError}</Text> : null}
-        {diffUrl ? (
+        {gateDiffText ? (
+          <MobileDiffViewer
+            title={focusedFilePath ? `${focusedFilePath} · gate package` : 'Gate package diff'}
+            diffText={gateDiffText}
+            initialPath={focusedFilePath}
+            onOpenEvidence={openEvidenceFromDiff}
+          />
+        ) : gateDiffActive ? (
+          <Text style={styles.emptyText}>Loading gate package diff…</Text>
+        ) : diffUrl ? (
           <MobileDiffViewer
             title={diffArtifactPath.split('/').pop() ?? 'Diff'}
             diffUrl={diffUrl}

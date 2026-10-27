@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The owner tab prefetches pending gates, then active runs, into the persistent store and pauses while hidden. Gate package diffs and evidence images open from held content offline; live reads are verified before they are shown or stored.
+
 - PR details, slot PR links, review threads, runner seats, model catalogs and visible models update from shared gateway observations; Check GitHub, seat Refresh and CI-timeout checks stay explicit (seat Refresh is disabled offline), a failed slot PR lookup no longer stalls changed files, and the page-local seat and visible-model caches are removed.
 
 - Observe gateway versions and checkout progress through the shared cache, retaining explicit remote checks and current-state update guards.

@@ -3,8 +3,49 @@ import { AsyncDirective } from 'lit/async-directive.js';
 import { directive } from 'lit/directive.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
+import { isRunArtifactImagePath } from '@farmslot/protocol';
+
 import { readGatewayAuth } from '../../gateway-url.js';
 import { gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+
+/** Content rule 4: evidence images up to 2 MB are content by their manifest `sha256`. */
+const HELD_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_HELD_MEDIA_URLS = 2000;
+const heldMediaIds = new Map<string, string>();
+
+/**
+ * Names the manifest `sha256` behind an evidence image URL, so the media seam can show held
+ * bytes in its place and keep what it loads. Returns the URL unchanged.
+ */
+export function gatewayContentMediaUrl(
+  url: string,
+  artifact: { path: string; sha256?: string; sizeBytes?: number } | undefined,
+): string {
+  const sha256 = artifact?.sha256;
+  if (
+    !sha256 ||
+    !/^[0-9a-f]{64}$/.test(sha256) ||
+    !isRunArtifactImagePath(artifact.path) ||
+    (artifact.sizeBytes ?? 0) > HELD_IMAGE_BYTES
+  )
+    return url;
+  heldMediaIds.delete(url);
+  heldMediaIds.set(url, sha256);
+  if (heldMediaIds.size > MAX_HELD_MEDIA_URLS)
+    heldMediaIds.delete(heldMediaIds.keys().next().value!);
+  return url;
+}
+
+function objectMedia(blob: Blob): { url: string; dispose(): void } {
+  // Raw markup must not gain the dashboard's origin when opened as a blob.
+  const safeBlob = /^(?:text\/html|application\/(?:xhtml\+xml|xml)|image\/svg\+xml)/i.test(
+    blob.type,
+  )
+    ? new Blob([blob], { type: 'text/plain' })
+    : blob;
+  const objectUrl = URL.createObjectURL(safeBlob);
+  return { url: objectUrl, dispose: () => URL.revokeObjectURL(objectUrl) };
+}
 
 function hasGatewayMediaAuth(): boolean {
   const { token, password } = readGatewayAuth();
@@ -20,12 +61,25 @@ export function requiresGatewayMediaHeaders(url: string): boolean {
   return parsed.origin === origin && parsed.pathname.startsWith('/api/');
 }
 
-/** The owner releases the object URL when its view closes or changes source. */
+/**
+ * Held artifact bytes stand in for the URL, offline and online; a live load is kept as opened.
+ * The owner releases the object URL when its view closes or changes source.
+ */
 export async function loadGatewayMedia(
   url: string,
   signal: AbortSignal,
 ): Promise<{ url: string; dispose(): void }> {
+  const sha256 = heldMediaIds.get(url);
+  // Loaded only when content can be held, so plain media keeps a light import graph.
+  const held = sha256 ? await import('../../held-content.js') : undefined;
+  const key = sha256 ? { kind: 'artifact' as const, id: sha256 } : undefined;
+  if (held && key) {
+    const data = await held.openHeldContent(key);
+    signal.throwIfAborted();
+    if (data) return objectMedia(new Blob([new Uint8Array(data)]));
+  }
   if (!requiresGatewayMediaHeaders(url)) return { url, dispose() {} };
+  const keep = held?.openedContentKeeper('gate');
   const resource = new URL(url, gatewayHttpOrigin());
   resource.searchParams.delete('token');
   resource.searchParams.delete('password');
@@ -33,14 +87,9 @@ export async function loadGatewayMedia(
   if (!response.ok) throw new Error(`Could not load gateway media (${response.status}).`);
   const blob = await response.blob();
   signal.throwIfAborted();
-  // Raw markup must not gain the dashboard's origin when opened as a blob.
-  const safeBlob = /^(?:text\/html|application\/(?:xhtml\+xml|xml)|image\/svg\+xml)/i.test(
-    blob.type,
-  )
-    ? new Blob([blob], { type: 'text/plain' })
-    : blob;
-  const objectUrl = URL.createObjectURL(safeBlob);
-  return { url: objectUrl, dispose: () => URL.revokeObjectURL(objectUrl) };
+  if (keep && key && blob.size <= HELD_IMAGE_BYTES)
+    keep(key, new Uint8Array(await blob.arrayBuffer()));
+  return objectMedia(blob);
 }
 
 type GatewayMediaFormat = 'url' | 'html';
@@ -56,7 +105,11 @@ export class GatewayMedia extends AsyncDirective {
   render(url: string, format: GatewayMediaFormat = 'url') {
     this.lastUrl = url;
     this.lastFormat = format;
-    if (!(format === 'html' ? hasGatewayMediaAuth() : requiresGatewayMediaHeaders(url))) {
+    if (
+      !(format === 'html'
+        ? hasGatewayMediaAuth()
+        : requiresGatewayMediaHeaders(url) || heldMediaIds.has(url))
+    ) {
       this.release();
       this.source = undefined;
       return this.value(url, format);

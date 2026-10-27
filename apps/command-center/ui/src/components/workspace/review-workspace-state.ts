@@ -107,6 +107,7 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @state() _diffModalOpen = false;
   @state() _diffModalTitle = 'Review input diff';
   @state() _diffModalUrl = '';
+  @state() _diffModalText = '';
   @state() _splitPct = 50; // review takes this % of available height
   readonly _splitResizer = new VerticalSplitResizer({
     getSplitPct: () => this._splitPct,
