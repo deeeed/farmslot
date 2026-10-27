@@ -1012,7 +1012,7 @@ export async function executeFindSlotStep(
   const automaticLoads = run.slotId ? undefined : automaticSlotLoads(pressureDecisions);
   if (automaticLoads?.size) {
     inputs.hostLoadSelection = Object.fromEntries(automaticLoads);
-    // Persist exclusions even when every allowed node is overloaded and FIND_SLOT fails.
+    // Persist exclusions before waiting when every allowed node is overloaded.
     updateRunStep(runId, 'find-slot', { inputs });
     await persistRunNow(getRun(runId)!, 'find-slot host load selection');
   }
@@ -1399,14 +1399,35 @@ export async function executeFindSlotStep(
     }
   }
 
-  if (
-    !run.slotId &&
-    freeSlots.length > 0 &&
-    freeSlots.every((slot) => automaticSlotLoadBlocker(slot, selectionOptions))
-  ) {
-    throw new Error(
-      `No allowed free slot below the automatic load threshold: ${[...new Set(freeSlots.map((slot) => automaticSlotLoadBlocker(slot, selectionOptions)))].join(' ')}`,
+  const loadBlockedSlots = freeSlots.filter((slot) => {
+    const selected = optionsFor(slot);
+    return (
+      selected &&
+      automaticSlotLoadBlocker(slot, selected) &&
+      !validateSlotForDispatch(slot, fleet.slots, { ...selected, automaticLoads: undefined })
     );
+  });
+  if (!run.slotId && eligibleFreeSlots.length === 0 && loadBlockedSlots.length > 0) {
+    const reason = `Waiting for node load: ${[...new Set(loadBlockedSlots.map((slot) => automaticSlotLoadBlocker(slot, selectionOptions)))].join(' ')}`;
+    inputs.hostLoadWaitReason = reason;
+    updateRunStep(runId, 'find-slot', { inputs });
+    await awaitAsQueueTime(runId, 'find-slot', async () => {
+      let loads = automaticLoads;
+      while (
+        loadBlockedSlots.every((slot) => automaticSlotLoadBlocker(slot, { automaticLoads: loads }))
+      ) {
+        await delay(5_000);
+        if (runSupersededSince(getRun(runId), generation))
+          throw runChangedError(runId, loadBlockedSlots[0]!.slot);
+        loads = automaticSlotLoads(
+          capturePressureAdmissionDecisionsLightweight([
+            ...new Set(loadBlockedSlots.map((slot) => slot.machine)),
+          ]),
+        );
+      }
+    });
+    const result = await executeFindSlotStep(runId, getRun(runId)!, generation, context);
+    return { ...result, inputs: { ...result.inputs, hostLoadWaitReason: reason } };
   }
 
   // Human intervention when no good candidates exist

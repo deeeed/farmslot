@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
+import * as promiseTimers from 'node:timers/promises';
 
 import type { PressureAdmissionDecision, Run, SlotStatus } from '@farmslot/protocol';
 
@@ -73,6 +74,18 @@ let expectedTarget: string | undefined = branch;
 let pickerPayload: import('@farmslot/protocol').RunDecisionPayload | undefined;
 const liveRows = new Map<string, Record<string, unknown>>();
 let pressureDecisions = new Map<string, PressureAdmissionDecision>();
+const loadWaits: number[] = [];
+let afterLoadWait: (() => void) | undefined;
+mock.module('node:timers/promises', {
+  namedExports: {
+    ...promiseTimers,
+    setTimeout: async (ms: number) => {
+      loadWaits.push(ms);
+      assert.ok(afterLoadWait, 'unexpected timer in slot selection');
+      afterLoadWait();
+    },
+  },
+});
 let expectedSlot = 'macpro-mmt-1';
 const refreshedSlots: string[] = [];
 let cancelledHolder: Run | undefined;
@@ -260,6 +273,8 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   claims.length = 0;
   prHead = branch;
   pressureDecisions = new Map();
+  loadWaits.length = 0;
+  afterLoadWait = undefined;
   expectedSlot = 'macpro-mmt-1';
   refreshedSlots.length = 0;
   nudgeCandidates = [];
@@ -421,21 +436,45 @@ test('find-slot avoids overloaded allowed nodes and records the load decision be
   assert.equal(run.taskFile, null);
 });
 
-test('find-slot records why an all-overloaded allowlist cannot be selected', async () => {
+test('find-slot queues an all-overloaded allowlist until an allowed node cools', async (t) => {
   reset('fix-bug', 'TAT-4137');
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
   pressureDecisions = new Map([['macpro', loadDecision('macpro', 83 / 16)]]);
   run.allowedSlots = ['macpro-mmt-1'];
-  await assert.rejects(
-    executeFindSlotStep(run.id, run, 0, context),
-    /No allowed free slot below.*5.19 >= 1.50/,
-  );
-  assert.match(
-    JSON.stringify(run.steps.find((step) => step.name === 'find-slot')?.inputs),
-    /skipped for automatic selection/,
-  );
-  assert.deepEqual(claims, []);
-  assert.deepEqual(refreshedSlots, []);
+  afterLoadWait = () => {
+    const step = run.steps.find((step) => step.name === 'find-slot')!;
+    assert.ok(step.queuedSince);
+    assert.match(String(step.inputs?.hostLoadWaitReason), /5.19 >= 1.50/);
+    assert.deepEqual(claims, []);
+    assert.deepEqual(refreshedSlots, []);
+    assert.equal(run.taskFile, null);
+    now += 5_000;
+    pressureDecisions.set('macpro', loadDecision('macpro', 0.4));
+  };
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-1');
+  assert.deepEqual(loadWaits, [5_000]);
+  assert.deepEqual(claims, ['macpro-mmt-1']);
+  assert.equal(run.steps[0]!.queuedMs, 5_000);
+  assert.equal(run.steps[0]!.queuedSince, undefined);
 });
+
+for (const change of ['cancel', 'pause', 'replay'] as const) {
+  test(`find-slot stops its load wait after ${change} without claiming a slot`, async () => {
+    reset('fix-bug', 'TAT-4137');
+    pressureDecisions = new Map([['macpro', loadDecision('macpro', 83 / 16)]]);
+    run.allowedSlots = ['macpro-mmt-1'];
+    afterLoadWait = () => {
+      if (change === 'replay') run.engineState!.generation = 1;
+      else run.status = change === 'cancel' ? 'cancelled' : 'paused';
+    };
+    await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /changed while waiting/);
+    assert.deepEqual(loadWaits, [5_000]);
+    assert.deepEqual(claims, []);
+    assert.deepEqual(refreshedSlots, []);
+  });
+}
 
 test('an operator affinity-card pick retains explicit pressure policy on an overloaded alternative', async () => {
   reset('pr-complete', 'example-org/terminal#210');
