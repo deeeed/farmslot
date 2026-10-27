@@ -484,6 +484,36 @@ export async function getSlotHeadSha(slotId: string): Promise<string | null> {
   }
 }
 
+/** Bind the accepted CI-fix delivery and its primary worker to the same exact pane. */
+export async function recordCiFixRunnerSession(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  runner: string,
+  workerTarget: string,
+): Promise<void> {
+  const deliveryPane = await resolveExactTmuxWindowPane(vars, workerTarget);
+  const relaunched = await captureAndRecordRunnerSession({
+    vars,
+    runner,
+    runId,
+    role: 'ci-fix',
+    captureLabel: 'ci fix relaunch',
+    capture: { paneId: deliveryPane?.paneId ?? null, slotId: vars.slotId },
+  });
+  const relaunchedRun = getRun(runId);
+  const relaunchWorkerRole = primaryRoleForFlow(relaunchedRun?.flowType);
+  // Never fabricate a worker context the dispatch did not create.
+  if (relaunchedRun?.agentContexts?.some((ctx) => ctx.role === relaunchWorkerRole)) {
+    await recordRunnerSessionForRole({
+      runId,
+      role: relaunchWorkerRole,
+      session: relaunched,
+      paneId: deliveryPane?.paneId,
+      captureLabel: 'ci fix relaunch',
+    });
+  }
+}
+
 /** Check if all actionable comments are from bots (not human reviewers) */
 function allCommentsAreFromBots(comments: BotComment[]): boolean {
   return (
@@ -1032,27 +1062,7 @@ async function attemptInlineCIFix(
       // so this delivery owns a brand-new session that no earlier capture can
       // supply. Attribute it to the delivery pane and bind both the ci-fix role
       // and the worker role that now shares the pane.
-      const deliveryPane = await resolveExactTmuxWindowPane(vars, workerTarget);
-      const relaunched = await captureAndRecordRunnerSession({
-        vars,
-        runner,
-        runId,
-        role: 'ci-fix',
-        captureLabel: 'ci fix relaunch',
-        capture: { paneId: deliveryPane?.paneId ?? null, slotId },
-      });
-      const relaunchedRun = getRun(runId);
-      const relaunchWorkerRole = primaryRoleForFlow(relaunchedRun?.flowType);
-      // Never fabricate a worker context the dispatch did not create.
-      if (relaunchedRun?.agentContexts?.some((ctx) => ctx.role === relaunchWorkerRole)) {
-        await recordRunnerSessionForRole({
-          runId,
-          role: relaunchWorkerRole,
-          session: relaunched,
-          paneId: deliveryPane?.paneId,
-          captureLabel: 'ci fix relaunch',
-        });
-      }
+      await recordCiFixRunnerSession(vars, runId, runner, workerTarget);
     }
     mergeCIWatchOutputPatch(runId, {
       phase: 'waiting_for_worker',

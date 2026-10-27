@@ -581,6 +581,7 @@ function recoveryFixture() {
     },
     slot: { current_run_id: 'run-1', slot_epoch: 1 },
     sent: '',
+    prompt: '',
     mirrors: 0,
     records: 0,
     kills: 0,
@@ -605,8 +606,9 @@ function recoveryFixture() {
     resolveWorkerDispatchPrompt: async () =>
       'Follow the checklist in tasks/run-1/REVIEW.rev-claude.md.',
     resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
-    sendRunnerPostLaunchPrompt: async (_vars, pane) => {
+    sendRunnerPostLaunchPrompt: async (_vars, pane, _runner, prompt) => {
       state.sent = pane;
+      state.prompt = prompt;
     },
     captureRunnerSessionMetadata: async (_vars, _runner, _before, capture) => {
       assert.equal(state.sent, '%22');
@@ -650,6 +652,9 @@ test('review prompt recovery replaces the binding without mutating its stale sna
   assert.equal(f.state.run.agentContexts![0].runnerSessionPath, '/sessions/resumed.jsonl');
   assert.equal(f.state.run.agentContexts![0].target?.paneId, '%22');
   assert.equal(f.state.mirrors, 1);
+  assert.match(f.state.prompt, /REVIEW\.rev-claude\.md/);
+  assert.doesNotMatch(f.state.prompt, /review-feedback\.rev-claude\.md/);
+  assert.doesNotMatch(f.state.prompt, /SIGNAL\.json complete/);
 });
 
 test('review metadata failures defer and retry without killing accepted work', async () => {
@@ -693,6 +698,42 @@ test('review capture cannot write after cancellation, reassignment or a queued a
     assert.equal(f.state.mirrors, 0);
     assert.equal(f.state.kills, 0);
   }
+});
+
+test('review capture rejects an in-place run generation update', async () => {
+  const f = recoveryFixture();
+  f.deps.captureRunnerSessionMetadata = async () => {
+    Object.assign(f.state.run, { engineState: { generation: 2 } });
+    return { runnerSessionId: 'late-session', runnerSessionPath: '/late.jsonl' };
+  };
+  assert.equal(await f.recover(), 'indeterminate');
+  assert.equal(f.state.records, 0);
+  assert.equal(f.state.mirrors, 0);
+});
+
+test('review capture rechecks cancellation after its queued asynchronous slot read', async () => {
+  const f = recoveryFixture();
+  let reads = 0;
+  f.deps.readSlotRow = async () => {
+    if (++reads === 2) {
+      await Promise.resolve();
+      Object.assign(f.state.run, { status: 'cancelled' });
+    }
+    return f.state.slot;
+  };
+  assert.equal(await f.recover(), 'indeterminate');
+  assert.equal(f.state.records, 0);
+  assert.equal(f.state.mirrors, 0);
+});
+
+test('a generation change between the run write and mirror cannot certify recovery', async () => {
+  const f = recoveryFixture();
+  f.state.afterWrite = () => {
+    Object.assign(f.state.run, { engineState: { generation: 2 } });
+  };
+  assert.equal(await f.recover(), 'indeterminate');
+  assert.equal(f.state.records, 1);
+  assert.equal(f.state.mirrors, 0);
 });
 
 test('the slot mirror rechecks ownership after the run binding write', async () => {

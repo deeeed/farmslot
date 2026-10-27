@@ -575,13 +575,18 @@ export async function resumeReviewAgentPromptDelivery(
   const taskDir = path.posix.dirname(taskMdPath);
   const reviewTarget = targetForChecklistBasename(path.posix.basename(taskMdPath));
   const parentRun = dependencies.getRun(runId);
-  const original = parentRun?.agentContexts?.find((entry) => entry.id === context.id);
+  const expectedSlotId = parentRun?.slotId;
+  const expectedGeneration = parentRun?.engineState?.generation;
+  const original = structuredClone(
+    parentRun?.agentContexts?.find((entry) => entry.id === context.id),
+  );
   const slot = await dependencies.readSlotRow(vars.slotId);
+  const expectedEpoch = slot?.slot_epoch;
   const ownsSlot = (row: Readonly<Record<string, unknown>> | null) =>
     row?.current_run_id === runId &&
-    row.slot_epoch === slot?.slot_epoch &&
+    row.slot_epoch === expectedEpoch &&
     (!row.handoff_run_id || row.handoff_run_id === runId);
-  const currentAttempt = () => {
+  const currentAttempt = (expectedTarget: AgentContext['target'] = original?.target) => {
     const current = dependencies.getRun(runId);
     const reviewer = current?.agentContexts?.find((entry) => entry.id === context.id);
     return Boolean(
@@ -589,15 +594,15 @@ export async function resumeReviewAgentPromptDelivery(
       original &&
       reviewer &&
       !isTerminalRunStatus(current.status) &&
-      current.slotId === parentRun?.slotId &&
+      current.slotId === expectedSlotId &&
       current.slotId === vars.slotId &&
-      current.engineState?.generation === parentRun?.engineState?.generation &&
+      current.engineState?.generation === expectedGeneration &&
       (reviewer.status === 'working' || reviewer.status === 'launching') &&
       reviewer.attemptStartedAt === original.attemptStartedAt &&
       reviewer.signalAttemptId === original.signalAttemptId &&
       reviewer.taskFile === original.taskFile &&
       reviewer.runner === original.runner &&
-      JSON.stringify(reviewer.target) === JSON.stringify(original.target),
+      JSON.stringify(reviewer.target) === JSON.stringify(expectedTarget),
     );
   };
   if (
@@ -649,6 +654,7 @@ export async function resumeReviewAgentPromptDelivery(
         slotId: vars.slotId,
       });
       if (!session.runnerSessionId || !session.runnerSessionPath) return 'indeterminate';
+      const boundTarget = original.target ? { ...original.target, paneId: pane.paneId } : null;
       const recorded = await dependencies.recordRunnerSessionForRole({
         runId,
         session,
@@ -657,12 +663,16 @@ export async function resumeReviewAgentPromptDelivery(
         captureLabel: 'recovered reviewer prompt',
         paneId: pane.paneId,
         writeOptions: {
-          guard: async () =>
-            currentAttempt() && ownsSlot(await dependencies.readSlotRow(vars.slotId)),
-          mirrorIf: ownsSlot,
+          guard: async () => {
+            const currentSlot = await dependencies.readSlotRow(vars.slotId);
+            return currentAttempt() && ownsSlot(currentSlot);
+          },
+          mirrorIf: (row) => ownsSlot(row) && currentAttempt(boundTarget),
         },
       });
-      return recorded && ownsSlot(await dependencies.readSlotRow(vars.slotId))
+      if (!recorded) return 'indeterminate';
+      const currentSlot = await dependencies.readSlotRow(vars.slotId);
+      return currentAttempt(recorded.target) && ownsSlot(currentSlot)
         ? 'delivered'
         : 'indeterminate';
     } catch (error) {

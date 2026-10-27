@@ -55,7 +55,7 @@ const upsert: typeof contexts.upsertAgentContext = async (_id, _role, patch, opt
   const next = { ...prior, ...patch };
   run = {
     ...run,
-    agentContexts: run.agentContexts!.map((entry) => (entry.id === prior.id ? next : entry)),
+    agentContexts: [...run.agentContexts!.filter((entry) => entry.id !== prior.id), next],
   };
   return next;
 };
@@ -64,6 +64,7 @@ let captured: Awaited<ReturnType<typeof processes.captureRunnerSessionMetadata>>
   runnerSessionPath: '/resumed.jsonl',
 };
 let captureAttempts = 0;
+let failNextCapture = false;
 let sentPrompts = 0;
 let usageSession: string | null | undefined;
 let settledPath: string | null | undefined;
@@ -122,7 +123,11 @@ mock.module('../runners/session-process.js', {
     ...processes,
     probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
     captureRunnerSessionMetadata: async () => {
-      if (++captureAttempts === 1) throw new Error('transient session read timeout');
+      captureAttempts++;
+      if (failNextCapture) {
+        failNextCapture = false;
+        throw new Error('transient session read timeout');
+      }
       return captured;
     },
   },
@@ -185,6 +190,9 @@ const { runReviewAgent }: typeof import('./review-agent.js') = await import(
 );
 
 test('recovered review completion uses the refreshed binding while its original snapshot stays stale', async () => {
+  captureAttempts = 0;
+  sentPrompts = 0;
+  failNextCapture = true;
   const result = await runReviewAgent(
     vars,
     'claude',
@@ -211,6 +219,8 @@ test('recovered review completion uses the refreshed binding while its original 
 });
 
 test('the review-fix relaunch records the primary sibling before transcript creation', async () => {
+  failNextCapture = false;
+  captureAttempts = 0;
   captured = { runnerSessionId: null, runnerSessionPath: null };
   const worker: AgentContext = {
     ...original,
@@ -229,11 +239,37 @@ test('the review-fix relaunch records the primary sibling before transcript crea
     new URL('./orchestrator.ts?session-regression', import.meta.url).href
   );
   await recordReviewFixRunnerSession(vars, run.id, 'claude', 'slot-session:dev');
-  assert.deepEqual(
-    run.agentContexts!.map((entry) => [entry.id, entry.target?.paneId, entry.runnerSessionId]),
-    [
-      ['dev', '%22', null],
-      ['review-fix', '%22', null],
-    ],
+  for (const id of ['dev', 'review-fix']) {
+    const recorded = run.agentContexts!.find((entry) => entry.id === id);
+    assert.equal(recorded?.target?.paneId, '%22', id);
+    assert.equal(recorded?.runnerSessionId, null, id);
+  }
+});
+
+test('the CI-fix relaunch records the primary sibling before transcript creation', async () => {
+  captured = { runnerSessionId: null, runnerSessionPath: null };
+  failNextCapture = false;
+  captureAttempts = 0;
+  const worker: AgentContext = {
+    ...original,
+    id: 'dev',
+    role: 'dev',
+    reviewId: undefined,
+    runnerSessionId: null,
+    runnerSessionPath: null,
+    target: { session: 'slot-session', window: 'dev', pane: null, target: 'slot-session:dev' },
+  };
+  run = {
+    ...makeRun({ slotId: vars.slotId, flowType: 'dev' }),
+    agentContexts: [worker, { ...worker, id: 'ci-fix', role: 'ci-fix' }],
+  };
+  const { recordCiFixRunnerSession }: typeof import('../ci-monitor/inline-fix.js') = await import(
+    new URL('../ci-monitor/inline-fix.ts?session-regression', import.meta.url).href
   );
+  await recordCiFixRunnerSession(vars, run.id, 'claude', 'slot-session:dev');
+  for (const id of ['dev', 'ci-fix']) {
+    const recorded = run.agentContexts!.find((entry) => entry.id === id);
+    assert.equal(recorded?.target?.paneId, '%22', id);
+    assert.equal(recorded?.runnerSessionId, null, id);
+  }
 });
