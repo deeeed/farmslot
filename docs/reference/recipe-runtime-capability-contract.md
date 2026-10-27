@@ -747,25 +747,29 @@ No product run or model turn is needed.
 
 ### Cold runtime on reused slots
 
-Status: Proposed F169/F170 supplement to ADR-054, included in PR #1515.
+Status: Proposed F169/F170 supplement to ADR-054 under the lead's 18:10 scope clarification, included in PR #1515.
 
-For an acquire action bound to a managed resource's health hook, the gateway MUST
-reuse a healthy resource, or boot a confirmed-stopped resource with its configured
-boot hook and recheck health. For a browser, its configured slot dev-server MUST
-be healthy first. Unknown/unavailable observations and failed boots MUST refuse
-acquire without claiming health. Health polling and release MUST NOT start
-resources. Preserve existing lease, device, owner and source fences.
+After safe reset and fixture sync, every real run MUST health-check its configured
+managed runtime before starting the worker. Boot down resources through the pack's
+existing hooks, dev-server first, then browser or simulator, and recheck health.
+Reuse healthy resources without restart. Unknown/unavailable observations and
+failed boots MUST refuse launch without claiming health. Preserve owner, successor,
+source, cancellation and device fences; attached resources without boot authority
+retain their existing policy. Capability health polling/release remain read-only.
 
 Shared fixture expansion MUST preserve captured source bindings and otherwise
 prefer the slot's `FARMSLOT_WORKSPACE` over the legacy deployment default for
-`farmslot_dir`. Reopen uses that selected root. No new RPC, CLI flag, SDK field or
-provider declaration is added. Shared slot-config is private and ships with the
-CLI; roll out matching CLI bytes after merge without a public package publication.
+`farmslot_dir`. Reopen uses that selected root. No new RPC, CLI flag, SDK field,
+provider declaration or pipeline enum is added. Shared slot-config is private and
+ships with the CLI; roll out matching CLI bytes after merge without a public
+package publication.
 
-Extend the same disposable run with a cold configured dev-server/browser acquire,
-a real isolated browser health read, warm reuse without restart, configured-root
-reopen and owned cleanup. Regress health-only reads, boot failure, unavailable
-observations and protected owners. No product app, order or model turn is needed.
+Before merge, regress boot ordering, healthy reuse, unavailable observations,
+boot failure and changed owners. The lead explicitly schedules one disposable
+Extension, Mobile and Terminal proof AFTER #1515 lands and source rollout, using
+cold configured resources and configured-root reopen. No recurring/scheduled
+smoke jobs or further pre-merge canary runs. Preserve existing task pins, workers
+and foreign resources; clean only proof-owned runtime.
 
 ### Acceptance proof
 

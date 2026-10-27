@@ -444,24 +444,28 @@ field, provider contract or harness operation. See
 
 ### Cold runtime on reuse, F169/F170 supplement (2026-10-27)
 
-Status: Proposed under the lead's added #1515 scope; independent supplement review precedes implementation.
+Status: Proposed under the lead's added #1515 scope and 18:10 clarification; independent supplement review precedes implementation.
 
-A selected slot may be cold after safe settlement. A capability acquire that
-currently uses a managed resource's health action MUST establish that resource
-when stopped, through its configured boot hook, then verify health. For a browser,
-start the slot's configured dev-server first. Keep healthy resources and foreign
-owners intact. An unavailable observation is not a stopped resource and does not
-authorize boot. Ordinary health reads and release actions remain read-only.
-Existing device-claim and attached-device policies remain unchanged.
+After safe reset and fixture sync, every real run health-checks its configured
+runtime before starting its worker. Run the pack's boot hooks for down managed
+resources, dev server first, then browser or simulator, and verify health before
+launch. Reuse healthy resources without restart. An unavailable observation is
+not a stopped resource and cannot authorize boot. Keep owner, successor, device,
+source and run-cancellation fences; attached devices without boot authority keep
+their existing policy. Resource failure refuses worker launch with its reason.
+
+This is part of normal run dispatch, not a recurring or scheduled canary. Keep
+capability health reads and release actions read-only; acquiring the now-running
+runtime retains the existing provider contract. No new daemon or pipeline enum.
 
 Resolve reopen/boot fixture paths through captured source bindings, then the
 slot's configured `FARMSLOT_WORKSPACE`; a configured workspace outranks the legacy
 remote deployment default. This uses existing pool environment and resource hooks,
-not a project-specific fallback or a new RPC/schema field. The shared private
-slot-config helper requires matching CLI distribution rollout after merge.
+not a project-specific fallback or new RPC/schema. The private shared slot-config
+helper requires matching CLI distribution rollout after merge.
 
-The same disposable smoke must acquire its cold dev server and real isolated
-browser without manual start, verify health and warm reuse, and invoke reopen
-from its configured workspace. Keep other sessions/resources unchanged and clean
-up only proof-owned resources. Reuse the same run for supported repair/replay;
-no replacement run or product operation.
+Use targeted regressions before merge. As the lead directs, after #1515 lands
+and matching source is live, run one disposable proof per Extension, Mobile and
+Terminal project, including cold runtime health/boot and configured-root reopen.
+Preserve other sessions/resources and clean only proof-owned resources. No
+recurring/scheduled smoke infrastructure or additional pre-merge canary runs.
