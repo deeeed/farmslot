@@ -590,6 +590,44 @@ test('expired evidence reports the pending inspection and never queues a release
   model.dispose();
 });
 
+test('a completed failed inspection ends pending feedback and retains its failure', async () => {
+  for (const failed of [
+    slot('expired', {}, { workspace: undefined, workspaceError: 'Node unavailable' }),
+    slot('expired', { publication: 'unknown', error: 'Lookup unavailable' }),
+    slot('expired', { publication: 'unknown' }),
+  ]) {
+    const { model, calls, setSlots, emit } = setup([
+      slot('expired', { observedAt: '2000-01-01T00:00:00Z' }),
+    ]);
+    await model.load(['expired']);
+    await model.release('expired');
+    assert.match(model.error, /Checking workspace/);
+    setSlots([failed]);
+    emit(Events.FLEET_UPDATED, {});
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(model.error, '');
+    assert.equal(model.rows[0].eligibility.allowed, false);
+    assert(model.rows[0].warning, 'The completed failure must remain visible');
+    assert.equal(model.rows[0].slot.workspaceError, failed.workspaceError);
+    assert.equal(model.rows[0].slot.workspace?.error, failed.workspace?.error);
+    assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 0);
+    model.dispose();
+  }
+});
+
+test('a failed release inspection keeps the actual read error instead of a pending hint', async () => {
+  const { model, failNextRead, calls } = setup([
+    slot('expired', { observedAt: '2000-01-01T00:00:00Z' }),
+  ]);
+  await model.load(['expired']);
+  failNextRead();
+  await model.release('expired');
+  assert.equal(model.error, 'Read failed');
+  assert.equal(model.canRelease, false);
+  assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 0);
+  model.dispose();
+});
+
 test('ordinary terminal owners allow a guarded single release while protected holds stay excluded', () => {
   const ordinary = slot(
     'terminal',

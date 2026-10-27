@@ -25,6 +25,11 @@ interface FleetRowRead {
   promise?: Promise<void>;
 }
 
+interface PendingWorkspaceInspection {
+  slotId: string;
+  observedAt: string | undefined;
+}
+
 export interface FleetRefreshClient {
   contextKey(): string;
   request<T>(method: string, params?: unknown, timeout?: number): Promise<T>;
@@ -127,7 +132,7 @@ export class FleetRefreshViewModel {
   private loadGeneration = 0;
   private rowRead: FleetRowRead = { generation: 0, again: false };
   private stopFleetObservation?: () => void;
-  private waitingForInspection?: string;
+  private waitingForInspection?: PendingWorkspaceInspection;
   private inspectedContext: string | undefined;
   private displayContext: string | undefined;
   inspecting = false;
@@ -258,8 +263,12 @@ export class FleetRefreshViewModel {
       await this.load(this.rows.map((value) => value.slotId));
       const fresh = this.rows.find((value) => value.slotId === slotId);
       if (releaseRequested && fresh?.eligibility.allowed) await this.release(slotId);
-      else if (releaseRequested && fresh?.eligibility.reason === 'unknown') {
-        this.waitingForInspection = slotId;
+      else if (
+        releaseRequested &&
+        this.phase === 'review' &&
+        fresh?.eligibility.reason === 'unknown'
+      ) {
+        this.waitingForInspection = { slotId, observedAt: fresh.slot.workspace?.observedAt };
         this.error = CHECKING_WORKSPACE;
         this.changed();
       }
@@ -308,8 +317,15 @@ export class FleetRefreshViewModel {
             const slot = current.get(row.slotId);
             return slot ? { ...row, ...fleetWorkspaceRow(slot), slot } : row;
           });
-          const waiting = this.rows.find((row) => row.slotId === this.waitingForInspection);
-          if (waiting && waiting.eligibility.reason !== 'unknown') {
+          const pending = this.waitingForInspection;
+          const waiting = this.rows.find((row) => row.slotId === pending?.slotId);
+          if (
+            waiting &&
+            (waiting.eligibility.reason !== 'unknown' ||
+              waiting.slot.workspaceError ||
+              waiting.slot.workspace?.error ||
+              waiting.slot.workspace?.observedAt !== pending?.observedAt)
+          ) {
             this.waitingForInspection = undefined;
             if (this.error === CHECKING_WORKSPACE) this.error = '';
           }
