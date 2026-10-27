@@ -2,13 +2,15 @@
 
 ## Unreleased
 
+- Reduce retained task-tooling copy overhead without changing authenticated bytes, modes or links.
+
 - Ship the acceptance-contract TypeScript declaration in the public package.
 
 - Support acknowledged acceptance derivation and revision-bound proof destinations for PR completion.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.39.4 - 2026-10-27
+## 0.39.5 - 2026-10-27
 
 - Cache native process metadata during passive polling while keeping fresh identity checks for cleanup and controls.
 

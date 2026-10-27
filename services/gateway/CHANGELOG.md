@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Let loaded nodes finish retaining task tooling within the measured task-initialization budget.
+
 - Keep before captures bound to the recorded full-review base when dispatch replay advances the worktree baseline.
 
 - Before fresh workers start, including pending native reservations, reuse healthy runtime or boot stopped pack resources under launch budgets, ownership and pressure checks.
