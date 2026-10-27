@@ -23,15 +23,21 @@ Operator sync jobs can compare each enabled project's committed Node fixture wit
 its product main before scheduling work:
 
 ```bash
-python3 scripts/check-pack-node-pins.py <workspace>
+python3 scripts/check-pack-node-pins.py <farmslot-checkout>
 ```
 
-The read-only check requires Git, Python 3 and authenticated `gh` access to both
-repositories. It resolves each upstream main SHA and checks each project once
-across the workspace's pools. It follows committed fixture symlinks and ignores
+The argument is the Farmslot checkout containing the default `pool/` and
+`projects/` directories. Each project with a Node fixture needs Git-tracked
+`project.json` and a GitHub `origin` remote; plain copied project directories
+report `UNVERIFIED`. Git, Python 3 and authenticated `gh` access to both
+repositories are required. The check compares the fixture mapped to
+`.tool-versions`, its `nodejs` entry and the product's `.nvmrc` on `main`, using
+fixed upstream commit SHAs once per project across the pools. It follows committed fixture symlinks and ignores
 slot branches, local fixture edits and stale tracking refs. Numeric major and
 minor requirements accept matching patch pins; `lts/*` requires a Node entry.
-`DRIFT` or `UNVERIFIED` exits with status 1 and names the project.
+`DRIFT` or `UNVERIFIED` exits with status 1 and names the project or missing
+checkout directory. Run regressions with
+`python3 scripts/tests/pack-node-pins.test.py`.
 
 ## pack.json
 
