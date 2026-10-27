@@ -10,7 +10,7 @@ export function ArtifactImage({
   authHeaders,
   ...props
 }: Omit<ImageProps, 'source'> & {
-  artifact: { path: string; sha256?: string; sizeBytes?: number };
+  artifact: { path: string; sha256?: string };
   uri: string;
   authHeaders?: ArtifactHttpHeaders;
 }) {

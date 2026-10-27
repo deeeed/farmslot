@@ -33,6 +33,14 @@ const imageKey: ContentKey = {
   id: createHash('sha256').update(PNG).digest('hex'),
 };
 const PNG_URI = `data:image/png;base64,${Buffer.from(PNG).toString('base64')}`;
+// A PNG body over the 2 MB storage cap.
+const LARGE = new Uint8Array(3 * 1024 * 1024);
+LARGE.set(PNG);
+const largeKey: ContentKey = {
+  kind: 'artifact',
+  id: createHash('sha256').update(LARGE).digest('hex'),
+};
+const LARGE_URI = `data:image/png;base64,${Buffer.from(LARGE).toString('base64')}`;
 const text = (result: HeldContentResult) =>
   result.status === 'ready' ? new TextDecoder().decode(result.data) : result.status;
 
@@ -132,11 +140,29 @@ test('an image whose live bytes mismatched never reloads its URL; only a failed 
   assert.deepEqual(heldImageSource({ status: 'ready', data: PNG }, url), { uri: PNG_URI });
   assert.equal(heldImageSource({ status: 'unavailable' }, url), url);
   assert.equal(heldImageSource({ status: 'mismatch' }, url), undefined);
-  // A verified image over 2 MB still loads from its URL, as today.
-  assert.equal(
-    heldImageSource({ status: 'ready', data: new Uint8Array(3 * 1024 * 1024) }, url),
-    url,
-  );
+  // A verified image over 2 MB also renders from its verified bytes, never from its URL.
+  assert.deepEqual(heldImageSource({ status: 'ready', data: LARGE }, url), { uri: LARGE_URI });
+});
+
+test('a verified live image over 2 MB renders from its bytes and is not stored', async () => {
+  const { cache, store } = harness();
+  try {
+    const result = await openHeldContent({
+      cache,
+      key: largeKey,
+      cohort: 'gate',
+      read: async () => LARGE,
+    });
+    assert.ok(result.status === 'ready');
+    assert.equal(result.data, LARGE);
+    assert.deepEqual(heldImageSource(result, { uri: 'https://gateway.invalid/large.png' }), {
+      uri: LARGE_URI,
+    });
+    assert.equal(await cache.hasContent(largeKey), false);
+    assert.deepEqual(await store.listContent(), []);
+  } finally {
+    await cache.dispose();
+  }
 });
 
 test('a package diff that mismatched never falls back to the artifact URL renderer', () => {
@@ -149,16 +175,14 @@ test('a package diff that mismatched never falls back to the artifact URL render
   assert.equal(gateDiffFallsBack({ status: 'none' }), true);
 });
 
-test('evidence images are content by manifest sha256 up to 2 MB', () => {
+test('evidence images are content by manifest sha256 at any size; without one they keep the URL', () => {
   const sha256 = imageKey.id;
   assert.deepEqual(artifactImageKey({ path: 'evidence/a.png', sha256 }), imageKey);
+  const large = { path: 'evidence/large.png', sha256: largeKey.id, sizeBytes: LARGE.byteLength };
+  assert.deepEqual(artifactImageKey(large), largeKey);
   assert.equal(artifactImageKey({ path: 'evidence/a.png' }), undefined);
   assert.equal(artifactImageKey({ path: 'evidence/run.mp4', sha256 }), undefined);
-  assert.equal(
-    artifactImageKey({ path: 'evidence/a.png', sha256, sizeBytes: 3 * 1024 * 1024 }),
-    undefined,
-  );
-  assert.equal(imageDataUri(new Uint8Array(2 * 1024 * 1024 + 1)), undefined);
+  assert.equal(imageDataUri(LARGE), LARGE_URI);
 });
 
 test('artifact reads carry the bundle digest and auth headers, and refusals are authorization errors', async (t) => {

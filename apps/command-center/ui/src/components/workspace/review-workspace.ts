@@ -104,6 +104,7 @@ import {
 } from './workspace-url-state.js';
 
 const REVIEW_DIFF_MISMATCH = 'This diff does not match the reviewed snapshot, so it is not shown.';
+const REVIEW_DIFF_GONE = 'The review changed while its diff was loading and has no diff.';
 const UNRECORDED_REVIEW =
   'The reviewed revision was not recorded. Source for this review is unavailable.';
 
@@ -384,8 +385,13 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     };
     const reviewed = identity();
     void this._reviewDiffText(true).then((text) => {
-      if (!captured.ownsView() || request !== this._diffModalRequest || identity() !== reviewed)
+      if (!captured.ownsView() || request !== this._diffModalRequest) return;
+      if (identity() !== reviewed) {
+        // The snapshot changed during the read: the open modal reads the current one's diff.
+        if (this._payload?.reviewSnapshot?.diffPath) this._openReviewInputDiff();
+        else this._diffModalNotice = REVIEW_DIFF_GONE;
         return;
+      }
       if (typeof text === 'string') this._diffModalText = text;
       // A diff that fails the snapshot's identity is not shown, nor read again from its URL.
       else if (text === CONTENT_MISMATCH) this._diffModalNotice = REVIEW_DIFF_MISMATCH;

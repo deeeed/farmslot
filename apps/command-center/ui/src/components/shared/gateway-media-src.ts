@@ -8,26 +8,22 @@ import { isRunArtifactImagePath } from '@farmslot/protocol';
 import { readGatewayAuth } from '../../gateway-url.js';
 import { gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 
-/** Content rule 4: evidence images up to 2 MB are content by their manifest `sha256`. */
-const HELD_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_HELD_MEDIA_URLS = 2000;
 const heldMediaIds = new Map<string, string>();
+/** Sources whose body failed its manifest `sha256`: settled until the URL or identity changes. */
+const mismatchedMedia = new Set<string>();
 
 /**
- * Names the manifest `sha256` behind an evidence image URL, so the media seam can show held
- * bytes in its place and keep what it loads. Returns the URL unchanged.
+ * Names the manifest `sha256` behind an evidence image URL, so the media seam shows only bytes
+ * that verify, at any size, and keeps what it loads within the 2 MB image cap (Content rule 4).
+ * Returns the URL unchanged.
  */
 export function gatewayContentMediaUrl(
   url: string,
-  artifact: { path: string; sha256?: string; sizeBytes?: number } | undefined,
+  artifact: { path: string; sha256?: string } | undefined,
 ): string {
   const sha256 = artifact?.sha256;
-  if (
-    !sha256 ||
-    !/^[0-9a-f]{64}$/.test(sha256) ||
-    !isRunArtifactImagePath(artifact.path) ||
-    (artifact.sizeBytes ?? 0) > HELD_IMAGE_BYTES
-  )
+  if (!sha256 || !/^[0-9a-f]{64}$/.test(sha256) || !isRunArtifactImagePath(artifact.path))
     return url;
   heldMediaIds.delete(url);
   heldMediaIds.set(url, sha256);
@@ -84,6 +80,9 @@ async function loadContentMedia(url: string, sha256: string, signal: AbortSignal
   const data = await held.openHeldContent(key);
   signal.throwIfAborted();
   if (data) return objectMedia(new Blob([new Uint8Array(data)]));
+  // A settled mismatch is not fetched again, so a re-render cannot loop on the same body.
+  const source = `${url}\n${sha256}`;
+  if (mismatchedMedia.has(source)) throw new Error('Gateway media does not match its manifest.');
   let type = '';
   const verified = await held.readVerifiedContent(
     key,
@@ -94,9 +93,13 @@ async function loadContentMedia(url: string, sha256: string, signal: AbortSignal
     },
     'gate',
   );
-  signal.throwIfAborted();
-  if (verified === held.CONTENT_MISMATCH)
+  if (verified === held.CONTENT_MISMATCH) {
+    mismatchedMedia.add(source);
+    if (mismatchedMedia.size > MAX_HELD_MEDIA_URLS)
+      mismatchedMedia.delete(mismatchedMedia.values().next().value!);
     throw new Error('Gateway media does not match its manifest.');
+  }
+  signal.throwIfAborted();
   return objectMedia(new Blob([new Uint8Array(verified)], { type }));
 }
 

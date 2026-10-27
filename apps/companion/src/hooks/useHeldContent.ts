@@ -79,14 +79,15 @@ export function useGateDiffContent(run: Run | null): GateDiffContent {
 }
 
 /**
- * An evidence image from held content by manifest `sha256`, read live and stored as opened while
- * connected, otherwise today's URL source. Undefined while the bytes are being read, and after
+ * An evidence image from held content by manifest `sha256`, or read live while connected and
+ * shown from its verified bytes at any size (stored as opened up to 2 MB). Without a `sha256`, or
+ * when no read completes, today's URL source. Undefined while the bytes are being read, and after
  * live bytes failed verification.
  */
 export function useArtifactImageSource(
   uri: string,
   headers: ArtifactHttpHeaders | undefined,
-  artifact: { path: string; sha256?: string; sizeBytes?: number },
+  artifact: { path: string; sha256?: string },
 ): ImageSourcePropType | undefined {
   const cache = useSyncExternalStore(subscribeResourceCache, getResourceCache, getResourceCache);
   const connected = useConnectedTransport() !== null;

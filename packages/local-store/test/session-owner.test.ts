@@ -472,3 +472,67 @@ test(
     }
   },
 );
+
+test(
+  'a failed sign-out retirement does not keep the next principal off persistent storage',
+  { timeout: 2000 },
+  async () => {
+    const source = fixture();
+    const admin = auth('admin');
+    admin.capabilities!.resourceChanges!.upstreamObservers = { version: 1, methods: ['pr.list'] };
+    let socketOpen = true;
+    source.client.replaceResourceObservers = async (params) => {
+      if (!socketOpen) throw new Error('Not connected');
+      return { version: 1, sequence: params.sequence, applied: true };
+    };
+    const opened: string[] = [];
+    const notices: (string | undefined)[] = [];
+    const errors: string[] = [];
+    const owner = new ResourceCacheOwner({
+      identities: () => ({ load: async () => null, save: async () => {} }),
+      async openStore(metadata) {
+        opened.push(metadata.scope.principalId!);
+        const memory = createMemoryResourceStore();
+        return {
+          ...memory,
+          persistent: true,
+          get deleted() {
+            return memory.deleted;
+          },
+        };
+      },
+      onNotice: (notice) => notices.push(notice),
+      onError: (error) => errors.push(error instanceof Error ? error.message : String(error)),
+    });
+    const connection = { id: 1, gatewayUrl: url, connected: true, authentication: admin };
+    owner.update({ client: source.client, connection });
+    const collectorQuery = {
+      ...resourceQuery('pr.list'),
+      live: true,
+      sourceObservation: undefined,
+      dependencies: query.dependencies,
+    };
+    const stop = owner.cache!.observe(collectorQuery, () => {});
+    try {
+      assert.equal((await owner.cache!.retry(collectorQuery)).status, 'ready');
+      // The owner retires the admin cache before that cache hears the socket close.
+      socketOpen = false;
+      owner.update({
+        client: source.client,
+        connection: { id: 1, gatewayUrl: url, connected: false },
+        signedOut: true,
+      });
+      stop();
+      owner.update({
+        client: source.client,
+        connection: { id: 2, gatewayUrl: url, connected: true, authentication: auth('operator') },
+      });
+      assert.equal((await owner.cache!.retry(query)).status, 'ready');
+      assert.deepEqual(opened, ['admin', 'operator']);
+      assert.deepEqual(errors, ['Not connected']);
+      assert.equal(notices.at(-1), undefined);
+    } finally {
+      await owner.dispose();
+    }
+  },
+);

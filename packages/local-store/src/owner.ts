@@ -172,7 +172,9 @@ export class ResourceCacheOwner {
       if (foregroundChanged) for (const listener of this.owned.inputChanges) listener();
       return;
     }
-    const before = this.retirement;
+    // Wait for the previous owner's cleanup, not its success: retire() already reported a failure,
+    // such as observer withdrawal on a closed socket, and it must not keep this owner in memory.
+    const before = this.retirement.catch(() => undefined);
     const storage = this.options.identities(connection.gatewayUrl, connection.profileId);
     let cache: GatewayResourceCache;
     const owned: OwnedCache = {

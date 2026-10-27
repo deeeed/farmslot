@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mock, test } from 'node:test';
 
+import { PartType } from 'lit/directive.js';
+
 import { type ReadyGatePayload, reviewDiffHash, type RunDecision } from '@farmslot/protocol';
 import {
   type ContentKey,
@@ -51,7 +53,8 @@ Object.defineProperty(globalThis, 'location', {
 
 const { ReadyWorkspaceActionPresenter } = await import('./ready-workspace-action-presenter.js');
 const { heldBlobId, openHeldText } = await import('../../held-content.js');
-const { loadGatewayMedia } = await import('../shared/gateway-media-src.js');
+const { GatewayMedia, gatewayContentMediaUrl, loadGatewayMedia } =
+  await import('../shared/gateway-media-src.js');
 const { clearGatewayMemoryAuth, setGatewayMemoryAuth } = await import('../../gateway-url.js');
 
 type Presenter = InstanceType<typeof ReadyWorkspaceActionPresenter>;
@@ -485,9 +488,10 @@ test('an evidence image whose body fails its manifest sha256 gets no object URL'
     return 'blob:mismatch';
   });
   const view = makePresenter();
-  const url = view._artifactUrl(imageArtifact.path, imageArtifact);
   // With gateway auth the body is fetched with headers; without it, the URL is not used instead.
   for (const auth of [true, false]) {
+    const artifact = { ...imageArtifact, path: `evidence/${auth ? 'auth' : 'plain'}.png` };
+    const url = view._artifactUrl(artifact.path, artifact);
     if (auth) setGatewayMemoryAuth({ token: 'service-fixture' }, 'ws://localhost:7777/ws');
     else clearGatewayMemoryAuth();
     await assert.rejects(
@@ -498,4 +502,142 @@ test('an evidence image whose body fails its manifest sha256 gets no object URL'
   clearGatewayMemoryAuth();
   assert.deepEqual(created, []);
   assert.deepEqual(await fixture.origins(), {});
+});
+
+test('an evidence image over 2 MB is shown only from bytes that verify, and is not kept', async (t) => {
+  gateway.connectionState = 'connected';
+  const fixture = openCache(t);
+  setGatewayMemoryAuth({ token: 'service-fixture' }, 'ws://localhost:7777/ws');
+  t.after(clearGatewayMemoryAuth);
+  const large = new Uint8Array(2 * 1024 * 1024 + 16);
+  large.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const sha256 = createHash('sha256').update(large).digest('hex');
+  const artifact = { path: 'evidence/large.png', sha256, sizeBytes: large.length };
+  let body = large;
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async () => new Response(body, { headers: { 'content-type': 'image/png' } }),
+  );
+  const created: Blob[] = [];
+  t.mock.method(URL, 'createObjectURL', (blob: Blob) => {
+    created.push(blob);
+    return 'blob:large-image';
+  });
+  t.mock.method(URL, 'revokeObjectURL', () => undefined);
+  const url = makePresenter()._artifactUrl(artifact.path, artifact);
+
+  const media = await loadGatewayMedia(url, new AbortController().signal);
+  assert.equal(media.url, 'blob:large-image');
+  assert.deepEqual(new Uint8Array(await created[0].arrayBuffer()), large);
+  await flush();
+  assert.deepEqual(await fixture.origins(), {}, 'over the 2 MB image cap: shown, not kept');
+
+  // Another body served at the same path is not shown.
+  body = large.slice();
+  body[100] = 1;
+  await assert.rejects(
+    loadGatewayMedia(url, new AbortController().signal),
+    /does not match its manifest/,
+  );
+  assert.equal(created.length, 1);
+});
+
+test('a package refreshed while its diff loads leaves the open modal on the new package diff', async (t) => {
+  gateway.connectionState = 'connected';
+  const fixture = openCache(t);
+  const refreshedDiff = `${changedSection}\n`;
+  const ready = decision.payload as ReadyGatePayload;
+  const refreshed = {
+    ...decision,
+    payload: {
+      ...ready,
+      prPackage: {
+        ...ready.prPackage,
+        id: 'refreshed',
+        packageHash: 'refreshed-hash',
+        reviewSnapshot: {
+          ...ready.prPackage!.reviewSnapshot,
+          diffHash: reviewDiffHash(refreshedDiff),
+          diffPath: 'artifacts/package-2.diff',
+        },
+      },
+    },
+  } as RunDecision;
+  assert.equal(
+    await fixture.cache.storeContent({
+      key: { kind: 'diff', id: reviewDiffHash(refreshedDiff) },
+      data: encoder.encode(refreshedDiff),
+      origin: 'prefetch',
+      cohort: 'gate',
+    }),
+    true,
+  );
+  // Nothing is held for the first package, so its diff is read from the gateway, slowly.
+  let late!: (response: Response) => void;
+  t.mock.method(
+    globalThis,
+    'fetch',
+    () =>
+      new Promise<Response>((resolve) => {
+        late = resolve;
+      }),
+  );
+  const view = makePresenter();
+  view._openDiffModal('Package diff', { path: 'artifacts/package.diff' });
+  await flush();
+  // Another client refreshes the package; the gateway keeps the decision id.
+  view.decision = refreshed;
+  late(new Response(packageDiff));
+  await flush();
+  assert.equal(view._diffModalOpen, true);
+  assert.equal(view._diffModalText, refreshedDiff);
+  assert.equal(view._diffModalArtifactPath, 'artifacts/package-2.diff');
+  assert.equal(view._diffModalUrl, '');
+  assert.equal(view._diffModalNotice, '');
+});
+
+test('an image mismatch is settled: a re-render fetches the same source no more', async (t) => {
+  gateway.connectionState = 'connected';
+  openCache(t);
+  let offline = false;
+  const fetched: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+    fetched.push(new URL(String(input), 'http://localhost:7777').searchParams.get('path') ?? '');
+    if (offline) throw new TypeError('Failed to fetch');
+    return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 7, 7]), {
+      headers: { 'content-type': 'image/png' },
+    });
+  });
+  t.mock.method(console, 'error', () => undefined);
+  t.mock.method(URL, 'createObjectURL', () => assert.fail('A mismatched body is never shown'));
+  class MediaHarness extends GatewayMedia {
+    override setValue(): void {}
+  }
+  const settled = { ...imageArtifact, path: 'evidence/settled.png' };
+  const url = makePresenter()._artifactUrl(settled.path, settled);
+  const view = new MediaHarness({ type: PartType.CHILD });
+  view.render(url);
+  await flush();
+  // The failed load clears the source; the host renders again, as that clearing may cause.
+  view.render(url);
+  await flush();
+  assert.deepEqual(fetched, ['evidence/settled.png']);
+
+  // A new manifest identity for the same URL is a new source, read once more.
+  gatewayContentMediaUrl(url, { path: settled.path, sha256: 'e'.repeat(64) });
+  view.render(url);
+  await flush();
+  assert.deepEqual(fetched, ['evidence/settled.png', 'evidence/settled.png']);
+
+  // A network failure is not settled: the next render tries again.
+  offline = true;
+  const flaky = { ...imageArtifact, path: 'evidence/flaky.png' };
+  const flakyUrl = makePresenter()._artifactUrl(flaky.path, flaky);
+  const other = new MediaHarness({ type: PartType.CHILD });
+  other.render(flakyUrl);
+  await flush();
+  other.render(flakyUrl);
+  await flush();
+  assert.equal(fetched.filter((path) => path === 'evidence/flaky.png').length, 2);
 });

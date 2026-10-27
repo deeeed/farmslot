@@ -123,6 +123,7 @@ index 1111111..2222222 100644
 `;
 
 const PACKAGE_DIFF_MISMATCH = 'This diff does not match its package, so it is not shown.';
+const PACKAGE_DIFF_GONE = 'The package changed while its diff was loading and has no diff.';
 
 type DecisionOutcome =
   | { kind: 'applied' }
@@ -633,12 +634,17 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     const request = this._diffModalRequest;
     const diffHash = snapshot.diffHash;
     void this._packageDiffText().then((text) => {
-      if (
-        !captured.ownsView() ||
-        request !== this._diffModalRequest ||
-        this._payload?.prPackage?.reviewSnapshot?.diffHash !== diffHash
-      )
+      if (!captured.ownsView() || request !== this._diffModalRequest) return;
+      const current = this._payload?.prPackage?.reviewSnapshot;
+      if (current?.diffHash !== diffHash) {
+        // The package changed during the read: the open modal reads the current package's diff.
+        if (current?.diffHash && current.diffPath) {
+          this._diffModalArtifactPath = current.diffPath;
+          this._syncViewStateToHash();
+          this._loadDiffModalArtifact({ path: current.diffPath });
+        } else this._diffModalNotice = PACKAGE_DIFF_GONE;
         return;
+      }
       if (typeof text === 'string') this._diffModalText = text;
       // A diff that fails its package's identity is not shown, nor read again from its URL.
       else if (text === CONTENT_MISMATCH) this._diffModalNotice = PACKAGE_DIFF_MISMATCH;

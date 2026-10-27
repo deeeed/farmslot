@@ -13,7 +13,6 @@ import {
   type ContentKey,
   type ContentPrefetchArtifact,
   type GatewayResourceCache,
-  RESOURCE_CONTENT_LIMITS,
   type ResourceContentCohort,
   verifyResourceContent,
 } from '@farmslot/protocol/client-cache';
@@ -77,18 +76,15 @@ export function gateDiffSource(run: Run | null): GateDiffSource | undefined {
   };
 }
 
-/** Evidence images up to 2 MB are content by their manifest `sha256` (Content rule 4). */
+/**
+ * An evidence image with a manifest `sha256` is content by it at any size, so it is shown only
+ * from verified bytes. Only storing is capped, at 2 MB (Content rule 4).
+ */
 export function artifactImageKey(artifact: {
   path: string;
   sha256?: string;
-  sizeBytes?: number;
 }): ContentKey | undefined {
-  if (
-    !artifact.sha256 ||
-    !isRunArtifactImagePath(artifact.path) ||
-    (artifact.sizeBytes ?? 0) > RESOURCE_CONTENT_LIMITS.imageBytes
-  )
-    return undefined;
+  if (!artifact.sha256 || !isRunArtifactImagePath(artifact.path)) return undefined;
   return { kind: 'artifact', id: artifact.sha256 };
 }
 
@@ -154,22 +150,20 @@ function imageType(data: Uint8Array): string {
 }
 
 /**
- * Verified bytes up to 2 MB render as a data URI. A mismatch renders no source, the same
- * unavailable image as a failed load, rather than reload the URL that served it. An unavailable
- * read, or a verified image over 2 MB, keeps the URL.
+ * Verified bytes render as a data URI at any size, so the image shown is the one verified. A
+ * mismatch renders no source, the same unavailable image as a failed load, rather than reload
+ * the URL that served it. Only an unavailable read keeps the URL.
  */
 export function heldImageSource<T>(
   result: HeldContentResult,
   urlSource: T,
 ): { uri: string } | T | undefined {
   if (result.status === 'mismatch') return undefined;
-  const dataUri = result.status === 'ready' ? imageDataUri(result.data) : undefined;
-  return dataUri ? { uri: dataUri } : urlSource;
+  return result.status === 'ready' ? { uri: imageDataUri(result.data) } : urlSource;
 }
 
-/** `<Image>` takes no bytes, so held images up to 2 MB render as a data URI. */
-export function imageDataUri(data: Uint8Array): string | undefined {
-  if (data.byteLength > RESOURCE_CONTENT_LIMITS.imageBytes) return undefined;
+/** `<Image>` takes no bytes, so verified image bytes render as a data URI. */
+export function imageDataUri(data: Uint8Array): string {
   let binary = '';
   for (let index = 0; index < data.byteLength; index += 0x8000)
     binary += String.fromCharCode(...data.subarray(index, index + 0x8000));
