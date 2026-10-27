@@ -17,6 +17,22 @@ my-pack/
   hooks/                         # optional pack hook scripts
 ```
 
+## Check Node pins
+
+Operator sync jobs can compare each enabled project's committed Node fixture with
+its product main before scheduling work:
+
+```bash
+python3 scripts/check-pack-node-pins.py <workspace>
+```
+
+The read-only check requires Git, Python 3 and authenticated `gh` access to both
+repositories. It resolves each upstream main SHA and checks each project once
+across the workspace's pools. It follows committed fixture symlinks and ignores
+slot branches, local fixture edits and stale tracking refs. Numeric major and
+minor requirements accept matching patch pins; `lts/*` requires a Node entry.
+`DRIFT` or `UNVERIFIED` exits with status 1 and names the project.
+
 ## pack.json
 
 ```json
