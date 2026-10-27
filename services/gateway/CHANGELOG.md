@@ -25,7 +25,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Keep original PR-completion criteria and append source-linked review and instruction obligations, with current-head code review and captured visual proof before completion.
 
-- Prefer lightly loaded allowed nodes for automatic slot placement, skip nodes at the load-per-core threshold, and record the selection reasons before writing the task.
+- Prefer lightly loaded allowed nodes for automatic slot placement, retry selection with fresh sources and eligibility when load is the only blocker, and record the selection reasons before writing the task.
 
 - Fetch an unfetched PR branch before the inherited-commit signature check, preserving the dispatch checkout and unsigned-work refusal.
 - Release a selected finished checkout before writing the next task, while refusing unpublished work and changed ownership.
