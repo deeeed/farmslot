@@ -144,3 +144,74 @@ test('reconnect excludes native-object discovery and refuses a missing socket', 
   );
   assert(missing.isClosed());
 });
+
+test('a gate open counts artifact bytes beside frames and ends at the rendered diff', async () => {
+  const f = fixture([
+    ['Sent', { type: 'req', id: 'run', method: 'run.get', params: { runId: 'gate' } }, 10.1],
+    ['Received', { type: 'res', id: 'run', ok: true, payload: { run: {} } }, 10.2],
+  ]);
+  const listener = { current: undefined };
+  const connect = async (url, receive) => {
+    listener.current = receive;
+    const socket = await f.connect(url, receive);
+    const call = socket.call.bind(socket);
+    socket.call = async (method, params) => {
+      const result = await call(method, params);
+      if (method === 'Page.navigate')
+        queueMicrotask(() => {
+          for (const [event, value] of [
+            [
+              'Network.requestWillBeSent',
+              {
+                requestId: 'a',
+                timestamp: 10.3,
+                request: {
+                  url: 'http://x/api/run-artifact?runId=gate&path=artifacts%2Fp%2Fdiff-1.diff',
+                },
+              },
+            ],
+            ['Network.responseReceived', { requestId: 'a', response: { status: 200 } }],
+            [
+              'Network.loadingFinished',
+              { requestId: 'a', timestamp: 10.5, encodedDataLength: 1234 },
+            ],
+          ])
+            listener.current({ method: event, params: value });
+        });
+      return result;
+    };
+    return socket;
+  };
+  const result = await measureOfflineClientStore({
+    ...f,
+    connect,
+    phase: 'gate',
+    route: 'run/gate',
+    match: { runId: 'gate' },
+  });
+  assert.equal(result.method, 'run-artifact');
+  assert.equal(result.artifactBytes, 1234);
+  assert.equal(result.diffReadMs, 500);
+  assert.equal(result.renderedMs, 900);
+  assert.equal(result.gatewayRequests['run.get'], 1);
+  assert(f.isClosed());
+});
+
+test('a connected gate open names the live file diff and its reply time', async () => {
+  const f = fixture([
+    ['Sent', { type: 'req', id: 'file', method: 'git.diff', params: { slotId: 'gate' } }, 10.1],
+    ['Received', { type: 'event', event: 'resource.changed', payload: {} }, 10.2],
+    ['Received', { type: 'res', id: 'file', ok: true, payload: { diff: 'x' } }, 10.4],
+  ]);
+  const result = await measureOfflineClientStore({
+    ...f,
+    phase: 'gate',
+    route: 'run/gate',
+    match: { runId: 'gate' },
+  });
+  assert.equal(result.method, 'git.diff');
+  assert.equal(result.diffReplyMs, 400);
+  assert.equal(result.artifactBytes, 0);
+  assert.equal(result.totalBytes, result.receivedBytes);
+  assert(f.isClosed());
+});

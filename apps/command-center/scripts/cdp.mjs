@@ -21,7 +21,8 @@
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
 //   node scripts/cdp.mjs close <hash>                 Close a matching tab.
 //   node scripts/cdp.mjs gateway <method> [paramsJson] Send a JSON-RPC request to ws://localhost:7777.
-//   node scripts/cdp.mjs baseline <hash> <cold|reconnect|diff> [gate-route] Measure actual websocket reads.
+//   node scripts/cdp.mjs baseline <hash> <cold|reconnect|diff|gate> [gate-route] Measure actual websocket reads;
+//     gate also counts /api/run-artifact HTTP bytes and stops at the rendered diff.
 //   node scripts/cdp.mjs idle-reads <hash> <ms> <methodsJson> Count outgoing reads in a settled page.
 //
 // Env:
@@ -799,7 +800,8 @@ try {
     );
   } else if (cmd === 'baseline') {
     const [hash, phase, route, matchJson] = rest;
-    if (!hash || !phase) die('usage: cdp.mjs baseline <hash> <cold|reconnect|diff> [gate-route]');
+    if (!hash || !phase)
+      die('usage: cdp.mjs baseline <hash> <cold|reconnect|diff|gate> [gate-route]');
     const tab = await findTab(hash);
     if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
     console.log(

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add the offline gate-review browser proof: prefetch order and the stop after a refusal, a pending gate opened offline with both sides held, an untracked file prefetched while an ignored `.env` is never read or stored, and fix-loop bytes. The client-store baseline gains a gate phase that counts gateway frames plus run-artifact bytes and names where the diff came from.
+
 - Add read-only CI-watch card proof for check counts and live poll/timeout text.
 
 - Add a read-only browser probe for completed checklist durations and live step timing.

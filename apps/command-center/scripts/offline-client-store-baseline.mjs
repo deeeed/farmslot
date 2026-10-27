@@ -36,7 +36,11 @@ export async function observeIdleGatewayReads({ connect, tab, methods, durationM
 
 /** Measure production reads triggered by navigation, reload, or a socket disconnect. */
 export async function measureOfflineClientStore({ connect, tab, phase, route, gatewayUrl, match }) {
-  assert(['cold', 'reconnect', 'diff'].includes(phase), 'Expected cold, reconnect or diff');
+  assert(
+    ['cold', 'reconnect', 'diff', 'gate'].includes(phase),
+    'Expected cold, reconnect, diff or gate',
+  );
+  if (phase === 'gate') return measureGateOpen({ connect, tab, route, match });
   if (phase === 'diff') {
     assert(route, 'Diff measurement requires the real gate route');
     assert(match?.runId || match?.slotId, 'Diff measurement requires its runId or slotId');
@@ -181,7 +185,7 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
           if(document.querySelector('whats-new-modal')?.open) throw Error('Dismiss the update notice before measuring a gate diff');
           const deadline=Date.now()+5000;
           while(Date.now()<deadline){
-            const workspace=document.querySelector('ready-workspace,review-workspace');
+            const workspace=${DEEP_FIND}(document,'ready-workspace,review-workspace');
             const button=workspace && [...workspace.querySelectorAll('button.rdy-tab')].find(b=>b.textContent.trim().startsWith('Diff'));
             if(button && !button.classList.contains('active')) button.click();
             if(workspace) await workspace.updateComplete;
@@ -225,6 +229,131 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
     armed = false;
     clearTimeout(timer);
     await client.call('Runtime.releaseObjectGroup', { objectGroup: 'offline-store-baseline' });
+    client.close();
+  }
+}
+
+// Gate workspaces render inside run detail's shadow root, so lookups cross shadow roots.
+const DEEP_FIND = `((function find(root,selector){const hit=root.querySelector(selector);if(hit)return hit;for(const node of root.querySelectorAll('*'))if(node.shadowRoot){const found=find(node.shadowRoot,selector);if(found)return found;}}))`;
+
+const GATE_RENDER = `(async()=>{
+  if(document.querySelector('whats-new-modal')?.open) throw Error('Dismiss the update notice before measuring a gate diff');
+  const deadline=Date.now()+30000;
+  while(Date.now()<deadline){
+    const workspace=${DEEP_FIND}(document,'ready-workspace,review-workspace');
+    const button=workspace && [...workspace.querySelectorAll('button.rdy-tab')].find(b=>b.textContent.trim().startsWith('Diff'));
+    if(button && !button.classList.contains('active')) button.click();
+    if(workspace) await workspace.updateComplete;
+    const diff=workspace?.querySelector('diff-review');
+    if(diff) await diff.updateComplete;
+    if(diff?.querySelector('.d2h-diff-table')) return {paintedAt:performance.now()};
+    await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  throw Error('Gate diff did not render');
+})()`;
+
+/**
+ * Open a pending gate's diff by navigation and stop at its rendered table. A connected gate reads
+ * its file diff with `git.diff`; its package diff and other retained artifacts arrive over
+ * `/api/run-artifact`, so HTTP artifact bytes are counted beside received gateway frames.
+ */
+export async function measureGateOpen({ connect, tab, route, match }) {
+  assert(route, 'Gate measurement requires the real gate route');
+  assert(match?.runId, 'Gate measurement requires its runId');
+  let armed = false;
+  let receivedBytes = 0;
+  let diffReplyAt;
+  const sent = {};
+  const diffRequests = new Set();
+  const artifacts = new Map();
+  const client = await connect(tab.webSocketDebuggerUrl, ({ method, params }) => {
+    if (!armed) return;
+    if (method === 'Network.requestWillBeSent') {
+      const url = new URL(params.request.url, 'http://localhost');
+      if (url.pathname !== '/api/run-artifact') return;
+      artifacts.set(params.requestId, {
+        runId: url.searchParams.get('runId'),
+        path: url.searchParams.get('path'),
+        requestAt: params.timestamp,
+      });
+      return;
+    }
+    const artifact = artifacts.get(params.requestId);
+    if (method === 'Network.responseReceived' && artifact) artifact.status = params.response.status;
+    else if (method === 'Network.loadingFinished' && artifact) {
+      artifact.bytes = params.encodedDataLength;
+      artifact.finishedAt = params.timestamp;
+    } else if (method === 'Network.loadingFailed' && artifact) artifact.failed = params.errorText;
+    if (!['Network.webSocketFrameSent', 'Network.webSocketFrameReceived'].includes(method)) return;
+    if (params.response.opcode !== 1) return;
+    const raw = params.response.payloadData;
+    if (!raw.startsWith('{')) return;
+    const frame = JSON.parse(raw);
+    const key = `${params.requestId}:${frame.id}`;
+    if (method === 'Network.webSocketFrameSent' && frame.type === 'req') {
+      sent[frame.method] = (sent[frame.method] ?? 0) + 1;
+      if (frame.method === 'git.diff') diffRequests.add(key);
+    } else if (
+      method === 'Network.webSocketFrameReceived' &&
+      ['res', 'event'].includes(frame.type)
+    ) {
+      receivedBytes += Buffer.byteLength(raw, 'utf8');
+      if (frame.type === 'res' && diffRequests.has(key)) diffReplyAt ??= params.timestamp;
+    }
+  });
+  try {
+    await client.call('Page.enable');
+    await client.call('Network.enable');
+    await client.call('Performance.enable');
+    const before = await client.call('Performance.getMetrics');
+    const startedAt = before.metrics.find(({ name }) => name === 'Timestamp').value;
+    armed = true;
+    const url = new URL(tab.url);
+    url.hash = route;
+    await client.call('Page.navigate', { url: url.href });
+    const rendered = await client.call('Runtime.evaluate', {
+      expression: GATE_RENDER,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    assert(!rendered.exceptionDetails, 'Gate diff did not render');
+    const after = await client.call('Performance.getMetrics');
+    const renderedAt =
+      after.metrics.find(({ name }) => name === 'NavigationStart').value +
+      rendered.result.value.paintedAt / 1000;
+    armed = false;
+    const reads = [...artifacts.values()].filter((entry) => entry.runId === match.runId);
+    const diff = reads.find((entry) => /\.diff$/u.test(entry.path ?? ''));
+    const artifactBytes = reads.reduce((sum, entry) => sum + (entry.bytes ?? 0), 0);
+    return {
+      phase: 'gate',
+      // Which read supplied the displayed diff: the live file diff, the package artifact, or
+      // neither (held or already in memory).
+      method: sent['git.diff'] ? 'git.diff' : diff ? 'run-artifact' : 'local',
+      elapsedMs: Math.round((renderedAt - startedAt) * 1000),
+      renderedMs: Math.round((renderedAt - startedAt) * 1000),
+      ...(diff?.finishedAt === undefined
+        ? {}
+        : { diffReadMs: Math.round((diff.finishedAt - startedAt) * 1000) }),
+      ...(diffReplyAt === undefined
+        ? {}
+        : { diffReplyMs: Math.round((diffReplyAt - startedAt) * 1000) }),
+      receivedBytes,
+      artifactBytes,
+      totalBytes: receivedBytes + artifactBytes,
+      artifactReads: reads.map(({ path, status, bytes, failed }) => ({
+        path,
+        status,
+        bytes,
+        ...(failed ? { failed } : {}),
+      })),
+      gatewayRequests: sent,
+      timing: 'navigation to the rendered gate diff table, CDP monotonic timestamps',
+      bytes:
+        'received UTF-8 gateway application frames plus /api/run-artifact HTTP transfer bytes (encodedDataLength) through render; excludes Vite and websocket framing',
+    };
+  } finally {
+    armed = false;
     client.close();
   }
 }
