@@ -38,7 +38,10 @@ const vars: SlotVars = {
   sshTarget: '',
   projectName: 'terminal',
   resourceVars: { cdp_port: '9543', port: '9343' },
-  machineEnv: { FARMSLOT_WORKSPACE: path.join(root, 'deployment') },
+  machineEnv: {
+    FARMSLOT_WORKSPACE: path.join(root, 'deployment'),
+    PERPS_RECIPE_LIBRARY_ROOT: path.join(root, 'canonical-library'),
+  },
 };
 const project: ProjectVars = {
   projectName: 'terminal',
@@ -69,7 +72,11 @@ mock.module('../../core/index.js', {
     loadProjectVars: async () => project,
     slotFileExists: async (_vars: SlotVars, file: string) => existsSync(file),
     execOnSlot: async (_vars: SlotVars, command: string) => {
-      const result = spawnSync('bash', ['-c', command], { encoding: 'utf8', timeout: 2000 });
+      const result = spawnSync('bash', ['-c', command], {
+        encoding: 'utf8',
+        timeout: 2000,
+        env: { ...process.env, PERPS_RECIPE_LIBRARY_ROOT: '/retired/task-worktree' },
+      });
       if (result.error) throw result.error;
       return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
     },
@@ -116,10 +123,16 @@ test('a failed selected launcher keeps its exit code and removes its temporary s
 test('an explicit runtime override still executes its retained launcher', async () => {
   const custom = path.join(repo, 'custom');
   await mkdir(custom, { recursive: true });
-  await writeFile(path.join(custom, 'reopen-browser.sh'), 'echo explicit-runtime\n');
+  await writeFile(
+    path.join(custom, 'reopen-browser.sh'),
+    'echo explicit-runtime\nprintf "%s\\n" "$PERPS_RECIPE_LIBRARY_ROOT"\n',
+  );
   const result = await slotReopen({ slotId: vars.slotId, runtimeDir: 'custom' }, () => {});
   assert.equal(result.exitCode, 0);
-  assert.equal(result.stdout.trim(), 'explicit-runtime');
+  assert.equal(
+    result.stdout.trim(),
+    `explicit-runtime\n${vars.machineEnv?.PERPS_RECIPE_LIBRARY_ROOT}`,
+  );
 });
 
 test('a missing declared source fails without running the stale retained launcher', async () => {

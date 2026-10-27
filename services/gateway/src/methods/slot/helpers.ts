@@ -39,6 +39,7 @@ import {
   resolveProjectTaskDirName,
   slotFileExists,
   type SlotVars,
+  withProjectMachineEnv,
 } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { runnerProcessPatternSource } from '../../runners/registry.js';
@@ -442,7 +443,11 @@ async function slotReopenWithSources(
     cdpPort: params.cdpPort ?? vars.resourceVars.cdp_port,
     watcherPort: params.watcherPort ?? vars.resourceVars.watcher_port ?? vars.resourceVars.port,
   });
-  const result = await execOnSlot(vars, command, { onOutput: stream.onOutput, timeout: 120_000 });
+  const result = await execOnSlot(
+    vars,
+    withProjectMachineEnv(command, vars, projectVars.projectJson, projectVars),
+    { onOutput: stream.onOutput, timeout: 120_000 },
+  );
   stream.complete(result.exitCode);
   return { ...result, requestId };
 }

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Reopen browsers through the selected pack's rendered launcher, preserving saved wrappers when a node's deployment root changes.
+- Reopen browsers through the selected pack's rendered launcher and current pool environment, preserving saved wrappers when deployment or library roots change.
 
 - Let loaded nodes finish retaining task tooling within the measured task-initialization budget.
 
