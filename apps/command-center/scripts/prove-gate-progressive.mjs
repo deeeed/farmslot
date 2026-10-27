@@ -452,7 +452,7 @@ try {
     client.on('message', (bytes, binary) => {
       const frame = JSON.parse(bytes.toString());
       if (frame.type === 'req') {
-        requests.set(frame.id, frame);
+        requests.set(frame.id, { ...frame, sentAt: Date.now() });
         events.push({
           method: frame.method,
           view: frame.params?.view,
@@ -486,6 +486,7 @@ try {
       if (req)
         events.push({
           responseTo: req.method,
+          rpcMs: Date.now() - req.sentAt,
           view: req.params?.view,
           receivedMs: Date.now() - started,
           bytes: bytes.length,
@@ -759,21 +760,10 @@ try {
         ),
       );
       await save('local-first-reply.json', firstReply);
-      const wallMs = localBatchEnd - localBatchStart;
-      await save('local-admission.json', {
-        launches: localLaunches,
-        peak: localPeak,
-        active: localActive,
-        wallMs,
-      });
-      assert(wallMs < 15000, 'The cold local batch must fit the normal client deadline');
+      const cold = events.find((event) => event.responseTo === 'fleet.status' && event.ok);
+      assert(cold?.rpcMs < 2000, 'Cold Fleet bootstrap must answer before workspace inspection');
+      assert(firstReply.ms < 2000, 'Concurrent fleet.status must not await background checks');
       assert.equal(firstReply.slots.length, 31);
-      assert(
-        firstReply.slots
-          .filter((slot) => slot.enabled)
-          .every((slot) => slot.workspace && !slot.workspace.error),
-        'One fleet.status must inspect every enabled local checkout',
-      );
       const needsRetry = JSON.parse(
         await cdp(
           'eval',
@@ -787,11 +777,19 @@ try {
       await cdp(
         'eval',
         route,
-        `const {getState,isHydrating}=await import('/src/state.ts');const end=Date.now()+60000;while(isHydrating(getState(),'fleet')){if(Date.now()>end)throw Error('Fleet bootstrap did not settle');await new Promise(r=>setTimeout(r,50))}const fleet=getState().fleet;return {slots:fleet?.slots.map(slot=>({slot:slot.slot,enabled:slot.enabled,workspace:slot.workspace??null,error:slot.workspaceError??null}))??[]};`,
+        `const {getState,isHydrating}=await import('/src/state.ts');const end=Date.now()+60000;while(isHydrating(getState(),'fleet')||!getState().fleet?.slots.filter(s=>s.enabled).every(s=>s.workspace&&!s.workspace.error)){if(Date.now()>end)throw Error('Background fleet observations did not arrive');await new Promise(r=>setTimeout(r,50))}const fleet=getState().fleet;return {slots:fleet?.slots.map(slot=>({slot:slot.slot,enabled:slot.enabled,workspace:slot.workspace??null,error:slot.workspaceError??null}))??[]};`,
       ),
     );
     await save('fleet-first.json', firstFleet);
     if (boundedLocal) {
+      const wallMs = localBatchEnd - localBatchStart;
+      await save('local-admission.json', {
+        launches: localLaunches,
+        peak: localPeak,
+        active: localActive,
+        wallMs,
+      });
+      assert(wallMs < 15000, 'The background local batch must finish within fifteen seconds');
       assert.equal(firstFleet.slots.length, 31);
       assert(
         firstFleet.slots

@@ -49,12 +49,13 @@ import {
 } from './dispatch/slot-scoring.js';
 import { checkFixtureSteps } from './slot/check.js';
 import { isLinkedGitWorktreeMarker, probeDefaultBranch } from './slot/slot-tracking.js';
-import { enrichFleetWorkspaces } from './slot/workspace.js';
+import { enrichFleetWorkspaces, observedFleetWorkspaces } from './slot/workspace.js';
 
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
 let fleetRefreshInFlight: Promise<FleetStatusResult> | null = null;
+let workspaceRefreshInFlight: Promise<void> | null = null;
 
 const FLEET_STALE_MS_DEFAULT = 5 * 60_000;
 
@@ -69,25 +70,80 @@ export function isFleetCheckedAtStale(checkedAt: string, nowMs = Date.now()): bo
   return nowMs - ts > fleetStaleThresholdMs();
 }
 
+interface FleetWorkspaceObservations {
+  read(fleet: FleetStatus): FleetStatus;
+  refresh(fleet: FleetStatus): Promise<FleetStatus>;
+}
+
 export interface FleetStatusDeps {
   load(): Promise<FleetStatus>;
   refresh(): Promise<FleetStatusResult>;
+  workspaces?: FleetWorkspaceObservations;
 }
 
 const defaultFleetStatusDeps: FleetStatusDeps = {
   load: () => loadFleetStatus(),
   refresh: () => fleetRefresh(),
+  workspaces: { read: observedFleetWorkspaces, refresh: enrichFleetWorkspaces },
 };
+
+function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
+  if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
+  return {
+    fleet: {
+      ...fleet,
+      stale: true,
+      slots: fleet.slots.map((slot) => ({ ...slot, dispatchable: false })),
+    },
+  };
+}
+
+function refreshWorkspaceObservations(
+  fleet: FleetStatus,
+  deps: FleetStatusDeps,
+  publish?: (fleet: FleetStatus) => void,
+): void {
+  if (workspaceRefreshInFlight || !deps.workspaces) return;
+  const workspaces = deps.workspaces;
+  const previous = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
+  workspaceRefreshInFlight = workspaces
+    .refresh(fleet)
+    .then(async () => {
+      // Owners may have changed while Git/network reads ran. Publish current
+      // rows, never the captured fleet that started the observation.
+      const current = workspaces.read(await deps.load());
+      const changed = current.slots.some((slot) => {
+        const before = previous.get(slot.slot);
+        return (
+          before?.workspace !== slot.workspace || before?.workspaceError !== slot.workspaceError
+        );
+      });
+      // A cached observation must not create a fleet.updated -> status loop.
+      if (changed) publish?.(fleetStatusResult(current).fleet);
+    })
+    .catch((error: unknown) => {
+      // A failed passive read keeps the saved response available. Slot failures
+      // already carry workspaceError; a later status request can retry the batch.
+      console.error(`[fleet.status] background workspace refresh failed: ${String(error)}`);
+    })
+    .finally(() => {
+      workspaceRefreshInFlight = null;
+    });
+}
 
 export async function fleetStatus(
   params?: FleetStatusParams,
   deps: FleetStatusDeps = defaultFleetStatusDeps,
+  publish?: (fleet: FleetStatus) => void,
 ): Promise<FleetStatusResult> {
   // forceRefresh means a real machine re-probe, never just a re-read of the
   // cached status file — that re-read is what produced ghost prepare hints.
   // Ghost marking happens inside loadFleetStatus, so both branches are honest.
   const loaded = params?.forceRefresh ? (await deps.refresh()).fleet : await deps.load();
-  const fleet = deps === defaultFleetStatusDeps ? await enrichFleetWorkspaces(loaded) : loaded;
+  const fleet = params?.forceRefresh
+    ? ((await deps.workspaces?.refresh(loaded)) ?? loaded)
+    : (deps.workspaces?.read(loaded) ?? loaded);
+  if (!params?.forceRefresh) refreshWorkspaceObservations(fleet, deps, publish);
   if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
   // Still stale: serve it honestly (stale flag, nothing dispatchable). Kick a
   // background re-probe only when this call did not just refresh AND probeable
@@ -99,13 +155,7 @@ export async function fleetStatus(
       console.error(`[fleet.status] background stale refresh failed: ${(err as Error).message}`);
     });
   }
-  return {
-    fleet: {
-      ...fleet,
-      stale: true,
-      slots: fleet.slots.map((slot) => ({ ...slot, dispatchable: false })),
-    },
-  };
+  return fleetStatusResult(fleet);
 }
 
 // ─── fleetRefresh — native TS port of farm-status.sh collect mode ───

@@ -48,7 +48,7 @@
     },
     {
       "id": "local-admission",
-      "claim": "A 31-slot cold local burst completes within the normal 15-second client deadline without Retry, produces workspace observations for all 30 enabled slots with at most four concurrent fingerprints, and retains sub-two-second warm reads."
+      "claim": "A 31-slot cold status answers within two seconds without Retry; background checks produce all 30 enabled observations within fifteen seconds with at most four concurrent fingerprints, retaining sub-two-second warm reads."
     }
   ],
   "workflow": {

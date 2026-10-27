@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Serve saved fleet observations immediately while workspace checks refresh in the background, keeping slow Git and network reads outside status requests.
+
 - Let loaded nodes finish retaining task tooling within the measured task-initialization budget.
 
 - Keep before captures bound to the recorded full-review base when dispatch replay advances the worktree baseline.
