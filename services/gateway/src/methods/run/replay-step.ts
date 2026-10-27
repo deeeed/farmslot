@@ -68,6 +68,7 @@ import { replaySlotCapabilityRequirements } from '../../run-engine/slot-capabili
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import { assertRunNotArchiving, isRunArchivingRefusal } from '../../run-lifecycle/archive-fence.js';
 import { cancelledSlotReplayRefusal } from '../../run-lifecycle/cancelled-slot-reclaim.js';
+import { checkoutBeforeIdleReturn } from '../../run-lifecycle/safe-idle-slot.js';
 import {
   acquireRunTransition,
   withRunTransition,
@@ -1336,6 +1337,22 @@ async function replayRunStep(
     if (vars && isDisconnectedRemote(vars))
       throw new Error(
         `Cannot replay ${PS.HUMAN_GATE} yet: machine ${vars.machine} for slot ${gateSlotId} is not connected. Replay again once the node reconnects.`,
+      );
+  }
+  const idleCheckout =
+    targetIdx > prepareIdx && prepareIdx >= 0 ? checkoutBeforeIdleReturn(existing) : undefined;
+  if (idleCheckout && (await readSlotRow(idleCheckout.slotId))?.current_run_id !== existing.id) {
+    const { loadSlotVars } = await import('../../core/config.js');
+    const vars = await loadSlotVars(idleCheckout.slotId);
+    const git = `git -C ${shellQuote(vars.remoteRepo)}`;
+    const actual = await execOnSlot(
+      vars,
+      `${git} rev-parse --abbrev-ref HEAD && ${git} rev-parse HEAD`,
+    );
+    const [branch, head] = actual.stdout.trim().split('\n');
+    if (actual.exitCode !== 0 || branch !== idleCheckout.branch || head !== idleCheckout.headSha)
+      throw new Error(
+        `Cannot replay ${replayStepName}: slot ${idleCheckout.slotId} no longer has this run's retained checkout; replay from prepare or earlier`,
       );
   }
   const replaySnapshot = getRun(params.runId) ?? existing;

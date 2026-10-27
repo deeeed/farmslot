@@ -975,7 +975,8 @@ async function slotReleaseImpl(
         runner: null,
         model: null,
         app: null,
-        current_run_id: null,
+        // Recovery retains its named owner until fixtures and the final ready CAS verify.
+        ...(options?.workspaceRecovery ? {} : { current_run_id: null }),
         current_flow_type: null,
         current_ticket_or_pr: null,
         current_mode: null,

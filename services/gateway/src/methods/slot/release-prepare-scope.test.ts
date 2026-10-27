@@ -180,8 +180,16 @@ mock.module('../../core/index.js', {
       predicate: (slot: Record<string, unknown>) => boolean,
       fields: Record<string, unknown>,
     ) => applies(predicate, fields),
-    resetSlotIf: async () => {
+    resetSlotIf: async (_id: string, predicate: (row: Record<string, unknown>) => boolean) => {
+      if (!predicate(slotRow)) return false;
       events.push('reset');
+      slotRow = {
+        ...slotRow,
+        current_run_id: null,
+        cleanup_run_id: null,
+        lifecycle: 'ready',
+        phase: null,
+      };
       return true;
     },
     execOnSlot: execForTest,
@@ -607,8 +615,7 @@ test('a browser session process that survives keeps the slot held and names it',
 });
 
 // Delete and archive end a cancelled run, and the run view's Release frees its slot:
-// all three release the slot its cancel kept for replay with the reset of
-// `slot release --reset` (ADR-054 amendment, 2026-10-19).
+// delete and explicit Release keep their reset policy; archive preserves local work.
 async function releaseFromRunView(): Promise<void> {
   const hold = cancelledRunSlotHold({
     slot: SLOT_ID,
@@ -631,7 +638,7 @@ const CANCELLED_SLOT_RELEASES: Array<[string, () => Promise<unknown>, boolean]> 
 ];
 
 for (const [action, release, endsRun] of CANCELLED_SLOT_RELEASES) {
-  test(`${action} of a cancelled run releases its kept slot with a reset, editor or not`, async (t) => {
+  test(`${action} of a cancelled run releases ownership under its checkout policy`, async (t) => {
     realRuns.updateRun('cancelled', { slotId: SLOT_ID });
     slotRow = {
       ...slotRow,
@@ -652,8 +659,8 @@ for (const [action, release, endsRun] of CANCELLED_SLOT_RELEASES) {
           String(call.arguments[0]),
         ),
       ).length,
-      1,
-      'the discarded work is logged once, for reflog recovery',
+      action === 'archive' ? 0 : 1,
+      'archive preserves local work; explicit reset records its discard',
     );
     assert.ok(
       !slotCommands.some((cmd) => cmd.startsWith('lsof -a -d cwd')),
@@ -678,6 +685,9 @@ test('cleanup archives a week-old cancelled run only after releasing its kept sl
   t.mock.method(console, 'log', () => {});
   let presentAtRelease: boolean | undefined;
   const slot = {
+    returnToIdle: async (): Promise<
+      import('../../run-lifecycle/safe-idle-slot.js').SafeIdleSlotResult
+    > => ({ kind: 'ready' }),
     preflight: slotReleasePreflight,
     release: (
       params: Parameters<typeof slotRelease>[0],
@@ -693,7 +703,7 @@ test('cleanup archives a week-old cancelled run only after releasing its kept sl
   assert.equal(presentAtRelease, true, 'the slot is released before the run leaves the store');
 
   assert.ok(result.runsArchived.includes('cancelled'));
-  assert.ok(events.includes('reset'), 'the kept slot was released, not orphaned');
+  assert.ok(events.includes('reset'), 'the kept ownership was released, not orphaned');
   assert.equal(slotRow.current_run_id ?? null, null);
   assert.equal(realRuns.getRun('cancelled'), undefined, 'the run was archived after');
 });

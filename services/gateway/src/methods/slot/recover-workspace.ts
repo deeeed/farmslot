@@ -220,7 +220,7 @@ export async function recoverSlotWorkspace(
       if (
         current.epoch !== entryEpoch ||
         current.recoveryId !== marker.id ||
-        current.currentRunId ||
+        current.currentRunId !== authorized.currentRunId ||
         current.cleanupRunId ||
         current.handoffRunId
       )
@@ -332,7 +332,7 @@ export async function recoverSlotWorkspace(
       verified.headSha !== verified.remoteDefaultSha ||
       !isSlotIdleBranch(verified.branch, tracking, defaultBranch, linked) ||
       verified.dirtyCount ||
-      verified.currentRunId ||
+      verified.currentRunId !== authorized.currentRunId ||
       verified.cleanupRunId ||
       verified.handoffRunId ||
       !['OK', 'not-required'].includes(fixtures)

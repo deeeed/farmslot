@@ -92,8 +92,12 @@ test('blocked archive authority permits only its owner-bound release preflight',
 
 /** Stubbed release that ends where the real one does: slot ready, runs detached. */
 function recordingSlot(preflight: SlotReleasePreflight | null = clean) {
-  const calls = { preflight: 0, releases: [] as SlotReleaseParams[] };
+  const calls = { preflight: 0, releases: [] as SlotReleaseParams[], idleReturns: [] as string[] };
   const slot: ArchiveSlotRelease = {
+    returnToIdle: async (slotId) => {
+      calls.idleReturns.push(slotId);
+      return { kind: 'ready' };
+    },
     preflight: async () => {
       calls.preflight += 1;
       return preflight;
@@ -649,4 +653,17 @@ test('a failed replay of a cancelled run gives its kept slot back to the run', a
   assert.equal(await readSlotField(slotId, 'lifecycle'), 'held');
   assert.equal(await readSlotField(slotId, 'phase'), 'occupied');
   assert.equal(await readSlotField(slotId, 'held_reason'), cancelledRunHoldReason(run.id));
+});
+
+test('cancelled archive preserves local work while cancelled delete keeps explicit reset', async (t) => {
+  const run = await cancelledRunOnKeptSlot(t, 31);
+  const { slot, calls } = recordingSlot();
+  slot.returnToIdle = async () => ({ kind: 'local-work', reason: 'dirty files' });
+  await runArchive({ runId: run.id }, noopEmit, slot);
+  assert.deepEqual(calls.releases, [{ slotId, expectedRunId: run.id, keepWork: true }]);
+  assert.equal(
+    (await getRunWithArchived(run.id))?.slotTeardownSkipped,
+    'Checkout retained: dirty files',
+  );
+  t.after(() => rm(path.join(runsDirectory(), 'archive', `${run.id}.json`), { force: true }));
 });

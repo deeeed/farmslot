@@ -5,6 +5,7 @@ import * as promiseTimers from 'node:timers/promises';
 import type { PoolConfig, PressureAdmissionDecision, Run, SlotStatus } from '@farmslot/protocol';
 import { sourceLockDigest } from '@farmslot/slot-config/sources';
 
+import type { SafeIdleSlotResult } from '../run-lifecycle/safe-idle-slot.js';
 import type { RunSlotSourcePlans } from '../sources/slot-planning.js';
 import { sourceTestLock, sourceTestMaterialization } from '../sources/source.test-support.js';
 
@@ -275,6 +276,19 @@ mock.module('../run-lifecycle/finished-slot-reclaim.js', {
     },
   },
 });
+const safeIdle = await import('../run-lifecycle/safe-idle-slot.js');
+const reuseOutcomes = new Map<string, SafeIdleSlotResult>();
+const reuseCalls: string[] = [];
+let defaultReuseOutcome: SafeIdleSlotResult = { kind: 'ready' };
+mock.module('../run-lifecycle/safe-idle-slot.js', {
+  namedExports: {
+    ...safeIdle,
+    reuseSafeIdleSlot: async (slotId: string) => {
+      reuseCalls.push(slotId);
+      return reuseOutcomes.get(slotId) ?? defaultReuseOutcome;
+    },
+  },
+});
 const { executeFindSlotStep } = await import('./find-slot-step.js');
 
 function reset(flowType: Run['flowType'], ticketOrPr: string): void {
@@ -310,6 +324,9 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   pickedSlot = undefined;
   expectedTarget = branch;
   pickerPayload = undefined;
+  reuseOutcomes.clear();
+  defaultReuseOutcome = { kind: 'ready' };
+  reuseCalls.length = 0;
   liveRows.clear();
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
@@ -358,9 +375,11 @@ for (const [flow, ticket] of [
     assert.deepEqual(claims, ['macpro-mmt-1']);
   });
 }
-test('an unresolved PR head still requires a slot choice when every free branch is stale', async () => {
+test('an unresolved PR head asks only when every free candidate has local work', async () => {
   reset('pr-complete', 'example-org/terminal#210');
   prHead = '';
+  for (const slot of slots)
+    reuseOutcomes.set(slot.slot, { kind: 'local-work', reason: 'dirty files' });
   await assert.rejects(
     executeFindSlotStep(run.id, run, 0, context),
     /unexpected all_stale slot picker/,
@@ -655,6 +674,9 @@ test('an operator affinity-card pick retains explicit pressure policy on an over
 
 test('the stale-slot picker offers only eligible slots and waits for a human pick', async () => {
   reset('dev', 'TAT-9000');
+  for (const slot of slots)
+    reuseOutcomes.set(slot.slot, { kind: 'local-work', reason: 'dirty files' });
+  defaultReuseOutcome = { kind: 'local-work', reason: 'dirty files' };
   expectedTarget = undefined;
   const selectable = candidate('selectable', 'macpro', 'fix/old');
   slots.splice(
@@ -692,6 +714,9 @@ test('the stale-slot picker offers only eligible slots and waits for a human pic
 
 test('the stale-slot picker still permits an explicit node-load override', async () => {
   reset('dev', 'TAT-9000');
+  for (const slot of slots)
+    reuseOutcomes.set(slot.slot, { kind: 'local-work', reason: 'dirty files' });
+  defaultReuseOutcome = { kind: 'local-work', reason: 'dirty files' };
   expectedTarget = undefined;
   const cold = candidate('cold', 'mini', 'fix/cold');
   const hot = candidate('hot', 'macpro', 'fix/hot');
@@ -711,6 +736,9 @@ test('the stale-slot picker still permits an explicit node-load override', async
 
 test('the picker keeps released legacy rows without a phase eligible', async () => {
   reset('dev', 'TAT-9000');
+  for (const slot of slots)
+    reuseOutcomes.set(slot.slot, { kind: 'local-work', reason: 'dirty files' });
+  defaultReuseOutcome = { kind: 'local-work', reason: 'dirty files' };
   expectedTarget = undefined;
   const legacy = candidate('legacy', 'macpro', 'fix/legacy');
   slots.splice(0, slots.length, legacy);
@@ -752,3 +780,44 @@ for (const reason of ['no_free_slots', 'missing_required_resources'] as const) {
     );
   });
 }
+
+for (const kind of ['local-work', 'unavailable'] as const) {
+  test(`automatic selection passes a ${kind} candidate and records its reason`, async () => {
+    reset('dev', 'PROOF-9000');
+    expectedTarget = undefined;
+    const blocked = candidate('blocked', 'first', 'fix/published');
+    const safe = candidate('safe', 'second', 'fix/merged');
+    slots.splice(0, slots.length, blocked, safe);
+    reuseOutcomes.set(blocked.slot, { kind, reason: 'candidate-specific refusal' });
+    expectedSlot = safe.slot;
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+    assert.equal(result.outputs?.selectedSlot, safe.slot);
+    assert.deepEqual(reuseCalls, ['blocked', 'safe']);
+    assert.deepEqual(result.inputs?.reclaimFailures, { blocked: 'candidate-specific refusal' });
+    assert.equal(pickerPayload, undefined);
+    assert.equal(run.allowedSlots, undefined);
+  });
+}
+
+test('a clean main checkout is selected regardless of numeric stale score', async () => {
+  reset('dev', 'PROOF-9001');
+  expectedTarget = undefined;
+  slots.splice(0, slots.length, candidate('safe-main', 'first', 'main'));
+  expectedSlot = 'safe-main';
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, expectedSlot);
+  assert.deepEqual(reuseCalls, [expectedSlot]);
+  assert.equal(pickerPayload, undefined);
+});
+
+test('unknown evidence with no safe candidate refuses with reasons without a picker', async () => {
+  reset('dev', 'PROOF-9002');
+  slots.splice(0, slots.length, candidate('unreachable', 'first', 'main'));
+  reuseOutcomes.set('unreachable', { kind: 'unavailable', reason: 'Git transport unavailable' });
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, context),
+    /No safely reusable slot: unreachable: Git transport unavailable/,
+  );
+  assert.equal(pickerPayload, undefined);
+  assert.deepEqual(claims, []);
+});

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Automatically reuse clean published idle slots before asking for a slot, and safely return settled checkouts to main while preserving local work and replay evidence.
+
 - Complete artifact-only comparison trials from their retained evidence without requiring an output-review decision, and recognize completed scripted commands in their flow-owned worker role.
 - Reuse passive workspace observations while Git metadata is unchanged and reuse immutable ancestry comparisons by SHA pair; recovery commands still inspect current contents.
 - Serve stored run snapshots without waiting for worker and publication checks; current reads and command guards stay authoritative.

@@ -258,7 +258,7 @@ Use real Git/fixtures and both authenticated fleet renderers. Before recovery, e
 
 ## Amendment 2: automatic safe slot reuse (2026-10-27)
 
-**Status:** Proposed for independent amendment review. The lead approved this policy's scope on 2026-10-27; implementation follows the review.
+**Status:** Accepted. Lead approval on 2026-10-27; both independent amendment reviews approved proposal `7e7e6e19`. Implementation: PR #1515.
 **Specification:** [Automatic safe reuse](../reference/recipe-runtime-capability-contract.md#automatic-safe-reuse).
 
 ### Decision

@@ -331,6 +331,21 @@ mock.module('../methods/slot/release.js', {
   },
 });
 
+const safeIdle = await import('./safe-idle-slot.js');
+let idleReturnResult: import('./safe-idle-slot.js').SafeIdleSlotResult = {
+  kind: 'unavailable',
+  reason: 'No fixture Git checkout',
+};
+let idleReturnCalls = 0;
+mock.module('./safe-idle-slot.js', {
+  namedExports: {
+    ...safeIdle,
+    reuseSafeIdleSlot: async () => {
+      idleReturnCalls++;
+      return idleReturnResult;
+    },
+  },
+});
 const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } =
   await import('./slot-teardown.js');
 const { replaySlotReclaimCheck } = await import('../methods/run/replay-step.js');
@@ -349,6 +364,8 @@ const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENT
 
 beforeEach(() => {
   run.status = 'cancelled';
+  idleReturnResult = { kind: 'unavailable', reason: 'No fixture Git checkout' };
+  idleReturnCalls = 0;
   run.slotReclaimed = undefined;
   run.steps = [];
   slotRow = { current_run_id: RUN_ID, slot_epoch: 1 };
@@ -1087,4 +1104,20 @@ test('the engine failure path stops the runtime before dropping its slot ownersh
   await cleanupSlotAfterRunFailure(SLOT_ID, RUN_ID, 'review failure');
   assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
   assert.equal(slotRow?.lifecycle, 'ready');
+});
+
+test('done cleanup attempts safe checkout return after resource shutdown', async () => {
+  run.status = 'done';
+  configuredResources = slotRuntimeResources();
+  idleReturnResult = { kind: 'ready' };
+  const result = await releaseCompletedRunSlot(run);
+  assert.equal(result.released, true);
+  assert.equal(idleReturnCalls, 1);
+  assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
+});
+
+test('failed cleanup retains its checkout until archive rather than resetting it', async () => {
+  run.status = 'failed';
+  await releaseCompletedRunSlot(run);
+  assert.equal(idleReturnCalls, 0);
 });

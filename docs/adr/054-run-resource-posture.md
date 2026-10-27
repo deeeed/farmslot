@@ -405,7 +405,7 @@ Clients and downstream harnesses consume the existing resource and slot contract
 
 ## Amendment: safe checkout return after settlement (2026-10-27)
 
-**Status:** Proposed for independent amendment review. The lead approved this policy's scope on 2026-10-27; implementation follows the review.
+**Status:** Accepted. Lead approval on 2026-10-27; both independent amendment reviews approved proposal `7e7e6e19`. Implementation: PR #1515.
 
 ### Decision
 

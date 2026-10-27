@@ -689,8 +689,8 @@ The same `slot.refresh` release mode, bound to the held recovery ID and a fresh 
 
 ### Automatic safe reuse
 
-Status: Proposed under ADR-042 Amendment 2 and ADR-054's 2026-10-27 settlement
-amendment; lead-approved policy scope, independent review before implementation.
+Status: Accepted under ADR-042 Amendment 2 and ADR-054's 2026-10-27 settlement
+amendment; lead approval and paired amendment reviews of `7e7e6e19`. Implementation: PR #1515.
 
 Before a stale-work decision, automatic find-slot MUST inspect the selected free
 candidate's actual dirt and publication evidence, including default-branch local
@@ -728,6 +728,8 @@ archive instruction; cancelled delete and explicit owner-bound force release
 retain their existing policy. Active pinned warm, native or skip-prepare
 successors MUST prevent reset. A replay after prepare MUST verify its recorded
 branch/HEAD and refuse a changed checkout with "replay from prepare or earlier".
+The existing prepare-step outputs retain `checkoutBeforeIdleReturn` with the slot,
+branch and settlement HEAD; the dispatch HEAD is not the settlement checkout.
 Records, branch refs and
 retained evidence MUST survive checkout normalization. Readiness MUST NOT be
 published across an unconfirmed reset or a changed owner/epoch.
