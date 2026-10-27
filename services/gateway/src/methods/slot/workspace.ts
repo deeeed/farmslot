@@ -27,7 +27,8 @@ import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
-import { getRunWithArchived } from '../../runs/store.js';
+import { getAllRuns, getRunWithArchived } from '../../runs/store.js';
+import { isActiveSlotHolder, slotPinIsRequestOnly } from '../dispatch/slot-scoring.js';
 
 import { readMergedPreparePullRequests, refIncludedInMergedPullRequest } from './unmerged-work.js';
 import { probeWorkspace } from './workspace-probe.js';
@@ -84,8 +85,13 @@ export async function workspaceProtectedReason(
   row: Readonly<Record<string, unknown>>,
 ): Promise<string | undefined> {
   if (findActiveGateHeldRunForSlot(slotId)) return 'Resolve the publication gate before releasing';
-  if (findGateParkedRunForSlot(slotId)) return 'Slot retains a parked workspace';
   const owner = text(row.current_run_id);
+  const active = getAllRuns().find(
+    (run) => run.slotId === slotId && isActiveSlotHolder(run) && !slotPinIsRequestOnly(run, row),
+  );
+  if (active) return `Run ${active.id.slice(0, 8)} still needs this checkout`;
+  const parked = findGateParkedRunForSlot(slotId);
+  if (parked && (!owner || owner === parked.id)) return 'Slot retains a parked workspace';
   if (!owner) return undefined;
   const run = await getRunWithArchived(owner);
   if (!run) return 'The owning run record is missing';

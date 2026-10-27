@@ -92,8 +92,12 @@ test('blocked archive authority permits only its owner-bound release preflight',
 
 /** Stubbed release that ends where the real one does: slot ready, runs detached. */
 function recordingSlot(preflight: SlotReleasePreflight | null = clean) {
-  const calls = { preflight: 0, releases: [] as SlotReleaseParams[] };
+  const calls = { preflight: 0, releases: [] as SlotReleaseParams[], idleReturns: [] as string[] };
   const slot: ArchiveSlotRelease = {
+    returnToIdle: async (slotId) => {
+      calls.idleReturns.push(slotId);
+      return { kind: 'ready' };
+    },
     preflight: async () => {
       calls.preflight += 1;
       return preflight;
@@ -650,3 +654,65 @@ test('a failed replay of a cancelled run gives its kept slot back to the run', a
   assert.equal(await readSlotField(slotId, 'phase'), 'occupied');
   assert.equal(await readSlotField(slotId, 'held_reason'), cancelledRunHoldReason(run.id));
 });
+
+test('cancelled archive preserves local work while cancelled delete keeps explicit reset', async (t) => {
+  const run = await cancelledRunOnKeptSlot(t, 31);
+  const { slot, calls } = recordingSlot();
+  slot.returnToIdle = async () => ({ kind: 'local-work', reason: 'dirty files' });
+  await runArchive({ runId: run.id }, noopEmit, slot);
+  assert.deepEqual(calls.releases, [{ slotId, expectedRunId: run.id, keepWork: true }]);
+  assert.equal(
+    (await getRunWithArchived(run.id))?.slotTeardownSkipped,
+    'Checkout retained: dirty files',
+  );
+  t.after(() => rm(path.join(runsDirectory(), 'archive', `${run.id}.json`), { force: true }));
+});
+
+for (const checkout of [
+  { branch: 'main', headSha: 'a'.repeat(40) },
+  { branch: 'fix/settled', headSha: 'b'.repeat(40) },
+]) {
+  test(`post-prepare replay refuses a changed released checkout (${checkout.branch}) before mutation`, async (t) => {
+    const run = await cancelledRunOnKeptSlot(t, checkout.branch === 'main' ? 41 : 42);
+    updateRun(run.id, {
+      status: 'done',
+      branch: 'fix/settled',
+      steps: getRun(run.id)!.steps.map((step) => ({
+        ...step,
+        status: 'done',
+        ...(step.name === 'prepare'
+          ? {
+              outputs: {
+                checkoutBeforeIdleReturn: {
+                  slotId,
+                  branch: 'fix/settled',
+                  headSha: 'a'.repeat(40),
+                },
+              },
+            }
+          : {}),
+      })),
+    });
+    await updateSlotStatus(slotId, { current_run_id: null, lifecycle: 'ready', phase: null });
+    const actualExec = await import('../../core/exec.js');
+    t.mock.module('../../core/exec.js', {
+      namedExports: {
+        ...actualExec,
+        execOnSlot: async () => ({
+          exitCode: 0,
+          stdout: `${checkout.branch}\n${checkout.headSha}\n`,
+          stderr: '',
+        }),
+      },
+    });
+    const before = structuredClone(getRun(run.id));
+    await assert.rejects(
+      runReplayStep({ runId: run.id, stepName: 'review', triggeredBy: 'operator' }, noopEmit, {
+        startEngine: async () => assert.fail('changed checkout must not dispatch'),
+      }),
+      /replay from prepare or earlier/,
+    );
+    assert.deepEqual(getRun(run.id), before, 'refusal preserves terminal run and step evidence');
+    assert.equal(await readSlotField(slotId, 'current_run_id'), null);
+  });
+}

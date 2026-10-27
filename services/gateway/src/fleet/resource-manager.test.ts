@@ -110,6 +110,10 @@ test('resource control allows cold device boots without extending other hooks', 
   assert.equal(resourceControlTimeoutMs('device', 'boot'), 120_000);
   assert.equal(resourceControlTimeoutMs('device', 'shutdown'), 30_000);
   assert.equal(resourceControlTimeoutMs('dev-server', 'boot'), 30_000);
+  assert.equal(resourceControlTimeoutMs('dev-server', 'boot', 600_000), 600_000);
+  assert.equal(resourceControlTimeoutMs('device', 'boot', 3_600_000), 3_600_000);
+  assert.equal(resourceControlTimeoutMs('browser', 'shutdown', 600_000), 30_000);
+  assert.equal(resourceControlTimeoutMs('browser', 'boot', Number.NaN), 30_000);
 });
 
 const iosSimResource = {

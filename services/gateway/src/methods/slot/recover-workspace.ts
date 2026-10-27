@@ -65,10 +65,16 @@ function identityOwnsRow(
   );
 }
 
+interface SlotRecoveryOptions {
+  /** Automatic reuse/settlement keeps the runtime cold; manual RPCs keep their existing policy. */
+  skipRecycle?: boolean;
+}
+
 export async function recoverSlotWorkspace(
   params: SlotRefreshParams,
   emit: EventEmitter,
   signal?: AbortSignal,
+  options?: SlotRecoveryOptions,
 ): Promise<SlotRefreshResult> {
   const requestId = params.requestId ?? `refresh-${randomUUID()}`;
   const started = Date.now();
@@ -220,7 +226,7 @@ export async function recoverSlotWorkspace(
       if (
         current.epoch !== entryEpoch ||
         current.recoveryId !== marker.id ||
-        current.currentRunId ||
+        current.currentRunId !== authorized.currentRunId ||
         current.cleanupRunId ||
         current.handoffRunId
       )
@@ -277,6 +283,7 @@ export async function recoverSlotWorkspace(
               epoch: authorized.epoch,
               verifyWork,
               discardLocalWork: params.mode === 'force',
+              skipRecycle: options?.skipRecycle,
             },
           },
         );
@@ -332,7 +339,7 @@ export async function recoverSlotWorkspace(
       verified.headSha !== verified.remoteDefaultSha ||
       !isSlotIdleBranch(verified.branch, tracking, defaultBranch, linked) ||
       verified.dirtyCount ||
-      verified.currentRunId ||
+      verified.currentRunId !== authorized.currentRunId ||
       verified.cleanupRunId ||
       verified.handoffRunId ||
       !['OK', 'not-required'].includes(fixtures)

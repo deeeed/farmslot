@@ -45,6 +45,7 @@ import {
   endRunArchive,
   isRunArchiving,
 } from '../../run-lifecycle/archive-fence.js';
+import { reuseSafeIdleSlot } from '../../run-lifecycle/safe-idle-slot.js';
 import { slotOwnershipBlocker } from '../../run-lifecycle/slot-teardown.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
@@ -138,11 +139,13 @@ export async function runDelete(
 export interface ArchiveSlotRelease {
   preflight: typeof slotReleasePreflight;
   release: typeof slotRelease;
+  returnToIdle: typeof reuseSafeIdleSlot;
 }
 
 const ARCHIVE_SLOT_RELEASE: ArchiveSlotRelease = {
   preflight: slotReleasePreflight,
   release: slotRelease,
+  returnToIdle: reuseSafeIdleSlot,
 };
 
 export async function runArchive(
@@ -160,7 +163,9 @@ export async function runArchive(
       await releaseBlockedRunSlot(run, emit, slot);
     }
     const archive = () => storeArchiveRun(params.runId);
-    const ok = await (fenced ? archive() : withTerminalRunSlotReleased(run, emit, slot, archive));
+    const ok = await (fenced
+      ? archive()
+      : withTerminalRunSlotReleased(run, emit, slot, archive, true));
     if (!ok) throw new Error(`Run not found: ${params.runId}`);
   } finally {
     if (fenced) endRunArchive(params.runId);
@@ -223,8 +228,8 @@ async function releaseBlockedRunSlot(
 
 /**
  * Eviction stops a terminal run's owned worker before its ownership record leaves
- * the live store. Done/failed runs keep their checkout; a cancelled run retains
- * its existing explicit-reset policy (ADR-054, 2026-10-19). The archive fence
+ * the live store. Archive safely returns published work to idle; delete keeps
+ * its existing checkout policy. The archive fence
  * prevents replay from reclaiming the slot during teardown.
  */
 async function withTerminalRunSlotReleased(
@@ -232,6 +237,7 @@ async function withTerminalRunSlotReleased(
   emit: Emit,
   slot: ArchiveSlotRelease,
   evict: () => Promise<boolean>,
+  archive = false,
 ): Promise<boolean> {
   if (!run || !isTerminalRunStatus(run.status)) return evict();
   // The store owns this recovery hold's eviction fence and requires explicit
@@ -256,7 +262,7 @@ async function withTerminalRunSlotReleased(
   });
   if (!fenced) return evict();
   try {
-    await releaseKeptSlot(run, emit, slot);
+    await releaseKeptSlot(run, emit, slot, archive);
     return await evict();
   } finally {
     endRunArchive(run.id);
@@ -264,21 +270,40 @@ async function withTerminalRunSlotReleased(
 }
 
 /** Existing release guards protect foreign owners; keep finished workers' checkouts. */
-async function releaseKeptSlot(run: Run, emit: Emit, slot: ArchiveSlotRelease): Promise<void> {
+async function releaseKeptSlot(
+  run: Run,
+  emit: Emit,
+  slot: ArchiveSlotRelease,
+  archive: boolean,
+): Promise<void> {
   if (!run.slotId) return;
   const slotId = run.slotId;
   // Another active run owns the slot now; it keeps it.
-  if (!ownsRunSlotCleanup(await readSlotRow(slotId), run.id)) return;
+  const before = await readSlotRow(slotId);
+  if (!ownsRunSlotCleanup(before, run.id)) return;
   const blocker = await slotOwnershipBlocker(run);
   if (blocker) throw new Error(`Cannot release slot ${slotId} of run ${run.id}: ${blocker}`);
   const { released } = await slot.release(
     {
       slotId,
       expectedRunId: run.id,
-      ...(run.status === 'cancelled' ? { forceReset: true } : { keepWork: true }),
+      ...(run.status === 'cancelled' && !archive ? { forceReset: true } : { keepWork: true }),
     },
     emit,
   );
+  if (released && archive) {
+    const result = await slot.returnToIdle(slotId, emit, {
+      epoch: Number(before?.slot_epoch) || 0,
+      runId: null,
+      recordRunId: run.id,
+    });
+    if (result.kind !== 'ready') {
+      const retained = updateRun(run.id, {
+        slotTeardownSkipped: `Checkout retained: ${result.reason}`,
+      });
+      emit(Events.RUN_UPDATED, { run: retained });
+    }
+  }
   if (!released && ownsRunSlotCleanup(await readSlotRow(slotId), run.id))
     throw new Error(
       `Cannot release slot ${slotId} of ${run.status} run ${run.id}: it is still held`,
@@ -343,6 +368,7 @@ export async function runCleanup(
       () => {},
       slot,
       () => storeArchiveRun(run.id),
+      true,
     ),
   );
   const cacheDirsRemoved = await cleanupReviewWorkspaceCaches(dryRun, {
