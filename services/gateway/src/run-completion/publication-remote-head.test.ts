@@ -20,6 +20,10 @@ let remote: string;
 let pushExit: number;
 let pushAdvances: boolean;
 let driftDuringBody: boolean;
+let mergeExit: number | undefined;
+let fetchOk: boolean;
+let probeHead: string;
+let conflictsDuringPush: boolean;
 const commands: string[] = [];
 const mutations: string[] = [];
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
@@ -29,7 +33,7 @@ mock.module('../core/config.js', {
     ...config,
     loadSlotVars: async () => vars,
     loadProjectVars: async () => ({
-      projectJson: { default_branch: 'main', ci: { repo: 'fixture/repo' } },
+      projectJson: { default_branch: 'main', ci: { repo: 'fixture/repo', enabled: false } },
     }),
   },
 });
@@ -40,11 +44,16 @@ mock.module('../core/exec.js', {
     execLocal: async () => ok(),
     execOnSlot: async (_vars: unknown, command: string) => {
       commands.push(command);
+      if (command.includes('CONFLICT_EXIT:'))
+        return ok(
+          `HEAD:${probeHead}\nFETCH_OK:${fetchOk ? 1 : 0}\nREF_OK:1\nBEHIND:1\nAHEAD:1\nCONFLICT_EXIT:${mergeExit ?? 'unknown'}\nTREE_BEGIN\nconflict.txt\nTREE_END\n`,
+        );
       if (command.includes('rev-parse HEAD')) return ok(head);
       if (command.includes('push -u origin')) {
         if (pushExit)
           return { stdout: 'hook refused', stderr: 'push rejected', exitCode: pushExit };
         if (pushAdvances) remote = head;
+        if (conflictsDuringPush) mergeExit = 1;
         return ok();
       }
       if (command.includes('ls-remote')) return ok(`${remote}\trefs/heads/${branch}\n`);
@@ -168,6 +177,10 @@ beforeEach(() => {
   pushExit = 0;
   pushAdvances = true;
   driftDuringBody = false;
+  mergeExit = 0;
+  fetchOk = true;
+  probeHead = head;
+  conflictsDuringPush = false;
   commands.length = 0;
   mutations.length = 0;
 });
@@ -204,6 +217,74 @@ test('local-first publication pushes an existing PR rather than only pushing dur
   assert.ok(commands.some((command) => command.includes('push -u origin')));
 });
 
+for (const flow of ['pr-complete', 'dev', 'fix-bug', 'update-branch'] as const) {
+  test(`${flow} publication refuses merge conflicts with CI disabled before pushing or posting`, async () => {
+    run.flowType = flow;
+    mergeExit = 1;
+    await assert.rejects(
+      publishCompletionPackage(run.id, makeReadyGatePackage({ headSha: head, branch })),
+      /PUBLICATION_MERGE_CONFLICT/,
+    );
+    assert.deepEqual(mutations, []);
+    assert.ok(!commands.some((command) => command.includes('push -u origin')));
+    assert.equal(run.engineState?.publishGate?.publicationStatus, 'publish_failed');
+  });
+}
+
+test('an unavailable merge probe cannot use the stale base as clean publication proof', async () => {
+  fetchOk = false;
+  await assert.rejects(
+    publishCompletionPackage(run.id, makeReadyGatePackage({ headSha: head, branch })),
+    /PUBLICATION_MERGEABILITY_UNAVAILABLE/,
+  );
+  assert.deepEqual(mutations, []);
+});
+
+test('publication binds the conflict probe to the approved HEAD', async () => {
+  probeHead = old;
+  await assert.rejects(
+    publishCompletionPackage(run.id, makeReadyGatePackage({ headSha: head, branch })),
+    /Publication HEAD drift/,
+  );
+  assert.deepEqual(mutations, []);
+});
+
+test('an unknown merge-tree result refuses publication before pushing or posting', async () => {
+  mergeExit = undefined;
+  await assert.rejects(
+    publishCompletionPackage(run.id, makeReadyGatePackage({ headSha: head, branch })),
+    /PUBLICATION_MERGEABILITY_UNAVAILABLE/,
+  );
+  assert.ok(!commands.some((command) => command.includes('push -u origin')));
+  assert.deepEqual(mutations, []);
+});
+
+test('base conflicts introduced during push refuse PR mutation', async () => {
+  conflictsDuringPush = true;
+  await assert.rejects(
+    publishCompletionPackage(run.id, makeReadyGatePackage({ headSha: head, branch })),
+    /PUBLICATION_MERGE_CONFLICT/,
+  );
+  assert.equal(remote, head);
+  assert.deepEqual(mutations, []);
+});
+
+test('legacy completion refuses conflicts before publishing', async () => {
+  mergeExit = 1;
+  await assert.rejects(
+    runCompletionPipeline(run.id, { skipRetrospective: true }),
+    /PUBLICATION_MERGE_CONFLICT/,
+  );
+  assert.deepEqual(mutations, []);
+});
+
+test('publication probes the given base and permits a clean branch behind it', async () => {
+  await pushPublicationBranch(run, head, 'feature/upstream');
+  const probes = commands.filter((command) => command.includes('CONFLICT_EXIT:'));
+  assert.equal(probes.length, 2);
+  assert.ok(probes.every((command) => command.includes('origin/feature/upstream')));
+});
+
 test('successful push exit with a stale actual remote refuses publication', async () => {
   pushAdvances = false;
   await assert.rejects(
@@ -229,7 +310,7 @@ test('an optimistic local tracking ref cannot satisfy the actual remote check', 
 });
 
 test('local HEAD drift refuses a push', async () => {
-  await assert.rejects(pushPublicationBranch(run, old), /Publication HEAD drift/);
+  await assert.rejects(pushPublicationBranch(run, old, 'main'), /Publication HEAD drift/);
   assert.ok(!commands.some((command) => command.includes('push -u origin')));
 });
 

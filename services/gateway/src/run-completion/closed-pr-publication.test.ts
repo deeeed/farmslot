@@ -46,11 +46,13 @@ const execution = await import('../core/exec.js');
 const execute = async (_vars: SlotVars, command: string) => {
   commands.push(command);
   return {
-    stdout: command.includes('rev-parse HEAD')
-      ? head
-      : command.includes('ls-remote')
-        ? `${head}\trefs/heads/fix/reused\n`
-        : '',
+    stdout: command.includes('CONFLICT_EXIT:')
+      ? `HEAD:${head}\nFETCH_OK:1\nREF_OK:1\nBEHIND:0\nAHEAD:1\nCONFLICT_EXIT:0\nTREE_BEGIN\nTREE_END\n`
+      : command.includes('rev-parse HEAD')
+        ? head
+        : command.includes('ls-remote')
+          ? `${head}\trefs/heads/fix/reused\n`
+          : '',
     stderr: '',
     exitCode: 0,
   };

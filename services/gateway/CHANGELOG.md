@@ -11,7 +11,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Keep busy review-fix workers alive through signal inactivity, including fixes without delivery turn tokens.
 - Include configured pi providers such as LiteLLM in the model catalog while retaining built-in models.
 
-- Push completion commits for existing PRs and verify the actual remote branch matches the published HEAD before finalize succeeds.
+- Push completion commits for existing PRs, verify the actual remote HEAD, and refuse publication when the branch conflicts with its freshly fetched base, even when CI is disabled.
 - Stop unchanged empty review-fix cycles and accept completed evidence-only fixes or fixes of at most 50 source lines without another review, retaining the original review and fix provenance.
 - Validate nested review-fix and CI-fix declarations against their selected contract, preserving the primary checklist checks.
 
