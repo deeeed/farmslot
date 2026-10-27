@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show saved fleet recovery rows immediately while current workspace inspection runs, retaining them on read errors.
+
 - Copy or share the current view’s Command Center link from one floating quick-action menu, with menu and long-press access to the existing voice recorder. Configure the web URL per gateway profile; Android builds now include Clipboard.
 
 - Show shared fleet workspace status, release-and-update actions, local-work confirmation and recovery progress.

@@ -11,6 +11,7 @@ import { DiffTestFilterController } from '../shared/diff-test-filter-controller.
 // stale diff from another run is visible in the assertion.
 const branchFiles: Record<string, GitBranchDiffFile[]> = {};
 const fileDiffRequests: string[] = [];
+let fileDiffReply: ((path?: string) => Promise<{ diff: string }>) | undefined;
 // Decision submission: the reply to run.resolveDecision, its requested window, and the run a
 // later run.get reads.
 let resolveReply: () => Promise<unknown> = async () => ({});
@@ -38,6 +39,7 @@ mock.module('../../gateway-client.js', {
         }
         if (method === Methods.GIT_BRANCH_DIFF) return { files: branchFiles[params.slotId] ?? [] };
         fileDiffRequests.push(`${params.slotId}:${params.path}`);
+        if (fileDiffReply) return fileDiffReply(params.path);
         return { diff: `diff from ${params.slotId}` };
       },
     },
@@ -48,6 +50,17 @@ mock.module('../../gateway-client.js', {
 Object.defineProperty(globalThis, 'location', {
   configurable: true,
   value: new URL('http://localhost/'),
+});
+Object.defineProperty(globalThis, 'window', {
+  configurable: true,
+  value: { location: new URL('http://localhost/#runs') },
+});
+mock.module('../../utils/reconnect.js', {
+  namedExports: {
+    currentRecoveryEpoch: () => 1,
+    isRecoveryEpochCurrent: (epoch: number) => epoch === 1,
+    waitForRecoveryHydration: async () => true,
+  },
 });
 
 const { ReadyWorkspaceActionPresenter } = await import('./ready-workspace-action-presenter.js');
@@ -92,6 +105,71 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 const testFile = { path: 'src/gate.test.ts', status: 'M', additions: 3, deletions: 0 } as const;
 const codeFile = { path: 'src/gate.ts', status: 'M', additions: 2, deletions: 1 } as const;
+
+test('a slow file reply cannot replace the file selected afterward', async (t) => {
+  let finish!: (value: { diff: string }) => void;
+  fileDiffReply = (path) =>
+    path === 'old.ts'
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve({ diff: 'new file diff' });
+  t.after(() => {
+    fileDiffReply = undefined;
+  });
+  const view = makePresenter();
+  const old = view._selectFile('old.ts');
+  await view._selectFile('new.ts');
+  finish({ diff: 'wrong old diff' });
+  await old;
+  assert.equal(view._selectedFile, 'new.ts');
+  assert.equal(view._fileDiff, 'new file diff');
+  assert.equal(view._fileDiffLoading, false);
+});
+
+test('a file failure stays local and the actual selection can retry', async (t) => {
+  fileDiffReply = async () => {
+    throw new Error('Source busy');
+  };
+  t.after(() => {
+    fileDiffReply = undefined;
+  });
+  const view = makePresenter({ _recoveryPhase: 'live' });
+  await view._selectFile('gate.ts');
+  assert.equal(view._fileDiffError, 'Source busy');
+  assert.equal(view._recoveryPhase, 'live');
+  fileDiffReply = async () => ({ diff: 'retried content' });
+  await view._selectFile('gate.ts');
+  assert.equal(view._fileDiff, 'retried content');
+  assert.equal(view._fileDiffError, '');
+});
+
+test('opening Evidence leaves source browsing idle and does not cover the gate', async () => {
+  const view = makePresenter({ _activeTab: 'evidence' });
+  view._loadBranchDiff = async () => assert.fail('Diff has not been opened');
+  await view._beginRecovery();
+  assert.equal(view._recoveryPhase, 'live');
+  assert.equal(view._isRecovering, false);
+});
+
+test('opening Diff requests its file list after hydration', async () => {
+  const view = makePresenter({ _activeTab: 'diff' });
+  const epochs: number[] = [];
+  view._loadBranchDiff = async (epoch) => {
+    epochs.push(epoch ?? 0);
+  };
+  await view._beginRecovery();
+  assert.deepEqual(epochs, [1]);
+});
+
+test('a retained resolved gate can load Diff on the current connection', async () => {
+  branchFiles['slot-a'] = [codeFile];
+  const view = makePresenter({ _recoveryEpoch: 0 });
+  await view._loadBranchDiff();
+  await flush();
+  assert.deepEqual(view._diffFiles, [codeFile]);
+  assert.equal(view._fileDiff, 'diff from slot-a');
+});
 
 test('hiding tests hands a selected test file to the first visible file', () => {
   const selected: string[] = [];
@@ -182,6 +260,20 @@ function submittingPresenter(): Presenter {
   runReadable = true;
   return makePresenter({ runId: 'run-a', decision: gateDecision(), _recoveryPhase: 'live' });
 }
+
+test('a stored gate cannot submit a decision or open review while the current read is pending', async () => {
+  const view = submittingPresenter();
+  view.actionsBlocked = true;
+  view._acting = false;
+  view._reviewModalOpen = false;
+  const sentBefore = resolveWindows.length;
+  view._confirmAction('hold');
+  view._openReviewRequestModal();
+  await view._resolve('hold');
+  assert.equal(resolveWindows.length, sentBefore);
+  assert.equal(view._acting, false);
+  assert.equal(view._reviewModalOpen, false);
+});
 const timedOut = async (): Promise<never> => {
   throw new GatewayRequestTimeoutError('Request run.resolveDecision timed out after 600000ms');
 };

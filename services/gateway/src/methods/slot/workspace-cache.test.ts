@@ -150,6 +150,30 @@ test('a verified mutation invalidates cached dirt before its TTL expires', async
   assert.equal(probes, 2);
 });
 
+test('a 37-second inspection gets its cache window after completion without changing observed time', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  let resume!: () => void;
+  let notify!: () => void;
+  const started = new Promise<void>((resolve) => {
+    notify = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  invalidateSlotWorkspaceObservations('cache-slot');
+  pausedProbe = { gate, started: notify };
+  const before = probes;
+  const pending = enrichFleetWorkspaces(await loadFleetStatus(true));
+  await started;
+  now += 37_600;
+  resume();
+  const first = await pending;
+  const next = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 1, 'slow reads must not be expired immediately on delivery');
+  assert.equal(next.slots[0]?.workspace?.observedAt, first.slots[0]?.workspace?.observedAt);
+});
+
 test('a pending inspection from an old identity settles before a new single-flight inspection', async () => {
   let resume: () => void = () => assert.fail('Probe gate missing');
   let notify: () => void = () => assert.fail('Probe start missing');

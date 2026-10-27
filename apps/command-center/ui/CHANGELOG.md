@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show saved gate details and fleet recovery rows while current readiness refreshes, keep slow reads local, and load source diffs when opened.
+
 - Open shared Companion links in Command Center after checking the configured gateway binding, with an exact supported selection or an unavailable reason.
 
 - Show slot publication, owner and distance behind main, with one release-and-update action and safe bulk release in the fleet view.

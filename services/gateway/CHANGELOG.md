@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Serve stored run snapshots without waiting for worker and publication checks; current reads and command guards stay authoritative.
+
 - Shorten autonomous task instructions by removing the extra permission caveat.
 - Remove the local CI-parity worker step and its completion receipt requirement.
 - Keep busy review-fix workers alive through signal inactivity, including fixes without delivery turn tokens.

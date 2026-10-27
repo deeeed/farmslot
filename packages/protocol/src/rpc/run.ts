@@ -246,6 +246,8 @@ export interface RunCreateNativeParams extends RunCreateParams {
 
 export interface RunGetParams {
   runId: string;
+  /** Stored display data without live reconciliation. Never verifies action readiness. */
+  view?: 'snapshot';
 }
 
 export interface RunGetResult {

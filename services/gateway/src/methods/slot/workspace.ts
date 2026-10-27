@@ -383,6 +383,9 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
           until: Date.now() + 15_000,
           promise: promise.finally(() => {
             entry.pending = false;
+            // A slow inspection must have a useful cache window after it
+            // settles. Explicit invalidation during the read still wins.
+            if (entry.until !== 0) entry.until = Date.now() + 15_000;
           }),
         };
         cached = entry;

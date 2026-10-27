@@ -1,0 +1,91 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Progressive gate and fleet recovery reads",
+  "description": "Uses source UI, a real authenticated private gateway, held transport replies and an isolated Git workspace. Never releases a slot or starts a worker. Requires an existing isolated Agent Chrome CDP endpoint.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["proof_root"],
+    "properties": {
+      "proof_root": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_./-]+$"
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "gate-first-paint",
+      "claim": "Stored acceptance and paused action controls render within two seconds while the current read is held."
+    },
+    {
+      "id": "lazy-details",
+      "claim": "The stored Package can be opened without an eager live source diff or a mutating RPC."
+    },
+    {
+      "id": "causal-control",
+      "claim": "Withholding the stored response prevents package details from appearing until it is released."
+    },
+    {
+      "id": "fleet-progressive",
+      "claim": "The actual fleet dialog shows its saved eligible row before current inspection completes, with release paused."
+    }
+  ],
+  "workflow": {
+    "entry": "gate",
+    "nodes": {
+      "gate": {
+        "action": "command",
+        "intent": "Stored gate details render before the held current reply.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/gate\"",
+        "timeout_ms": 600000,
+        "next": "gate-observed"
+      },
+      "gate-observed": {
+        "action": "assert_output",
+        "intent": "Require completed browser assertions and owned teardown.",
+        "source": "gate",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "next": "causal",
+        "proves": ["gate-first-paint", "lazy-details"]
+      },
+      "causal": {
+        "action": "command",
+        "intent": "Withholding the real stored reply hides package details.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/causal\" --withhold-snapshot",
+        "timeout_ms": 600000,
+        "next": "causal-observed"
+      },
+      "causal-observed": {
+        "action": "assert_output",
+        "intent": "Require completed browser assertions and owned teardown.",
+        "source": "causal",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "next": "fleet",
+        "proves": ["causal-control"]
+      },
+      "fleet": {
+        "action": "command",
+        "intent": "Saved fleet rows stay visible while inspection is held.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/fleet\" --fleet",
+        "timeout_ms": 600000,
+        "next": "fleet-observed"
+      },
+      "fleet-observed": {
+        "action": "assert_output",
+        "intent": "Require completed browser assertions and owned teardown.",
+        "source": "fleet",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "next": "done",
+        "proves": ["fleet-progressive"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

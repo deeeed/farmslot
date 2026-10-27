@@ -87,6 +87,7 @@ import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-art
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
+import { readRunProgressively } from './progressive-run-read.js';
 import {
   checkInteractiveHandoffSignal,
   confirmForceComplete,
@@ -494,11 +495,17 @@ export class RunDetail extends RunDetailState {
     // The shared RUN_LIST is capped and can omit deep-linked historical runs.
     // Retry the route target directly once the slice is no longer hydrating so
     // reconnects do not fall through to "not found" prematurely.
-    if (!this.run && this.runId && !this._hydrating && !this._missingRunFetchAttempted) {
+    if (!this.run && this.runId && !this._connectionStale && !this._missingRunFetchAttempted) {
       this._missingRunFetchAttempted = true;
       void this.fetchRun(this.runId);
     }
-    if (wasHydrating && !this._hydrating && !sharedRun && this._directRun?.id === this.runId) {
+    if (
+      wasHydrating &&
+      !this._hydrating &&
+      !sharedRun &&
+      this._directRun?.id === this.runId &&
+      !this._directRunRefreshing
+    ) {
       void this.fetchRun(this.runId);
     }
     // The list row's payloads are trimmed: fetch the full run once, again
@@ -508,7 +515,11 @@ export class RunDetail extends RunDetailState {
       this.runId &&
       (shouldFetchTrimmedRun({
         sharedRun,
-        directRun,
+        directRun:
+          this._verifiedRunSnapshot?.runId === this.runId &&
+          this._verifiedRunSnapshot.connectionEpoch === gateway.connectionEpoch
+            ? directRun
+            : null,
         refreshing: this._directRunRefreshing,
         failedAt: this._directRunFailedAt,
         now: Date.now(),
@@ -819,10 +830,22 @@ export class RunDetail extends RunDetailState {
       this.runId === runId &&
       gateway.connectionEpoch === connectionEpoch;
     this._directRunRefreshing = true;
+    this._verifiedRunSnapshot = null;
     this._directRunRefreshFailed = false;
     this._directRunUnavailable = false;
     try {
-      const res = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
+      const res = await readRunProgressively(
+        runId,
+        (params) => gateway.request<RunGetResult>(Methods.RUN_GET, params),
+        (snapshot) => {
+          if (!requestStillCurrent() || !snapshot.run) return;
+          this._directRun = snapshot.run;
+          this.run = snapshot.run;
+          // This is display data only. Do not set _verifiedRunSnapshot or clear
+          // the refreshing/error fences until the ordinary read succeeds.
+          this._applySelectedStepFromHash();
+        },
+      );
       if (!requestStillCurrent()) return;
       if (res.run) {
         this._verifiedRunSnapshot = { runId, connectionEpoch };

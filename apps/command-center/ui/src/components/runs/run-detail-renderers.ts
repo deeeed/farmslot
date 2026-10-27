@@ -544,6 +544,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const openReviewGate = r.decisions.some(
     (decision) => !decision.resolvedAt && decision.type === 'engine_review_posting',
   );
+  const openPublicationGate = r.decisions.some(
+    (decision) =>
+      !decision.resolvedAt &&
+      decision.type === 'engine_human_gate' &&
+      decision.payload?.kind === 'ready',
+  );
   // ADR-054 `free-slot`: while the park record holds the release, the slot row
   // belongs to dispatch, not to this run. `isSlotFreedByPark` ignores `phase`,
   // and cancel deliberately skips slot release for a park-freed run, so this
@@ -776,6 +782,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         : nothing}
     </div>
     ${r.summary ? html`${renderRunTitle(r, 'header-summary')}` : nothing}
+    ${openPublicationGate ? ctx.renderGateSection(r) : nothing}
     ${r.slotTeardownSkipped
       ? html`<p role="status" data-testid="run-slot-cleanup-hint">
           Workspace cleanup deferred: ${r.slotTeardownSkipped}
@@ -1177,7 +1184,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
       ? ctx._renderRunEvidence(r)
       : nothing}
-    ${r.output && !openReviewGate ? ctx.renderGateSection(r) : nothing}
+    ${r.output && !openReviewGate && !openPublicationGate ? ctx.renderGateSection(r) : nothing}
     ${!openReviewGate
       ? renderRunReviewResult(
           r,
@@ -1186,7 +1193,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           () => void ctx._rereviewLatestHead(r),
         )
       : nothing}
-    ${r.reviewWorkspace && !r.output && !openReviewGate ? ctx.renderGateSection(r) : nothing}
+    ${r.reviewWorkspace && !r.output && !openReviewGate && !openPublicationGate
+      ? ctx.renderGateSection(r)
+      : nothing}
     ${ctx._renderAgentSessions(r)} ${renderReviewChain(r)}
     ${ctx.siblings.length
       ? html`
@@ -1366,7 +1375,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       : r.reviewWorkspace
         ? html`<p data-testid="review-terminal-unavailable">${terminalUnavailable}</p>`
         : nothing}
-    ${r.reviewWorkspace || r.output ? nothing : ctx.renderGateSection(r)}
+    ${r.reviewWorkspace || r.output || openPublicationGate ? nothing : ctx.renderGateSection(r)}
     ${isRecoverableBlockedWorkerRun(r)
       ? html`<details>
           <summary class="output-file-summary">Worker recovery (advanced)</summary>

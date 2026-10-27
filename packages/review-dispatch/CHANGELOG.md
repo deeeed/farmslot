@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep saved fleet recovery rows visible while current inspection runs or fails, with release guarded until inspection succeeds.
+
 - Share fleet workspace rows, safe bulk release, discard confirmation and recovery progress between both operator apps.
 
 - Share plain CI-watch check counts, failing names, next poll and timeout countdown between both clients.

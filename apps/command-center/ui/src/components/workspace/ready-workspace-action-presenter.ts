@@ -143,6 +143,16 @@ interface RetainedReadyPayload {
 }
 
 export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState {
+  private _branchRead?: symbol;
+  private _fileRead?: symbol;
+  private get sourceIdentity(): string {
+    return JSON.stringify([
+      this.runId,
+      this.slotId,
+      this.decision?.id,
+      this._payload?.prPackage?.packageHash,
+    ]);
+  }
   readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this._diffTestPatterns,
     onChange: () => this._onHideTestsChanged(),
@@ -204,6 +214,12 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   override updated(changed: Map<string, unknown>) {
     if (changed.has('slotId') && this._initialized) {
       void this._beginRecovery();
+    } else if (
+      changed.has('_activeTab') &&
+      this._activeTab === 'diff' &&
+      this._recoveryPhase === 'live'
+    ) {
+      void this._loadBranchDiff();
     }
   }
 
@@ -537,13 +553,27 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._recoveryMessage = 'Refreshing ready workspace from gateway…';
     const hydrated = await waitForRecoveryHydration(epoch);
     if (!hydrated || this._recoveryEpoch !== epoch) return;
-    await this._loadBranchDiff(epoch);
+    if (this._activeTab === 'diff') await this._loadBranchDiff(epoch);
+    else {
+      // Source browsing is independent of gate readiness. Read it only when
+      // the operator opens Diff; an unreachable slot must not cover the gate.
+      this._recoveryPhase = 'live';
+      this._recoveryMessage = '';
+    }
   }
 
   // ─── Data loading ───
 
   async _loadBranchDiff(epoch = this._recoveryEpoch || currentRecoveryEpoch()) {
-    if (!this.slotId) return;
+    if (!this.slotId || !isRecoveryEpochCurrent(epoch)) return;
+    this._recoveryEpoch = epoch;
+    const read = (this._branchRead = Symbol());
+    const identity = this.sourceIdentity;
+    const current = () =>
+      this._branchRead === read &&
+      this.sourceIdentity === identity &&
+      epoch === this._recoveryEpoch &&
+      isRecoveryEpochCurrent(epoch);
     this._diffLoading = true;
     try {
       const result = await gateway.request<GitBranchDiffResult>(
@@ -554,7 +584,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           this._payload?.prPackage?.reviewSnapshot,
         ),
       );
-      if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      if (!current()) return;
       this._diffError = '';
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
@@ -568,7 +598,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         this._fileDiff = '';
       }
     } catch (err) {
-      if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      if (!current()) return;
       console.error('[ready-workspace] branch diff failed:', err);
       if (this._payload?.prPackage) {
         this._diffFiles = [];
@@ -584,12 +614,8 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._recoveryPhase = 'error';
       this._recoveryMessage = 'Ready workspace failed to recover — retry when ready.';
     } finally {
-      if (epoch === this._recoveryEpoch) this._diffLoading = false;
-      if (
-        epoch === this._recoveryEpoch &&
-        isRecoveryEpochCurrent(epoch) &&
-        this._recoveryPhase !== 'error'
-      ) {
+      if (current()) this._diffLoading = false;
+      if (current() && this._recoveryPhase !== 'error') {
         this._recoveryPhase = 'live';
         this._recoveryMessage = '';
       }
@@ -620,10 +646,19 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _selectFile(filePath: string) {
+    const read = (this._fileRead = Symbol());
+    const identity = this.sourceIdentity;
+    const epoch = currentRecoveryEpoch();
+    const current = () =>
+      this._fileRead === read &&
+      this.sourceIdentity === identity &&
+      this._selectedFile === filePath &&
+      isRecoveryEpochCurrent(epoch);
     this._selectedFile = filePath;
     this._syncViewStateToHash();
     this._fileDiffLoading = true;
     this._fileDiff = '';
+    this._fileDiffError = '';
     try {
       const result = await gateway.request<GitDiffResult>(
         Methods.GIT_DIFF,
@@ -634,15 +669,17 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           this._payload?.prPackage?.reviewSnapshot,
         ),
       );
+      if (!current()) return;
       this._fileDiff = result.diff;
       if (this._diffModalOpen && !this._diffModalUrl) {
         this._diffModalTitle = `${workspaceArtifactBasename(filePath)} diff`;
         this._diffModalText = result.diff;
       }
     } catch (err) {
-      console.error('[ready-workspace] file diff failed:', err);
+      if (!current()) return;
+      this._fileDiffError = err instanceof Error ? err.message : String(err);
     } finally {
-      this._fileDiffLoading = false;
+      if (current()) this._fileDiffLoading = false;
     }
   }
 
@@ -734,7 +771,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _confirmAction(actionId: string) {
-    if (this._isRecovering) return;
+    if (this.actionsBlocked || this._packagePending || this._isRecovering) return;
     const packageGate = Boolean(this._payload?.prPackage);
     if (readyActionRequiresConfirmation(actionId, packageGate)) {
       this._confirmTimer.confirm(actionId, () => this._resolve(actionId));
@@ -744,7 +781,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _openReviewRequestModal() {
-    if (this.decision?.resolvedAt || this._isRecovering || this._acting) return;
+    if (
+      this.actionsBlocked ||
+      this._packagePending ||
+      this.decision?.resolvedAt ||
+      this._isRecovering ||
+      this._acting
+    )
+      return;
     this._reviewPicker = new ReviewDispatchViewModel({
       context: {
         allowedActions: ['request-review'],
@@ -766,14 +810,26 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _submitReviewRequest() {
-    if (this._acting || !this._reviewPicker.canInvoke('request-review')) return;
+    if (
+      this.actionsBlocked ||
+      this._packagePending ||
+      this._acting ||
+      !this._reviewPicker.canInvoke('request-review')
+    )
+      return;
     const reviewRequest = this._reviewPicker.toRequestPayload();
     const applied = await this._resolve('request-review', { reviewRequest });
     if (applied) this._closeReviewRequestModal();
   }
 
   async _resolve(actionId: string, extraSelectionData: Record<string, unknown> = {}) {
-    if (this._isRecovering || this.decision?.resolvedAt) return;
+    if (
+      this.actionsBlocked ||
+      this._packagePending ||
+      this._isRecovering ||
+      this.decision?.resolvedAt
+    )
+      return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) {
@@ -855,7 +911,15 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _refreshPublishPackage(payload: ReadyGatePayload) {
-    if (this._refreshingPackage || this._acting || this._isRecovering || !payload.prPackage) return;
+    if (
+      this.actionsBlocked ||
+      this._packagePending ||
+      this._refreshingPackage ||
+      this._acting ||
+      this._isRecovering ||
+      !payload.prPackage
+    )
+      return;
     this._refreshingPackage = true;
     this._actionMessage = 'Refreshing publish package…';
     this._actionTone = '';
