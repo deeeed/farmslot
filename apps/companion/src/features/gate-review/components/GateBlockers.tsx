@@ -11,7 +11,6 @@ import {
   publicationGateBlockers,
   publicationGateView,
   type ReviewDispatchViewModel,
-  untestableOverrideView,
 } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
@@ -19,9 +18,7 @@ import { ReasonSheet } from '../../../components/ReasonSheet';
 import { fonts, radii, spacing } from '../../../lib/theme';
 import { ReviewDispatchPicker } from '../../review-dispatch/ReviewDispatchPicker';
 
-type Sheet =
-  | { kind: 'skip-criterion'; claimId: string; text: string }
-  | { kind: 'another-round'; text: string };
+type Sheet = { kind: 'another-round'; text: string };
 
 /**
  * What blocks publish, at the top of the gate: each blocker with its one plain action,
@@ -34,7 +31,6 @@ export function GateBlockers({
   evidenceModel,
   reviewer,
   busy = false,
-  onSkip,
   acceptingFindings,
   onAcceptFindingsChange,
   onAnotherRound,
@@ -48,7 +44,6 @@ export function GateBlockers({
   evidenceModel?: EvidenceReviewModel | null;
   reviewer?: Parameters<EvidenceReviewModel['judgmentRows']>[0];
   busy?: boolean;
-  onSkip: (claimId: string, reason: string) => Promise<void>;
   acceptingFindings: boolean;
   onAcceptFindingsChange: (accepting: boolean) => void;
   onAnotherRound: (brief: string) => Promise<void>;
@@ -79,7 +74,7 @@ export function GateBlockers({
     readiness,
     gate: decision,
     resolved,
-    canSkip: (claimId) => Boolean(evidenceModel?.claimOverrideCandidate(claimId)),
+    canSkip: () => false,
     budget: payload?.reviewRoundBudget,
   });
   if (!blockers.length) return null;
@@ -105,40 +100,12 @@ export function GateBlockers({
     onAcceptFindingsChange(action.kind === 'accept-findings');
     setRequestingReview(false);
     if (action.kind === 'accept-findings') setSheet(null);
-    else
-      setSheet(
-        action.kind === 'skip-criterion'
-          ? { kind: 'skip-criterion', claimId: action.claimId, text: '' }
-          : action.kind === 'another-round'
-            ? { kind: 'another-round', text: '' }
-            : null,
-      );
+    else setSheet(action.kind === 'another-round' ? { kind: 'another-round', text: '' } : null);
   };
   const renderSheet = (blocker: PublicationBlocker) => {
     const action = blocker.actions.find((entry) => entry.kind === sheet?.kind);
     if (acceptingFindings || !sheet || !action || sheet.kind !== action.kind) return null;
     const change = (text: string) => setSheet({ ...sheet, text });
-    if (sheet.kind === 'skip-criterion' && action.kind === 'skip-criterion') {
-      if (sheet.claimId !== action.claimId) return null;
-      const skip = untestableOverrideView(sheet.claimId, sheet.text);
-      return (
-        <ReasonSheet
-          title={skip.title}
-          hint={skip.hint}
-          label={skip.reasonLabel}
-          placeholder={skip.placeholder}
-          value={sheet.text}
-          confirmLabel={skip.confirm}
-          cancelLabel={skip.cancel}
-          canConfirm={skip.canConfirm}
-          busy={disabled}
-          testID="companion-blocker-skip"
-          onChange={change}
-          onConfirm={() => void send(() => onSkip(sheet.claimId, sheet.text))}
-          onCancel={() => setSheet(null)}
-        />
-      );
-    }
     if (sheet.kind !== 'another-round' || !payload?.reviewRoundBudget) return null;
     const round = anotherReviewRoundView(payload.reviewRoundBudget, sheet.text);
     return (

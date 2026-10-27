@@ -91,10 +91,11 @@ export function selectedEvidenceMediaItem(
   authHeaders: ArtifactHttpHeaders,
   sharedOwner?: SharedRunArtifactOwner,
 ): MediaViewerItem {
+  const claim = model.claims.find(({ id }) => id === model.selection?.claimId);
   return {
     uri: resolveArtifactUrl(path),
     path,
-    title: model.selection?.caption,
+    title: claim ? `${claim.id}: ${claim.text}` : model.selection?.caption,
     mediaType:
       model.selection?.artifacts.find((artifact) => artifact.artifactPath === path)?.mediaType ??
       classifyArtifact(path),

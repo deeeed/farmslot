@@ -7,7 +7,7 @@ import {
   type EvidenceReviewOccurrence,
   formatEvidenceReviewVideoTime,
 } from '@farmslot/adapter-sdk/evidence';
-import { type AcceptanceClaimRow } from '@farmslot/review-dispatch';
+import { acceptanceClaimLabel, type AcceptanceClaimRow } from '@farmslot/review-dispatch';
 
 import './media-lightbox.js';
 import './proof-step-details.js';
@@ -138,13 +138,6 @@ export class EvidenceReviewer extends LitElement {
       font-weight: 600;
       border-radius: 999px;
       background: color-mix(in srgb, currentColor 14%, transparent);
-    }
-    .state::before {
-      content: '';
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: currentColor;
     }
     .state[data-tone='pending'] {
       color: ${unsafeCSS(colors.statusWarn)};
@@ -756,11 +749,21 @@ export class EvidenceReviewer extends LitElement {
     const model = this.model;
     if (!model || !this.selection) return nothing;
     const current = this.claim();
-    const items = this.playerItems();
+    const row = current ? this.row(current) : undefined;
+    const items = this.playerItems().map((item) =>
+      row ? { ...item, caption: acceptanceClaimLabel(row) } : item,
+    );
     return html`
       <header>
-        <h2>Evidence review${current ? html` · ${current.id}` : nothing}</h2>
-        <button class="btn" @click=${() => this.close()}>Close</button>
+        <div>
+          <h2>Evidence review${current ? html` · ${current.id}` : nothing}</h2>
+          ${current
+            ? html`<p data-testid="evidence-review-criterion">${current.text}</p>`
+            : nothing}
+        </div>
+        <button class="btn" data-testid="evidence-review-close" @click=${() => this.close()}>
+          Close
+        </button>
       </header>
       <div class="body" style="--nav-width:${this.navWidth}px">
         <nav aria-label="Acceptance criteria">
@@ -792,12 +795,14 @@ export class EvidenceReviewer extends LitElement {
                 <span class="claim-text">${claim.text}</span>
                 ${this.row(claim)
                   ? html`<span class="state" data-tone=${this.row(claim)!.tone}
-                      >${this.row(claim)!.state}</span
+                      >${acceptanceClaimLabel(this.row(claim)!)}</span
                     >`
                   : nothing}
                 <span class="muted"
                   >${start === null
-                    ? 'not recorded'
+                    ? claim.status?.proofMode === 'review'
+                      ? 'Code review'
+                      : 'No recording'
                     : formatEvidenceReviewVideoTime(start / 1000, false)}</span
                 >
               </button>

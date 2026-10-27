@@ -14,7 +14,8 @@ import type {
   EvidenceReviewComparisonFilter,
   EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
-import { acceptanceVerdictLabel, type SelfPrincipalSummary } from '@farmslot/protocol';
+import { type SelfPrincipalSummary } from '@farmslot/protocol';
+import { acceptanceClaimLabel, acceptanceClaimRows } from '@farmslot/review-dispatch';
 
 import {
   type ArtifactHttpHeaders,
@@ -322,11 +323,11 @@ export function EvidenceReviewWorkspace({
                   </Pressable>
                 ))}
                 <Text style={styles.railSubtitle}>
-                  {row.claim.status ? acceptanceVerdictLabel(row.claim.status) : 'not assessed'} ·{' '}
-                  {row.claim.status?.proofMode ?? 'no proof mode'} ·{' '}
-                  {row.claim.proofKinds.join(', ') || 'no recorded proof'} ·{' '}
-                  {row.claim.reviewLabels.join('; ')}
+                  {acceptanceClaimLabel(acceptanceClaimRows({ claims: [row.claim] })[0])}
                 </Text>
+                {row.claim.reviewLabels?.length ? (
+                  <Text style={styles.railSubtitle}>{row.claim.reviewLabels.join(' · ')}</Text>
+                ) : null}
                 {row.sourceUrl ? (
                   <Pressable onPress={() => Linking.openURL(row.sourceUrl!)}>
                     <Text style={styles.deltaActionText}>Original Jira AC</Text>

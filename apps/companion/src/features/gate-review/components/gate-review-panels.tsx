@@ -13,6 +13,7 @@ import {
 import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import { type Run, type RunDecision, type RunGateReadiness } from '@farmslot/protocol';
 import {
+  criterionDraftsAvailable,
   type PublicationGateAction,
   type PublicationGateClaim,
   publicationGateCriteria,
@@ -156,6 +157,8 @@ export function GateActions({
   onResolve,
   reviewPicker,
   attestationReason,
+  drafts,
+  criterionDrafts,
   onAttestationReason,
   claims,
   judgmentRows,
@@ -189,6 +192,8 @@ export function GateActions({
   pendingVisualClaimIds?: readonly string[];
   readiness?: RunGateReadiness;
   onFocusClaim?: (id: string) => void;
+  drafts?: Parameters<typeof AcceptanceClaimList>[0]['drafts'];
+  criterionDrafts?: import('@farmslot/review-dispatch').CriterionDraft[];
   attestationReason: string;
   onAttestationReason: (reason: string) => void;
   reviewPicker: ReviewDispatchViewModel;
@@ -228,6 +233,7 @@ export function GateActions({
     reviewSummary:
       decision.payload?.kind === 'ready' ? decision.payload.gateSummary?.review : undefined,
     attestationReason,
+    criterionDrafts,
     attesting: attestingDecisionId === decision.id,
     acceptingFindings: acceptingFindings ?? acceptingDecisionId === decision.id,
   });
@@ -291,7 +297,9 @@ export function GateActions({
         ]}
       >
         <Text style={{ color: primary ? palette.onAccent : palette.text, fontWeight: '600' }}>
-          {sendingActionId === action.id ? 'Submitting…' : action.label}
+          {sendingActionId === action.id
+            ? 'Submitting…'
+            : ((primary ? view.draftApprovalLabel : undefined) ?? action.label)}
         </Text>
       </Pressable>
     );
@@ -309,7 +317,7 @@ export function GateActions({
       judging ||
       sendingActionId ||
       accepting ||
-      attestingDecisionId === decision.id ? (
+      view.attesting ? (
         <Text
           testID="companion-gate-review-approve-reason"
           accessibilityRole="header"
@@ -350,6 +358,7 @@ export function GateActions({
               : null}
             <AcceptanceClaimList
               rows={view.claims}
+              drafts={criterionDraftsAvailable(decision) ? drafts : undefined}
               onFocus={onFocusClaim}
               onRecord={onRecordVisualReview}
               disabled={disabled || judging || sendingActionId !== null}
@@ -359,7 +368,7 @@ export function GateActions({
           </ScrollView>
         </View>
       ) : null}
-      {view.attestation && attestingDecisionId === decision.id ? (
+      {view.attestation && view.attesting ? (
         <View style={gateStyles.section} accessibilityLabel="Evidence attestation">
           <Text style={[gateStyles.label, { color: palette.text }]}>
             Reason for evidence policy attestation

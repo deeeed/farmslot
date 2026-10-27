@@ -9,7 +9,7 @@ import type {
   Run,
   RunDecision,
 } from '@farmslot/protocol';
-import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+import { CriterionDraftModel, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
@@ -69,6 +69,10 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _acting = false;
   @state() _pendingConfirm: string | null = null;
   @state() _evidenceAttestationReason = '';
+  readonly _criterionDrafts = new CriterionDraftModel({
+    getItem: (key) => localStorage.getItem(key),
+    setItem: (key, value) => localStorage.setItem(key, value),
+  });
   @state() _actionMessage = '';
   @state() _actionTone: 'success' | 'error' | '' = '';
   @state() _refreshingPackage = false;
@@ -136,6 +140,7 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _diffFiles: GitBranchDiffFile[] = [];
   /** Effective test-file globs from the last branch diff (Diff tab filter and diff modal). */
   @state() _diffTestPatterns: readonly string[] | null = null;
+  @state() _branchDiffLoaded = false;
   @state() _diffLoading = false;
   @state() _selectedFile = '';
   @state() _fileDiff = '';

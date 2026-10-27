@@ -8,7 +8,6 @@ import {
   type AcceptanceCriterionView,
   type AcceptanceRegistration,
   type AcceptanceStatusLedger,
-  acceptanceVerdictLabel,
   acceptReviewFindingsAvailable,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
@@ -39,6 +38,13 @@ import {
   SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
+import {
+  canDraftCriterion,
+  type CriterionDraft,
+  criterionDraftApprovalLabel,
+  criterionDraftReason,
+} from './criterion-drafts.js';
+
 export interface PublicationGateAction extends DecisionAction {
   disabledReason?: string | null;
 }
@@ -64,6 +70,7 @@ export interface PublicationGateInput {
   blockedReason?: string;
   /** The written reason for evidence attestation or for accepting review findings. */
   attestationReason?: string;
+  criterionDrafts?: readonly CriterionDraft[];
   resolved?: boolean;
   attesting?: boolean;
   /** The person chose to accept the open review findings (ADR-065 Amendment 8). */
@@ -112,11 +119,15 @@ export interface AcceptanceClaimRow {
   pending: boolean;
   source?: PublicationGateClaim;
   judgment?: EvidenceReviewJudgmentRow;
+  draft?: CriterionDraft;
 }
 
 /** One AC presentation for publication gates, previews and evidence panels. */
 export function acceptanceClaimRows(
-  input: Pick<PublicationGateInput, 'claims' | 'judgmentRows' | 'pendingVisualClaimIds'> & {
+  input: Pick<
+    PublicationGateInput,
+    'claims' | 'judgmentRows' | 'pendingVisualClaimIds' | 'criterionDrafts' | 'attestationReason'
+  > & {
     criteria?: readonly AcceptanceCriterionRef[];
     ledger?: AcceptanceStatusLedger;
     registration?: AcceptanceRegistration;
@@ -150,20 +161,16 @@ export function acceptanceClaimRows(
     id: claim.id,
     text: claim.text,
     state:
-      claim.status?.verdict === 'failed'
-        ? 'Issue'
-        : pending.has(claim.id) || claim.status?.verdict === 'awaiting-review'
-          ? 'Needs a check'
-          : claim.status?.verdict === 'proven'
-            ? claim.proofKinds?.includes('person-reviewed')
-              ? 'Checked'
-              : claim.proofKinds?.includes('agent-reviewed')
-                ? 'Verified by agent'
-                : 'Proven'
-            : (claim.status?.verdict ??
-              ('evidenceLinked' in claim && claim.evidenceLinked
-                ? 'Evidence linked'
-                : 'Not assessed')),
+      claim.status?.verdict === 'untestable'
+        ? 'Skipped'
+        : claim.status?.verdict === 'proven'
+          ? claim.status.proofMode === 'review'
+            ? 'Verified in code'
+            : 'Proven in app'
+          : pending.has(claim.id) ||
+              (claim.status?.verdict === 'awaiting-review' && claim.status.proofMode !== 'review')
+            ? 'Needs your look'
+            : 'Not proven',
     tone: 'pending',
     detail: '',
     pending: pending.has(claim.id),
@@ -189,23 +196,14 @@ export function acceptanceClaimRows(
       };
     } else if (input.registration?.original.some(({ id }) => id === row.id))
       row.origin = { label: 'Original criterion', reference: row.id };
-    // The code review checks a `review` claim (ADR-062 Amendment 18).
-    const status = row.source?.status;
-    if (status?.proofMode === 'review' && !['failed', 'untestable'].includes(status.verdict))
-      row.state = acceptanceVerdictLabel(status);
     row.tone =
-      row.state === 'Issue'
-        ? 'issue'
-        : row.state === 'Checked' || row.state === 'Checked in review'
-          ? 'checked'
-          : row.state === 'Verified by agent'
-            ? 'verified'
-            : row.state === 'Proven'
-              ? 'proven'
-              : row.state === 'untestable'
-                ? 'untestable'
-                : 'pending';
-    if (row.tone === 'untestable') row.state = 'Untestable';
+      row.state === 'Proven in app' || row.state === 'Verified in code'
+        ? 'proven'
+        : row.state === 'Skipped'
+          ? 'untestable'
+          : row.state === 'Needs your look'
+            ? 'pending'
+            : 'issue';
     const retained = row.source?.retained ?? row.judgment?.claim.retained;
     row.detail = [
       retained
@@ -224,11 +222,25 @@ export function acceptanceClaimRows(
         source: undefined,
         judgment: undefined,
         text: 'Review the recorded criterion.',
-        state: 'Needs a check',
+        state: 'Needs your look',
         tone: 'pending',
         detail: '',
         pending: true,
       });
+  }
+  for (const row of claims) {
+    const draft = input.criterionDrafts?.find(({ claimId }) => claimId === row.id);
+    if (draft && row.source && canDraftCriterion(row.source)) {
+      row.draft = draft;
+      row.state =
+        draft.choice === 'skip'
+          ? 'Skipped'
+          : draft.codeReview
+            ? 'Verified in code'
+            : 'Proven in app';
+      row.tone = draft.choice === 'skip' ? 'untestable' : 'proven';
+      row.detail = `${draft.note} · Pending gate approval`;
+    }
   }
   return claims;
 }
@@ -344,8 +356,13 @@ function gateReviewBlockingReason(
 
 /** Presentation only: action availability and evidence judgments remain gateway-owned. */
 export function publicationGateView(input: PublicationGateInput) {
-  const pending = new Set(input.pendingVisualClaimIds ?? []);
+  const pending = new Set(
+    (input.pendingVisualClaimIds ?? []).filter(
+      (id) => !input.criterionDrafts?.some((draft) => draft.claimId === id),
+    ),
+  );
   const claims = acceptanceClaimRows(input);
+  const draftReason = criterionDraftReason(input.criterionDrafts ?? [], input.attestationReason);
   const reviewBlock =
     (input.run && publicationReviewBlockingReason(input.run)) ||
     input.readiness?.reasons.find((reason) => reason.code === 'review-fix-required')?.message;
@@ -403,11 +420,26 @@ export function publicationGateView(input: PublicationGateInput) {
     evidenceAttestationAvailable(input.readiness)
       ? offeredAttestation
       : null;
+  const onlyCodeReviewRemains =
+    claims.some(
+      (claim) =>
+        claim.source?.status?.proofMode === 'review' &&
+        claim.source.status.verdict === 'awaiting-review',
+    ) &&
+    claims.every(
+      (claim) =>
+        (claim.source?.status?.proofMode === 'review' &&
+          claim.source.status.verdict === 'awaiting-review') ||
+        claim.source?.status?.verdict === 'proven' ||
+        claim.source?.status?.verdict === 'untestable',
+    );
   const approval = sendBack
     ? null
     : normal && !normal.disabledReason
       ? normal
-      : ((input.attesting ? attestation : null) ??
+      : ((input.attesting || onlyCodeReviewRemains || Boolean(input.criterionDrafts?.length)
+          ? attestation
+          : null) ??
         (input.acceptingFindings ? acceptFindings : null) ??
         normal ??
         null);
@@ -461,12 +493,14 @@ export function publicationGateView(input: PublicationGateInput) {
             : 'Ready to publish'),
     blockedReason:
       blockedReason ||
-      (reasonRequired && !isValidEvidenceAttestationReason(input.attestationReason)
+      (reasonRequired && !isValidEvidenceAttestationReason(draftReason)
         ? accepting
           ? 'Enter a reason before accepting the findings.'
           : 'Enter an attestation reason before approving.'
         : ''),
     approval,
+    draftApprovalLabel: criterionDraftApprovalLabel(input.criterionDrafts ?? []),
+    attesting: approval?.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
     sendBack: sendBack ?? null,
     attestation,
     acceptFindings,
@@ -754,4 +788,19 @@ export function reviewFallbackLine(
   );
   const loop = review.session?.fallback || !attempt ? '' : `Round ${attempt.loopNumber} `;
   return `${loop}Ran COLD in a fresh session: ${fallback.detail}. Compared ${ranges.join(' with ') || 'no recorded range'}.`;
+}
+
+/** Presentation only: keep engine timing tags out of the operator's criterion row. */
+export function acceptanceTimingCaption(
+  timing: 'measured' | 'untimed' | 'outside-recording' | undefined,
+): string {
+  return timing === 'outside-recording'
+    ? 'Outside the recording'
+    : timing === 'untimed'
+      ? 'No recorded time'
+      : '';
+}
+
+export function acceptanceClaimLabel(row: Pick<AcceptanceClaimRow, 'state'>): string {
+  return `${row.state === 'Proven in app' || row.state === 'Verified in code' ? '✓ ' : row.state === 'Not proven' ? '✕ ' : ''}${row.state}`;
 }

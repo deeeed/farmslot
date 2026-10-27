@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep reversible criterion drafts across reload and submit their notes through the existing publication override and attestation calls.
+
 - Keep saved fleet recovery rows visible while current inspection runs or fails, with release guarded until inspection succeeds.
 
 - Share fleet workspace rows, safe bulk release, discard confirmation and recovery progress between both operator apps.

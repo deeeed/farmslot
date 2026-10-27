@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { ChildProcess, execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { mock } from 'node:test';
@@ -23,6 +23,12 @@ const output = path.resolve(process.argv[2]);
 const control = process.argv.includes('--withhold-snapshot');
 const costProof = process.argv.includes('--fleet-cost');
 const baseline = process.argv.includes('--baseline');
+const codeProof = process.argv.includes('--code-review');
+const expectMissing = process.argv.includes('--expect-missing-confirmation');
+let codeFixture;
+let holdCodeEvidence = codeProof,
+  holdCodeApproval = codeProof;
+const heldCodeEvidence = [];
 const boundedLocal = process.argv.includes('--bounded-local');
 const fleetProof = process.argv.includes('--fleet') || costProof || boundedLocal;
 const ancestryInputFile = process.env.FARMSLOT_GATE_PROOF_ANCESTRY;
@@ -56,10 +62,12 @@ const listen = async (server) => {
   });
   return server.address().port;
 };
-const closeServer = (server) =>
-  server.listening
+const closeServer = (server) => {
+  server.closeAllConnections();
+  return server.listening
     ? new Promise((yes, no) => server.close((error) => (error ? no(error) : yes())))
     : Promise.resolve();
+};
 const events = [],
   sockets = new Set(),
   held = [],
@@ -91,7 +99,7 @@ const cdp = async (...args) => {
     const result = await exec(process.execPath, ['apps/command-center/scripts/cdp.mjs', ...args], {
       cwd: source,
       env,
-      timeout: 90000,
+      timeout: args[0] === 'screenshot' ? 15000 : 90000,
       maxBuffer: 2 * 1024 * 1024,
     });
     return result.stdout;
@@ -163,7 +171,7 @@ try {
     baseSha = (await git('rev-parse', 'HEAD')).stdout.trim();
     if (!fleetProof) {
       await git('checkout', '-qb', 'proof');
-      for (let i = 0; i < 51; i++)
+      for (let i = 0; i < (codeProof ? 5 : 51); i++)
         await writeFile(
           path.join(fixtureRepo, `source-${String(i).padStart(2, '0')}.ts`),
           `export const observed${i} = ${i};\n`,
@@ -335,6 +343,19 @@ try {
       },
     ],
   });
+  if (codeProof) {
+    const { prepareCodeReviewGate } = await import('./gate-code-review-proof.mjs');
+    codeFixture = await prepareCodeReviewGate({
+      sourceModule,
+      source,
+      store,
+      run,
+      root,
+      mock,
+      headSha,
+    });
+    release = true;
+  }
   if (costProof) {
     assert(ancestryInputFile, 'Provide the real published ancestry input');
     ancestryInput = JSON.parse(await readFile(ancestryInputFile, 'utf8'));
@@ -356,7 +377,9 @@ try {
     await ancestryGit('update-ref', 'HEAD', input.headSha);
     assert.equal((await ancestryGit('rev-parse', 'HEAD')).stdout.trim(), input.headSha);
   }
-  const { createGatewayAuthRuntime } = await sourceModule('services/gateway/src/security/auth.ts');
+  const { createGatewayAuthRuntime, authorizeHttpRequest } = await sourceModule(
+    'services/gateway/src/security/auth.ts',
+  );
   const { createWebSocketServer, broadcastEvent } = await sourceModule(
     'services/gateway/src/server.ts',
   );
@@ -365,10 +388,57 @@ try {
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   const credential = auth.writer.issueCredential(person.id, 'Disposable browser proof');
-  gatewayServer = createServer();
+  const { applyGatewayCors } = await sourceModule('services/gateway/src/security/origin.ts');
+  const { serveFile, serveRunArtifact } = await sourceModule(
+    'services/gateway/src/methods/filesystem.ts',
+  );
+  gatewayServer = createServer((req, res) => {
+    if (!applyGatewayCors(req, res)) {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    const resource = req.url?.startsWith('/api/run-artifact?')
+      ? 'run-artifact'
+      : req.url?.startsWith('/api/file?')
+        ? 'file'
+        : null;
+    if (resource) {
+      if (!authorizeHttpRequest({ runtime: auth, req, res, resource })) return;
+      if (resource === 'run-artifact') serveRunArtifact(req, res);
+      else serveFile(req, res);
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
   gatewaySockets = createWebSocketServer(gatewayServer, auth);
   const gatewayPort = await listen(gatewayServer);
-  proxyServer = createServer();
+  proxyServer = createServer((req, res) => {
+    const upstream = httpRequest(
+      {
+        hostname: '127.0.0.1',
+        port: gatewayPort,
+        path: req.url,
+        method: req.method,
+        headers: req.headers,
+      },
+      (reply) => {
+        res.writeHead(reply.statusCode ?? 502, reply.headers);
+        reply.pipe(res);
+      },
+    );
+    upstream.on('error', (error) => {
+      primaryError ??= error;
+      res.destroy(error);
+    });
+    req.pipe(upstream);
+  });
   proxySockets = new WebSocketServer({ server: proxyServer });
   proxySockets.on('connection', (client) => {
     sockets.add(client);
@@ -398,7 +468,16 @@ try {
       const frame = JSON.parse(bytes.toString());
       const req = requests.get(frame.id);
       const sourceHeld = holdSource && ['git.branchDiff', 'git.diff'].includes(req?.method);
+      const codeEvidenceHeld =
+        codeProof && holdCodeEvidence && req?.method === 'run.recipeRunsForRun';
+      const codeApprovalHeld =
+        codeProof &&
+        holdCodeApproval &&
+        ((req?.method === 'run.resolveDecision' && frame.ok !== false) ||
+          (frame.type === 'event' && frame.event?.startsWith('run.')));
       const hold =
+        codeEvidenceHeld ||
+        codeApprovalHeld ||
         sourceHeld ||
         (!release &&
           ((req?.method === 'run.get' && (!req.params?.view || control)) ||
@@ -411,6 +490,11 @@ try {
           receivedMs: Date.now() - started,
           bytes: bytes.length,
           ok: frame.ok,
+          ...(codeProof &&
+          frame.ok === false &&
+          ['run.resolveDecision', 'run.overrideClaim'].includes(req.method)
+            ? { error: { code: frame.error?.code, message: frame.error?.message } }
+            : {}),
           held: hold,
           ...(req.method === 'fleet.status' && frame.ok
             ? {
@@ -426,7 +510,7 @@ try {
             : {}),
         });
       if (hold)
-        (sourceHeld ? heldSource : held).push(() => {
+        (codeEvidenceHeld ? heldCodeEvidence : sourceHeld ? heldSource : held).push(() => {
           if (client.readyState === WebSocket.OPEN) client.send(bytes, { binary });
         });
       else if (client.readyState === WebSocket.OPEN) client.send(bytes, { binary });
@@ -493,7 +577,29 @@ try {
     ),
   );
   if (releaseNotes.open) await cdp('click', route, 'whats-new-modal >>> button.primary');
-  if (costProof) {
+  if (codeProof) {
+    route = `runs?run=${run.id}`;
+    const { proveCodeReviewGate } = await import('./gate-code-review-proof.mjs');
+    await proveCodeReviewGate({
+      cdp,
+      origin,
+      run,
+      output,
+      save,
+      events,
+      store,
+      expectMissing,
+      fixture: codeFixture,
+      releaseEvidence: () => {
+        holdCodeEvidence = false;
+        for (const send of heldCodeEvidence.splice(0)) send();
+      },
+      releaseReplies: () => {
+        holdCodeApproval = false;
+        for (const send of held.splice(0)) send();
+      },
+    });
+  } else if (costProof) {
     const input = ancestryInput;
     assert(input && ancestryRepo, 'Published ancestry must be prepared before service startup');
     const { refIncludedInMergedPullRequest, readMergedPreparePullRequests } = await sourceModule(
@@ -941,24 +1047,29 @@ try {
       );
   }
   await save('rpc-final.json', events);
-  assert(
-    !events.some((e) =>
-      /^(slot\.refresh$|fleet\.refreshSlots$|run\.(resolveDecision|replay|cancel|overrideClaim|reviewVisualClaim)|dispatch\.(?!queue\.list$))/.test(
-        e.method ?? '',
+  if (!codeProof)
+    assert(
+      !events.some((e) =>
+        /^(slot\.refresh$|fleet\.refreshSlots$|run\.(resolveDecision|replay|cancel|overrideClaim|reviewVisualClaim)|dispatch\.(?!queue\.list$))/.test(
+          e.method ?? '',
+        ),
       ),
-    ),
-    'The proof must not issue a command',
-  );
+      'The proof must not issue a command',
+    );
   if (primaryError) throw primaryError;
   await save('result.json', {
     status: 'PASS',
-    mode: costProof
-      ? 'fleet-cost'
-      : fleetProof
-        ? 'fleet'
-        : control
-          ? 'causal-negative'
-          : 'progressive',
+    mode: codeProof
+      ? expectMissing
+        ? 'code-review-control'
+        : 'code-review'
+      : costProof
+        ? 'fleet-cost'
+        : fleetProof
+          ? 'fleet'
+          : control
+            ? 'causal-negative'
+            : 'progressive',
     ...(costResult ? { cost: costResult } : {}),
     paintMs: gatePaintMs,
     targetMs: 2000,
@@ -986,7 +1097,11 @@ try {
     }
   };
   if (route) await attempt(() => cdp('close', route));
-  if (ui) await attempt(() => ui.close());
+  if (ui)
+    await attempt(() => {
+      ui.httpServer?.closeAllConnections();
+      return ui.close();
+    });
   for (const socket of sockets) socket.terminate();
   if (proxySockets) await attempt(() => new Promise((yes) => proxySockets.close(yes)));
   if (proxyServer) await attempt(() => closeServer(proxyServer));
@@ -1012,12 +1127,16 @@ console.log(
   JSON.stringify({
     status: 'PASS',
     output,
-    mode: costProof
-      ? 'fleet-cost'
-      : fleetProof
-        ? 'fleet'
-        : control
-          ? 'causal-negative'
-          : 'progressive',
+    mode: codeProof
+      ? expectMissing
+        ? 'code-review-control'
+        : 'code-review'
+      : costProof
+        ? 'fleet-cost'
+        : fleetProof
+          ? 'fleet'
+          : control
+            ? 'causal-negative'
+            : 'progressive',
   }),
 );
