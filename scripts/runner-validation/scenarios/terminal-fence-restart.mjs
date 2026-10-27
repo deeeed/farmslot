@@ -21,8 +21,9 @@ export const RUNNER_AGNOSTIC = true;
  * `runtime.capability.acquire`, `runtime.posture.apply`, `runtime.capability.status`.
  * No pane text, no unit doubles.
  *
- * The restart is REAL but it is the dev `tsx watch` supervisor's, not a
- * `farmslot up` restart: touching a gateway source file makes the supervisor
+ * Requires an isolated watch gateway (`yarn dev:gateway` from Command Center),
+ * not the shared `farmdev` stack. The restart is REAL but it is the dev
+ * `tsx watch` supervisor's: touching a gateway source file makes the supervisor
  * replace the process. It is proven by the LISTENER PID changing, recorded in
  * the evidence, and it kills operator sessions on this gateway — so the
  * scenario refuses to run while any other run is active.
@@ -174,7 +175,7 @@ async function restartGateway(timeoutMs) {
   }
   if (after === before) {
     throw new Error(
-      `gateway listener pid never changed from ${before}; the dev supervisor did not restart it`,
+      `gateway listener pid never changed from ${before}; use an isolated dev:gateway watch supervisor, not the shared farmdev stack`,
     );
   }
   return { before, after };
