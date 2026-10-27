@@ -1049,6 +1049,7 @@ async function attemptInlineCIFix(
           runId,
           role: relaunchWorkerRole,
           session: relaunched,
+          paneId: deliveryPane?.paneId,
           captureLabel: 'ci fix relaunch',
         });
       }
