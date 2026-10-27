@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add the conditional-edits browser proof: hashed and run-bound saves, a refused save with both versions, stale-run drafts, worker writes after a save, typing during a save, read-only editors without the capability or on a node that cannot check edits, no draft sent on reconnect, drafts deleted with their count on sign-out and principal change, an untracked file opened offline, and the slot PR, review threads and slot PR recovery paths.
+
 - Add the offline gate-review browser proof: prefetch order and the stop after a refusal, a pending gate opened offline with both sides held, an untracked file prefetched while an ignored `.env` is never read or stored, and fix-loop bytes. The client-store baseline gains a gate phase that counts gateway frames plus run-artifact bytes and names where the diff came from.
 
 - Add read-only CI-watch card proof for check counts and live poll/timeout text.
