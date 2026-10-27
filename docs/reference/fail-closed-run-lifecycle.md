@@ -754,8 +754,8 @@ credential held by automation.
 
 ## Worker launch preflight
 
-**Status:** Proposed under ADR-065 Amendment 11. This section does not authorize
-implementation or activation.
+**Status:** Scope and implementation accepted under ADR-065 Amendment 11.
+The measured budget revision requires paired delta review before implementation.
 
 ### Admission point and binding
 
@@ -791,7 +791,9 @@ lifecycle records, even when the resource was created by an older attempt.
    pin where declared; otherwise check its child Node without inventing a Yarn
    version requirement. An override naming a valid binary does not establish which
    runtime Yarn or the worker actually runs. Conflicting declarations, missing
-   required tools and unavailable observations MUST refuse. An undeclared Ruby
+   required tools MUST refuse when their absence is observed. A timeout or
+   unavailable observation MUST remain unverified under the retry policy below.
+   An undeclared Ruby
    requirement MUST NOT be invented. Probes MUST NOT install tools, change
    defaults, edit tracked files or mutate managed fixtures.
 3. **Prior-attempt leftovers.** Inspect existing lease and session registries
@@ -802,15 +804,32 @@ lifecycle records, even when the resource was created by an older attempt.
    retained resources MUST NOT be released or block their admitted continuation.
    Remaining leftovers MUST prevent launch until canonical cleanup settles.
    Preserve foreign owners and needed admitted reviews. Process existence alone
-   proves no leftover; unknown ownership refuses without terminating a process.
+   proves no leftover. Unknown ownership MUST remain unverified without
+   terminating a process; existing slot and resource ownership fences still apply.
 
 ### Cost and failure
 
-Read-only checks, including remote probes and waiting for an existing cleanup
-result, MUST finish within ten seconds total. Probe budgets MUST NOT become
-cleanup command budgets. Existing cleanup keeps its configured timeout and
-ownership fences. If it remains unsettled, refuse promptly as cleanup pending;
-never cancel it, start competing cleanup or launch a worker optimistically.
+Each read-only probe MUST have its own budget. Before shipping, measure three
+executions of each probe on a loaded execution host and a remote host, including
+launch-shell and transport costs. Record all samples and p50/p95 in the PR. With
+three samples, nearest-rank p95 is the largest observation, not a tail guarantee.
+The budget is the larger host p95 plus the greater of that p95 or five seconds,
+rounded up to whole seconds. Remeasure if the probe work changes. There is no
+shared ten-second cutoff.
+
+After a timeout, wait one measured p95 and retry the affected probe once with
+its full budget. A second timeout or unavailable observation MUST record the
+probe as unverified and allow launch through existing admission fences. Preserve
+the probe name, reason, attempts and elapsed time in existing dispatch details.
+Never report it passed. Only an observed mismatch or unreleased leftover refuses
+launch. A changed launch binding still invalidates this attempt under the
+admission rules above.
+
+Probe budgets MUST NOT become cleanup command budgets. Existing cleanup keeps
+its configured timeout and ownership fences. An observed pending cleanup is an
+unreleased leftover and refuses until its owner settles it. Never cancel it or
+start competing cleanup. An unavailable cleanup observation follows the same
+unverified policy and grants no cleanup or ownership authority.
 
 A refusal MUST identify the failed check, slot or node, observed and expected
 values, and the exact supported correction or retry condition. `run.create`
@@ -827,8 +846,9 @@ the same run. No new RPC, flag, SDK field or harness extension is proposed.
 Regression and disposable scripted dispatch proof MUST cover mismatched selected
 source bytes, CLI/protocol mismatch, a Yarn child selecting the wrong Node,
 declared Ruby mismatch, owned leftover cleanup and foreign/current-review
-preservation. Cover unavailable probes, the total budget, pending cleanup and a
-generation change before launch. Simulate the budget with an injected clock;
+preservation. Cover timeout then retry, retry exhaustion allowing an explicitly
+unverified probe, per-probe budgets, pending cleanup and a generation change
+before launch. Simulate budgets and retry waits with an injected clock;
 each default test stays below five seconds, the suite below five minutes, with
 no fixed wait of one second or more. Prove failed preflight creates no worker or
 fixture mutation, then correct the declared prerequisite through its supported

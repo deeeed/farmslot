@@ -789,7 +789,8 @@ beside an evidence-policy gap.
 
 ## Amendment 11: verify launch prerequisites before starting a worker, 2026-10-27
 
-**Status:** Proposed. Implementation requires lead approval after paired review.
+**Status:** Scope and implementation accepted by the lead on 2026-10-27.
+The measured budget revision below requires paired delta review before implementation.
 **Specification:** [Worker launch preflight](../reference/fail-closed-run-lifecycle.md#worker-launch-preflight).
 
 ### Decision
@@ -806,11 +807,19 @@ reviews remain protected. Reattachment through `run.resume` alone starts no
 worker and is not a new launch trigger.
 
 Bind observations to the current run generation, slot, source selection and
-launch shell. Recheck those identities before launch. A mismatch, unavailable
-probe or pending cleanup refuses the launch with the failed check, observed and
-expected values, and the exact supported correction. Read-only inspection has a
-ten-second total budget. Cleanup retains its own configured budget; the check
-must not shorten it or report unfinished cleanup as success.
+launch shell. Recheck those identities before launch. An observed mismatch or
+unreleased leftover refuses launch with the check, observed and expected values,
+and the supported correction. A timeout is not evidence of a mismatch. Wait and
+retry that probe once; if still unavailable, record it as unverified and allow
+launch through existing admission fences. Never label an unverified probe passed.
+
+Each probe has its own budget, derived from measured p95 plus margin. Measure
+three executions per probe on a loaded execution host and a remote host,
+including launch-shell and transport costs, and retain p50/p95 in the shipping
+PR. Use the larger host p95, rounded up after adding the greater of that p95 or
+five seconds. The retry uses the same budget and waits one measured p95 first.
+Cleanup retains its own configured budget; the check must not shorten it or
+report unfinished cleanup as success.
 
 Use the current lifecycle owner, source receipts, toolchain probes and resource
 registries. Do not add a daemon, selector writer, alternative cleanup owner or
@@ -823,8 +832,8 @@ A task should discover launch prerequisites before consuming worker time.
 Checking the shell that starts the worker catches a valid configured binary
 whose Yarn child still resolves another runtime. Checking bound source receipts
 avoids advancing a retained run to current source merely to inspect it. The
-bounded refusal gives an operator a correction without bypassing admission or
-interrupting needed reviews.
+observed refusal gives an operator a correction. Slowness alone does not create
+a new blocker or interrupt needed reviews.
 
 ### Public surface
 
