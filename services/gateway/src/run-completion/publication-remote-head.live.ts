@@ -280,7 +280,7 @@ test(
     assert.match(refused.error ?? '', /remote HEAD mismatch/);
     await waitCleanup();
     // Push exactly the publication HEAD through the production helper and real hook.
-    await pushPublicationBranch(current(), head);
+    await pushPublicationBranch(current(), head, 'main');
     assert.equal(git('ls-remote', 'origin', `refs/heads/${branch}`).split(/\s+/)[0], head);
     assert.match(await readFile(hookReceipt, 'utf8'), /hook/);
     await client.call('run.replayStep', { runId: created.id, stepName: 'finalize' });
