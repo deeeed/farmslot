@@ -37,6 +37,7 @@ import {
   startResourcePolling,
 } from './fleet/resource-manager.js';
 import { loadFleetStatus, onStateChange } from './fleet/state.js';
+import { setFleetWorkspacePublisher } from './methods/fleet.js';
 import { resetClientResourceIndex, streamUnsubscribe } from './methods/stream-feed.js';
 import { parseTerminalKey } from './methods/terminal.js';
 import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
@@ -440,6 +441,7 @@ export function createWebSocketServer(
 export function initServerGlobals(): void {
   if (serverGlobalsInitialized) return;
   serverGlobalsInitialized = true;
+  setFleetWorkspacePublisher((fleet) => broadcastEvent(Events.FLEET_UPDATED, { fleet }));
 
   // Broadcast PTY exit events to all clients
   onPtyExit((slotId, exitCode) => {
@@ -525,6 +527,7 @@ export function resetServerGlobalsForTests(): void {
     throw new Error('resetServerGlobalsForTests is only available during tests');
   }
   serverGlobalsInitialized = false;
+  setFleetWorkspacePublisher(undefined);
   if (backlogAutoDispatchInterval) {
     clearInterval(backlogAutoDispatchInterval);
     backlogAutoDispatchInterval = null;

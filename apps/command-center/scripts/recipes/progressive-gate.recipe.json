@@ -52,7 +52,7 @@
     },
     {
       "id": "open-fleet-observations",
-      "claim": "A mounted release dialog receives a real staged Git change through background observations, reducing bulk eligibility without reopening."
+      "claim": "A mounted release dialog receives a real staged Git change immediately after monitor-owned background observation, reducing bulk eligibility without reopening."
     }
   ],
   "workflow": {

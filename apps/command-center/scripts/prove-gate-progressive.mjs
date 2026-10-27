@@ -380,7 +380,7 @@ try {
   const { createGatewayAuthRuntime, authorizeHttpRequest } = await sourceModule(
     'services/gateway/src/security/auth.ts',
   );
-  const { createWebSocketServer, broadcastEvent } = await sourceModule(
+  const { createWebSocketServer, broadcastEvent, initServerGlobals } = await sourceModule(
     'services/gateway/src/server.ts',
   );
   const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
@@ -418,6 +418,7 @@ try {
     res.end();
   });
   gatewaySockets = createWebSocketServer(gatewayServer, auth);
+  if (boundedLocal) initServerGlobals();
   const gatewayPort = await listen(gatewayServer);
   proxyServer = createServer((req, res) => {
     const upstream = httpRequest(
@@ -872,16 +873,34 @@ try {
       const changedRepo = path.join(root, 'local-proof-0');
       await writeFile(path.join(changedRepo, 'fixture.txt'), 'Changed while Fleet is open\n');
       await exec('git', ['add', 'fixture.txt'], { cwd: changedRepo });
+      // Exercise the monitor's caller with no request publisher. The server's
+      // once-only completion publisher must notify the mounted view immediately.
+      const { fleetStatus } = await sourceModule('services/gateway/src/methods/fleet.ts');
+      const monitorReads = [];
+      const observationDeadline = Date.now() + 45000;
+      for (;;) {
+        const start = performance.now();
+        const { fleet } = await fleetStatus();
+        monitorReads.push(performance.now() - start);
+        if (fleet.slots.find((slot) => slot.slot === 'local-proof-0')?.workspace?.dirtyCount === 1)
+          break;
+        assert(Date.now() < observationDeadline, 'Actual monitor observation must finish');
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      await save('monitor-observation.json', {
+        reads: monitorReads,
+        observedAt: new Date().toISOString(),
+      });
       const updated = JSON.parse(
         await cdp(
           'eval',
           route,
-          `const {gateway}=await import('/src/gateway-client.ts');const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){if(e.localName==='fleet-refresh-modal'&&e.open)all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);const current=all[0];if(!current)throw Error('Expected the same open dialog');const end=Date.now()+45000,reads=[];for(;;){const start=performance.now();await gateway.request('fleet.status',{},15000);reads.push(performance.now()-start);const text=current.shadowRoot?.textContent?.replace(/\\s+/g,' ')??'';if(text.includes('1 changed files')&&text.includes('Release idle slots (29)'))return {text,reads,open:current.open};if(Date.now()>end)throw Error('Open dialog missed actual changed Git observation');await new Promise(r=>setTimeout(r,250))}`,
+          `const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){if(e.localName==='fleet-refresh-modal'&&e.open)all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);const current=all[0];if(!current)throw Error('Expected the same open dialog');const end=Date.now()+2000;for(;;){const text=current.shadowRoot?.textContent?.replace(/\\s+/g,' ')??'';if(text.includes('1 changed files')&&text.includes('Release idle slots (29)'))return {text,open:current.open};if(Date.now()>end)throw Error('Open dialog missed monitor-owned Git observation');await new Promise(r=>setTimeout(r,250))}`,
         ),
       );
       assert(updated.open, 'The same dialog must remain open');
       assert(
-        updated.reads.every((ms) => ms < 2000),
+        monitorReads.every((ms) => ms < 2000),
         'Observation refresh must not delay reads',
       );
       await save('fleet-observation-after.json', updated);

@@ -17,6 +17,7 @@ import {
 } from '@farmslot/protocol';
 
 const FLEET_INSPECTION_TIMEOUT_MS = 120_000;
+const CHECKING_WORKSPACE = 'Checking workspace. Try release again when ready.';
 
 interface FleetRowRead {
   generation: number;
@@ -126,6 +127,7 @@ export class FleetRefreshViewModel {
   private loadGeneration = 0;
   private rowRead: FleetRowRead = { generation: 0, again: false };
   private stopFleetObservation?: () => void;
+  private waitingForInspection?: string;
   private inspectedContext: string | undefined;
   private displayContext: string | undefined;
   inspecting = false;
@@ -156,6 +158,7 @@ export class FleetRefreshViewModel {
     this.stopFleetObservation?.();
     const context = this.client.contextKey();
     this.inspectedContext = undefined;
+    this.waitingForInspection = undefined;
     const saved =
       cachedSlots ?? (this.displayContext === context ? this.rows.map((row) => row.slot) : []);
     this.summary = null;
@@ -255,6 +258,11 @@ export class FleetRefreshViewModel {
       await this.load(this.rows.map((value) => value.slotId));
       const fresh = this.rows.find((value) => value.slotId === slotId);
       if (releaseRequested && fresh?.eligibility.allowed) await this.release(slotId);
+      else if (releaseRequested && fresh?.eligibility.reason === 'unknown') {
+        this.waitingForInspection = slotId;
+        this.error = CHECKING_WORKSPACE;
+        this.changed();
+      }
       return;
     }
     if (!row.eligibility.allowed || !row.slot.workspace) return;
@@ -300,6 +308,11 @@ export class FleetRefreshViewModel {
             const slot = current.get(row.slotId);
             return slot ? { ...row, ...fleetWorkspaceRow(slot), slot } : row;
           });
+          const waiting = this.rows.find((row) => row.slotId === this.waitingForInspection);
+          if (waiting && waiting.eligibility.reason !== 'unknown') {
+            this.waitingForInspection = undefined;
+            if (this.error === CHECKING_WORKSPACE) this.error = '';
+          }
           this.changed();
         }
       })
@@ -464,10 +477,17 @@ export class FleetRefreshViewModel {
     for (const unsubscribe of this.unsubscribers) unsubscribe();
     this.unsubscribers = [];
   }
-  dispose(): void {
+  close(): void {
     ++this.loadGeneration;
+    this.rowRead.again = false;
     this.stopFleetObservation?.();
     this.stopFleetObservation = undefined;
+    this.inspectedContext = undefined;
+    this.waitingForInspection = undefined;
+    this.confirmation = null;
+  }
+  dispose(): void {
+    this.close();
     this.detach();
     this.listeners.clear();
   }

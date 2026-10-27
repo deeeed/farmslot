@@ -19,6 +19,7 @@ import {
   parseGitHeadProbe,
   preserveClaimedRowsUnknownToProbe,
   reconcileRefreshSlotRowWithActiveRun,
+  setFleetWorkspacePublisher,
   slotHeadRefreshUpdate,
 } from './fleet.js';
 
@@ -419,7 +420,7 @@ test('fresh fleet.status passes through without stale flag or background refresh
   assert.equal(calls.refresh, 0);
 });
 
-test('background observations coalesce, publish current owners, and do not echo cached events', async () => {
+test('monitor-owned observations publish current owners and coalesce without echoing cached events', async () => {
   let current = fleetFixture(new Date().toISOString(), [
     slotStatusFixture({ slot: 'observed', currentRunId: 'earlier-owner' }),
   ]);
@@ -442,8 +443,11 @@ test('background observations coalesce, publish current owners, and do not echo 
     },
   };
   const publish = (fleet: FleetStatus) => published.push(fleet);
+  setFleetWorkspacePublisher(publish);
   try {
-    const first = await fleetStatus(undefined, deps, publish);
+    // The monitor has no per-request publisher. Server initialization registers
+    // the completion broadcaster before either monitor or UI requests run.
+    const first = await fleetStatus(undefined, deps);
     const second = await fleetStatus(undefined, deps, publish);
     assert.equal(first.fleet, current);
     assert.equal(second.fleet, current);
@@ -459,6 +463,7 @@ test('background observations coalesce, publish current owners, and do not echo 
   } finally {
     resume();
     await new Promise<void>((resolve) => setImmediate(resolve));
+    setFleetWorkspacePublisher(undefined);
   }
   assert.equal(published.length, 1);
   assert.equal(published[0]?.slots[0]?.currentRunId, 'current-owner');

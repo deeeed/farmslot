@@ -374,6 +374,10 @@ function workspaceObservationKey(slot: SlotStatus): string {
   ]);
 }
 
+function workspaceObservable(slot: SlotStatus): boolean {
+  return !slot.missingFromPool && slot.enabled && slot.health.ssh !== 'FAIL';
+}
+
 /** Read completed observations only. Their original age and ownership still apply. */
 export function observedFleetWorkspaces(fleet: FleetStatus): FleetStatus {
   return {
@@ -381,9 +385,7 @@ export function observedFleetWorkspaces(fleet: FleetStatus): FleetStatus {
     slots: fleet.slots.map((slot) => {
       const cached = inspections.get(slot.slot);
       const usable =
-        !slot.missingFromPool &&
-        slot.enabled &&
-        slot.health.ssh !== 'FAIL' &&
+        workspaceObservable(slot) &&
         cached?.key === workspaceObservationKey(slot) &&
         cached.until !== 0;
       return {
@@ -398,8 +400,7 @@ export function observedFleetWorkspaces(fleet: FleetStatus): FleetStatus {
 export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promise<SlotStatus[]> {
   return Promise.all(
     slots.map(async (slot) => {
-      if (slot.missingFromPool || !slot.enabled || slot.health.ssh === 'FAIL')
-        return { ...slot, workspace: undefined };
+      if (!workspaceObservable(slot)) return { ...slot, workspace: undefined };
       const key = workspaceObservationKey(slot);
       let cached = inspections.get(slot.slot);
       while (cached?.pending && cached.key !== key) {

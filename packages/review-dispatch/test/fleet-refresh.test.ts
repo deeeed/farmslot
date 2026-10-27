@@ -179,6 +179,34 @@ test('an open recovery view receives completed background observations without r
   model.dispose();
 });
 
+test('closing a recovery view stops observation reads until reopened', async () => {
+  const { model, emit, calls } = setup([slot('shown')]);
+  await model.load(['shown']);
+  model.close();
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.equal(model.canRelease, false);
+  await model.load(['shown']);
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 3);
+  model.dispose();
+});
+
+test('closing during the initial read cannot authorize a later hidden release', async () => {
+  const { model, holdNextRead, calls } = setup([slot('shown')]);
+  const release = holdNextRead();
+  const loading = model.load(['shown']);
+  model.close();
+  release();
+  await loading;
+  await model.release('shown');
+  assert.equal(model.canRelease, false);
+  assert.equal(calls.length, 1);
+  model.dispose();
+});
+
 test('an observation received during initial loading is read after that reply settles', async () => {
   const { model, holdNextRead, emit, calls } = setup([slot('shown')]);
   const release = holdNextRead();
@@ -539,6 +567,24 @@ test('expired evidence only permits release after a fresh inspection succeeds', 
   assert.equal(model.bulkCount, 0);
   assert.equal(model.rows[0]?.action, 'Release and update to main');
   slots[0] = slot('expired');
+  await model.release('expired');
+  assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 1);
+  model.dispose();
+});
+
+test('expired evidence reports the pending inspection and never queues a release', async () => {
+  const { model, calls, setSlots, emit } = setup([
+    slot('expired', { observedAt: '2000-01-01T00:00:00Z' }),
+  ]);
+  await model.load(['expired']);
+  await model.release('expired');
+  assert.match(model.error, /Checking workspace/);
+  assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 0);
+  setSlots([slot('expired')]);
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(model.error, '');
+  assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 0);
   await model.release('expired');
   assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 1);
   model.dispose();

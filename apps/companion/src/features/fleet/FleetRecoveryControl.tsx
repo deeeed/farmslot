@@ -33,6 +33,10 @@ export function FleetRecoveryControl({
     if (slot && row?.action !== 'Inspect workspace') await model.release(slot.slot);
   };
   const running = model?.phase === 'running';
+  const close = () => {
+    model?.close();
+    setOpen(false);
+  };
   return (
     <View>
       {row ? (
@@ -58,7 +62,7 @@ export function FleetRecoveryControl({
           {row?.action ?? (count ? `Release idle slots (${count})` : 'Inspect idle slots')}
         </Text>
       </Pressable>
-      <Modal visible={open} onRequestClose={() => setOpen(false)} transparent animationType="fade">
+      <Modal visible={open} onRequestClose={close} transparent animationType="fade">
         <View style={styles.overlay}>
           <View style={styles.dialog}>
             <View style={styles.header}>
@@ -67,7 +71,7 @@ export function FleetRecoveryControl({
                 testID="fleet-recovery-close"
                 accessibilityRole="button"
                 style={styles.button}
-                onPress={() => setOpen(false)}
+                onPress={close}
               >
                 <Text style={styles.text}>Close</Text>
               </Pressable>

@@ -56,6 +56,12 @@ const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
 let fleetRefreshInFlight: Promise<FleetStatusResult> | null = null;
 let workspaceRefreshInFlight: Promise<void> | null = null;
+type FleetWorkspacePublisher = (fleet: FleetStatus) => void;
+let workspacePublisher: FleetWorkspacePublisher | undefined;
+
+export function setFleetWorkspacePublisher(publish: FleetWorkspacePublisher | undefined): void {
+  workspacePublisher = publish;
+}
 
 const FLEET_STALE_MS_DEFAULT = 5 * 60_000;
 
@@ -101,7 +107,7 @@ function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
 function refreshWorkspaceObservations(
   fleet: FleetStatus,
   deps: FleetStatusDeps,
-  publish?: (fleet: FleetStatus) => void,
+  publish?: FleetWorkspacePublisher,
 ): void {
   if (workspaceRefreshInFlight || !deps.workspaces) return;
   const workspaces = deps.workspaces;
@@ -134,7 +140,7 @@ function refreshWorkspaceObservations(
 export async function fleetStatus(
   params?: FleetStatusParams,
   deps: FleetStatusDeps = defaultFleetStatusDeps,
-  publish?: (fleet: FleetStatus) => void,
+  publish: FleetWorkspacePublisher | undefined = workspacePublisher,
 ): Promise<FleetStatusResult> {
   // forceRefresh means a real machine re-probe, never just a re-read of the
   // cached status file — that re-read is what produced ghost prepare hints.
