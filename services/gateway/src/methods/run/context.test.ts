@@ -5,11 +5,58 @@ import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import {
   resolveBoundTerminalRunForSlot,
+  runGet,
   runRecipeRunsForRun,
   selectActiveRunForSlot,
   selectRecipeRunId,
 } from './context.js';
 import { makeRun } from './test-fixtures.js';
+
+test('snapshot reads return the stored gate without inspecting an unreachable worker', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    mode: 'interactive',
+    ticketOrPr: `SNAPSHOT-${Date.now()}`,
+    initialContext: 'Stored gate display read',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const stored = updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'unreachable-snapshot-worker',
+    decisions: [
+      {
+        id: 'saved-gate',
+        type: 'engine_human_gate',
+        title: 'Review changes',
+        description: 'Captured worker result',
+        actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+        createdAt: run.createdAt,
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          branch: 'branch',
+          diffStat: { files: 51, additions: 100, deletions: 20 },
+          workerReport: 'Saved report',
+          acceptanceCriteria: ['Keep the original criterion'],
+        },
+      },
+    ],
+  });
+  assert.deepEqual(await runGet({ runId: run.id, view: 'snapshot' }), { run: stored });
+  assert.equal(getRun(run.id), stored, 'a display read must not rewrite readiness or decisions');
+});
+
+test('snapshot read refuses an unknown run', async () => {
+  await assert.rejects(
+    runGet({ runId: 'missing-snapshot-run', view: 'snapshot' }),
+    /Run not found/,
+  );
+});
 
 test('selectRecipeRunId prefers exact recipe run context before artifact root', () => {
   const recipeRuns = [

@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Complete artifact-only comparison trials from their retained evidence without requiring an output-review decision, and recognize completed scripted commands in their flow-owned worker role.
+- Reuse passive workspace observations while Git metadata is unchanged and reuse immutable ancestry comparisons by SHA pair; recovery commands still inspect current contents.
+- Serve stored run snapshots without waiting for worker and publication checks; current reads and command guards stay authoritative.
 - Retain every indexed screenshot in selected recipe packages, even when the PR evidence selection uses fewer images.
 - Require task-local adaptation for recipe and action-contract mismatches; reserve unattended blockers for external prerequisites.
 

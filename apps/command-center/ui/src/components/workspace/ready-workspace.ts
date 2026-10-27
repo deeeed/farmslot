@@ -101,6 +101,7 @@ interface EvidenceReadScope {
   runId: string;
   decisionId: string | undefined;
   packageHash: string | undefined;
+  runUpdatedAt: string | undefined;
 }
 
 @customElement('ready-workspace')
@@ -143,6 +144,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       runId: this.runId,
       decisionId: this.decision?.id,
       packageHash: this._payload?.prPackage?.packageHash,
+      runUpdatedAt: this.run?.updatedAt,
     };
     const sameDecision =
       scope.runId === this._evidenceScope?.runId &&
@@ -157,7 +159,11 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       return Promise.resolve();
     }
     const sameScope = sameDecision && scope.packageHash === this._evidenceScope?.packageHash;
-    if (!force && sameScope && this._evidenceRead) return this._evidenceRead;
+    const sameRevision = sameScope && scope.runUpdatedAt === this._evidenceScope?.runUpdatedAt;
+    if (!force && sameRevision && this._evidenceRead) return this._evidenceRead;
+    // A clock tick or a compact list render is not a new evidence revision.
+    if (!force && sameRevision && (this._evidenceLoaded || this._evidenceError))
+      return Promise.resolve();
     const task: Promise<void> = this._readReviewEvidence(scope, sameScope).finally(() => {
       if (this._evidenceRead === task) this._evidenceRead = undefined;
     });
@@ -167,6 +173,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private async _readReviewEvidence(scope: EvidenceReadScope, sameScope: boolean): Promise<void> {
     const request = ++this._evidenceRequest;
     if (!sameScope) this._resetReviewEvidence(scope);
+    else this._evidenceScope = scope;
     if (!this._evidenceLoaded) {
       this._evidenceLoading = true;
       this._evidenceError = '';
@@ -309,7 +316,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   /** Skip a criterion: the gateway records the untestable override with its reason. */
   private async _skipCriterion(claimId: string, reason: string): Promise<void> {
     const model = this._evidenceModel;
-    if (!this.decision || !model || this._acting) return;
+    if (!this.decision || !model || this._acting || this._actionsPaused || this._isRecovering)
+      return;
     const candidate = model.claimOverrideCandidate(claimId);
     if (!candidate) return;
     this._acting = true;
@@ -338,7 +346,15 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private async _giveAnotherRound(payload: ReadyGatePayload, brief: string): Promise<void> {
     const budget = payload.reviewRoundBudget;
     const headSha = payload.prPackage?.headSha;
-    if (!budget || !headSha || !this.decision || this._acting) return;
+    if (
+      !budget ||
+      !headSha ||
+      !this.decision ||
+      this._acting ||
+      this._actionsPaused ||
+      this._isRecovering
+    )
+      return;
     this._acting = true;
     try {
       await gateway.request(
@@ -431,7 +447,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     verdict: 'confirmed' | 'rejected',
   ): Promise<void> {
     const model = this._evidenceModel;
-    if (!model || this._acting) return;
+    if (!model || this._acting || this._actionsPaused || this._isRecovering) return;
     this._acting = true;
     this._visualJudgmentFeedback = { claimId, phase: 'saving' };
     try {
@@ -671,7 +687,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       pausedRetry: this.loadError ? () => location.reload() : undefined,
       pausedReason: this._actionsPaused
         ? this.loadError
-          ? 'Run unavailable; actions paused'
+          ? 'Run refresh failed; saved gate visible, actions paused'
           : 'Refreshing run; actions paused'
         : undefined,
       recovering: this._isRecovering,
@@ -685,9 +701,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       confirmAction: (actionId) => this._confirmAction(actionId),
       ...this._visualReviewControls(),
       showClaims: false,
-      loading: this._evidenceLoading && !this.mockData,
-      loadError: this._evidenceError,
-      retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence()),
+      // Recorded media may still be loading. The captured gate's actions and
+      // acceptance already exist, and have their own current-read fences.
+      loading: this._packagePending,
+      retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence(true)),
       refreshPackage: () => void this._refreshPublishPackage(payload),
       pendingVisualClaimIds: this._evidenceModel?.pendingVisualClaimIds,
     });
@@ -814,6 +831,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       selectedFile: this._selectedFile,
       recovering: this._isRecovering,
       fileDiffLoading: this._fileDiffLoading,
+      fileDiffError: this._fileDiffError,
       fileDiff: this._fileDiff,
       selectFile: (path) => this._selectFile(path),
     });
@@ -827,7 +845,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       recipeView: this._recipeView,
       runId: this.runId,
       slotId: this.slotId,
-      recovering: this._isRecovering,
+      recovering: this._isRecovering || this._actionsPaused,
       recipeRunnerUiOptions: this._recipeRunnerUiOptions,
       setRecipeView: (view) => {
         this._recipeView = view;
@@ -881,7 +899,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       criteria: this._renderClaimReview(),
       loading: this._evidenceLoading && !this.mockData,
       error: this._evidenceError,
-      retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence()),
+      retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence(true)),
       selectionToolbar: this._renderEvidenceSelectionToolbar(payload),
       artifactGroups: this._evidenceModel
         ? html` ${payload.prPackage && !this.decision?.resolvedAt
