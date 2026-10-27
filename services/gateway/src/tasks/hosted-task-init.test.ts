@@ -14,6 +14,8 @@ import { remapRemoteFarmRefs } from '../node-support/remote-command.js';
 import * as realRuntime from './agent-runtime-script.js';
 
 let fixtureFarm = '';
+let executedOptions: realExec.ExecOnSlotOptions | undefined;
+let executionCount = 0;
 function fixtureSlot(root: string): SlotVars {
   return {
     slotId: 'fixture-1',
@@ -46,7 +48,11 @@ mock.module('./agent-runtime-script.js', {
 mock.module('../core/exec.js', {
   namedExports: {
     ...realExec,
-    execOnSlot: async () => ({ exitCode: 2, stdout: 'TASK_INIT_PARTIAL', stderr: '' }),
+    execOnSlot: async (_slot: SlotVars, _command: string, options?: realExec.ExecOnSlotOptions) => {
+      executedOptions = options;
+      executionCount += 1;
+      return { exitCode: 2, stdout: 'TASK_INIT_PARTIAL', stderr: '' };
+    },
   },
 });
 const fresh: string = './hosted-task-init.js?partial-preservation';
@@ -90,6 +96,7 @@ test('partial initialization refuses before any gateway sidecar replaces retaine
   ];
   const before = files.map((file) => fs.readFileSync(path.join(worker, file), 'utf8'));
   const slot = fixtureSlot(root);
+  executionCount = 0;
   await assert.rejects(
     initializeHostedTaskOnSlot(slot, gateway, {
       binding: 'static',
@@ -104,6 +111,11 @@ test('partial initialization refuses before any gateway sidecar replaces retaine
     }),
     /TASK_INIT_PARTIAL/,
   );
+  // The three loaded-node samples reached 265.096s; allow twice that sample p95.
+  assert.ok((executedOptions?.timeout ?? 0) >= 2 * 265_096);
+  assert.ok((executedOptions?.timeout ?? Infinity) <= 10 * 60_000);
+  assert.equal(executedOptions?.noRetry, true);
+  assert.equal(executionCount, 1, 'a refused partial initialization must not be retried');
   assert.deepEqual(
     files.map((file) => fs.readFileSync(path.join(worker, file), 'utf8')),
     before,
