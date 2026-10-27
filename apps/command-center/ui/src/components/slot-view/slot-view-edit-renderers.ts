@@ -7,6 +7,7 @@ import {
   keepMineSlotViewConflict,
   keepTheirsSlotViewConflict,
   slotViewEditable,
+  slotViewFileChangedPath,
   slotViewReadOnly,
   slotViewSaveState,
 } from './slot-view-edit-effects.js';
@@ -63,7 +64,7 @@ export function renderSlotViewEditStrip(view: SlotView) {
     Boolean(path) &&
     slotViewEditable(view, path) &&
     slotViewGateWarning(view._linkedRun, view._slot);
-  const changed = view._fileChangedNotice;
+  const changed = slotViewFileChangedPath(view);
   const drafts = view._slotDrafts.filter((draft) => draft.state !== 'hidden');
   if (!conflict && !gate && !view._editNotice && !changed && drafts.length === 0) return nothing;
   return html`<div class="sv-edit-strip">

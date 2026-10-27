@@ -2,6 +2,7 @@ import type { Draft, DraftKey, DraftStore } from '@farmslot/local-store/drafts';
 import { type FsReadResult, type FsWriteResult, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { type DraftScopeWriter, draftScopeWriter } from '../../draft-scopes.js';
 import { gateway } from '../../gateway-client.js';
 import {
   getEditorDraftScopeId,
@@ -121,6 +122,11 @@ function armingKey(view: SlotView, path: string): string | undefined {
   return key && draftIdentity(key);
 }
 
+/** The identity of the draft the view shows at this path: scope, slot, run and path. */
+export function slotViewDraftIdentity(view: SlotView, path: string): string | undefined {
+  return armingKey(view, path);
+}
+
 /** The view still shows this draft: same scope, slot, run and path. */
 function shows(view: SlotView, identity: string, path: string): boolean {
   return armingKey(view, path) === identity;
@@ -180,12 +186,18 @@ export async function refreshSlotViewDrafts(view: SlotView): Promise<void> {
   // Each change starts a refresh; only the latest one may replace what the view shows.
   const refresh = ++view._draftRefresh;
   retireOtherArming(view);
+  // Another slot's, run's or scope's drafts leave the view at once, before the store answers.
+  const shown = [...view._fileDrafts].filter(
+    ([path, draft]) => draftIdentity(draft) === armingKey(view, path),
+  );
+  if (shown.length !== view._fileDrafts.size) view._fileDrafts = new Map(shown);
   const store = view._draftStore;
   const scopeId = getEditorDraftScopeId();
   if (!store || !scopeId) {
     view._slotDrafts = [];
     return;
   }
+  const writer = draftScopeWriter(scopeId);
   // Loaded when drafts are, so the workspace effects keep a light import graph.
   const { getState } = await import('../../state.js');
   const state = getState();
@@ -196,7 +208,8 @@ export async function refreshSlotViewDrafts(view: SlotView): Promise<void> {
   const refused = refusedSlots.get(scopeId) ?? new Set<string>();
   for (const draft of await store.list(scopeId)) {
     const next = slotViewDraftState(draft, fleet, refused);
-    if (next && next !== draft.state) await store.put({ ...draft, state: next });
+    if (next && next !== draft.state)
+      await writer.write(() => store.put({ ...draft, state: next }));
   }
   await store.sweep();
   const drafts = await store.list(scopeId, view.slotId);
@@ -224,6 +237,7 @@ export async function editSlotViewFile(
   const key = draftKey(view, path);
   if (!store || !key || !slotViewEditable(view, path)) return;
   const identity = draftIdentity(key);
+  const writer = draftScopeWriter(key.scopeId);
   // The file as last read is the base of a draft this edit starts.
   const liveContent = view._liveFileContents.get(path) ?? '';
   const liveHash = view._liveFileHashes.get(path) ?? null;
@@ -236,13 +250,17 @@ export async function editSlotViewFile(
     const draft =
       content === baseContent && !savesInFlight.has(identity)
         ? undefined
-        : await store.put({
-            ...key,
-            baseContent,
-            baseHash,
-            editedContent: content,
-            state: 'current',
-          });
+        : await writer.write(() =>
+            store.put({
+              ...key,
+              baseContent,
+              baseHash,
+              editedContent: content,
+              state: 'current',
+            }),
+          );
+    // A retired scope (sign-out, another principal) takes no more edits, nor shows them.
+    if (!writer.live()) return;
     if (!draft) await store.delete(key);
     if (!shows(view, identity, path)) return;
     if (!draft) {
@@ -307,12 +325,15 @@ export async function saveSlotViewDraft(view: SlotView, path: string): Promise<b
   const store = view._draftStore;
   if (!draft || !store || view._saveFeedback === 'saving') return false;
   const identity = draftIdentity(draft);
+  const writer = draftScopeWriter(draft.scopeId);
+  // Only the draft the view shows is saved, and never one of a retired scope.
+  if (identity !== armingKey(view, path) || !writer.live()) return false;
   const content = draft.editedContent;
   savesInFlight.add(identity);
   view._saveFeedback = 'saving';
   view._editNotice = '';
   view._saveRefused = '';
-  if (view._fileChangedNotice === path) view._fileChangedNotice = '';
+  if (view._fileChangedNotice === identity) view._fileChangedNotice = '';
   let result: FsWriteResult;
   try {
     result = await gateway.request<FsWriteResult>(Methods.FS_WRITE, {
@@ -323,10 +344,10 @@ export async function saveSlotViewDraft(view: SlotView, path: string): Promise<b
       runId: draft.runId,
     });
   } catch (error) {
-    await inOrder(identity, () => refuseSlotViewSave(view, store, draft, error));
+    await inOrder(identity, () => refuseSlotViewSave(view, store, writer, draft, error));
     return false;
   }
-  await inOrder(identity, () => completeSlotViewSave(view, store, draft, content, result));
+  await inOrder(identity, () => completeSlotViewSave(view, store, writer, draft, content, result));
   return true;
 }
 
@@ -338,6 +359,7 @@ export async function saveSlotViewDraft(view: SlotView, path: string): Promise<b
 async function completeSlotViewSave(
   view: SlotView,
   store: DraftStore,
+  writer: DraftScopeWriter,
   sent: Draft,
   content: string,
   result: FsWriteResult,
@@ -347,11 +369,13 @@ async function completeSlotViewSave(
   const latest = await store.get(sent);
   const kept =
     latest && latest.editedContent !== content
-      ? await store.put({
-          ...latest,
-          baseContent: content,
-          baseHash: result.hash ?? latest.baseHash,
-        })
+      ? await writer.write(() =>
+          store.put({
+            ...latest,
+            baseContent: content,
+            baseHash: result.hash ?? latest.baseHash,
+          }),
+        )
       : undefined;
   if (!kept) await store.delete(sent);
   const path = sent.path;
@@ -366,7 +390,7 @@ async function completeSlotViewSave(
   view._liveFileContents = new Map(view._liveFileContents).set(path, content);
   view._liveFileHashes = new Map(view._liveFileHashes).set(path, result.hash);
   // A later read with other bytes is a worker's write over this save.
-  if (result.hash) view._userSaves.set(path, { hash: result.hash, content });
+  if (result.hash) view._userSaves.set(identity, { hash: result.hash, content });
   armSlotViewAutosave(view, path);
   view._saveConflict = undefined;
   view._saveFeedback = 'saved';
@@ -385,6 +409,7 @@ async function completeSlotViewSave(
 async function refuseSlotViewSave(
   view: SlotView,
   store: DraftStore,
+  writer: DraftScopeWriter,
   sent: Draft,
   error: unknown,
 ): Promise<void> {
@@ -393,7 +418,8 @@ async function refuseSlotViewSave(
   view._saveFeedback = '';
   const latest = (await store.get(sent)) ?? sent;
   const refusal = slotViewSaveRefusal(error);
-  if (refusal?.kind === 'run') await store.put({ ...latest, state: 'stale-run' });
+  if (refusal?.kind === 'run')
+    await writer.write(() => store.put({ ...latest, state: 'stale-run' }));
   const path = sent.path;
   const conflict =
     refusal?.kind === 'hash' && shows(view, identity, path)
@@ -403,7 +429,7 @@ async function refuseSlotViewSave(
     resumeShownAutosave(view, identity);
     return;
   }
-  if (refusal?.kind !== 'hash') view._saveRefused = path;
+  if (refusal?.kind !== 'hash') view._saveRefused = identity;
   if (conflict) view._saveConflict = conflict;
   else if (refusal?.kind === 'run') {
     view._fileDrafts = new Map([...view._fileDrafts].filter(([file]) => file !== path));
@@ -425,13 +451,15 @@ export async function keepMineSlotViewConflict(view: SlotView): Promise<void> {
   const store = view._draftStore;
   if (!conflict || !draft || !store) return;
   const identity = draftIdentity(draft);
-  const rebased = await store.put({
-    ...draft,
-    baseContent: conflict.theirs ?? '',
-    baseHash: conflict.theirsHash,
-  });
+  const rebased = await draftScopeWriter(draft.scopeId).write(() =>
+    store.put({
+      ...draft,
+      baseContent: conflict.theirs ?? '',
+      baseHash: conflict.theirsHash,
+    }),
+  );
   // Navigated away: the stored draft is rebased, and saving it waits for the user.
-  if (!shows(view, identity, conflict.path)) return;
+  if (!rebased || !shows(view, identity, conflict.path)) return;
   view._fileDrafts = new Map(view._fileDrafts).set(conflict.path, rebased);
   await saveSlotViewDraft(view, conflict.path);
 }
@@ -467,26 +495,37 @@ export async function noteSlotViewFileRead(
   content: string,
   hash: string | undefined,
 ): Promise<void> {
-  const saved = view._userSaves.get(path);
-  if (!saved || !hash || hash === saved.hash) return;
-  view._userSaves.delete(path);
-  if (content === saved.content || view._fileDrafts.has(path)) return;
+  // Saves are told apart per draft identity: another slot's save at this path is not this one.
   const key = draftKey(view, path);
-  if (!key || !view._draftStore) return;
-  const identity = draftIdentity(key);
-  const draft: Draft = await view._draftStore.put({
-    ...key,
-    baseContent: content,
-    baseHash: hash,
-    editedContent: saved.content,
-    state: 'current',
-  });
+  const store = view._draftStore;
+  const identity = key && draftIdentity(key);
+  const saved = identity && view._userSaves.get(identity);
+  if (!key || !store || !identity || !saved || !hash || hash === saved.hash) return;
+  view._userSaves.delete(identity);
+  if (content === saved.content || view._fileDrafts.has(path)) return;
+  const draft = await draftScopeWriter(key.scopeId).write(() =>
+    store.put({
+      ...key,
+      baseContent: content,
+      baseHash: hash,
+      editedContent: saved.content,
+      state: 'current',
+    }),
+  );
   // Kept under the draft it belongs to; the view hears of it only while it shows that draft.
   view._autosaveArmed.delete(identity);
-  if (!shows(view, identity, path)) return;
+  if (!draft || !shows(view, identity, path)) return;
   view._fileDrafts = new Map(view._fileDrafts).set(path, draft);
-  view._fileChangedNotice = path;
+  view._fileChangedNotice = identity;
   void refreshSlotViewDrafts(view);
+}
+
+/** The file a worker changed after the user's save, while the view still shows its draft. */
+export function slotViewFileChangedPath(view: SlotView): string {
+  const notice = view._fileChangedNotice;
+  const identity: unknown = notice ? JSON.parse(notice) : undefined;
+  const path: unknown = Array.isArray(identity) ? identity[3] : undefined;
+  return typeof path === 'string' && armingKey(view, path) === notice ? path : '';
 }
 
 /** The proof reads this from `file-save-state`'s `data-state`. */
@@ -496,7 +535,7 @@ export function slotViewSaveState(
 ): 'saved' | 'saving' | 'draft' | 'conflict' | 'refused' {
   if (view._saveFeedback === 'saving') return 'saving';
   if (view._saveConflict?.path === path) return 'conflict';
-  if (view._saveRefused === path) return 'refused';
+  if (view._saveRefused && view._saveRefused === armingKey(view, path)) return 'refused';
   return view._fileDrafts.has(path) ? 'draft' : 'saved';
 }
 
@@ -507,7 +546,8 @@ export async function copySlotViewDraft(draft: Draft): Promise<void> {
 
 export async function discardSlotViewDraft(view: SlotView, draft: DraftKey): Promise<void> {
   await view._draftStore?.delete(draft);
-  if (draft.slotId === view.slotId && view._fileDrafts.get(draft.path)?.runId === draft.runId) {
+  const shown = view._fileDrafts.get(draft.path);
+  if (shown && draftIdentity(shown) === draftIdentity(draft)) {
     view._fileDrafts = new Map([...view._fileDrafts].filter(([file]) => file !== draft.path));
     view._editorRevision++;
   }

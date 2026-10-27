@@ -221,7 +221,13 @@ export async function loadSlotViewFileContent(
   options: LoadContentOptions = {},
 ) {
   if (options.skipMedia && (isImageFile(path) || isMediaFile(path))) return true;
-  if (!view._isLive || view._liveFileContents.has(path)) return true;
+  if (!view._isLive) return true;
+  // Cached text is shown only beside the file's own open read, which alone makes it editable.
+  if (
+    view._liveFileContents.has(path) &&
+    view._workspaceReads.stateOf(Methods.FS_READ, { slotId: view.slotId, path })
+  )
+    return true;
 
   const epoch = view._recoveryEpoch;
   const version = view._workspaceReads.version;
@@ -682,7 +688,7 @@ export async function createSlotViewFile(view: SlotView) {
   const target = slotViewWriteTarget(view);
   try {
     // `expectedHash: null`: the file must not exist yet.
-    const result = await gateway.request<FsWriteResult>(Methods.FS_WRITE, {
+    await gateway.request<FsWriteResult>(Methods.FS_WRITE, {
       slotId: target.slotId,
       path: filePath,
       content: '',
@@ -690,12 +696,13 @@ export async function createSlotViewFile(view: SlotView) {
       runId: target.runId,
     });
     if (!target.shown()) return;
-    // Cache empty content and open in edit mode
-    view._liveFileContents = new Map(view._liveFileContents).set(filePath, '');
-    view._liveFileHashes = new Map(view._liveFileHashes).set(filePath, result.hash);
-    view._openFile(filePath, 'file', true);
     view._newFilePrompt = false;
     view._newFilePath = '';
+    // The new file opens through its own read, like every other file: that read makes it editable.
+    const loaded = await loadSlotViewFileContent(view, filePath, {
+      errorFallback: 'Failed to read file',
+    });
+    if (loaded && target.shown()) view._openFile(filePath, 'file', true);
   } catch (err) {
     if (!refusedFileOperation(view, err, target.shown))
       console.error('[slot-view] create file failed:', err);

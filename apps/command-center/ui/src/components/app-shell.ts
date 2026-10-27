@@ -75,6 +75,7 @@ import {
   isVersionNewer,
 } from '../build-info.js';
 import { getDesktopConnection, isDesktopClient } from '../desktop-connection.js';
+import { retireDraftScope } from '../draft-scopes.js';
 import type { ConnectionState } from '../gateway-client.js';
 import { gateway } from '../gateway-client.js';
 import {
@@ -1021,7 +1022,7 @@ export class FarmApp extends LitElement {
         () => this.confirmSignOut(),
         async () => {
           // Drafts rule 6: the confirmation named the unsaved count; signing out deletes them.
-          if (scopeId) await drafts?.deleteScope(scopeId);
+          if (scopeId && drafts) await retireDraftScope(drafts, scopeId);
           await gateway.signOut();
           this.authSecret = '';
           this.pairingOpen = false;

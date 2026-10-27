@@ -107,4 +107,18 @@ test("a principal change names the previous account's unsaved drafts, then delet
   await flush();
   assert.equal(getDeletedDraftCount(), 0);
   assert.equal((await drafts.list(second)).length, 1);
+
+  // Work queued for the scope this document leaves never lands after the change, even when that
+  // scope held no drafts to list.
+  const { draftScopeWriter } = await import('./draft-scopes.js');
+  assert.deepEqual(await drafts.list(previous), []);
+  const queued = draftScopeWriter(previous);
+  fakeGateway.principalId = 'operator-c';
+  gateway.reconnect();
+  await flush();
+  assert.equal(
+    await queued.write(() => drafts.put({ ...draft, editedContent: 'queued before the change' })),
+    undefined,
+  );
+  assert.deepEqual(await drafts.list(previous), []);
 });

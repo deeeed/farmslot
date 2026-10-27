@@ -3,7 +3,12 @@ import { Methods } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 
 import type { SlotView } from './slot-view.js';
-import { editSlotViewFile, saveSlotViewDraft, slotViewEditable } from './slot-view-edit-effects.js';
+import {
+  editSlotViewFile,
+  saveSlotViewDraft,
+  slotViewDraftIdentity,
+  slotViewEditable,
+} from './slot-view-edit-effects.js';
 import { canSaveSlotViewFile } from './slot-view-file-command-model.js';
 import type { CodeViewerElement, EditorId } from './slot-view-model.js';
 import { EDITOR_PREF_KEY } from './slot-view-model.js';
@@ -73,11 +78,15 @@ export async function saveSlotViewFile(view: SlotView): Promise<void> {
     return;
   }
 
+  // Save belongs to the draft shown when it was pressed; a view that moved on saves nothing.
+  const identity = slotViewDraftIdentity(view, path);
+  const pressed = () => identity !== undefined && slotViewDraftIdentity(view, path) === identity;
   const codeViewer = view.querySelector('code-viewer') as CodeViewerElement | null;
   const content = codeViewer?._editor?.getValue();
   const shown = view._fileDrafts.get(path)?.editedContent ?? view._liveFileContents.get(path);
   if (content !== undefined && content !== shown) await editSlotViewFile(view, path, content);
-  if (!view._fileDrafts.has(path) || !(await saveSlotViewDraft(view, path))) return;
+  if (!pressed() || !view._fileDrafts.has(path) || !(await saveSlotViewDraft(view, path))) return;
+  if (!pressed()) return;
   view._pinFile(path);
   // Auto-refresh diagnostics if they've been loaded.
   if (view._diagnostics.length > 0 || view._diagnosticsLoading) {

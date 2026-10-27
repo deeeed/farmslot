@@ -129,7 +129,7 @@ export abstract class SlotViewState extends LitElement {
   /** The connection a draft may autosave on; restored and reconnected drafts are absent. */
   _autosaveArmed = new Map<string, number>();
   _autosaveTimer?: ReturnType<typeof setTimeout>;
-  /** What the user last saved per path, to tell a worker's later write apart. */
+  /** What the user last saved per draft identity, to tell a worker's later write apart. */
   _userSaves = new Map<string, { hash: string; content: string }>();
   @state() _saveConflict?: {
     path: string;
@@ -138,9 +138,9 @@ export abstract class SlotViewState extends LitElement {
     theirsHash: string | null;
   };
   @state() _editNotice = '';
-  /** The path whose last save was refused for its run, its host or an error. */
+  /** The draft identity whose last save was refused for its run, its host or an error. */
   @state() _saveRefused = '';
-  /** The saved file a worker then changed; the user's version is kept as a draft. */
+  /** The draft identity of a saved file a worker then changed; the user's version is kept. */
   @state() _fileChangedNotice = '';
   /** Bumped to replace the editor's text, such as after keeping the file's own version. */
   @state() _editorRevision = 0;

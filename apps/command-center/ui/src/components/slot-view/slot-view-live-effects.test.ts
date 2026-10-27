@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mock, test } from 'node:test';
+
+import { createDraftStore, createMemoryDraftStorage } from '@farmslot/local-store/drafts';
+
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
 let reply: () => Promise<unknown> = async () => ({ ok: true });
 const gateway = {
   connectionState: 'disconnected',
   connectionEpoch: 1,
+  resourceConnectionId: 1,
   authenticatedConnection: { capabilities: { conditionalFileWrites: true } },
   request: (method: string, params: Record<string, unknown>) => {
     requests.push({ method, params });
@@ -14,9 +20,10 @@ const gateway = {
 };
 mock.module('../../gateway-client.js', { namedExports: { gateway } });
 let hashRead: () => Promise<unknown> = async () => ({ status: 'ready', data: { hash: 'h1' } });
+let draftScope: string | undefined;
 mock.module('../../resource-cache.js', {
   namedExports: {
-    getEditorDraftScopeId: () => undefined,
+    getEditorDraftScopeId: () => draftScope,
     getResourceCache: () => ({ retry: () => hashRead() }),
     getResourceNativeOwnerId: () => undefined,
     getResourceWorkspaceKey: () => undefined,
@@ -47,8 +54,23 @@ mock.module('../../held-run-diff.js', {
   },
 });
 
-const { handleSlotViewChangeSelect, handleSlotViewTreeAction, loadSlotViewDiffContent } =
-  await import('./slot-view-live-effects.js');
+mock.module('../../state.js', {
+  namedExports: {
+    getState: () => ({ fleetObservation: { status: 'ready' }, fleet: { slots: [] } }),
+    isFleetCurrent: () => true,
+  },
+});
+
+const {
+  createSlotViewFile,
+  handleSlotViewChangeSelect,
+  handleSlotViewFileSelect,
+  handleSlotViewTreeAction,
+  loadSlotViewDiffContent,
+  openSlotViewFile,
+} = await import('./slot-view-live-effects.js');
+const { editSlotViewFile, saveSlotViewDraft, slotViewEditable } =
+  await import('./slot-view-edit-effects.js');
 type View = Parameters<typeof loadSlotViewDiffContent>[0];
 
 function makeView(): View {
@@ -173,4 +195,80 @@ test("a file deleted from slot A after the view moved to slot B leaves B's tabs 
     assert.equal(view._editNotice, '', outcome);
     assert.equal(reloads, 0, outcome);
   }
+});
+
+/** A workspace whose reads answer at once, and which knows which files have a read open. */
+function editableView() {
+  const opened = new Map<string, { content: string; hash: string }>();
+  const files = new Map([['src/cached.ts', 'cached\n']]);
+  const reads = {
+    version: 0,
+    ready: true,
+    owns: () => true,
+    read: async (_method: string, params: { path: string }) => {
+      const content = files.get(params.path) ?? '';
+      const result = { content, hash: sha256(content) };
+      opened.set(params.path, result);
+      return result;
+    },
+    stateOf: (_method: string, params: { path: string }) =>
+      opened.has(params.path) ? { status: 'ready', data: opened.get(params.path) } : undefined,
+  };
+  const view = Object.assign(makeView(), {
+    _slot: { slot: 'slot-a', machine: 'mac', health: { ssh: 'LOCAL' }, currentRunId: 'run-1' },
+    _isRecoveryBlocked: false,
+    _conditionalWritesRefused: new Set(),
+    _nodesQuery: { state: { data: { nodes: [] } } },
+    _workspaceReads: reads,
+    _draftStore: createDraftStore(createMemoryDraftStorage()),
+    _fileDrafts: new Map(),
+    _slotDrafts: [],
+    _draftRefresh: 0,
+    _autosaveArmed: new Map(),
+    _userSaves: new Map(),
+    _saveFeedback: '',
+    _editNotice: '',
+    _saveRefused: '',
+    _fileChangedNotice: '',
+    _newFilePrompt: true,
+    _newFilePath: 'src/new.ts',
+  });
+  Object.assign(view, {
+    _openFile: (path: string, type: 'file' | 'diff', pin: boolean) =>
+      openSlotViewFile(view, path, type, pin),
+  });
+  return { view, opened };
+}
+
+test('a created file opens through its own read, so it can be edited and saved at once', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  gateway.connectionState = 'connected';
+  draftScope = 'scope-a';
+  requests.length = 0;
+  reply = async () => ({ ok: true, hash: sha256('') });
+  const { view, opened } = editableView();
+  await createSlotViewFile(view);
+  assert.ok(opened.has('src/new.ts'), 'the new file has its own read');
+  assert.equal(view._activeFile, 'src/new.ts');
+  assert.equal(slotViewEditable(view, 'src/new.ts'), true);
+  await editSlotViewFile(view, 'src/new.ts', 'export {};\n');
+  assert.equal(await saveSlotViewDraft(view, 'src/new.ts'), true);
+  assert.deepEqual(requests.at(-1)?.params, {
+    slotId: 'slot-a',
+    path: 'src/new.ts',
+    content: 'export {};\n',
+    expectedHash: sha256(''),
+    runId: 'run-1',
+  });
+  draftScope = undefined;
+});
+
+test('selecting a file whose text is cached opens its own read when none is open', async () => {
+  gateway.connectionState = 'connected';
+  const { view, opened } = editableView();
+  view._liveFileContents = new Map([['src/cached.ts', 'cached\n']]);
+  await handleSlotViewFileSelect(view, 'src/cached.ts');
+  assert.ok(opened.has('src/cached.ts'));
+  assert.equal(view._liveFileHashes.get('src/cached.ts'), sha256('cached\n'));
+  assert.equal(view._activeFile, 'src/cached.ts');
 });

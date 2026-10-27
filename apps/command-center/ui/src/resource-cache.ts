@@ -21,6 +21,7 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { createOwnerContentPrefetch, fetchRunArtifactBytes } from './content-prefetch.js';
+import { retireDraftScope } from './draft-scopes.js';
 import { gateway } from './gateway-client.js';
 
 let notice: string | undefined;
@@ -137,19 +138,21 @@ function retireOtherPrincipalDrafts(): void {
     return;
   const scopeId = resourceStoreScopeId(metadata.scope);
   if (draftScopeChecked === scopeId) return;
+  // The scope this document leaves is retired even before its queued drafts are written.
+  const left = draftScopeChecked;
   draftScopeChecked = scopeId;
   const profile = draftProfile(scopeId);
   void Promise.all([editorDraftStorage(), getEditorDrafts()])
     .then(async ([storage, store]) => {
       const others = new Set(
-        (await storage.list())
-          .map((draft) => draft.scopeId)
-          .filter((other) => other !== scopeId && draftProfile(other) === profile),
+        [...(await storage.list()).map((draft) => draft.scopeId), ...(left ? [left] : [])].filter(
+          (other) => other !== scopeId && draftProfile(other) === profile,
+        ),
       );
       let unsaved = 0;
       for (const other of others) {
         unsaved += await store.countUnsaved(other);
-        await store.deleteScope(other);
+        await retireDraftScope(store, other);
       }
       if (unsaved === 0) return;
       deletedDrafts += unsaved;
