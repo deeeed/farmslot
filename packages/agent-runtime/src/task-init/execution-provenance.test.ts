@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import { retainTaskExecution, verifyTaskExecutionProvenance } from './execution-provenance.js';
+import { taskInputDigest } from './pin.js';
 
 function fixture(t: TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-tooling-'));
@@ -44,6 +45,26 @@ function fixture(t: TestContext) {
     },
   };
 }
+
+test('retained tooling copies content, modes and links without timestamp work', (t) => {
+  const { taskDir, input } = fixture(t);
+  const oldTime = new Date('2001-01-01T00:00:00Z');
+  fs.chmodSync(input.executable, 0o755);
+  fs.utimesSync(input.executable, oldTime, oldTime);
+  fs.symlinkSync('bin/farmslot.mjs', path.join(input.distributionRoot, 'entry-link'));
+  const original = fs.statSync(input.executable);
+  const receipt = retainTaskExecution(taskDir, input);
+  const retained = fs.statSync(receipt.resolvedExecutable);
+  assert.notEqual(retained.mtimeMs, original.mtimeMs);
+  assert.equal(retained.mode & 0o111, original.mode & 0o111);
+  assert.equal(receipt.retainedInputs[0]!.sha256, taskInputDigest(input.distributionRoot));
+  assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
+  assert.equal(fs.statSync(input.executable).mtimeMs, original.mtimeMs);
+  fs.chmodSync(receipt.resolvedExecutable, 0o644);
+  assert.throws(() => verifyTaskExecutionProvenance(taskDir, null), {
+    code: 'TASK_INPUT_CHANGED',
+  });
+});
 
 test('a tilde FARMSLOT_HOME retains tooling under the home directory, not the checkout', (t) => {
   const { root, taskDir, input } = fixture(t);

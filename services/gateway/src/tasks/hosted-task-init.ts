@@ -36,8 +36,8 @@ const producedTaskFiles = [
   'artifacts/harness-provenance.json',
 ] as const;
 
-// Initialization snapshots the installed CLI and provider before hashing their retained bytes.
-// Keep enough headroom for that filesystem work on a loaded node.
+// Three loaded-node samples reached 265s retaining installed CLI/provider inputs.
+// Round twice that sample p95 up to ten minutes; partial initialization is never retried.
 const HOSTED_TASK_INIT_TIMEOUT_MS = 10 * 60_000;
 
 export interface HostedTaskInput {
