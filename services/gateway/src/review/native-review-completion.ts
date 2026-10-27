@@ -10,7 +10,10 @@ import {
 import { upsertAgentContext } from '../agents/contexts.js';
 import { loadProjectVars, type loadSlotVars } from '../core/config.js';
 import type { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
-import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
+import {
+  readNativeWorkerCommandError,
+  readNativeWorkerSnapshot,
+} from '../runners/native/worker-control.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { getRun, persistRunNow } from '../runs/store.js';
 import { checklistMarkerCommand, targetForChecklistBasename } from '../tasks/checklist-target.js';
@@ -69,10 +72,17 @@ export async function continueNativeReviewCompletion(
   const reserved = context.nativeCommandId;
   const adopted = reserved && context.nativeSession!.commandId === reserved;
   const ended = command?.state === 'completed' || command?.state === 'failed';
-  if (adopted && !probe.ok && ended)
+  if (adopted && !probe.ok && ended) {
+    const failure =
+      command.outcome === 'failed'
+        ? await readNativeWorkerCommandError(runId, 'review', context.id)
+        : undefined;
+    current();
     throw new NativeReviewCompletionError(
-      'Native reviewer completion turn ended without a valid terminal signal',
+      failure?.message ?? 'Native reviewer completion turn ended without a valid terminal signal',
+      { cause: failure },
     );
+  }
   if (reserved && !probe.ok && input.enforceProgressTimeout) {
     const project = await loadProjectVars(vars.projectName);
     const timeout = (project.projectJson.review?.review_inactivity_timeout_min ?? 10) * 60_000;

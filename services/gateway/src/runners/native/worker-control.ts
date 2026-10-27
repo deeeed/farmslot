@@ -127,6 +127,38 @@ export async function readNativeWorkerSnapshot(
   return snapshot;
 }
 
+/** Read the normalized error for the exact failed command, including earlier event pages. */
+export async function readNativeWorkerCommandError(
+  runId: string,
+  role: AgentRole,
+  contextId: string,
+  read = readNativeWorkerSnapshot,
+): Promise<Error | undefined> {
+  const { binding } = workerBinding(runId, role, contextId);
+  const commandId = binding.commandId;
+  let after: number | undefined;
+  let failure: Error | undefined;
+  while (true) {
+    const snapshot = await read(runId, role, contextId, { after, limit: 500 });
+    if (workerBinding(runId, role, contextId).binding.commandId !== commandId)
+      throw new Error('Native worker command changed during failure observation');
+    for (const event of snapshot.events) {
+      if (
+        event.sessionId === binding.sessionId &&
+        event.generation === binding.generation &&
+        event.commandId === commandId &&
+        event.type === 'error' &&
+        event.text
+      )
+        failure = new Error(event.text, { cause: event.data });
+    }
+    if (!snapshot.hasMore) return failure;
+    if (snapshot.cursor <= (after ?? 0))
+      throw new Error('Native worker failure history cursor did not advance');
+    after = snapshot.cursor;
+  }
+}
+
 /** Later native workers of the same role that accepted their task. */
 function laterAcceptedWorkers(run: Run, context: AgentContext): AgentContext[] {
   const contexts = run.agentContexts ?? [];

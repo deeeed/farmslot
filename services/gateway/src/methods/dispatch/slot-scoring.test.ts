@@ -380,6 +380,40 @@ test('pickedSlotIneligibility rejects ghosts, foreign projects, and undispatchab
   );
 });
 
+test('worker-blocked runs keep their owner lease and refuse stale dispatch claims', () => {
+  const monitor: Run['steps'] = [
+    { name: 'monitor', status: 'done', outputs: { workerSignal: { status: 'blocked' } } },
+  ];
+  const reviewFix: Run['steps'] = [
+    { name: 'review', status: 'done', outputs: { verdict: 'blocked', feedbackSent: true } },
+  ];
+  for (const steps of [monitor, reviewFix]) {
+    const run = { status: 'blocked', steps };
+    const lookup = (id: string) => (id === 'worker' ? run : undefined);
+    const slot = { current_run_id: 'worker', lifecycle: 'busy', phase: 'working' };
+    assert.equal(failedRunSlotCleanup(slot, 'worker', lookup), 'none');
+    assert.equal(
+      failedRunSlotCleanup({ ...slot, handoff_run_id: 'incoming' }, 'worker', lookup),
+      'none',
+    );
+    assert.equal(
+      slotClaimBlockedByLiveOwner(slot, 'next-run', lookup),
+      'slot is claimed by live run worker',
+    );
+    assert.equal(slotClaimBlockedByLiveOwner(slot, 'worker', lookup), null);
+    assert.equal(failedRunSlotCleanup(slot, 'next-run', lookup), 'none');
+    assert.equal(
+      failedRunSlotCleanup(slot, 'worker', () => ({ ...run, status: 'failed' })),
+      'reset',
+    );
+  }
+  const blockedCI = () => ({
+    status: 'blocked',
+    steps: [{ name: 'ci-watch', status: 'done' as const }],
+  });
+  assert.equal(failedRunSlotCleanup({ current_run_id: 'ci' }, 'ci', blockedCI), 'reset');
+});
+
 test('failedRunSlotCleanup resets only owned slots and clears only own reservations', () => {
   const liveOwner = (id: string) => (id === 'prior' ? { status: 'monitoring' } : undefined);
   const deadOwner = (id: string) => (id === 'prior' ? { status: 'cancelled' } : undefined);

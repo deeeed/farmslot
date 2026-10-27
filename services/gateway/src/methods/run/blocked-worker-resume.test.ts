@@ -347,7 +347,7 @@ test('cancelled and eval runs are left alone, even when the worker kept going', 
   assert.equal(getRun(evalRun.id)!.status, 'blocked');
 });
 
-test('a worker that resumes during the block teardown waits for the cleanup, then re-binds its free slot and resumes', async (t) => {
+test('a worker blocked on an answer keeps its lease through cleanup and resumes without prepare', async (t) => {
   const slotId = 'slot-terminal-overlap';
   const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-OVERLAP' });
   t.after(async () => {
@@ -373,6 +373,7 @@ test('a worker that resumes during the block teardown waits for the cleanup, the
     }),
   );
   const order: string[] = [];
+  let destructiveCleanup = false;
   let release!: () => void;
   const settleGate = new Promise<void>((resolve) => (release = resolve));
   let entered!: () => void;
@@ -394,7 +395,14 @@ test('a worker that resumes during the block teardown waits for the cleanup, the
       tickWorkGraph: async () => {},
       cleanupEvalHarness: async () => {},
       cleanupSlot: async (blockedRun) => {
-        await cleanupSlotAfterRunFailure(slotId, blockedRun.id, 'monitor-terminal blocked');
+        await cleanupSlotAfterRunFailure(
+          slotId,
+          blockedRun.id,
+          'monitor-terminal blocked',
+          async () => {
+            destructiveCleanup = true;
+          },
+        );
         order.push('slot-cleanup');
       },
     },
@@ -417,11 +425,17 @@ test('a worker that resumes during the block teardown waits for the cleanup, the
 
   release();
   await terminal;
-  const released = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
-  assert.equal(released.current_run_id, null, 'the block cleanup released the slot');
-  assert.equal(released.lifecycle, 'ready');
+  const held = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
+  assert.equal(held.current_run_id, run.id, 'the worker keeps its lease while awaiting an answer');
+  assert.equal(held.lifecycle, 'busy');
+  assert.equal(held.slot_epoch, 1);
+  assert.equal(destructiveCleanup, false);
+  assert.equal(
+    slotClaimBlockedByLiveOwner(held, 'next-run', getRun),
+    `slot is claimed by live run ${run.id}`,
+  );
 
-  // The worker is still in that workspace: the free slot is re-bound, then resumed.
+  // The worker's later running signal reattaches monitor on the same lease.
   assert.equal(
     (await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps))?.status,
     'monitoring',
@@ -429,8 +443,8 @@ test('a worker that resumes during the block teardown waits for the cleanup, the
   assert.deepEqual(order, ['slot-cleanup', 'replay']);
   const rebound = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
   assert.equal(rebound.current_run_id, run.id);
-  assert.equal(rebound.lifecycle, 'held');
-  assert.ok(rebound.slot_epoch > released.slot_epoch, 'a claim-type write');
+  assert.equal(rebound.lifecycle, 'busy');
+  assert.equal(rebound.slot_epoch, held.slot_epoch, 'no release or re-prepare');
 
   // The next signal finds the run monitoring: nothing more.
   assert.equal(await resumeBlockedRunWhoseWorkerContinued(run.id, () => {}, deps), null);
