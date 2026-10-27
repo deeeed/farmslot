@@ -2,12 +2,27 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 
 await import('../runtime/mock-pty.test-support.js');
+let disconnectedRepo: string | undefined;
+const execution = await import('../core/exec.js');
+const executeOnSlot: typeof execution.execOnSlot = async (...args) => {
+  if (args[0].remoteRepo === disconnectedRepo && args[1].startsWith('cat '))
+    throw new Error('Node disconnected during fixture content read');
+  return execution.execOnSlot(...args);
+};
+mock.module('../core/exec.js', {
+  namedExports: { ...execution, execOnSlot: executeOnSlot },
+});
+const core = await import('../core/index.js');
+mock.module('../core/index.js', {
+  namedExports: { ...core, execOnSlot: executeOnSlot },
+});
 const { checkFixtures } = await import('./fleet.js');
+const { checkFixtureSteps } = await import('./slot/check.js');
 
 async function fixture(t: TestContext, projectJson: RawProjectJson) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'fleet-fixtures-'));
@@ -111,4 +126,27 @@ test('optional missing fixtures stay outside the denominator', async (t) => {
     fixtures: { templates: [{ src: 'missing', dst: 'optional', optional: true }] },
   });
   assert.equal(await f.check(), 'not-required');
+});
+
+test('installer read failure remains a fixture warning while sibling slots verify', async (t) => {
+  const project: RawProjectJson = {
+    fixtures: { templates: [{ src: 'exclude', dst: '.git/info/exclude' }] },
+  };
+  const failed = await fixture(t, project);
+  const sibling = await fixture(t, project);
+  for (const f of [failed, sibling]) {
+    await f.file(f.sources, 'exclude', '.agent/\n');
+    await f.file(f.repo, '.git/info/exclude', '.agent/\n.cache/\n');
+  }
+  disconnectedRepo = failed.repo;
+  t.after(() => {
+    disconnectedRepo = undefined;
+  });
+  assert.deepEqual(await Promise.all([failed.check(), sibling.check()]), ['0/1', 'OK']);
+  const steps = await checkFixtureSteps(failed.vars, failed.project, project);
+  assert.deepEqual(steps[0], {
+    name: 'fixture:.git/info/exclude',
+    status: 'warn',
+    detail: '.git/info/exclude read failed: Node disconnected during fixture content read',
+  });
 });

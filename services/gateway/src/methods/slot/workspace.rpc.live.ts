@@ -99,6 +99,7 @@ fi
     git(repo, 'push', '-q', '-u', 'origin', 'previous');
     await writeFile(path.join(root, 'projects/proof/fixtures/fixture.txt'), 'synced fixture\n');
     await writeFile(path.join(root, 'projects/proof/fixtures/runtime.txt'), 'runtime fixture\n');
+    await writeFile(path.join(root, 'projects/proof/fixtures/exclude'), '.agent/\n');
     await writeFile(
       path.join(root, 'projects/proof/project.json'),
       JSON.stringify({
@@ -110,6 +111,7 @@ fi
           templates: [
             { src: 'fixture.txt', dst: 'fixture.txt' },
             { src: 'runtime.txt', dst: '{{runtime_dir}}/runtime.txt' },
+            { src: 'exclude', dst: '.git/info/exclude' },
           ],
         },
       }),
@@ -158,7 +160,7 @@ fi
       dev: '-',
       devserver: '-',
       cdp: '-',
-      fixtures: '0/2',
+      fixtures: '0/3',
       branch: 'previous',
       head_sha: git(repo, 'rev-parse', 'HEAD'),
       agent: 'idle',
@@ -227,8 +229,16 @@ fi
 
     const execution = await import('../../core/exec.js');
     let failPostReleaseProbe = false;
+    let failInstallerRead = false;
     const executeOnSlot: typeof execution.execOnSlot = async (...args) => {
       if (/\btmux\b/.test(args[1])) return { exitCode: 1, stdout: '', stderr: '' };
+      if (
+        failInstallerRead &&
+        args[0].slotId === 'proof-slot' &&
+        args[1].startsWith('cat ') &&
+        args[1].includes('/.git/info/exclude')
+      )
+        throw new Error('Injected fixture content transport failure');
       if (failPostReleaseProbe && args[1].includes('FARMSLOT_WORKSPACE_PROBE')) {
         const state = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
         const row = state.slots.find((slot: { slot: string }) => slot.slot === args[0].slotId);
@@ -508,6 +518,28 @@ fi
     assert.equal(row.fixtures, 'OK');
     assert.equal(row.warm, false, 'Full release tears down warm resources');
     assert.equal(row.workspace, null, 'Ready observations are not persisted across later claims');
+    await writeFile(path.join(repo, '.git/info/exclude'), '.agent/\n.cache/\n');
+    failInstallerRead = true;
+    let isolatedRefresh: FleetStatusResult;
+    try {
+      isolatedRefresh = await call<FleetStatusResult>('fleet.refresh');
+    } finally {
+      failInstallerRead = false;
+    }
+    assert.equal(
+      isolatedRefresh.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.health.fixtures,
+      '2/3',
+    );
+    assert.equal(
+      isolatedRefresh.fleet.slots.find((slot) => slot.slot === 'proof-empty')?.health.fixtures,
+      'not-required',
+      'A failed fixture read must not lose sibling slot observations',
+    );
+    const restoredRefresh = await call<FleetStatusResult>('fleet.refresh');
+    assert.equal(
+      restoredRefresh.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.health.fixtures,
+      'OK',
+    );
     if (coldFailureOnly) {
       await writeFile(
         path.join(output, 'cold-retry.json'),
@@ -520,6 +552,7 @@ fi
             coldOnRetry: row.warm === false,
             pendingRecoveryPrepareRefused: true,
             expandedRuntimeFixture: '.agent/runtime.txt',
+            fleetReadFailureIsolated: true,
           },
           null,
           2,

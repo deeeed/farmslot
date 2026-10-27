@@ -8,6 +8,7 @@ import { isMissingProjectConfigError } from '@farmslot/slot-config';
 
 import {
   execOnSlot,
+  type ExecResult,
   expandHook,
   expandPlatformField,
   expandTemplate,
@@ -444,9 +445,21 @@ export async function checkFixtureSteps(
     const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${dst}`, timeoutMs);
     let matches = localMd5 === remoteMd5;
     if (!matches && remoteMd5 && (dst === '.skills.local' || dst === '.git/info/exclude')) {
-      const content = await execOnSlot(vars, `cat ${shellQuote(`${vars.remoteRepo}/${dst}`)}`, {
-        timeout: timeoutMs,
-      });
+      let content: ExecResult;
+      try {
+        content = await execOnSlot(vars, `cat ${shellQuote(`${vars.remoteRepo}/${dst}`)}`, {
+          timeout: timeoutMs,
+        });
+      } catch (error) {
+        // A lost node read leaves this fixture unverified, without losing sibling slot checks.
+        steps.push({
+          name: `fixture:${dst}`,
+          status: 'warn',
+          detail: `${dst} read failed: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        mismatches++;
+        continue;
+      }
       matches =
         content.exitCode === 0 &&
         (dst === '.git/info/exclude'
