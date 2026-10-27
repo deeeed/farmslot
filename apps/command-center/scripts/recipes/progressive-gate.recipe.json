@@ -45,6 +45,10 @@
     {
       "id": "passive-read-cost",
       "claim": "Unchanged workspace reads launch no full probe during the warm minute; the real published SHA pair is compared once and each fleet.status finishes under ten seconds."
+    },
+    {
+      "id": "local-admission",
+      "claim": "A 31-slot local burst produces actual workspace observations for all 30 enabled slots with at most four concurrent fingerprints; warm fleet reads stay under two seconds."
     }
   ],
   "workflow": {
@@ -132,6 +136,22 @@
         "stream": "stdout",
         "contains": "\"status\":\"PASS\"",
         "proves": ["passive-read-cost"],
+        "next": "local-admission"
+      },
+      "local-admission": {
+        "action": "command",
+        "intent": "Inspect a local fleet without an unbounded process burst.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/local-admission\" --bounded-local",
+        "timeout_ms": 600000,
+        "next": "local-admission-observed"
+      },
+      "local-admission-observed": {
+        "action": "assert_output",
+        "intent": "Require real workspace rows, bounded launches and owned teardown.",
+        "source": "local-admission",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "proves": ["local-admission"],
         "next": "done"
       }
     }
