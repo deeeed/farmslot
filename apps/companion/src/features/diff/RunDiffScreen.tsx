@@ -29,6 +29,7 @@ import {
   resolveRecipeRunSelection,
 } from '../../lib/artifact-url';
 import { diffArtifactCandidate, diffFocusedFilePathFromRequest } from '../../lib/diff';
+import { gateDiffFallsBack } from '../../lib/held-content';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
@@ -176,7 +177,7 @@ export default function DiffViewerScreen() {
     selectedRecipeRun || requestedPathIsDiffArtifact ? null : run,
   );
   const gateDiffText = gateDiff.status === 'ready' ? gateDiff.text : '';
-  const gateDiffActive = Boolean(gateDiffText) || gateDiff.status === 'loading';
+  const gateDiffActive = !gateDiffFallsBack(gateDiff);
   const recipeRunUrlParam =
     selectedRecipeRun && selectedRecipeRun.groupKind !== CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
       ? selectedRecipeRun.id
@@ -360,6 +361,10 @@ export default function DiffViewerScreen() {
             initialPath={focusedFilePath}
             onOpenEvidence={openEvidenceFromDiff}
           />
+        ) : gateDiff.status === 'ready' ? (
+          <Text style={styles.emptyText}>The gate package has no changes.</Text>
+        ) : gateDiff.status === 'mismatch' ? (
+          <Text style={styles.errorText}>This diff doesn't match its package.</Text>
         ) : gateDiffActive ? (
           <Text style={styles.emptyText}>Loading gate package diff…</Text>
         ) : diffUrl ? (

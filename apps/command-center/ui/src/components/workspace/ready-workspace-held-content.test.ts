@@ -26,6 +26,8 @@ const gateway = {
 mock.module('../../gateway-client.js', { namedExports: { gateway } });
 
 let cache: GatewayResourceCache | undefined;
+// The signed-in owner; the view's scope also names its run, slot and decision.
+let viewOwner = 'operator';
 mock.module('../../resource-cache.js', {
   namedExports: {
     getResourceCache: () => cache,
@@ -168,16 +170,22 @@ function makePresenter(): Presenter {
     _diffModalText: '',
     _diffModalUrl: '',
     _diffModalArtifactPath: '',
+    _diffModalNotice: '',
+    _diffModalRequest: 0,
     _queries: {
       get decision() {
-        return decision;
+        return view.decision;
       },
       ready: false,
       sync: () => undefined,
-      capture: () => ({
-        current: () => gateway.connectionState === 'connected',
-        ownsView: () => true,
-      }),
+      capture: () => {
+        const scope = () => JSON.stringify([viewOwner, view.runId, view.decision?.id]);
+        const captured = scope();
+        return {
+          current: () => gateway.connectionState === 'connected' && captured === scope(),
+          ownsView: () => captured === scope(),
+        };
+      },
     },
     _reads: {
       read: async () => assert.fail('The slot is unreachable; its diff is not read'),
@@ -349,4 +357,145 @@ test('a diff modal restored from the URL opens the package diff from held bytes 
   await flush();
   assert.equal(other._diffModalText, '');
   assert.match(other._diffModalUrl, /path=artifacts%2Fother\.diff/);
+});
+
+test('a late diff-modal read never fills a modal reopened for another package or owner', async (t) => {
+  gateway.connectionState = 'connected';
+  const refreshedDiff = `${changedSection}\n`;
+  const refreshedKey: ContentKey = { kind: 'diff', id: reviewDiffHash(refreshedDiff) };
+  const ready = decision.payload as ReadyGatePayload;
+  const refreshed = {
+    ...decision,
+    payload: {
+      ...ready,
+      prPackage: {
+        ...ready.prPackage,
+        id: 'refreshed',
+        packageHash: 'refreshed-hash',
+        reviewSnapshot: { ...ready.prPackage!.reviewSnapshot, diffHash: refreshedKey.id },
+      },
+    },
+  } as RunDecision;
+  // Nothing is held for the first package, so its diff is read from the gateway, slowly.
+  const pending: Array<(response: Response) => void> = [];
+  t.mock.method(
+    globalThis,
+    'fetch',
+    () => new Promise<Response>((resolve) => pending.push(resolve)),
+  );
+  t.after(() => {
+    viewOwner = 'operator';
+  });
+  const holdRefreshed = (owned: GatewayResourceCache) =>
+    owned.storeContent({
+      key: refreshedKey,
+      data: encoder.encode(refreshedDiff),
+      origin: 'prefetch',
+      cohort: 'gate',
+    });
+
+  for (const change of ['package refresh', 'owner change'] as const) {
+    let owned = openCache(t).cache;
+    const view = makePresenter();
+    view._openDiffModal('Package diff', { path: 'artifacts/package.diff' });
+    await flush();
+    const late = pending.at(-1)!;
+    if (change === 'owner change') {
+      viewOwner = 'another-operator';
+      owned = openCache(t).cache;
+    }
+    assert.equal(await holdRefreshed(owned), true);
+    // Same artifact filename, another package: the modal opens from its own held diff.
+    view.decision = refreshed;
+    view._openDiffModal('Package diff', { path: 'artifacts/package.diff' });
+    await flush();
+    assert.equal(view._diffModalText, refreshedDiff, change);
+    late(new Response(packageDiff));
+    await flush();
+    assert.equal(view._diffModalText, refreshedDiff, `${change}: the late read stays out`);
+    assert.equal(view._diffModalUrl, '', change);
+    viewOwner = 'operator';
+  }
+});
+
+test('a live package diff that fails its diffHash is neither listed nor shown', async (t) => {
+  gateway.connectionState = 'connected';
+  const fixture = openCache(t);
+  // A later retain put another package's diff at the same artifact path.
+  const fetched: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+    fetched.push(new URL(String(input), 'http://localhost:7777').searchParams.get('path') ?? '');
+    return new Response(`${changedSection}\n`);
+  });
+  const view = makePresenter();
+  assert.equal(await view._showPackageDiff(), false);
+  assert.deepEqual(view._diffFiles, []);
+  assert.equal(view._heldDiff, undefined);
+
+  view._openDiffModal('Package diff', { path: 'artifacts/package.diff' });
+  await flush();
+  assert.equal(view._diffModalText, '');
+  assert.equal(view._diffModalUrl, '', 'the same artifact is not read again from its URL');
+  assert.equal(view._diffModalNotice, 'This diff does not match its package, so it is not shown.');
+  assert.deepEqual(fetched, ['artifacts/package.diff', 'artifacts/package.diff']);
+  assert.deepEqual(await fixture.origins(), {});
+});
+
+test('a verified package diff over the 5 MB cap is shown but not kept', async (t) => {
+  gateway.connectionState = 'connected';
+  const fixture = openCache(t);
+  const line = `+${'x'.repeat(1023)}\n`;
+  const lines = 5 * 1024 + 1;
+  const largeDiff = `diff --git a/big.txt b/big.txt
+new file mode 100644
+index ${'0'.repeat(40)}..${'1'.repeat(40)}
+--- /dev/null
++++ b/big.txt
+@@ -0,0 +1,${lines} @@
+${line.repeat(lines)}`;
+  const ready = decision.payload as ReadyGatePayload;
+  const view = makePresenter();
+  view.decision = {
+    ...decision,
+    payload: {
+      ...ready,
+      prPackage: {
+        ...ready.prPackage,
+        reviewSnapshot: { ...ready.prPackage!.reviewSnapshot, diffHash: reviewDiffHash(largeDiff) },
+      },
+    },
+  } as RunDecision;
+  t.mock.method(globalThis, 'fetch', async () => new Response(largeDiff));
+  assert.equal(await view._packageDiffText(), largeDiff);
+  await flush();
+  assert.deepEqual(await fixture.origins(), {});
+});
+
+test('an evidence image whose body fails its manifest sha256 gets no object URL', async (t) => {
+  gateway.connectionState = 'connected';
+  const fixture = openCache(t);
+  t.mock.method(globalThis, 'fetch', async () => {
+    return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 9, 9, 9]), {
+      headers: { 'content-type': 'image/png' },
+    });
+  });
+  const created: Blob[] = [];
+  t.mock.method(URL, 'createObjectURL', (blob: Blob) => {
+    created.push(blob);
+    return 'blob:mismatch';
+  });
+  const view = makePresenter();
+  const url = view._artifactUrl(imageArtifact.path, imageArtifact);
+  // With gateway auth the body is fetched with headers; without it, the URL is not used instead.
+  for (const auth of [true, false]) {
+    if (auth) setGatewayMemoryAuth({ token: 'service-fixture' }, 'ws://localhost:7777/ws');
+    else clearGatewayMemoryAuth();
+    await assert.rejects(
+      loadGatewayMedia(url, new AbortController().signal),
+      /does not match its manifest/,
+    );
+  }
+  clearGatewayMemoryAuth();
+  assert.deepEqual(created, []);
+  assert.deepEqual(await fixture.origins(), {});
 });

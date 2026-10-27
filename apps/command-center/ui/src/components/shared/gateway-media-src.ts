@@ -61,25 +61,7 @@ export function requiresGatewayMediaHeaders(url: string): boolean {
   return parsed.origin === origin && parsed.pathname.startsWith('/api/');
 }
 
-/**
- * Held artifact bytes stand in for the URL, offline and online; a live load is kept as opened.
- * The owner releases the object URL when its view closes or changes source.
- */
-export async function loadGatewayMedia(
-  url: string,
-  signal: AbortSignal,
-): Promise<{ url: string; dispose(): void }> {
-  const sha256 = heldMediaIds.get(url);
-  // Loaded only when content can be held, so plain media keeps a light import graph.
-  const held = sha256 ? await import('../../held-content.js') : undefined;
-  const key = sha256 ? { kind: 'artifact' as const, id: sha256 } : undefined;
-  if (held && key) {
-    const data = await held.openHeldContent(key);
-    signal.throwIfAborted();
-    if (data) return objectMedia(new Blob([new Uint8Array(data)]));
-  }
-  if (!requiresGatewayMediaHeaders(url)) return { url, dispose() {} };
-  const keep = held?.openedContentKeeper('gate');
+async function fetchGatewayMedia(url: string, signal: AbortSignal): Promise<Blob> {
   const resource = new URL(url, gatewayHttpOrigin());
   resource.searchParams.delete('token');
   resource.searchParams.delete('password');
@@ -87,9 +69,46 @@ export async function loadGatewayMedia(
   if (!response.ok) throw new Error(`Could not load gateway media (${response.status}).`);
   const blob = await response.blob();
   signal.throwIfAborted();
-  if (keep && key && blob.size <= HELD_IMAGE_BYTES)
-    keep(key, new Uint8Array(await blob.arrayBuffer()));
-  return objectMedia(blob);
+  return blob;
+}
+
+/**
+ * An evidence image with a manifest `sha256` (Content rules 1 and 2): held bytes first, offline
+ * and online, else live bytes shown and kept only when they verify. A body that does not match
+ * is never shown, and its URL is not used in its place.
+ */
+async function loadContentMedia(url: string, sha256: string, signal: AbortSignal) {
+  // Loaded only when content can be held, so plain media keeps a light import graph.
+  const held = await import('../../held-content.js');
+  const key = { kind: 'artifact' as const, id: sha256 };
+  const data = await held.openHeldContent(key);
+  signal.throwIfAborted();
+  if (data) return objectMedia(new Blob([new Uint8Array(data)]));
+  let type = '';
+  const verified = await held.readVerifiedContent(
+    key,
+    async () => {
+      const blob = await fetchGatewayMedia(url, signal);
+      type = blob.type;
+      return new Uint8Array(await blob.arrayBuffer());
+    },
+    'gate',
+  );
+  signal.throwIfAborted();
+  if (verified === held.CONTENT_MISMATCH)
+    throw new Error('Gateway media does not match its manifest.');
+  return objectMedia(new Blob([new Uint8Array(verified)], { type }));
+}
+
+/** The owner releases the object URL when its view closes or changes source. */
+export async function loadGatewayMedia(
+  url: string,
+  signal: AbortSignal,
+): Promise<{ url: string; dispose(): void }> {
+  const sha256 = heldMediaIds.get(url);
+  if (sha256) return loadContentMedia(url, sha256, signal);
+  if (!requiresGatewayMediaHeaders(url)) return { url, dispose() {} };
+  return objectMedia(await fetchGatewayMedia(url, signal));
 }
 
 type GatewayMediaFormat = 'url' | 'html';

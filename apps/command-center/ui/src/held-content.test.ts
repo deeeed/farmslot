@@ -10,8 +10,15 @@ import {
 
 let cache: GatewayResourceCache | undefined;
 mock.module('./resource-cache.js', { namedExports: { getResourceCache: () => cache } });
-const { frozenDiffAlias, heldBlobId, heldDiffFiles, heldFileDiff, openHeldText } =
-  await import('./held-content.js');
+const {
+  CONTENT_MISMATCH,
+  frozenDiffAlias,
+  heldBlobId,
+  heldDiffFiles,
+  heldFileDiff,
+  openHeldText,
+  readVerifiedText,
+} = await import('./held-content.js');
 
 const oldId = 'a'.repeat(40);
 const newId = 'b'.repeat(40);
@@ -102,4 +109,43 @@ test('a frozen review diff opens by its alias and is then held as opened', async
     [['diff', 'opened']],
   );
   assert.equal(await openHeldText(frozenDiffAlias('review-run', 'base-sha', 'other')), undefined);
+});
+
+test('a live diff read is shown and kept only when it matches its diffHash', async (t) => {
+  const store = createMemoryResourceStore();
+  cache = createGatewayResourceCache({
+    store,
+    transport: {
+      getConnection: () => ({
+        id: 1,
+        connected: true,
+        authMode: 'none',
+        scope: { gatewayUrl: 'ws://held.test' },
+      }),
+      onConnectionChange: () => () => {},
+      onResourceChanged: () => () => {},
+      resynchronize() {},
+      request: () => new Promise(() => {}),
+    },
+  });
+  t.after(async () => {
+    await cache?.dispose();
+    cache = undefined;
+  });
+  const key = { kind: 'diff' as const, id: reviewDiffHash(diff) };
+  const bytes = (text: string) => async () => new TextEncoder().encode(text);
+  // The review snapshot's path now holds a later retain's diff.
+  const other = diff.replace('+two', '+changed');
+  assert.equal(await readVerifiedText(key, bytes(other), 'gate'), CONTENT_MISMATCH);
+  assert.deepEqual(await store.listContent(), []);
+  const failed = async () => {
+    throw new Error('offline');
+  };
+  assert.equal(await readVerifiedText(key, failed, 'gate'), undefined);
+  assert.equal(await readVerifiedText(key, bytes(diff), 'gate'), diff);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    (await store.listContent()).map(({ kind, origin }) => [kind, origin]),
+    [['diff', 'opened']],
+  );
 });

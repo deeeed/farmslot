@@ -8,8 +8,10 @@ import {
   artifactImageKey,
   fetchArtifactBytes,
   fetchRunArtifactBytes,
+  type GateDiffContent,
+  gateDiffContent,
   gateDiffSource,
-  imageDataUri,
+  heldImageSource,
   openHeldContent,
 } from '../lib/held-content';
 import { getResourceCache, subscribeResourceCache } from '../lib/resource-cache';
@@ -17,17 +19,13 @@ import { useConnectionStore } from '../store/connection';
 
 import { useConnectedTransport } from './useConnectedTransport';
 
-export type GateDiffContent =
-  | { status: 'none' | 'loading' | 'unavailable' }
-  | { status: 'ready'; text: string };
-
 const NONE: GateDiffContent = { status: 'none' };
 const LOADING: GateDiffContent = { status: 'loading' };
 const UNAVAILABLE: GateDiffContent = { status: 'unavailable' };
 
 /**
  * The open gate's retained diff, verified by `diffHash`: held content first, then a live read
- * while connected. Unavailable leaves the screen on today's diff path.
+ * while connected. Unavailable leaves the screen on today's diff path; a mismatch is final.
  */
 export function useGateDiffContent(run: Run | null): GateDiffContent {
   const cache = useSyncExternalStore(subscribeResourceCache, getResourceCache, getResourceCache);
@@ -46,9 +44,9 @@ export function useGateDiffContent(run: Run | null): GateDiffContent {
     resolved && resolved.cache === cache && resolved.identity === identity
       ? resolved.content
       : undefined;
-  const ready = current?.status === 'ready';
+  const settled = current?.status === 'ready' || current?.status === 'mismatch';
   useEffect(() => {
-    if (!source || ready) return;
+    if (!source || settled) return;
     let active = true;
     const controller = new AbortController();
     const settle = (content: GateDiffContent) => {
@@ -68,22 +66,22 @@ export function useGateDiffContent(run: Run | null): GateDiffContent {
         ? () => fetchRunArtifactBytes(gatewayUrl, headers, source, controller.signal)
         : undefined,
     }).then(
-      (data) =>
-        settle(data ? { status: 'ready', text: new TextDecoder().decode(data) } : UNAVAILABLE),
+      (result) => settle(gateDiffContent(result)),
       () => settle(UNAVAILABLE),
     );
     return () => {
       active = false;
       controller.abort();
     };
-  }, [cache, connected, gatewayUrl, headers, ready, source]);
+  }, [cache, connected, gatewayUrl, headers, settled, source]);
   if (!source) return NONE;
   return current ?? LOADING;
 }
 
 /**
  * An evidence image from held content by manifest `sha256`, read live and stored as opened while
- * connected, otherwise today's URL source. Undefined while the held bytes are being read.
+ * connected, otherwise today's URL source. Undefined while the bytes are being read, and after
+ * live bytes failed verification.
  */
 export function useArtifactImageSource(
   uri: string,
@@ -97,14 +95,14 @@ export function useArtifactImageSource(
   const [resolved, setResolved] = useState<{
     cache: typeof cache;
     identity: string;
-    source: ImageSourcePropType;
-    held: boolean;
+    source: ImageSourcePropType | undefined;
+    settled: boolean;
   }>();
   const current =
     resolved && resolved.cache === cache && resolved.identity === identity ? resolved : undefined;
-  const held = current?.held === true;
+  const settled = current?.settled === true;
   useEffect(() => {
-    if (!keyId || held) return;
+    if (!keyId || settled) return;
     let active = true;
     const controller = new AbortController();
     openHeldContent({
@@ -113,22 +111,22 @@ export function useArtifactImageSource(
       cohort: 'gate',
       read: connected ? () => fetchArtifactBytes(uri, headers ?? {}, controller.signal) : undefined,
     })
-      .catch(() => undefined)
-      .then((data) => {
-        const dataUri = data && imageDataUri(data);
+      .catch(() => ({ status: 'unavailable' as const }))
+      .then((result) => {
         if (active)
           setResolved({
             cache,
             identity: `${keyId}\n${uri}`,
-            held: Boolean(dataUri),
-            source: dataUri ? { uri: dataUri } : artifactSource(uri, headers),
+            // Verified or rejected bytes are final; only an unavailable read tries again.
+            settled: result.status !== 'unavailable',
+            source: heldImageSource(result, artifactSource(uri, headers)),
           });
       });
     return () => {
       active = false;
       controller.abort();
     };
-  }, [cache, connected, headers, held, keyId, uri]);
+  }, [cache, connected, headers, keyId, settled, uri]);
   if (!keyId) return artifactSource(uri, headers);
   return current?.source;
 }

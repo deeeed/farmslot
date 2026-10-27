@@ -582,6 +582,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         title: this._diffModalTitle,
         diffText: this._diffModalText,
         artifactUrl: this._diffModalUrl,
+        notice: this._diffModalNotice,
         testPatterns: this._diffTestPatterns,
         close: () => this._closeDiffModal(),
       },
@@ -697,6 +698,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
 
   _closeDiffModal(): void {
     this._diffModalOpen = false;
+    this._diffModalRequest++;
     this._syncViewStateToHash();
   }
 

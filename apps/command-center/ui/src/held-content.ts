@@ -9,6 +9,7 @@ import {
   gitBlobHash,
   parseUnifiedDiff as parseDiffFiles,
   type ResourceContentCohort,
+  verifyResourceContent,
 } from '@farmslot/protocol/client-cache';
 
 import { parseUnifiedDiff } from './utils/unified-diff.js';
@@ -60,6 +61,43 @@ export function openedContentKeeper(cohort: ResourceContentCohort) {
       })
       .catch(() => false);
   };
+}
+
+/** Live bytes that do not hash to the identity they were read for: never shown or kept. */
+export const CONTENT_MISMATCH = Symbol('content mismatch');
+/** Identity-bearing text to show, a mismatch, or nothing (not held, or the read failed). */
+export type VerifiedText = string | typeof CONTENT_MISMATCH | undefined;
+
+/**
+ * Content rules 1 and 2 for a live read: bytes are shown and kept only when they hash to the
+ * identity they were read for, at any size. The caps decide only whether they are kept.
+ */
+export async function readVerifiedContent(
+  key: ContentKey,
+  read: () => Promise<Uint8Array>,
+  cohort: ResourceContentCohort,
+  untrackedFiles?: ReviewDiffSnapshot['untrackedFiles'],
+): Promise<Uint8Array | typeof CONTENT_MISMATCH> {
+  const keep = openedContentKeeper(cohort);
+  const data = await read();
+  if (!verifyResourceContent(key, data, untrackedFiles)) return CONTENT_MISMATCH;
+  keep(key, data, untrackedFiles);
+  return data;
+}
+
+/** A diff read live: its verified text, a mismatch, or nothing when the read fails. */
+export async function readVerifiedText(
+  key: ContentKey,
+  read: () => Promise<Uint8Array>,
+  cohort: ResourceContentCohort,
+  untrackedFiles?: ReviewDiffSnapshot['untrackedFiles'],
+): Promise<VerifiedText> {
+  try {
+    const data = await readVerifiedContent(key, read, cohort, untrackedFiles);
+    return data === CONTENT_MISMATCH ? data : decoder.decode(data);
+  } catch {
+    return undefined;
+  }
 }
 
 /** A file read as text is kept by the git blob hash of its bytes. */

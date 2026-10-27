@@ -29,10 +29,12 @@ import {
   transferBoundRequestOptions,
 } from '../../gateway-request-timeout.js';
 import {
+  CONTENT_MISMATCH,
   heldDiffFiles,
   heldFileDiff,
-  openedContentKeeper,
   openHeldText,
+  readVerifiedText,
+  type VerifiedText,
 } from '../../held-content.js';
 import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { diffSelectionHandOff, visibleDiffSelection } from '../../utils/diff-test-filter.js';
@@ -120,6 +122,8 @@ index 1111111..2222222 100644
  }
 `;
 
+const PACKAGE_DIFF_MISMATCH = 'This diff does not match its package, so it is not shown.';
+
 type DecisionOutcome =
   | { kind: 'applied' }
   | { kind: 'other'; action: string }
@@ -134,8 +138,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   private _fileDiffRequest?: object;
   /** The package's retained diff, listed while the slot diff cannot be read. */
   _heldDiff?: string;
+  /** Every diff modal open and close; a modal read applies only to the request it started for. */
+  _diffModalRequest = 0;
   /** A diff modal restored from the URL waits for the gate, which names its package diff. */
-  private _restoringDiffModal = '';
+  private _restoringDiffModal?: { path: string; request: number };
 
   get _gateDecision() {
     return this._usesMockData ? this.decision : this._queries.decision;
@@ -193,12 +199,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._diffTestPatterns = null;
     this._diffModalText = '';
     this._diffModalUrl = '';
+    this._diffModalNotice = '';
     this._fileDiffLoading = false;
     this._diffLoading = false;
     this._initialized = false;
     this._diffFiles = [];
     this._fileDiff = '';
     this._diffModalOpen = false;
+    this._diffModalRequest++;
     this._legacyTaskPromptText = '';
     this._legacyTaskPromptLoading = false;
     this._legacyTaskPromptError = '';
@@ -266,10 +274,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
 
   willUpdate() {
     this._queries.sync();
-    if (this._restoringDiffModal && this._payload) {
-      const path = this._restoringDiffModal;
-      this._restoringDiffModal = '';
-      this._loadDiffModalArtifact({ path });
+    const restoring = this._restoringDiffModal;
+    if (restoring && this._payload) {
+      this._restoringDiffModal = undefined;
+      if (restoring.request === this._diffModalRequest)
+        this._loadDiffModalArtifact({ path: restoring.path });
     }
     if (!this._initialized && this._gateDecision && this.slotId) {
       this._initialized = true;
@@ -339,6 +348,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       }
       if (hashState.file) this._selectedFile = hashState.file;
       this._diffModalOpen = hashState.modal === 'diff';
+      this._diffModalRequest++;
       this._reviewModalOpen = hashState.modal === 'review';
       this._lightboxOpen = hashState.modal === 'lightbox';
       if (hashState.diffArtifact) {
@@ -346,7 +356,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         this._diffModalTitle = workspaceArtifactBasename(hashState.diffArtifact, 'Diff');
         this._diffModalText = '';
         this._diffModalUrl = '';
-        this._restoringDiffModal = this._usesMockData ? '' : hashState.diffArtifact;
+        this._diffModalNotice = '';
+        this._restoringDiffModal = this._usesMockData
+          ? undefined
+          : { path: hashState.diffArtifact, request: this._diffModalRequest };
       }
       if (hashState.lightboxIndex !== undefined) this._lightboxIndex = hashState.lightboxIndex;
       this._lightboxRecipeRunId = hashState.lightboxRecipeRunId ?? null;
@@ -600,8 +613,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         ? ''
         : this._fileDiff;
     this._diffModalUrl = '';
+    this._diffModalNotice = '';
     this._diffModalArtifactPath = artifact?.path ?? '';
     this._diffModalOpen = true;
+    this._diffModalRequest++;
     this._syncViewStateToHash();
     if (!this._usesMockData && artifact) this._loadDiffModalArtifact(artifact);
   }
@@ -613,37 +628,47 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._diffModalUrl = this._artifactUrl(artifact.path, artifact);
       return;
     }
+    // A late read must not fill a modal reopened since, for another owner or package.
+    const captured = this._queries.capture();
+    const request = this._diffModalRequest;
+    const diffHash = snapshot.diffHash;
     void this._packageDiffText().then((text) => {
-      if (!this._diffModalOpen || this._diffModalArtifactPath !== artifact.path) return;
-      if (text !== undefined) this._diffModalText = text;
+      if (
+        !captured.ownsView() ||
+        request !== this._diffModalRequest ||
+        this._payload?.prPackage?.reviewSnapshot?.diffHash !== diffHash
+      )
+        return;
+      if (typeof text === 'string') this._diffModalText = text;
+      // A diff that fails its package's identity is not shown, nor read again from its URL.
+      else if (text === CONTENT_MISMATCH) this._diffModalNotice = PACKAGE_DIFF_MISMATCH;
       else this._diffModalUrl = this._artifactUrl(artifact.path, artifact);
     });
   }
 
   /**
    * Content rules 1 and 2: the package's retained diff by `diffHash`. Held bytes come first;
-   * while connected, the retained artifact is read and kept as opened.
+   * while connected, the retained artifact is read, and shown and kept only when it verifies.
    */
-  async _packageDiffText(): Promise<string | undefined> {
+  async _packageDiffText(): Promise<VerifiedText> {
     const prPackage = this._payload?.prPackage;
     const snapshot = prPackage?.reviewSnapshot;
     if (!snapshot?.diffHash) return undefined;
     const key = { kind: 'diff' as const, id: snapshot.diffHash };
+    const path = snapshot.diffPath;
     const held = await openHeldText(key);
-    if (held !== undefined || !snapshot.diffPath || gateway.connectionState !== 'connected')
-      return held;
-    const keep = openedContentKeeper('gate');
-    try {
-      const data = await fetchRunArtifactBytes({
-        runId: this.runId,
-        path: snapshot.diffPath,
-        bundleDigest: prPackage?.artifactBundle?.bundleDigest,
-      });
-      keep(key, data, snapshot.untrackedFiles);
-      return new TextDecoder().decode(data);
-    } catch {
-      return undefined;
-    }
+    if (held !== undefined || !path || gateway.connectionState !== 'connected') return held;
+    return readVerifiedText(
+      key,
+      () =>
+        fetchRunArtifactBytes({
+          runId: this.runId,
+          path,
+          bundleDigest: prPackage?.artifactBundle?.bundleDigest,
+        }),
+      'gate',
+      snapshot.untrackedFiles,
+    );
   }
 
   /** Lists the package diff's files in place of the slot diff. False when it is not available. */
@@ -652,7 +677,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     const packageHash = this._payload?.prPackage?.packageHash;
     const text = await this._packageDiffText();
     if (
-      text === undefined ||
+      typeof text !== 'string' ||
       !captured.ownsView() ||
       this._payload?.prPackage?.packageHash !== packageHash
     )
@@ -848,7 +873,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       if (!current()) return;
       // The file's section of the package diff stands in for an unreadable slot diff.
       const held = await this._packageDiffText();
-      const section = held === undefined ? undefined : heldFileDiff(held, filePath);
+      const section = typeof held === 'string' ? heldFileDiff(held, filePath) : undefined;
       if (!current()) return;
       if (section !== undefined) show(section);
       else this._diffError = err instanceof Error ? err.message : String(err);

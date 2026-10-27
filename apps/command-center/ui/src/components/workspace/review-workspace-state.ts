@@ -108,6 +108,8 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @state() _diffModalTitle = 'Review input diff';
   @state() _diffModalUrl = '';
   @state() _diffModalText = '';
+  /** Shown in place of a diff that could not be shown, such as one that failed verification. */
+  @state() _diffModalNotice = '';
   @state() _splitPct = 50; // review takes this % of available height
   readonly _splitResizer = new VerticalSplitResizer({
     getSplitPct: () => this._splitPct,

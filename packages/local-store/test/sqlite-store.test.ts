@@ -220,6 +220,108 @@ test('schema 4 rebuilds an older store and keeps content as exact SQLite blobs',
   }
 });
 
+// Schema 3 as released with content and aliases, before query rows gained `origin` and `cohort`.
+const schema3 = [
+  `CREATE TABLE resource_stores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope_id TEXT NOT NULL UNIQUE,
+    metadata TEXT,
+    last_used INTEGER NOT NULL
+  )`,
+  `CREATE TABLE resource_queries (
+    store_id INTEGER NOT NULL REFERENCES resource_stores(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    observed_at INTEGER NOT NULL,
+    bytes INTEGER NOT NULL,
+    accessed_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (store_id, id)
+  )`,
+  `CREATE TABLE resource_content (
+    store_id INTEGER NOT NULL REFERENCES resource_stores(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    id TEXT NOT NULL,
+    data BLOB,
+    bytes INTEGER NOT NULL,
+    origin TEXT NOT NULL,
+    cohort TEXT NOT NULL,
+    accessed_at INTEGER NOT NULL,
+    PRIMARY KEY (store_id, kind, id)
+  )`,
+  `CREATE TABLE resource_content_aliases (
+    store_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    id TEXT NOT NULL,
+    PRIMARY KEY (store_id, alias),
+    FOREIGN KEY (store_id, kind, id)
+      REFERENCES resource_content(store_id, kind, id) ON DELETE CASCADE
+  )`,
+  'PRAGMA user_version = 3',
+];
+
+test('a real schema 3 database is rebuilt as schema 4: rows are cleared and drafts are kept', async () => {
+  const { sqlite, adapter } = database();
+  const identity = scope('schema-3');
+  for (const statement of schema3) sqlite.exec(statement);
+  sqlite
+    .prepare('INSERT INTO resource_stores (id, scope_id, metadata, last_used) VALUES (1, ?, ?, 1)')
+    .run(resourceStoreScopeId(identity), JSON.stringify({ scope: identity }));
+  sqlite
+    .prepare('INSERT INTO resource_queries VALUES (1, ?, ?, 1, 17, 2)')
+    .run('fs.read:{}', JSON.stringify({ value: 'schema 3' }));
+  sqlite
+    .prepare("INSERT INTO resource_content VALUES (1, 'blob', 'held', ?, 3, 'opened', 'gate', 3)")
+    .run(new Uint8Array([1, 2, 3]));
+  sqlite.exec(
+    "INSERT INTO resource_content_aliases VALUES (1, 'frozen-diff:run:a:b', 'blob', 'held')",
+  );
+  sqlite.exec("CREATE TABLE drafts (text TEXT); INSERT INTO drafts VALUES ('keep draft')");
+  const count = (table: string) =>
+    sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count;
+  const store = await createSqliteResourceStore({ database: adapter, scope: identity });
+  try {
+    assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 4);
+    assert.deepEqual(
+      sqlite
+        .prepare('PRAGMA table_info(resource_queries)')
+        .all()
+        .map(({ name }) => name),
+      ['store_id', 'id', 'data', 'observed_at', 'bytes', 'accessed_at', 'origin', 'cohort'],
+    );
+    assert.equal(await store.getMetadata(), undefined);
+    assert.equal(await store.getQuery('fs.read:{}'), undefined);
+    assert.equal(await store.hasContent({ kind: 'blob', id: 'held' }), false);
+    assert.equal(await store.getContentByAlias('frozen-diff:run:a:b'), undefined);
+    for (const table of ['resource_queries', 'resource_content', 'resource_content_aliases'])
+      assert.equal(count(table), 0);
+    assert.equal(count('resource_stores'), 1);
+    assert.deepEqual(
+      sqlite
+        .prepare('SELECT text FROM drafts')
+        .all()
+        .map(({ text }) => text),
+      ['keep draft'],
+    );
+    await store.putQuery({
+      id: 'fs.read:{}',
+      data: { value: 'schema 4' },
+      observedAt: 4,
+      bytes: 20,
+      origin: 'prefetch',
+      cohort: 'gate',
+    });
+    const saved = await store.getQuery('fs.read:{}');
+    assert.equal(saved?.origin, 'prefetch');
+    assert.equal(saved?.cohort, 'gate');
+    assert.equal(sqlite.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
+    assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally {
+    await store.close();
+    sqlite.close();
+  }
+});
+
 test('deleting a scope from a connection that never opened a store removes its content blobs', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'local-store-content-'));
   const filename = join(directory, 'resources.sqlite');

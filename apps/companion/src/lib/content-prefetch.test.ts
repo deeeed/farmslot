@@ -352,13 +352,15 @@ test('each persistent cache gets one prefetcher that fills it through the gatewa
     assert.equal(run.status, 'stale');
     const source = gateDiffSource(run.data!.run)!;
     const diff = await openHeldContent({ cache, key: source.key, cohort: 'gate' });
-    assert.equal(new TextDecoder().decode(diff), DIFF);
+    assert.ok(diff.status === 'ready');
+    assert.equal(new TextDecoder().decode(diff.data), DIFF);
     const payload = run.data!.run.decisions[0]!.payload;
     assert.ok(payload?.kind === 'ready');
     const imageKey = artifactImageKey(payload.prPackage!.evidenceManifest![0]!)!;
     const image = await openHeldContent({ cache, key: imageKey, cohort: 'gate' });
+    assert.ok(image.status === 'ready');
     assert.equal(
-      imageDataUri(image!),
+      imageDataUri(image.data),
       `data:image/png;base64,${Buffer.from(PNG).toString('base64')}`,
     );
     const origins = Object.fromEntries(

@@ -42,12 +42,15 @@ import { fetchRunArtifactBytes } from '../../content-prefetch.js';
 import { gateway } from '../../gateway-client.js';
 import {
   blobKey,
+  CONTENT_MISMATCH,
   frozenDiffAlias,
   heldBlobId,
   heldDiffFiles,
   heldFileDiff,
   openedContentKeeper,
   openHeldText,
+  readVerifiedText,
+  type VerifiedText,
 } from '../../held-content.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
@@ -100,6 +103,7 @@ import {
   writeReviewWorkspaceHashState,
 } from './workspace-url-state.js';
 
+const REVIEW_DIFF_MISMATCH = 'This diff does not match the reviewed snapshot, so it is not shown.';
 const UNRECORDED_REVIEW =
   'The reviewed revision was not recorded. Source for this review is unavailable.';
 
@@ -115,6 +119,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   private _proposeScope?: { current(): boolean };
   /** The review's held diff, listed while the live or saved source cannot be read. */
   private _heldDiff?: string;
+  /** Every diff modal open and close; a modal read applies only to the request it started for. */
+  private _diffModalRequest = 0;
 
   get _usesMockData(): boolean {
     return window.location.hash.startsWith('#dev/');
@@ -153,8 +159,10 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._commentFileError = '';
     this._commentFileLoading = false;
     this._diffModalOpen = false;
+    this._diffModalRequest++;
     this._diffModalUrl = '';
     this._diffModalText = '';
+    this._diffModalNotice = '';
     this._lightboxOpen = false;
     this._artifactLightboxItems = null;
     this._recipeRunning = false;
@@ -172,10 +180,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   /**
    * The review's diff by identity: a saved review's frozen commits by alias, then the retained
-   * input diff by `diffHash`. With `fetch`, a connected client reads the retained diff and keeps
-   * it as opened.
+   * input diff by `diffHash`. With `fetch`, a connected client reads the retained diff, and shows
+   * and keeps it only when it verifies. The review payload names no bundle, so the read is the
+   * run's current one; verification rejects a diff a later retain put at the same path.
    */
-  private async _reviewDiffText(fetch: boolean): Promise<string | undefined> {
+  private async _reviewDiffText(fetch: boolean): Promise<VerifiedText> {
     const snapshot = this._payload?.reviewSnapshot;
     const run = this._queries.run.state.data?.run;
     const subject = run?.id === this.runId ? run.reviewWorkspaceSubject : undefined;
@@ -187,24 +196,23 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     }
     if (!snapshot?.diffHash) return undefined;
     const key = { kind: 'diff' as const, id: snapshot.diffHash };
+    const path = snapshot.diffPath;
     const held = await openHeldText(key);
-    if (held !== undefined || !fetch || !snapshot.diffPath) return held;
+    if (held !== undefined || !fetch || !path) return held;
     if (gateway.connectionState !== 'connected') return undefined;
-    const keep = openedContentKeeper('gate');
-    try {
-      const data = await fetchRunArtifactBytes({ runId: this.runId, path: snapshot.diffPath });
-      keep(key, data, snapshot.untrackedFiles);
-      return new TextDecoder().decode(data);
-    } catch {
-      return undefined;
-    }
+    return readVerifiedText(
+      key,
+      () => fetchRunArtifactBytes({ runId: this.runId, path }),
+      'gate',
+      snapshot.untrackedFiles,
+    );
   }
 
   /** Lists the review's diff from its bytes. False when they are not available. */
   private async _showReviewDiff(fetch: boolean): Promise<boolean> {
     const captured = this._queries.capture();
     const text = await this._reviewDiffText(fetch);
-    if (text === undefined || !captured.ownsView()) return false;
+    if (typeof text !== 'string' || !captured.ownsView()) return false;
     this._heldDiff = text;
     this._diffError = '';
     this._diffFiles = heldDiffFiles(text);
@@ -358,16 +366,29 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._payload?.artifactUrls?.[workspaceArtifactBasename(diffPath)] ??
       runArtifactUrl(this.runId, { path: diffPath });
     this._diffModalText = '';
+    this._diffModalNotice = '';
     this._diffModalOpen = true;
-    if (diffPath !== this._payload?.reviewSnapshot?.diffPath) {
+    const request = ++this._diffModalRequest;
+    const snapshot = this._payload?.reviewSnapshot;
+    if (diffPath !== snapshot?.diffPath) {
       this._diffModalUrl = url;
       return;
     }
     // The retained diff opens from held bytes; the modal reads the URL only when they are missing.
     this._diffModalUrl = '';
+    // A late read must not fill a modal reopened since, for another owner or review.
+    const captured = this._queries.capture();
+    const identity = () => {
+      const current = this._payload?.reviewSnapshot;
+      return JSON.stringify([current?.diffHash, current?.baseSha, current?.headSha]);
+    };
+    const reviewed = identity();
     void this._reviewDiffText(true).then((text) => {
-      if (!this._diffModalOpen || this._diffModalUrl) return;
-      if (text !== undefined) this._diffModalText = text;
+      if (!captured.ownsView() || request !== this._diffModalRequest || identity() !== reviewed)
+        return;
+      if (typeof text === 'string') this._diffModalText = text;
+      // A diff that fails the snapshot's identity is not shown, nor read again from its URL.
+      else if (text === CONTENT_MISMATCH) this._diffModalNotice = REVIEW_DIFF_MISMATCH;
       else this._diffModalUrl = url;
     });
   }
@@ -770,7 +791,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       if (!current()) return;
       // The file's section of the review diff stands in for an unreadable source.
       const held = await this._reviewDiffText(true);
-      const section = held === undefined ? undefined : heldFileDiff(held, path);
+      const section = typeof held === 'string' ? heldFileDiff(held, path) : undefined;
       if (!current()) return;
       this._fileDiff = section ?? '';
       if (section === undefined) this._diffError = err instanceof Error ? err.message : String(err);
@@ -1109,9 +1130,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         .title=${this._diffModalTitle}
         .diffText=${this._diffModalText}
         .artifactUrl=${this._diffModalUrl}
+        .notice=${this._diffModalNotice}
         .testPatterns=${this._diffTestPatterns}
         @diff-modal-close=${() => {
           this._diffModalOpen = false;
+          this._diffModalRequest++;
         }}
       ></diff-viewer-modal>
     `;
@@ -1385,7 +1408,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     };
     // The reviewed file by its blob id in the review diff, held on this device.
     const diff = this._heldDiff ?? (await this._reviewDiffText(false));
-    const id = diff === undefined ? undefined : heldBlobId(diff, c.path, 'head');
+    const id = typeof diff === 'string' ? heldBlobId(diff, c.path, 'head') : undefined;
     const held = id ? await openHeldText({ kind: 'blob', id }) : undefined;
     if (!captured.ownsView() || epoch !== this._sourceLoadEpoch) return;
     if (held !== undefined || gateway.connectionState !== 'connected') {

@@ -101,6 +101,8 @@ export class DiffViewerModal extends LitElement {
   @property() title = 'Diff';
   @property() diffText = '';
   @property() artifactUrl = '';
+  /** Shown in place of the diff, such as for content that failed verification. */
+  @property() notice = '';
   /**
    * Effective test-file globs from the host's `git.branchDiff` result, so the
    * modal agrees with the changed-files list on what counts as a test. Null
@@ -405,18 +407,20 @@ export class DiffViewerModal extends LitElement {
               ${this._renderDiffTree(tree.children, selected?.path)}
             </div>
             <div class="dvm-main">
-              ${this._loading
-                ? html`<div class="dvm-empty">Loading diff…</div>`
-                : this._error
-                  ? html`<div class="dvm-empty">Failed to load diff: ${this._error}</div>`
-                  : selected
-                    ? html`<diff-review
-                        .diff=${selected.diff}
-                        .filename=${selected.path}
-                      ></diff-review>`
-                    : parsed.length > 0
-                      ? html`<div class="dvm-empty">Only test files changed (hidden)</div>`
-                      : html`<div class="dvm-empty">No diff content available.</div>`}
+              ${this.notice
+                ? html`<div class="dvm-empty" role="alert">${this.notice}</div>`
+                : this._loading
+                  ? html`<div class="dvm-empty">Loading diff…</div>`
+                  : this._error
+                    ? html`<div class="dvm-empty">Failed to load diff: ${this._error}</div>`
+                    : selected
+                      ? html`<diff-review
+                          .diff=${selected.diff}
+                          .filename=${selected.path}
+                        ></diff-review>`
+                      : parsed.length > 0
+                        ? html`<div class="dvm-empty">Only test files changed (hidden)</div>`
+                        : html`<div class="dvm-empty">No diff content available.</div>`}
             </div>
           </div>
         </div>

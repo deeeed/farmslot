@@ -26,6 +26,15 @@ export interface GateDiffSource extends ContentPrefetchArtifact {
   untrackedFiles?: ReviewDiffSnapshot['untrackedFiles'];
 }
 
+/** `mismatch`: bytes this client fetched failed verification; they are never shown. */
+export type HeldContentResult =
+  | { status: 'ready'; data: Uint8Array }
+  | { status: 'unavailable' | 'mismatch' };
+
+export type GateDiffContent =
+  | { status: 'none' | 'loading' | 'unavailable' | 'mismatch' }
+  | { status: 'ready'; text: string };
+
 /** Raw artifact bytes. An authorization refusal rejects with `code: 'AUTH_FORBIDDEN'`. */
 export async function fetchArtifactBytes(
   uri: string,
@@ -85,7 +94,8 @@ export function artifactImageKey(artifact: {
 
 /**
  * Opens held bytes, which marks them opened. Without them, a live read (only passed while the
- * gateway is connected) is verified and stored as opened. Undefined leaves today's load path.
+ * gateway is connected) is verified and stored as opened. A failed read is unavailable, which
+ * leaves today's load path; bytes that fail verification are a mismatch.
  */
 export async function openHeldContent({
   cache,
@@ -101,12 +111,14 @@ export async function openHeldContent({
   cohort: ResourceContentCohort;
   untrackedFiles?: ReviewDiffSnapshot['untrackedFiles'];
   read?: () => Promise<Uint8Array>;
-}): Promise<Uint8Array | undefined> {
+}): Promise<HeldContentResult> {
   const held = await cache?.openContent(key);
-  if (held || !read) return held;
+  if (held) return { status: 'ready', data: held };
+  if (!read) return { status: 'unavailable' };
   const token = cache?.contentWriteToken();
   const data = await read().catch(() => undefined);
-  if (!data || !verifyResourceContent(key, data, untrackedFiles)) return undefined;
+  if (!data) return { status: 'unavailable' };
+  if (!verifyResourceContent(key, data, untrackedFiles)) return { status: 'mismatch' };
   await cache?.storeContent({
     key,
     data,
@@ -115,7 +127,21 @@ export async function openHeldContent({
     token,
     ...(untrackedFiles?.length ? { untrackedFiles } : {}),
   });
-  return data;
+  return { status: 'ready', data };
+}
+
+export function gateDiffContent(result: HeldContentResult): GateDiffContent {
+  return result.status === 'ready'
+    ? { status: 'ready', text: new TextDecoder().decode(result.data) }
+    : { status: result.status };
+}
+
+/**
+ * Only a package diff that is missing or could not be read falls back to the run's diff artifact
+ * or workspace diff. A mismatch keeps its notice instead of loading the same diff unverified.
+ */
+export function gateDiffFallsBack(content: GateDiffContent): boolean {
+  return content.status === 'none' || content.status === 'unavailable';
 }
 
 function imageType(data: Uint8Array): string {
@@ -125,6 +151,20 @@ function imageType(data: Uint8Array): string {
   if (starts(0x52, 0x49, 0x46, 0x46) && String.fromCharCode(...data.subarray(8, 12)) === 'WEBP')
     return 'image/webp';
   return 'image/png';
+}
+
+/**
+ * Verified bytes up to 2 MB render as a data URI. A mismatch renders no source, the same
+ * unavailable image as a failed load, rather than reload the URL that served it. An unavailable
+ * read, or a verified image over 2 MB, keeps the URL.
+ */
+export function heldImageSource<T>(
+  result: HeldContentResult,
+  urlSource: T,
+): { uri: string } | T | undefined {
+  if (result.status === 'mismatch') return undefined;
+  const dataUri = result.status === 'ready' ? imageDataUri(result.data) : undefined;
+  return dataUri ? { uri: dataUri } : urlSource;
 }
 
 /** `<Image>` takes no bytes, so held images up to 2 MB render as a data URI. */
