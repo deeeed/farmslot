@@ -20,7 +20,7 @@ export function workerSourceProbeCommand(expected: WorkerSourceExpectation): str
 const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('node:module'),{pathToFileURL}=require('node:url');
 (async()=>{
  const expected=JSON.parse(process.argv[1]),cliPath=process.argv[2];
- const result=(status,detail)=>process.stdout.write(JSON.stringify({status,detail}));
+ const result=(status,detail,retry)=>process.stdout.write(JSON.stringify({status,detail,...(retry===false?{retry:false}:{})}));
  if(!cliPath){result('mismatch','Worker farmslot CLI is missing. Install the matching CLI through the supported update route and retry this run.');return}
  const cli=fs.realpathSync(cliPath);
  const manifest=(file,name)=>{let root=path.dirname(file);for(;;){const p=path.join(root,'package.json');if(fs.existsSync(p)){const v=JSON.parse(fs.readFileSync(p,'utf8'));if(v.name===name)return v}const parent=path.dirname(root);if(parent===root)return null;root=parent}};
@@ -31,13 +31,13 @@ const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('n
  for(const [name,actual,wanted] of [['CLI',cliPackage.version,expected.cliVersion],['protocol package',protocolPackage?.version,expected.protocolVersion],['node wire protocol',protocol.PROTOCOL_VERSION,expected.wireVersion]]){
   if(actual!==wanted){result('mismatch',name+' resolved '+actual+'; expected '+wanted+'. Install the matching CLI/helpers through the supported update route and retry this run.');return}
  }
- if(!expected.taskDir){result('unverified','No retained task source receipt is bound to this launch.');return}
+ if(!expected.taskDir){result('unverified','No retained task source receipt is bound to this launch.',false);return}
  const receiptFile=path.join(expected.taskDir,'artifacts/harness-provenance.json');
- if(!fs.existsSync(receiptFile)){result('unverified','This task has no retained source receipt; existing source admission still applies.');return}
+ if(!fs.existsSync(receiptFile)){result('unverified','This task has no retained source receipt; existing source admission still applies.',false);return}
  const receipt=JSON.parse(fs.readFileSync(receiptFile,'utf8'));
  const runtime=await import(pathToFileURL(expected.runtimeModule).href);
  try{runtime.verifyTaskExecutionProvenance(expected.taskDir,receipt.bindingIdentity??null)}catch(e){
-  if(e.code==='TASK_PROVENANCE_LEGACY'){result('unverified',e.message);return}
+  if(e.code==='TASK_PROVENANCE_LEGACY'){result('unverified',e.message,false);return}
   if((e.exitCode===5 && typeof e.code==='string') || e.code==='ENOENT'){result('mismatch',e.code+': '+e.message+' Repair the retained input through its supported source owner, then retry this same run.');return}
   throw e;
  }

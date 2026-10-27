@@ -148,6 +148,7 @@ export function checkToolchainObservation(
       status: 'unverified',
       detail:
         'Product toolchains match; this legacy task has no bound pack toolchain declaration. Retained inputs were preserved.',
+      retry: false,
     };
   return unverified.length
     ? { status: 'unverified', detail: unverified.join('; ') }

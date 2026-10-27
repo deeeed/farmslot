@@ -52,7 +52,11 @@ function probeResult(raw: string): LaunchProbeResult {
     (value.status !== 'verified' && value.status !== 'mismatch' && value.status !== 'unverified')
   )
     return { status: 'unverified', detail: 'Probe response is unavailable or invalid.' };
-  return { status: value.status, detail: value.detail };
+  return {
+    status: value.status,
+    detail: value.detail,
+    ...(value.retry === false ? { retry: false } : {}),
+  };
 }
 
 async function packageVersion(name: string): Promise<string> {
@@ -101,10 +105,12 @@ export async function admitWorkerLaunch(
         sourcePlan: initial.sourcePlan,
       })
     : null;
-  const originalVars = structuredClone(input.vars);
+  // Native callers resolve the checkout path before admission. Fence the configured inputs
+  // against the same configured representation, while probing the actual launch path.
+  const originalVars = structuredClone(await loadSlotVars(input.vars.slotId));
   const project = input.projectVars ?? (await loadProjectVars(input.vars.projectName));
   const originalConfig = structuredClone(project.projectJson);
-  const assertCurrent = async () => {
+  const assertRunCurrent = () => {
     input.assertCurrent?.();
     const current = input.runId ? getRun(input.runId) : undefined;
     if (
@@ -123,6 +129,9 @@ export async function admitWorkerLaunch(
       throw new Error(
         'Worker launch preflight was superseded; retry under the current run generation.',
       );
+  };
+  const assertCurrent = async () => {
+    assertRunCurrent();
     const vars = await loadSlotVars(input.vars.slotId);
     const latestProject = await loadProjectVars(input.vars.projectName);
     if (
@@ -137,7 +146,7 @@ export async function admitWorkerLaunch(
       throw new Error(
         `Worker launch slot ${input.vars.slotId} is now owned by ${slot.current_run_id}; this attempt cannot launch.`,
       );
-    input.assertCurrent?.();
+    assertRunCurrent();
   };
   const inShell = (command: string): string => {
     const body = `cd ${shellQuote(input.vars.remoteRepo)} && ${command}`;
@@ -251,7 +260,11 @@ export async function admitWorkerLaunch(
                     limit: 1,
                   }),
               })
-            : { status: 'unverified', detail: 'No persisted run attempt owns this launch.' },
+            : {
+                status: 'unverified',
+                detail: 'No persisted run attempt owns this launch.',
+                retry: false,
+              },
       },
     ],
     {
@@ -260,16 +273,32 @@ export async function admitWorkerLaunch(
         const detail = `${input.vars.slotId} ${result.status}: ${result.detail} [attempts=${attempts}, elapsed=${Math.round(elapsedMs)}ms]`;
         const probeName = `preflight-${name}`;
         probeDetails.set(probeName, detail);
-        input.record?.(
-          probeName,
-          detail,
-          result.status === 'verified' ? 'ok' : result.status === 'mismatch' ? 'failed' : 'skipped',
-        );
+        const outcome =
+          result.status === 'verified' ? 'ok' : result.status === 'mismatch' ? 'failed' : 'skipped';
+        input.record?.(probeName, detail, outcome);
         if (input.runId) {
           const current = getRun(input.runId);
           const active =
             current?.steps.find((step) => step.status === 'running') ??
             current?.steps.find((step) => step.name === 'dispatch');
+          // Relaunches have no dispatch collector. Keep their evidence on the dispatch
+          // step so completing the current review/watch step cannot replace it.
+          const durable = !input.record
+            ? (current?.steps.find((step) => step.name === 'dispatch') ?? active)
+            : undefined;
+          if (durable)
+            updateRunStep(input.runId, durable.name, {
+              outputs: {
+                ...durable.outputs,
+                subSteps: [
+                  ...(Array.isArray(durable.outputs?.subSteps)
+                    ? durable.outputs.subSteps
+                    : []
+                  ).filter((entry: unknown) => !isRecord(entry) || entry.name !== probeName),
+                  { name: probeName, outcome, detail, durationMs: Math.round(elapsedMs) },
+                ],
+              },
+            });
           if (active)
             updateRunStep(input.runId, active.name, {
               detail: [...probeDetails].map(([probe, value]) => `${probe}: ${value}`).join('\n'),

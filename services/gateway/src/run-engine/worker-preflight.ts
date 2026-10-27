@@ -5,6 +5,8 @@ export type LaunchProbeName = 'code' | 'toolchain' | 'leftovers';
 export interface LaunchProbeResult {
   status: 'verified' | 'mismatch' | 'unverified';
   detail: string;
+  /** A stable absent declaration or receipt cannot be recovered by retrying the read. */
+  retry?: false;
 }
 
 export interface LaunchProbeTiming {
@@ -98,7 +100,7 @@ export async function runLaunchPreflight(
     let result = await inspectBounded(probe, timing, deadline);
     await options.assertCurrent();
     let attempts = 1;
-    if (result.status === 'unverified') {
+    if (result.status === 'unverified' && result.retry !== false) {
       options.record(probe.name, result, attempts, now() - started);
       await wait(timing.retryWaitMs);
       await options.assertCurrent();

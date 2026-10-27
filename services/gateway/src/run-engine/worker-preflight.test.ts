@@ -124,6 +124,27 @@ test('transport unavailability is retried and remains recorded as unverified', a
   assert.deepEqual(f.waits, [20_245]);
 });
 
+test('a stable absent declaration stays unverified without a pointless retry', async () => {
+  const f = fixture();
+  let reads = 0;
+  await runLaunchPreflight(
+    [
+      {
+        name: 'code',
+        inspect: async () => {
+          reads++;
+          return { status: 'unverified', detail: 'No retained source receipt', retry: false };
+        },
+      },
+    ],
+    f.options,
+  );
+  assert.equal(reads, 1);
+  assert.deepEqual(f.waits, []);
+  assert.equal(f.records[0].result.status, 'unverified');
+  assert.equal(f.records[0].attempts, 1);
+});
+
 test('generation change while a probe runs refuses before recording or launching', async () => {
   const f = fixture();
   let generation = 3;

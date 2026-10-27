@@ -22,5 +22,6 @@ test('actual protocol and wire versions are checked through the selected CLI res
 test('a legacy task with no retained source binding remains explicitly unverified', async () => {
   const result = await probe(await expected());
   assert.equal(result.status, 'unverified');
+  assert.equal(result.retry, false);
   assert.match(result.detail, /No retained task source receipt/);
 });
