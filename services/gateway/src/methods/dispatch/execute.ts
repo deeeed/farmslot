@@ -154,6 +154,7 @@ export {
   validateTicketRef,
 } from './ticket-ref.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
+import { admitWorkerLaunch } from '../../run-engine/worker-launch-preflight.js';
 
 /**
  * Wait between the pre-clear (C-c C-u) and post-clear in the launch prelude
@@ -1105,8 +1106,10 @@ export async function dispatchExecute(
   const pressureAttemptKey = `${params.runId ?? 'no-run'}:${
     currentRun ? (dispatchStartedAtMs(currentRun) ?? 'no-attempt') : 'no-attempt'
   }`;
+  let assertPreflightCurrent: () => Promise<void> = async () => {};
   const runPressureGate = async (): Promise<void> => {
     options.assertCurrent?.();
+    await assertPreflightCurrent();
     const latestRun = params.runId ? getRun(params.runId) : currentRun;
     if (
       currentRun?.transport === 'native' &&
@@ -1137,6 +1140,14 @@ export async function dispatchExecute(
     options.assertCurrent?.();
   };
   await runPressureGate();
+  if (transport !== 'native')
+    assertPreflightCurrent = await admitWorkerLaunch({
+      runId: params.runId,
+      vars,
+      projectVars,
+      assertCurrent: options.assertCurrent,
+      record: step,
+    });
 
   const branch =
     extractField(taskContent, /^\*\*Branch:\*\*\s*`?([^`\n]+)/m) ||

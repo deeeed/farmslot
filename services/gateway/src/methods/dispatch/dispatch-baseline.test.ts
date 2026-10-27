@@ -102,6 +102,10 @@ mock.module('../../run-completion/commit-signatures.js', {
     },
   },
 });
+// This fixture isolates baseline preservation and stops before launch. Probe behavior has its own tests.
+mock.module('../../run-engine/worker-launch-preflight.js', {
+  namedExports: { admitWorkerLaunch: async () => async () => {} },
+});
 const modulePath: string = './execute.js?dispatch-baseline';
 const { dispatchExecute } = (await import(modulePath)) as typeof import('./execute.js');
 let engineSkipPrepare: boolean | undefined;

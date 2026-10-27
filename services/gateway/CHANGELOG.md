@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Check admitted source bytes, declared launch toolchains and unsettled prior cleanup before starting workers. Retry slow probes with measured budgets and report unavailable observations as unverified.
+
 - Retain every indexed screenshot in selected recipe packages, even when the PR evidence selection uses fewer images.
 - Require task-local adaptation for recipe and action-contract mismatches; reserve unattended blockers for external prerequisites.
 

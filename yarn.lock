@@ -4962,6 +4962,7 @@ __metadata:
     "@farmslot/slot-config": "workspace:*"
     "@sinclair/typebox": "npm:^0.34.49"
     "@types/node": "npm:^22.0.0"
+    "@types/semver": "npm:^7.7.1"
     "@types/shell-quote": "npm:^1.7.5"
     "@types/ws": "npm:^8.5.0"
     "@typesafe-ai/sdk": "npm:^0.6.0"
@@ -4969,6 +4970,7 @@ __metadata:
     chokidar: "npm:^4.0.0"
     htmlparser2: "npm:^10.0.0"
     node-pty: "npm:^1.0.0"
+    semver: "npm:^7.7.4"
     shell-quote: "npm:^1.8.4"
     tsx: "npm:^4.19.0"
     typescript: "npm:^5.6.0"
@@ -8212,6 +8214,13 @@ __metadata:
   dependencies:
     "@types/node": "npm:*"
   checksum: 10c0/d077a761a0753b079bf8279b3993948030ca86ed9125437b9b29c1de40db9b2deb7fddc369f014b58861d450e8b8cc75f163aa29dc8cea81952efbfd859168cf
+  languageName: node
+  linkType: hard
+
+"@types/semver@npm:^7.7.1":
+  version: 7.8.0
+  resolution: "@types/semver@npm:7.8.0"
+  checksum: 10c0/46a1f38e36013448b279798e8b134e7e8de3b3630b1f40683903b9d57d36dd1d70838515570ed9a149fa09e9c381b9e39319b58d7b9f3b929b42ae2becff7aa3
   languageName: node
   linkType: hard
 
