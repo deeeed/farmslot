@@ -386,6 +386,8 @@ export async function slotReopen(
   params: SlotReopenParams,
   emit: EventEmitter,
 ): Promise<SlotCommandResult> {
+  const vars = await loadSlotVars(params.slotId);
+  if (!vars.slotEnabled) return disabledSlotNoop('reopen', params.slotId, params.requestId);
   return withSlotSources(params.slotId, () => slotReopenWithSources(params, emit));
 }
 

@@ -57,10 +57,12 @@ const project: ProjectVars = {
 const retained = '#!/bin/bash\necho retired-root >&2\nexit 127\n';
 const realCore = await import('../../core/index.js');
 const sourceSelections: string[] = [];
+const executedCommands: string[] = [];
 mock.module('../../sources/runtime.js', {
   namedExports: {
     withSlotSources: async (slotId: string, operation: () => Promise<unknown>) => {
       sourceSelections.push(slotId);
+      if (!vars.slotEnabled) throw new Error('Offline node cannot admit sources');
       return operation();
     },
   },
@@ -72,6 +74,7 @@ mock.module('../../core/index.js', {
     loadProjectVars: async () => project,
     slotFileExists: async (_vars: SlotVars, file: string) => existsSync(file),
     execOnSlot: async (_vars: SlotVars, command: string) => {
+      executedCommands.push(command);
       const result = spawnSync('bash', ['-c', command], {
         encoding: 'utf8',
         timeout: 2000,
@@ -85,7 +88,9 @@ mock.module('../../core/index.js', {
 const { slotReopen } = await import('./helpers.js');
 
 beforeEach(async () => {
+  vars.slotEnabled = true;
   sourceSelections.length = 0;
+  executedCommands.length = 0;
   await writeFile(path.join(runtime, 'reopen-browser.sh'), retained);
   await writeFile(
     path.join(fixtures, 'reopen.sh'),
@@ -141,4 +146,12 @@ test('a missing declared source fails without running the stale retained launche
     slotReopen({ slotId: vars.slotId }, () => {}),
     /ENOENT/,
   );
+});
+
+test('a disabled reopen skips source admission and execution even when its node is offline', async () => {
+  vars.slotEnabled = false;
+  const result = await slotReopen({ slotId: vars.slotId }, () => {});
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(sourceSelections, []);
+  assert.deepEqual(executedCommands, []);
 });
