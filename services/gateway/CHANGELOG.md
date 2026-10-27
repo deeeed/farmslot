@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep a worker-blocked run's slot lease while it waits for an answer, so dispatch cannot overwrite its in-place fix before monitoring resumes.
+
 - Retain exact worker panes before transcripts appear and refresh resumed reviewer session bindings so finished work does not strand slots.
 - Reopen browsers through the selected pack's rendered launcher and current pool environment, preserving saved wrappers when deployment or library roots change.
 
