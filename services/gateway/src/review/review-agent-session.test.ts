@@ -63,6 +63,8 @@ let captured: Awaited<ReturnType<typeof processes.captureRunnerSessionMetadata>>
   runnerSessionId: 'resumed-session',
   runnerSessionPath: '/resumed.jsonl',
 };
+let captureAttempts = 0;
+let sentPrompts = 0;
 let usageSession: string | null | undefined;
 let settledPath: string | null | undefined;
 mock.module('../runs/store.js', {
@@ -108,13 +110,21 @@ mock.module('../core/tmux.js', {
   },
 });
 mock.module('../runners/registry.js', {
-  namedExports: { ...registry, sendRunnerPostLaunchPrompt: async () => undefined },
+  namedExports: {
+    ...registry,
+    sendRunnerPostLaunchPrompt: async () => {
+      sentPrompts++;
+    },
+  },
 });
 mock.module('../runners/session-process.js', {
   namedExports: {
     ...processes,
     probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
-    captureRunnerSessionMetadata: async () => captured,
+    captureRunnerSessionMetadata: async () => {
+      if (++captureAttempts === 1) throw new Error('transient session read timeout');
+      return captured;
+    },
   },
 });
 mock.module('../runners/worker-prompt.js', {
@@ -190,6 +200,8 @@ test('recovered review completion uses the refreshed binding while its original 
     null,
     'lineage',
   );
+  assert.equal(captureAttempts, 2);
+  assert.equal(sentPrompts, 1);
   assert.equal(original.runnerSessionId, 'stale-session');
   assert.equal(usageSession, 'resumed-session');
   assert.equal(settledPath, '/resumed.jsonl');

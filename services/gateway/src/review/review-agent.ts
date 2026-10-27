@@ -642,34 +642,36 @@ export async function resumeReviewAgentPromptDelivery(
       runtimeDir,
     },
   );
-  try {
-    const session = await dependencies.captureRunnerSessionMetadata(vars, runner, [], {
-      paneId: pane.paneId,
-      slotId: vars.slotId,
-    });
-    if (!session.runnerSessionId || !session.runnerSessionPath) return 'indeterminate';
-    const recorded = await dependencies.recordRunnerSessionForRole({
-      runId,
-      session,
-      role: 'review',
-      contextId: context.id,
-      captureLabel: 'recovered reviewer prompt',
-      paneId: pane.paneId,
-      writeOptions: {
-        guard: async () =>
-          currentAttempt() && ownsSlot(await dependencies.readSlotRow(vars.slotId)),
-        mirrorIf: ownsSlot,
-      },
-    });
-    return recorded && ownsSlot(await dependencies.readSlotRow(vars.slotId))
-      ? 'delivered'
-      : 'indeterminate';
-  } catch (error) {
-    // The prompt was accepted. Session read/write failures must preserve that
-    // reviewer and leave recovery pending so the next poll can retry metadata.
-    console.warn(`[review] ${context.id} session recording deferred: ${String(error)}`);
-    return 'indeterminate';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const session = await dependencies.captureRunnerSessionMetadata(vars, runner, [], {
+        paneId: pane.paneId,
+        slotId: vars.slotId,
+      });
+      if (!session.runnerSessionId || !session.runnerSessionPath) return 'indeterminate';
+      const recorded = await dependencies.recordRunnerSessionForRole({
+        runId,
+        session,
+        role: 'review',
+        contextId: context.id,
+        captureLabel: 'recovered reviewer prompt',
+        paneId: pane.paneId,
+        writeOptions: {
+          guard: async () =>
+            currentAttempt() && ownsSlot(await dependencies.readSlotRow(vars.slotId)),
+          mirrorIf: ownsSlot,
+        },
+      });
+      return recorded && ownsSlot(await dependencies.readSlotRow(vars.slotId))
+        ? 'delivered'
+        : 'indeterminate';
+    } catch (error) {
+      // The prompt was accepted. Session read/write failures must preserve that
+      // reviewer. Retry metadata once without resending its prompt, then defer.
+      console.warn(`[review] ${context.id} session recording deferred: ${String(error)}`);
+    }
   }
+  return 'indeterminate';
 }
 
 export async function waitForRecoveredReviewerOrCleanup(
