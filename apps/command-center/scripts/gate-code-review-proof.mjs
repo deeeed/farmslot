@@ -421,15 +421,15 @@ export async function proveCodeReviewGate({
     'A verified code criterion must have no Skip action',
   );
   await cdp('click', route, selector('criterion-skip-AC-3'));
-  const noteSelector = await query(
-    `const find=r=>{const g=r.querySelector('ready-workspace');if(g)return g;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const hit=find(e.shadowRoot);if(hit)return hit;}};const note=find(document)?.querySelector('[data-testid=criterion-note-AC-2]');if(!note)throw Error('Expected the mounted note editor');const parts=['[data-testid=criterion-note-AC-2]'];let root=note.getRootNode();while(root.host){parts.unshift(root.host.localName);root=root.host.getRootNode();}return parts.join(' >>> ');`,
+  const { selector: noteSelector } = await query(
+    `const find=r=>{const g=r.querySelector('ready-workspace');if(g)return g;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const hit=find(e.shadowRoot);if(hit)return hit;}};const note=find(document)?.querySelector('[data-testid=criterion-note-AC-2]');if(!note)throw Error('Expected the mounted note editor');const parts=['[data-testid=criterion-note-AC-2]'];let root=note.getRootNode();while(root.host){parts.unshift(root.host.localName);root=root.host.getRootNode();}return {selector:parts.join(' >>> ')};`,
   );
   await cdp('fill', route, noteSelector, 'One ');
-  assert.equal(
+  assert.deepEqual(
     await query(
-      `const find=r=>{const g=r.querySelector('ready-workspace');if(g)return g;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const hit=find(e.shadowRoot);if(hit)return hit;}};return find(document)?.querySelector('[data-testid=criterion-note-AC-2]')?.value;`,
+      `const find=r=>{const g=r.querySelector('ready-workspace');if(g)return g;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const hit=find(e.shadowRoot);if(hit)return hit;}};return {value:find(document)?.querySelector('[data-testid=criterion-note-AC-2]')?.value};`,
     ),
-    'One ',
+    { value: 'One ' },
     'A note edit must retain its trailing space',
   );
   await cdp('fill', route, noteSelector, 'One configuration location.');
