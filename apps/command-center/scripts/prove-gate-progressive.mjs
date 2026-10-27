@@ -79,6 +79,7 @@ const launches = { workspace: 0, compare: 0 };
 let localActive = 0,
   localPeak = 0,
   localLaunches = 0;
+let localBatchStart, localBatchEnd;
 const cleanupFailures = [];
 const env = {
   ...process.env,
@@ -261,11 +262,13 @@ try {
           : options;
       const result = Reflect.apply(original, this, [launch]);
       if (fingerprint && this.pid) {
+        localBatchStart ??= Date.now();
         localLaunches++;
         localActive++;
         localPeak = Math.max(localPeak, localActive);
         this.once('close', () => {
           localActive--;
+          localBatchEnd = Date.now();
         });
       }
       if (countLaunches && this.pid) {
@@ -650,6 +653,14 @@ try {
         ),
       );
       await save('local-first-reply.json', firstReply);
+      const wallMs = localBatchEnd - localBatchStart;
+      await save('local-admission.json', {
+        launches: localLaunches,
+        peak: localPeak,
+        active: localActive,
+        wallMs,
+      });
+      assert(wallMs < 15000, 'The cold local batch must fit the normal client deadline');
       assert.equal(firstReply.slots.length, 31);
       assert(
         firstReply.slots
@@ -664,13 +675,7 @@ try {
           `const {getState}=await import('/src/state.ts');return {retry:!getState().fleet};`,
         ),
       );
-      if (needsRetry.retry) {
-        await cdp('click', route, 'fleet-canvas >>> farm-hydrating >>> button');
-        await save('local-bootstrap-retry.json', {
-          reason: 'The existing short bootstrap request expired during the cold batch',
-          count: 1,
-        });
-      }
+      assert.equal(needsRetry.retry, false, 'Normal Fleet bootstrap must succeed without Retry');
     }
     const firstFleet = JSON.parse(
       await cdp(
@@ -681,11 +686,6 @@ try {
     );
     await save('fleet-first.json', firstFleet);
     if (boundedLocal) {
-      await save('local-admission.json', {
-        launches: localLaunches,
-        peak: localPeak,
-        active: localActive,
-      });
       assert.equal(firstFleet.slots.length, 31);
       assert(
         firstFleet.slots
@@ -750,7 +750,11 @@ try {
       await save('local-warm.json', warm);
       for (const read of warm) {
         assert(read.ms < 2000, 'Warm fleet.status must complete under two seconds');
-        assert(read.slots.filter((slot) => slot.workspace).length === 30);
+        assert.equal(
+          read.slots.filter((slot) => slot.workspace).length,
+          30,
+          'Every warm reply retains all enabled workspace observations',
+        );
         for (const slot of read.slots)
           assert.equal(
             slot.workspace?.observedAt,
