@@ -2,13 +2,15 @@
 
 ## Unreleased
 
-- Reduce retained task-tooling copy overhead without changing authenticated bytes, modes or links.
-
 - Ship the acceptance-contract TypeScript declaration in the public package.
 
 - Support acknowledged acceptance derivation and revision-bound proof destinations for PR completion.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.39.4 - 2026-10-28
+
+- Reduce retained task-tooling copy overhead without changing authenticated bytes, modes or links.
 
 ## 0.39.3 - 2026-10-27
 
