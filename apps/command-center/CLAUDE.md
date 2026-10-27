@@ -94,20 +94,20 @@ Validation flow:
 
 If CDP is not available, at minimum use `node scripts/cdp.mjs gateway <method>` to verify data flows, and `curl http://localhost:5174/src/components/...` to verify compilation.
 
-### Dev Stack — Local CLI and Gateway Autorestart — HARD RULE
+### Dev stack and local CLI — HARD RULE
 
 **Never use a globally installed `farmslot` binary in dev.** It may point at a different install than the checkout under test (wrong `FARMSLOT_ROOT`, pool path, gateway port/token).
 
-| Task               | Command                                              |
-| ------------------ | ---------------------------------------------------- |
-| Start gateway + UI | `cd apps/command-center && yarn farmdev`             |
-| CLI (this repo)    | `cd apps/command-center && yarn farmslot …`          |
-| Gateway RPC        | `node apps/command-center/scripts/cdp.mjs gateway …` |
-| Gateway only       | `yarn workspace @farmslot/gateway dev`               |
+| Task                   | Command                                              |
+| ---------------------- | ---------------------------------------------------- |
+| Start gateway + UI     | `cd apps/command-center && yarn farmdev`             |
+| CLI (this repo)        | `cd apps/command-center && yarn farmslot …`          |
+| Gateway RPC            | `node apps/command-center/scripts/cdp.mjs gateway …` |
+| Isolated gateway watch | `yarn workspace @farmslot/gateway dev`               |
 
 **Worktree slot dispatch:** `run.create` for `macwork-ff-*` uses the **operator** gateway (`7777`, default CLI URL). Slot ports `8808+` are for recipe/CDP validation after prepare `sandbox` — do not pass `--url ws://localhost:8809` when dispatching. See [worktree-operator-model.md](../../docs/operations/worktree-operator-model.md).
 
-`farmdev` → `scripts/dev.sh` → `yarn dev` → `concurrently` with `@farmslot/gateway start` and Vite. The shared gateway runs without watch; use the supported gateway deployment path to apply source updates. Pool JSON changes are picked up via file watcher + `fleetRefresh` (no restart).
+`farmdev` → `scripts/dev.sh` → `yarn dev` → `concurrently` with `scripts/dev-gateway.sh` and Vite. The shared gateway uses `@farmslot/gateway start`. Source edits and Update checkout leave it running; the operator must update the checkout and restart its existing `yarn farmdev` supervisor to apply them, following the [gateway update procedure](../../docs/operations/release-process.md). Isolated sandboxes set `FARMSLOT_DISABLE_ORCHESTRATION=1` and retain gateway watch mode. Pool JSON changes are picked up via file watcher + `fleetRefresh` (no restart).
 
 Bare `yarn dev` skips `.env.ports` unless ports are already exported — prefer `yarn farmdev` on the main operator tree.
 

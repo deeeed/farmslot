@@ -142,7 +142,7 @@ For fast orchestration validation, prefer the checkout-local `scripted` runner w
 
 Examples: `docs(adr): add ADR-026 self-improvement recursive loop`, `feat(ui): retrospective grading checklist`, `fix(gateway): prevent slot orphaning on restart`.
 
-### Dev Stack — Local CLI and Gateway Autorestart — HARD RULE
+### Dev stack and local CLI — HARD RULE
 
 **Do not invoke a globally installed `farmslot` binary during development.** PATH may resolve to an older machine-installed build with the wrong repo root, pool dir, or gateway URL — conflicting with the checkout you are editing.
 
@@ -159,13 +159,13 @@ cd apps/command-center && yarn farmslot <subcommand>
 node apps/command-center/scripts/cdp.mjs gateway <method> '<params-json>'
 ```
 
-`yarn farmdev` runs `scripts/dev.sh`, which loads `.env.ports`, selected-home `providers.env` and a separate node credential, then `yarn dev` (gateway without watch + Vite UI). Source edits leave the shared gateway running. Use the supported gateway deployment path to apply updates. Pool JSON edits under `pool/` are hot-reloaded (chokidar → fleet refresh) without a restart.
+`yarn farmdev` runs `scripts/dev.sh`, which loads `.env.ports`, selected-home `providers.env` and a separate node credential, then `yarn dev` (gateway without watch + Vite UI). Source edits and Update checkout leave the shared gateway running. The operator must update the checkout and restart its existing `yarn farmdev` supervisor to apply them; see the [gateway update procedure](docs/operations/release-process.md). Pool JSON edits under `pool/` are hot-reloaded (chokidar → fleet refresh) without a restart.
 
 ### Worktree slots — dispatch vs validation gateway — HARD RULE
 
 For `macwork-ff-*` slots: **dispatch from operator main** (`~/dev/farmslot`, default gateway **7777** / UI **5174**). Never `yarn farmslot --url ws://localhost:8809 run create` for normal runs — `8808+` is the per-worktree **validation stack** (recipe/CDP UI) started by prepare `sandbox`, not the control plane. Git/tmux still execute in `farmslot-wt/farmslot-{n}`. See [docs/operations/worktree-operator-model.md](docs/operations/worktree-operator-model.md).
 
-Worktree sandbox slots start their own stack via `sandbox-dev.sh` with the same stable gateway launch. Only the main operator / `farmdev` tree should own the canonical gateway for CDP and `cdp.mjs gateway` probes unless a slot explicitly isolated ports.
+Worktree sandbox slots start their own stack via `sandbox-dev.sh`, which sets `FARMSLOT_DISABLE_ORCHESTRATION=1` and retains gateway watch mode for source validation. Only the main operator / `farmdev` tree should own the canonical gateway for CDP and `cdp.mjs gateway` probes unless a slot explicitly isolated ports.
 
 ### Command Center Typecheck — HARD RULE
 
