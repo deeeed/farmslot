@@ -217,7 +217,7 @@ export function AcceptanceClaimList({
               {claim.draft ? (
                 <Text style={{ color: palette.secondary }}>Pending approval</Text>
               ) : null}
-              {!claim.draft && drafts.skipDisabledReason?.(claim.id) ? (
+              {claim.draft?.choice !== 'confirm' && drafts.skipDisabledReason?.(claim.id) ? (
                 <Text style={{ color: palette.secondary }}>
                   {drafts.skipDisabledReason(claim.id)}
                 </Text>

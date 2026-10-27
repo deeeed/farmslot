@@ -128,7 +128,7 @@ export function renderAcceptanceClaimList(
                     >
                       Skip
                     </button>`}
-              ${!claim.draft && drafts.skipDisabledReason?.(claim.id)
+              ${claim.draft?.choice !== 'confirm' && drafts.skipDisabledReason?.(claim.id)
                 ? html`<span>${drafts.skipDisabledReason(claim.id)}</span>`
                 : nothing}
               ${claim.draft

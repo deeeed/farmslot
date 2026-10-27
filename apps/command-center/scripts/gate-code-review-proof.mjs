@@ -384,6 +384,8 @@ export async function proveCodeReviewGate({
   await save('media-review-header.json', header);
   await cdp('screenshot', route, path.join(output, 'media-review-header.png'));
   await cdp('click', route, '[data-testid=evidence-review-close]');
+  await cdp('click', route, 'ready-workspace [data-testid=criterion-skip-AC-5]');
+  await save('skip-while-loading.json', await read());
   releaseEvidence();
   const readyUntil = Date.now() + 30000;
   while (
@@ -394,6 +396,17 @@ export async function proveCodeReviewGate({
     assert(Date.now() < readyUntil, 'Draft controls did not become ready');
   }
   const selector = (id) => `ready-workspace [data-testid=${id}]`;
+  const pendingSkipUntil = Date.now() + 30000;
+  let pendingSkip;
+  do {
+    pendingSkip = (await read()).rows.find(({ id }) => id === 'AC-5');
+    if (pendingSkip?.text.includes('This criterion has no recorded evidence that can be skipped.'))
+      break;
+    assert(Date.now() < pendingSkipUntil, 'The drafted skip must explain its unavailable evidence');
+  } while (Date.now() < pendingSkipUntil);
+  assert(pendingSkip.text.includes('Skipped'));
+  await save('drafted-skip-unavailable.json', pendingSkip);
+  await cdp('click', route, selector('criterion-undo-AC-5'));
   const unavailableSkip = await query(
     `const find=r=>{const g=r.querySelector('ready-workspace');if(g)return g;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const hit=find(e.shadowRoot);if(hit)return hit;}};const g=find(document);return {disabled:g?.querySelector('[data-testid=criterion-skip-AC-5]')?.disabled,text:g?.querySelector('[data-ac-id=AC-5]')?.innerText};`,
   );
