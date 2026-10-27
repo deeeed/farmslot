@@ -9,6 +9,8 @@ import '../runtime/mock-pty.test-support.js';
 
 import { makeRun } from '../run-completion/test-fixtures.js';
 import { retainedReviewerDeliveryPlan } from '../runners/registry.js';
+import { recordRunnerSessionForRole } from '../runners/session-record.js';
+import { makeVars } from '../runners/test-fixtures.js';
 import { targetForChecklistBasename } from '../tasks/checklist-target.js';
 
 import {
@@ -555,52 +557,204 @@ test('review prompt recovery stays unsupported for non-interactive runners', asy
   assert.equal(outcome, 'unsupported');
 });
 
-test('review prompt recovery reuses the exact live reviewer pane', async () => {
-  const vars = {
-    projectName: 'farmslot-farm',
-  } as Parameters<typeof resumeReviewAgentPromptDelivery>[0];
-  let sentPane = '';
-  let sentPrompt = '';
-
-  const outcome = await resumeReviewAgentPromptDelivery(
-    vars,
-    'missing-run',
-    {
-      id: 'rev-claude',
-      runner: 'claude',
-      taskFile: 'tasks/run-1/REVIEW.rev-claude.md',
-      signalFile: 'tasks/run-1/REVIEW.rev-claude-SIGNAL.json',
-      target: { session: 'ff-1', window: 'rev-claude', pane: null, target: 'ff-1:rev-claude' },
-      attemptStartedAt: '2026-08-03T16:00:00.000Z',
+function recoveryFixture() {
+  const vars = makeVars({ slotId: 'slot-1' });
+  const context: AgentContext = {
+    id: 'rev-claude',
+    runId: 'run-1',
+    slotId: vars.slotId,
+    role: 'review',
+    label: 'Reviewer',
+    status: 'working',
+    runner: 'claude',
+    taskFile: 'tasks/run-1/REVIEW.rev-claude.md',
+    signalFile: 'tasks/run-1/REVIEW.rev-claude-SIGNAL.json',
+    target: { session: 'ff-1', window: 'rev-claude', pane: null, target: 'ff-1:rev-claude' },
+    attemptStartedAt: '2026-08-03T16:00:00.000Z',
+    runnerSessionId: 'stale-session',
+    runnerSessionPath: '/sessions/stale.jsonl',
+  };
+  const state = {
+    run: {
+      ...makeRun({ slotId: vars.slotId, status: 'monitoring', engineState: { generation: 1 } }),
+      agentContexts: [context],
     },
-    {
-      listExactTmuxWindows: async () => [
-        {
-          windowId: '@22',
-          windowIndex: 1,
-          windowName: 'rev-claude',
-          activityAt: 1,
-          paneId: '%22',
-          panePid: '2002',
-        },
-      ],
-      resolveExactTmuxWindowPane: async () => ({ paneId: '%22', panePid: '2002' }),
-      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
-      resolveWorkerDispatchPrompt: async () =>
-        'Follow the checklist in tasks/run-1/REVIEW.rev-claude.md.',
-      resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
-      sendRunnerPostLaunchPrompt: async (_vars, paneId, _runner, prompt) => {
-        sentPane = paneId;
-        sentPrompt = prompt;
+    slot: { current_run_id: 'run-1', slot_epoch: 1 },
+    sent: '',
+    prompt: '',
+    mirrors: 0,
+    records: 0,
+    kills: 0,
+    beforeGuard: () => {},
+    afterWrite: () => {},
+  };
+  const deps: NonNullable<Parameters<typeof resumeReviewAgentPromptDelivery>[3]> = {
+    getRun: () => state.run,
+    readSlotRow: async () => state.slot,
+    listExactTmuxWindows: async () => [
+      {
+        windowId: '@22',
+        windowIndex: 1,
+        windowName: 'rev-claude',
+        activityAt: 1,
+        paneId: '%22',
+        panePid: '2002',
       },
+    ],
+    resolveExactTmuxWindowPane: async () => ({ paneId: '%22', panePid: '2002' }),
+    probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
+    resolveWorkerDispatchPrompt: async () =>
+      'Follow the checklist in tasks/run-1/REVIEW.rev-claude.md.',
+    resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
+    sendRunnerPostLaunchPrompt: async (_vars, pane, _runner, prompt) => {
+      state.sent = pane;
+      state.prompt = prompt;
     },
-  );
+    captureRunnerSessionMetadata: async (_vars, _runner, _before, capture) => {
+      assert.equal(state.sent, '%22');
+      assert.equal(capture?.paneId, '%22');
+      return { runnerSessionId: 'resumed-session', runnerSessionPath: '/sessions/resumed.jsonl' };
+    },
+    recordRunnerSessionForRole: (options) =>
+      recordRunnerSessionForRole(options, {
+        readRun: () => state.run,
+        upsert: async (_runId, role, patch, write) => {
+          state.beforeGuard();
+          if (write?.guard && !(await write.guard())) return null;
+          assert.equal(role, 'review');
+          assert.equal(patch.id, context.id);
+          const next = { ...state.run.agentContexts![0], ...patch };
+          state.run = { ...state.run, agentContexts: [next] };
+          state.records++;
+          state.afterWrite();
+          if (!write?.mirrorIf || write.mirrorIf(state.slot)) state.mirrors++;
+          return next;
+        },
+      }),
+    killTmuxWindowById: async () => {
+      state.kills++;
+    },
+  };
+  return {
+    vars,
+    context,
+    state,
+    deps,
+    recover: () => resumeReviewAgentPromptDelivery(vars, 'run-1', context, deps),
+  };
+}
 
-  assert.equal(outcome, 'delivered');
-  assert.equal(sentPane, '%22');
-  assert.match(sentPrompt, /REVIEW\.rev-claude\.md/);
-  assert.doesNotMatch(sentPrompt, /review-feedback\.rev-claude\.md/);
-  assert.doesNotMatch(sentPrompt, /SIGNAL\.json complete/);
+test('review prompt recovery replaces the binding without mutating its stale snapshot', async () => {
+  const f = recoveryFixture();
+  assert.equal(await f.recover(), 'delivered');
+  assert.equal(f.context.runnerSessionId, 'stale-session');
+  assert.equal(f.state.run.agentContexts![0].runnerSessionId, 'resumed-session');
+  assert.equal(f.state.run.agentContexts![0].runnerSessionPath, '/sessions/resumed.jsonl');
+  assert.equal(f.state.run.agentContexts![0].target?.paneId, '%22');
+  assert.equal(f.state.mirrors, 1);
+  assert.match(f.state.prompt, /REVIEW\.rev-claude\.md/);
+  assert.doesNotMatch(f.state.prompt, /review-feedback\.rev-claude\.md/);
+  assert.doesNotMatch(f.state.prompt, /SIGNAL\.json complete/);
+});
+
+test('review metadata failures defer and retry without killing accepted work', async () => {
+  for (const phase of ['capture', 'record']) {
+    const f = recoveryFixture();
+    const capture = f.deps.captureRunnerSessionMetadata;
+    const record = f.deps.recordRunnerSessionForRole;
+    if (phase === 'capture')
+      f.deps.captureRunnerSessionMetadata = async () => {
+        throw new Error('metadata read timed out');
+      };
+    else
+      f.deps.recordRunnerSessionForRole = async () => {
+        throw new Error('metadata write failed');
+      };
+    assert.equal(await f.recover(), 'indeterminate');
+    assert.equal(f.state.records, 0);
+    assert.equal(f.state.kills, 0);
+    f.deps.captureRunnerSessionMetadata = capture;
+    f.deps.recordRunnerSessionForRole = record;
+    assert.equal(await f.recover(), 'delivered');
+    assert.equal(f.state.kills, 0);
+  }
+});
+
+test('review capture cannot write after cancellation, reassignment or a queued attempt change', async () => {
+  for (const phase of ['capture', 'write-queue']) {
+    const f = recoveryFixture();
+    const supersede = () => {
+      f.state.run = { ...f.state.run, status: 'cancelled', engineState: { generation: 2 } };
+      f.state.slot = { current_run_id: 'successor', slot_epoch: 2 };
+    };
+    if (phase === 'capture')
+      f.deps.captureRunnerSessionMetadata = async () => {
+        supersede();
+        return { runnerSessionId: 'late-session', runnerSessionPath: '/late.jsonl' };
+      };
+    else f.state.beforeGuard = supersede;
+    assert.equal(await f.recover(), 'indeterminate');
+    assert.equal(f.state.records, 0);
+    assert.equal(f.state.mirrors, 0);
+    assert.equal(f.state.kills, 0);
+  }
+});
+
+test('review capture rejects an in-place run generation update', async () => {
+  const f = recoveryFixture();
+  f.deps.captureRunnerSessionMetadata = async () => {
+    Object.assign(f.state.run, { engineState: { generation: 2 } });
+    return { runnerSessionId: 'late-session', runnerSessionPath: '/late.jsonl' };
+  };
+  assert.equal(await f.recover(), 'indeterminate');
+  assert.equal(f.state.records, 0);
+  assert.equal(f.state.mirrors, 0);
+});
+
+test('review capture rechecks cancellation after its queued asynchronous slot read', async () => {
+  const f = recoveryFixture();
+  let reads = 0;
+  f.deps.readSlotRow = async () => {
+    if (++reads === 2) {
+      await Promise.resolve();
+      Object.assign(f.state.run, { status: 'cancelled' });
+    }
+    return f.state.slot;
+  };
+  assert.equal(await f.recover(), 'indeterminate');
+  assert.equal(f.state.records, 0);
+  assert.equal(f.state.mirrors, 0);
+});
+
+test('a generation change between the run write and mirror cannot certify recovery', async () => {
+  const f = recoveryFixture();
+  f.state.afterWrite = () => {
+    Object.assign(f.state.run, { engineState: { generation: 2 } });
+  };
+  assert.equal(await f.recover(), 'indeterminate');
+  assert.equal(f.state.records, 1);
+  assert.equal(f.state.mirrors, 0);
+});
+
+test('the slot mirror rechecks ownership after the run binding write', async () => {
+  const f = recoveryFixture();
+  f.state.afterWrite = () => {
+    f.state.slot = { current_run_id: 'successor', slot_epoch: 2 };
+  };
+  await f.recover();
+  assert.equal(f.state.records, 1);
+  assert.equal(f.state.mirrors, 0);
+});
+
+test('an incomplete reviewer capture remains pending instead of certifying its stale binding', async () => {
+  const f = recoveryFixture();
+  f.deps.captureRunnerSessionMetadata = async () => ({
+    runnerSessionId: null,
+    runnerSessionPath: null,
+  });
+  assert.equal(await f.recover(), 'indeterminate');
+  assert.equal(f.state.records, 0);
+  assert.equal(f.state.kills, 0);
 });
 
 test('review recovery timeout performs cleanup before allowing a fresh reviewer', async () => {

@@ -11,6 +11,7 @@ import * as realRunStore from '../runs/store.js';
 
 import * as realSessionLifecycle from './session-lifecycle.js';
 import * as realSessionProcess from './session-process.js';
+import { recordRunnerSessionForRole } from './session-record.js';
 
 const RUN_ID = 'run-owned-stop';
 const SLOT_ID = 'macwork-mmt-3';
@@ -185,6 +186,29 @@ test('a deferred cleanup owner stops its retained exact saved worker', async () 
   assert.equal(await stopRunOwnedTmuxWorkers(run), null);
   assert.equal(parkedStops, 1);
   assert.ok(commands.some((command) => /display-message -p -t '?%75/.test(command)));
+});
+
+test('a published worker captured before its transcript can still be stopped on completion', async () => {
+  setup('published_ready');
+  const worker = run.agentContexts![0];
+  worker.target = { session: 'mmt-3', window: 'dev', pane: null, target: 'mmt-3:dev' };
+  await recordRunnerSessionForRole(
+    {
+      runId: run.id,
+      role: worker.role,
+      contextId: worker.id,
+      session: { runnerSessionId: null, runnerSessionPath: null },
+      paneId: '%75',
+      captureLabel: 'worker before transcript creation',
+    },
+    {
+      readRun: () => run,
+      upsert: async (_runId, _role, patch) => Object.assign(worker, patch),
+    },
+  );
+  assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+  assert.equal(exitsSentTo('%75'), 1);
+  assert.equal(panes.get('%75')!.runnerLive, false);
 });
 
 test('a finished worker with a saved conversation recovers its named pane and leaves the operator shell alone', async () => {

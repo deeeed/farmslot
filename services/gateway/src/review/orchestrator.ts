@@ -3091,7 +3091,7 @@ async function workerAcknowledgesFixTask(signalChanged: () => Promise<boolean>):
  * against the delivery pane and bound to the worker role as well — that role's
  * previous binding was cleared by the respawn and would otherwise stay empty.
  */
-async function recordReviewFixRunnerSession(
+export async function recordReviewFixRunnerSession(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runId: string,
   runner: string,
@@ -3130,6 +3130,7 @@ async function recordReviewFixRunnerSession(
       runId,
       role: workerRole,
       session: relaunched,
+      paneId: deliveryPane?.paneId,
       captureLabel: 'review fix relaunch',
     });
   }
