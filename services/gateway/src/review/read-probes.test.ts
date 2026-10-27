@@ -62,6 +62,140 @@ async function flush() {
   for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+test('a 31-slot local burst admits four fingerprints and queued readers keep their command budget', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const hold = latch();
+  let active = 0;
+  let peak = 0;
+  const started: string[] = [];
+  const signals: boolean[] = [];
+  let released = false;
+  execute = async (slot, _command, options) => {
+    assert.ok(options && typeof options === 'object');
+    active++;
+    peak = Math.max(peak, active);
+    started.push(slot.remoteRepo);
+    if (!released) await hold.promise;
+    signals.push(options.signal?.aborted ?? false);
+    active--;
+    return { stdout: 'observed', stderr: '', exitCode: 0 };
+  };
+  const slots = Array.from({ length: 31 }, (_, index) =>
+    makeVars({ remoteRepo: `/fixture/workspace-${index}` }),
+  );
+  const reads = slots.map((slot, index) =>
+    probes.readSlotProbe(slot, 'fingerprint', 'workspace', index === 30 ? 10 : 100_000),
+  );
+  const duplicate = probes.readSlotProbe(slots[30]!, 'fingerprint', 'workspace', 10);
+  const settled = Promise.allSettled([...reads, duplicate]);
+  try {
+    await flush();
+    assert.equal(started.length, 4);
+    t.mock.timers.tick(20);
+  } finally {
+    released = true;
+    hold.release();
+    await settled;
+  }
+  assert.equal(peak, 4);
+  assert.equal(started.length, 31, 'queued duplicates share one pending command');
+  assert.ok(
+    signals.every((aborted) => !aborted),
+    'waiting does not consume the command budget',
+  );
+  assert.ok((await settled).every((result) => result.status === 'fulfilled'));
+});
+
+test('local recovery and remote reads do not queue behind passive local fingerprints', async () => {
+  const hold = latch();
+  let localStarts = 0;
+  execute = async (_slot, command) => {
+    if (command === 'blocked local') {
+      localStarts++;
+      await hold.promise;
+    }
+    return { stdout: command, stderr: '', exitCode: 0 };
+  };
+  const occupied = Array.from({ length: 4 }, (_, index) =>
+    probes.readSlotProbe(
+      makeVars({ remoteRepo: `/fixture/held-${index}` }),
+      'blocked local',
+      'workspace',
+      5000,
+    ),
+  );
+  try {
+    await flush();
+    assert.equal(localStarts, 4);
+    const recovery = probes.readSlotProbe(vars, 'current recovery', 'workspace-recovery', 120_000);
+    const remote = probes.readSlotProbe(
+      makeVars({ host: 'remote.invalid', machine: 'remote-fixture' }),
+      'remote observation',
+      'workspace',
+      5000,
+    );
+    assert.equal((await recovery).stdout, 'current recovery');
+    assert.equal((await remote).stdout, 'remote observation');
+  } finally {
+    hold.release();
+    await Promise.all(occupied);
+  }
+});
+
+test(
+  'a failed fingerprint releases its permit and the next admitted command still times out',
+  { timeout: 2000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const holds = Array.from({ length: 5 }, latch);
+    const signals = new Map<number, AbortSignal>();
+    const started: number[] = [];
+    execute = async (_slot, command, options) => {
+      assert.ok(options && typeof options === 'object' && options.signal);
+      const index = Number(command);
+      signals.set(index, options.signal);
+      started.push(index);
+      if (index === 4)
+        options.signal.addEventListener('abort', holds[index]!.release, { once: true });
+      await holds[index]!.promise;
+      return {
+        stdout: '',
+        stderr: '',
+        exitCode: index === 0 ? 1 : options.signal.aborted ? 130 : 0,
+      };
+    };
+    const reads = holds.map((_hold, index) =>
+      probes.readSlotProbe(
+        makeVars({ remoteRepo: `/fixture/failure-${index}` }),
+        String(index),
+        'workspace',
+        index === 4 ? 10 : 100_000,
+      ),
+    );
+    const settled = Promise.allSettled(reads);
+    try {
+      await flush();
+      assert.deepEqual(started, [0, 1, 2, 3]);
+      t.mock.timers.tick(20);
+      holds[0]!.release();
+      await flush();
+      assert.deepEqual(started, [0, 1, 2, 3, 4], 'a failed command must free its permit');
+      const queued = signals.get(4);
+      assert.ok(queued);
+      t.mock.timers.tick(9);
+      assert.equal(queued.aborted, false);
+      t.mock.timers.tick(1);
+      assert.equal(queued.aborted, true, 'the full deadline still fires after admission');
+    } finally {
+      holds.forEach((hold) => hold.release());
+      await settled;
+    }
+    const results = await settled;
+    assert.equal(results[0]?.status, 'rejected');
+    assert.equal(results[4]?.status, 'rejected');
+  },
+);
+
 test('concurrent gate readers share one slow evidence fingerprint, then refresh after settlement', async () => {
   const hold = latch();
   let fingerprints = 0;

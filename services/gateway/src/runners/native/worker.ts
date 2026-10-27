@@ -529,8 +529,10 @@ export async function dispatchNativeWorker(input: {
     throw new Error('Native worker reservation belongs to another execution context');
   await persistRunNow(ownedRun(run.id), 'native worker reservation');
 
+  let assertPreflightCurrent: () => Promise<void> = async () => {};
   const admission = async () => {
     await input.beforeInput();
+    await assertPreflightCurrent();
     const slot = await readSlotRow(vars.slotId);
     if (slot?.current_run_id !== run.id || slot.phase === 'releasing')
       throw new Error('Native worker slot ownership changed');
@@ -634,6 +636,17 @@ export async function dispatchNativeWorker(input: {
       await persistRunNow(ownedRun(run.id), 'native worker account selection');
     },
   });
+  if (input.role !== 'review') {
+    const { admitWorkerLaunch } = await import('../../run-engine/worker-launch-preflight.js');
+    assertPreflightCurrent = await admitWorkerLaunch({
+      runId: input.runId,
+      vars,
+      projectVars: input.projectVars,
+      environment: prepared.launch.environment,
+      record: (name, detail, outcome) => input.emit?.('dispatch.step', { name, detail, outcome }),
+      assertCurrent: input.assertCurrent,
+    });
+  }
   const digest = nativeWorkerLaunchDigest(prepared.launch);
   if (binding.launchDigest && binding.launchDigest !== digest)
     throw new Error('Native worker launch configuration changed; explicit recovery is required');

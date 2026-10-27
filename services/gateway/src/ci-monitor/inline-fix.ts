@@ -35,6 +35,7 @@ import {
   expandSourceBindings,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
+import { withMachineEnv } from '../core/project-env.js';
 import {
   resolveExactTmuxWindowPane,
   respawnTmuxWindowWithCommand,
@@ -405,6 +406,12 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   const roleWindowName =
     run.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
       ?.window ?? null;
+  const { admitWorkerLaunch } = await import('../run-engine/worker-launch-preflight.js');
+  const assertPreflightCurrent = await admitWorkerLaunch({
+    runId,
+    vars,
+    wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
+  });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
     vars,
     primaryTarget.session,
@@ -426,6 +433,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 
+  await assertPreflightCurrent();
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
   });

@@ -34,6 +34,7 @@ import {
 } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withMachineEnv } from '../core/project-env.js';
 import { onSlotReset } from '../core/state.js';
 import {
   resolveExactTmuxWindowPane,
@@ -3156,6 +3157,12 @@ async function relaunchWorkerForFix(
   const roleWindowName =
     parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
       ?.target?.window ?? null;
+  const { admitWorkerLaunch } = await import('../run-engine/worker-launch-preflight.js');
+  const assertPreflightCurrent = await admitWorkerLaunch({
+    runId,
+    vars,
+    wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
+  });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
     vars,
     resolved.session,
@@ -3193,6 +3200,7 @@ async function relaunchWorkerForFix(
     taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
+  await assertPreflightCurrent();
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
   });

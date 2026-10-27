@@ -7,6 +7,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Before fresh run workers start, reuse healthy managed runtime or boot stopped pack resources in server-first order, preserving runtime ownership and pressure checks.
 
 - Automatically reuse clean published idle slots before asking for a slot, and safely return settled checkouts to main while preserving local work and replay evidence.
+- Check admitted source bytes, declared launch toolchains and unsettled prior cleanup before starting workers. Retry slow probes with measured budgets and report unavailable observations as unverified.
+- Bound concurrent local workspace fingerprints and start each command deadline after admission, so full-fleet reads do not cancel local inspections before they finish.
 
 - Complete artifact-only comparison trials from their retained evidence without requiring an output-review decision, and recognize completed scripted commands in their flow-owned worker role.
 - Reuse passive workspace observations while Git metadata is unchanged and reuse immutable ancestry comparisons by SHA pair; recovery commands still inspect current contents.

@@ -751,3 +751,106 @@ links elsewhere MUST survive unchanged; an edited or unproven farm marker MUST
 refuse. Assert original receipts, packages, QA and execution state remain
 unchanged. Use a fixture person for adoption setup, never a real person's
 credential held by automation.
+
+## Worker launch preflight
+
+**Status:** Accepted under ADR-065 Amendment 11. The measured budget revision
+passed paired delta review before implementation in [#1509](https://github.com/deeeed/farmslot/pull/1509).
+
+### Admission point and binding
+
+The existing worker-launch owner MUST run preflight before every dispatch and
+before every replay path that starts a worker. Replay MUST first release that
+run's leftovers, defined below, through the canonical lifecycle owner. Preflight
+MUST NOT add a second cleanup path. `run.resume` reattachment alone is not a
+trigger; any subsequent worker launch uses the shared check. Read-only result
+reconciliation MUST NOT launch a worker to perform this check.
+
+Bind the check to run id, generation, chosen slot, admitted source identity and
+actual launch environment. Recheck the binding after asynchronous probes and
+immediately before starting the worker. Cancellation, pause, replay, a changed
+owner or changed launch inputs MUST prevent an obsolete check from launching.
+A pass MUST NOT be reused for another launch or generation. Current attempt
+means the launch owner's current `Run.engineState.generation`, as supplied by
+`run.replayStep` or `run.resume` under their existing lifecycle rules. Preflight
+MUST NOT create a generation. Retained-resource admission follows the existing
+lifecycle records, even when the resource was created by an older attempt.
+
+### Exactly three checks
+
+1. **Code drift.** Verify the chosen node's selected pack templates and skills
+   against the source identities bound by the gateway for this launch. Verify
+   that the actual selected worker CLI and protocol versions match the gateway's
+   required versions. Read verified receipts and relevant bytes through their
+   existing owners. Never select current main, advance a marker, materialize a
+   replacement selection or rewrite a retained pin as an observation.
+2. **Toolchain.** In the chosen slot, use the worker's launch shell and wrappers
+   to observe Node, Yarn and Yarn's child Node, plus Ruby when the pack declares
+   it. Compare with the product checkout's `.nvmrc` and `engines`, and declared
+   pack pins. Check Yarn against `packageManager`, `engines.yarn` or its pack
+   pin where declared; otherwise check its child Node without inventing a Yarn
+   version requirement. An override naming a valid binary does not establish which
+   runtime Yarn or the worker actually runs. Conflicting declarations, missing
+   required tools MUST refuse when their absence is observed. A timeout or
+   unavailable observation MUST remain unverified under the retry policy below.
+   An undeclared Ruby
+   requirement MUST NOT be invented. Probes MUST NOT install tools, change
+   defaults, edit tracked files or mutate managed fixtures.
+3. **Prior-attempt leftovers.** Inspect existing lease and session registries
+   using run and attempt ownership. A leftover is owned by an earlier attempt
+   and not assigned to this replay by an existing retention contract. Preserve
+   ADR-054's cancel replay hold, Amendments 6/7's refused-completion worker,
+   slot, checkout and leases, and `run.resume` review-fix reattachment. These
+   retained resources MUST NOT be released or block their admitted continuation.
+   Remaining leftovers MUST prevent launch until canonical cleanup settles.
+   Preserve foreign owners and needed admitted reviews. Process existence alone
+   proves no leftover. Unknown ownership MUST remain unverified without
+   terminating a process; existing slot and resource ownership fences still apply.
+
+### Cost and failure
+
+Each read-only probe MUST have its own budget. Before shipping, measure three
+executions of each probe on a loaded execution host and a remote host, including
+launch-shell and transport costs. Record all samples and p50/p95 in the PR. With
+three samples, nearest-rank p95 is the largest observation, not a tail guarantee.
+The budget is the larger host p95 plus the greater of that p95 or five seconds,
+rounded up to whole seconds. Remeasure if the probe work changes. There is no
+shared ten-second cutoff.
+
+After a timeout, wait one measured p95 and retry the affected probe once with
+its full budget. A second timeout or unavailable observation MUST record the
+probe as unverified and allow launch through existing admission fences. Preserve
+the probe name, reason, attempts and elapsed time in existing dispatch details.
+Never report it passed. Only an observed mismatch or unreleased leftover refuses
+launch. A changed launch binding still invalidates this attempt under the
+admission rules above.
+
+Probe budgets MUST NOT become cleanup command budgets. Existing cleanup keeps
+its configured timeout and ownership fences. An observed pending cleanup is an
+unreleased leftover and refuses until its owner settles it. Never cancel it or
+start competing cleanup. An unavailable cleanup observation follows the same
+unverified policy and grants no cleanup or ownership authority.
+
+A refusal MUST identify the failed check, slot or node, observed and expected
+values, and the exact supported correction or retry condition. `run.create`
+through `farmslot run` and `run.replayStep` through `farmslot rpc` may return
+before deferred dispatch completes. Synchronous failures use the command error;
+deferred failures use existing run events, `Run.error` and `RunStep.detail` in
+`@farmslot/protocol`. Command Center and Companion consume `runStepDisplayDetail`;
+the CLI reads the same records. Do not fabricate a successful step or review.
+Preserve prior-attempt records and required reviews; correction and retry use
+the same run. No new RPC, flag, SDK field or harness extension is proposed.
+
+### Acceptance
+
+Regression and disposable scripted dispatch proof MUST cover mismatched selected
+source bytes, CLI/protocol mismatch, a Yarn child selecting the wrong Node,
+declared Ruby mismatch, owned leftover cleanup and foreign/current-review
+preservation. Cover timeout then retry, retry exhaustion allowing an explicitly
+unverified probe, per-probe budgets, pending cleanup and a generation change
+before launch. Simulate budgets and retry waits with an injected clock;
+each default test stays below five seconds, the suite below five minutes, with
+no fixed wait of one second or more. Prove failed preflight creates no worker or
+fixture mutation, then correct the declared prerequisite through its supported
+owner and retry the same run. The successful path MUST reach real dispatch and
+be cancelled and archived. Wallet and fixture validity remain outside scope.
