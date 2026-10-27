@@ -4,6 +4,11 @@ import path from 'node:path';
 
 const isolatedTestPaths = new Set<string>();
 
+export function isGatewayTestProcess(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
+  if (env.NODE_TEST_CONTEXT) return true;
+  return argv.some((arg) => /(?:^|[/\\])[^/\\]+\.test\.(?:ts|tsx|js|mjs|cjs)$/.test(arg));
+}
+
 function removeIsolatedTestPaths(): void {
   const byDir = new Map<string, string[]>();
   for (const isolated of isolatedTestPaths) {
