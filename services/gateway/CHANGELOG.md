@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Retain every indexed screenshot in selected recipe packages, even when the PR evidence selection uses fewer images.
+- Require task-local adaptation for recipe and action-contract mismatches; reserve unattended blockers for external prerequisites.
+
 - Keep remote slot-action and resource command timeouts separate from node-support resolution, matching local execution. A slow source check previously reduced browser lease cleanup to a 1 ms node request and blocked the same run from reacquiring its browser.
 - Verify release fixtures with the same expanded paths and installer additions as slot checks, and refuse prepare while workspace recovery is pending.
 
@@ -25,7 +28,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Keep original PR-completion criteria and append source-linked review and instruction obligations, with current-head code review and captured visual proof before completion.
 
-- Prefer lightly loaded allowed nodes for automatic slot placement, skip nodes at the load-per-core threshold, and record the selection reasons before writing the task.
+- Prefer lightly loaded allowed nodes for automatic slot placement, retry selection with fresh sources and eligibility when load is the only blocker, and record the selection reasons before writing the task.
 
 - Fetch an unfetched PR branch before the inherited-commit signature check, preserving the dispatch checkout and unsigned-work refusal.
 - Release a selected finished checkout before writing the next task, while refusing unpublished work and changed ownership.

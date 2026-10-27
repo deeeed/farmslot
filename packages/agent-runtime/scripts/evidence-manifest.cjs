@@ -1,3 +1,5 @@
+const path = require('node:path');
+
 const MANIFEST_KEYS = new Set([
   'version',
   'preferred_mode',
@@ -141,4 +143,54 @@ function validateEvidenceManifest(value) {
   return issues;
 }
 
-module.exports = { validateEvidenceManifest };
+function normalizeArtifactPath(value, mediaOnly = true) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(trimmed)) return null;
+  const pathPart = trimmed.split(/[?#]/, 1)[0];
+  const normalized = pathPart.replace(/\\/g, '/').replace(/^\.\/+/g, '');
+  if (!normalized || path.posix.isAbsolute(normalized) || normalized.includes('\0')) return null;
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.some((segment) => segment === '.' || segment === '..')) return null;
+  const withoutArtifacts =
+    segments[0] === 'artifacts' ? segments.slice(1).join('/') : segments.join('/');
+  if (
+    !withoutArtifacts ||
+    (mediaOnly && !/\.(png|jpe?g|gif|webp|mp4|mov|webm)$/i.test(withoutArtifacts))
+  )
+    return null;
+  return `artifacts/${withoutArtifacts}`;
+}
+
+function evidenceManifestArtifacts(value, artifactRoot, fileExists) {
+  const issues = validateEvidenceManifest(value);
+  const refs = new Set();
+  if (issues.length) return { refs: null, issues };
+  const add = (value) => {
+    const relative = normalizeArtifactPath(value);
+    if (!relative) return;
+    const normalized = path.posix.join(artifactRoot, relative.slice('artifacts/'.length));
+    if (
+      /^artifacts\/(?:harness-launch|harness-relaunch|harness-relaunch-node20|runtime-launch|runtime-relaunch|runner-blockers)\//.test(
+        normalized,
+      )
+    ) {
+      issues.push(`evidence-manifest references internal artifact: ${normalized}`);
+      return;
+    }
+    refs.add(normalized);
+  };
+  for (const pair of value.before_after_pairs ?? []) {
+    add(pair.before);
+    add(pair.after);
+  }
+  for (const entry of value.standalone ?? []) add(entry.file);
+  add(value.videos?.before);
+  add(value.videos?.after);
+  for (const ref of [...refs].sort()) {
+    if (!fileExists(ref)) issues.push(`evidence-manifest references missing artifact: ${ref}`);
+  }
+  return { refs, issues };
+}
+
+module.exports = { validateEvidenceManifest, normalizeArtifactPath, evidenceManifestArtifacts };
