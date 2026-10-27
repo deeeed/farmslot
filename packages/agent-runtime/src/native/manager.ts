@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
@@ -39,7 +39,9 @@ import {
   durableWrite,
   matchesProcess,
   privateDirectory,
+  processGroupId,
   processIdentityAlive,
+  type ProcessMetadataCache,
   readJournal,
   readJson,
   recordedProcessGroupAlive,
@@ -230,6 +232,7 @@ interface SessionRecord {
 /** Runs only inside the local host. Synchronous fsync orders intent before native input. */
 export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
+  private readonly processObservations: ProcessMetadataCache = new Map();
   private persisted = new WeakMap<
     SessionRecord,
     {
@@ -770,14 +773,14 @@ export class NativeSessionManager {
       throw new Error('Native worker reservation was cancelled before launch');
   }
 
-  private recordedLeaderAlive(record: SessionRecord): boolean {
+  private recordedLeaderAlive(record: SessionRecord, observations?: ProcessMetadataCache): boolean {
     const pid = record.info.processPid;
     if (!pid) return false;
     const identity = record.processes?.find((process) => process.pid === pid)?.identity;
-    if (identity) return processIdentityAlive(pid, identity);
+    if (identity) return processIdentityAlive(pid, identity, observations);
     if (!record.info.processIdentity) return alive(pid);
     try {
-      return matchesProcess(pid, record.info.processIdentity);
+      return matchesProcess(pid, record.info.processIdentity, observations);
     } catch (error) {
       const probe = error as { status?: number; code?: string };
       // Presence with unreadable identity blocks cleanup without breaking reads.
@@ -786,11 +789,11 @@ export class NativeSessionManager {
     }
   }
 
-  private recordedGroupAlive(record: SessionRecord): boolean {
+  private recordedGroupAlive(record: SessionRecord, observations?: ProcessMetadataCache): boolean {
     const pid = record.info.processPid;
     if (!pid) return false;
     const leader = record.processes?.find((process) => process.pid === pid);
-    if (!recordedProcessGroupAlive(pid, leader?.identity)) return false;
+    if (!recordedProcessGroupAlive(pid, leader?.identity, undefined, observations)) return false;
     // Positive attribution to another native generation distinguishes a reused
     // numeric group. Unknown groups still block; neither case receives a signal.
     for (const candidate of this.sessions.values()) {
@@ -803,15 +806,11 @@ export class NativeSessionManager {
       )
         continue;
       try {
-        if (!matchesProcess(pid, candidate.info.processIdentity)) continue;
-        const observedGroup: string = execFileSync('ps', ['-p', String(pid), '-o', 'pgid='], {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 5000,
-        });
+        if (!matchesProcess(pid, candidate.info.processIdentity, observations)) continue;
+        const observedGroup = processGroupId(pid, observations);
         if (
-          Number(observedGroup.trim()) === pid &&
-          matchesProcess(pid, candidate.info.processIdentity)
+          observedGroup === pid &&
+          matchesProcess(pid, candidate.info.processIdentity, observations)
         )
           return false;
       } catch (error) {
@@ -1099,15 +1098,18 @@ export class NativeSessionManager {
     if (event.type === 'turn.completed') this.scheduleQueuedInput(record);
   }
 
-  private owned(owner: string, id: string): SessionRecord {
+  private owned(owner: string, id: string, observations?: ProcessMetadataCache): SessionRecord {
     const record = this.sessions.get(id);
     if (!record || record.info.ownerPrincipalId !== owner)
       throw new Error('Native session not found for this principal');
-    this.reconcileMissingProcess(record);
+    this.reconcileMissingProcess(record, observations);
     return record;
   }
 
-  private reconcileMissingProcess(record: SessionRecord): void {
+  private reconcileMissingProcess(
+    record: SessionRecord,
+    observations?: ProcessMetadataCache,
+  ): void {
     const pid = record.info.processPid;
     // A live adapter owns descendant cleanup. A recovered journal has no
     // adapter and needs absence of both the recorded PID and its group.
@@ -1116,8 +1118,8 @@ export class NativeSessionManager {
       record.info.processStopped ||
       record.adapter ||
       record.startup ||
-      this.recordedLeaderAlive(record) ||
-      this.recordedGroupAlive(record)
+      this.recordedLeaderAlive(record, observations) ||
+      this.recordedGroupAlive(record, observations)
     )
       return;
     const recorded = record.processes;
@@ -1127,7 +1129,14 @@ export class NativeSessionManager {
       this.persist(record);
       return;
     }
-    if (recorded.some((child) => processIdentityAlive(child.pid, child.identity))) return;
+    // Cached presence is enough for a passive read. Declaring cleanup complete is
+    // authoritative, so recheck every identity without observations first.
+    if (
+      this.recordedLeaderAlive(record) ||
+      this.recordedGroupAlive(record) ||
+      recorded.some((child) => processIdentityAlive(child.pid, child.identity))
+    )
+      return;
     record.info.processStopped = true;
     record.info.error ??= 'Native worker process is missing; its exit was not observed.';
     this.append(record, {
@@ -1156,12 +1165,12 @@ export class NativeSessionManager {
     return [...this.sessions.values()]
       .filter((record) => record.info.ownerPrincipalId === owner)
       .map((record) => {
-        this.reconcileMissingProcess(record);
+        this.reconcileMissingProcess(record, this.processObservations);
         return this.snapshot(record);
       });
   }
   read(owner: string, id: string, after = 0, limit = 200) {
-    const record = this.owned(owner, id);
+    const record = this.owned(owner, id, this.processObservations);
     if (!Number.isSafeInteger(after) || after < 0 || after > record.events.length)
       throw new Error('Invalid native event cursor');
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500)
@@ -1186,7 +1195,7 @@ export class NativeSessionManager {
     };
   }
   readWorker(owner: string, id: string, leaseId: string, after?: number, limit?: number) {
-    const record = this.owned(owner, id);
+    const record = this.owned(owner, id, this.processObservations);
     if (record.workerLeaseError) throw record.workerLeaseError;
     const result = record.workerHistory.read(
       leaseId,
