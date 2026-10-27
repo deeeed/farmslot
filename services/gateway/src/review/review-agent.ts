@@ -47,6 +47,7 @@ import {
   sendRunnerPostLaunchPrompt,
 } from '../runners/registry.js';
 import { probeRunnerDescendantPid } from '../runners/session-process.js';
+import { captureAndRecordRunnerSession } from '../runners/session-record.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { clearRunActiveTaskFile, getRun, updateRun } from '../runs/store.js';
 import {
@@ -448,6 +449,7 @@ export function selectRecoverableReviewContext(
 }
 
 interface ReviewPromptRecoveryDependencies {
+  captureAndRecordRunnerSession: typeof captureAndRecordRunnerSession;
   listExactTmuxWindows: typeof listExactTmuxWindows;
   resolveExactTmuxWindowPane: typeof resolveExactTmuxWindowPane;
   probeRunnerDescendantPid: typeof probeRunnerDescendantPid;
@@ -460,6 +462,7 @@ interface ReviewPromptRecoveryDependencies {
 }
 
 const defaultReviewPromptRecoveryDependencies: ReviewPromptRecoveryDependencies = {
+  captureAndRecordRunnerSession,
   listExactTmuxWindows,
   resolveExactTmuxWindowPane,
   probeRunnerDescendantPid,
@@ -591,6 +594,15 @@ export async function resumeReviewAgentPromptDelivery(
       runtimeDir,
     },
   );
+  await dependencies.captureAndRecordRunnerSession({
+    vars,
+    runner,
+    runId,
+    role: 'review',
+    contextId: context.id,
+    captureLabel: 'recovered reviewer prompt',
+    capture: { paneId: pane.paneId, slotId: vars.slotId },
+  });
   return 'delivered';
 }
 
@@ -916,19 +928,21 @@ async function recoverRunningReviewAgent(params: {
       await abandonRecoveredReviewer('invalid recovered reviewer artifact cleanup', 'blocked');
       throw terminalArtifactError;
     }
-    await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
-    const usage = context.runnerSessionPath
+    const sessionContext =
+      getRun(params.runId)?.agentContexts?.find((entry) => entry.id === context.id) ?? context;
+    await waitForSessionTranscriptToSettle(params.vars, sessionContext.runnerSessionPath ?? null);
+    const usage = sessionContext.runnerSessionPath
       ? await extractRunnerSessionUsage({
           slotId: params.slotId,
           vars: params.vars,
           runner: params.runner,
-          runnerSessionId: context.runnerSessionId ?? null,
-          runnerSessionPath: context.runnerSessionPath,
+          runnerSessionId: sessionContext.runnerSessionId ?? null,
+          runnerSessionPath: sessionContext.runnerSessionPath,
         })
       : unavailableRunnerSessionUsage({
           runner: params.runner,
-          runnerSessionId: context.runnerSessionId ?? null,
-          runnerSessionPath: context.runnerSessionPath ?? null,
+          runnerSessionId: sessionContext.runnerSessionId ?? null,
+          runnerSessionPath: sessionContext.runnerSessionPath ?? null,
           error: 'Recovered reviewer has no persisted runner session path.',
         });
     const persisted = await persistReviewOutputArtifacts({
@@ -954,12 +968,12 @@ async function recoverRunningReviewAgent(params: {
       ...feedback,
       reviewId: context.reviewId,
       mode: params.mode,
-      reviewerSessionId: context.runnerSessionId,
+      reviewerSessionId: sessionContext.runnerSessionId,
       session: {
         mode: params.mode,
         reviewId: context.reviewId,
         continuity: params.mode === 'warm' ? 'resumed' : 'fresh',
-        sessionId: context.runnerSessionId ?? undefined,
+        sessionId: sessionContext.runnerSessionId ?? undefined,
         ...(params.mode === 'warm'
           ? { priorSessionId: context.runnerSessionId ?? undefined, priorRunId: params.runId }
           : {}),

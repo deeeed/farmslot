@@ -9,6 +9,7 @@ import '../runtime/mock-pty.test-support.js';
 
 import { makeRun } from '../run-completion/test-fixtures.js';
 import { retainedReviewerDeliveryPlan } from '../runners/registry.js';
+import { captureAndRecordRunnerSession } from '../runners/session-record.js';
 import { targetForChecklistBasename } from '../tasks/checklist-target.js';
 
 import {
@@ -561,43 +562,68 @@ test('review prompt recovery reuses the exact live reviewer pane', async () => {
   } as Parameters<typeof resumeReviewAgentPromptDelivery>[0];
   let sentPane = '';
   let sentPrompt = '';
+  const context: AgentContext = {
+    id: 'rev-claude',
+    runId: 'missing-run',
+    slotId: 'slot-1',
+    role: 'review',
+    label: 'Reviewer',
+    status: 'working',
+    runner: 'claude',
+    taskFile: 'tasks/run-1/REVIEW.rev-claude.md',
+    signalFile: 'tasks/run-1/REVIEW.rev-claude-SIGNAL.json',
+    target: { session: 'ff-1', window: 'rev-claude', pane: null, target: 'ff-1:rev-claude' },
+    attemptStartedAt: '2026-08-03T16:00:00.000Z',
+    runnerSessionId: 'stale-session',
+    runnerSessionPath: '/sessions/stale.jsonl',
+  };
+  const run = { ...makeRun(), agentContexts: [context] };
 
-  const outcome = await resumeReviewAgentPromptDelivery(
-    vars,
-    'missing-run',
-    {
-      id: 'rev-claude',
-      runner: 'claude',
-      taskFile: 'tasks/run-1/REVIEW.rev-claude.md',
-      signalFile: 'tasks/run-1/REVIEW.rev-claude-SIGNAL.json',
-      target: { session: 'ff-1', window: 'rev-claude', pane: null, target: 'ff-1:rev-claude' },
-      attemptStartedAt: '2026-08-03T16:00:00.000Z',
-    },
-    {
-      listExactTmuxWindows: async () => [
-        {
-          windowId: '@22',
-          windowIndex: 1,
-          windowName: 'rev-claude',
-          activityAt: 1,
-          paneId: '%22',
-          panePid: '2002',
+  const outcome = await resumeReviewAgentPromptDelivery(vars, 'missing-run', context, {
+    captureAndRecordRunnerSession: (options) =>
+      captureAndRecordRunnerSession(options, {
+        capture: async (_vars, _runner, _before, capture) => {
+          assert.equal(sentPane, '%22', 'capture follows accepted prompt delivery');
+          assert.equal(capture?.paneId, '%22');
+          return {
+            runnerSessionId: 'resumed-session',
+            runnerSessionPath: '/sessions/resumed.jsonl',
+          };
         },
-      ],
-      resolveExactTmuxWindowPane: async () => ({ paneId: '%22', panePid: '2002' }),
-      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
-      resolveWorkerDispatchPrompt: async () =>
-        'Follow the checklist in tasks/run-1/REVIEW.rev-claude.md.',
-      resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
-      sendRunnerPostLaunchPrompt: async (_vars, paneId, _runner, prompt) => {
-        sentPane = paneId;
-        sentPrompt = prompt;
+        readRun: () => run,
+        upsert: async (_runId, role, patch) => {
+          assert.equal(role, 'review');
+          assert.equal(patch.id, context.id);
+          Object.assign(context, patch);
+          return context;
+        },
+      }),
+    listExactTmuxWindows: async () => [
+      {
+        windowId: '@22',
+        windowIndex: 1,
+        windowName: 'rev-claude',
+        activityAt: 1,
+        paneId: '%22',
+        panePid: '2002',
       },
+    ],
+    resolveExactTmuxWindowPane: async () => ({ paneId: '%22', panePid: '2002' }),
+    probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
+    resolveWorkerDispatchPrompt: async () =>
+      'Follow the checklist in tasks/run-1/REVIEW.rev-claude.md.',
+    resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
+    sendRunnerPostLaunchPrompt: async (_vars, paneId, _runner, prompt) => {
+      sentPane = paneId;
+      sentPrompt = prompt;
     },
-  );
+  });
 
   assert.equal(outcome, 'delivered');
   assert.equal(sentPane, '%22');
+  assert.equal(context.runnerSessionId, 'resumed-session');
+  assert.equal(context.runnerSessionPath, '/sessions/resumed.jsonl');
+  assert.equal(context.target?.paneId, '%22');
   assert.match(sentPrompt, /REVIEW\.rev-claude\.md/);
   assert.doesNotMatch(sentPrompt, /review-feedback\.rev-claude\.md/);
   assert.doesNotMatch(sentPrompt, /SIGNAL\.json complete/);

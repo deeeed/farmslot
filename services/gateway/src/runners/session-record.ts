@@ -148,7 +148,6 @@ export async function recordRunnerSessionForRole(
   deps: RunnerSessionRecordDeps = { upsert: upsertAgentContext },
 ): Promise<AgentContext | null> {
   const patch = runnerSessionContextPatch(options.session, options.captureLabel, options.now);
-  if (!patch) return null;
   const run = (deps.readRun ?? getRun)(options.runId);
   const context =
     run &&
@@ -162,6 +161,9 @@ export async function recordRunnerSessionForRole(
   const target =
     capturedTarget ??
     (run && context ? runnerSessionContextTarget(run, { ...context, ...patch }) : null);
+  // Pane capture and transcript capture are independent. A runner can start
+  // before its transcript exists; retain its exact pane for later cleanup.
+  if (!patch && !capturedTarget) return null;
   return deps.upsert(options.runId, options.role, {
     ...patch,
     ...(target ? { target } : {}),
