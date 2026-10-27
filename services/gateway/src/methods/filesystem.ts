@@ -369,12 +369,15 @@ async function assertLocalHash(
 }
 
 async function assertLocalDestinationAbsent(targetPath: string, relPath: string): Promise<void> {
+  let entry;
   try {
-    await lstat(targetPath);
+    entry = await lstat(targetPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
+  // A directory or other non-file has no hash. A symlink keeps its refusal in the hash read.
+  if (!entry.isFile() && !entry.isSymbolicLink()) throw fsConflict('destination-exists', {});
   throw fsConflict('destination-exists', { hash: await localFileHash(targetPath, relPath) });
 }
 

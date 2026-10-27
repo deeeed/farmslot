@@ -104,12 +104,15 @@ async function assertFileHash(target: string, relPath: string, expectedHash: str
 }
 
 async function assertDestinationAbsent(target: string, relPath: string) {
+  let entry;
   try {
-    await lstat(target);
+    entry = await lstat(target);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
+  // A directory or other non-file has no hash. A symlink keeps its refusal in the hash read.
+  if (!entry.isFile() && !entry.isSymbolicLink()) throw conflictError('destination-exists', null);
   throw conflictError('destination-exists', await currentFileHash(target, relPath));
 }
 

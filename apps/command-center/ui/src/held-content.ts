@@ -150,9 +150,15 @@ export function heldDiffFiles(text: string): GitBranchDiffFile[] {
   });
 }
 
-/** One file's section of a held diff. */
+/**
+ * One file's section of a held diff, by its new path, or its old path when deleted. Git C-quotes
+ * unusual names; the protocol parser reads each section's paths decoded.
+ */
 export function heldFileDiff(text: string, path: string): string | undefined {
-  return parseUnifiedDiff(text).find((file) => file.path === path)?.diff;
+  return parseUnifiedDiff(text).find((file) => {
+    const [parsed] = parseDiffFiles(file.diff);
+    return (parsed ? (parsed.newPath ?? parsed.oldPath) : file.path) === path;
+  })?.diff;
 }
 
 /** The full blob id of a file side the held diff names; abbreviated ids cannot be looked up. */

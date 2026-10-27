@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -70,6 +70,13 @@ test('a guarded rename needs the source hash and an absent destination', async (
     currentHash: sha256('b'),
   });
   await refused(guarded('c.txt', 'stale'), { reason: 'hash', currentHash: sha256('a') });
+  // A directory destination has no hash; a symlink destination keeps its refusal.
+  await mkdir(file('dir'));
+  await refused(guarded('dir', sha256('a')), { reason: 'destination-exists' });
+  await symlink('b.txt', file('link'));
+  await assert.rejects(guarded('link', sha256('a')), /Refusing final-component symlink: link/);
+  assert.ok((await stat(file('dir'))).isDirectory());
+  assert.equal(await readFile(file('a.txt'), 'utf8'), 'a');
   assert.equal(await readFile(file('b.txt'), 'utf8'), 'b');
   assert.deepEqual(await guarded('c.txt', sha256('a')), { ok: true, hash: sha256('a') });
   assert.equal(await readFile(file('c.txt'), 'utf8'), 'a');

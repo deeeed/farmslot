@@ -81,12 +81,35 @@ function draftKey(view: SlotView, path: string, runId = view._slot?.currentRunId
 }
 
 /**
+ * Autosave permission belongs to one draft: its scope, slot, run and path. The same slot view
+ * shows other slots and runs, so a path alone would lend one draft's permission to another.
+ */
+function armingKey(view: SlotView, path: string): string | undefined {
+  const key = draftKey(view, path);
+  return key && JSON.stringify([key.scopeId, key.slotId, key.runId, key.path]);
+}
+
+function armSlotViewAutosave(view: SlotView, path: string): void {
+  const key = armingKey(view, path);
+  if (key) view._autosaveArmed.set(key, gateway.resourceConnectionId);
+}
+
+/** Another slot or run drops every permission given for the previous one. */
+function retireOtherArming(view: SlotView): void {
+  const current = armingKey(view, '');
+  const prefix = current?.slice(0, current.lastIndexOf(','));
+  for (const key of view._autosaveArmed.keys())
+    if (!prefix || !key.startsWith(`${prefix},`)) view._autosaveArmed.delete(key);
+}
+
+/**
  * Drafts rules 3 to 5: every draft of the scope takes its state from the ready fleet record, the
  * 30-day sweep runs, and the slot's visible drafts are listed. Hidden drafts are not listed.
  */
 export async function refreshSlotViewDrafts(view: SlotView): Promise<void> {
   // Each change starts a refresh; only the latest one may replace what the view shows.
   const refresh = ++view._draftRefresh;
+  retireOtherArming(view);
   const store = view._draftStore;
   const scopeId = getEditorDraftScopeId();
   if (!store || !scopeId) {
@@ -136,7 +159,7 @@ export async function editSlotViewFile(
     return;
   }
   // A draft started by typing on this connection autosaves; a restored one waits for a save.
-  if (!existing) view._autosaveArmed.set(path, gateway.resourceConnectionId);
+  if (!existing) armSlotViewAutosave(view, path);
   const draft = await store.put({
     ...key,
     baseContent,
@@ -151,16 +174,21 @@ export async function editSlotViewFile(
 
 export function scheduleSlotViewAutosave(view: SlotView, path: string): void {
   clearTimeout(view._autosaveTimer);
+  const scheduled = armingKey(view, path);
   view._autosaveTimer = setTimeout(async () => {
     const { getState, isFleetCurrent } = await import('../../state.js');
     const slot = getState().fleet?.slots.find((candidate) => candidate.slot === view.slotId);
+    // The draft that paused must still be the one shown: same scope, slot, run and path.
+    const key = armingKey(view, path);
     if (
+      key !== undefined &&
+      key === scheduled &&
       view._activeFile === path &&
       view._fileDrafts.has(path) &&
       slotViewAutosaveAllowed({
         fleetCurrent: isFleetCurrent(),
         slot,
-        armed: view._autosaveArmed.get(path) === gateway.resourceConnectionId,
+        armed: view._autosaveArmed.get(key) === gateway.resourceConnectionId,
       })
     )
       void saveSlotViewDraft(view, path);
@@ -211,27 +239,41 @@ export async function saveSlotViewDraft(view: SlotView, path: string): Promise<b
       expectedHash: draft.baseHash,
       runId: draft.runId,
     });
-    await store.delete(draft);
-    view._fileDrafts = new Map([...view._fileDrafts].filter(([file]) => file !== path));
+    // Typing during the request stays a draft, now over the saved text and its new hash.
+    const latest = view._fileDrafts.get(path);
+    if (latest && latest.editedContent !== content) {
+      const rebased = await store.put({
+        ...latest,
+        baseContent: content,
+        baseHash: result.hash ?? latest.baseHash,
+      });
+      view._fileDrafts = new Map(view._fileDrafts).set(path, rebased);
+    } else {
+      await store.delete(draft);
+      view._fileDrafts = new Map([...view._fileDrafts].filter(([file]) => file !== path));
+    }
     view._liveFileContents = new Map(view._liveFileContents).set(path, content);
     view._liveFileHashes = new Map(view._liveFileHashes).set(path, result.hash);
     // A later read with other bytes is a worker's write over this save.
     if (result.hash) view._userSaves.set(path, { hash: result.hash, content });
-    view._autosaveArmed.set(path, gateway.resourceConnectionId);
+    armSlotViewAutosave(view, path);
     view._saveConflict = undefined;
     view._saveFeedback = 'saved';
     setTimeout(() => {
       if (view._saveFeedback === 'saved') view._saveFeedback = '';
     }, 2000);
+    if (view._fileDrafts.has(path)) scheduleSlotViewAutosave(view, path);
     void refreshSlotViewDrafts(view);
     return true;
   } catch (error) {
     view._saveFeedback = '';
+    // Typing during the request is the draft any refusal keeps, never the text that was sent.
+    const latest = view._fileDrafts.get(path) ?? draft;
     const refusal = slotViewSaveRefusal(error);
     if (refusal?.kind !== 'hash') view._saveRefused = path;
-    if (refusal?.kind === 'hash') await showSlotViewConflict(view, path, content);
+    if (refusal?.kind === 'hash') await showSlotViewConflict(view, path, latest.editedContent);
     else if (refusal?.kind === 'run') {
-      await store.put({ ...draft, state: 'stale-run' });
+      await store.put({ ...latest, state: 'stale-run' });
       view._fileDrafts = new Map([...view._fileDrafts].filter(([file]) => file !== path));
       view._editNotice =
         'The slot now serves another run. Your edit is kept as a read-only draft to copy.';
@@ -302,7 +344,8 @@ export async function noteSlotViewFileRead(
     editedContent: saved.content,
     state: 'current',
   });
-  view._autosaveArmed.delete(path);
+  const armed = armingKey(view, path);
+  if (armed) view._autosaveArmed.delete(armed);
   view._fileDrafts = new Map(view._fileDrafts).set(path, draft);
   view._fileChangedNotice = path;
   void refreshSlotViewDrafts(view);

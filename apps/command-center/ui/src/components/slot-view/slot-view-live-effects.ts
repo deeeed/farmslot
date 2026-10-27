@@ -45,6 +45,9 @@ type LoadContentOptions = {
   warnLabel?: string;
 };
 
+/** A file's text: an fs.read answer, or a held new side, which has no hash. */
+type LoadedFile = Pick<FsReadResult, 'content' | 'hash'> & { held?: boolean };
+
 function isCurrentLiveResult(view: SlotView, epoch: number, version: number) {
   return (
     epoch === view._recoveryEpoch &&
@@ -221,8 +224,11 @@ export async function loadSlotViewFileContent(
 
   const epoch = view._recoveryEpoch;
   const version = view._workspaceReads.version;
+  // Offline, a file the held run diff touches, such as an untracked one, opens from its held new
+  // side. It carries no fs.read hash, so it stays read-only; the first answer wins.
+  const held = gateway.connectionState === 'connected' ? undefined : new AbortController();
   try {
-    const result = await view._workspaceReads.read<FsReadResult>(
+    const live = view._workspaceReads.read<FsReadResult>(
       Methods.FS_READ,
       {
         slotId: view.slotId,
@@ -236,11 +242,24 @@ export async function loadSlotViewFileContent(
         void noteSlotViewFileRead(view, path, result.content, result.hash);
       },
     );
-    if (!isCurrentLiveResult(view, epoch, version) || !view._workspaceReads.owns(result))
+    const fromHeld = held
+      ? import('../../held-run-diff.js')
+          .then(({ heldRunFileContent }) =>
+            heldRunFileContent(getResourceCache(), view._linkedRun, path, { signal: held.signal }),
+          )
+          .then((content): Promise<LoadedFile> | LoadedFile =>
+            content === undefined ? live : { content, held: true },
+          )
+      : undefined;
+    const result: LoadedFile = await (fromHeld ? Promise.race<LoadedFile>([live, fromHeld]) : live);
+    if (
+      !isCurrentLiveResult(view, epoch, version) ||
+      (!result.held && !view._workspaceReads.owns(result))
+    )
       return false;
     view._liveFileContents = new Map(view._liveFileContents).set(path, result.content);
     view._liveFileHashes = new Map(view._liveFileHashes).set(path, result.hash);
-    noteSlotViewReadAccess(view, path, true);
+    if (!result.held) noteSlotViewReadAccess(view, path, true);
     return true;
   } catch (err) {
     if (!isCurrentLiveResult(view, epoch, version)) return false;
@@ -261,6 +280,8 @@ export async function loadSlotViewFileContent(
       view._liveFileContents = next;
     }
     return true;
+  } finally {
+    held?.abort();
   }
 }
 

@@ -105,8 +105,8 @@ function syncContentPrefetch(): void {
 let draftStorage: Promise<DraftStorage> | undefined;
 let drafts: Promise<DraftStore> | undefined;
 let deletedDrafts = 0;
-/** Scopes this document has checked for other principals' drafts, once each. */
-const draftScopesChecked = new Set<string>();
+/** The scope this document last checked for other principals' drafts. */
+let draftScopeChecked: string | undefined;
 
 /** The gateway profile a drafts scope id belongs to, whichever principal holds it. */
 function draftProfile(scopeId: string): string | undefined {
@@ -125,18 +125,19 @@ function draftProfile(scopeId: string): string | undefined {
 }
 
 /**
- * Drafts rule 6: the first authenticated connect of a scope in this document deletes the drafts
- * other principals left on the same gateway profile, in this tab or another one, and says how
- * many were unsaved. Each scope is checked once, so a tab still holding an older login never
- * deletes the drafts of the principal another tab has since signed in as.
+ * Drafts rule 6: the first authenticated connect in this document, and every change of principal
+ * after it, deletes the drafts other principals left on the same gateway profile, in this tab or
+ * another one, and says how many were unsaved. A reconnect as the same principal checks nothing,
+ * so a tab still holding an older login never deletes the drafts of the principal another tab
+ * has since signed in as.
  */
 function retireOtherPrincipalDrafts(): void {
   const metadata = owner.renderMetadata;
   if (!metadata || gateway.connectionState !== 'connected' || !gateway.authenticatedConnection)
     return;
   const scopeId = resourceStoreScopeId(metadata.scope);
-  if (draftScopesChecked.has(scopeId)) return;
-  draftScopesChecked.add(scopeId);
+  if (draftScopeChecked === scopeId) return;
+  draftScopeChecked = scopeId;
   const profile = draftProfile(scopeId);
   void Promise.all([editorDraftStorage(), getEditorDrafts()])
     .then(async ([storage, store]) => {

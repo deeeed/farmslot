@@ -313,5 +313,88 @@ test("a worker's write over the user's save shows a notice and keeps the user's 
     { base: kept.baseContent, baseHash: kept.baseHash, edited: kept.editedContent },
     { base: worker, baseHash: sha256(worker), edited: mine },
   );
-  assert.equal(view._autosaveArmed.has('src/value.ts'), false, 'its save is explicit');
+  assert.equal(
+    [...view._autosaveArmed.keys()].some((key) => key.includes('src/value.ts')),
+    false,
+    'its save is explicit',
+  );
+});
+
+test('typing while a save is pending stays a draft over the saved text', async (t) => {
+  const store = reset(t);
+  const view = makeView(store);
+  const sent = 'export const value = 20;\n';
+  const newer = 'export const value = 21;\n';
+  let answer!: (reply: unknown) => void;
+  reply = () =>
+    new Promise((resolve) => {
+      answer = resolve;
+    });
+  await effects.editSlotViewFile(view, 'src/value.ts', sent);
+  const saving = effects.saveSlotViewDraft(view, 'src/value.ts');
+  await flush();
+  await effects.editSlotViewFile(view, 'src/value.ts', newer);
+  answer({ ok: true, hash: sha256(sent) });
+  assert.equal(await saving, true);
+  const [kept] = await store.list('scope-a');
+  assert.deepEqual(
+    { base: kept.baseContent, baseHash: kept.baseHash, edited: kept.editedContent },
+    { base: sent, baseHash: sha256(sent), edited: newer },
+  );
+  assert.equal(view._fileDrafts.get('src/value.ts')?.editedContent, newer);
+  assert.equal(view._liveFileContents.get('src/value.ts'), sent);
+  assert.equal(effects.slotViewSaveState(view, 'src/value.ts'), 'draft');
+});
+
+test('a save that fails without a refusal keeps the newest draft and its autosave as they were', async (t) => {
+  const store = reset(t);
+  const view = makeView(store);
+  const newer = 'export const value = 23;\n';
+  let fail!: (error: Error) => void;
+  reply = () =>
+    new Promise((_, reject) => {
+      fail = reject;
+    });
+  await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 22;\n');
+  const armed = [...view._autosaveArmed];
+  const saving = effects.saveSlotViewDraft(view, 'src/value.ts');
+  await flush();
+  await effects.editSlotViewFile(view, 'src/value.ts', newer);
+  fail(new Error('Gateway request timed out'));
+  assert.equal(await saving, false);
+  const [kept] = await store.list('scope-a');
+  assert.deepEqual(
+    { base: kept.baseContent, edited: kept.editedContent, state: kept.state },
+    { base, edited: newer, state: 'current' },
+  );
+  assert.deepEqual([...view._autosaveArmed], armed);
+  assert.equal(effects.slotViewSaveState(view, 'src/value.ts'), 'refused');
+});
+
+test("a restored draft on another slot never inherits the first slot's autosave", async (t) => {
+  const store = reset(t);
+  const slotB = slot({ slot: 'slot-b', currentRunId: 'run-b' });
+  fleetSlots = [slot(), slotB];
+  const view = makeView(store);
+  // Typing in slot A arms its own draft.
+  await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 30;\n');
+  // The same view moves to slot B, which holds a restored draft at the same path.
+  await store.put(draftFor({ slotId: 'slot-b', runId: 'run-b' }));
+  Object.assign(view, { slotId: 'slot-b', _slot: slotB });
+  await effects.refreshSlotViewDrafts(view);
+  assert.equal(view._fileDrafts.get('src/value.ts')?.slotId, 'slot-b');
+  await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 31;\n');
+  t.mock.timers.tick(effects.SLOT_VIEW_AUTOSAVE_PAUSE_MS);
+  await flush();
+  assert.equal(writes.length, 0, "slot B's restored draft waits for an explicit save");
+  assert.equal(await effects.saveSlotViewDraft(view, 'src/value.ts'), true);
+  assert.equal(writes[0].params.slotId, 'slot-b');
+
+  // Back on slot A, its earlier permission is gone too.
+  Object.assign(view, { slotId: 'slot-a', _slot: fleetSlots[0] });
+  await effects.refreshSlotViewDrafts(view);
+  await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 32;\n');
+  t.mock.timers.tick(effects.SLOT_VIEW_AUTOSAVE_PAUSE_MS);
+  await flush();
+  assert.equal(writes.length, 1);
 });

@@ -1,7 +1,7 @@
 // @farmslot:serial — writes slot fixtures into the shared `pool/` directory and status file.
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -195,6 +195,19 @@ test('stale and absent preconditions are refused with the current hash, locally 
       reason: 'hash',
       currentHash: sha256('two'),
     });
+    // A directory destination has no hash; a symlink destination keeps its refusal.
+    await mkdir(file('dir'));
+    await refused(
+      fsRename({ slotId, oldPath: 'a.txt', newPath: 'dir', expectedHash: sha256('two') }),
+      { reason: 'destination-exists' },
+    );
+    await symlink('b.txt', file('link'));
+    await assert.rejects(
+      fsRename({ slotId, oldPath: 'a.txt', newPath: 'link', expectedHash: sha256('two') }),
+      /Refusing final-component symlink: link/,
+    );
+    assert.equal(await readFile(file('a.txt'), 'utf8'), 'two');
+    assert.ok((await stat(file('dir'))).isDirectory());
     assert.equal(await readFile(file('b.txt'), 'utf8'), 'b');
     assert.deepEqual(
       await fsRename({ slotId, oldPath: 'a.txt', newPath: 'c.txt', expectedHash: sha256('two') }),
@@ -209,7 +222,6 @@ test('stale and absent preconditions are refused with the current hash, locally 
     await fsDelete({ slotId, path: 'c.txt', expectedHash: sha256('two') });
     await assert.rejects(stat(file('c.txt')), { code: 'ENOENT' });
 
-    await mkdir(file('dir'));
     await assert.rejects(
       fsDelete({ slotId, path: 'dir', expectedHash: sha256('') }),
       /File versions apply to files only/,

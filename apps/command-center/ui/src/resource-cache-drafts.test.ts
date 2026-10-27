@@ -90,4 +90,21 @@ test("a principal change names the previous account's unsaved drafts, then delet
   assert.deepEqual(await drafts.list(previous), []);
   dismissDeletedDraftNotice();
   assert.equal(getDeletedDraftCount(), 0);
+
+  // Back to the first principal in the same document: B's drafts go the same way.
+  const second = getEditorDraftScopeId()!;
+  await drafts.put({ ...draft, scopeId: second, editedContent: 'edited by b' });
+  fakeGateway.principalId = 'operator-a';
+  gateway.reconnect();
+  await flush();
+  assert.equal(getEditorDraftScopeId(), previous);
+  assert.equal(getDeletedDraftCount(), 1, 'the return to A counts what B left unsaved');
+  assert.deepEqual(await drafts.list(second), []);
+  dismissDeletedDraftNotice();
+  // A reconnect as the same principal checks nothing again.
+  await drafts.put({ ...draft, scopeId: second, editedContent: 'edited by b again' });
+  gateway.reconnect();
+  await flush();
+  assert.equal(getDeletedDraftCount(), 0);
+  assert.equal((await drafts.list(second)).length, 1);
 });
