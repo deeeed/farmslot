@@ -140,6 +140,7 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _selectedFile = '';
   @state() _fileDiff = '';
   @state() _fileDiffLoading = false;
+  @state() _fileDiffError = '';
   @state() _diffError = '';
   @state() _recoveryPhase: RecoveryPhase = 'live';
   @state() _recoveryMessage = '';

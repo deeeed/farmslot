@@ -313,15 +313,11 @@ export function readyWorkspaceLightStyles(): string {
       ready-workspace .rdy-publish-evidence-row small {
         color: ${colors.textMuted};
       }
-      ready-workspace .rdy-recovery-overlay {
-        position: absolute;
-        inset: 0;
-        z-index: 15;
+      ready-workspace .rdy-recovery-status {
+        flex-shrink: 0;
+        padding: 8px;
         display: flex;
         align-items: center;
-        justify-content: center;
-        background: rgba(10, 10, 15, 0.72);
-        backdrop-filter: blur(2px);
       }
       ready-workspace .rdy-recovery-card {
         width: min(360px, calc(100% - 24px));

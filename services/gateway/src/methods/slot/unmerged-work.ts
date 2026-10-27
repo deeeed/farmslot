@@ -105,6 +105,27 @@ const readPublishedAncestry: PublishedAncestryReader = async (repo, base, head, 
   );
 };
 
+const passiveAncestry = new Map<string, Promise<boolean>>();
+
+/** Published SHA ancestry is immutable. Fetch-enabled recovery checks still use a fresh provider read. */
+const readPassivePublishedAncestry: PublishedAncestryReader = (repo, base, head, timeoutMs) => {
+  if (![base, head].every((sha) => /^[a-f0-9]{40,64}$/i.test(sha)))
+    return readPublishedAncestry(repo, base, head, timeoutMs);
+  const key = JSON.stringify([repo, base, head]);
+  const cached = passiveAncestry.get(key);
+  if (cached) return cached;
+  const read = readPublishedAncestry(repo, base, head, timeoutMs).catch((error: unknown) => {
+    if (passiveAncestry.get(key) === read) passiveAncestry.delete(key);
+    throw error;
+  });
+  passiveAncestry.set(key, read);
+  if (passiveAncestry.size > 512) {
+    const oldest = passiveAncestry.keys().next().value;
+    if (oldest !== undefined) passiveAncestry.delete(oldest);
+  }
+  return read;
+};
+
 export async function refIncludedInMergedPullRequest(
   vars: SlotVars,
   ref: string,
@@ -114,6 +135,9 @@ export async function refIncludedInMergedPullRequest(
   readMerged: ReadMergedPreparePullRequests,
   options: MergedPullRequestReadOptions = {},
 ): Promise<boolean> {
+  const readAncestry =
+    options.readAncestry ??
+    (options.allowFetch === false ? readPassivePublishedAncestry : readPublishedAncestry);
   const read = (command: string) =>
     exec(vars, command, options.timeoutMs ? { timeout: options.timeoutMs } : undefined);
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
@@ -125,14 +149,7 @@ export async function refIncludedInMergedPullRequest(
       `${git} merge-base --is-ancestor ${shellQuote(pr.mergeSha)} ${shellQuote(options.defaultSha ?? `origin/${defaultBranch}`)}`,
     );
     if (contained.exitCode !== 0 && options.defaultSha) {
-      if (
-        !(await (options.readAncestry ?? readPublishedAncestry)(
-          repo,
-          pr.mergeSha,
-          options.defaultSha,
-          options.timeoutMs ?? 5000,
-        ))
-      )
+      if (!(await readAncestry(repo, pr.mergeSha, options.defaultSha, options.timeoutMs ?? 5000)))
         continue;
     } else {
       if (contained.exitCode === 1) continue;
@@ -146,14 +163,7 @@ export async function refIncludedInMergedPullRequest(
     if (knownHead.exitCode !== 0 && options.allowFetch === false) {
       // Status reads cannot fetch a later PR head. Compare the two published
       // identities on GitHub while retaining the local merged-default check.
-      if (
-        await (options.readAncestry ?? readPublishedAncestry)(
-          repo,
-          head.stdout.trim(),
-          pr.headSha,
-          options.timeoutMs ?? 5000,
-        )
-      )
+      if (await readAncestry(repo, head.stdout.trim(), pr.headSha, options.timeoutMs ?? 5000))
         return true;
       continue;
     }

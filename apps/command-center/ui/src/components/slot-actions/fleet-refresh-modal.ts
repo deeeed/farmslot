@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { FleetRefreshViewModel } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
+import { getState } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 
 @customElement('fleet-refresh-modal')
@@ -133,7 +134,10 @@ export class FleetRefreshModal extends LitElement {
     );
     this.model = model;
     this.unsubscribe = model.subscribe(() => this.requestUpdate());
-    await model.load(this.singleSlotId ? [this.singleSlotId] : [...this.slotIds]);
+    await model.load(
+      this.singleSlotId ? [this.singleSlotId] : [...this.slotIds],
+      getState().fleet?.slots,
+    );
     if (this.model === model && this.singleSlotId && !this.inspectOnly)
       await model.release(this.singleSlotId);
   }
@@ -157,7 +161,7 @@ export class FleetRefreshModal extends LitElement {
           <button aria-label="Close" @click=${() => this.close()}>Close</button>
         </header>
         ${model.error ? html`<p role="alert" class="warning">${model.error}</p>` : nothing}
-        ${model.phase === 'loading' ? html`<p>Inspecting workspaces...</p>` : nothing}
+        ${model.inspecting ? html`<p role="status">Checking current workspaces…</p>` : nothing}
         ${model.confirmation
           ? html`<div class="confirm" role="alertdialog" aria-label="Discard local work">
               <p>${model.confirmation.warning}</p>
@@ -180,7 +184,8 @@ export class FleetRefreshModal extends LitElement {
                 ? html`<div class="detail" role="status">${row.status} ${row.detail}</div>`
                 : nothing}
               <button
-                ?disabled=${running ||
+                ?disabled=${!model.canRelease ||
+                running ||
                 row.status === 'refreshed' ||
                 (!row.eligibility.allowed && row.eligibility.reason !== 'unknown')}
                 @click=${() => void model.release(row.slotId)}
@@ -198,7 +203,7 @@ export class FleetRefreshModal extends LitElement {
         <footer>
           ${!this.singleSlotId
             ? html`<button
-                ?disabled=${running || !model.bulkCount}
+                ?disabled=${!model.canRelease || running || !model.bulkCount}
                 @click=${() => void model.releaseIdle()}
               >
                 Release idle slots (${model.bulkCount})

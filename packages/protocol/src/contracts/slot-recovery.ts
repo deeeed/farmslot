@@ -60,6 +60,11 @@ export interface SlotRecoveryEligibility {
   detail?: string;
 }
 
+/** Covers passive inspections under load while keeping old workspace evidence bounded.
+ * Recovery commands still re-inspect and compare the exact content/owner identity.
+ */
+export const SLOT_WORKSPACE_MAX_AGE_MS = 120_000;
+
 /** The gateway rechecks this same rule at execution; renderers never infer force authority. */
 export function slotRecoveryEligibility(
   slot: SlotStatus | undefined,
@@ -87,7 +92,7 @@ export function slotRecoveryEligibility(
   const work = slot.workspace;
   if (!work) return blocked(slot.workspaceError ?? 'Workspace has not been inspected', 'unknown');
   const observed = Date.parse(work.observedAt);
-  if (!Number.isFinite(observed) || now - observed > 30_000)
+  if (!Number.isFinite(observed) || now - observed > SLOT_WORKSPACE_MAX_AGE_MS)
     return blocked('Workspace inspection expired', 'unknown');
   if (slot.lifecycle === 'busy' && !work.terminalOwner) return blocked('Slot is working');
   bulkInspectable = slot.lifecycle === 'ready' && !work.currentRunId;

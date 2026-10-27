@@ -31,6 +31,7 @@ import { getRunWithArchived } from '../../runs/store.js';
 
 import { readMergedPreparePullRequests, refIncludedInMergedPullRequest } from './unmerged-work.js';
 import { probeWorkspace } from './workspace-probe.js';
+import { workspaceVersion } from './workspace-version.js';
 
 export function recoveryFromRow(row: Readonly<Record<string, unknown>>): SlotRecovery | undefined {
   const recovery = row.workspace_recovery;
@@ -336,7 +337,10 @@ interface WorkspaceInspection {
   pending: boolean;
   until: number;
   promise: Promise<SlotWorkspace>;
+  version?: string;
+  workspace?: SlotWorkspace;
 }
+const PASSIVE_WORKSPACE_MAX_AGE_MS = 90_000;
 const inspections = new Map<string, WorkspaceInspection>();
 export function invalidateSlotWorkspaceObservations(slotId: string): void {
   const cached = inspections.get(slotId);
@@ -358,6 +362,8 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
         slot.cleanupRunId,
         slot.handoffRunId,
         slot.lifecycle,
+        slot.agent,
+        slot.phase,
         slot.heldReason,
       ]);
       let cached = inspections.get(slot.slot);
@@ -374,16 +380,68 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
         cached = inspections.get(slot.slot);
       }
       if (!cached || (!cached.pending && (cached.key !== key || cached.until < Date.now()))) {
-        const promise = inspectSlotWorkspace(slot.slot, {
-          network: slot.lifecycle !== 'busy' && slot.agent !== 'working',
+        const previous = cached;
+        const inspect = () =>
+          inspectSlotWorkspace(slot.slot, {
+            network: slot.lifecycle !== 'busy' && slot.agent !== 'working',
+          });
+        const promise = Promise.resolve().then(async () => {
+          try {
+            const vars = await loadSlotVars(slot.slot);
+            const project = await loadProjectVars(vars.projectName);
+            entry.version = await workspaceVersion(
+              vars,
+              getProjectField(project.projectJson, 'default_branch') || DEFAULT_BRANCH,
+            );
+          } catch {
+            // Metadata is only an optimization. The real inspection still
+            // reports unreadable repositories or unavailable node transport.
+            return inspect();
+          }
+          const retained = previous?.workspace;
+          if (
+            previous?.key === key &&
+            previous.until !== 0 &&
+            entry.version !== undefined &&
+            previous.version === entry.version &&
+            retained &&
+            !retained.error &&
+            Date.now() - Date.parse(retained.observedAt) < PASSIVE_WORKSPACE_MAX_AGE_MS
+          ) {
+            const row = await readSlotRow(slot.slot);
+            // Git metadata cannot attest a Run's completion or a new recovery
+            // owner. Reuse only while the live ownership/protection facts agree.
+            if (
+              row &&
+              (Number(row.slot_epoch) || 0) === retained.epoch &&
+              text(row.current_run_id) === retained.currentRunId &&
+              text(row.cleanup_run_id) === retained.cleanupRunId &&
+              text(row.handoff_run_id) === retained.handoffRunId &&
+              row.lifecycle === slot.lifecycle &&
+              row.agent === slot.agent &&
+              text(row.phase) === (slot.phase ?? null) &&
+              JSON.stringify(recoveryFromRow(row)) === JSON.stringify(retained.recovery) &&
+              (await workspaceProtectedReason(slot.slot, row)) === retained.protectedReason
+            )
+              return retained;
+          }
+          return inspect();
         });
         const entry: WorkspaceInspection = {
           key,
           pending: true,
           until: Date.now() + 15_000,
-          promise: promise.finally(() => {
-            entry.pending = false;
-          }),
+          promise: promise
+            .then((workspace) => {
+              entry.workspace = workspace;
+              return workspace;
+            })
+            .finally(() => {
+              entry.pending = false;
+              // A slow inspection must have a useful cache window after it
+              // settles. Explicit invalidation during the read still wins.
+              if (entry.until !== 0) entry.until = Date.now() + 15_000;
+            }),
         };
         cached = entry;
         inspections.set(slot.slot, entry);

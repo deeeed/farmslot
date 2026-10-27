@@ -26,7 +26,10 @@ export function FleetRecoveryControl({
   const launch = async () => {
     if (!model) return;
     setOpen(true);
-    await model.load(slot ? [slot.slot] : (slots ?? []).map((value) => value.slot));
+    await model.load(
+      slot ? [slot.slot] : (slots ?? []).map((value) => value.slot),
+      slot ? [slot] : slots,
+    );
     if (slot && row?.action !== 'Inspect workspace') await model.release(slot.slot);
   };
   const running = model?.phase === 'running';
@@ -75,8 +78,8 @@ export function FleetRecoveryControl({
                   {model.error}
                 </Text>
               ) : null}
-              {model?.phase === 'loading' ? (
-                <Text style={styles.text}>Inspecting workspaces...</Text>
+              {model?.inspecting ? (
+                <Text style={styles.text}>Checking current workspaces…</Text>
               ) : null}
               {model?.confirmation ? (
                 <View style={styles.confirm}>
@@ -117,6 +120,7 @@ export function FleetRecoveryControl({
                     accessibilityRole="button"
                     style={styles.button}
                     disabled={
+                      !model.canRelease ||
                       running ||
                       item.status === 'refreshed' ||
                       (!item.eligibility.allowed && item.eligibility.reason !== 'unknown')
@@ -134,7 +138,7 @@ export function FleetRecoveryControl({
             {!slot ? (
               <Pressable
                 accessibilityRole="button"
-                disabled={running || !model?.bulkCount}
+                disabled={!model?.canRelease || running || !model?.bulkCount}
                 style={styles.button}
                 onPress={() => void model?.releaseIdle()}
               >
