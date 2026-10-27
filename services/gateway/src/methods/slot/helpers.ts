@@ -13,6 +13,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 
 import type {
   SlotAutoRefreshParams,
@@ -29,10 +30,12 @@ import { runSessionUsage } from '@farmslot/slot-config';
 import {
   execLocal,
   execOnSlot,
+  expandTemplate,
   farmslotRoot,
   GatewayMethodError,
   loadProjectVars,
   loadSlotVars,
+  renderFixtureTemplate,
   resolveProjectTaskDirName,
   slotFileExists,
   type SlotVars,
@@ -40,6 +43,7 @@ import {
 import { shellQuote } from '../../core/tmux.js';
 import { runnerProcessPatternSource } from '../../runners/registry.js';
 import { buildFindRunnerDescendantPidFromVariableCommand } from '../../runners/session-process.js';
+import { withSlotSources } from '../../sources/runtime.js';
 
 import type { EventEmitter } from './shared.js';
 
@@ -348,6 +352,7 @@ export async function slotSoftRefresh(
 
 export function buildReopenCommand(opts: {
   reopenScript: string;
+  fixtureContent?: string;
   slotId: string;
   repo: string;
   runtimeDir: string;
@@ -355,17 +360,35 @@ export function buildReopenCommand(opts: {
   watcherPort?: string;
 }): string {
   const parts = [
-    `bash ${shellQuote(opts.reopenScript)}`,
+    opts.fixtureContent === undefined
+      ? `bash ${shellQuote(opts.reopenScript)}`
+      : 'bash "$reopen_script"',
     `--slot-id ${shellQuote(opts.slotId)}`,
     `--repo ${shellQuote(opts.repo)}`,
   ];
   if (opts.cdpPort) parts.push(`--cdp-port ${shellQuote(opts.cdpPort)}`);
   parts.push(`--runtime-dir ${shellQuote(opts.runtimeDir)}`);
   if (opts.watcherPort) parts.push(`--watcher-port ${shellQuote(opts.watcherPort)}`);
-  return parts.join(' ');
+  const command = parts.join(' ');
+  if (opts.fixtureContent === undefined) return command;
+  return [
+    'set -eu',
+    'umask 077',
+    `reopen_script=$(mktemp ${shellQuote(`${path.posix.dirname(opts.reopenScript)}/.reopen.XXXXXX`)})`,
+    `trap 'rm -f -- "$reopen_script"' EXIT`,
+    `printf '%s' ${shellQuote(opts.fixtureContent)} > "$reopen_script"`,
+    command,
+  ].join('\n');
 }
 
 export async function slotReopen(
+  params: SlotReopenParams,
+  emit: EventEmitter,
+): Promise<SlotCommandResult> {
+  return withSlotSources(params.slotId, () => slotReopenWithSources(params, emit));
+}
+
+async function slotReopenWithSources(
   params: SlotReopenParams,
   emit: EventEmitter,
 ): Promise<SlotCommandResult> {
@@ -387,11 +410,32 @@ export async function slotReopen(
       { userAction: `farmslot slot fixtures ${params.slotId}` },
     );
   }
+  // Explicit overrides and undeclared launchers keep their retained-script contract.
+  const fixture =
+    params.repo === undefined && params.runtimeDir === undefined
+      ? projectVars.projectJson.fixtures?.templates?.find(
+          (entry) =>
+            entry.src &&
+            !entry.compose &&
+            expandTemplate(entry.dst, vars, projectVars) === `${runtimeDir}/reopen-browser.sh`,
+        )
+      : undefined;
+  const fixtureContent = fixture?.src
+    ? await renderFixtureTemplate(
+        path.resolve(
+          projectVars.projectFixturesDir,
+          expandTemplate(fixture.src, vars, projectVars),
+        ),
+        vars,
+        projectVars,
+      )
+    : undefined;
   const requestId = params.requestId ?? `reopen-${randomUUID()}`;
   const startTime = Date.now();
   const stream = makeStream(emit, requestId, startTime);
   const command = buildReopenCommand({
     reopenScript,
+    fixtureContent,
     slotId: params.slotId,
     repo,
     runtimeDir,

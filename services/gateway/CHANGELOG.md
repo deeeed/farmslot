@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Reopen browsers through the selected pack's rendered launcher, preserving saved wrappers when a node's deployment root changes.
+
 - Let loaded nodes finish retaining task tooling within the measured task-initialization budget.
 
 - Keep before captures bound to the recorded full-review base when dispatch replay advances the worktree baseline.
