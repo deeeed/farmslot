@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Complete artifact-only comparison trials from their retained evidence without requiring an output-review decision.
+
 - Keep remote slot-action and resource command timeouts separate from node-support resolution, matching local execution. A slow source check previously reduced browser lease cleanup to a 1 ms node request and blocked the same run from reacquiring its browser.
 - Verify release fixtures with the same expanded paths and installer additions as slot checks, and refuse prepare while workspace recovery is pending.
 
