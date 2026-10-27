@@ -10,7 +10,11 @@ import type { ReadyGatePayload } from '@farmslot/protocol';
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
-import { type MergeMainStrategy, resolveMergeMainStrategy } from '../methods/slot/slot-tracking.js';
+import {
+  type MergeMainStrategy,
+  remoteBranchRefspec,
+  resolveMergeMainStrategy,
+} from '../methods/slot/slot-tracking.js';
 
 /** Soft-gate fields exposed on ready-gate / package-refresh summaries. */
 export interface BranchFreshnessSummary {
@@ -166,7 +170,7 @@ export function buildBranchFreshnessProbeScript(repoPath: string, defaultBranch:
   return [
     'set +e',
     // Capture fetch rc: a failed fetch must not fall through to a stale tracking ref.
-    `git -C ${repo} fetch origin ${branch} --quiet 2>/dev/null`,
+    `git -C ${repo} fetch origin ${shellQuote(remoteBranchRefspec(branch))} --quiet 2>/dev/null`,
     'fetch_rc=$?',
     `head=$(git -C ${repo} rev-parse HEAD 2>/dev/null)`,
     'behind=""',

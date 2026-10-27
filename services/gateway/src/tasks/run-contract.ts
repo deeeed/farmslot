@@ -25,7 +25,7 @@ export function runContractSection(run: RunContractRun, taskDir: string): string
     '',
     'Farmslot runs this task unattended. These rules apply on top of CHECKLIST.md:',
     '',
-    `- Never pause for input or ask a question. When blocked, run \`${taskDir}/mark blocked --reason "…"\` and stop.`,
+    `- Never pause or ask for input. Recipe, recipe-library or action-contract mismatches never block: copy the closest recipe into the task, adapt to current actions and continue. Use testnet unless the dispatch asks for mainnet; never block over it. Run \`${taskDir}/mark blocked --reason "…"\` and stop only for missing credentials, a product decision the ticket does not settle, or a farm/device failure outside the checkout.`,
     '- Commit the change locally with a Conventional Commit. Until Farmslot publishes the PR, never `git push` and never run a `gh pr` write: Farmslot publishes the branch and the PR after the operator approves it at the publication gate. A later Farmslot follow-up checklist, such as CI-FIX.md, may include its own push step; follow it.',
     '- Never credit or attribute the work to an AI agent in commits, PR text or code comments.',
   ].join('\n');

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { validateEvidenceManifest } = require('./evidence-manifest.cjs');
+const { evidenceManifestArtifacts, normalizeArtifactPath } = require('./evidence-manifest.cjs');
 const {
   expandedArtifactsForCommand,
   resolveWorkerTerminalArtifactPath,
@@ -115,9 +115,6 @@ if (!taskDir) {
 }
 
 const issues = [];
-const mediaExt = /\.(png|jpe?g|gif|webp|mp4|mov|webm)$/i;
-const internalArtifactPath =
-  /^artifacts\/(?:harness-launch|harness-relaunch|harness-relaunch-node20|runtime-launch|runtime-relaunch|runner-blockers)\//;
 
 function fileExists(rel) {
   try {
@@ -246,34 +243,6 @@ function isRecipeQualityArtifactFallback(value) {
 function isRecipeQualityArtifactStrict(value) {
   const validator = sharedRecipeQualityValidator ?? isRecipeQualityArtifactFallback;
   return validator(value);
-}
-
-function normalizeArtifactPath(value, mediaOnly = true) {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(trimmed)) return null;
-  const pathPart = trimmed.split(/[?#]/, 1)[0];
-  const normalized = pathPart.replace(/\\/g, '/').replace(/^\.\/+/g, '');
-  if (!normalized || path.posix.isAbsolute(normalized) || normalized.includes('\0')) return null;
-  const segments = normalized.split('/').filter(Boolean);
-  if (segments.some((segment) => segment === '.' || segment === '..')) return null;
-  const withoutArtifacts =
-    segments[0] === 'artifacts' ? segments.slice(1).join('/') : segments.join('/');
-  if (!withoutArtifacts || (mediaOnly && !mediaExt.test(withoutArtifacts))) return null;
-  return `artifacts/${withoutArtifacts}`;
-}
-
-function addRef(refs, value, artifactRoot = 'artifacts') {
-  const relative = normalizeArtifactPath(value);
-  const normalized = relative
-    ? path.posix.join(artifactRoot, relative.slice('artifacts/'.length))
-    : null;
-  if (!normalized) return;
-  if (internalArtifactPath.test(normalized)) {
-    issues.push(`evidence-manifest references internal artifact: ${normalized}`);
-    return;
-  }
-  refs.add(normalized);
 }
 
 function validateRecipeQualityArtifact() {
@@ -498,26 +467,10 @@ function parseManifest() {
     issues.push(`evidence-manifest.json: invalid JSON: ${error.message}`);
     return null;
   }
-  const manifestIssues = validateEvidenceManifest(manifest);
-  if (manifestIssues.length > 0) {
-    issues.push(...manifestIssues);
-    return null;
-  }
-
-  const refs = new Set();
-  const artifactRoot = path.posix.dirname(relPath);
-  for (const pair of manifest.before_after_pairs ?? []) {
-    addRef(refs, pair?.before, artifactRoot);
-    addRef(refs, pair?.after, artifactRoot);
-  }
-  for (const entry of manifest.standalone ?? []) addRef(refs, entry?.file, artifactRoot);
-  addRef(refs, manifest.videos?.before, artifactRoot);
-  addRef(refs, manifest.videos?.after, artifactRoot);
-
-  for (const ref of [...refs].sort()) {
-    if (!fileExists(ref)) issues.push(`evidence-manifest references missing artifact: ${ref}`);
-  }
-  return { manifest, refs };
+  const result = evidenceManifestArtifacts(manifest, path.posix.dirname(relPath), fileExists);
+  issues.push(...result.issues);
+  if (!result.refs) return null;
+  return { manifest, refs: result.refs };
 }
 
 let terminalContract;

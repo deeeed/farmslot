@@ -6,13 +6,18 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Reuse passive workspace observations while Git metadata is unchanged and reuse immutable ancestry comparisons by SHA pair; recovery commands still inspect current contents.
 - Serve stored run snapshots without waiting for worker and publication checks; current reads and command guards stay authoritative.
+- Retain every indexed screenshot in selected recipe packages, even when the PR evidence selection uses fewer images.
+- Require task-local adaptation for recipe and action-contract mismatches; reserve unattended blockers for external prerequisites.
+
+- Keep remote slot-action and resource command timeouts separate from node-support resolution, matching local execution. A slow source check previously reduced browser lease cleanup to a 1 ms node request and blocked the same run from reacquiring its browser.
+- Verify release fixtures with the same expanded paths and installer additions as slot checks, and refuse prepare while workspace recovery is pending.
 
 - Shorten autonomous task instructions by removing the extra permission caveat.
 - Remove the local CI-parity worker step and its completion receipt requirement.
 - Keep busy review-fix workers alive through signal inactivity, including fixes without delivery turn tokens.
 - Include configured pi providers such as LiteLLM in the model catalog while retaining built-in models.
 
-- Push completion commits for existing PRs and verify the actual remote branch matches the published HEAD before finalize succeeds.
+- Push completion commits for existing PRs, verify the actual remote HEAD, and refuse publication when the branch conflicts with its freshly fetched base, even when CI is disabled.
 - Stop unchanged empty review-fix cycles and accept completed evidence-only fixes or fixes of at most 50 source lines without another review, retaining the original review and fix provenance.
 - Validate nested review-fix and CI-fix declarations against their selected contract, preserving the primary checklist checks.
 
@@ -25,7 +30,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Keep original PR-completion criteria and append source-linked review and instruction obligations, with current-head code review and captured visual proof before completion.
 
-- Prefer lightly loaded allowed nodes for automatic slot placement, skip nodes at the load-per-core threshold, and record the selection reasons before writing the task.
+- Prefer lightly loaded allowed nodes for automatic slot placement, retry selection with fresh sources and eligibility when load is the only blocker, and record the selection reasons before writing the task.
 
 - Fetch an unfetched PR branch before the inherited-commit signature check, preserving the dispatch checkout and unsigned-work refusal.
 - Release a selected finished checkout before writing the next task, while refusing unpublished work and changed ownership.

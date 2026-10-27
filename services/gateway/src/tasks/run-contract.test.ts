@@ -11,6 +11,19 @@ test('autonomous dev and fix-bug runs get the run contract', () => {
     assert.ok(section);
     assert.match(section, /^## Run contract\n/);
     assert.match(section, /`temp\/tasks\/fix\/t-1\/mark blocked --reason "…"`/);
+    assert.match(
+      section,
+      /Recipe, recipe-library or action-contract mismatches never block: copy the closest recipe into the task, adapt to current actions and continue\./,
+    );
+    assert.match(
+      section,
+      /and stop only for missing credentials, a product decision the ticket does not settle, or a farm\/device failure outside the checkout\./,
+    );
+    assert.match(
+      section,
+      /Use testnet unless the dispatch asks for mainnet; never block over it\./,
+    );
+    assert.doesNotMatch(section, /consent|permission/i);
     assert.match(section, /Commit the change locally with a Conventional Commit/);
     assert.match(section, /Until Farmslot publishes the PR, never `git push`/);
     // CI-FIX.md, sent after publication, asks the same worker to push its fix.
