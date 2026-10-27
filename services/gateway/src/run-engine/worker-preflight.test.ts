@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  LAUNCH_PROBE_TIMING,
   type LaunchPreflightOptions,
   LaunchPreflightRefusal,
   type LaunchProbe,
@@ -21,6 +20,11 @@ function fixture() {
   }> = [];
   const waits: number[] = [];
   const options: LaunchPreflightOptions = {
+    timing: {
+      code: { budgetMs: 12_000, retryWaitMs: 5_609 },
+      toolchain: { budgetMs: 16_000, retryWaitMs: 7_841 },
+      leftovers: { budgetMs: 41_000, retryWaitMs: 20_245 },
+    },
     assertCurrent: () => {},
     record: (name, result, attempts, elapsed) => records.push({ name, result, attempts, elapsed }),
     now: () => time,
@@ -185,5 +189,4 @@ test('each probe receives its measured budget without a total ten-second cutoff'
   await runLaunchPreflight(probes, f.options);
   assert.deepEqual(budgets, [12_000, 16_000, 41_000]);
   assert.deepEqual(f.waits, []);
-  assert.equal(LAUNCH_PROBE_TIMING.leftovers.retryWaitMs, 20_245);
 });

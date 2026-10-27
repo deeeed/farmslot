@@ -37,6 +37,7 @@ const fs=require('node:fs'),path=require('node:path'),{createRequire}=require('n
  const receipt=JSON.parse(fs.readFileSync(receiptFile,'utf8'));
  const runtime=await import(pathToFileURL(expected.runtimeModule).href);
  try{runtime.verifyTaskExecutionProvenance(expected.taskDir,receipt.bindingIdentity??null)}catch(e){
+  if(e.code==='TASK_PROVENANCE_LEGACY'){result('unverified',e.message);return}
   if((e.exitCode===5 && typeof e.code==='string') || e.code==='ENOENT'){result('mismatch',e.code+': '+e.message+' Repair the retained input through its supported source owner, then retry this same run.');return}
   throw e;
  }

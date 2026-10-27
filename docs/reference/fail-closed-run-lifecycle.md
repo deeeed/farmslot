@@ -754,8 +754,8 @@ credential held by automation.
 
 ## Worker launch preflight
 
-**Status:** Scope and implementation accepted under ADR-065 Amendment 11.
-The measured budget revision requires paired delta review before implementation.
+**Status:** Accepted under ADR-065 Amendment 11. The measured budget revision
+passed paired delta review before implementation in [#1509](https://github.com/deeeed/farmslot/pull/1509).
 
 ### Admission point and binding
 

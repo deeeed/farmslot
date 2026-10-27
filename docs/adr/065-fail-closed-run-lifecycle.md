@@ -789,8 +789,8 @@ beside an evidence-policy gap.
 
 ## Amendment 11: verify launch prerequisites before starting a worker, 2026-10-27
 
-**Status:** Scope and implementation accepted by the lead on 2026-10-27.
-The measured budget revision below requires paired delta review before implementation.
+**Status:** Accepted by the lead on 2026-10-27. The measured budget revision
+passed paired delta review before implementation in [#1509](https://github.com/deeeed/farmslot/pull/1509).
 **Specification:** [Worker launch preflight](../reference/fail-closed-run-lifecycle.md#worker-launch-preflight).
 
 ### Decision
@@ -844,5 +844,5 @@ command error; deferred failures use existing run events, `Run.error` and
 `RunStep.detail`. Command Center and Companion consume the protocol's existing
 `runStepDisplayDetail`; the CLI reads the same run records. No new command, flag,
 SDK export, package contract or harness hook is proposed. Harnesses inherit launch admission
-and keep their existing setup commands. A future implementation records its PR
-and any required owning-package release separately.
+and keep their existing setup commands. Implementation is tracked in #1509; no
+public package contract or release is added.

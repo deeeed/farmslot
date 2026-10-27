@@ -14,9 +14,9 @@ export interface LaunchProbeTiming {
 
 // Loaded-host and remote-host samples in #1509. Budget = p95 + max(p95, 5s), rounded up.
 export const LAUNCH_PROBE_TIMING: Readonly<Record<LaunchProbeName, LaunchProbeTiming>> = {
-  code: { budgetMs: 12_000, retryWaitMs: 5_609 },
-  toolchain: { budgetMs: 16_000, retryWaitMs: 7_841 },
-  leftovers: { budgetMs: 41_000, retryWaitMs: 20_245 },
+  code: { budgetMs: 53000, retryWaitMs: 26219 },
+  toolchain: { budgetMs: 7000, retryWaitMs: 1748 },
+  leftovers: { budgetMs: 28000, retryWaitMs: 13604 },
 };
 
 export interface LaunchProbe {
