@@ -70,6 +70,7 @@ const drafts = findAll(document, '[data-testid="draft-item"]').map((item) => ({
   text: text(item)?.slice(0, 200),
   copy: Boolean(item.querySelector('[data-testid="draft-copy"]')),
   discard: Boolean(item.querySelector('[data-testid="draft-discard"]')),
+  open: Boolean(item.querySelector('[data-testid="draft-open"]')),
 }));
 
 // Every IndexedDB database and store this origin holds: the drafts store's real rows.

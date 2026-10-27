@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Conditional file edits keep worker changes and drafts safe",
-  "description": "Use a private farm with four local slots (ready, working, review gate, and one whose run switches), one slot on a real farmslot node with conditional writes and one on a node whose handshake omits them, a fake gh PR with a review thread and a fake git that can slow one base. Two admin principals sign in; the principal change uses the real login path, a second tab of the same origin signing in as the second admin with a connection link, and the return to the first admin is the first tab's next document on the login this browser profile saved. Lane-side preloads strip the node flag and, at one checkpoint, the gateway capability, and hold the gateway's first two writes of one ready-slot file for 8 s so the proof types while a save is in flight; no product switch. The offline step stops the gateway and opens the working slot's untracked file. A pre-flight aborts unless gh, codexbar, claude, cursor-agent, ssh, zsh and bash resolve to fakes on each service's PATH and in its login shell. Also covers the D08 slot-workspace targets: slot PR, review threads, R2-B1 and R3-B1. No GitHub, provider, native or worker CLI execution.",
+  "description": "Use a private farm with four local slots (ready, working, review gate, and one whose run switches), one slot on a real farmslot node with conditional writes and one on a node whose handshake omits them, a fake gh PR with a review thread and a fake git that can slow one base. Two admin principals sign in; the principal change uses the real login path, a second tab of the same origin signing in as the second admin with a connection link, and the return to the first admin is the first tab's next document on the login this browser profile saved. Lane-side preloads strip the node flag and, at one checkpoint, the gateway capability, and hold the gateway's first two writes of one ready-slot file for 8 s so the proof types while a save is in flight; no product switch. The offline step stops the gateway and opens the working slot's untracked file. Every service gets a case-owned TMUX_TMPDIR and no TMUX or TMUX_PANE, because the node runs /opt/homebrew/bin/tmux by absolute path. A pre-flight aborts unless gh, codexbar, claude, cursor-agent, ssh, zsh and bash resolve to fakes on each service's PATH and in its login shell, and unless every real tmux a service would run reaches only the case's socket; the audit also lists the services' Unix sockets. Also covers the D08 slot-workspace targets: slot PR, review threads, R2-B1 and R3-B1. No GitHub, provider, native or worker CLI execution.",
   "proofTargets": [
     {
       "id": "slotPrDetected",
@@ -17,7 +17,7 @@
     },
     {
       "id": "slotPrRecoveryRetry",
-      "claim": "R2-B1: when gh fails once during reconnect recovery the base is kept, and the first later success applies the PR's new base."
+      "claim": "R2-B1: while gh keeps failing during reconnect recovery, recovery settles with a branch diff that is asked for and answered and keeps the old base; once gh answers again, the first success applies the PR's new base."
     },
     {
       "id": "editsWorkerChangeAfterSave",
@@ -37,7 +37,7 @@
     },
     {
       "id": "editsStaleRunDraft",
-      "claim": "When the slot moves to another run, a draft for the old run is read-only with copy and discard, and a save naming the old run is refused."
+      "claim": "When the slot moves to another run, a draft for the old run is listed read-only with copy and discard but no open, stays out of the editor, Copy carries its edited content, and a save naming the old run is refused."
     },
     {
       "id": "editsNodeWithoutConditionalWrites",
@@ -53,7 +53,7 @@
     },
     {
       "id": "editsReconnectSendsNoDraft",
-      "claim": "With unsaved drafts held, a reconnect and a reload send no fs.write frame and the drafts stay held."
+      "claim": "An unsaved draft restored on a ready slot, where saving is allowed, is editable over a current read, and its restore, a reconnect and a reload send no fs.write and leave the file unchanged."
     },
     {
       "id": "editsDraftsDeletedOnSignOut",

@@ -607,10 +607,15 @@ if (phase('d08')) {
   assert(after.slot.branchDiffFiles.includes('src/develop-only.ts'));
   claims.slotSlowBaseIgnored = true;
 
-  // R2-B1: the PR lookup fails once during reconnect recovery; the first later success applies its
-  // base. One lookup makes two gh calls, the stored binding's check and the list, so both fail.
+  // R2-B1: the PR lookup fails during reconnect recovery. Recovery must settle without it: a
+  // branch diff is asked for and answered while every lookup still fails. Only then does gh answer
+  // again, and the first later success applies the PR's new base.
   const fakeBefore = (await fakeLog()).length;
-  await checkpoint('gh-state', { failNext: 2, prBase: 'release' });
+  const lookupsSince = async (from) =>
+    (await fakeLog())
+      .slice(from)
+      .filter((row) => ['failed', 'pr-list', 'pr-verify'].includes(row.outcome));
+  await checkpoint('gh-state', { failNext: 1000000, prBase: 'release' });
   const restartAt = Date.now();
   await checkpoint('gateway-restart');
   await until(
@@ -625,7 +630,33 @@ if (phase('d08')) {
     'The first PR lookup after the restart fails',
     { target: A, timeout: 60000 },
   );
-  const during = await inspect(A);
+  const fallback = await waitFor(
+    () => {
+      const request = requests(
+        owner.since(failed.at * 1000),
+        'git.branchDiff',
+        (row) => row.params?.slotId === slots.ready.id,
+      )[0];
+      const reply = request && replyTo(owner.rows, request);
+      return reply && !reply.error && { request, reply };
+    },
+    'Recovery settles with a branch diff while the lookup fails',
+    { target: A, timeout: 90000 },
+  );
+  const settled = await until(
+    (value) =>
+      value.slot?.branchDiffBase === fallback.request.params.base &&
+      !value.slot.branchDiffLoading &&
+      value.slot.branchDiffError === null,
+    'The fallback base renders while gh fails',
+    A,
+    { timeout: 30000 },
+  );
+  const whileFailing = await lookupsSince(fakeBefore);
+  assert.notEqual(fallback.request.params.base, 'release', 'The failed lookup changed nothing');
+  assert(whileFailing.length >= 1 && whileFailing.every((row) => row.outcome === 'failed'));
+  const releasedAt = Date.now();
+  await checkpoint('gh-state', { failNext: 0 });
   const applied = await until(
     (value) =>
       value.slot?.branchDiffBase === 'release' &&
@@ -635,12 +666,12 @@ if (phase('d08')) {
     A,
     { timeout: 240000, interval: 2000 },
   );
-  const lookups = (await fakeLog())
-    .slice(fakeBefore)
-    .filter((row) => ['failed', 'pr-list', 'pr-verify'].includes(row.outcome));
+  const lookups = await lookupsSince(fakeBefore);
   evidence.r2 = {
     failed,
-    baseWhileFailed: during.slot.branchDiffBase,
+    fallback,
+    settled: settled.slot,
+    releasedAt,
     applied: applied.slot,
     lookups,
     branchDiffBases: requests(
@@ -651,14 +682,14 @@ if (phase('d08')) {
   };
   await save('r2-recovery-retry', evidence.r2);
   await image('r2-applied-base', A);
-  assert.deepEqual(
-    lookups.slice(0, 2).map((row) => row.outcome),
-    ['failed', 'failed'],
-    'The first lookup after the restart fails',
+  assert(
+    lookups.filter((row) => row.at * 1000 < releasedAt).every((row) => row.outcome === 'failed'),
+    'No lookup succeeded before the release',
   );
-  assert(lookups.some((row) => row.outcome !== 'failed'));
-  assert.notEqual(evidence.r2.baseWhileFailed, 'release', 'The failed lookup changed nothing');
-  assert(evidence.r2.branchDiffBases.some((row) => row.base === 'release'));
+  assert(lookups.some((row) => row.at * 1000 >= releasedAt && row.outcome !== 'failed'));
+  assert(
+    evidence.r2.branchDiffBases.some((row) => row.wall >= releasedAt && row.base === 'release'),
+  );
   claims.slotPrRecoveryRetry = true;
 }
 
@@ -910,8 +941,8 @@ if (phase('runs')) {
   assert.equal(latin1.slot.readOnlyReason?.reason, 'encoding');
   evidence.encoding = latin1.slot.readOnlyReason;
 
-  // A draft for a run the slot no longer serves is read-only with copy and discard, and a save
-  // naming that run is refused.
+  // A draft for a run the slot no longer serves is read-only: listed with copy and discard but no
+  // open, never in the editor, its copy is its edited text, and a save naming that run is refused.
   const runFile = 'src/run-bound.ts';
   await openFile('switch', runFile);
   await typeInEditor(A, '// D11 draft for run A');
@@ -927,12 +958,39 @@ if (phase('runs')) {
           item.path === runFile &&
           item.state === 'stale-run' &&
           item.copy &&
-          item.discard,
-      ),
+          item.discard &&
+          !item.open,
+      ) &&
+      draftFor(value, 'switch', runFile)?.state === 'stale-run' &&
+      typeof value.slot?.editor?.value === 'string' &&
+      !value.slot.editor.value.includes('D11 draft for run A'),
     'The run A draft becomes read-only with copy and discard',
     A,
-    { timeout: 30000 },
+    { timeout: 30000, params: { indexedDb: true, editorText: true } },
   );
+  const staleDraft = draftFor(stale, 'switch', runFile);
+  // The copy is read through the page: the clipboard write is recorded and not passed on, so the
+  // proof never replaces the desktop clipboard of the machine it runs on.
+  await cdp([
+    'eval',
+    A,
+    `window.__d11Copies = [];
+     Object.defineProperty(navigator.clipboard, 'writeText', {
+       configurable: true,
+       value: (text) => { window.__d11Copies.push(text); return Promise.resolve(); },
+     });
+     return true`,
+  ]);
+  await clickElement(A, '[data-testid="draft-copy"]');
+  const copies = await waitFor(
+    async () => {
+      const copied = await cdp(['eval', A, 'return window.__d11Copies ?? []']);
+      return copied.length ? copied : undefined;
+    },
+    'Copy writes the draft to the clipboard',
+    { target: A },
+  );
+  assert.deepEqual(copies, [staleDraft.editedContent], 'Copy carries the edited content');
   const runRefusal = await rpc('fs.write', {
     slotId: slots.switch.id,
     path: runFile,
@@ -948,7 +1006,13 @@ if (phase('runs')) {
   await until((value) => !draftFor(value, 'switch', runFile), 'The stale draft is discarded', A, {
     params: { indexedDb: true },
   });
-  evidence.staleRun = { drafts: stale.drafts, refusal: runRefusal.error };
+  evidence.staleRun = {
+    drafts: stale.drafts,
+    draft: staleDraft,
+    copies,
+    editor: stale.slot.editor,
+    refusal: runRefusal.error,
+  };
   claims.editsStaleRunDraft = true;
   claims.editsGateWarning = true;
 }
@@ -1119,27 +1183,65 @@ if (phase('capability')) {
   await waitFor(nodesConnected, 'Both nodes reconnected', { timeout: 90000 });
   claims.editsWithoutCapability = true;
 
-  // Drafts are never sent: a reconnect and a reload with drafts present send no fs.write.
-  const quietFrom = Date.now();
+  // Drafts are never sent. The ready slot, where saving is allowed, holds the user's version that
+  // the worker change kept as a draft. Restored in a new document over a current read it is
+  // editable, and neither the restore, a reconnect nor a reload sends it.
+  const readyFile = 'src/edit.ts';
+  const onDisk = await readSlotFile('ready', readyFile);
+  const stored = draftFor(await inspect(A, { indexedDb: true }), 'ready', readyFile);
+  assert(stored?.state === 'current', 'An unsaved draft is stored for the ready slot');
+  assert.notEqual(stored.editedContent, stored.baseContent);
+  assert.notEqual(stored.editedContent, onDisk);
+  assert.equal(stored.baseHash, sha256(onDisk), 'The draft is over the current file');
+  const currentRead = (since) =>
+    waitFor(
+      () =>
+        requests(
+          owner.since(since),
+          'fs.read',
+          (row) => row.params?.slotId === slots.ready.id && row.params.path === readyFile,
+        )
+          .map((row) => replyTo(owner.rows, row))
+          .find((reply) => reply?.payload?.hash === sha256(onDisk)),
+      'The restored draft has a current read',
+      { target: A, timeout: 30000 },
+    );
+  const restoredShown = (value) =>
+    value.slot?.slotId === slots.ready.id &&
+    value.slot.activeFile === readyFile &&
+    value.slot.editor?.readOnly === false &&
+    value.slot.editor.value === stored.editedContent;
+  const restoredFrom = Date.now();
+  await openFile('ready', readyFile, 'owner-restored');
+  const restoredRead = await currentRead(restoredFrom);
+  await until(restoredShown, 'The restored draft is editable over the current read', A, {
+    params: { editorText: true },
+  });
+  // Longer than the autosave pause.
+  await delay(5000);
   const connected = await inspect(A);
   assert((await dropGatewaySocket(A)) >= 1);
   await until(
     (value) => value.connection === 'connected' && value.connectionId !== connected.connectionId,
-    'Reconnected with drafts present',
+    'Reconnected with the restored draft',
     A,
     { timeout: 60000 },
   );
   await delay(10000);
-  await navigate(A, url('owner-reload', slotRoute('work', file)));
-  await until((value) => value.connection === 'connected', 'Reloaded with drafts present', A, {
+  const reloadFrom = Date.now();
+  await devtools((call) => call('Page.reload'), A);
+  const reloadRead = await currentRead(reloadFrom);
+  await until(restoredShown, 'The draft is restored again after the reload', A, {
     timeout: 60000,
+    params: { editorText: true },
   });
   await delay(10000);
-  const sent = requests(owner.since(quietFrom), 'fs.write');
+  const sent = requests(owner.since(restoredFrom), 'fs.write');
   const held = await inspect(A, { indexedDb: true });
-  evidence.reconnect = { fsWrites: sent, drafts: drafts(held) };
-  assert.equal(sent.length, 0, 'No draft is sent on reconnect or reload');
-  assert(draftFor(held, 'work', file), 'The draft is still held');
+  evidence.reconnect = { stored, restoredRead, reloadRead, fsWrites: sent, drafts: drafts(held) };
+  assert.equal(sent.length, 0, 'No draft is sent on restore, reconnect or reload');
+  assert.equal(await readSlotFile('ready', readyFile), onDisk, 'The file on disk is unchanged');
+  assert.equal(draftFor(held, 'ready', readyFile)?.editedContent, stored.editedContent);
   claims.editsReconnectSendsNoDraft = true;
 }
 
