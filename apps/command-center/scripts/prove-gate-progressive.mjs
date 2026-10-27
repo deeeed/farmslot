@@ -23,7 +23,8 @@ const output = path.resolve(process.argv[2]);
 const control = process.argv.includes('--withhold-snapshot');
 const costProof = process.argv.includes('--fleet-cost');
 const baseline = process.argv.includes('--baseline');
-const fleetProof = process.argv.includes('--fleet') || costProof;
+const boundedLocal = process.argv.includes('--bounded-local');
+const fleetProof = process.argv.includes('--fleet') || costProof || boundedLocal;
 const ancestryInputFile = process.env.FARMSLOT_GATE_PROOF_ANCESTRY;
 await mkdir(output, { recursive: false, mode: 0o700 });
 const root = await mkdtemp(path.join(os.tmpdir(), 'gate-progressive-'));
@@ -75,6 +76,10 @@ let costResult;
 let ancestryInput, ancestryRepo;
 let countLaunches = false;
 const launches = { workspace: 0, compare: 0 };
+let localActive = 0,
+  localPeak = 0,
+  localLaunches = 0;
+let localBatchStart, localBatchEnd;
 const cleanupFailures = [];
 const env = {
   ...process.env,
@@ -214,13 +219,58 @@ try {
       slots: [{ id: 'recovery-proof-slot', repo: fixtureRepo, session: 'unused-proof' }],
     }),
   );
+  if (boundedLocal) {
+    const raw = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
+    const pool = JSON.parse(await readFile(path.join(root, 'pool/local.json'), 'utf8'));
+    const template = raw.slots[0];
+    raw.slots = [];
+    pool.slots = [];
+    for (let index = 0; index < 31; index++) {
+      const id = `local-proof-${index}`;
+      const repo = path.join(root, id);
+      await exec('git', ['clone', '--shared', '--quiet', fixtureRepo, repo]);
+      raw.slots.push({
+        ...template,
+        slot: id,
+        repo,
+        enabled: index < 30,
+        lifecycle: index < 30 ? 'ready' : 'disabled',
+      });
+      pool.slots.push({ id, repo, session: id, enabled: index < 30 });
+    }
+    await writeFile(path.join(root, 'status.json'), JSON.stringify(raw));
+    await writeFile(path.join(root, 'pool/local.json'), JSON.stringify(pool));
+  }
   // The unrelated PTY module changes shared tmux options on import. The
   // existing test fence forbids every PTY/tmux operation in this read-only proof.
   await sourceModule('services/gateway/src/runtime/mock-pty.test-support.ts');
-  if (costProof) {
+  if (costProof || boundedLocal) {
     const original = ChildProcess.prototype.spawn;
     mock.method(ChildProcess.prototype, 'spawn', function (options) {
-      const result = Reflect.apply(original, this, [options]);
+      const fingerprint =
+        boundedLocal && options.args.some((arg) => arg.includes('FARMSLOT_WORKSPACE_PROBE'));
+      // Reproduce contention above four real fingerprint processes. Every
+      // child still runs the actual Git reader under its owning cancellation.
+      const launch =
+        fingerprint && localActive >= 4
+          ? {
+              ...options,
+              args: options.args.map((arg) =>
+                arg.includes('FARMSLOT_WORKSPACE_PROBE') ? `sleep 6\n${arg}` : arg,
+              ),
+            }
+          : options;
+      const result = Reflect.apply(original, this, [launch]);
+      if (fingerprint && this.pid) {
+        localBatchStart ??= Date.now();
+        localLaunches++;
+        localActive++;
+        localPeak = Math.max(localPeak, localActive);
+        this.once('close', () => {
+          localActive--;
+          localBatchEnd = Date.now();
+        });
+      }
       if (countLaunches && this.pid) {
         if (options.args.some((arg) => arg.includes('FARMSLOT_WORKSPACE_PROBE')))
           launches.workspace++;
@@ -594,6 +644,59 @@ try {
     }
     await cdp('screenshot', route, path.join(output, 'fleet-cost.png'));
   } else if (fleetProof) {
+    if (boundedLocal) {
+      const firstReply = JSON.parse(
+        await cdp(
+          'eval',
+          route,
+          `const {gateway}=await import('/src/gateway-client.ts');const start=performance.now();const {fleet}=await gateway.request('fleet.status',{},120000);return {ms:performance.now()-start,slots:fleet.slots.map(slot=>({slot:slot.slot,enabled:slot.enabled,workspace:slot.workspace??null,error:slot.workspaceError??null}))};`,
+        ),
+      );
+      await save('local-first-reply.json', firstReply);
+      const wallMs = localBatchEnd - localBatchStart;
+      await save('local-admission.json', {
+        launches: localLaunches,
+        peak: localPeak,
+        active: localActive,
+        wallMs,
+      });
+      assert(wallMs < 15000, 'The cold local batch must fit the normal client deadline');
+      assert.equal(firstReply.slots.length, 31);
+      assert(
+        firstReply.slots
+          .filter((slot) => slot.enabled)
+          .every((slot) => slot.workspace && !slot.workspace.error),
+        'One fleet.status must inspect every enabled local checkout',
+      );
+      const needsRetry = JSON.parse(
+        await cdp(
+          'eval',
+          route,
+          `const {getState}=await import('/src/state.ts');return {retry:!getState().fleet};`,
+        ),
+      );
+      assert.equal(needsRetry.retry, false, 'Normal Fleet bootstrap must succeed without Retry');
+    }
+    const firstFleet = JSON.parse(
+      await cdp(
+        'eval',
+        route,
+        `const {getState,isHydrating}=await import('/src/state.ts');const end=Date.now()+60000;while(isHydrating(getState(),'fleet')){if(Date.now()>end)throw Error('Fleet bootstrap did not settle');await new Promise(r=>setTimeout(r,50))}const fleet=getState().fleet;return {slots:fleet?.slots.map(slot=>({slot:slot.slot,enabled:slot.enabled,workspace:slot.workspace??null,error:slot.workspaceError??null}))??[]};`,
+      ),
+    );
+    await save('fleet-first.json', firstFleet);
+    if (boundedLocal) {
+      assert.equal(firstFleet.slots.length, 31);
+      assert(
+        firstFleet.slots
+          .filter((slot) => slot.enabled)
+          .every((slot) => slot.workspace && !slot.workspace.error),
+        'Every enabled local slot must carry its actual workspace',
+      );
+      assert(firstFleet.slots.filter((slot) => !slot.enabled).every((slot) => !slot.workspace));
+      assert.equal(localLaunches, 30);
+      assert(localPeak <= 4, 'Local fingerprints must have bounded admission');
+    }
     holdFleet = true;
     started = Date.now();
     await cdp('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
@@ -604,8 +707,12 @@ try {
         `const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);const modal=all.find(e=>e.localName==='fleet-refresh-modal'&&e.open);const root=modal?.shadowRoot;return {text:root?.textContent?.replace(/\\s+/g,' '),rows:root?.querySelectorAll('article[data-slot]').length,releaseDisabled:Array.from(root?.querySelectorAll('article button')??[]).every(e=>e.disabled),busy:!!root?.querySelector('[role=status]')};`,
       ),
     );
-    assert.equal(observation.rows, 1, 'Cached row must render before current inspection settles');
-    assert(observation.text.includes('Release idle slots (1)'));
+    assert.equal(
+      observation.rows,
+      boundedLocal ? 31 : 1,
+      'Cached rows must render before current inspection settles',
+    );
+    assert(observation.text.includes(`Release idle slots (${boundedLocal ? 30 : 1})`));
     assert.equal(observation.releaseDisabled, true);
     assert(held.length > 0, 'Require an actual held fleet reply');
     await save('fleet-held.json', observation);
@@ -632,6 +739,29 @@ try {
       ),
     );
     await cdp('click', route, 'fleet-canvas >>> fleet-refresh-modal >>> button[aria-label=Close]');
+    if (boundedLocal) {
+      const warm = JSON.parse(
+        await cdp(
+          'eval',
+          route,
+          `const {gateway}=await import('/src/gateway-client.ts');const reads=[];for(let index=0;index<3;index++){const start=performance.now();const {fleet}=await gateway.request('fleet.status',{},120000);reads.push({ms:performance.now()-start,slots:fleet.slots.map(slot=>({slot:slot.slot,workspace:slot.workspace??null}))})}return reads;`,
+        ),
+      );
+      await save('local-warm.json', warm);
+      for (const read of warm) {
+        assert(read.ms < 2000, 'Warm fleet.status must complete under two seconds');
+        assert.equal(
+          read.slots.filter((slot) => slot.workspace).length,
+          30,
+          'Every warm reply retains all enabled workspace observations',
+        );
+        for (const slot of read.slots)
+          assert.equal(
+            slot.workspace?.observedAt,
+            firstFleet.slots.find((first) => first.slot === slot.slot).workspace?.observedAt,
+          );
+      }
+    }
   } else {
     await cdp(
       'eval',
