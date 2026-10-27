@@ -441,3 +441,27 @@ Existing completion, output-close, archive and safe slot-release paths report
 reset or retention through current cleanup outcomes. No new command, RPC, SDK
 field, provider contract or harness operation. See
 [automatic safe reuse](../reference/recipe-runtime-capability-contract.md#automatic-safe-reuse).
+
+### Cold runtime on reuse, F169/F170 supplement (2026-10-27)
+
+Status: Proposed under the lead's added #1515 scope; independent supplement review precedes implementation.
+
+A selected slot may be cold after safe settlement. A capability acquire that
+currently uses a managed resource's health action MUST establish that resource
+when stopped, through its configured boot hook, then verify health. For a browser,
+start the slot's configured dev-server first. Keep healthy resources and foreign
+owners intact. An unavailable observation is not a stopped resource and does not
+authorize boot. Ordinary health reads and release actions remain read-only.
+Existing device-claim and attached-device policies remain unchanged.
+
+Resolve reopen/boot fixture paths through captured source bindings, then the
+slot's configured `FARMSLOT_WORKSPACE`; a configured workspace outranks the legacy
+remote deployment default. This uses existing pool environment and resource hooks,
+not a project-specific fallback or a new RPC/schema field. The shared private
+slot-config helper requires matching CLI distribution rollout after merge.
+
+The same disposable smoke must acquire its cold dev server and real isolated
+browser without manual start, verify health and warm reuse, and invoke reopen
+from its configured workspace. Keep other sessions/resources unchanged and clean
+up only proof-owned resources. Reuse the same run for supported repair/replay;
+no replacement run or product operation.
