@@ -13,9 +13,24 @@ let controlOk = true;
 let refusal: string | undefined;
 let afterProbe: (() => void) | undefined;
 const calls: string[] = [];
+const realConfig = await import('../core/config.js');
+let prepareSeconds: number | undefined;
+let compileSeconds: number | undefined;
+const bootTimeouts: number[] = [];
+mock.module('../methods/slot/prepare-command.js', {
+  namedExports: { PREPARE_PREFLIGHT_TIMEOUT_MS: 900_000 },
+});
 mock.module('../core/state.js', { namedExports: { readSlotRow: async () => ({ ...row }) } });
 mock.module('../core/config.js', {
-  namedExports: { loadSlotVars: async () => ({ resourceVars: {} }) },
+  namedExports: {
+    ...realConfig,
+    loadSlotVars: async () => ({ projectName: 'proof', resourceVars: {} }),
+    loadProjectVars: async () => ({
+      projectJson: {
+        timeouts: { prepare_preflight_s: prepareSeconds, build_compile_s: compileSeconds },
+      },
+    }),
+  },
 });
 mock.module('../runs/store.js', { namedExports: { getRun: () => run } });
 mock.module('../sources/runtime.js', {
@@ -59,9 +74,11 @@ mock.module('./resource-manager.js', {
       action: string,
       extras: unknown,
       owner: string,
+      options: { bootTimeoutMs: number },
     ) => {
       assert.deepEqual([slot, action, extras, owner], ['slot', 'boot', undefined, 'run']);
       calls.push('boot:' + id);
+      bootTimeouts.push(options.bootTimeoutMs);
       return { ok: controlOk, detail: 'test boot' };
     },
   },
@@ -81,6 +98,9 @@ function resource(id: string, type: SlotResource['definition']['type']): SlotRes
   };
 }
 beforeEach(() => {
+  prepareSeconds = undefined;
+  compileSeconds = undefined;
+  bootTimeouts.length = 0;
   row = { current_run_id: 'run', slot_epoch: 1 };
   run = { id: 'run', slotId: 'slot', status: 'dispatching' };
   resources = [resource('browser', 'browser'), resource('server', 'dev-server')];
@@ -181,3 +201,18 @@ test('cleanup, handoff and recovery fences refuse before health', async () => {
   }
   assert.deepEqual(calls, []);
 });
+
+test('undeclared launch budget uses normal prepare budget, allowing a cold Terminal boot', async () => {
+  await ready();
+  assert.deepEqual(bootTimeouts, [900_000, 900_000]);
+});
+for (const field of ['prepare', 'compile'])
+  test(`only fresh boot receives its declared ${field} launch budget`, async () => {
+    if (field === 'prepare') prepareSeconds = 3600;
+    else compileSeconds = 600;
+    await ready();
+    assert.deepEqual(bootTimeouts, [
+      field === 'prepare' ? 3_600_000 : 600_000,
+      field === 'prepare' ? 3_600_000 : 600_000,
+    ]);
+  });

@@ -72,7 +72,7 @@ if [ -n "${SLOT_ID}" ]; then
   if [ "$is_local_slot" = true ]; then
     FARMSLOT_DIR="${PROJECT_DIR}"
   else
-    FARMSLOT_DIR="~/farmslot-node"
+    FARMSLOT_DIR="$(expand_slot_template '{{farmslot_dir}}')" || exit 1
   fi
 
   echo "  host:     ${SSH_TARGET} $([ "$is_local_slot" = true ] && echo '(local)')"
@@ -237,6 +237,7 @@ if [ -n "${SLOT_ID}" ]; then
     find "$STAGED_DIR" -not -path '*/test-artifacts/*' -type f \( -name '*.md' -o -name '*.js' -o -name '*.json' -o -name '*.ts' -o -name '*.sh' \) -exec \
       sed -i.bak \
         -e "s|{{farmslot_dir}}|${FARMSLOT_DIR}|g" \
+        -e "s|{{FARMSLOT_DIR}}|${FARMSLOT_DIR}|g" \
         -e "s|{{slot_id}}|${SLOT_ID}|g" \
         -e "s|{{platform}}|${PLATFORM}|g" \
         -e "s|{{port}}|${PORT:-}|g" \

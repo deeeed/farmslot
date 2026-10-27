@@ -24,13 +24,7 @@ import {
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
 // ─── Placeholder helpers ───
-import {
-  getProjectField,
-  loadProjectVars,
-  loadSlotVars,
-  type RawProjectJson,
-  resolveSlot,
-} from '../core/config.js';
+import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
 import { execLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { withProjectMachineEnv } from '../core/project-env.js';
@@ -1321,10 +1315,10 @@ export async function reconcileFailedDeviceControl(input: {
 export function resourceControlTimeoutMs(
   resourceType: string,
   action: ResourceControlAction,
-  launchSeconds = 0,
+  bootTimeoutMs = 0,
 ): number {
-  if (action === 'boot' && Number.isFinite(launchSeconds) && launchSeconds > 0)
-    return Math.max(resourceType === 'device' ? 120_000 : 30_000, launchSeconds * 1000);
+  if (action === 'boot' && Number.isFinite(bootTimeoutMs) && bootTimeoutMs > 0)
+    return Math.max(resourceType === 'device' ? 120_000 : 30_000, bootTimeoutMs);
   return resourceType === 'device' && action === 'boot' ? 120_000 : 30_000;
 }
 
@@ -1332,6 +1326,10 @@ interface ResourceControlResult {
   ok: boolean;
   detail?: string;
   providerProcesses?: RuntimeCapabilityLease['providerProcesses'];
+}
+
+interface ResourceControlOptions {
+  bootTimeoutMs: number;
 }
 
 /** Execute a control hook and immediately re-poll the slot's resources. */
@@ -1347,10 +1345,11 @@ export async function executeResourceControl(
    */
   extraVars?: Record<string, string>,
   ownerRunId?: string,
+  options?: ResourceControlOptions,
 ): Promise<ResourceControlResult> {
   const { withSlotSources } = await import('../sources/runtime.js');
   return withSlotSources(slotId, () =>
-    executeResourceControlWithSources(slotId, resourceId, action, extraVars, ownerRunId),
+    executeResourceControlWithSources(slotId, resourceId, action, extraVars, ownerRunId, options),
   );
 }
 
@@ -1360,6 +1359,7 @@ async function executeResourceControlWithSources(
   action: ResourceControlAction,
   extraVars?: Record<string, string>,
   ownerRunId?: string,
+  options?: ResourceControlOptions,
 ): Promise<ResourceControlResult> {
   const { pool, slot } = await resolveSlot(slotId);
   if (!isSlotResourceConfigured(slot.resources, resourceId)) {
@@ -1381,14 +1381,7 @@ async function executeResourceControlWithSources(
   }
 
   const expanded = expandTemplate(hookCmd, slotVars, projectVars, extraVars);
-  const timeoutMs = resourceControlTimeoutMs(
-    resourceDef.type,
-    action,
-    Number(
-      getProjectField(projectJson, 'timeouts.prepare_preflight_s') ||
-        getProjectField(projectJson, 'timeouts.build_compile_s'),
-    ),
-  );
+  const timeoutMs = resourceControlTimeoutMs(resourceDef.type, action, options?.bootTimeoutMs);
 
   // Check for unresolved required variables after expansion
   if (hasUnresolvedPlaceholders(expanded)) {

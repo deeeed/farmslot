@@ -1,8 +1,9 @@
 import { isTerminalRunStatus } from '@farmslot/protocol';
 
-import { loadSlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { readSlotRow } from '../core/state.js';
 import { getRuntimeCapabilityRegistry } from '../methods/runtime-capabilities.js';
+import { PREPARE_PREFLIGHT_TIMEOUT_MS } from '../methods/slot/prepare-command.js';
 import { getRun } from '../runs/store.js';
 import { withSlotSources } from '../sources/runtime.js';
 
@@ -45,6 +46,15 @@ export async function ensureRunRuntimeReady(
     };
     await assertOwner();
     const vars = await loadSlotVars(slotId);
+    const project = await loadProjectVars(vars.projectName);
+    const launchSeconds = Number(
+      getProjectField(project.projectJson, 'timeouts.prepare_preflight_s') ||
+        getProjectField(project.projectJson, 'timeouts.build_compile_s'),
+    );
+    const bootTimeoutMs =
+      Number.isFinite(launchSeconds) && launchSeconds > 0
+        ? launchSeconds * 1000
+        : PREPARE_PREFLIGHT_TIMEOUT_MS;
     const resources = (await resolveSlotResources(slotId))
       .filter(
         ({ definition: def }) =>
@@ -87,6 +97,7 @@ export async function ensureRunRuntimeReady(
             'boot',
             undefined,
             runId,
+            { bootTimeoutMs },
           );
           await assertOwner();
           if (!result.ok)

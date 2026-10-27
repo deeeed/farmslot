@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -23,6 +25,8 @@ const SLOT_ID = 'macpro-mm-1';
 const IDENTITY = '/slot/.agent/preflight.identity';
 
 let slotRow: Record<string, unknown>;
+let recycleStartsRuntime = false;
+let recycledRuntime: ChildProcess | undefined;
 let events: string[];
 let reapFails: boolean;
 let emitted: Array<{ event: string; payload: Record<string, unknown> }>;
@@ -58,6 +62,15 @@ const applies = (
 
 const execForTest = async (_vars: unknown, cmd: string) => {
   slotCommands.push(cmd);
+  if (cmd === '__proof_runtime__') {
+    recycledRuntime = spawn(
+      process.execPath,
+      ['-e', 'require("node:fs").watch(process.argv[1], () => {})', runRoot],
+      { stdio: 'ignore' },
+    );
+    await once(recycledRuntime, 'spawn');
+    return ok();
+  }
   // An editor with the checkout open (macwork-mmt-1, Cursor 44809, 10-19).
   if (cmd.startsWith('lsof -a -d cwd')) return ok('p44809\nn/slot\n');
   if (cmd.includes('git rev-parse HEAD 2>/dev/null')) return ok('5d0c1a7e\n2\n');
@@ -154,7 +167,10 @@ mock.module('../../core/index.js', {
       projectName: 'mm',
       resourceVars: cdpPort ? { cdp_port: cdpPort } : {},
     }),
-    loadProjectVars: async () => ({ runtimeDir: '.agent', projectJson: {} }),
+    loadProjectVars: async () => ({
+      runtimeDir: '.agent',
+      projectJson: recycleStartsRuntime ? { hooks: { recycle: '__proof_runtime__' } } : {},
+    }),
     readSlotField: async (_slotId: string, field: string) => slotRow[field] ?? null,
     readSlotRow: async () => slotRow,
     markSlotStatusIf: async (
@@ -252,6 +268,8 @@ const emit = (event: string, payload: unknown) =>
   emitted.push({ event, payload: payload as Record<string, unknown> });
 
 beforeEach(async () => {
+  recycleStartsRuntime = false;
+  recycledRuntime = undefined;
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 1 };
   events = [];
   reapFails = false;
@@ -718,3 +736,44 @@ test('deleting a cancelled run leaves a slot another active run owns', async () 
   assert.ok(!events.includes('reset'));
   assert.equal(realRuns.getRun('cancelled'), undefined);
 });
+
+for (const recovery of [true, false])
+  test(`${recovery ? 'fenced recovery stays cold' : 'ordinary explicit release retains recycle policy'}`, async (t) => {
+    recycleStartsRuntime = true;
+    slotRow.current_run_id = 'finished';
+    if (recovery) {
+      slotRow.workspace_recovery = { id: 'cold-recovery' };
+      slotRow.phase = 'releasing';
+    }
+    t.after(async () => {
+      if (
+        recycledRuntime &&
+        recycledRuntime.exitCode === null &&
+        recycledRuntime.signalCode === null
+      ) {
+        const exited = once(recycledRuntime, 'exit');
+        recycledRuntime.kill('SIGTERM');
+        await exited;
+      }
+    });
+    const result = await slotRelease(
+      { slotId: SLOT_ID, skipArtifacts: true, forceReset: !recovery },
+      emit,
+      recovery
+        ? {
+            workspaceRecovery: {
+              id: 'cold-recovery',
+              epoch: 1,
+              verifyWork: async () => {},
+              discardLocalWork: false,
+            },
+          }
+        : undefined,
+    );
+    assert.equal(result.released, true);
+    assert.equal(
+      Boolean(recycledRuntime),
+      !recovery,
+      'only explicit release may invoke the runtime-starting recycle hook',
+    );
+  });

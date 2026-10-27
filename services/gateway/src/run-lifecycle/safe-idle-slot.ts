@@ -47,6 +47,9 @@ async function retainCheckout(
       !(run.slotId === slotId && run.branch === workspace.branch)
     )
       continue;
+    // A later run on the same branch cannot rewrite historical replay evidence.
+    if (checkoutBeforeIdleReturn(run) && run.id !== runId && run.id !== workspace.currentRunId)
+      continue;
     const step = run.steps.find((step) => step.name === 'prepare')!;
     updateRunStep(run.id, 'prepare', {
       outputs: {

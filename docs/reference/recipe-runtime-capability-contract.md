@@ -761,7 +761,11 @@ Error/unknown/unavailable observations or boot failures MUST refuse launch with
 the reason. Boot after claim under dispatch pressure admission and pass the run
 ID for sidecar ownership. Preserve source, owner, successor, device and
 cancellation fences. Companion Mobile/Extension hooks use existing harness launch
-commands. Capability health polling and release remain read-only.
+commands.
+The fresh-launch gate uses the declared prepare/build budget, or the normal prepare
+preflight budget when undeclared. Other control and acquire callers keep their
+existing limits. Boot shares the registry ownership fence with acquire and release;
+this can serialize resource operations across slots until the boot settles. Capability health polling and release remain read-only.
 
 Fixture expansion MUST preserve captured source bindings. Only remote slots
 otherwise prefer the slot pool-env `FARMSLOT_WORKSPACE` to the legacy remote

@@ -930,17 +930,22 @@ async function slotReleaseImpl(
     idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
 
-    // Recycle app
-    step('recycle', 'Recycling app...');
-    const recycleCmd = vars.recycleCmd
-      ? expandRecycleCmd(vars)
-      : expandHook('recycle', projectJson, vars, projectVars);
-    if (recycleCmd) {
-      await assertReleaseClaim();
-      await execOnSlot(vars, recycleCmd);
-      step('recycle', 'App recycled');
+    // Recovery publishes a cold checkout. The next real dispatch owns boot.
+    if (options?.workspaceRecovery) {
+      step('recycle', 'Workspace recovery keeps runtime stopped');
     } else {
-      step('recycle', 'No recycle command configured');
+      // Recycle app
+      step('recycle', 'Recycling app...');
+      const recycleCmd = vars.recycleCmd
+        ? expandRecycleCmd(vars)
+        : expandHook('recycle', projectJson, vars, projectVars);
+      if (recycleCmd) {
+        await assertReleaseClaim();
+        await execOnSlot(vars, recycleCmd);
+        step('recycle', 'App recycled');
+      } else {
+        step('recycle', 'No recycle command configured');
+      }
     }
   }
 

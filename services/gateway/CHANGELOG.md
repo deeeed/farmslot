@@ -4,9 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Before fresh run workers start, reuse healthy managed runtime or boot stopped pack resources in server-first order, preserving runtime ownership and pressure checks.
+- Before fresh workers start, including pending native reservations, reuse healthy runtime or boot stopped pack resources under launch budgets, ownership and pressure checks.
 
-- Automatically reuse clean published idle slots before asking for a slot, and safely return settled checkouts to main while preserving local work and replay evidence.
+- Automatically reuse clean published idle slots and return settled checkouts to main while preserving local work, historical replay evidence and stopped runtime.
 - Check admitted source bytes, declared launch toolchains and unsettled prior cleanup before starting workers. Retry slow probes with measured budgets and report unavailable observations as unverified.
 - Bound concurrent local workspace fingerprints and start each command deadline after admission, so full-fleet reads do not cancel local inspections before they finish.
 

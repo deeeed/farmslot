@@ -249,3 +249,53 @@ test('an active skip-prepare successor protects a finished parent checkout', asy
     /still needs this checkout/,
   );
 });
+
+test('a successor settlement cannot replace the predecessor checkout receipt', async () => {
+  const predecessor = makeRun({
+    id: 'predecessor',
+    slotId: 'proof',
+    branch: workspace.branch,
+    status: 'done',
+    steps: [
+      {
+        name: 'prepare',
+        status: 'done',
+        outputs: {
+          checkoutBeforeIdleReturn: {
+            slotId: 'proof',
+            branch: workspace.branch,
+            headSha: '1'.repeat(40),
+          },
+        },
+      },
+    ],
+  });
+  const successor = makeRun({
+    id: 'successor',
+    slotId: 'proof',
+    branch: workspace.branch,
+    status: 'done',
+    steps: [{ name: 'prepare', status: 'done' }],
+  });
+  runs = [predecessor, successor];
+  workspace.currentRunId = successor.id;
+  await reuseSafeIdleSlot('proof', () => {}, {
+    epoch: 7,
+    runId: successor.id,
+    recordRunId: successor.id,
+  });
+  assert.equal(checkoutBeforeIdleReturn(predecessor)?.headSha, '1'.repeat(40));
+  assert.equal(checkoutBeforeIdleReturn(successor)?.headSha, workspace.headSha);
+  workspace.headSha = '2'.repeat(40);
+  await reuseSafeIdleSlot('proof', () => {}, {
+    epoch: 7,
+    runId: successor.id,
+    recordRunId: successor.id,
+  });
+  assert.equal(checkoutBeforeIdleReturn(predecessor)?.headSha, '1'.repeat(40));
+  assert.equal(
+    checkoutBeforeIdleReturn(successor)?.headSha,
+    workspace.headSha,
+    'the named run can record its own later settlement',
+  );
+});

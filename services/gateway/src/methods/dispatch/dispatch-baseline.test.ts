@@ -102,6 +102,9 @@ mock.module('../../run-completion/commit-signatures.js', {
     },
   },
 });
+mock.module('../../fleet/runtime-ready.js', {
+  namedExports: { ensureRunRuntimeReady: async () => {} },
+});
 // This fixture isolates baseline preservation and stops before launch. Probe behavior has its own tests.
 mock.module('../../run-engine/worker-launch-preflight.js', {
   namedExports: { admitWorkerLaunch: async () => async () => {} },

@@ -1305,6 +1305,8 @@ export async function dispatchExecute(
       projectVars,
       accountLabel: params.providerAccountLabel,
       beforeInput: runPressureGate,
+      beforeFreshLaunch: () =>
+        ensureRunRuntimeReady(params.slotId, currentRun.id, runPressureGate, options.assertCurrent),
       assertCurrent: options.assertCurrent,
       emit,
     });
