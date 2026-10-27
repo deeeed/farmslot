@@ -61,15 +61,8 @@ test(
       path.join(root, 'bin/recycle-proof'),
       `#!/bin/sh
 set -eu
-if [ -f "$FARMSLOT_ROOT/cancel-recycle" ]; then
-  touch "$FARMSLOT_ROOT/recycle-entered"
-  attempts=0
-  while [ ! -f "$FARMSLOT_ROOT/release-recycle" ]; do
-    attempts=$((attempts + 1))
-    [ "$attempts" -lt 200 ] || exit 1
-    sleep 0.05
-  done
-fi
+touch "$FARMSLOT_ROOT/recycle-entered"
+
 `,
     );
     const seed = path.join(root, 'seed'),
@@ -228,7 +221,21 @@ fi
     const execution = await import('../../core/exec.js');
     let failPostReleaseProbe = false;
     let failInstallerRead = false;
+    let pauseReset = false;
+    let enterReset: () => void = () => {};
+    let resumeReset: () => void = () => {};
+    const resetEntered = new Promise<void>((resolve) => {
+      enterReset = resolve;
+    });
+    const resetResumed = new Promise<void>((resolve) => {
+      resumeReset = resolve;
+    });
     const executeOnSlot: typeof execution.execOnSlot = async (...args) => {
+      if (pauseReset && args[1].includes('git reset --hard')) {
+        pauseReset = false;
+        enterReset();
+        await resetResumed;
+      }
       if (/\btmux\b/.test(args[1])) return { exitCode: 1, stdout: '', stderr: '' };
       if (
         failInstallerRead &&
@@ -496,12 +503,22 @@ fi
       expectedWorkspace: retryCold,
     });
     assert.equal(recovered.refreshed, true, recovered.detail);
-    const immediate = (await call<FleetStatusResult>('fleet.status')).fleet.slots.find(
+    assert.equal(
+      await readFile(path.join(root, 'recycle-entered'), 'utf8'),
+      '',
+      'explicit manual recovery retains its project recycle hook',
+    );
+    let immediate = (await call<FleetStatusResult>('fleet.status')).fleet.slots.find(
       (slot) => slot.slot === 'proof-slot',
     );
+    // Recovery can invalidate an in-flight passive observation; the RPC names that transient.
+    if (immediate?.workspaceError === 'Workspace changed; inspect again')
+      immediate = (await call<FleetStatusResult>('fleet.status')).fleet.slots.find(
+        (slot) => slot.slot === 'proof-slot',
+      );
     assert.equal(immediate?.branch, 'main');
     assert.equal(immediate?.lifecycle, 'ready');
-    assert.equal(immediate?.workspace?.publication, 'baseline');
+    assert.equal(immediate?.workspace?.publication, 'baseline', JSON.stringify(immediate));
     assert.equal(git(repo, 'branch', '--show-current'), 'main');
     assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
     assert.equal(await readFile(path.join(repo, 'fixture.txt'), 'utf8'), 'synced fixture\n');
@@ -570,7 +587,7 @@ fi
       head_sha: git(repo, 'rev-parse', 'HEAD'),
       warm: true,
     });
-    await writeFile(path.join(root, 'cancel-recycle'), 'cancel during actual teardown');
+    pauseReset = true;
     const cancelWork = await inspectSlotWorkspace('proof-slot');
     const bulk = await call<{ requestId: string }>('fleet.refreshSlots', {
       requestId: 'cold-cancel-proof',
@@ -583,20 +600,12 @@ fi
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     };
-    await waitFor(async () => {
-      try {
-        await readFile(path.join(root, 'recycle-entered'));
-        return true;
-      } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
-        throw error;
-      }
-    });
+    await resetEntered;
     const cancellation = await call<{ cancelled: boolean }>('fleet.refreshSlots.cancel', {
       requestId: bulk.requestId,
     });
     assert.equal(cancellation.cancelled, true);
-    await writeFile(path.join(root, 'release-recycle'), 'finish the owned teardown');
+    resumeReset();
     await waitFor(() => bulkSummaries.has(bulk.requestId));
     const cancelledSummary = bulkSummaries.get(bulk.requestId);
     assert.ok(cancelledSummary && 'cancelled' in cancelledSummary);
@@ -606,7 +615,7 @@ fi
     assert.equal(
       cancelledHeld?.warm,
       false,
-      'Completed teardown is cold when cancellation arrives during recycle',
+      'Completed teardown is cold when cancellation arrives during reset',
     );
     const cancelledWork = await inspectSlotWorkspace('proof-slot');
     const cancelledRetry = await call<SlotRefreshResult>('slot.refresh', {

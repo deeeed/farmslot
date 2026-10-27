@@ -847,3 +847,38 @@ test('runtime template values reach nested project commands and preserve reserve
     'node "/relocated node/resolve.mjs" literal {{repo}}',
   );
 });
+
+test('remote hooks use slot pool workspace, while local hooks keep their repo root', () => {
+  const remote = runnerArgsSlotVars({
+    host: 'remote.invalid',
+    machineEnv: { FARMSLOT_WORKSPACE: '/deploy/dev' },
+  });
+  const local = runnerArgsSlotVars({
+    host: 'localhost',
+    machineEnv: { FARMSLOT_WORKSPACE: '/wrong/local' },
+  });
+  const original = process.env.FARMSLOT_WORKSPACE;
+  process.env.FARMSLOT_WORKSPACE = '/wrong/gateway';
+  try {
+    assert.equal(
+      expandTemplate('{{farmslot_dir}}/projects/demo/reopen.sh', remote),
+      '/deploy/dev/projects/demo/reopen.sh',
+    );
+    assert.equal(
+      expandTemplate('{{FARMSLOT_DIR}}', { ...remote, machineEnv: {} }),
+      '~/farmslot-node',
+    );
+    assert.equal(
+      expandTemplate('{{farmslot_dir}}', local),
+      expandTemplate('{{farmslot_dir}}', { ...local, machineEnv: {} }),
+    );
+    assert.notEqual(expandTemplate('{{farmslot_dir}}', local), '/wrong/local');
+    assert.equal(
+      expandTemplate('{{farmslot_dir}}', remote, undefined, { farmslot_dir: '/captured/source' }),
+      '/captured/source',
+    );
+  } finally {
+    if (original === undefined) delete process.env.FARMSLOT_WORKSPACE;
+    else process.env.FARMSLOT_WORKSPACE = original;
+  }
+});

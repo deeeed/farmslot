@@ -1066,7 +1066,7 @@ A code review already certifies the exact package head before publication. Showi
 
 ## Amendment 19 (2026-10-24): Publish captures from same-run attempts at one head
 
-**Status:** Proposed under the lead's approved multi-attempt evidence scope.
+**Status:** Accepted (2026-10-27).
 **Specification:** [Consumers and publication](../reference/recorded-run-evidence.md#consumers-and-publication).
 
 ### Decision
@@ -1075,8 +1075,9 @@ One publication package may include after and standalone captures from several
 recipe attempts captured by the same run at its clean publication head. Each
 attempt keeps its original path, execution identity and complete immutable
 closure. Admission and frozen readers check the run's captured inventory,
-product provenance and every consumed byte. Before captures retain their existing
-exception for the run's unchanged dispatch baseline.
+product provenance and every consumed byte. Before captures use the frozen full-review
+base when available, otherwise the run's dispatch baseline. A warm review delta is
+not a full-review base; replaying dispatch must not invalidate the recorded comparison.
 
 The successful-attempt pointer still selects claim verdicts. Additional captures
 do not combine ledgers, borrow passing sibling verdicts or qualify visual claims
