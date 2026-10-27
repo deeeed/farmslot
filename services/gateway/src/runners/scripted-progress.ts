@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { isRecord } from '@farmslot/protocol';
+import { isRecord, primaryRoleForFlow } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
 import { slotFileExists, slotReadFile, slotStat } from '../core/slot-io.js';
@@ -35,7 +35,7 @@ export async function readScriptedCommandProgress(
   const observed = normalizeWorkerSignal(monitor?.outputs?.workerSignal);
   if (
     !context ||
-    context.role !== 'primary' ||
+    (context.role !== 'primary' && context.role !== primaryRoleForFlow(run.flowType)) ||
     context.runId !== run.id ||
     context.slotId !== vars.slotId ||
     run.slotId !== vars.slotId ||
