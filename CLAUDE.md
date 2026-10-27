@@ -48,7 +48,7 @@ Details: `projects/<project>/fixtures/runtime/recipe-quality.md`.
 
 **Every UI change must be validated in the browser via CDP, not just TypeScript compilation.** Use the committed helpers — do NOT write throwaway `cdp-*.mjs` scripts:
 
-1. Start dev server: `cd apps/command-center && yarn farmdev > /tmp/farmslot-dev.log 2>&1 &` (gateway auto-restarts on code changes via `tsx watch`; see **Dev Stack — Local CLI** below)
+1. Start dev server: `cd apps/command-center && yarn farmdev > /tmp/farmslot-dev.log 2>&1 &` (the shared gateway runs without source watching; see **Dev Stack — Local CLI** below)
 2. Launch Chrome with CDP: `bash apps/command-center/scripts/debug-chrome.sh` (idempotent — reuses session if listening). **Default CDP port is `9323`** (not 9222 — that's reserved for the example-browser flow; 4355 is reserved for another flow). Override via `FARMSLOT_CDP_PORT`.
 3. Evaluate in-page via `node apps/command-center/scripts/cdp.mjs eval <route-hash> "<expr>"` or `--file probes/...js` for longer scripts.
 4. Query gateway directly via `node apps/command-center/scripts/cdp.mjs gateway <method> '<params-json>'` to distinguish UI-render bugs from empty-data cases.
@@ -159,13 +159,13 @@ cd apps/command-center && yarn farmslot <subcommand>
 node apps/command-center/scripts/cdp.mjs gateway <method> '<params-json>'
 ```
 
-`yarn farmdev` runs `scripts/dev.sh`, which loads `.env.ports`, selected-home `providers.env` and a separate node credential, then `yarn dev` (gateway `tsx watch` + Vite UI). **Gateway source edits auto-restart** — do not manually kill/restart the gateway when `farmdev` is already running. Pool JSON edits under `pool/` are hot-reloaded (chokidar → fleet refresh) without a restart.
+`yarn farmdev` runs `scripts/dev.sh`, which loads `.env.ports`, selected-home `providers.env` and a separate node credential, then `yarn dev` (gateway without watch + Vite UI). Source edits leave the shared gateway running. Use the supported gateway deployment path to apply updates. Pool JSON edits under `pool/` are hot-reloaded (chokidar → fleet refresh) without a restart.
 
 ### Worktree slots — dispatch vs validation gateway — HARD RULE
 
 For `macwork-ff-*` slots: **dispatch from operator main** (`~/dev/farmslot`, default gateway **7777** / UI **5174**). Never `yarn farmslot --url ws://localhost:8809 run create` for normal runs — `8808+` is the per-worktree **validation stack** (recipe/CDP UI) started by prepare `sandbox`, not the control plane. Git/tmux still execute in `farmslot-wt/farmslot-{n}`. See [docs/operations/worktree-operator-model.md](docs/operations/worktree-operator-model.md).
 
-Worktree sandbox slots start their own stack via `sandbox-dev.sh` (also `tsx watch`). Only the main operator / `farmdev` tree should own the canonical gateway for CDP and `cdp.mjs gateway` probes unless a slot explicitly isolated ports.
+Worktree sandbox slots start their own stack via `sandbox-dev.sh` with the same stable gateway launch. Only the main operator / `farmdev` tree should own the canonical gateway for CDP and `cdp.mjs gateway` probes unless a slot explicitly isolated ports.
 
 ### Command Center Typecheck — HARD RULE
 

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Keep the shared gateway running across source edits; apply gateway updates through deployment.
+
 - Prove fleet release and update through a real browser action followed by unrestricted scored dispatch.
 
 - Prove shared-link deployment binding and exact run, retained file and collection receipt through the existing browser tools.
