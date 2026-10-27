@@ -20,7 +20,6 @@ import {
   evidenceAttestationAvailable,
   improvementApplyOutcome,
   type ImprovementApplyResult,
-  isPublishApprovalAction,
   isValidEvidenceAttestationReason,
   liveGateParkView,
   Methods,
@@ -40,8 +39,6 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
-  applyCriterionDraftSkips,
-  criterionDraftReason,
   gateReviewLineageOptions,
   resultDecisionView,
   ReviewDispatchViewModel,
@@ -61,7 +58,7 @@ import {
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedRefresh } from '../../hooks/useConnectedRefresh';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
-import { useCriterionDrafts } from '../../hooks/useCriterionDrafts';
+import { useGateCriterionDrafts } from '../../hooks/useGateCriterionDrafts';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import { useReread } from '../../hooks/useReread';
 import { useRunAcceptance } from '../../hooks/useRunAcceptance';
@@ -226,7 +223,6 @@ export default function DecisionDetailScreen({
   const router = useRouter();
   const isFocused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
-  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const connection = useConnectedTransport();
@@ -237,10 +233,6 @@ export default function DecisionDetailScreen({
   const removeDecision = useDecisionStore((s) => s.removeDecision);
   const [decision, setDecision] = useState<DecisionDetail | null>(storeDecision ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [evidenceReason, setEvidenceReason] = useState<{ scope: string; text: string } | null>(
-    null,
-  );
-
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [documentViewer, setDocumentViewer] = useState<DecisionDocumentContent | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
@@ -378,18 +370,12 @@ export default function DecisionDetailScreen({
   const runPosture = runPostureStatus.state?.posture;
   // The gate review's publish guard applies here too: this tab sends the same actions.
   const humanGate = useHumanGateGuard(client, sourceRun, decision);
-  const codeReviewScope = JSON.stringify([
-    sourceRunId,
-    decision?.id,
-    client?.authenticatedPrincipal?.id,
-    gatewayUrl,
-  ]);
-  const criterionDrafts = useCriterionDrafts(
-    codeReviewScope,
-    decision?.payload?.kind === 'ready' ? (decision.payload.prPackage?.packageHash ?? '') : '',
-  );
-  const reasonInput = evidenceReason?.scope === codeReviewScope ? evidenceReason.text : '';
-  const attestationReason = criterionDraftReason(criterionDrafts.entries, reasonInput);
+  const draftState = useGateCriterionDrafts({
+    runId: sourceRunId,
+    decision,
+    evidenceModel: humanGate?.acceptance.evidenceModel,
+    client,
+  });
   const [acceptingGateId, setAcceptingGateId] = useState<string | null>(null);
   const supersedingResultId = supersedingResultDecisionId(decision, sourceRun);
   useEffect(() => {
@@ -715,7 +701,7 @@ export default function DecisionDetailScreen({
       if (!client || !decision) return;
       const gateReasons = gateActionReasons(
         actionId,
-        attestationReason,
+        draftState.attestationReason,
         evidenceAttestationAvailable(
           decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
           actionId,
@@ -723,7 +709,7 @@ export default function DecisionDetailScreen({
       );
       if (
         (gateReasons.evidenceAttestationReason !== undefined || gateReasons.reason !== undefined) &&
-        !isValidEvidenceAttestationReason(attestationReason)
+        !isValidEvidenceAttestationReason(draftState.attestationReason)
       ) {
         Alert.alert(
           'Written reason required',
@@ -800,77 +786,20 @@ export default function DecisionDetailScreen({
               Alert.alert('Publish approval is disabled', withheldNow);
               return;
             }
-            const submit = async () => {
-              if (
-                !isPublishApprovalAction(actionId) ||
-                !criterionDrafts.entries.length ||
-                !sourceRun ||
-                decision.payload?.kind !== 'ready'
-              )
-                return client.request(method, params);
-              const drafts = [...criterionDrafts.entries];
-              const appliedClaims = new Set<string>();
-              const owner = client.authenticatedPrincipal?.id;
-              const next = await applyCriterionDraftSkips({
+            const scope = draftState.model.scopeVersion;
+            void draftState
+              .submit({
                 run: sourceRun,
                 decision,
-                drafts,
-                execution: (id) =>
-                  humanGate?.acceptance.evidenceModel?.claimOverrideCandidate(id)?.recipeRunId,
-                request: (method, params) =>
-                  client.request<import('@farmslot/protocol').RunOverrideClaimResult>(
-                    method,
-                    params,
-                    null,
-                  ),
-                assertCurrent: () => {
-                  if (
-                    useConnectionStore.getState().authorityEpoch !== authorityEpoch ||
-                    useConnectionStore.getState().client !== client ||
-                    client.authenticatedPrincipal?.id !== owner
-                  )
-                    throw new Error('The signed-in authority changed.');
-                },
-                applied: (run, gate, claimId) => {
-                  appliedClaims.add(claimId);
-                  criterionDrafts.rebind(
-                    gate.payload?.kind === 'ready'
-                      ? (gate.payload.prPackage?.packageHash ?? '')
-                      : '',
-                    claimId,
-                    drafts.filter((entry) => !appliedClaims.has(entry.claimId)),
-                  );
-                  setSourceRun(run);
-                },
-              });
-              const nextAction = next.actions.some(({ id }) => id === actionId)
-                ? actionId
-                : actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
-                    next.actions.some(({ id }) => id === 'approve-publish')
-                  ? 'approve-publish'
-                  : actionId;
-              const reasons = gateActionReasons(
-                nextAction,
-                attestationReason,
-                evidenceAttestationAvailable(
-                  next.payload?.kind === 'ready' ? next.payload.gateReadiness : undefined,
-                  nextAction,
-                ),
-              );
-              const request = decisionResolveRequest(
-                { ...decisionWithRunContext!, ...next },
-                nextAction,
-                resourcePosture,
+                actionId,
+                reason: draftState.reasonInput,
                 selectionData,
-                reasons.evidenceAttestationReason,
-                reasons.reason,
-              );
-              const result = await client.request(request.method, request.params, null);
-              criterionDrafts.clear();
-              return result;
-            };
-            void submit()
+                resourcePosture,
+                applied: setSourceRun,
+                fallback: () => client.request(method, params),
+              })
               .then((result) => {
+                if (scope !== draftState.model.scopeVersion) return;
                 if (method === Methods.IMPROVEMENT_APPLY) {
                   const outcome = improvementApplyOutcome(result as ImprovementApplyResult);
                   if (!outcome.passed) {
@@ -919,16 +848,14 @@ export default function DecisionDetailScreen({
                   if (alert) Alert.alert(alert.title, alert.message);
                 });
               })
-              .catch((err: Error) => Alert.alert('Failed to resolve', err.message));
+              .catch(draftState.reportError(scope, 'Failed to resolve'));
           },
         },
       ]);
     },
     [
       applyPostureGate,
-      attestationReason,
-      authorityEpoch,
-      criterionDrafts,
+      draftState,
       client,
       decision,
       decisionWithRunContext,
@@ -940,6 +867,7 @@ export default function DecisionDetailScreen({
       reviewPublication,
       router,
       runPostureStatus.state,
+      sourceRun,
       sourceRunId,
       slotPicker,
     ],
@@ -1985,20 +1913,6 @@ export default function DecisionDetailScreen({
                       resolveAction('request-review', { reviewRequest })
                     }
                     onReviewEvidence={focusGateClaim}
-                    onSkip={(claimId, reason) =>
-                      gateBlockerAction((gate, runId) => {
-                        const model = humanGate.acceptance.evidenceModel;
-                        if (!client || !model) throw new Error('The gate evidence is unavailable.');
-                        return requestClaimUntestableOverride(
-                          client,
-                          runId,
-                          gate,
-                          model,
-                          claimId,
-                          reason,
-                        );
-                      })
-                    }
                     acceptingFindings={acceptingGateId === decision.id}
                     onAcceptFindingsChange={(accepting) =>
                       setAcceptingGateId(accepting ? decision.id : null)
@@ -2023,7 +1937,7 @@ export default function DecisionDetailScreen({
                     )}
                     disabled={!client}
                     reviewDisabled={reviewBudget?.remaining === 0}
-                    sendingActionId={null}
+                    sendingActionId={draftState.model.submissionActionId}
                     reviewPicker={reviewPicker}
                     claims={humanGate.acceptance.evidenceModel?.claims}
                     judgmentRows={humanGate.acceptance.evidenceModel?.judgmentRows(
@@ -2054,28 +1968,10 @@ export default function DecisionDetailScreen({
                         : undefined
                     }
                     onFocusClaim={focusGateClaim}
-                    drafts={{
-                      model: criterionDrafts,
-                      canSkip: () => true,
-                      choose: (id, choice, note) => {
-                        const claim = humanGate.acceptance.evidenceModel?.claims.find(
-                          (claim) => claim.id === id,
-                        );
-                        if (claim)
-                          criterionDrafts.choose(
-                            claim,
-                            choice,
-                            note,
-                            humanGate.acceptance.evidenceModel?.claimOverrideCandidate(id)
-                              ?.recipeRunId,
-                          );
-                      },
-                    }}
-                    criterionDrafts={criterionDrafts.entries}
-                    attestationReason={reasonInput}
-                    onAttestationReason={(text) =>
-                      setEvidenceReason({ scope: codeReviewScope, text })
-                    }
+                    drafts={draftState.actions}
+                    criterionDrafts={decision.resolvedAt ? [] : draftState.model.entries}
+                    attestationReason={draftState.reasonInput}
+                    onAttestationReason={draftState.setReason}
                     onResolve={(action, selection) => resolveAction(action.id, selection)}
                     acceptingFindings={acceptingGateId === decision.id}
                     onAcceptFindings={() => setAcceptingGateId(decision.id)}
@@ -2092,7 +1988,7 @@ export default function DecisionDetailScreen({
                   const disabled =
                     withheldActions.has(action.id) ||
                     (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
-                      (!isValidEvidenceAttestationReason(attestationReason) ||
+                      (!isValidEvidenceAttestationReason(draftState.attestationReason) ||
                         !decisionWithRunContext?.runMeta)) ||
                     (decision.type === 'engine_review_posting' &&
                       action.id === 'post' &&

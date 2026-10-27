@@ -100,6 +100,7 @@ export function AcceptanceClaimList({
   const appearance = useColorScheme();
   const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
   const [busy, setBusy] = useState(false);
+  const submitting = Boolean(drafts?.model.submissionActionId);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const button = {
     minHeight: 44,
@@ -184,7 +185,7 @@ export function AcceptanceClaimList({
                   style={button}
                   accessibilityRole="button"
                   testID={`criterion-undo-${claim.id}`}
-                  disabled={disabled || busy}
+                  disabled={disabled || busy || submitting}
                   onPress={() => drafts.model.undo(claim.id)}
                 >
                   <Text style={{ color: palette.text }}>Undo</Text>
@@ -195,7 +196,7 @@ export function AcceptanceClaimList({
                     style={button}
                     accessibilityRole="button"
                     testID={`criterion-confirm-${claim.id}`}
-                    disabled={disabled || busy || !drafts.model.ready}
+                    disabled={disabled || busy || submitting || !drafts.model.ready}
                     onPress={() => drafts.choose(claim.id, 'confirm')}
                   >
                     <Text style={{ color: palette.text }}>Confirm</Text>
@@ -204,7 +205,13 @@ export function AcceptanceClaimList({
                     style={button}
                     accessibilityRole="button"
                     testID={`criterion-skip-${claim.id}`}
-                    disabled={disabled || busy || !drafts.model.ready || !drafts.canSkip(claim.id)}
+                    disabled={
+                      disabled ||
+                      busy ||
+                      submitting ||
+                      !drafts.model.ready ||
+                      !drafts.canSkip(claim.id)
+                    }
                     onPress={() => drafts.choose(claim.id, 'skip')}
                   >
                     <Text style={{ color: palette.text }}>Skip</Text>
@@ -219,7 +226,7 @@ export function AcceptanceClaimList({
                   testID={`criterion-note-${claim.id}`}
                   accessibilityLabel={claim.draft.choice === 'skip' ? 'Skip reason' : 'Note'}
                   value={claim.draft.note}
-                  editable={!disabled && !busy}
+                  editable={!disabled && !busy && !submitting}
                   onChangeText={(note) => drafts.choose(claim.id, claim.draft!.choice, note)}
                   style={{ ...button, color: palette.text, flex: 1 }}
                   returnKeyType="done"
@@ -240,7 +247,7 @@ export function AcceptanceClaimList({
             <VisualClaimJudgment
               row={claim.judgment}
               onRecord={onRecord}
-              disabled={disabled || busy}
+              disabled={disabled || busy || submitting}
               onBusyChange={(value) => {
                 setBusy(value);
                 onBusyChange?.(value);

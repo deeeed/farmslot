@@ -271,7 +271,7 @@ export function gateReviewActions(
     if (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)
       return {
         ...action,
-        disabledReason: reviewBlock ?? (guard.reviewReasons.join(' · ') || null),
+        disabledReason: reviewBlock ?? null,
       };
     if (!isPublishApprovalAction(action.id)) return { ...action, disabledReason: null };
     // Accepting findings is offered under the shared rule while they block (ADR-065 Amendment 8).

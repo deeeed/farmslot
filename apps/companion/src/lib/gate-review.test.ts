@@ -59,6 +59,14 @@ test('native gate permits attestation only for checked policy failures with all 
     )[0].disabledReason,
     null,
   );
+  assert.equal(
+    gateReviewActions(
+      [action],
+      { ...guard, reviewReasons: ['Optional prior review is stale'] },
+      readiness,
+    )[0].disabledReason,
+    null,
+  );
   assert.match(gateReviewActions([action], guard)[0].disabledReason!, /unavailable/);
   assert.match(
     gateReviewActions([action], guard, {
@@ -68,8 +76,12 @@ test('native gate permits attestation only for checked policy failures with all 
     /unavailable/,
   );
   assert.match(
-    gateReviewActions([action], { ...guard, reviewReasons: ['Review required'] }, readiness)[0]
-      .disabledReason!,
+    gateReviewActions(
+      [action],
+      { ...guard, reviewReasons: ['Review required'] },
+      readiness,
+      'Review required',
+    )[0].disabledReason!,
     /Review required/,
   );
 });

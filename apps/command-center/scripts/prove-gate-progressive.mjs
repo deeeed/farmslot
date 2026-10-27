@@ -25,6 +25,7 @@ const costProof = process.argv.includes('--fleet-cost');
 const baseline = process.argv.includes('--baseline');
 const codeProof = process.argv.includes('--code-review');
 const expectMissing = process.argv.includes('--expect-missing-confirmation');
+let codeFixture;
 let holdCodeEvidence = codeProof,
   holdCodeApproval = codeProof;
 const heldCodeEvidence = [];
@@ -170,7 +171,7 @@ try {
     baseSha = (await git('rev-parse', 'HEAD')).stdout.trim();
     if (!fleetProof) {
       await git('checkout', '-qb', 'proof');
-      for (let i = 0; i < 51; i++)
+      for (let i = 0; i < (codeProof ? 5 : 51); i++)
         await writeFile(
           path.join(fixtureRepo, `source-${String(i).padStart(2, '0')}.ts`),
           `export const observed${i} = ${i};\n`,
@@ -344,7 +345,15 @@ try {
   });
   if (codeProof) {
     const { prepareCodeReviewGate } = await import('./gate-code-review-proof.mjs');
-    await prepareCodeReviewGate({ sourceModule, source, store, run, root, mock });
+    codeFixture = await prepareCodeReviewGate({
+      sourceModule,
+      source,
+      store,
+      run,
+      root,
+      mock,
+      headSha,
+    });
     release = true;
   }
   if (costProof) {
@@ -580,6 +589,7 @@ try {
       events,
       store,
       expectMissing,
+      fixture: codeFixture,
       releaseEvidence: () => {
         holdCodeEvidence = false;
         for (const send of heldCodeEvidence.splice(0)) send();

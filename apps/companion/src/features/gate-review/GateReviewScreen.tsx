@@ -98,7 +98,6 @@ export function GateReviewScreen({
           evidenceModel={acceptance.evidenceModel}
           reviewer={acceptance.reviewer}
           busy={judging || viewModel.sendingActionId !== null}
-          onSkip={actions.markUntestable}
           acceptingFindings={acceptingDecisionId === viewModel.decision.id}
           onAcceptFindingsChange={(accepting) =>
             setAcceptingDecisionId(accepting ? viewModel.decision.id : null)
@@ -156,7 +155,9 @@ export function GateReviewScreen({
                   onRecordVisualReview={recordVisualReview}
                   initiallyExpanded
                   attestationReason={viewModel.attestationReason}
-                  criterionDrafts={viewModel.draftActions.model.entries}
+                  criterionDrafts={
+                    viewModel.decision.resolvedAt ? [] : viewModel.draftActions.model.entries
+                  }
                   drafts={
                     viewModel.decision.actions.some(
                       ({ id }) =>
@@ -264,7 +265,9 @@ export function GateReviewScreen({
           attestationReason={viewModel.attestationReason}
           onAttestationReason={actions.setAttestationReason}
           drafts={viewModel.draftActions}
-          criterionDrafts={viewModel.draftActions.model.entries}
+          criterionDrafts={
+            viewModel.decision.resolvedAt ? [] : viewModel.draftActions.model.entries
+          }
           acceptingFindings={acceptingDecisionId === viewModel.decision.id}
           onAcceptFindings={() => setAcceptingDecisionId(viewModel.decision.id)}
         />

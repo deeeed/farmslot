@@ -165,3 +165,93 @@ test('an owning override response preserves remaining consent when its update ev
   await load(reloaded, 'person/run/gate', 'package-b');
   assert.deepEqual(reloaded.entries, consent);
 });
+
+function approvalGate(): import('@farmslot/protocol').RunDecision {
+  return {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Review',
+    description: 'Prepared package',
+    createdAt: '2026-10-27T00:00:00Z',
+    actions: [{ id: 'approve-publish-evidence-attested', label: 'Attest', style: 'danger' }],
+  };
+}
+
+test('one approval owns the pending draft and a second press sends no command', async () => {
+  const model = new CriterionDraftModel({ getItem: () => null, setItem: () => undefined });
+  await load(model);
+  model.choose(claim, 'confirm');
+  await model.settled();
+  let complete: (value: string) => void = () => {
+    throw new Error('Send was not started');
+  };
+  let sends = 0;
+  const input: import('../src/criterion-drafts.js').CriterionDraftApproval<string> = {
+    run: { id: 'run' },
+    decision: approvalGate(),
+    actionId: 'approve-publish-evidence-attested',
+    reason: '',
+    requestSkip: async () => {
+      throw new Error('No skip was chosen');
+    },
+    applied: () => {
+      throw new Error('No skip was chosen');
+    },
+    assertCurrent: () => undefined,
+    send: async (_decision, _action, reason) => {
+      sends++;
+      assert.match(reason, /AC-2: Confirmed in code review/);
+      return new Promise<string>((resolve) => {
+        complete = resolve;
+      });
+    },
+  };
+  const pending = model.approve(input);
+  await setImmediate();
+  assert.equal(model.submissionActionId, 'approve-publish-evidence-attested');
+  model.undo('AC-2');
+  assert.equal(model.entries.length, 1);
+  await assert.rejects(model.approve(input), /already being submitted/);
+  assert.equal(sends, 1);
+  complete('accepted');
+  assert.equal(await pending, 'accepted');
+  assert.deepEqual(model.entries, []);
+  assert.equal(model.submissionActionId, null);
+});
+
+test('a reply for a detached gate cannot clear the new gate draft', async () => {
+  const model = new CriterionDraftModel({ getItem: () => null, setItem: () => undefined });
+  await load(model);
+  model.choose(claim, 'confirm');
+  await model.settled();
+  let complete: (value: string) => void = () => {
+    throw new Error('Send was not started');
+  };
+  const pending = model.approve({
+    run: { id: 'run' },
+    decision: approvalGate(),
+    actionId: 'approve-publish-evidence-attested',
+    reason: '',
+    requestSkip: async () => {
+      throw new Error('No skip');
+    },
+    applied: () => {
+      throw new Error('No skip');
+    },
+    assertCurrent: () => undefined,
+    send: async () =>
+      new Promise<string>((resolve) => {
+        complete = resolve;
+      }),
+  });
+  const refused = assert.rejects(pending, /gate or signed-in authority changed/);
+  await setImmediate();
+  model.deactivate();
+  await load(model, 'other-person/run/gate');
+  model.choose(claim, 'skip', 'A different gate', 'execution');
+  await model.settled();
+  complete('old reply');
+  await refused;
+  assert.equal(model.entries[0].choice, 'skip');
+  assert.equal(model.entries[0].note, 'A different gate');
+});

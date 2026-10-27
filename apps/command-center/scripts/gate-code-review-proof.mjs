@@ -4,7 +4,15 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export async function prepareCodeReviewGate({ sourceModule, source, store, run, root, mock }) {
+export async function prepareCodeReviewGate({
+  sourceModule,
+  source,
+  store,
+  run,
+  root,
+  mock,
+  headSha,
+}) {
   const protocol = await sourceModule('packages/protocol/src/index.ts');
   const { readRecordedEvidencePackage } = await sourceModule('packages/adapter-sdk/src/index.ts');
   const { makeReadyGatePackage, retainRunFixture } = await sourceModule(
@@ -144,8 +152,10 @@ export async function prepareCodeReviewGate({ sourceModule, source, store, run, 
   assert.equal(validation.status, 'valid', JSON.stringify(validation.findings));
   const prepared = makeReadyGatePackage({
     reviewSnapshot: undefined,
-    headSha: 'a'.repeat(40),
-    diffStat: { files: 5, additions: 10, deletions: 0 },
+    headSha,
+    branch: 'proof',
+    remoteBranchRef: 'proof',
+    diffStat: { files: 5, additions: 5, deletions: 0 },
     evidenceManifest: [],
     reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
   });
@@ -292,6 +302,7 @@ export async function prepareCodeReviewGate({ sourceModule, source, store, run, 
         }),
     },
   });
+  let suppressedResumes = 0;
   const methods = await sourceModule('services/gateway/src/methods/run.ts');
   mock.module(path.join(source, 'services/gateway/src/methods/run.ts'), {
     namedExports: {
@@ -300,10 +311,13 @@ export async function prepareCodeReviewGate({ sourceModule, source, store, run, 
         methods.runResolveDecision(params, emit, {
           ...dependencies,
           assertGatePrerequisites: async () => readiness(store.getRun(run.id)),
+          resumeRun: async () => {
+            suppressedResumes++;
+          },
         }),
     },
   });
-  return { texts, runId: run.id };
+  return { texts, runId: run.id, suppressedResumes: () => suppressedResumes };
 }
 
 export async function proveCodeReviewGate({
@@ -317,6 +331,7 @@ export async function proveCodeReviewGate({
   releaseEvidence,
   releaseReplies,
   expectMissing,
+  fixture,
 }) {
   let route = `runs?run=${run.id}`;
   await cdp('goto', `${origin}/#${route}&tab=evidence`);
@@ -405,7 +420,7 @@ export async function proveCodeReviewGate({
   await cdp('click', route, selector('gate-approve'));
   await cdp('click', route, selector('gate-approve'));
   const savedUntil = Date.now() + 30000;
-  while (!store.getRun(run.id).decisions[0].resolvedAt) {
+  while (!store.getRun(run.id).decisions[0].resolvedAt || fixture.suppressedResumes() !== 1) {
     const refusal = events.find(
       (event) => event.responseTo === 'run.resolveDecision' && event.ok === false,
     );
@@ -414,6 +429,13 @@ export async function proveCodeReviewGate({
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   const saved = store.getRun(run.id);
+  assert.notEqual(saved.status, 'failed', 'The isolated receipt proof must not start a workflow');
+  assert.equal(saved.agentContexts?.length ?? 0, 0, 'No worker may be launched');
+  assert.equal(
+    fixture.suppressedResumes(),
+    1,
+    'The supported no-dispatch boundary must own resume',
+  );
   assert.equal(saved.claimOverrideReceipts.length, 1);
   assert.equal(saved.claimOverrideReceipts[0].claimId, 'AC-3');
   assert(saved.decisions[0].evidenceAttestation.reason.includes('AC-2: Confirmed in code review.'));
@@ -421,6 +443,8 @@ export async function proveCodeReviewGate({
   assert.equal(saved.visualJudgmentReceipts?.length ?? 0, 0);
   await save('durable-readback.json', {
     runId: saved.id,
+    engineResumeSuppressed: fixture.suppressedResumes(),
+    workerContexts: saved.agentContexts?.length ?? 0,
     overrideReceipts: saved.claimOverrideReceipts,
     attestation: saved.decisions[0].evidenceAttestation,
     decision: {

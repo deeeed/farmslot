@@ -16,7 +16,6 @@ import {
   withArtifactBundleDigest,
 } from '@farmslot/protocol';
 import {
-  applyCriterionDraftSkips,
   buildArtifactUrlResolver,
   criterionDraftReason,
   ReviewDispatchViewModel,
@@ -733,7 +732,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     ]);
     if (key === this._decisionActionStateKey) return;
     this._decisionActionStateKey = key;
-    if (!this._draftApprovalInFlight) this._acting = false;
+    if (this._draftApprovalOwner !== this._decisionOwnerKey) this._acting = false;
     this._pendingConfirm = null;
     this._evidenceAttestationReason = '';
     this._actionMessage = '';
@@ -860,7 +859,16 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   protected _criterionExecution(_claimId: string): string | undefined {
     return undefined;
   }
-  private _draftApprovalInFlight = false;
+  private get _decisionOwnerKey(): string {
+    return JSON.stringify([
+      this.runId,
+      this.decision?.id,
+      gateway.gatewayUrl,
+      gateway.authenticatedPrincipalId,
+      gateway.credentialGeneration,
+    ]);
+  }
+  private _draftApprovalOwner: string | null = null;
 
   async _resolve(actionId: string, extraSelectionData: Record<string, unknown> = {}) {
     if (
@@ -888,7 +896,8 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     // This view is reused across runs: a reply for a gate it no longer shows is not its to report.
     const runId = this.runId;
     const decisionId = this.decision?.id;
-    const stillShown = () => this.runId === runId && this.decision?.id === decisionId;
+    const stillShown = () =>
+      this.isConnected !== false && this.runId === runId && this.decision?.id === decisionId;
     // The gateway checks the gate against its slot before it answers, which can be slow.
     const slow = setTimeout(() => {
       if (stillShown() && this._acting)
@@ -897,89 +906,69 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     }, DECISION_RESOLVE_SLOW_MS);
     let failure: unknown;
     const drafts = [...this._criterionDrafts.entries];
-    const appliedClaims = new Set<string>();
-    this._draftApprovalInFlight = approving && drafts.length > 0;
+    const submissionOwner = this._decisionOwnerKey;
+    if (approving && drafts.length) this._draftApprovalOwner = submissionOwner;
     const reason = criterionDraftReason(drafts, this._evidenceAttestationReason);
-    const authority = JSON.stringify([
-      gateway.gatewayUrl,
-      gateway.authenticatedPrincipalId,
-      gateway.credentialGeneration,
-    ]);
     try {
-      let decision = this.decision;
-      if (approving && drafts.length && this.run) {
-        decision = await applyCriterionDraftSkips({
+      const send = async (
+        decision: import('@farmslot/protocol').RunDecision,
+        selectedAction: string,
+        reason: string,
+      ) => {
+        actionId = selectedAction;
+        return gateway.request(
+          Methods.RUN_RESOLVE_DECISION,
+          buildRunResolveDecisionParams({
+            runId: this.runId,
+            decision,
+            actionId: selectedAction,
+            ...publicationApprovalReasonFields(
+              selectedAction,
+              reason,
+              evidenceAttestationAvailable(
+                decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
+                selectedAction,
+              ),
+            ),
+            ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
+            publicationTarget: this._publicationTarget,
+            selectedEvidenceKeys: payload ? this._selectedEvidenceKeysForSubmit(payload) : [],
+            selectionData: extraSelectionData,
+          }),
+          DECISION_RESOLVE_TIMEOUT_MS,
+        );
+      };
+      if (approving && drafts.length) {
+        if (!this.run) throw new Error('Load the current run before approving its drafts.');
+        await this._criterionDrafts.approve({
           run: this.run,
-          decision,
-          drafts,
-          execution: (claimId) => this._criterionExecution(claimId),
-          request: (method, params) =>
+          decision: this.decision,
+          actionId,
+          reason: this._evidenceAttestationReason,
+          execution: (id) => this._criterionExecution(id),
+          requestSkip: (method, params) =>
             gateway.request<import('@farmslot/protocol').RunOverrideClaimResult>(method, params, {
               timeout: null,
             }),
           assertCurrent: () => {
-            if (
-              !stillShown() ||
-              authority !==
-                JSON.stringify([
-                  gateway.gatewayUrl,
-                  gateway.authenticatedPrincipalId,
-                  gateway.credentialGeneration,
-                ])
-            )
+            if (!stillShown() || submissionOwner !== this._decisionOwnerKey)
               throw new Error('The gate or signed-in authority changed.');
           },
-          applied: (run, next, claimId) => {
-            appliedClaims.add(claimId);
+          applied: (run, next) => {
             this.run = run;
             this.decision = next;
-            this._criterionDrafts.rebind(
-              next.payload?.kind === 'ready' ? (next.payload.prPackage?.packageHash ?? '') : '',
-              claimId,
-              drafts.filter((entry) => !appliedClaims.has(entry.claimId)),
-            );
           },
+          send,
         });
-        if (!decision.actions.some(({ id }) => id === actionId)) {
-          if (
-            actionId === 'approve-publish-evidence-attested' &&
-            decision.actions.some(({ id }) => id === 'approve-publish')
-          )
-            actionId = 'approve-publish';
-          else
-            throw new Error(
-              'The gate actions changed after saving skips. Review the gate before approving.',
-            );
-        }
-      }
-      await gateway.request(
-        Methods.RUN_RESOLVE_DECISION,
-        buildRunResolveDecisionParams({
-          runId: this.runId,
-          decision,
-          actionId,
-          ...publicationApprovalReasonFields(
-            actionId,
-            reason,
-            evidenceAttestationAvailable(
-              decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
-              actionId,
-            ),
-          ),
-          ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
-          publicationTarget: this._publicationTarget,
-          selectedEvidenceKeys: payload ? this._selectedEvidenceKeysForSubmit(payload) : [],
-          selectionData: extraSelectionData,
-        }),
-        DECISION_RESOLVE_TIMEOUT_MS,
-      );
+      } else await send(this.decision, actionId, reason);
     } catch (err) {
       console.error('[ready-workspace] resolve failed:', err);
       failure = err;
     } finally {
       clearTimeout(slow);
     }
-    this._draftApprovalInFlight = false;
+    if (this._draftApprovalOwner === submissionOwner) this._draftApprovalOwner = null;
+    if (!stillShown() || submissionOwner !== this._decisionOwnerKey) return;
     // A failed request can still have been applied (a lost reply, or a second click whose
     // first submission won): report what the gateway did, not how the request ended.
     const outcome: DecisionOutcome =

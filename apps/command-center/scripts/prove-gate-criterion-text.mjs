@@ -89,19 +89,29 @@ try {
   await ui.listen();
   const origin = `http://127.0.0.1:${ui.httpServer.address().port}`;
   env.FARMSLOT_UI_URL = origin;
-  route = `runs?run=${runId}`;
-  const expectedUrl = `${origin}/#${route}&tab=evidence`;
+  const fragment = `runs?run=${runId}`;
+  const expectedUrl = `${origin}/#${fragment}&tab=evidence`;
   try {
     await cdp('goto', expectedUrl, '--new');
   } catch (error) {
     if (!error.stderr?.startsWith('CDP navigation reached ')) throw error;
     await save('cold-navigation.json', { message: error.message, stderr: error.stderr });
-    await cdp(
-      'eval',
-      route,
-      `const deadline=Date.now()+60000;while(document.readyState!=='complete'){if(location.href!==${JSON.stringify(expectedUrl)}||Date.now()>deadline)throw Error('Owned document did not finish loading');await new Promise(r=>setTimeout(r,50));}return {url:location.href};`,
-    );
   }
+  const owned = JSON.parse(await cdp('tabs')).filter((tab) => {
+    try {
+      return new URL(tab.url).origin === origin;
+    } catch {
+      return false;
+    }
+  });
+  assert.equal(owned.length, 1, 'Expected exactly one tab at the owned private origin');
+  route = `id:${owned[0].id}`;
+  await save('owned-tab.json', { id: owned[0].id, origin, runId });
+  await cdp(
+    'eval',
+    route,
+    `const deadline=Date.now()+60000;while(document.readyState!=='complete'){if(Date.now()>deadline)throw Error('Owned document did not finish loading');await new Promise(r=>setTimeout(r,50));}return {url:location.href};`,
+  );
   const login = JSON.parse(
     await cdp('eval', route, "return {required:!!document.querySelector('.auth-card')};"),
   );
@@ -124,6 +134,10 @@ try {
     assert(Date.now() < deadline, 'Actual gate criterion text and recorded media did not load');
   } while (Date.now() < deadline);
   assert(view.runId === runId && criteria.every((text) => view.text.includes(text)) && view.ready);
+  assert(
+    !view.text.includes('No evidence files'),
+    'Loaded recorded media must not be labeled empty',
+  );
   await save('gate.json', { runId, criteria, sourceView: view });
   await cdp('screenshot', route, path.join(output, 'actual-gate.png'));
   const claimId =
@@ -153,8 +167,8 @@ try {
     criteria: criteria.length,
     before: receiptIds(before),
     after: receiptIds(after),
-    nativeCalls: 0,
-    mutations: 0,
+    explicitDeviceCommands: 0,
+    explicitMutationCommands: 0,
   });
 } catch (error) {
   failure = error;

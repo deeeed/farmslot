@@ -184,7 +184,7 @@ export function MediaViewer({
           <View style={[styles.captionBar, { top: topInset + 12 }]} pointerEvents="box-none">
             <Text
               style={styles.captionText}
-              numberOfLines={1}
+              numberOfLines={current?.evidenceModel?.selection?.claimId ? undefined : 1}
               testID={testID ? `${testID}-title` : undefined}
             >
               {current?.title ?? 'Evidence'}

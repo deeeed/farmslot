@@ -109,9 +109,9 @@ test('one shared projection counts original plus derived rows and keeps exclusio
     rows.map(({ id }) => id),
     ['AC-1', 'AC-2'],
   );
-  assert.equal(rows[0].state, 'Proven');
+  assert.equal(rows[0].state, 'Proven in app');
   assert.equal(rows[0].origin?.reference, 'parent');
-  assert.equal(rows[1].state, 'Not assessed');
+  assert.equal(rows[1].state, 'Not proven');
   assert.equal(rows[1].origin?.url, 'https://example.test/comments/1');
   assert.equal(rows[1].origin?.body, 'Correct the stale price');
 });
@@ -134,7 +134,7 @@ test('a pending steer is visible without inventing an AC or changing an inherite
     ledger: ledger(),
     pendingVisualClaimIds: ['AC-1'],
   });
-  assert.equal(rows[0].state, 'Proven');
+  assert.equal(rows[0].state, 'Proven in app');
   assert.equal(rows[0].pending, false);
   assert.equal(rows.length, 2);
 });

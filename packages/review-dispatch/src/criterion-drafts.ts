@@ -1,6 +1,7 @@
 import {
   type AcceptanceCriterionView,
   buildRunDecisionActionRequest,
+  isPublishApprovalAction,
   MARK_CLAIM_UNTESTABLE_ACTION,
   type ReviewSummary,
   type Run,
@@ -44,16 +45,38 @@ export function criterionDraftApprovalLabel(drafts: readonly CriterionDraft[]): 
   return `Approve with ${drafts.filter(({ choice }) => choice === 'confirm').length} confirmed, ${drafts.filter(({ choice }) => choice === 'skip').length} skipped`;
 }
 
+export interface CriterionDraftApproval<T> {
+  run: Pick<Run, 'id'>;
+  decision: RunDecision;
+  actionId: string;
+  reason: string;
+  execution?: (claimId: string) => string | undefined;
+  requestSkip: (
+    method: string,
+    params: import('@farmslot/protocol').RunOverrideClaimParams,
+  ) => Promise<RunOverrideClaimResult>;
+  send: (decision: RunDecision, actionId: string, reason: string) => Promise<T>;
+  assertCurrent: () => void;
+  applied: (run: Run, decision: RunDecision) => void;
+}
+
 /** UI drafts only. Scope includes the gateway, person, run and decision; snapshot is its frozen package. */
 export class CriterionDraftModel {
   entries: CriterionDraft[] = [];
   error: { claimId: string; message: string; retry: () => void } | null = null;
   ready = false;
+  submissionActionId: string | null = null;
+  private submissionToken: symbol | null = null;
+  private scopeEpoch = 0;
   private key = '';
   private snapshot = '';
   private revision = 0;
   private saved: CriterionDraft[] = [];
   private writes: Promise<void> = Promise.resolve();
+  private notificationVersion = 0;
+  get viewVersion(): number {
+    return this.notificationVersion;
+  }
   private listeners = new Set<() => void>();
   constructor(private storage: CriterionDraftStorage) {}
   subscribe(listener: () => void): () => void {
@@ -63,11 +86,17 @@ export class CriterionDraftModel {
     };
   }
   private changed() {
+    this.notificationVersion++;
     for (const listener of this.listeners) listener();
   }
   setScope(scope: string, snapshot: string): void {
     const key = `farmslot:criterion-drafts:v1:${scope}`;
     if (key === this.key && snapshot === this.snapshot) return;
+    if (key !== this.key) {
+      this.scopeEpoch++;
+      this.submissionActionId = null;
+      this.submissionToken = null;
+    }
     this.key = key;
     this.snapshot = snapshot;
     this.entries = [];
@@ -145,7 +174,7 @@ export class CriterionDraftModel {
     note = '',
     recipeRunId?: string,
   ): void {
-    if (!this.ready || !canDraftCriterion(claim)) return;
+    if (!this.ready || this.submissionToken || !canDraftCriterion(claim)) return;
     const existing = this.entries.find(({ claimId }) => claimId === claim.id);
     const draft: CriterionDraft = {
       claimId: claim.id,
@@ -162,6 +191,7 @@ export class CriterionDraftModel {
     );
   }
   undo(claimId: string): void {
+    if (this.submissionToken) return;
     this.persist(
       this.entries.filter((entry) => entry.claimId !== claimId),
       claimId,
@@ -200,6 +230,77 @@ export class CriterionDraftModel {
       appliedClaimId,
     );
   }
+  get scopeVersion(): number {
+    return this.scopeEpoch;
+  }
+  deactivate(): void {
+    this.key = '';
+    this.snapshot = '';
+    this.ready = false;
+    this.revision++;
+    this.scopeEpoch++;
+    this.submissionToken = null;
+    this.submissionActionId = null;
+  }
+  async approve<T>(input: CriterionDraftApproval<T>): Promise<T> {
+    if (!isPublishApprovalAction(input.actionId) || !this.ready || this.submissionToken)
+      throw new Error('This gate approval is unavailable or already being submitted.');
+    const token = Symbol('criterion-approval');
+    const epoch = this.scopeEpoch;
+    const drafts = [...this.entries];
+    const reason = criterionDraftReason(drafts, input.reason);
+    const appliedClaims = new Set<string>();
+    this.submissionToken = token;
+    this.submissionActionId = input.actionId;
+    this.changed();
+    const assertCurrent = () => {
+      if (this.scopeEpoch !== epoch) throw new Error('The gate or signed-in authority changed.');
+      input.assertCurrent();
+    };
+    try {
+      await this.settled();
+      assertCurrent();
+      if (this.error) throw new Error(this.error.message);
+      const decision = await applyCriterionDraftSkips({
+        ...input,
+        drafts,
+        request: input.requestSkip,
+        assertCurrent,
+        applied: (run, next, claimId) => {
+          appliedClaims.add(claimId);
+          this.rebind(
+            next.payload?.kind === 'ready' ? (next.payload.prPackage?.packageHash ?? '') : '',
+            claimId,
+            drafts.filter((entry) => !appliedClaims.has(entry.claimId)),
+          );
+          input.applied(run, next);
+        },
+      });
+      assertCurrent();
+      let actionId = input.actionId;
+      if (!decision.actions.some(({ id }) => id === actionId)) {
+        if (
+          actionId === 'approve-publish-evidence-attested' &&
+          decision.actions.some(({ id }) => id === 'approve-publish')
+        )
+          actionId = 'approve-publish';
+        else
+          throw new Error(
+            'The gate actions changed after saving skips. Review it before approving.',
+          );
+      }
+      const result = await input.send(decision, actionId, reason);
+      assertCurrent();
+      this.clear();
+      return result;
+    } finally {
+      if (this.submissionToken === token) {
+        this.submissionToken = null;
+        this.submissionActionId = null;
+        this.changed();
+      }
+    }
+  }
   settled(): Promise<void> {
     return this.writes;
   }
@@ -209,8 +310,8 @@ export class CriterionDraftModel {
 }
 
 /** One approval click submits the existing skip RPCs, then binds approval to their returned package. */
-export async function applyCriterionDraftSkips(input: {
-  run: Run;
+async function applyCriterionDraftSkips(input: {
+  run: Pick<Run, 'id'>;
   decision: RunDecision;
   drafts: readonly CriterionDraft[];
   request: (
@@ -223,7 +324,15 @@ export async function applyCriterionDraftSkips(input: {
 }): Promise<RunDecision> {
   let decision = input.decision;
   const head = decision.payload?.kind === 'ready' ? decision.payload.prPackage?.headSha : undefined;
-  for (const draft of input.drafts.filter(({ choice }) => choice === 'skip')) {
+  const skips = input.drafts
+    .filter(({ choice }) => choice === 'skip')
+    .map((draft) => ({
+      ...draft,
+      recipeRunId: draft.recipeRunId ?? input.execution?.(draft.claimId),
+    }));
+  if (skips.some(({ recipeRunId }) => !recipeRunId))
+    throw new Error('Wait for the recorded evidence to load before approving these skips.');
+  for (const draft of skips) {
     input.assertCurrent();
     const request = buildRunDecisionActionRequest({
       runId: input.run.id,
@@ -259,7 +368,11 @@ export function codeReviewNoteSuggestion(summary?: ReviewSummary): string {
   const review = summary?.reviews
     .filter(({ stale, verdict }) => !stale && verdict === 'pass')
     .at(-1);
-  return review ? `Review ${review.id} passed with ${review.unresolvedCount} open findings.` : '';
+  return review
+    ? review.unresolvedCount === 0
+      ? 'The current code review passed with no open findings.'
+      : `The current code review passed with ${review.unresolvedCount} open findings.`
+    : '';
 }
 
 export interface CriterionDraftActions {

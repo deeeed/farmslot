@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Confirm code-review criteria in the publication gate with notes included in the existing attestation, and keep criterion text visible while evidence loads.
+- Keep reversible criterion drafts across reload and submit their notes through the existing publication override and attestation calls.
 
 - Keep saved fleet recovery rows visible while current inspection runs or fails, with release guarded until inspection succeeds.
 

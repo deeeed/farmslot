@@ -111,7 +111,9 @@ export function renderAcceptanceClaimList(
                       type="button"
                       class="gate-primary"
                       data-testid=${`criterion-confirm-${claim.id}`}
-                      ?disabled=${actions.busy || !drafts.model.ready}
+                      ?disabled=${actions.busy ||
+                      Boolean(drafts.model.submissionActionId) ||
+                      !drafts.model.ready}
                       @click=${() => drafts.choose(claim.id, 'confirm')}
                     >
                       Confirm
@@ -120,7 +122,10 @@ export function renderAcceptanceClaimList(
                       type="button"
                       class="gate-secondary"
                       data-testid=${`criterion-skip-${claim.id}`}
-                      ?disabled=${actions.busy || !drafts.model.ready || !drafts.canSkip(claim.id)}
+                      ?disabled=${actions.busy ||
+                      Boolean(drafts.model.submissionActionId) ||
+                      !drafts.model.ready ||
+                      !drafts.canSkip(claim.id)}
                       @click=${() => drafts.choose(claim.id, 'skip')}
                     >
                       Skip

@@ -323,10 +323,7 @@ export function EvidenceReviewWorkspace({
                   </Pressable>
                 ))}
                 <Text style={styles.railSubtitle}>
-                  {acceptanceClaimLabel(acceptanceClaimRows({ claims: [row.claim] })[0])} ·{' '}
-                  {row.claim.status?.proofMode ?? 'no proof mode'} ·{' '}
-                  {row.claim.proofKinds.join(', ') || 'no recorded proof'} ·{' '}
-                  {row.claim.reviewLabels.join('; ')}
+                  {acceptanceClaimLabel(acceptanceClaimRows({ claims: [row.claim] })[0])}
                 </Text>
                 {row.sourceUrl ? (
                   <Pressable onPress={() => Linking.openURL(row.sourceUrl!)}>

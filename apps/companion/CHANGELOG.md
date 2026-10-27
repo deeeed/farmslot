@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Confirm code-review criteria in the publication gate with notes included in the existing attestation, and keep criterion text visible while evidence loads.
+- Add reversible criterion drafts and approval counts using the same gate model as Command Center.
 
 - Show saved fleet recovery rows immediately while current workspace inspection runs, retaining them on read errors.
 

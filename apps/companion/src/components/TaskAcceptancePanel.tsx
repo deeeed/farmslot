@@ -67,7 +67,10 @@ export function TaskAcceptancePanel({
   expectedRows,
   ...props
 }: TaskAcceptancePanelProps) {
-  return loading ? (
+  return loading &&
+    !props.acceptanceCriteria?.length &&
+    !props.acceptanceStatus?.criteria.length &&
+    !props.acceptanceRegistration ? (
     <TaskAcceptanceSkeleton rows={expectedRows} />
   ) : (
     <TaskAcceptanceContent {...props} />
