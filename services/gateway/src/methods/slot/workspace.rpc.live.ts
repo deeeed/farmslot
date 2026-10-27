@@ -100,22 +100,20 @@ fi
     await writeFile(path.join(root, 'projects/proof/fixtures/fixture.txt'), 'synced fixture\n');
     await writeFile(path.join(root, 'projects/proof/fixtures/runtime.txt'), 'runtime fixture\n');
     await writeFile(path.join(root, 'projects/proof/fixtures/exclude'), '.agent/\n');
-    await writeFile(
-      path.join(root, 'projects/proof/project.json'),
-      JSON.stringify({
-        name: 'proof',
-        default_branch: 'main',
-        hooks: { recycle: 'sh "$FARMSLOT_ROOT/bin/recycle-proof"' },
-        scripted: { commands: { proof: { command: 'true', timeout_ms: 5000 } } },
-        fixtures: {
-          templates: [
-            { src: 'fixture.txt', dst: 'fixture.txt' },
-            { src: 'runtime.txt', dst: '{{runtime_dir}}/runtime.txt' },
-            { src: 'exclude', dst: '.git/info/exclude' },
-          ],
-        },
-      }),
-    );
+    const proofProject = {
+      name: 'proof',
+      default_branch: 'main',
+      hooks: { recycle: 'sh "$FARMSLOT_ROOT/bin/recycle-proof"' },
+      scripted: { commands: { proof: { command: 'true', timeout_ms: 5000 } } },
+      fixtures: {
+        templates: [
+          { src: 'fixture.txt', dst: 'fixture.txt' },
+          { src: 'runtime.txt', dst: '{{runtime_dir}}/runtime.txt' },
+          { src: 'exclude', dst: '.git/info/exclude' },
+        ],
+      },
+    };
+    await writeFile(path.join(root, 'projects/proof/project.json'), JSON.stringify(proofProject));
     const linkedRepo = path.join(root, 'linked-checkout');
     const emptyRepo = path.join(root, 'no-fixtures-checkout');
     if (!uiProof) {
@@ -540,6 +538,11 @@ fi
       restoredRefresh.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.health.fixtures,
       'OK',
     );
+    // The installer-read case uses a clone; linked worktrees have a .git file.
+    proofProject.fixtures.templates = proofProject.fixtures.templates.filter(
+      (template) => template.src !== 'exclude',
+    );
+    await writeFile(path.join(root, 'projects/proof/project.json'), JSON.stringify(proofProject));
     if (coldFailureOnly) {
       await writeFile(
         path.join(output, 'cold-retry.json'),
