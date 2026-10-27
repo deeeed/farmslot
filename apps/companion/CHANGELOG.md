@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Run and slot Diff screens observe the prefetched active-run diff online and offline. The slot diff base is the stack base, then the project's default branch, then main.
+
 - Prefetch pending gates, then active runs, into the device store. The gate package diff on the run Diff tab and evidence images up to 2 MB open from held content offline; live reads are shown and stored only when their bytes match `diffHash` or the manifest `sha256`, and a mismatch says so instead of loading the same file.
 
 - Decision CI context and the review dispatch picker observe shared PR, model catalog and visible-model observations; Refresh stays an explicit GitHub check.

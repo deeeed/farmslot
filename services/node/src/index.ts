@@ -179,6 +179,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       nativeSessions: nativeSessions.declaration,
       gatewayUrl: GATEWAY_URL,
       execCancellation: true,
+      conditionalWrites: true,
       observationCapabilities: { workers: 1, files: 1, workspace: 1 },
     });
     if (ws !== socket) {
@@ -326,6 +327,7 @@ function sendResponse(
   error?: string,
   errorCode?: string,
   responseSocket?: WebSocket,
+  details?: unknown,
 ): void {
   const destination = responseSocket ?? ws;
   if (!destination || destination.readyState !== WebSocket.OPEN) return;
@@ -334,7 +336,13 @@ function sendResponse(
     id,
     ok,
     payload: ok ? payload : undefined,
-    error: ok ? undefined : { code: errorCode ?? 'EXEC_ERROR', message: error ?? 'Unknown error' },
+    error: ok
+      ? undefined
+      : {
+          code: errorCode ?? 'EXEC_ERROR',
+          message: error ?? 'Unknown error',
+          ...(details !== undefined ? { details } : {}),
+        },
   };
   destination.send(JSON.stringify(frame));
 }
@@ -344,6 +352,19 @@ function requireString(params: Record<string, unknown>, key: string): string {
   const val = params[key];
   if (typeof val !== 'string') throw new Error(`Missing required string param: ${key}`);
   return val;
+}
+
+/** A file version precondition: a SHA-256 hex string, or null where the path must not exist. */
+function optionalExpectedHash(
+  params: Record<string, unknown>,
+  absentAllowed: boolean,
+): string | null | undefined {
+  const value = params.expectedHash;
+  if (value === undefined || typeof value === 'string' || (absentAllowed && value === null))
+    return value;
+  throw new Error(
+    absentAllowed ? 'expectedHash must be a string or null' : 'expectedHash must be a string',
+  );
 }
 
 function requireNumber(params: Record<string, unknown>, key: string): number {
@@ -636,7 +657,8 @@ async function handleRequest(
         const root = requireString(params, 'root');
         const relPath = requireString(params, 'relPath');
         const content = requireString(params, 'content');
-        const result = await fsWrite({ root, relPath, content });
+        const expectedHash = optionalExpectedHash(params, true);
+        const result = await fsWrite({ root, relPath, content, expectedHash });
         sendResponse(frame.id, true, result);
         break;
       }
@@ -668,7 +690,8 @@ async function handleRequest(
         const root = requireString(params, 'root');
         const oldRelPath = requireString(params, 'oldRelPath');
         const newRelPath = requireString(params, 'newRelPath');
-        const result = await fsRename({ root, oldRelPath, newRelPath });
+        const expectedHash = optionalExpectedHash(params, false);
+        const result = await fsRename({ root, oldRelPath, newRelPath, expectedHash });
         sendResponse(frame.id, true, result);
         break;
       }
@@ -676,7 +699,8 @@ async function handleRequest(
       case 'fs.delete': {
         const root = requireString(params, 'root');
         const relPath = requireString(params, 'relPath');
-        const result = await fsDelete({ root, relPath });
+        const expectedHash = optionalExpectedHash(params, false);
+        const result = await fsDelete({ root, relPath, expectedHash });
         sendResponse(frame.id, true, result);
         break;
       }
@@ -898,7 +922,7 @@ async function handleRequest(
         sendResponse(frame.id, false, undefined, `Unknown method: ${frame.method}`);
     }
   } catch (err) {
-    const error = err as NodeJS.ErrnoException;
+    const error = err as NodeJS.ErrnoException & { details?: unknown };
     sendResponse(
       frame.id,
       false,
@@ -906,6 +930,7 @@ async function handleRequest(
       err instanceof Error ? err.message : String(err),
       typeof error.code === 'string' ? error.code : undefined,
       responseSocket,
+      error?.details,
     );
   }
 }

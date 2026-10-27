@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Advertise `conditionalWrites` and check `expectedHash` on file writes, renames and deletes: exclusive create, hashed deletes on files only. `fs.read` returns the SHA-256 of the raw bytes.
+
 - Advertise worker/file observation support and revoke failed worker samples until the existing sampler recovers, fencing stopped watches and superseded connections.
 
 - Support opt-in file-watch deletion and read-error notifications while preserving content-only requests and fencing delivery to the requesting connection.

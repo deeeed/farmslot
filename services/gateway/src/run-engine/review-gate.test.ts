@@ -50,6 +50,59 @@ test('a superseded review-posting gate stops without dismissing the reopened run
   assert.deepEqual(getRun(run.id), afterReplay, 'stale gate effects cannot overwrite replay state');
 });
 
+test('a review gate payload names the retained capture its artifact manifest came from', async (t) => {
+  const tasks = path.join(farmslotRoot, '.sandbox/review-gate-bundle/tasks');
+  await mkdir(tasks, { recursive: true });
+  const root = await mkdtemp(path.join(tasks, 'review-gate-bundle-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'artifacts'));
+  await writeFile(path.join(root, 'TASK.md'), '# Review\n');
+  await writeFile(path.join(root, 'artifacts/review.md'), 'Recommendation: COMMENT\nReport');
+  await writeFile(path.join(root, 'artifacts/result.png'), 'review image');
+  await writeFile(
+    path.join(root, 'artifacts/review-result.json'),
+    JSON.stringify({ schemaVersion: 1, verdict: 'pass', recommendation: 'COMMENT', issues: [] }),
+  );
+  await writeFile(
+    path.join(root, 'artifacts/line-comments.json'),
+    JSON.stringify({ comments: [], recommendation: 'COMMENT' }),
+  );
+  const run = createRun({
+    flowType: 'review-pr',
+    project: 'missing-review-gate',
+    ticketOrPr: '43',
+  });
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: null,
+    taskFile: path.join(root, 'TASK.md'),
+    engineState: { generation: 1 },
+  });
+  const execution = executeReviewGate(run.id);
+  t.after(async () => {
+    for (const decision of getRun(run.id)!.decisions) resolveEngineDecision(decision.id, 'abort');
+    await execution;
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  let decision: RunDecision | undefined;
+  for (let i = 0; i < 400 && !(decision && hasEngineDecisionWaiter(decision.id)); i++) {
+    decision = getRun(run.id)!.decisions.find((d) => d.type === 'engine_review_posting');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(decision && hasEngineDecisionWaiter(decision.id));
+  const payload = decision.payload as ReviewGatePayload;
+  const retained = getRun(run.id)!;
+  assert.ok(retained.artifactBundle, 'the gate retains a capture before it opens');
+  assert.deepEqual(payload.artifactBundle, retained.artifactBundle);
+  assert.ok(payload.artifactManifest?.some((artifact) => artifact.path === 'artifacts/result.png'));
+  const { readRetainedRunText } = await import('../run-completion/retained-artifacts.js');
+  assert.equal(
+    await readRetainedRunText(retained, 'artifacts/result.png', payload.artifactBundle),
+    'review image',
+  );
+});
+
 test('refresh preserves the fresh decision list and refuses an in-flight resolution or replacement', async (t) => {
   const tasks = path.join(farmslotRoot, '.sandbox/review-refresh-retained/tasks');
   await mkdir(tasks, { recursive: true });
@@ -115,6 +168,12 @@ test('refresh preserves the fresh decision list and refuses an in-flight resolut
     (refreshed.decisions[0].payload as ReviewGatePayload).artifactManifest?.find(
       (artifact) => artifact.path === 'artifacts/result.png',
     ),
+  );
+  assert.ok(refreshed.artifactBundle);
+  assert.deepEqual(
+    (refreshed.decisions[0].payload as ReviewGatePayload).artifactBundle,
+    refreshed.artifactBundle,
+    'the refreshed manifest names the capture it was read from',
   );
   const { readRetainedRunText } = await import('../run-completion/retained-artifacts.js');
   assert.equal(await readRetainedRunText(refreshed, 'artifacts/result.png'), 'review image');

@@ -271,6 +271,54 @@ export function renderSlotViewWorkspaceStyles(): string {
         gap: 4px;
         flex-shrink: 0;
       }
+      slot-view .sv-read-only,
+      slot-view .sv-save-state {
+        align-self: center;
+        font-size: 10px;
+        color: ${colors.textMuted};
+      }
+      slot-view .sv-edit-strip {
+        display: flex;
+        flex-direction: column;
+        gap: ${spacing.xs};
+        padding: ${spacing.xs} ${spacing.lg};
+        background: ${colors.bgCard};
+        border-bottom: 1px solid #1e1e36;
+        font-size: ${fonts.sizeXs};
+        color: ${colors.textSecondary};
+        flex-shrink: 0;
+        max-height: 40%;
+        overflow: auto;
+      }
+      slot-view .sv-edit-strip p {
+        margin: 0;
+      }
+      slot-view .sv-edit-versions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: ${spacing.sm};
+      }
+      slot-view .sv-edit-versions figure {
+        margin: 0;
+        min-width: 0;
+      }
+      slot-view .sv-edit-versions pre {
+        margin: 0;
+        max-height: 200px;
+        overflow: auto;
+        font-family: ${fonts.mono};
+        background: ${colors.bgSurface};
+        border-radius: ${radii.sm};
+        padding: ${spacing.xs};
+      }
+      slot-view .sv-edit-draft {
+        display: flex;
+        align-items: center;
+        gap: ${spacing.sm};
+      }
+      slot-view .sv-edit-draft-path {
+        font-family: ${fonts.mono};
+      }
       slot-view .sv-mode-toggle {
         font-family: ${fonts.mono};
         font-size: 10px;

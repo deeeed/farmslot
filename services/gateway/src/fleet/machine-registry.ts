@@ -23,6 +23,8 @@ export interface ConnectedNode {
   /** URL the node itself dials to reach this gateway (its GATEWAY_URL). */
   gatewayUrl?: string;
   execCancellation?: boolean;
+  /** The node checks `expectedHash` on file writes (ADR-009 Amendment 1). */
+  conditionalWrites?: boolean;
   observationCapabilities?: NodeObservationCapabilities;
   observationAuthority?: () => boolean;
 }
@@ -54,6 +56,7 @@ export function registerNode(
   execCancellation?: boolean,
   observationCapabilities?: NodeObservationCapabilities,
   observationAuthority?: () => boolean,
+  conditionalWrites?: boolean,
 ): void {
   const previous = nodes.get(machine);
   if (previous) revokeNodeFileObservations(previous.ws);
@@ -71,6 +74,7 @@ export function registerNode(
     nativeAuthority,
     gatewayUrl: workerGatewayUrl(gatewayUrl),
     ...(execCancellation ? { execCancellation: true } : {}),
+    ...(conditionalWrites ? { conditionalWrites: true } : {}),
   });
   // Source status reads node receipts live; a reconnect changes what it can report.
   advanceSourceRevision();
@@ -107,6 +111,7 @@ export function getAllNodes(): NodeInfo[] {
     protocolVersion: node.protocolVersion,
     versionMatch: node.versionMatch,
     ...(node.execCancellation ? { execCancellation: true } : {}),
+    ...(node.conditionalWrites ? { conditionalWrites: true } : {}),
     uptime: (Date.now() - new Date(node.connectedAt).getTime()) / 1000,
   }));
 }

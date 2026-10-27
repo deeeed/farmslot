@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { setImmediate as turn } from 'node:timers/promises';
 
@@ -15,6 +16,11 @@ import type { GatewayAuthConnectResult } from '@farmslot/protocol/rpc/auth';
 
 import { ResourceCacheOwner } from '../src/owner.js';
 import { createStoredResourceCache } from '../src/session.js';
+import {
+  createSqliteResourceStore,
+  type ResourceSqliteDatabase,
+  type SqliteValue,
+} from '../src/sqlite-store.js';
 
 const url = 'ws://session.invalid/';
 const scope = { gatewayUrl: url, principalId: 'old', principalGeneration: 0 };
@@ -533,6 +539,73 @@ test(
       assert.equal(notices.at(-1), undefined);
     } finally {
       await owner.dispose();
+    }
+  },
+);
+
+test(
+  'a sign-out whose deletion failed never lets the next owner of that scope hydrate its rows',
+  { timeout: 2000 },
+  async () => {
+    const source = fixture();
+    const sqlite = new DatabaseSync(':memory:');
+    let failDeletion = false;
+    const database: ResourceSqliteDatabase = {
+      async run(sql, params = []) {
+        if (failDeletion && sql.startsWith('DELETE FROM resource_stores')) {
+          failDeletion = false;
+          throw new Error('disk failed');
+        }
+        sqlite.prepare(sql).run(...params);
+      },
+      async all<T>(sql: string, params: readonly SqliteValue[] = []) {
+        return sqlite.prepare(sql).all(...params) as T[];
+      },
+    };
+    const errors: string[] = [];
+    const owner = new ResourceCacheOwner({
+      identities: () => ({ load: async () => null, save: async () => {} }),
+      openStore: (metadata) => createSqliteResourceStore({ database, scope: metadata.scope }),
+      onNotice() {},
+      onError: (error) => errors.push(error instanceof Error ? error.message : String(error)),
+    });
+    const connection = (id: number) => ({
+      id,
+      gatewayUrl: url,
+      connected: true,
+      authentication: auth('old'),
+    });
+    const live = source.client.requestResource;
+    try {
+      source.client.requestResource = async <T>() => ({
+        data: { value: 'previous owner' } as T,
+        resourceState: {
+          epoch: 'session-epoch',
+          dependencies: [{ key: { family: 'sources', scope: 'farm' }, revision: 0 }],
+        },
+      });
+      owner.update({ client: source.client, connection: connection(1) });
+      assert.equal((await owner.cache!.retry(query)).data?.value, 'previous owner');
+      source.client.requestResource = live;
+      failDeletion = true;
+      owner.update({
+        client: source.client,
+        connection: { id: 1, gatewayUrl: url, connected: false },
+        signedOut: true,
+      });
+      owner.update({ client: source.client, connection: connection(2) });
+      const seen: (string | undefined)[] = [];
+      const stop = owner.cache!.observe(query, (state) => seen.push(state.data?.value));
+      assert.equal((await owner.cache!.retry(query)).data?.value, 'live');
+      stop();
+      assert.deepEqual(errors, ['disk failed']);
+      assert(
+        !seen.includes('previous owner'),
+        'rows whose deletion was requested must never hydrate',
+      );
+    } finally {
+      await owner.dispose();
+      sqlite.close();
     }
   },
 );

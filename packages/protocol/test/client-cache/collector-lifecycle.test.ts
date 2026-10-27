@@ -392,3 +392,20 @@ test('refused admission cannot block disposing the old owner or trigger another 
   assert.equal(store.deleted, true);
   assert.equal(await store.getQuery(query.id), undefined);
 });
+
+test('disposing withdraws observers over a connected socket, and skips a closed one', async () => {
+  for (const connected of [true, false]) {
+    const transport = new Transport();
+    const cache = createGatewayResourceCache({ transport });
+    cache.observe(query, () => {});
+    await until(() => cache.read(query).status === 'ready');
+    assert.equal(transport.admissions.length, 1);
+    // The owner disposes in the same turn the socket closes, before the cache hears of it.
+    if (!connected) transport.connection = { ...transport.connection, connected: false };
+    await cache.dispose();
+    assert.deepEqual(
+      transport.admissions.slice(1).map((admission) => admission.params.queries),
+      connected ? [[]] : [],
+    );
+  }
+});

@@ -4,6 +4,7 @@ import { customElement } from 'lit/decorators.js';
 import type {
   AgentContextSummary,
   GatewayStatusResult,
+  NodesListResult,
   Run,
   SlotActionSummary,
   SlotStatus,
@@ -40,6 +41,7 @@ import '../shared/media-lightbox.js';
 import '../workspace/recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getEditorDrafts, subscribeResourceCache } from '../../resource-cache.js';
 import { colors, lifecycleColor } from '../../styles/theme-tokens.js';
 import { setPinnedSlotLabel } from '../../utils/pinned-slots.js';
 import {
@@ -85,6 +87,7 @@ import {
   fetchSlotViewResources,
   loadSlotViewSlot,
 } from './slot-view-data-effects.js';
+import { refreshSlotViewDrafts } from './slot-view-edit-effects.js';
 import {
   openSlotViewEditor,
   revealSlotViewArtifacts,
@@ -298,11 +301,21 @@ export class SlotView extends SlotViewRecipePresenter {
     super.connectedCallback();
     connectSlotView(this);
     void this._refreshWorkerHistoryCapability();
+    // Editing: which nodes check edits, and the drafts of the rendered owner's scope.
+    this._nodesQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
+    void getEditorDrafts().then((store) => {
+      if (!this.isConnected) return;
+      this._draftStore = store;
+      void refreshSlotViewDrafts(this);
+    });
+    this._unsubDrafts = subscribeResourceCache(() => void refreshSlotViewDrafts(this));
   }
 
   disconnectedCallback() {
     clearInterval(this.progressAgeTimer);
     this.progressAgeTimer = undefined;
+    clearTimeout(this._autosaveTimer);
+    this._unsubDrafts?.();
     super.disconnectedCallback();
     disconnectSlotView(this);
   }

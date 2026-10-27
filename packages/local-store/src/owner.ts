@@ -53,6 +53,8 @@ const terminal = new Set<ResourceConnectionReason>([
 export class ResourceCacheOwner {
   private owned?: OwnedCache;
   private retirement: Promise<void> = Promise.resolve();
+  /** Revoked scopes whose retirement failed, so their deletion may not have happened. */
+  private readonly undeleted = new Map<string, ResourceStoreMetadata>();
   private pendingBinding?: { client: ResourceClientConnection; key: string; id: string | number };
   private readonly listeners = new Set<() => void>();
 
@@ -67,7 +69,9 @@ export class ResourceCacheOwner {
   }
   /** A verified live reply may support in-memory rendering without a persistable generation. */
   get renderMetadata(): ResourceStoreMetadata | undefined {
-    const owned = this.owned;
+    return this.metadataOf(this.owned);
+  }
+  private metadataOf(owned: OwnedCache | undefined): ResourceStoreMetadata | undefined {
     const auth = owned?.authentication;
     if (!owned || !auth) return owned?.renderIdentity?.metadata;
     return {
@@ -111,10 +115,14 @@ export class ResourceCacheOwner {
   private retire(reason: ResourceConnectionReason): void {
     const previous = this.owned;
     if (!previous) return;
+    const revoked = terminal.has(reason) ? this.metadataOf(previous) : undefined;
     this.owned = undefined;
     // dispose cancels listeners/reads before its first await. New storage awaits the whole cleanup.
     this.retirement = previous.cache.dispose(reason);
-    void this.retirement.catch((error: unknown) => this.options.onError(error));
+    void this.retirement.catch((error: unknown) => {
+      if (revoked) this.undeleted.set(resourceStoreScopeId(revoked.scope), revoked);
+      this.options.onError(error);
+    });
     this.notify();
   }
 
@@ -225,6 +233,18 @@ export class ResourceCacheOwner {
       },
       openStore: async (metadata) => {
         await before;
+        const id = resourceStoreScopeId(metadata.scope);
+        const revoked = this.undeleted.get(id);
+        if (revoked) {
+          // Store rule 7: finish the requested deletion before this scope is read again.
+          const old = await this.options.openStore(revoked, onNotice);
+          try {
+            await old.deleteAll();
+          } finally {
+            await old.close();
+          }
+          this.undeleted.delete(id);
+        }
         return this.options.openStore(metadata, onNotice);
       },
       onNotice,

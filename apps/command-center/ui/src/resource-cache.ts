@@ -3,6 +3,13 @@ import {
   closeBrowserResourceStores,
   createBrowserSqliteResourceStore,
 } from '@farmslot/local-store/browser';
+import {
+  createDraftStore,
+  createMemoryDraftStorage,
+  type DraftStorage,
+  type DraftStore,
+  openIndexedDbDraftStorage,
+} from '@farmslot/local-store/drafts';
 import type { Run } from '@farmslot/protocol';
 import {
   type ContentPrefetchTarget,
@@ -10,6 +17,7 @@ import {
   type GatewayResourceCache,
   type ResourceConnectionInputs,
   type ResourceStoreMetadata,
+  resourceStoreScopeId,
 } from '@farmslot/protocol/client-cache';
 
 import { createOwnerContentPrefetch, fetchRunArtifactBytes } from './content-prefetch.js';
@@ -18,7 +26,7 @@ import { gateway } from './gateway-client.js';
 let notice: string | undefined;
 /** The owned cache whose store is persistent; only this tab's owner store prefetches. */
 let persistentCache: GatewayResourceCache | undefined;
-let slotBase: ((run: Run) => string | undefined) | undefined;
+let defaultBranch: ((run: Run) => string | undefined) | undefined;
 let stopConnection: (() => void) | undefined;
 let suspended = false;
 const listeners = new Set<() => void>();
@@ -89,19 +97,76 @@ const contentPrefetch = createOwnerContentPrefetch({
   ),
   request: (method, params, signal) => gateway.request(method, params, { signal }),
   readArtifact: fetchRunArtifactBytes,
-  slotBase: (run) => slotBase?.(run),
+  defaultBranch: (run) => defaultBranch?.(run),
 });
 function syncContentPrefetch(): void {
   contentPrefetch.sync(owner.cache, owner.cache !== undefined && owner.cache === persistentCache);
 }
+let draftStorage: Promise<DraftStorage> | undefined;
+let drafts: Promise<DraftStore> | undefined;
+let deletedDrafts = 0;
+/** Scopes this document has checked for other principals' drafts, once each. */
+const draftScopesChecked = new Set<string>();
+
+/** The gateway profile a drafts scope id belongs to, whichever principal holds it. */
+function draftProfile(scopeId: string): string | undefined {
+  try {
+    const scope: unknown = JSON.parse(scopeId);
+    const gatewayUrl = scope && typeof scope === 'object' && Reflect.get(scope, 'gatewayUrl');
+    if (typeof gatewayUrl !== 'string') return undefined;
+    const profileId = Reflect.get(scope as object, 'profileId');
+    return resourceStoreScopeId({
+      gatewayUrl,
+      ...(typeof profileId === 'string' ? { profileId } : {}),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Drafts rule 6: the first authenticated connect of a scope in this document deletes the drafts
+ * other principals left on the same gateway profile, in this tab or another one, and says how
+ * many were unsaved. Each scope is checked once, so a tab still holding an older login never
+ * deletes the drafts of the principal another tab has since signed in as.
+ */
+function retireOtherPrincipalDrafts(): void {
+  const metadata = owner.renderMetadata;
+  if (!metadata || gateway.connectionState !== 'connected' || !gateway.authenticatedConnection)
+    return;
+  const scopeId = resourceStoreScopeId(metadata.scope);
+  if (draftScopesChecked.has(scopeId)) return;
+  draftScopesChecked.add(scopeId);
+  const profile = draftProfile(scopeId);
+  void Promise.all([editorDraftStorage(), getEditorDrafts()])
+    .then(async ([storage, store]) => {
+      const others = new Set(
+        (await storage.list())
+          .map((draft) => draft.scopeId)
+          .filter((other) => other !== scopeId && draftProfile(other) === profile),
+      );
+      let unsaved = 0;
+      for (const other of others) {
+        unsaved += await store.countUnsaved(other);
+        await store.deleteScope(other);
+      }
+      if (unsaved === 0) return;
+      deletedDrafts += unsaved;
+      notify();
+    })
+    .catch(reportCloseError);
+}
+
 owner.subscribe(() => {
   syncContentPrefetch();
+  retireOtherPrincipalDrafts();
   notify();
 });
 
 function sync(): void {
   if (suspended) return;
   owner.update({ client: gateway, connection: connectionInputs() });
+  retireOtherPrincipalDrafts();
 }
 
 function suspendForNavigation(): void {
@@ -146,12 +211,38 @@ export function getResourceStoreMetadata(): ResourceStoreMetadata | undefined {
 export function getResourceStoreNotice(): string | undefined {
   return owner.cache ? notice : undefined;
 }
+
+function editorDraftStorage(): Promise<DraftStorage> {
+  draftStorage ??=
+    typeof indexedDB === 'undefined'
+      ? Promise.resolve(createMemoryDraftStorage())
+      : openIndexedDbDraftStorage().catch(() => createMemoryDraftStorage());
+  return draftStorage;
+}
+/** Unsaved editor drafts: IndexedDB shared by every tab, outside the rebuildable resource store. */
+export function getEditorDrafts(): Promise<DraftStore> {
+  drafts ??= editorDraftStorage().then((storage) => createDraftStore(storage));
+  return drafts;
+}
+/** The rendered owner's drafts scope: its gateway profile and principal generation. */
+export function getEditorDraftScopeId(): string | undefined {
+  const metadata = owner.renderMetadata;
+  return metadata ? resourceStoreScopeId(metadata.scope) : undefined;
+}
+/** Unsaved drafts a principal change deleted, until the notice is dismissed. */
+export function getDeletedDraftCount(): number {
+  return deletedDrafts;
+}
+export function dismissDeletedDraftNotice(): void {
+  deletedDrafts = 0;
+  notify();
+}
 /** Pending gates and active runs, from the shared observations; nothing polls. */
 export function setContentPrefetchTargets(
   targets: readonly ContentPrefetchTarget[],
-  base?: (run: Run) => string | undefined,
+  runDefaultBranch?: (run: Run) => string | undefined,
 ): void {
-  slotBase = base;
+  defaultBranch = runDefaultBranch;
   contentPrefetch.setTargets(targets);
 }
 export function subscribeResourceCache(listener: () => void): () => void {

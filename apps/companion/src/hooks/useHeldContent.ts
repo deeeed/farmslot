@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { ImageSourcePropType } from 'react-native';
 
-import type { Run } from '@farmslot/protocol';
+import type { GitDiffResult, Run } from '@farmslot/protocol';
+import { activeRunDiffQuery, type ResourceQuery } from '@farmslot/protocol/client-cache';
 
 import { type ArtifactHttpHeaders, artifactSource } from '../lib/artifact-url';
+import { companionRunDiffBase } from '../lib/content-prefetch';
 import {
   artifactImageKey,
   artifactImageSource,
@@ -16,9 +18,29 @@ import {
   openHeldContent,
 } from '../lib/held-content';
 import { getResourceCache, subscribeResourceCache } from '../lib/resource-cache';
+import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
 import { useConnectionStore } from '../store/connection';
 
+import { useConfigurationProjects } from './useConfigurationProjects';
 import { useConnectedTransport } from './useConnectedTransport';
+
+/**
+ * The active run's diff since its base, with untracked files: the query prefetch keeps, so the
+ * diff screens read the held snapshot offline. Undefined until the base is known.
+ */
+export function useActiveRunDiffQuery(
+  run: Run | null | undefined,
+): ResourceQuery<GitDiffResult> | undefined {
+  const farm = useWorkspaceRenderAccess() === 'farm';
+  const projects = useConfigurationProjects();
+  const slotId = run?.slotId;
+  const runId = run?.id;
+  const base = run ? companionRunDiffBase(run, farm ? projects : undefined) : undefined;
+  return useMemo(
+    () => (slotId && runId && base ? activeRunDiffQuery({ slotId, runId, base }) : undefined),
+    [base, runId, slotId],
+  );
+}
 
 const NONE: GateDiffContent = { status: 'none' };
 const LOADING: GateDiffContent = { status: 'loading' };

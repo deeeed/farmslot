@@ -3,9 +3,16 @@
  * `diffHash` or a frozen-diff alias, files by git blob id, and artifacts by manifest `sha256`.
  * Views read held bytes first, offline and online; what they read live is kept as opened.
  */
-import type { GitBranchDiffFile, ReviewDiffSnapshot } from '@farmslot/protocol';
+import {
+  decisionArtifactBundleRef,
+  type GitBranchDiffFile,
+  type ReviewDiffSnapshot,
+  type Run,
+  type RunDecisionPayload,
+} from '@farmslot/protocol';
 import {
   type ContentKey,
+  type ContentPrefetchArtifact,
   gitBlobHash,
   parseUnifiedDiff as parseDiffFiles,
   type ResourceContentCohort,
@@ -22,6 +29,20 @@ const FULL_BLOB_ID = /^[0-9a-f]{40}$/;
 /** The alias a prefetched frozen review diff is stored under. */
 export function frozenDiffAlias(runId: string, baseSha: string, headSha: string): string {
   return `frozen-diff:${runId}:${baseSha}:${headSha}`;
+}
+
+/**
+ * A decision's retained diff as an artifact read, pinned to the bundle its payload records.
+ * Older payloads record none and read the run's current artifact.
+ */
+export function decisionDiffArtifact(
+  runId: string,
+  path: string,
+  payload: RunDecisionPayload | undefined,
+  run: Pick<Run, 'output'> = {},
+): ContentPrefetchArtifact {
+  const bundleDigest = decisionArtifactBundleRef(run, payload)?.bundleDigest;
+  return { runId, path, ...(bundleDigest ? { bundleDigest } : {}) };
 }
 
 /** The owner content reads belong to: its cache, which a principal or profile change replaces. */

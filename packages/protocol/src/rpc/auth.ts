@@ -52,6 +52,8 @@ export interface GatewayAuthConnectResult {
     /** Absent only on gateways predating ADR-071. */
     resourceChanges?: GatewayResourceChangesCapability;
     batchedContent?: boolean;
+    /** `expectedHash` and `runId` on file edits, and `hash` on `fs.read`. Experimental. */
+    conditionalFileWrites?: boolean;
   };
   /** Optional only for compatibility with older gateways. */
   principal?: SelfPrincipalSummary;

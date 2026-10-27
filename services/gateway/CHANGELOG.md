@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Check `expectedHash` and `runId` on `fs.write`, `fs.rename` and `fs.delete`. Creates are exclusive, the slot's run is read fresh from the status file, and a failed check returns `FS_CONFLICT` with its details. A conditional edit on a node without `conditionalWrites` fails with `FS_PRECONDITION_UNSUPPORTED`. `fs.read` returns the file hash, and node error details now reach the client. Review gates, recovered ones included, record the run's artifact bundle.
+
 - `git.diff` reports full index ids, and an untracked file that would overflow the reply is listed as a binary new file instead of failing the diff. Package diffs are written atomically.
 
 - Serve content by identity: `git.show` returns the object id and takes a paged, byte-bounded batch of paths (base64 on the slot's host; run-scoped reads limited to the frozen head and its merge-base), `git.diff` reports the compared commits and can include untracked files, and `capabilities.batchedContent` is on. Package preparation retains the exact diff its `diffHash` fingerprints.

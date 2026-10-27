@@ -15,7 +15,7 @@ import { startContentPrefetch } from './content-prefetch';
 import { fetchRunArtifactBytes } from './held-content';
 
 let notice: string | undefined;
-let prefetch: { cache: GatewayResourceCache; stop: () => void } | undefined;
+let prefetch: { cache: GatewayResourceCache; farm: boolean; stop: () => void } | undefined;
 let stopStore: (() => void) | undefined;
 let stopAppState: (() => void) | undefined;
 const listeners = new Set<() => void>();
@@ -70,20 +70,28 @@ function sync(): void {
     signedOut: state.signedOut,
     connection: connectionInputs(),
   });
+  // Authentication can change farm access without a new cache.
+  bindPrefetch();
 }
 
-/** One content prefetcher per persistent cache; it stops when that cache is retired. */
+/**
+ * One content prefetcher per persistent cache; it stops when that cache is retired. Farm access
+ * decides whether it can read the projects' default branches, so a change restarts it.
+ */
 function bindPrefetch(): void {
   const cache = owner.cache;
-  if (prefetch?.cache === cache) return;
+  const farm = getResourceWorkspaceAccess() === 'farm';
+  if (prefetch ? prefetch.cache === cache && prefetch.farm === farm : !cache) return;
   prefetch?.stop();
   prefetch = undefined;
   const client = useConnectionStore.getState().client;
   if (!cache || !client) return;
   prefetch = {
     cache,
+    farm,
     stop: startContentPrefetch({
       cache,
+      farm,
       transport: createResourceCacheTransport(client, connectionInputs),
       request: (method, params, signal) => client.request(method, params, undefined, { signal }),
       readArtifact(artifact, signal) {

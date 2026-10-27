@@ -7,7 +7,10 @@ import { ResourceCacheConformanceTransport } from '../../src/client-cache/confor
 import { gitBlobHash, verifyResourceContent } from '../../src/client-cache/content.js';
 import type { ResourceKey } from '../../src/client-cache/keys.js';
 import {
+  activeRunDiffBase,
+  activeRunDiffQuery,
   type ContentPrefetchArtifact,
+  type ContentPrefetchOptions,
   type ContentPrefetchTarget,
   createContentPrefetcher,
 } from '../../src/client-cache/prefetch.js';
@@ -222,6 +225,7 @@ function gateway(world: World) {
 function harness(
   world = createWorld(),
   capabilities: ResourceCacheConnection['capabilities'] = BATCHED,
+  defaultBranch?: ContentPrefetchOptions['defaultBranch'],
 ) {
   let connection: ResourceCacheConnection = {
     id: 1,
@@ -288,6 +292,7 @@ function harness(
     cache,
     request,
     readArtifact,
+    defaultBranch,
   });
   return {
     world,
@@ -892,6 +897,42 @@ test('real cache: a slot diff snapshot is prefetch and never evicts opened conte
   await cache.dispose();
 });
 
+test('real cache: a prefetch refresh of an opened snapshot evicts only what prefetch may', async () => {
+  const world = createWorld();
+  world.worktree.set('slot-s', { diff: '', mergeBaseSha: BASE, headSha: HEAD });
+  const budget = 4000;
+  const { cache, store, prefetcher } = realCache(world, budget);
+  const query = activeRunDiffQuery({ slotId: 'slot-s', runId: 's1', base: 'main' });
+  // The user opens the snapshot, so its row is opened.
+  const stop = cache.observe(query, () => {});
+  await flush();
+  stop();
+  const opened = (await store.getQuery(query.id))!;
+  assert.equal(opened.origin, undefined);
+  // A refresh that fits only by evicting an opened file.
+  const refreshed = { diff: 'x'.repeat(1500), mergeBaseSha: BASE, headSha: HEAD };
+  const file = bytes(`${'o'.repeat(budget - bytes(JSON.stringify(refreshed)).byteLength + 99)}\n`);
+  const key: ContentKey = { kind: 'blob', id: gitBlobHash(file) };
+  assert.equal(
+    await cache.storeContent({ key, data: file, origin: 'opened', cohort: 'run' }),
+    true,
+  );
+  world.worktree.set('slot-s', refreshed);
+  await cache.retry(query, { origin: 'prefetch', cohort: 'run' });
+  await flush();
+  assert.deepEqual(await cache.readContent(key), file);
+  assert.deepEqual(await store.getQuery(query.id), opened);
+
+  // With room, the refresh is stored and its row stays opened.
+  await store.deleteContent(key);
+  await cache.retry(query, { origin: 'prefetch', cohort: 'run' });
+  await flush();
+  const stored = (await store.getQuery(query.id))!;
+  assert.deepEqual([stored.data, stored.origin], [refreshed, undefined]);
+  prefetcher.dispose();
+  await cache.dispose();
+});
+
 test('real cache: gate prefetch promotes held run content, which run prefetch cannot evict', async () => {
   const world = createWorld();
   world.objects.set(BASE, new Map([['src/a.ts', A_OLD]]));
@@ -1050,4 +1091,39 @@ test('real cache: an aborted retry writes no result unless another caller shares
   await Promise.all([started, sharing]);
   assert.deepEqual((await store.getQuery(query.id))?.data, { value: 'second' });
   await cache.dispose();
+});
+
+test('activeRunDiffBase takes the stack base, then the project default branch, then main', () => {
+  const stacked = { stack: { baseBranch: 'feature/base', retargetedTo: 'develop' } } as Run;
+  const trunk = () => 'trunk';
+  assert.equal(activeRunDiffBase(stacked, trunk), 'develop');
+  assert.equal(
+    activeRunDiffBase({ stack: { baseBranch: 'feature/base' } } as Run, trunk),
+    'feature/base',
+  );
+  assert.equal(activeRunDiffBase({} as Run, trunk), 'trunk');
+  assert.equal(activeRunDiffBase({} as Run), 'main');
+  assert.equal(
+    activeRunDiffBase({} as Run, () => undefined),
+    'main',
+  );
+});
+
+test('an active run without a stack base is compared with its project default branch', async () => {
+  const { world, prefetcher, calls } = harness(createWorld(), BATCHED, (run) =>
+    run.project === 'farm' ? 'trunk' : undefined,
+  );
+  world.runs.set('s1', {
+    id: 's1',
+    slotId: 'slot-s',
+    project: 'farm',
+    decisions: [],
+  } as unknown as Run);
+  world.worktree.set('slot-s', { diff: '', mergeBaseSha: BASE, headSha: HEAD });
+  prefetcher.setTargets([target('s1', false)]);
+  await flush();
+  assert.deepEqual(
+    calls('git.diff').map((call) => call.params),
+    [activeRunDiffQuery({ slotId: 'slot-s', runId: 's1', base: 'trunk' }).params],
+  );
 });

@@ -797,16 +797,19 @@ export function createGatewayResourceCache(
             if (retention?.cohort === 'workspace') {
               const stored = await writingStore.listQueries();
               const previous = stored.find((value) => value.id === saved.id);
-              // Refreshing an opened snapshot keeps it opened; gate outranks run.
-              if (prefetched && (!previous || previous.origin === 'prefetch'))
-                row = {
-                  ...saved,
-                  origin: 'prefetch',
-                  cohort: previous?.cohort === 'gate' ? 'gate' : (prefetched.cohort ?? 'run'),
-                };
+              // A prefetch write evicts only what prefetch may evict, even when it refreshes a
+              // snapshot the user opened; that row stays opened. Gate outranks run.
+              const write: StoredResourceQuery = prefetched
+                ? {
+                    ...saved,
+                    origin: 'prefetch',
+                    cohort: previous?.cohort === 'gate' ? 'gate' : (prefetched.cohort ?? 'run'),
+                  }
+                : saved;
+              if (!previous || previous.origin === 'prefetch') row = write;
               const victims = workspaceRetentionEvictions(
                 entry.query,
-                row,
+                write,
                 stored,
                 options.contentBudgetBytes ?? defaultContentBudgetBytes,
                 await writingStore.listContent(),

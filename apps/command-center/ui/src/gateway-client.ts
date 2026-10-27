@@ -88,6 +88,8 @@ export class GatewayRequestError extends Error {
   constructor(
     message: string,
     readonly code: string,
+    /** The method's typed error details, such as an `FS_CONFLICT`'s current hash or run. */
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = 'GatewayRequestError';
@@ -879,6 +881,7 @@ export class GatewayClient {
         new GatewayRequestError(
           frame.error?.message ?? 'Unknown error',
           frame.error?.code ?? 'UNKNOWN',
+          frame.error?.details,
         ),
       );
     }

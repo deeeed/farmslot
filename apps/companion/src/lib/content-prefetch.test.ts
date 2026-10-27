@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import test, { mock } from 'node:test';
 
 import {
+  type ConfigProjectsResult,
   type DecisionListResult,
   type GatewayAuthConnectResult,
   HUMAN_GATE_DECISION_TYPE,
@@ -12,6 +13,7 @@ import {
   type RunGetResult,
 } from '@farmslot/protocol';
 import {
+  activeRunDiffQuery,
   createMemoryResourceStore,
   type GatewayResourceCache,
   gitBlobHash,
@@ -21,9 +23,11 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import {
+  companionRunDiffBase,
   contentPrefetchTargets,
   startContentPrefetch as startRealContentPrefetch,
 } from './content-prefetch';
+import { configurationProjectsQuery } from './gateway-run-sync';
 import { artifactImageKey, gateDiffSource, imageDataUri, openHeldContent } from './held-content';
 
 const GATEWAY = 'ws://gateway.invalid/ws';
@@ -91,10 +95,12 @@ const gateRun = {
 // Updated later than the gate: gates still go first.
 const activeRun = {
   id: 'run-active',
-  slotId: null,
+  slotId: 'slot-active',
+  project: 'farm',
   updatedAt: '2026-10-27T02:00:00.000Z',
   decisions: [],
 } as unknown as Run;
+const projects = { projects: [{ name: 'farm', defaultBranch: 'develop' }] };
 const runs = new Map([
   [gateRun.id, gateRun],
   [activeRun.id, activeRun],
@@ -116,7 +122,10 @@ const decisions = {
   ],
 } as unknown as DecisionListResult;
 
-function auth(batchedContent: boolean): GatewayAuthConnectResult {
+function auth(
+  batchedContent: boolean,
+  workspaceAccess: 'farm' | 'native' = 'farm',
+): GatewayAuthConnectResult {
   return {
     ok: true,
     clientKind: 'companion',
@@ -132,8 +141,14 @@ function auth(batchedContent: boolean): GatewayAuthConnectResult {
     capabilities: {
       httpBearerAuth: true,
       voiceInstructionFormatting: false,
-      workspaceAccess: 'farm',
-      resourceChanges: { version: 1, epoch: 'test', versionLists: false },
+      workspaceAccess,
+      resourceChanges: {
+        version: 1,
+        epoch: 'test',
+        versionLists: false,
+        workspaceReads: 1,
+        observedReads: 1,
+      },
       ...(batchedContent ? { batchedContent: true } : {}),
     },
   };
@@ -156,7 +171,11 @@ class FakeClient {
           ? decisions
           : method === 'run.get'
             ? { run: runs.get(String(params.runId)) }
-            : undefined;
+            : method === 'config.projects'
+              ? projects
+              : method === 'git.diff'
+                ? { diff: DIFF, mergeBaseSha: BASE, headSha: HEAD }
+                : undefined;
     return {
       data,
       resourceState: {
@@ -256,6 +275,7 @@ mock.module('@farmslot/local-store/native', {
 const prefetchers: Array<{ cache: GatewayResourceCache; stopped: boolean }> = [];
 mock.module('./content-prefetch', {
   namedExports: {
+    companionRunDiffBase,
     contentPrefetchTargets,
     startContentPrefetch(options: Parameters<typeof startRealContentPrefetch>[0]) {
       const entry = { cache: options.cache, stopped: false };
@@ -315,9 +335,22 @@ test('each persistent cache gets one prefetcher that fills it through the gatewa
       ['run-gate', 'run-active'],
     );
     assert.deepEqual(
-      client.calls.find(({ method }) => method === 'git.show')?.params,
+      client.calls.find(
+        ({ method, params }) => method === 'git.show' && params.slotId === 'slot-gate',
+      )?.params,
       { slotId: 'slot-gate', ref: BASE, paths: ['src/a.ts'] },
       'base files come through the gateway client at the snapshot base',
+    );
+    assert.deepEqual(
+      client.calls.find(({ method }) => method === 'git.diff')?.params,
+      {
+        slotId: 'slot-active',
+        runId: 'run-active',
+        base: 'develop',
+        target: 'worktree',
+        includeUntracked: true,
+      },
+      "a farm owner's active run compares with its project's default branch",
     );
     assert.deepEqual(
       fetches.map(({ url }) => [
@@ -371,6 +404,18 @@ test('each persistent cache gets one prefetcher that fills it through the gatewa
     assert.equal(origins[`blob:${blob(OLD)}`], 'prefetch');
     assert.equal(fetches.length, 2, 'opening held content transfers nothing');
 
+    // The diff screens observe the active-run diff prefetch kept, at the same base, offline.
+    const projectsState = cache.read(configurationProjectsQuery);
+    const base = companionRunDiffBase(activeRun, projectsState);
+    assert.equal(base, 'develop');
+    const runDiffQuery = activeRunDiffQuery({ slotId: 'slot-active', runId: 'run-active', base });
+    const stopDiff = cache.observe(runDiffQuery, () => {});
+    await flush();
+    const runDiff = cache.read(runDiffQuery);
+    stopDiff();
+    assert.equal(runDiff.status, 'stale');
+    assert.equal(runDiff.data?.diff, DIFF);
+
     // A profile change retires the cache, and its prefetcher with it; setConnection then binds
     // the client's next generation to a new cache.
     client.setConnected(true);
@@ -391,6 +436,42 @@ test('each persistent cache gets one prefetcher that fills it through the gatewa
   client.setConnected(true);
   await flush();
   assert.equal(client.calls.length, reads, 'a stopped prefetcher reads nothing');
+});
+
+test('without farm access, prefetch reads no projects and compares with the stack base, then main', async () => {
+  const { initializeNativeResourceCache } = await import('./resource-cache');
+  const client = new FakeClient(auth(true, 'native'));
+  setState({ client, activeProfileId: 'profile-native' });
+  const stop = initializeNativeResourceCache();
+  try {
+    await flush();
+    assert.equal(
+      client.calls.some(({ method }) => method === 'config.projects'),
+      false,
+    );
+    assert.equal(client.calls.find(({ method }) => method === 'git.diff')?.params.base, 'main');
+  } finally {
+    stop();
+    await flush();
+  }
+});
+
+test("the diff base is the stack base, then the project's default branch, then main", () => {
+  const ready = { status: 'ready' as const, data: projects as ConfigProjectsResult };
+  const stacked = { project: 'farm', stack: { baseBranch: 'feature/parent' } } as Run;
+  const retargeted = {
+    project: 'farm',
+    stack: { baseBranch: 'feature/parent', retargetedTo: 'feature/next' },
+  } as Run;
+  assert.equal(companionRunDiffBase(activeRun, ready), 'develop');
+  assert.equal(companionRunDiffBase(stacked, ready), 'feature/parent');
+  assert.equal(companionRunDiffBase(retargeted, ready), 'feature/next');
+  assert.equal(companionRunDiffBase({ project: 'other' } as Run, ready), 'main');
+  // Without farm access there is no projects observation.
+  assert.equal(companionRunDiffBase(activeRun, undefined), 'main');
+  assert.equal(companionRunDiffBase(stacked, undefined), 'feature/parent');
+  // While a farm owner's projects load, no base is chosen yet.
+  assert.equal(companionRunDiffBase(activeRun, { status: 'loading' }), undefined);
 });
 
 test('a gateway without capabilities.batchedContent gets no prefetch', async () => {

@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./native": "./src/native.ts",
     "./browser": "./src/browser.ts",
-    "./browser-worker": "./src/browser-worker.ts"
+    "./browser-worker": "./src/browser-worker.ts",
+    "./drafts": "./src/drafts.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",

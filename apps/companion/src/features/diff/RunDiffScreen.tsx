@@ -5,8 +5,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   extractRunArtifactManifest,
-  type GitDiffResult,
-  Methods,
   type RecipeRunArtifactGroup,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -17,7 +15,7 @@ import { MobileDiffViewer } from '../../components/MobileDiffViewer';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { observeNativeDiffFrame } from '../../farmslot/run-collections-proof';
-import { useGateDiffContent } from '../../hooks/useHeldContent';
+import { useActiveRunDiffQuery, useGateDiffContent } from '../../hooks/useHeldContent';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   type ArtifactManifestEntry,
@@ -197,13 +195,9 @@ export default function DiffViewerScreen() {
   const canLoadWorkspaceDiff = Boolean(
     !gateDiffActive && !selectedRecipeRun && run?.slotId && !diffUrl,
   );
-  const workspaceDiffQuery = useMemo(
-    () =>
-      canLoadWorkspaceDiff && run?.slotId
-        ? resourceQuery<GitDiffResult>(Methods.GIT_DIFF, { slotId: run.slotId, runId })
-        : undefined,
-    [canLoadWorkspaceDiff, run?.slotId, runId],
-  );
+  // The run's changes since its base, as prefetch keeps them, online and offline.
+  const activeRunDiffQuery = useActiveRunDiffQuery(run);
+  const workspaceDiffQuery = canLoadWorkspaceDiff ? activeRunDiffQuery : undefined;
   const workspaceDiffObservation = useResourceQuery(workspaceDiffQuery);
   const workspaceDiffSource = canLoadWorkspaceDiff
     ? (workspaceDiffObservation.data?.diff ?? '')

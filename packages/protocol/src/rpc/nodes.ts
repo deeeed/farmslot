@@ -8,6 +8,8 @@ export interface NodeInfo {
   uptime?: number;
   /** This node can cancel exec requests on their original connection. */
   execCancellation?: boolean;
+  /** This node checks `expectedHash` on file writes, renames and deletes. */
+  conditionalWrites?: boolean;
 }
 
 export interface NodesListResult {

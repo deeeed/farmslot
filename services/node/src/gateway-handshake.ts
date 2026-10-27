@@ -190,6 +190,8 @@ export interface NodeRegisterOptions {
   capabilities: RecipeRuntimeCapabilityDeclaration[];
   nativeSessions?: NativeExecutionNodeDeclaration;
   execCancellation?: boolean;
+  /** The node checks `expectedHash` on file writes (ADR-009 Amendment 1). */
+  conditionalWrites?: boolean;
   observationCapabilities?: NodeObservationCapabilities;
   /** The URL this node dials; the gateway hands it to workers on this machine. */
   gatewayUrl?: string;
@@ -221,6 +223,7 @@ export function registerNode(
         ? { observationCapabilities: options.observationCapabilities }
         : {}),
       ...(options.execCancellation ? { execCancellation: true } : {}),
+      ...(options.conditionalWrites ? { conditionalWrites: true } : {}),
       ...(options.nativeSessions ? { nativeSessions: options.nativeSessions } : {}),
       ...(options.gatewayUrl ? { gatewayUrl: options.gatewayUrl } : {}),
     },

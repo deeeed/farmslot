@@ -12,7 +12,7 @@ export interface FakeGatewaySocket {
   readyState: number;
   readonly sent: Array<{ id: string; method: string }>;
   response(id: string, payload: unknown, resourceState?: unknown): void;
-  failure(id: string, error: { code: string; message: string }): void;
+  failure(id: string, error: { code: string; message: string; details?: unknown }): void;
   event(event: string, payload: unknown): void;
 }
 
@@ -157,7 +157,7 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
         }),
       );
     }
-    failure(id: string, error: { code: string; message: string }) {
+    failure(id: string, error: { code: string; message: string; details?: unknown }) {
       this.dispatchEvent(
         new MessageEvent('message', {
           data: JSON.stringify({ type: 'res', id, ok: false, error }),

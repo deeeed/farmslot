@@ -3,6 +3,7 @@ import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js
 import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
+import { refreshSlotViewDrafts } from './slot-view-edit-effects.js';
 import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
 import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
 import { connectSlotViewLayoutObserver } from './slot-view-resize-effects.js';
@@ -62,6 +63,15 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
   if (changed.has('slotId') && view.slotId) {
     view._loadSlot();
     void view._refreshLinkedRun(view._linkedRun?.status ?? null);
+  }
+  // Another slot, or the slot's run changing, selects which drafts are current.
+  if (changed.has('slotId') || changed.has('_slot')) {
+    const previous = changed.get('_slot') as { currentRunId?: string | null } | null | undefined;
+    if (changed.has('slotId') || previous?.currentRunId !== view._slot?.currentRunId) {
+      view._saveConflict = undefined;
+      view._editNotice = '';
+      void refreshSlotViewDrafts(view);
+    }
   }
   if (
     changed.has('_linkedRun') &&

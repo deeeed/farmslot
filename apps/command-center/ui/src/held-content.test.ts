@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import { reviewDiffHash } from '@farmslot/protocol';
+import { reviewDiffHash, type RunDecisionPayload } from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
   createMemoryResourceStore,
@@ -12,6 +12,7 @@ let cache: GatewayResourceCache | undefined;
 mock.module('./resource-cache.js', { namedExports: { getResourceCache: () => cache } });
 const {
   CONTENT_MISMATCH,
+  decisionDiffArtifact,
   frozenDiffAlias,
   heldBlobId,
   heldDiffFiles,
@@ -63,6 +64,25 @@ test('a held diff lists its files and splits each file section', () => {
   ]);
   assert.match(heldFileDiff(diff, 'src/new-name.ts') ?? '', /^diff --git a\/src\/old-name.ts/);
   assert.equal(heldFileDiff(diff, 'src/missing.ts'), undefined);
+});
+
+test('a review diff read is pinned to the bundle its payload records; older payloads read the current one', () => {
+  const bundle = { bundleDigest: 'review-bundle', manifestDigest: 'manifest' };
+  const review = (artifactBundle?: typeof bundle) =>
+    ({ kind: 'review', ...(artifactBundle ? { artifactBundle } : {}) }) as RunDecisionPayload;
+  assert.deepEqual(decisionDiffArtifact('run-a', 'review/input.diff', review(bundle)), {
+    runId: 'run-a',
+    path: 'review/input.diff',
+    bundleDigest: 'review-bundle',
+  });
+  assert.deepEqual(decisionDiffArtifact('run-a', 'review/input.diff', review()), {
+    runId: 'run-a',
+    path: 'review/input.diff',
+  });
+  assert.deepEqual(decisionDiffArtifact('run-a', 'review/input.diff', undefined), {
+    runId: 'run-a',
+    path: 'review/input.diff',
+  });
 });
 
 test('blob ids name both sides; an abbreviated id cannot be looked up', () => {

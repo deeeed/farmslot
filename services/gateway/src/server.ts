@@ -292,6 +292,7 @@ export function createWebSocketServer(
             peek.error?.message,
             peek.error?.code,
             ws,
+            peek.error?.details,
           );
           return;
         }
@@ -786,6 +787,7 @@ async function handleMessage(
             : {}),
         },
         batchedContent: true,
+        conditionalFileWrites: true,
         workspaceAccess: gatewayWorkspaceAccess(
           result.principal,
           authRuntime.store.snapshot().principals,

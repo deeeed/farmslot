@@ -13,6 +13,10 @@ import './file-tree.js';
 import './git-changes.js';
 import './tab-bar.js';
 
+import { gateway } from '../../gateway-client.js';
+import { heldRunFileDiff } from '../../held-run-diff.js';
+import { getResourceCache } from '../../resource-cache.js';
+import { getRunForSlot } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
@@ -72,6 +76,8 @@ export class SlotWorkspace extends LitElement {
     },
   );
   private _prevSlotId = '';
+  /** Held-diff fallbacks still waiting; live teardown stops them with the reads. */
+  private readonly _heldDiffReads = new Set<AbortController>();
 
   private get _isLive(): boolean {
     return this.slotId !== '' && this.fileEntries.length === 0;
@@ -344,6 +350,8 @@ export class SlotWorkspace extends LitElement {
 
   private _teardownLive() {
     this.reads.clear();
+    for (const controller of this._heldDiffReads) controller.abort();
+    this._heldDiffReads.clear();
   }
 
   private async _loadDirectory(dirPath: string) {
@@ -408,8 +416,8 @@ export class SlotWorkspace extends LitElement {
 
   private async _handleChangeSelect(path: string) {
     if (this._isLive && !this._liveDiffContents.has(path)) {
-      try {
-        const result = await this.reads.read<GitDiffResult>(
+      const read = this.reads
+        .read<GitDiffResult>(
           Methods.GIT_DIFF,
           {
             slotId: this.slotId,
@@ -418,15 +426,27 @@ export class SlotWorkspace extends LitElement {
           (result) => {
             this._liveDiffContents = new Map(this._liveDiffContents).set(path, result.diff);
           },
+        )
+        .then(
+          (result) => result.diff,
+          (err: unknown) => `Error: ${err instanceof Error ? err.message : 'Failed to load diff'}`,
         );
-        const next = new Map(this._liveDiffContents);
-        next.set(path, result.diff);
-        this._liveDiffContents = next;
-      } catch (err) {
-        const next = new Map(this._liveDiffContents);
-        next.set(path, `Error: ${err instanceof Error ? err.message : 'Failed to load diff'}`);
-        this._liveDiffContents = next;
-      }
+      // Offline, a file with no saved diff shows its section of the held active-run diff.
+      const controller = new AbortController();
+      const held =
+        gateway.connectionState === 'connected'
+          ? undefined
+          : heldRunFileDiff(getResourceCache(), getRunForSlot(this.slotId), path, {
+              signal: controller.signal,
+            });
+      this._heldDiffReads.add(controller);
+      const diff = await (
+        held ? Promise.race([read, held.then((section) => section ?? read)]) : read
+      ).finally(() => {
+        controller.abort();
+        this._heldDiffReads.delete(controller);
+      });
+      this._liveDiffContents = new Map(this._liveDiffContents).set(path, diff);
     }
     this._openFile(path, 'diff');
   }

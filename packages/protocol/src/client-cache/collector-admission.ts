@@ -174,8 +174,11 @@ export class ResourceCollectorAdmission {
 
   async close(): Promise<void> {
     if (!this.connection) return;
-    if (this.admissionRefused && this.acknowledged === undefined) {
-      // The gateway refused this owner's admission, so it has no current membership to withdraw.
+    if (
+      !this.transport.getConnection().connected ||
+      (this.admissionRefused && this.acknowledged === undefined)
+    ) {
+      // A closed socket took its memberships with it, and a refused admission never had any.
       this.generation++;
       this.pending?.controller.abort();
       this.connection = undefined;

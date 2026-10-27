@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Edit slot workspace files when the gateway advertises conditional writes. Each save carries the hash it read and the slot's run; on a conflict you keep yours or theirs. Unsaved edits stay on the device as drafts for up to 30 days. The editor is read-only, with the reason shown, when the host, hash, encoding, run or connection rules editing out. Sign-out shows the unsaved count before deleting drafts, and when another user connects the previous user's drafts are deleted with a notice. Workspace diffs read the held active-run diff offline, and review workspaces pass the review digest.
+
 - The owner tab prefetches pending gates, then active runs, into the persistent store and pauses while hidden. Gate package diffs and evidence images open from held content offline; live reads are shown and stored only when their bytes match `diffHash` or the manifest `sha256`, and a mismatch says so instead of loading the same file.
 
 - PR details, slot PR links, review threads, runner seats, model catalogs and visible models update from shared gateway observations; Check GitHub, seat Refresh and CI-timeout checks stay explicit (seat Refresh is disabled offline), a failed slot PR lookup no longer stalls changed files, and the page-local seat and visible-model caches are removed.

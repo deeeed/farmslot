@@ -6,6 +6,7 @@ import { subscribe } from '../../state.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 import type { SlotView } from './slot-view.js';
+import { refreshSlotViewDrafts } from './slot-view-edit-effects.js';
 import { loadLayout } from './slot-view-layout.js';
 import { EDITOR_PREF_KEY, type EditorId, EDITORS } from './slot-view-model.js';
 import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
@@ -37,8 +38,15 @@ export function connectSlotView(view: SlotView): void {
     view._runQueries.sync();
   };
 
+  // Drafts follow the fleet record: runs that are no longer current, and unreadable slots.
+  let draftFleet: unknown;
+
   // Follow the same fleet projection as the rest of the application.
   view._unsubState = subscribe((state) => {
+    if (state.fleetObservation !== draftFleet) {
+      draftFleet = state.fleetObservation;
+      void refreshSlotViewDrafts(view);
+    }
     if (view.slotId) {
       const slot = state.fleet?.slots.find((candidate) => candidate.slot === view.slotId) ?? null;
       if (!view._slot && slot) {

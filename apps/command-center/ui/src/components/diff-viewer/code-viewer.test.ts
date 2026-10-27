@@ -30,6 +30,7 @@ class Range {
   ) {}
 }
 const positions: Array<{ lineNumber: number; column: number }> = [];
+const contentListeners: Array<() => void> = [];
 const revealed: number[] = [];
 const decorated: Array<{ range: Range; options: { className?: string } }> = [];
 let modelLineCount = 570;
@@ -47,6 +48,9 @@ const editor = {
     return { set() {}, clear() {} };
   },
   onMouseDown() {},
+  onDidChangeModelContent(listener: () => void) {
+    contentListeners.push(listener);
+  },
   onDidLayoutChange: () => ({ dispose() {} }),
   revealLineInCenter: (line: number) => revealed.push(line),
   setPosition: (next: { lineNumber: number; column: number }) => {
@@ -207,3 +211,64 @@ for (const [sourceLines, findingLine] of [
     assert.equal(decorated.length, previousDecorations, 'no comment decoration clamped to EOF');
   });
 }
+
+test('typing is reported, and a new content never discards typing the host has not adopted', async () => {
+  let value = 'saved\n';
+  let models = 0;
+  const events: CustomEvent[] = [];
+  const viewer = Object.create(CodeViewer.prototype) as Viewer & {
+    content: string;
+    contentRevision: number;
+  };
+  const typingEditor = {
+    ...editor,
+    getModel: () => ({ getValue: () => value, getLineCount: () => 1, dispose() {} }),
+    getValue: () => value,
+    setModel() {
+      models++;
+    },
+  };
+  Object.assign(viewer, {
+    requestUpdate() {},
+    querySelector: () => ({}),
+    dispatchEvent: (event: CustomEvent) => events.push(event),
+    content: 'saved\n',
+    language: 'typescript',
+    filePath: 'src/app.ts',
+    changedLines: [],
+    commentThreads: [],
+    showComments: false,
+    revealLine: 0,
+    diagnostics: [],
+    _applyCommentZones() {},
+    _applyDiagnosticMarkers() {},
+  });
+  const ready = viewer.firstUpdated();
+  await ready;
+  frames.shift()?.(0);
+  Object.assign(viewer, { _editor: typingEditor });
+
+  // The user types; the editor reports it.
+  value = 'typed\n';
+  contentListeners.at(-1)?.();
+  assert.deepEqual(events.at(-1)?.detail, { content: 'typed\n' });
+  assert.equal(events.at(-1)?.type, 'content-change');
+
+  // A worker's content arriving before the host adopts the typing keeps the typing.
+  viewer.content = 'worker\n';
+  viewer.updated(new Map<string, unknown>([['content', 'saved\n']]));
+  assert.equal(models, 0);
+  // The host adopts the typing: nothing to replace.
+  viewer.content = 'typed\n';
+  viewer.updated(new Map<string, unknown>([['content', 'worker\n']]));
+  assert.equal(models, 0);
+  // With nothing unsaved, a new content replaces the text.
+  viewer.content = 'worker\n';
+  viewer.updated(new Map<string, unknown>([['content', 'typed\n']]));
+  assert.equal(models, 1);
+  // A revision replaces the text even over typing, such as keeping the current file.
+  value = 'mine\n';
+  viewer.contentRevision = 1;
+  viewer.updated(new Map<string, unknown>([['contentRevision', 0]]));
+  assert.equal(models, 2);
+});

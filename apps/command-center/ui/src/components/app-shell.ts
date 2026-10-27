@@ -86,6 +86,10 @@ import {
   resolveGatewayConnectionSource,
 } from '../gateway-url.js';
 import {
+  dismissDeletedDraftNotice,
+  getDeletedDraftCount,
+  getEditorDrafts,
+  getEditorDraftScopeId,
   getResourceWorkspaceAccess,
   getResourceWorkspaceKey,
   subscribeResourceCache,
@@ -293,6 +297,8 @@ export class FarmApp extends LitElement {
   @state() private authRememberMe = getDesktopConnection()?.rememberMe !== false;
   @state() private authSaveError = '';
   @state() private signingOut = false;
+  /** Unsaved editor drafts the sign-out confirmation names; signing out deletes them. */
+  @state() private signOutUnsavedDrafts = 0;
   @state() private pairingOpen = false;
   @state() private pairingBusy = false;
   @state() private pairingProfileName = DEFAULT_PAIRING_PROFILE_NAME;
@@ -1008,9 +1014,14 @@ export class FarmApp extends LitElement {
     this.signingOut = true;
     this.authSaveError = '';
     try {
+      const scopeId = getEditorDraftScopeId();
+      const drafts = scopeId ? await getEditorDrafts() : undefined;
+      this.signOutUnsavedDrafts = scopeId && drafts ? await drafts.countUnsaved(scopeId) : 0;
       await confirmAccountSignOut(
         () => this.confirmSignOut(),
         async () => {
+          // Drafts rule 6: the confirmation named the unsaved count; signing out deletes them.
+          if (scopeId) await drafts?.deleteScope(scopeId);
           await gateway.signOut();
           this.authSecret = '';
           this.pairingOpen = false;
@@ -1022,6 +1033,7 @@ export class FarmApp extends LitElement {
       this.authSaveError = error instanceof Error ? error.message : 'Unable to sign out.';
     } finally {
       this.signingOut = false;
+      this.signOutUnsavedDrafts = 0;
     }
   }
 
@@ -1074,8 +1086,29 @@ export class FarmApp extends LitElement {
     });
   }
 
+  /** Drafts rule 6: a principal change deleted the previous account's unsaved drafts. */
+  private renderDraftNotice() {
+    const deleted = getDeletedDraftCount();
+    return deleted
+      ? html`<div
+          class="fa-draft-notice"
+          role="status"
+          data-testid="drafts-deleted-notice"
+          data-count=${deleted}
+        >
+          ${deleted} unsaved ${deleted === 1 ? 'edit' : 'edits'} from the previous account
+          ${deleted === 1 ? 'was' : 'were'} deleted.
+          <button @click=${() => dismissDeletedDraftNotice()}>Dismiss</button>
+        </div>`
+      : nothing;
+  }
+
   private renderAccountControl() {
-    const confirmation = accountSignOutConfirmation('Command Center');
+    // Revoking another device leaves this device's drafts alone.
+    const confirmation = accountSignOutConfirmation(
+      'Command Center',
+      this.revokeTarget ? 0 : this.signOutUnsavedDrafts,
+    );
     return html` <style>
         .fa-account-menu summary {
           list-style: none;
@@ -1124,6 +1157,18 @@ export class FarmApp extends LitElement {
         }
         .fa-account-confirm::backdrop {
           background: #0009;
+        }
+        .fa-draft-notice {
+          position: fixed;
+          right: 12px;
+          bottom: 8px;
+          z-index: 200;
+          padding: 6px 10px;
+          border: 1px solid #70551e;
+          border-radius: 4px;
+          background: #241d10;
+          color: #f2cf83;
+          font-size: 12px;
         }
         .fa-account-confirm h2 {
           margin: 0;
@@ -1199,6 +1244,14 @@ export class FarmApp extends LitElement {
           ${this.revokeTarget ? `Sign out ${this.revokeTarget.deviceName}?` : confirmation.title}
         </h2>
         <p>${confirmation.message}</p>
+        ${confirmation.drafts
+          ? html`<p
+              data-testid="account-sign-out-drafts"
+              data-count=${this.revokeTarget ? 0 : this.signOutUnsavedDrafts}
+            >
+              ${confirmation.drafts}
+            </p>`
+          : nothing}
         <form method="dialog">
           <button value="cancel" autofocus data-testid="account-sign-out-cancel">
             ${confirmation.cancel}
@@ -2393,7 +2446,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         )}
         <div class="fa-sidebar-resize" @pointerdown=${this.onSidebarResizeStart}></div>
         <div style="flex:1"></div>
-        ${this.renderAccountControl()} ${this.renderVersionFooter()}
+        ${this.renderAccountControl()} ${this.renderDraftNotice()} ${this.renderVersionFooter()}
         <button
           class="fa-nav-btn ${this.chatOpen ? 'active' : ''}"
           title="Co-Pilot (Cmd+K)"

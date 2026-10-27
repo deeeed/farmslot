@@ -1,11 +1,13 @@
 import { LitElement } from 'lit';
 import { property, state } from 'lit/decorators.js';
 
+import type { Draft, DraftStore } from '@farmslot/local-store/drafts';
 import type {
   ArtifactRef,
   Diagnostic,
   EvidenceManifestStandalone,
   GitBranchDiffFile,
+  NodesListResult,
   PRReviewThread,
   RecipeRunArtifactGroup,
   Run,
@@ -23,6 +25,7 @@ import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 import {
   type RecipeRunnerUiOptions,
@@ -73,6 +76,8 @@ export abstract class SlotViewState extends LitElement {
   @state() _liveEntries: FileEntry[] = [];
   @state() _liveGitData: GitData | null = null;
   @state() _liveFileContents = new Map<string, string>();
+  /** The hash each file's current `fs.read` reported; absent when the host sends none. */
+  @state() _liveFileHashes = new Map<string, string | undefined>();
   @state() _liveDiffContents = new Map<string, string>();
   @state() _wsLoading = false;
   @state() _wsError = '';
@@ -113,6 +118,37 @@ export abstract class SlotViewState extends LitElement {
   @state() _fileIndex: string[] = [];
   @state() _fileSearchResults: string[] = [];
   @state() _saveFeedback: '' | 'saving' | 'saved' = '';
+
+  // --- Editing (ADR-009 Amendment 1) ---
+  _draftStore?: DraftStore;
+  /** This slot's drafts the user may see: current ones, and read-only ones for an older run. */
+  @state() _slotDrafts: Draft[] = [];
+  /** Current-run drafts by path; the editor shows their edited content. */
+  @state() _fileDrafts = new Map<string, Draft>();
+  _draftRefresh = 0;
+  /** The connection a draft may autosave on; restored and reconnected drafts are absent. */
+  _autosaveArmed = new Map<string, number>();
+  _autosaveTimer?: ReturnType<typeof setTimeout>;
+  /** What the user last saved per path, to tell a worker's later write apart. */
+  _userSaves = new Map<string, { hash: string; content: string }>();
+  @state() _saveConflict?: {
+    path: string;
+    mine: string;
+    theirs?: string;
+    theirsHash: string | null;
+  };
+  @state() _editNotice = '';
+  /** The path whose last save was refused for its run, its host or an error. */
+  @state() _saveRefused = '';
+  /** The saved file a worker then changed; the user's version is kept as a draft. */
+  @state() _fileChangedNotice = '';
+  /** Bumped to replace the editor's text, such as after keeping the file's own version. */
+  @state() _editorRevision = 0;
+  /** The node refused a conditional write; the editor stays read-only for this slot. */
+  @state() _conditionalWritesRefused = false;
+  readonly _nodesQuery = new ResourceQueryController<NodesListResult>(this, () =>
+    this.requestUpdate(),
+  );
   @state() _newFilePrompt = false;
   @state() _newFilePath = '';
   @state() _showIgnored = true;
@@ -235,6 +271,7 @@ export abstract class SlotViewState extends LitElement {
 
   // --- Subscriptions ---
   _unsubState?: () => void;
+  _unsubDrafts?: () => void;
   _unsubConn?: () => void;
   _unsubResourceStatus?: () => void;
   _unsubPrepareTracker?: () => void;
@@ -267,6 +304,7 @@ export abstract class SlotViewState extends LitElement {
       this._pinnedEntries = [];
       this._liveGitData = null;
       this._liveFileContents = new Map();
+      this._liveFileHashes = new Map();
       this._liveDiffContents = new Map();
     },
   );

@@ -570,3 +570,32 @@ test('a pending judgment waits past the ordinary deadline for the server result'
   client.disconnect();
   await interrupted;
 });
+
+test('a refused request carries its typed error details', async (t) => {
+  const fake = installFakeGateway(t);
+  const { GatewayClient, GatewayRequestError, gateway } = await import('./gateway-client.js');
+  const client = new GatewayClient();
+  t.after(() => {
+    client.disconnect();
+    gateway.disconnect();
+  });
+  await client.setAuthCredentials({ token: 'details-test' });
+  const connected = new Promise<void>((resolve) =>
+    client.onConnectionChange((state) => {
+      if (state === 'connected') resolve();
+    }),
+  );
+  client.connect();
+  await connected;
+  const socket = fake.sockets.at(-1)!;
+  const write = client.request('fs.write', { slotId: 'slot', path: 'a.ts', content: '' });
+  const details = { reason: 'run', currentRunId: 'run-2' };
+  socket.failure(socket.sent.at(-1)!.id, { code: 'FS_CONFLICT', message: 'moved', details });
+  const error = await write.then(
+    () => assert.fail('the write was refused'),
+    (reason: unknown) => reason,
+  );
+  assert.ok(error instanceof GatewayRequestError);
+  assert.equal(error.code, 'FS_CONFLICT');
+  assert.deepEqual(error.details, details);
+});

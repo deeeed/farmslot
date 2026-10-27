@@ -4,6 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add conditional file edits (ADR-009 Amendment 1). `fs.read` returns `hash`, the SHA-256 of the raw bytes, on hosts that support them. `fs.write`, `fs.rename` and `fs.delete` take `expectedHash` and `runId`, and a failed precondition returns `FS_CONFLICT` with `FsConflictDetails`. `capabilities.conditionalFileWrites`, `NodeInfo.conditionalWrites` and `FS_PRECONDITION_UNSUPPORTED` mark support.
+
+- Review gate payloads carry `artifactBundle`, and `decisionArtifactBundleRef` reads it. Add `activeRunDiffQuery` and `activeRunDiffBase` (stack target, then the project default branch, then main); the prefetcher takes a `defaultBranch` option. A prefetch refresh of an opened snapshot keeps it opened and evicts as a prefetch write. Sign-out skips observer withdrawal when the socket is already closed.
+
 - `GatewayResourceCache.retry` accepts an abort signal; an aborted retry sends nothing and writes no result. An authorization refusal settles its callers before the eviction is written, so prefetch stops before another read leaves the cache.
 
 - Add content by identity to the resource store and cache (verified diffs, git blobs and artifacts, size caps, one byte budget shared with workspace snapshots, fetch-time write tokens and aliases) and `createContentPrefetcher`, which prefetches pending gates and active runs with an exact unified-diff applier. Observed `git.diff` accepts `includeUntracked`.

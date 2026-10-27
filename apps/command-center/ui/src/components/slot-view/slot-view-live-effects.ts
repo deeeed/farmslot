@@ -2,6 +2,7 @@ import type {
   EvidenceManifestStandalone,
   FsListResult,
   FsReadResult,
+  FsWriteResult,
   GitDiffResult,
   GitStatusResult,
   SlotHealth,
@@ -10,9 +11,17 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceCache } from '../../resource-cache.js';
 import { retainOpenedChildren } from '../workspace/workspace-reads.js';
 
 import type { SlotView } from './slot-view.js';
+import {
+  noteSlotViewFileRead,
+  noteSlotViewReadAccess,
+  slotViewFileQuery,
+  slotViewWritable,
+} from './slot-view-edit-effects.js';
+import { slotViewSaveRefusal } from './slot-view-edit-model.js';
 import {
   isDirectoryReadErrorMessage,
   isImageFile,
@@ -53,6 +62,7 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
   view._liveEntries = [];
   view._liveGitData = null;
   view._liveFileContents = new Map();
+  view._liveFileHashes = new Map();
   view._liveDiffContents = new Map();
 
   try {
@@ -220,17 +230,21 @@ export async function loadSlotViewFileContent(
       },
       (result) => {
         if (!isCurrentLiveResult(view, epoch, version)) return;
+        // The hash travels with its content: the editor checks one against the other.
         view._liveFileContents = new Map(view._liveFileContents).set(path, result.content);
+        view._liveFileHashes = new Map(view._liveFileHashes).set(path, result.hash);
+        void noteSlotViewFileRead(view, path, result.content, result.hash);
       },
     );
     if (!isCurrentLiveResult(view, epoch, version) || !view._workspaceReads.owns(result))
       return false;
-    const next = new Map(view._liveFileContents);
-    next.set(path, result.content);
-    view._liveFileContents = next;
+    view._liveFileContents = new Map(view._liveFileContents).set(path, result.content);
+    view._liveFileHashes = new Map(view._liveFileHashes).set(path, result.hash);
+    noteSlotViewReadAccess(view, path, true);
     return true;
   } catch (err) {
     if (!isCurrentLiveResult(view, epoch, version)) return false;
+    noteSlotViewReadAccess(view, path, false);
     const message = err instanceof Error ? err.message : String(err);
     if (isDirectoryReadErrorMessage(message)) {
       // A direct file URL/search hit can point at a symlinked directory such as
@@ -259,8 +273,12 @@ export async function loadSlotViewDiffContent(
 
   const epoch = view._recoveryEpoch;
   const version = view._workspaceReads.version;
+  // Offline, a per-file read with nothing stored waits for the gateway. The section of the run
+  // diff prefetch holds stands in for it; the first answer wins and the other is dropped.
+  const held =
+    gateway.connectionState === 'connected' || options.diffBase ? undefined : new AbortController();
   try {
-    const result = await view._workspaceReads.read<GitDiffResult>(
+    const live = view._workspaceReads.read<GitDiffResult>(
       Methods.GIT_DIFF,
       {
         slotId: view.slotId,
@@ -275,7 +293,22 @@ export async function loadSlotViewDiffContent(
         view._liveDiffContents = new Map(view._liveDiffContents).set(path, result.diff);
       },
     );
-    if (!isCurrentLiveResult(view, epoch, version) || !view._workspaceReads.owns(result))
+    const fromHeld = held
+      ? import('../../held-run-diff.js')
+          .then(({ heldRunFileDiff }) =>
+            heldRunFileDiff(getResourceCache(), view._linkedRun, options.requestPath ?? path, {
+              signal: held.signal,
+            }),
+          )
+          .then((diff) => (diff === undefined ? live : { diff, held: true }))
+      : undefined;
+    const result: GitDiffResult & { held?: boolean } = await (fromHeld
+      ? Promise.race([live, fromHeld])
+      : live);
+    if (
+      !isCurrentLiveResult(view, epoch, version) ||
+      (!result.held && !view._workspaceReads.owns(result))
+    )
       return false;
     const next = new Map(view._liveDiffContents);
     next.set(path, result.diff);
@@ -298,6 +331,8 @@ export async function loadSlotViewDiffContent(
       view._liveDiffContents = next;
     }
     return true;
+  } finally {
+    held?.abort();
   }
 }
 
@@ -454,12 +489,48 @@ export function pinSlotViewFile(view: SlotView, path: string) {
   view._openFiles = view._openFiles.map((f) => (f.path === path ? { ...f, pinned: true } : f));
 }
 
+/** The slot's current run, or null: every workspace write names the run it was made for. */
+function slotViewWriteRun(view: SlotView): string | null {
+  return view._slot?.currentRunId ?? null;
+}
+
+/**
+ * A file operation carries the file's hash from a current read: read-only slots, and files the
+ * host reports no hash for, refuse it (ADR-009 Amendment 1).
+ */
+async function slotViewFileHash(view: SlotView, path: string): Promise<string | undefined> {
+  if (!slotViewWritable(view)) return undefined;
+  const current = await getResourceCache()?.retry(slotViewFileQuery(view, path));
+  return current?.status === 'ready' ? current.data?.hash : undefined;
+}
+
+function refusedFileOperation(view: SlotView, error: unknown): boolean {
+  const refusal = slotViewSaveRefusal(error);
+  if (!refusal) return false;
+  if (refusal.kind === 'unsupported') view._conditionalWritesRefused = true;
+  view._editNotice =
+    refusal.kind === 'hash'
+      ? 'The file changed since it was read. Reload it and try again.'
+      : refusal.kind === 'run'
+        ? 'The slot now serves another run, so the change was refused.'
+        : refusal.kind === 'destination-exists'
+          ? 'A file already exists at that name, so the rename was refused.'
+          : "This slot's node cannot check edits, so the workspace is read-only.";
+  return true;
+}
+
 export async function handleSlotViewTreeAction(
   view: SlotView,
   detail: { action: string; path: string; type: string },
 ) {
   if (!view._isLive || view._isRecoveryBlocked || !view._workspaceReads.ready) return;
   const { action, path: filePath } = detail;
+  const directory = detail.type === 'directory';
+  const writes = ['new-file', 'new-folder', 'rename', 'delete'];
+  if (writes.includes(action) && !slotViewWritable(view)) {
+    view._editNotice = 'This slot is read-only here, so its files cannot be changed.';
+    return;
+  }
 
   switch (action) {
     case 'pin-folder': {
@@ -476,11 +547,17 @@ export async function handleSlotViewTreeAction(
       const name = prompt('Folder name:');
       if (!name) return;
       const folderPath = filePath + '/' + name;
+      // Directory operations carry no hash, so the user confirms them.
+      if (!confirm(`Create folder ${folderPath}?`)) return;
       try {
-        await gateway.request(Methods.FS_MKDIR, { slotId: view.slotId, path: folderPath });
+        await gateway.request(Methods.FS_MKDIR, {
+          slotId: view.slotId,
+          path: folderPath,
+          runId: slotViewWriteRun(view),
+        });
         view._reloadTree();
       } catch (err) {
-        console.error('[slot-view] mkdir failed:', err);
+        if (!refusedFileOperation(view, err)) console.error('[slot-view] mkdir failed:', err);
       }
       return;
     }
@@ -491,15 +568,23 @@ export async function handleSlotViewTreeAction(
       const dir = filePath.includes('/')
         ? filePath.substring(0, filePath.lastIndexOf('/') + 1)
         : '';
+      if (directory && !confirm(`Rename folder ${filePath} to ${dir + newName}?`)) return;
       try {
+        const expectedHash = directory ? undefined : await slotViewFileHash(view, filePath);
+        if (!directory && !expectedHash) {
+          view._editNotice = `${filePath} has no current hash to rename it with.`;
+          return;
+        }
         await gateway.request(Methods.FS_RENAME, {
           slotId: view.slotId,
           oldPath: filePath,
           newPath: dir + newName,
+          runId: slotViewWriteRun(view),
+          ...(expectedHash ? { expectedHash } : {}),
         });
         view._reloadTree();
       } catch (err) {
-        console.error('[slot-view] rename failed:', err);
+        if (!refusedFileOperation(view, err)) console.error('[slot-view] rename failed:', err);
       }
       return;
     }
@@ -521,7 +606,17 @@ export async function handleSlotViewTreeAction(
     case 'delete': {
       if (!confirm(`Delete ${filePath}?`)) return;
       try {
-        await gateway.request(Methods.FS_DELETE, { slotId: view.slotId, path: filePath });
+        const expectedHash = directory ? undefined : await slotViewFileHash(view, filePath);
+        if (!directory && !expectedHash) {
+          view._editNotice = `${filePath} has no current hash to delete it with.`;
+          return;
+        }
+        await gateway.request(Methods.FS_DELETE, {
+          slotId: view.slotId,
+          path: filePath,
+          runId: slotViewWriteRun(view),
+          ...(expectedHash ? { expectedHash } : {}),
+        });
         view._openFiles = view._openFiles.filter((f) => f.path !== filePath);
         if (view._activeFile === filePath) {
           view._activeFile =
@@ -529,7 +624,7 @@ export async function handleSlotViewTreeAction(
         }
         view._reloadTree();
       } catch (err) {
-        console.error('[slot-view] delete failed:', err);
+        if (!refusedFileOperation(view, err)) console.error('[slot-view] delete failed:', err);
       }
       return;
     }
@@ -539,21 +634,27 @@ export async function handleSlotViewTreeAction(
 export async function createSlotViewFile(view: SlotView) {
   const filePath = view._newFilePath.trim();
   if (!filePath || !view._isLive || view._isRecoveryBlocked || !view._workspaceReads.ready) return;
+  if (!slotViewWritable(view)) {
+    view._editNotice = 'This slot is read-only here, so files cannot be created.';
+    return;
+  }
   try {
-    await gateway.request(Methods.FS_WRITE, {
+    // `expectedHash: null`: the file must not exist yet.
+    const result = await gateway.request<FsWriteResult>(Methods.FS_WRITE, {
       slotId: view.slotId,
       path: filePath,
       content: '',
+      expectedHash: null,
+      runId: slotViewWriteRun(view),
     });
     // Cache empty content and open in edit mode
-    const next = new Map(view._liveFileContents);
-    next.set(filePath, '');
-    view._liveFileContents = next;
+    view._liveFileContents = new Map(view._liveFileContents).set(filePath, '');
+    view._liveFileHashes = new Map(view._liveFileHashes).set(filePath, result.hash);
     view._openFile(filePath, 'file', true);
     view._newFilePrompt = false;
     view._newFilePath = '';
   } catch (err) {
-    console.error('[slot-view] create file failed:', err);
+    if (!refusedFileOperation(view, err)) console.error('[slot-view] create file failed:', err);
   }
 }
 

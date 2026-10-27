@@ -387,6 +387,8 @@ export interface ReviewGatePayload {
   lineComments: ReviewLineComment[];
   artifactManifest?: EvidenceManifestEntry[];
   artifactUrls?: Record<string, string>;
+  /** Capture that retains the review's artifacts. Absent on older payloads. */
+  artifactBundle?: RunArtifactBundleRef;
   reviewSnapshot?: ReviewDiffSnapshot;
   reviewInputArtifactPaths?: string[];
   stale?: boolean;

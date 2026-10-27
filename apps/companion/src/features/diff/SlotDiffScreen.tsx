@@ -18,6 +18,7 @@ import { MobileDiffViewer } from '../../components/MobileDiffViewer';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { observeNativeSlotFrame } from '../../farmslot/run-collections-proof';
+import { useActiveRunDiffQuery } from '../../hooks/useHeldContent';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   type ArtifactManifestEntry,
@@ -96,16 +97,13 @@ export default function SlotDiffViewerScreen() {
   const recipeObservation = useResourceQuery(recipeQuery);
   const recipeRuns = recipeObservation.data?.recipeRuns ?? [];
   const recipeRunsLoaded = Boolean(recipeObservation.data);
-  const diffQuery = useMemo(
-    () =>
-      slotId
-        ? resourceQuery<GitDiffResult>(Methods.GIT_DIFF, {
-            slotId,
-            ...(currentRunId ? { runId: currentRunId } : {}),
-          })
-        : undefined,
-    [slotId, currentRunId],
+  // A slot's run shows its changes since its base, as prefetch keeps them, online and offline.
+  const activeRunDiffQuery = useActiveRunDiffQuery(currentRun);
+  const idleDiffQuery = useMemo(
+    () => (slotId ? resourceQuery<GitDiffResult>(Methods.GIT_DIFF, { slotId }) : undefined),
+    [slotId],
   );
+  const diffQuery = currentRunId ? activeRunDiffQuery : idleDiffQuery;
   const diffObservation = useResourceQuery(diffQuery);
   const diffText = diffObservation.data?.diff ?? '';
   const loading = diffObservation.status === 'loading';

@@ -43,6 +43,7 @@ import { gateway } from '../../gateway-client.js';
 import {
   blobKey,
   CONTENT_MISMATCH,
+  decisionDiffArtifact,
   frozenDiffAlias,
   heldBlobId,
   heldDiffFiles,
@@ -182,13 +183,15 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   /**
    * The review's diff by identity: a saved review's frozen commits by alias, then the retained
    * input diff by `diffHash`. With `fetch`, a connected client reads the retained diff, and shows
-   * and keeps it only when it verifies. The review payload names no bundle, so the read is the
-   * run's current one; verification rejects a diff a later retain put at the same path.
+   * and keeps it only when it verifies. The read is pinned to the bundle the review payload
+   * records; an older payload records none, so its read is the run's current one, and
+   * verification rejects a diff a later retain put at the same path.
    */
   private async _reviewDiffText(fetch: boolean): Promise<VerifiedText> {
     const snapshot = this._payload?.reviewSnapshot;
-    const run = this._queries.run.state.data?.run;
-    const subject = run?.id === this.runId ? run.reviewWorkspaceSubject : undefined;
+    const loaded = this._queries.run.state.data?.run;
+    const run = loaded?.id === this.runId ? loaded : undefined;
+    const subject = run?.reviewWorkspaceSubject;
     const base = subject?.baseSha ?? snapshot?.baseSha;
     const head = subject?.headSha ?? snapshot?.headSha;
     if (this.workspaceView && this.runId && base && head) {
@@ -203,7 +206,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     if (gateway.connectionState !== 'connected') return undefined;
     return readVerifiedText(
       key,
-      () => fetchRunArtifactBytes({ runId: this.runId, path }),
+      () => fetchRunArtifactBytes(decisionDiffArtifact(this.runId, path, this._payload, run)),
       'gate',
       snapshot.untrackedFiles,
     );

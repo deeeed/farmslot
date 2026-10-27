@@ -12,6 +12,8 @@ import type {
   StoreWorkerResponse,
 } from './worker-protocol.js';
 
+export * from './drafts.js';
+
 export interface BrowserResourceStoreOptions {
   scope: ResourceStoreScope;
   databaseName?: string;

@@ -3,6 +3,7 @@ import { Methods } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 
 import type { SlotView } from './slot-view.js';
+import { editSlotViewFile, saveSlotViewDraft, slotViewEditable } from './slot-view-edit-effects.js';
 import { canSaveSlotViewFile } from './slot-view-file-command-model.js';
 import type { CodeViewerElement, EditorId } from './slot-view-model.js';
 import { EDITOR_PREF_KEY } from './slot-view-model.js';
@@ -55,45 +56,32 @@ export async function runSlotViewGitAction(
   }
 }
 
+/** An explicit save: the editor's text becomes the file's draft, saved under its preconditions. */
 export async function saveSlotViewFile(view: SlotView): Promise<void> {
   if (!view._workspaceReads.ready) return;
-  const tab = view._openFiles.find((file) => file.path === view._activeFile);
+  const path = view._activeFile;
+  const tab = view._openFiles.find((file) => file.path === path);
   if (
     !canSaveSlotViewFile({
-      activeFile: view._activeFile,
+      activeFile: path,
       isLive: view._isLive,
       saveFeedback: view._saveFeedback,
       recoveryBlocked: view._isRecoveryBlocked,
       activeTabType: tab?.type,
+      editable: slotViewEditable(view, path),
     })
   ) {
     return;
   }
 
   const codeViewer = view.querySelector('code-viewer') as CodeViewerElement | null;
-  if (!codeViewer?._editor) return;
-  const content = codeViewer._editor.getValue();
-  view._saveFeedback = 'saving';
-  try {
-    await gateway.request(Methods.FS_WRITE, {
-      slotId: view.slotId,
-      path: view._activeFile,
-      content,
-    });
-    const next = new Map(view._liveFileContents);
-    next.set(view._activeFile, content);
-    view._liveFileContents = next;
-    view._pinFile(view._activeFile);
-    view._saveFeedback = 'saved';
-    setTimeout(() => {
-      view._saveFeedback = '';
-    }, 2000);
-    // Auto-refresh diagnostics if they've been loaded.
-    if (view._diagnostics.length > 0 || view._diagnosticsLoading) {
-      view._runDiagnostics();
-    }
-  } catch (err) {
-    console.error('[slot-view] save failed:', err);
-    view._saveFeedback = '';
+  const content = codeViewer?._editor?.getValue();
+  const shown = view._fileDrafts.get(path)?.editedContent ?? view._liveFileContents.get(path);
+  if (content !== undefined && content !== shown) await editSlotViewFile(view, path, content);
+  if (!view._fileDrafts.has(path) || !(await saveSlotViewDraft(view, path))) return;
+  view._pinFile(path);
+  // Auto-refresh diagnostics if they've been loaded.
+  if (view._diagnostics.length > 0 || view._diagnosticsLoading) {
+    view._runDiagnostics();
   }
 }

@@ -1,4 +1,5 @@
 import {
+  type ConfigProjectsResult,
   type DecisionListResult,
   type FleetStatusResult,
   mergeRunListObservations,
@@ -25,6 +26,10 @@ export const nativeRunHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LI
 });
 export const nativeDecisionsQuery = resourceQuery<DecisionListResult>(Methods.DECISION_LIST);
 export const nativeFleetQuery = resourceQuery<FleetStatusResult>(Methods.FLEET_STATUS);
+/** Farm owners only; it names each project's default branch. */
+export const configurationProjectsQuery = resourceQuery<ConfigProjectsResult>(
+  Methods.CONFIG_PROJECTS,
+);
 
 export function nativeCollectionReadTimeout(
   method: ResourceReadMethod,

@@ -269,6 +269,7 @@ waiting. Streams are never stored, and commands never pass through the store.
 | `mergeBaseSha`, `headSha` on `GitDiffResult`, when `base` is set                                                                              | `@farmslot/protocol/rpc/git`                       | Prefetch                                          |
 | `git.diff` option `includeUntracked`, for `target: 'worktree'`                                                                                | `@farmslot/protocol/rpc/git`                       | Prefetch                                          |
 | `capabilities.batchedContent`, `capabilities.resourceChanges.versionLists`                                                                    | `@farmslot/protocol/rpc/auth`                      | The shared cache                                  |
+| `capabilities.conditionalFileWrites`                                                                                                          | `@farmslot/protocol/rpc/auth`                      | The Command Center editor                         |
 
 ### Store
 
@@ -453,7 +454,10 @@ hasMore }`, with `status` one of `ok`, `held`, `missing`, `not-blob` or
    does not prefetch and loads content when opened.
 2. `capabilities.resourceChanges.versionLists` is `true` when the run list
    supports version lists. Without it the client rereads the run list.
-3. No missing capability falls back to polling. These fields start
+3. `capabilities.conditionalFileWrites` is `true` when file edits accept
+   `expectedHash` and `runId` ([ADR-009 Amendment 1](../adr/009-slot-workspace.md#amendment-1-2026-10-20-conditional-file-edits)).
+   Without it the editor stays read-only.
+4. No missing capability falls back to polling. These fields start
    experimental.
 
 ### Acceptance

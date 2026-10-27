@@ -449,11 +449,12 @@ export const queueQuery = resourceQuery<DispatchQueueListResult>(Methods.DISPATC
 export const projectsQuery = resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS);
 export const prsQuery = resourceQuery<PRListResult>(Methods.PR_LIST);
 
-/** Stacked runs compare with their parent branch, others with the project's default branch. */
-function contentPrefetchSlotBase(run: Run): string | undefined {
-  return (
-    run.stack?.retargetedTo ?? run.stack?.baseBranch ?? state.projectDefaultBranches[run.project]
-  );
+/**
+ * The default branch both prefetch and held reads give `activeRunDiffBase`: the run's project's,
+ * which a stacked run's stack base precedes, and `main` follows.
+ */
+export function runProjectDefaultBranch(run: Pick<Run, 'project'>): string | undefined {
+  return state.projectDefaultBranches[run.project];
 }
 
 let collectionCache: GatewayResourceCache | undefined;
@@ -499,11 +500,14 @@ function bindFarmCollections(): void {
   }
   if (gateway.connectionState !== 'connected') state.workspaceAccess = 'farm';
   const current = () => collectionCache === cache && collectionWorkspaceKey === workspaceKey;
-  const prefetchTargetsChanged = () =>
+  // Runs start once the projects name their default branches, so no read uses a passing base.
+  const prefetchTargetsChanged = () => {
+    if (cache.read(projectsQuery).status === 'loading') return;
     setContentPrefetchTargets(
       contentPrefetchTargets(state.decisions, cache.read(activeRunsQuery).data?.runs ?? []),
-      contentPrefetchSlotBase,
+      runProjectDefaultBranch,
     );
+  };
   collectionObservers.push(
     cache.observe(prsQuery, (result) => {
       if (!current()) return;
@@ -583,6 +587,7 @@ function bindFarmCollections(): void {
       );
       state.hydrated = { ...state.hydrated, projects: result.status !== 'loading' };
       state.bootstrapFailed = { ...state.bootstrapFailed, projects: Boolean(result.error) };
+      prefetchTargetsChanged();
       notify();
     }),
   );

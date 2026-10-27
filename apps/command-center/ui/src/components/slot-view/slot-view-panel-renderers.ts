@@ -17,6 +17,7 @@ import { renderRunTitle } from '../shared/run-title.js';
 
 import type { SlotView } from './slot-view.js';
 import { slotViewAgentContextChipLabel } from './slot-view-agent-contexts.js';
+import { renderSlotViewEditStrip } from './slot-view-edit-renderers.js';
 import { isSlotViewContextPinUnresolved } from './slot-view-linked-run-model.js';
 import { realPath, slotBoundRunIdForSlot, slotViewTerminalRunId } from './slot-view-model.js';
 import { slotViewEffectiveTerminalHeight } from './slot-view-resize-effects.js';
@@ -435,7 +436,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                 +
               </button>
             </div>
-            ${view._renderEditorHeader()}
+            ${view._renderEditorHeader()} ${renderSlotViewEditStrip(view)}
             <div class="sv-editor-content">${view._renderEditor()}</div>
           </div>
           <!-- Resource panel (right of editor, same height) -->

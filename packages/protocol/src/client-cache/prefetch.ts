@@ -10,7 +10,7 @@ import type { ResourceChangedPayload } from '../transport/events.js';
 import { gitBlobHash, RESOURCE_CONTENT_LIMITS, resourceContentWithinLimits } from './content.js';
 import { applyUnifiedDiff, parseUnifiedDiff, type UnifiedDiffFile } from './diff-apply.js';
 import { RESOURCE_PUBLISH_INTERVAL_MS } from './keys.js';
-import { resourceQuery } from './registry.js';
+import { type ResourceQuery, resourceQuery } from './registry.js';
 import type { ContentKey, ResourceContentCohort } from './store.js';
 import type {
   GatewayResourceCache,
@@ -50,8 +50,8 @@ export interface ContentPrefetchOptions {
   request<T>(method: string, params: unknown, signal: AbortSignal): Promise<T>;
   /** Raw bytes. An authorization refusal rejects with `code: 'AUTH_FORBIDDEN'`. */
   readArtifact(artifact: ContentPrefetchArtifact, signal: AbortSignal): Promise<Uint8Array>;
-  /** The branch an active slot run is compared with. Defaults to its stack base, then `main`. */
-  slotBase?(run: Run): string | undefined;
+  /** The run's project default branch, for an active run without a stack base (`activeRunDiffBase`). */
+  defaultBranch?(run: Run): string | undefined;
 }
 
 export interface ContentPrefetcher {
@@ -122,6 +122,30 @@ function updatedAt(target: ContentPrefetchTarget): number {
   const value =
     typeof target.updatedAt === 'string' ? Date.parse(target.updatedAt) : target.updatedAt;
   return value !== undefined && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * The base an active run's diff compares with, in the gateway's `publicationBaseForRun` order:
+ * the stack base, then the run's project default branch, then `main`.
+ */
+export function activeRunDiffBase<R extends Pick<Run, 'stack'>>(
+  run: R,
+  defaultBranch?: (run: R) => string | undefined,
+): string {
+  return run.stack?.retargetedTo ?? run.stack?.baseBranch ?? defaultBranch?.(run) ?? 'main';
+}
+
+/** The active-run diff prefetch keeps: merge-base to worktree, with untracked files. */
+export function activeRunDiffQuery(params: {
+  slotId: string;
+  runId: string;
+  base: string;
+}): ResourceQuery<GitDiffResult> {
+  return resourceQuery<GitDiffResult>(Methods.GIT_DIFF, {
+    ...params,
+    target: 'worktree',
+    includeUntracked: true,
+  });
 }
 
 function pendingPackage(run: Run): ReadyGatePrPackage | undefined {
@@ -480,12 +504,10 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     write: PrefetchWrite,
   ): Promise<void> {
     const since = Date.now();
-    const query = resourceQuery<GitDiffResult>(Methods.GIT_DIFF, {
+    const query = activeRunDiffQuery({
       slotId,
       runId: run.id,
-      base: options.slotBase?.(run) ?? run.stack?.retargetedTo ?? run.stack?.baseBranch ?? 'main',
-      target: 'worktree',
-      includeUntracked: true,
+      base: activeRunDiffBase(run, options.defaultBranch),
     });
     const placement = { origin: 'prefetch' as const, cohort: write.cohort };
     const diff = freshData(await cache.retry(query, placement, write.signal), since, write.signal);

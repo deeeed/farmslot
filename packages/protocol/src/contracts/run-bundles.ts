@@ -138,6 +138,7 @@ export function decisionArtifactBundleRef(
   payload: RunDecisionPayload | undefined,
 ): RunArtifactBundleRef | undefined {
   if (payload?.kind === 'ready') return payload.prPackage?.artifactBundle;
+  if (payload?.kind === 'review') return payload.artifactBundle;
   if (payload?.kind === 'output-review')
     return (
       payload.artifactBundle ??
