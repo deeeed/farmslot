@@ -398,3 +398,71 @@ test("a restored draft on another slot never inherits the first slot's autosave"
   await flush();
   assert.equal(writes.length, 1);
 });
+
+test('undoing back to the base while a save is pending keeps that undo as a draft', async (t) => {
+  const store = reset(t);
+  const view = makeView(store);
+  const sent = 'export const value = 24;\n';
+  let answer!: (reply: unknown) => void;
+  reply = () =>
+    new Promise((resolve) => {
+      answer = resolve;
+    });
+  await effects.editSlotViewFile(view, 'src/value.ts', sent);
+  const saving = effects.saveSlotViewDraft(view, 'src/value.ts');
+  await flush();
+  // The user undoes to the text the file had before the save.
+  await effects.editSlotViewFile(view, 'src/value.ts', base);
+  answer({ ok: true, hash: sha256(sent) });
+  assert.equal(await saving, true);
+  const [kept] = await store.list('scope-a');
+  assert.deepEqual(
+    { base: kept.baseContent, baseHash: kept.baseHash, edited: kept.editedContent },
+    { base: sent, baseHash: sha256(sent), edited: base },
+  );
+  assert.equal(view._fileDrafts.get('src/value.ts')?.editedContent, base);
+});
+
+test("a late save reply for slot A never touches slot B's draft at the same path", async (t) => {
+  const store = reset(t);
+  const slotB = slot({ slot: 'slot-b', currentRunId: 'run-b' });
+  fleetSlots = [slot(), slotB];
+  const view = makeView(store);
+  const sent = 'export const value = 40;\n';
+  let answer!: (reply: unknown) => void;
+  reply = () =>
+    new Promise((resolve) => {
+      answer = resolve;
+    });
+  await effects.editSlotViewFile(view, 'src/value.ts', sent);
+  const saving = effects.saveSlotViewDraft(view, 'src/value.ts');
+  await flush();
+  // Before A replies, the view moves to slot B and shows B's restored draft at that path.
+  const restored = await store.put(
+    draftFor({ slotId: 'slot-b', runId: 'run-b', editedContent: 'export const value = 41;\n' }),
+  );
+  Object.assign(view, { slotId: 'slot-b', _slot: slotB });
+  await effects.refreshSlotViewDrafts(view);
+  answer({ ok: true, hash: sha256(sent) });
+  assert.equal(await saving, true);
+  t.mock.timers.tick(effects.SLOT_VIEW_AUTOSAVE_PAUSE_MS);
+  await flush();
+  assert.deepEqual(
+    writes.map(({ params }) => params.slotId),
+    ['slot-a'],
+    'B is never sent',
+  );
+  const [stillB] = await store.list('scope-a', 'slot-b');
+  assert.deepEqual(
+    { base: stillB.baseContent, baseHash: stillB.baseHash, edited: stillB.editedContent },
+    { base: restored.baseContent, baseHash: restored.baseHash, edited: restored.editedContent },
+  );
+  assert.equal(view._fileDrafts.get('src/value.ts')?.slotId, 'slot-b');
+  assert.equal(
+    [...view._autosaveArmed.keys()].some((key) => key.includes('slot-b')),
+    false,
+    "B's restored draft stays unarmed",
+  );
+  assert.equal(view._liveFileContents.get('src/value.ts'), base, "B's view keeps its own file");
+  assert.deepEqual(await store.list('scope-a', 'slot-a'), [], "A's reply resolved A's draft");
+});
