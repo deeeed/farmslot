@@ -11,6 +11,15 @@ const code = fileURLToPath(new URL('../../../../', import.meta.url));
 const output = process.env.FARMSLOT_SAFE_IDLE_PROOF_OUT;
 assert.ok(output, 'Set FARMSLOT_SAFE_IDLE_PROOF_OUT outside the checkout');
 const lane = output;
+const cli = process.env.FARMSLOT_CLI;
+assert.ok(
+  cli && path.isAbsolute(cli),
+  'Set FARMSLOT_CLI to an owned immutable distribution executable',
+);
+assert.ok(
+  existsSync(path.resolve(path.dirname(await realpath(cli)), '../../..', 'DEPLOYED-REVISION.json')),
+  'Use an immutable CLI distribution, not a development workspace',
+);
 await mkdir(lane, { recursive: true });
 const tmux = (...args: string[]) => execFileSync('tmux', args, { encoding: 'utf8' }).trim();
 const beforeSessions = tmux('list-sessions', '-F', '#{session_id} #{session_name}').split('\n');
@@ -58,7 +67,7 @@ Object.assign(process.env, {
   FARMSLOT_GATEWAY_AUTH_MODE: 'token',
   GATEWAY_HOST: '127.0.0.1',
   TSX_TSCONFIG_PATH: path.join(code, 'services/gateway/tsconfig.json'),
-  FARMSLOT_CLI: path.join(root, 'bin/farmslot'),
+  FARMSLOT_CLI: cli,
 });
 for (const dir of [
   'pool',
@@ -86,15 +95,6 @@ for (const name of [
       await realpath(path.join(code, name)),
       'Retained fixture source must match',
     );
-const quote = (v: string) => `'${v.replaceAll("'", "'\\''")}'`;
-await writeFile(
-  path.join(root, 'bin/farmslot'),
-  `#!/bin/sh
-export FARMSLOT_ROOT=${quote(root)}
-exec ${quote(process.execPath)} ${quote(path.join(code, 'packages/cli/bin/farmslot.mjs'))} "$@"
-`,
-  { mode: 0o755 },
-);
 await writeFile(
   path.join(root, 'pool/proof.json'),
   JSON.stringify(

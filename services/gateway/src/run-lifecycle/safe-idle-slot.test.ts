@@ -159,3 +159,93 @@ test('a failed recovery remains unavailable with its actual reason', async () =>
     reason: failure,
   });
 });
+
+test('a parked predecessor protects an ownerless workspace but permits a named finished successor', async (t) => {
+  const parked = store.createRun({
+    project: 'proof',
+    flowType: 'dev',
+    mode: 'autonomous',
+    ticketOrPr: 'PROOF-PARK',
+  });
+  const successor = store.createRun({
+    project: 'proof',
+    flowType: 'dev',
+    mode: 'autonomous',
+    ticketOrPr: 'PROOF-SUCCESSOR',
+  });
+  t.after(async () => {
+    for (const run of [parked, successor]) {
+      store.updateRun(run.id, { status: 'done', slotId: null, park: undefined });
+      await store.deleteRun(run.id);
+    }
+  });
+  const at = new Date().toISOString();
+  store.updateRun(parked.id, {
+    status: 'human-gating',
+    slotId: 'proof',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'running' },
+    ],
+    park: {
+      version: 1,
+      operationId: 'park-operation',
+      previewId: 'preview',
+      runId: parked.id,
+      generation: 0,
+      machine: 'local',
+      slotId: 'proof',
+      mode: 'release',
+      phase: 'parked',
+      slotDisposition: 'freed',
+      slotFreedAt: at,
+      prePauseStatus: 'human-gating',
+      prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+      resourceManifest: { capturedAt: at, resources: [], capabilityLeases: [] },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: at,
+      updatedAt: at,
+    },
+  });
+  store.updateRun(successor.id, { status: 'done', slotId: 'proof' });
+  const gates = await import('../run-engine/gate-held-lifecycle.js');
+  assert.equal(
+    gates.findGateParkedRunForSlot('proof')?.id,
+    parked.id,
+    'fixture is an actual retained gate park',
+  );
+  assert.match(
+    (await work.workspaceProtectedReason('proof', { current_run_id: null })) ?? '',
+    /parked workspace/,
+  );
+  assert.equal(
+    await work.workspaceProtectedReason('proof', { current_run_id: successor.id }),
+    undefined,
+  );
+  assert.equal(store.getRun(parked.id)?.park?.slotDisposition, 'freed');
+});
+
+test('an active skip-prepare successor protects a finished parent checkout', async (t) => {
+  const child = store.createRun({
+    project: 'proof',
+    flowType: 'dev',
+    mode: 'autonomous',
+    ticketOrPr: 'PROOF-PINNED',
+  });
+  t.after(async () => {
+    store.updateRun(child.id, { status: 'done', slotId: null });
+    await store.deleteRun(child.id);
+  });
+  store.updateRun(child.id, {
+    status: 'monitoring',
+    slotId: 'proof',
+    engineState: { generation: 0, flags: { skipPrepare: true } },
+    steps: [{ name: 'find-slot', status: 'done' }],
+  });
+  assert.match(
+    (await work.workspaceProtectedReason('proof', { current_run_id: 'finished-parent' })) ?? '',
+    /still needs this checkout/,
+  );
+});

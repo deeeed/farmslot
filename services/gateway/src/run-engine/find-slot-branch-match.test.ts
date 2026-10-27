@@ -802,7 +802,10 @@ for (const kind of ['local-work', 'unavailable'] as const) {
 test('a clean main checkout is selected regardless of numeric stale score', async () => {
   reset('dev', 'PROOF-9001');
   expectedTarget = undefined;
-  slots.splice(0, slots.length, candidate('safe-main', 'first', 'main'));
+  const safe = candidate('safe-main', 'first', 'main');
+  safe.hostLoad = { cpuPercent: 95, memoryPercent: 90, diskPercent: 50, headroom: 'red' };
+  slots.splice(0, slots.length, safe);
+  assert.ok(scoring.slotScore(safe) >= 50, 'exercise the numeric stale-score threshold');
   expectedSlot = 'safe-main';
   const result = await executeFindSlotStep(run.id, run, 0, context);
   assert.equal(result.outputs?.selectedSlot, expectedSlot);
