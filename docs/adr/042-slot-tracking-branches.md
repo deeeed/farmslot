@@ -274,7 +274,25 @@ The work-preservation picker is needed only when every otherwise eligible free
 candidate has verified dirty or unpublished work. Unknown evidence grants no
 reset authority. Load, source, resource and ownership admission still apply.
 
-This supersedes Amendment 1's human stale-slot choice for safe automatic reuse.
+If none is reusable and any candidate is unavailable, refuse find-slot with the
+recorded candidate reasons. Replay find-slot after the evidence returns. This is
+not a work-preservation choice and adds no protocol field or reason enum.
+
+Both automatic paths use Amendment 1 release-mode evidence and
+`slotRecoveryEligibility`, fetched and rechecked inside the existing fence. The
+legacy release preflight, a deleted upstream or a default-branch name alone does
+not authorize reset. A park record protects its owner or an ownerless workspace;
+a named finished successor is judged on its own work, preserving the parked ref.
+This aligns the shared workspace guard with owner-bound slot release.
+
+Pinned slot and skip-prepare/warm selections keep their existing paths. Never
+reset a checkout still required by an active pinned warm, native or skip-prepare
+successor. A post-prepare replay must verify its recorded checkout, or refuse
+with an instruction to replay from prepare or earlier.
+
+This supersedes Amendment 1's human stale-slot choice and its `all_stale` proof
+precondition for clean published work. The manual-action proof instead seeds
+dirty or unpublished work that requires a human recovery choice.
 The fleet recovery action and its shared model remain available. Normal prepare
 continues to own task-specific fixture setup.
 
@@ -283,6 +301,7 @@ continues to own task-specific fixture setup.
 Published ticket branches and old default-branch heads must not strand otherwise
 usable capacity. Recovery precedes the incoming task write, preserves run evidence
 and never force-resets local work. A failed recovery retains its existing hold.
+Returning to the idle branch removes target-branch affinity for later follow-ups.
 
 ### Public surface
 

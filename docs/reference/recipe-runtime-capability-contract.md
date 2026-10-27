@@ -659,7 +659,7 @@ Add optional gateway-owned `SlotStatus.workspace`, persisted in the existing slo
 
 Publication states are `baseline`, `merged`, `pushed`, `unpushed`, `unknown`. Baseline equals the observed remote default; merged work is fully contained, patch-equivalent, or covered by a verified merged PR into that default. Pushed means the actual HEAD is reachable from a verified publication ref, including a fork. Unpushed requires positive evidence of local unpublished commits. Dirty work is a separate warning. Neither deleted upstreams nor stale local refs prove publication. Even the default/tracking branch must be inspected for local commits and dirt.
 
-Fleet status reads never fetch or write refs, index, checkout, task inputs or fixture selection. Use local evidence plus cached read-only network evidence; network probes run only for idle candidates, use existing request caching and a five-second probe timeout, with at most one in-flight inspection per slot and one default-ref query per repository per refresh. Cache results by HEAD and observed default SHA, with timestamps; no browser/GitHub poller per client. A cache miss or failed probe stays unknown. The destructive path fetches and verifies publication inside its fence before cleanup. The stricter release-mode inspector is authoritative; existing non-release teardown callers retain their current policy, including their deleted-upstream shortcut.
+Fleet status reads never fetch or write refs, index, checkout, task inputs or fixture selection. Use local evidence plus cached read-only network evidence; network probes run only for idle candidates, use existing request caching and a five-second probe timeout, with at most one in-flight inspection per slot and one default-ref query per repository per refresh. Cache results by HEAD and observed default SHA, with timestamps; no browser/GitHub poller per client. A cache miss or failed probe stays unknown. The destructive path fetches and verifies publication inside its fence before cleanup. The stricter release-mode inspector is authoritative; existing non-release teardown callers retain their current policy, including their deleted-upstream shortcut, except automatic find-slot and settlement resets, which require this release-mode evidence.
 
 `@farmslot/protocol` provides one pure recovery eligibility predicate for the gateway's fresh recheck and `FleetRefreshViewModel` in `@farmslot/review-dispatch`. The model owns both clients' labels, logical filters, target set/count, confirmations, RPC parameters and progress. Move browser fleet-refresh logic into it and remove duplicate eligibility/substring-based force decisions for this action. `fleet.prSummary` becomes a thin projection of the same workspace evidence, not a second lookup or release authority.
 
@@ -703,14 +703,32 @@ Selection MUST continue past a refused or unavailable candidate and preserve its
 reason. Ask for work-preservation input only when all otherwise eligible free
 candidates have verified dirty or unpublished work. Unknown Git/publication or
 node state MUST NOT grant reset authority; existing admission waits/refusals
-remain truthful. Never clear a held recovery or a protected owner to make a slot
-eligible. Normal prepare retains fixture setup responsibility.
+remain truthful. If no candidate is reusable and any candidate is unknown or
+refused, find-slot MUST refuse with its recorded per-candidate reasons; the
+operator may replay find-slot once the evidence returns. Keep the existing picker
+payload and reason enum. This uses existing step inputs and error reporting.
+Never clear a held recovery or a protected owner to make a slot eligible. Pinned
+slot and skip-prepare/warm selection retain their existing paths. Normal prepare
+retains fixture setup responsibility.
+
+Both automatic paths MUST use `slotRecoveryEligibility` and release-mode
+`baseline`/`merged`/`pushed` evidence, fetched and rechecked inside the fence. A
+default-branch name, deleted upstream or legacy release preflight alone MUST NOT
+authorize reset. A park record protects its owner or an ownerless workspace. A
+named finished successor is judged on its own work; preserve the parked ref and
+align the shared workspace guard with existing owner-bound release.
 
 After `done`, explicit output close or archive, existing owned cleanup MUST
 attempt the same safe idle return. Dirty, unpublished or unverified work MUST
 remain intact with a reported reason. Existing cancelled replay, recoverable
 completion, result-decision, successor and provider ownership guards apply.
-Archive MUST NOT imply local-work discard permission. Records, branch refs and
+Archive, including cancelled archive, MUST NOT imply local-work discard permission.
+This supersedes the 10-19/10-23 cancelled-archive reset rule under Arthur's new
+archive instruction; cancelled delete and explicit owner-bound force release
+retain their existing policy. Active pinned warm, native or skip-prepare
+successors MUST prevent reset. A replay after prepare MUST verify its recorded
+branch/HEAD and refuse a changed checkout with "replay from prepare or earlier".
+Records, branch refs and
 retained evidence MUST survive checkout normalization. Readiness MUST NOT be
 published across an unconfirmed reset or a changed owner/epoch.
 
@@ -718,8 +736,12 @@ Proof MUST cover one disposable authenticated run whose only free slot has a
 clean merged branch: create, safe recovery, write-task, prepare and dispatch
 succeed without a picker decision, then cancel/archive the owned smoke. Include
 safe terminal return, dirty/unpublished preservation, failed-first-candidate
-fallback, an older parked owner beside a finished successor, deleted publication
-refs, and ownership/epoch-change refusals. No product run or model turn is needed.
+fallback, exhausted unknown/refused candidates, an older parked owner beside a
+finished successor, deleted publication refs, active pinned successors, changed
+checkout replay and ownership/epoch-change refusals. Prove done or output-close
+return independently of cancelled archive, and preserve cancelled archive dirt.
+The manual-action proof seeds dirty/unpublished work requiring a human choice.
+No product run or model turn is needed.
 
 ### Acceptance proof
 

@@ -417,9 +417,20 @@ settled resource cleanup does not imply that the checkout was normalized.
 
 Publish-before-cleanup and existing owner, epoch, successor, native, recovery and
 capability guards remain authoritative. Retain run records, branch refs and
-recorded evidence. A cancelled replay hold still lasts until reclamation or an
-explicit close/archive. Recoverable completion and result-decision holds are
-not automatic completion. Archive alone does not authorize discarding local work.
+recorded evidence. Cancellation still keeps the replay hold until reclamation,
+owner-bound release, delete or archive. Recoverable completion and result-decision
+holds are not automatic completion.
+
+For archive, Arthur's new instruction to preserve dirty/unpublished work replaces
+the 10-19/10-23 cancelled-archive force-reset rule. Cancelled delete and explicit
+owner-bound force release keep their current discard policy. Archive cleanup may
+stop its worker and clear its ownership while retaining its local work.
+
+Use the shared release-mode publication evidence and recovery eligibility,
+including dirt/local commits on the idle branch. Skip reset for active pinned
+warm, native or skip-prepare successors. A post-prepare replay must verify the
+recorded branch/HEAD; otherwise refuse and name prepare or earlier as its restart
+point. Archive alone does not authorize local-work discard.
 
 This replaces keep-work-only checkout retention for the named settlement paths;
 the existing resource-shutdown policy remains. Normal prepare owns fixtures.
