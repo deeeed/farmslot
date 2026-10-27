@@ -45,8 +45,14 @@ mock.module('../methods/slot/workspace.js', {
 mock.module('../methods/slot/recover-workspace.js', {
   namedExports: {
     ...recovery,
-    recoverSlotWorkspace: async (params: Parameters<typeof recovery.recoverSlotWorkspace>[0]) => {
+    recoverSlotWorkspace: async (
+      params: Parameters<typeof recovery.recoverSlotWorkspace>[0],
+      _emit: unknown,
+      _signal: unknown,
+      options: Parameters<typeof recovery.recoverSlotWorkspace>[3],
+    ) => {
       assert.equal(params.mode, 'safe');
+      assert.equal(options?.skipRecycle, true, 'automatic recovery explicitly keeps runtime cold');
       assert.ok(params.expectedWorkspace);
       recovered.push(workspace);
       return failure ? { refreshed: false, detail: failure } : { refreshed: true };

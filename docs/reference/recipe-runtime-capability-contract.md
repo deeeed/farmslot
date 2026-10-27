@@ -764,7 +764,8 @@ cancellation fences. Companion Mobile/Extension hooks use existing harness launc
 commands.
 The fresh-launch gate uses the declared prepare/build budget, or the normal prepare
 preflight budget when undeclared. Other control and acquire callers keep their
-existing limits. Boot shares the registry ownership fence with acquire and release;
+existing limits. Automatic selection and settlement recovery skip project
+recycle; explicit manual recovery retains its existing project recycle hook. Boot shares the registry ownership fence with acquire and release;
 this can serialize resource operations across slots until the boot settles. Capability health polling and release remain read-only.
 
 Fixture expansion MUST preserve captured source bindings. Only remote slots

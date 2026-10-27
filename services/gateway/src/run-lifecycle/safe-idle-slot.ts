@@ -103,6 +103,8 @@ export async function reuseSafeIdleSlot(
     const result = await recoverSlotWorkspace(
       { slotId, release: true, mode: 'safe', expectedWorkspace: workspace },
       emit,
+      undefined,
+      { skipRecycle: true },
     );
     if (result.refreshed) emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
     return result.refreshed

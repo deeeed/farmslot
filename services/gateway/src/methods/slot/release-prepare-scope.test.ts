@@ -737,8 +737,9 @@ test('deleting a cancelled run leaves a slot another active run owns', async () 
   assert.equal(realRuns.getRun('cancelled'), undefined);
 });
 
-for (const recovery of [true, false])
-  test(`${recovery ? 'fenced recovery stays cold' : 'ordinary explicit release retains recycle policy'}`, async (t) => {
+for (const mode of ['automatic', 'manual', 'ordinary'])
+  test(`${mode} recovery preserves its recycle policy`, async (t) => {
+    const recovery = mode !== 'ordinary';
     recycleStartsRuntime = true;
     slotRow.current_run_id = 'finished';
     if (recovery) {
@@ -766,6 +767,7 @@ for (const recovery of [true, false])
               epoch: 1,
               verifyWork: async () => {},
               discardLocalWork: false,
+              skipRecycle: mode === 'automatic',
             },
           }
         : undefined,
@@ -773,7 +775,7 @@ for (const recovery of [true, false])
     assert.equal(result.released, true);
     assert.equal(
       Boolean(recycledRuntime),
-      !recovery,
-      'only explicit release may invoke the runtime-starting recycle hook',
+      mode !== 'automatic',
+      'manual recovery and ordinary release retain recycle; automatic recovery stays cold',
     );
   });

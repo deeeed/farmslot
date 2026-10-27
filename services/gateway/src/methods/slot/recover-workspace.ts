@@ -65,10 +65,16 @@ function identityOwnsRow(
   );
 }
 
+interface SlotRecoveryOptions {
+  /** Automatic reuse/settlement keeps the runtime cold; manual RPCs keep their existing policy. */
+  skipRecycle?: boolean;
+}
+
 export async function recoverSlotWorkspace(
   params: SlotRefreshParams,
   emit: EventEmitter,
   signal?: AbortSignal,
+  options?: SlotRecoveryOptions,
 ): Promise<SlotRefreshResult> {
   const requestId = params.requestId ?? `refresh-${randomUUID()}`;
   const started = Date.now();
@@ -277,6 +283,7 @@ export async function recoverSlotWorkspace(
               epoch: authorized.epoch,
               verifyWork,
               discardLocalWork: params.mode === 'force',
+              skipRecycle: options?.skipRecycle,
             },
           },
         );

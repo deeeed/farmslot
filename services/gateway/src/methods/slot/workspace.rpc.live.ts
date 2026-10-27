@@ -503,10 +503,10 @@ touch "$FARMSLOT_ROOT/recycle-entered"
       expectedWorkspace: retryCold,
     });
     assert.equal(recovered.refreshed, true, recovered.detail);
-    await assert.rejects(
-      readFile(path.join(root, 'recycle-entered')),
-      { code: 'ENOENT' },
-      'recovery must not invoke a runtime-starting recycle hook',
+    assert.equal(
+      await readFile(path.join(root, 'recycle-entered'), 'utf8'),
+      '',
+      'explicit manual recovery retains its project recycle hook',
     );
     let immediate = (await call<FleetStatusResult>('fleet.status')).fleet.slots.find(
       (slot) => slot.slot === 'proof-slot',

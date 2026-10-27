@@ -150,6 +150,7 @@ export interface SlotReleaseOptions {
     epoch: number;
     verifyWork: () => Promise<void>;
     discardLocalWork: boolean;
+    skipRecycle?: boolean;
   };
 }
 
@@ -171,6 +172,7 @@ function releaseCoalesceKey(params: SlotReleaseParams, options?: SlotReleaseOpti
     machineTransitionHeld: options?.machineTransitionHeld ?? false,
     expectedSlotEpoch: options?.expectedSlotEpoch ?? null,
     workspaceRecovery: options?.workspaceRecovery?.id ?? null,
+    skipRecycle: options?.workspaceRecovery?.skipRecycle ?? false,
   });
 }
 
@@ -930,8 +932,8 @@ async function slotReleaseImpl(
     idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
 
-    // Recovery publishes a cold checkout. The next real dispatch owns boot.
-    if (options?.workspaceRecovery) {
+    // Automatic recovery stays cold. Explicit manual recovery keeps its recycle policy.
+    if (options?.workspaceRecovery?.skipRecycle) {
       step('recycle', 'Workspace recovery keeps runtime stopped');
     } else {
       // Recycle app
