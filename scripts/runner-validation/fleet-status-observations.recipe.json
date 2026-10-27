@@ -35,7 +35,10 @@
         "proves": ["immediate-status"],
         "next": "done"
       },
-      "done": { "action": "stop", "intent": "Saved fleet observations answered without a timeout." }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

@@ -166,6 +166,72 @@ function setup(slots: SlotStatus[]) {
   };
 }
 
+test('an open recovery view receives completed background observations without reopening', async () => {
+  const { model, setSlots, emit, calls } = setup([slot('shown', {}, { workspace: undefined })]);
+  await model.load(['shown']);
+  assert.equal(model.bulkCount, 0);
+  setSlots([slot('shown')]);
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(model.bulkCount, 1);
+  assert.equal(calls.length, 2);
+  assert(calls.every((call) => call.method === Methods.FLEET_STATUS));
+  model.dispose();
+});
+
+test('an observation received during initial loading is read after that reply settles', async () => {
+  const { model, holdNextRead, emit, calls } = setup([slot('shown')]);
+  const release = holdNextRead();
+  const loading = model.load(['shown']);
+  emit(Events.FLEET_UPDATED, {});
+  assert.equal(calls.length, 1);
+  release();
+  await loading;
+  assert.equal(calls.length, 2, 'The pending initial read must not lose the observation');
+  assert.equal(model.bulkCount, 1);
+  model.dispose();
+});
+
+test('a burst of background updates coalesces reads and cannot outlive the farm connection', async () => {
+  const { model, setSlots, emit, calls, holdNextRead, setContext } = setup([
+    slot('shown', {}, { workspace: undefined }),
+  ]);
+  await model.load(['shown']);
+  const release = holdNextRead();
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  emit(Events.FLEET_UPDATED, {});
+  emit(Events.FLEET_UPDATED, {});
+  assert.equal(calls.length, 2, 'Only one observation read may be pending');
+  setSlots([slot('shown')]);
+  setContext('farm-b');
+  release();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(model.rows.length, 0);
+  assert.equal(model.canRelease, false);
+  model.dispose();
+  emit(Events.FLEET_UPDATED, {});
+  assert.equal(calls.length, 2);
+});
+
+test('an observation read from an earlier selection cannot replace a newer selection', async () => {
+  const { model, emit, holdNextRead, setSlots } = setup([slot('shown')]);
+  await model.load(['shown']);
+  const release = holdNextRead();
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  setSlots([slot('other')]);
+  await model.load(['other']);
+  release();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    model.rows.map((row) => row.slotId),
+    ['other'],
+  );
+  assert.equal(model.canRelease, true);
+  model.dispose();
+});
+
 test('a 37-second fleet inspection retains eligible rows without retimestamping their evidence', async (t) => {
   const observed = Date.parse('2026-10-27T00:00:00.000Z');
   let now = observed;

@@ -18,6 +18,12 @@ import {
 
 const FLEET_INSPECTION_TIMEOUT_MS = 120_000;
 
+interface FleetRowRead {
+  generation: number;
+  again: boolean;
+  promise?: Promise<void>;
+}
+
 export interface FleetRefreshClient {
   contextKey(): string;
   request<T>(method: string, params?: unknown, timeout?: number): Promise<T>;
@@ -118,6 +124,8 @@ export class FleetRefreshViewModel {
   private perSlotIds = new Map<string, string>();
   private activeTargets = new Set<string>();
   private loadGeneration = 0;
+  private rowRead: FleetRowRead = { generation: 0, again: false };
+  private stopFleetObservation?: () => void;
   private inspectedContext: string | undefined;
   private displayContext: string | undefined;
   inspecting = false;
@@ -144,6 +152,8 @@ export class FleetRefreshViewModel {
   }
   async load(slotIds?: readonly string[], cachedSlots?: readonly SlotStatus[]): Promise<void> {
     const generation = ++this.loadGeneration;
+    this.rowRead = { generation, again: false };
+    this.stopFleetObservation?.();
     const context = this.client.contextKey();
     this.inspectedContext = undefined;
     const saved =
@@ -160,6 +170,25 @@ export class FleetRefreshViewModel {
     this.error = '';
     this.confirmation = null;
     this.changed();
+    let changedDuringLoad = false;
+    const refreshObservedRows = () =>
+      this.refreshRows().catch((error: unknown) => {
+        if (generation !== this.loadGeneration || context !== this.client.contextKey()) return;
+        // Keep saved rows, but pause release until an explicit successful retry.
+        this.inspectedContext = undefined;
+        this.error = error instanceof Error ? error.message : String(error);
+        this.phase = 'error';
+        this.changed();
+      });
+    this.stopFleetObservation = this.client.subscribe(Events.FLEET_UPDATED, () => {
+      if (generation !== this.loadGeneration) return;
+      if (context !== this.client.contextKey()) {
+        this.sameContext();
+        return;
+      }
+      if (this.inspecting) changedDuringLoad = true;
+      else if (this.phase === 'review' || this.phase === 'done') void refreshObservedRows();
+    });
     try {
       const { fleet } = await this.client.request<FleetStatusResult>(
         Methods.FLEET_STATUS,
@@ -187,6 +216,7 @@ export class FleetRefreshViewModel {
     if (generation !== this.loadGeneration) return;
     this.inspecting = false;
     this.changed();
+    if (changedDuringLoad && this.phase === 'review') await refreshObservedRows();
   }
   private sameContext(): boolean {
     if (this.inspectedContext !== undefined && this.inspectedContext === this.client.contextKey())
@@ -247,20 +277,36 @@ export class FleetRefreshViewModel {
     this.changed();
     await this.releaseOne(confirmation.slotId, 'force', confirmation.identity);
   }
-  private async refreshRows(): Promise<void> {
-    if (!this.sameContext()) return;
-    const { fleet } = await this.client.request<FleetStatusResult>(
-      Methods.FLEET_STATUS,
-      {},
-      FLEET_INSPECTION_TIMEOUT_MS,
-    );
-    if (!this.sameContext()) return;
-    const current = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
-    this.rows = this.rows.map((row) => {
-      const slot = current.get(row.slotId);
-      return slot ? { ...row, ...fleetWorkspaceRow(slot), slot } : row;
-    });
-    this.changed();
+  private refreshRows(): Promise<void> {
+    const read = this.rowRead;
+    read.again = true;
+    if (read.promise) return read.promise;
+    read.promise = Promise.resolve()
+      .then(async () => {
+        while (read.again) {
+          read.again = false;
+          if (read.generation !== this.loadGeneration || !this.sameContext()) return;
+          const { fleet } = await this.client.request<FleetStatusResult>(
+            Methods.FLEET_STATUS,
+            {},
+            FLEET_INSPECTION_TIMEOUT_MS,
+          );
+          if (read.generation !== this.loadGeneration || !this.sameContext()) return;
+          // A newer observation arrived during this read; take one current
+          // snapshot instead of applying the older reply over it.
+          if (read.again) continue;
+          const current = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
+          this.rows = this.rows.map((row) => {
+            const slot = current.get(row.slotId);
+            return slot ? { ...row, ...fleetWorkspaceRow(slot), slot } : row;
+          });
+          this.changed();
+        }
+      })
+      .finally(() => {
+        read.promise = undefined;
+      });
+    return read.promise;
   }
   private update(slotId: string, fields: Partial<FleetRefreshRow>): void {
     this.rows = this.rows.map((row) => (row.slotId === slotId ? { ...row, ...fields } : row));
@@ -420,6 +466,8 @@ export class FleetRefreshViewModel {
   }
   dispose(): void {
     ++this.loadGeneration;
+    this.stopFleetObservation?.();
+    this.stopFleetObservation = undefined;
     this.detach();
     this.listeners.clear();
   }

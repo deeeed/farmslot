@@ -865,6 +865,32 @@ try {
             firstFleet.slots.find((first) => first.slot === slot.slot).workspace?.observedAt,
           );
       }
+      await cdp('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
+      await cdp('screenshot', route, path.join(output, 'fleet-observation-before.png'));
+      // Change real Git facts while the dialog stays mounted. Passive reads
+      // must publish the new observation without reopening or releasing a slot.
+      const changedRepo = path.join(root, 'local-proof-0');
+      await writeFile(path.join(changedRepo, 'fixture.txt'), 'Changed while Fleet is open\n');
+      await exec('git', ['add', 'fixture.txt'], { cwd: changedRepo });
+      const updated = JSON.parse(
+        await cdp(
+          'eval',
+          route,
+          `const {gateway}=await import('/src/gateway-client.ts');const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){if(e.localName==='fleet-refresh-modal'&&e.open)all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);const current=all[0];if(!current)throw Error('Expected the same open dialog');const end=Date.now()+45000,reads=[];for(;;){const start=performance.now();await gateway.request('fleet.status',{},15000);reads.push(performance.now()-start);const text=current.shadowRoot?.textContent?.replace(/\\s+/g,' ')??'';if(text.includes('1 changed files')&&text.includes('Release idle slots (29)'))return {text,reads,open:current.open};if(Date.now()>end)throw Error('Open dialog missed actual changed Git observation');await new Promise(r=>setTimeout(r,250))}`,
+        ),
+      );
+      assert(updated.open, 'The same dialog must remain open');
+      assert(
+        updated.reads.every((ms) => ms < 2000),
+        'Observation refresh must not delay reads',
+      );
+      await save('fleet-observation-after.json', updated);
+      await cdp('screenshot', route, path.join(output, 'fleet-observation-after.png'));
+      await cdp(
+        'click',
+        route,
+        'fleet-canvas >>> fleet-refresh-modal >>> button[aria-label=Close]',
+      );
     }
   } else {
     await cdp(

@@ -49,6 +49,10 @@
     {
       "id": "local-admission",
       "claim": "A 31-slot cold status answers within two seconds without Retry; background checks produce all 30 enabled observations within fifteen seconds with at most four concurrent fingerprints, retaining sub-two-second warm reads."
+    },
+    {
+      "id": "open-fleet-observations",
+      "claim": "A mounted release dialog receives a real staged Git change through background observations, reducing bulk eligibility without reopening."
     }
   ],
   "workflow": {
@@ -151,7 +155,7 @@
         "source": "local-admission",
         "stream": "stdout",
         "contains": "\"status\":\"PASS\"",
-        "proves": ["local-admission"],
+        "proves": ["local-admission", "open-fleet-observations"],
         "next": "done"
       }
     }
