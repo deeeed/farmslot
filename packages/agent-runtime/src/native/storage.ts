@@ -93,8 +93,12 @@ export function processGroupAlive(pid: number): boolean {
 }
 
 type ProcessMetadataField = 'lstart' | 'command' | 'pgid';
+interface ProcessMetadataObservation {
+  observedAt: number;
+  fields: Partial<Record<ProcessMetadataField, string>>;
+}
 /** Passive observations only. Control and cleanup checks omit this cache. */
-export type ProcessMetadataCache = Map<number, Partial<Record<ProcessMetadataField, string>>>;
+export type ProcessMetadataCache = Map<number, ProcessMetadataObservation>;
 
 function processMetadata(
   pid: number,
@@ -102,14 +106,19 @@ function processMetadata(
   timeout: number,
   observations?: ProcessMetadataCache,
 ): string {
-  const cached = observations?.get(pid);
-  if (cached?.[field] !== undefined) return cached[field];
+  const observedAt = Date.now();
+  const previous = observations?.get(pid);
+  const cached = previous && observedAt - previous.observedAt < 60_000 ? previous : undefined;
+  if (cached?.fields[field] !== undefined) return cached.fields[field];
   const value = execFileSync('ps', ['-p', String(pid), '-o', `${field}=`], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout,
   }).trim();
-  observations?.set(pid, { ...cached, [field]: value });
+  observations?.set(pid, {
+    observedAt: cached?.observedAt ?? observedAt,
+    fields: { ...cached?.fields, [field]: value },
+  });
   return value;
 }
 

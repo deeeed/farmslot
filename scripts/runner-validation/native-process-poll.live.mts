@@ -30,6 +30,8 @@ const { NativeSessionClient }: typeof import('../../packages/agent-runtime/src/n
 const { alive }: typeof import('../../packages/agent-runtime/src/native/storage.js') = await import(
   pathToFileURL(join(runtime, 'dist/native/storage.js')).href
 );
+const { socketDirectory }: typeof import('../../packages/agent-runtime/src/native/ipc.js') =
+  await import(pathToFileURL(join(runtime, 'dist/native/ipc.js')).href);
 const root = realpathSync(process.argv[4] ?? mkdtempSync(join(tmpdir(), 'native-poll-')));
 assert(dirname(root) === realpathSync(tmpdir()) && basename(root).startsWith('native-poll-'));
 const log = join(root, 'ps.log');
@@ -224,6 +226,8 @@ try {
         while (!settled() && Date.now() < deadline) await delay(25);
         assert(settled(), 'Owned supervisor cleanup did not settle');
       }
+      assert(!host.worker || !alive(host.worker), 'Owned worker cleanup did not settle');
+      rmSync(socketDirectory(host.root), { recursive: true, force: true });
     } catch (error) {
       errors.push(error);
     }

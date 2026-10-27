@@ -10,7 +10,7 @@
 
 ## 0.39.5 - 2026-10-28
 
-- Cache native process metadata during passive polling while keeping fresh identity checks for cleanup and controls.
+- Cache native process metadata for up to a minute during passive polling while keeping fresh identity checks for cleanup and controls.
 
 ## 0.39.4 - 2026-10-28
 
