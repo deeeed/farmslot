@@ -166,6 +166,100 @@ function setup(slots: SlotStatus[]) {
   };
 }
 
+test('an open recovery view receives completed background observations without reopening', async () => {
+  const { model, setSlots, emit, calls } = setup([slot('shown', {}, { workspace: undefined })]);
+  await model.load(['shown']);
+  assert.equal(model.bulkCount, 0);
+  setSlots([slot('shown')]);
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(model.bulkCount, 1);
+  assert.equal(calls.length, 2);
+  assert(calls.every((call) => call.method === Methods.FLEET_STATUS));
+  model.dispose();
+});
+
+test('closing a recovery view stops observation reads until reopened', async () => {
+  const { model, emit, calls } = setup([slot('shown')]);
+  await model.load(['shown']);
+  model.close();
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.equal(model.canRelease, false);
+  await model.load(['shown']);
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 3);
+  model.dispose();
+});
+
+test('closing during the initial read cannot authorize a later hidden release', async () => {
+  const { model, holdNextRead, calls } = setup([slot('shown')]);
+  const release = holdNextRead();
+  const loading = model.load(['shown']);
+  model.close();
+  release();
+  await loading;
+  await model.release('shown');
+  assert.equal(model.canRelease, false);
+  assert.equal(calls.length, 1);
+  model.dispose();
+});
+
+test('an observation received during initial loading is read after that reply settles', async () => {
+  const { model, holdNextRead, emit, calls } = setup([slot('shown')]);
+  const release = holdNextRead();
+  const loading = model.load(['shown']);
+  emit(Events.FLEET_UPDATED, {});
+  assert.equal(calls.length, 1);
+  release();
+  await loading;
+  assert.equal(calls.length, 2, 'The pending initial read must not lose the observation');
+  assert.equal(model.bulkCount, 1);
+  model.dispose();
+});
+
+test('a burst of background updates coalesces reads and cannot outlive the farm connection', async () => {
+  const { model, setSlots, emit, calls, holdNextRead, setContext } = setup([
+    slot('shown', {}, { workspace: undefined }),
+  ]);
+  await model.load(['shown']);
+  const release = holdNextRead();
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  emit(Events.FLEET_UPDATED, {});
+  emit(Events.FLEET_UPDATED, {});
+  assert.equal(calls.length, 2, 'Only one observation read may be pending');
+  setSlots([slot('shown')]);
+  setContext('farm-b');
+  release();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(model.rows.length, 0);
+  assert.equal(model.canRelease, false);
+  model.dispose();
+  emit(Events.FLEET_UPDATED, {});
+  assert.equal(calls.length, 2);
+});
+
+test('an observation read from an earlier selection cannot replace a newer selection', async () => {
+  const { model, emit, holdNextRead, setSlots } = setup([slot('shown')]);
+  await model.load(['shown']);
+  const release = holdNextRead();
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  setSlots([slot('other')]);
+  await model.load(['other']);
+  release();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    model.rows.map((row) => row.slotId),
+    ['other'],
+  );
+  assert.equal(model.canRelease, true);
+  model.dispose();
+});
+
 test('a 37-second fleet inspection retains eligible rows without retimestamping their evidence', async (t) => {
   const observed = Date.parse('2026-10-27T00:00:00.000Z');
   let now = observed;
@@ -475,6 +569,62 @@ test('expired evidence only permits release after a fresh inspection succeeds', 
   slots[0] = slot('expired');
   await model.release('expired');
   assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 1);
+  model.dispose();
+});
+
+test('expired evidence reports the pending inspection and never queues a release', async () => {
+  const { model, calls, setSlots, emit } = setup([
+    slot('expired', { observedAt: '2000-01-01T00:00:00Z' }),
+  ]);
+  await model.load(['expired']);
+  await model.release('expired');
+  assert.match(model.error, /Checking workspace/);
+  assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 0);
+  setSlots([slot('expired')]);
+  emit(Events.FLEET_UPDATED, {});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(model.error, '');
+  assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 0);
+  await model.release('expired');
+  assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 1);
+  model.dispose();
+});
+
+test('a completed failed inspection ends pending feedback and retains its failure', async () => {
+  for (const failed of [
+    slot('expired', {}, { workspace: undefined, workspaceError: 'Node unavailable' }),
+    slot('expired', { publication: 'unknown', error: 'Lookup unavailable' }),
+    slot('expired', { publication: 'unknown' }),
+  ]) {
+    const { model, calls, setSlots, emit } = setup([
+      slot('expired', { observedAt: '2000-01-01T00:00:00Z' }),
+    ]);
+    await model.load(['expired']);
+    await model.release('expired');
+    assert.match(model.error, /Checking workspace/);
+    setSlots([failed]);
+    emit(Events.FLEET_UPDATED, {});
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(model.error, '');
+    assert.equal(model.rows[0].eligibility.allowed, false);
+    assert(model.rows[0].warning, 'The completed failure must remain visible');
+    assert.equal(model.rows[0].slot.workspaceError, failed.workspaceError);
+    assert.equal(model.rows[0].slot.workspace?.error, failed.workspace?.error);
+    assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 0);
+    model.dispose();
+  }
+});
+
+test('a failed release inspection keeps the actual read error instead of a pending hint', async () => {
+  const { model, failNextRead, calls } = setup([
+    slot('expired', { observedAt: '2000-01-01T00:00:00Z' }),
+  ]);
+  await model.load(['expired']);
+  failNextRead();
+  await model.release('expired');
+  assert.equal(model.error, 'Read failed');
+  assert.equal(model.canRelease, false);
+  assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 0);
   model.dispose();
 });
 

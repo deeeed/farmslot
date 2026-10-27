@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Prove fast fleet bootstrap independently of background workspace completion, retaining admission bounds and release guards.
+
 - Prove criterion confirmation, reversible drafts across reloads, and approval through the browser and existing gate actions.
 
 - Update the fleet recovery proof for automatic published-slot reuse and explicit local-work confirmation.

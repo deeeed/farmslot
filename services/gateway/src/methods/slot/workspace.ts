@@ -345,6 +345,7 @@ interface WorkspaceInspection {
   promise: Promise<SlotWorkspace>;
   version?: string;
   workspace?: SlotWorkspace;
+  error?: string;
 }
 const PASSIVE_WORKSPACE_MAX_AGE_MS = 90_000;
 const inspections = new Map<string, WorkspaceInspection>();
@@ -354,24 +355,53 @@ export function invalidateSlotWorkspaceObservations(slotId: string): void {
   setWorkspaceOverlay(slotId, undefined);
 }
 
+function workspaceObservationKey(slot: SlotStatus): string {
+  return JSON.stringify([
+    slot.slot,
+    slot.machine,
+    slot.project,
+    slot.repo,
+    slot.headSha,
+    slot.branch,
+    slot.currentRunId,
+    slot.slotEpoch,
+    slot.cleanupRunId,
+    slot.handoffRunId,
+    slot.lifecycle,
+    slot.agent,
+    slot.phase,
+    slot.heldReason,
+  ]);
+}
+
+function workspaceObservable(slot: SlotStatus): boolean {
+  return !slot.missingFromPool && slot.enabled && slot.health.ssh !== 'FAIL';
+}
+
+/** Read completed observations only. Their original age and ownership still apply. */
+export function observedFleetWorkspaces(fleet: FleetStatus): FleetStatus {
+  return {
+    ...fleet,
+    slots: fleet.slots.map((slot) => {
+      const cached = inspections.get(slot.slot);
+      const usable =
+        workspaceObservable(slot) &&
+        cached?.key === workspaceObservationKey(slot) &&
+        cached.until !== 0;
+      return {
+        ...slot,
+        workspace: usable ? cached.workspace : undefined,
+        workspaceError: usable ? cached.error : slot.workspaceError,
+      };
+    }),
+  };
+}
+
 export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promise<SlotStatus[]> {
   return Promise.all(
     slots.map(async (slot) => {
-      if (slot.missingFromPool || !slot.enabled || slot.health.ssh === 'FAIL')
-        return { ...slot, workspace: undefined };
-      const key = JSON.stringify([
-        slot.slot,
-        slot.headSha,
-        slot.branch,
-        slot.currentRunId,
-        slot.slotEpoch,
-        slot.cleanupRunId,
-        slot.handoffRunId,
-        slot.lifecycle,
-        slot.agent,
-        slot.phase,
-        slot.heldReason,
-      ]);
+      if (!workspaceObservable(slot)) return { ...slot, workspace: undefined };
+      const key = workspaceObservationKey(slot);
       let cached = inspections.get(slot.slot);
       while (cached?.pending && cached.key !== key) {
         try {
@@ -437,10 +467,19 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
           key,
           pending: true,
           until: Date.now() + 15_000,
+          ...(previous?.key === key && previous.until !== 0
+            ? { workspace: previous.workspace, error: previous.error }
+            : {}),
           promise: promise
             .then((workspace) => {
               entry.workspace = workspace;
+              entry.error = undefined;
               return workspace;
+            })
+            .catch((error: unknown) => {
+              entry.workspace = undefined;
+              entry.error = error instanceof Error ? error.message : String(error);
+              throw error;
             })
             .finally(() => {
               entry.pending = false;
