@@ -31,6 +31,7 @@ export function renderReadyTopBar(input: {
   publicationTarget: 'draft' | 'ready';
   pendingConfirm: string | null;
   attestationReason?: string;
+  criterionDrafts?: readonly import('@farmslot/review-dispatch').CriterionDraft[];
   attesting?: boolean;
   chooseAttestation?: () => void;
   acceptingFindings?: boolean;
@@ -87,6 +88,7 @@ export function renderReadyTopBar(input: {
       reviewSummary: input.payload.gateSummary?.review,
       blockedReason: readyReviewBlockingReason(input.payload, input.decision?.actions),
       attestationReason: input.attestationReason,
+      criterionDrafts: input.criterionDrafts,
       attesting: input.attesting,
       chooseAttestation: () => input.chooseAttestation?.(),
       acceptingFindings: input.acceptingFindings,

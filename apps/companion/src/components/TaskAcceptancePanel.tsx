@@ -12,7 +12,11 @@ import type {
   AcceptanceRegistration,
   AcceptanceStatusLedger,
 } from '@farmslot/protocol';
-import { acceptanceClaimRows, untestableOverrideView } from '@farmslot/review-dispatch';
+import {
+  acceptanceClaimRows,
+  acceptanceTimingCaption,
+  untestableOverrideView,
+} from '@farmslot/review-dispatch';
 
 import { acceptanceLedgerView } from '../lib/task-progress-view';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
@@ -32,6 +36,10 @@ interface TaskAcceptancePanelProps {
     verdict: 'confirmed' | 'rejected',
     reason?: string,
   ) => Promise<void>;
+  drafts?: Parameters<typeof AcceptanceClaimList>[0]['drafts'];
+  criterionDrafts?: import('@farmslot/review-dispatch').CriterionDraft[];
+  attestationReason?: string;
+  initiallyExpanded?: boolean;
   onMarkUntestable?: (id: string, reason: string) => void;
   evidenceModel?: EvidenceReviewModel | null;
   showOccurrences?: boolean;
@@ -80,6 +88,10 @@ function TaskAcceptanceContent({
   judgmentRows,
   onRecordVisualReview,
   onRetry,
+  drafts,
+  criterionDrafts,
+  attestationReason,
+  initiallyExpanded,
 }: TaskAcceptancePanelProps) {
   const ledger = acceptanceStatus ?? { schemaVersion: 1 as const, criteria: [] };
   const view = acceptanceLedgerView(
@@ -125,7 +137,9 @@ function TaskAcceptanceContent({
     setShowWarnings(false);
   }, [evidenceModel]);
   const packageStatus = evidenceModel?.packageStatus;
-  const [expanded, setExpanded] = React.useState(view.defaultOpen || Boolean(error));
+  const [expanded, setExpanded] = React.useState(
+    initiallyExpanded || view.defaultOpen || Boolean(error),
+  );
   React.useEffect(() => {
     if (
       error ||
@@ -281,7 +295,10 @@ function TaskAcceptanceContent({
       ) : null}
       {expanded ? (
         <AcceptanceClaimList
+          drafts={drafts}
           rows={acceptanceClaimRows({
+            criterionDrafts,
+            attestationReason,
             criteria: acceptanceCriteria ?? undefined,
             ledger,
             registration: acceptanceRegistration,
@@ -316,7 +333,12 @@ function TaskAcceptanceContent({
                     Engine verdict: {criterion.status.engineVerdict} · {criterion.status.note}
                   </Text>
                 ) : null}
-                {onMarkUntestable && evidenceModel?.claimOverrideCandidate(criterion.id) ? (
+                {!drafts &&
+                onMarkUntestable &&
+                !(
+                  criterion.status?.proofMode === 'review' && criterion.status.verdict === 'proven'
+                ) &&
+                evidenceModel?.claimOverrideCandidate(criterion.id) ? (
                   <SkipCriterion
                     claimId={criterion.id}
                     open={overrideClaim === criterion.id}
@@ -331,7 +353,9 @@ function TaskAcceptanceContent({
                   />
                 ) : null}
                 {review?.timing && review?.timing !== 'measured' ? (
-                  <Text style={baseStyles.textMuted}>{review?.timing}</Text>
+                  <Text style={baseStyles.textMuted}>
+                    {acceptanceTimingCaption(review?.timing)}
+                  </Text>
                 ) : null}
                 {display.clip && evidenceModel && !evidenceModel.errors.length && onOpenEvidence ? (
                   <Pressable

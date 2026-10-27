@@ -379,3 +379,30 @@ test('legacy package diagnostics render once in neutral collapsed details even w
   assert(!text.includes('class="ac-error"'));
   assert(!text.includes('<details open'));
 });
+
+test('the gate can show every registered criterion before evidence has loaded', () => {
+  const text = litText(
+    renderAcceptancePanel(
+      { schemaVersion: 1, criteria: [] },
+      {
+        expanded: true,
+        criteria: [
+          { id: 'AC-2', text: 'The address is defined in a single config location.' },
+          { id: 'AC-4', text: 'Tests cover the fee wallet being applied to orders.' },
+        ],
+      },
+    ),
+  );
+  assert.match(text, /The address is defined in a single config location/);
+  assert.match(text, /Tests cover the fee wallet being applied to orders/);
+  assert.equal(
+    litBindings(
+      renderAcceptancePanel(
+        { schemaVersion: 1, criteria: [] },
+        { expanded: true, criteria: [{ id: 'AC-2', text: 'A registered criterion' }] },
+      ),
+      '?open=',
+    )[0],
+    true,
+  );
+});

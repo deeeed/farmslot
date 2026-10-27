@@ -51,6 +51,14 @@ test('native gate permits attestation only for checked policy failures with all 
     ],
   };
   assert.equal(gateReviewActions([action], guard, readiness)[0].disabledReason, null);
+  assert.equal(
+    gateReviewActions(
+      [action],
+      { ...guard, acceptanceReasons: ['AC-2 requires confirmation'] },
+      readiness,
+    )[0].disabledReason,
+    null,
+  );
   assert.match(gateReviewActions([action], guard)[0].disabledReason!, /unavailable/);
   assert.match(
     gateReviewActions([action], guard, {

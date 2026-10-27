@@ -71,7 +71,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
           ${renderAcceptanceClaimList(view.claims, { ...input, busy: disabled })}
         </section>`
       : nothing}
-    ${view.attestation && input.attesting
+    ${view.attestation && view.attesting
       ? html`<section class="gate-attestation" aria-label="Evidence attestation">
           <label
             >Reason for evidence policy attestation
@@ -132,7 +132,8 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
           input.loadError ||
           input.pausedReason ||
           input.acceptingFindings ||
-          input.attesting
+          input.attesting ||
+          view.attesting
             ? html`<p class="gate-status" role=${input.loadError ? 'alert' : 'status'}>
                 ${input.pausedReason
                   ? html`<span class="gate-status-message">${input.pausedReason}</span
@@ -180,7 +181,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
           (!input.inlineBlockers ||
             !view.blockedReason ||
             input.acceptingFindings ||
-            input.attesting)
+            view.attesting)
             ? html`<button
                 class="gate-primary"
                 data-testid="gate-approve"
@@ -199,7 +200,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                       : view.attestation
                         ? 'Confirm attestation and publish?'
                         : 'Confirm Publish?'
-                    : (view.approval?.label ?? 'Approve publish')}
+                    : (view.draftApprovalLabel ?? view.approval?.label ?? 'Approve publish')}
               </button>`
             : nothing}
           ${view.primaryActions.filter((action) => !handled(action.id)).map(renderAction)}
@@ -219,7 +220,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
           ${view.attestation || view.secondaryActions.length
             ? html`<details class="gate-more-actions">
                 <summary>More actions</summary>
-                ${view.attestation && !input.attesting
+                ${view.attestation && !view.attesting
                   ? html`<button
                       class="gate-secondary"
                       title=${view.attestation.description ?? ''}

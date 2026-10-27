@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import { type GitBranchDiffFile, Methods, type RunDecision } from '@farmslot/protocol';
-import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
+import { CriterionDraftModel, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
@@ -76,6 +76,7 @@ type Presenter = InstanceType<typeof ReadyWorkspaceActionPresenter>;
 function makePresenter(fields: Partial<Presenter> = {}): Presenter {
   const view = Object.create(ReadyWorkspaceActionPresenter.prototype) as Presenter;
   Object.assign(view, {
+    _criterionDrafts: new CriterionDraftModel({ getItem: () => null, setItem: () => undefined }),
     requestUpdate: () => undefined,
     _syncViewStateToHash: () => undefined,
     slotId: 'slot-a',

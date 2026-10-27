@@ -268,6 +268,11 @@ export function gateReviewActions(
       !evidenceAttestationAvailable(readiness)
     )
       return { ...action, disabledReason: 'Evidence attestation is unavailable for this gate.' };
+    if (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)
+      return {
+        ...action,
+        disabledReason: reviewBlock ?? (guard.reviewReasons.join(' · ') || null),
+      };
     if (!isPublishApprovalAction(action.id)) return { ...action, disabledReason: null };
     // Accepting findings is offered under the shared rule while they block (ADR-065 Amendment 8).
     if (

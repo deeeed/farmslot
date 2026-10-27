@@ -243,3 +243,26 @@ test('action refusals remain visible outside collapsed package details', () => {
   assert.match(text, /The displayed visual review snapshot changed/);
   assert.doesNotMatch(text, /rdy-gate-details/);
 });
+
+test('the attestation form is primary when only code-review criteria remain', () => {
+  const input = topBarFixture();
+  input.attesting = false;
+  input.pendingConfirm = null;
+  input.claims = [
+    {
+      id: 'AC-2',
+      text: 'Address has one configuration location',
+      status: {
+        id: 'AC-2',
+        text: 'Address has one configuration location',
+        proofMode: 'review',
+        verdict: 'awaiting-review',
+        evidence: [],
+        recipeNodes: [],
+      },
+    },
+  ];
+  const text = litText(renderReadyTopBar(input));
+  assert.match(text, /Reason for evidence policy attestation/);
+  assert.match(text, /Attest evidence and approve/);
+});

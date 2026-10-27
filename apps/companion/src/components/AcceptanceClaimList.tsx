@@ -6,11 +6,16 @@ import {
   Linking,
   Pressable,
   Text,
+  TextInput,
   useColorScheme,
   View,
 } from 'react-native';
 
-import { type AcceptanceClaimRow } from '@farmslot/review-dispatch';
+import {
+  type AcceptanceClaimRow,
+  canDraftCriterion,
+  type CriterionDraftActions,
+} from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
 import { fonts } from '../lib/theme';
@@ -56,6 +61,11 @@ function ClaimState({
         alignSelf: 'flex-start',
       }}
     >
+      {claim.state === 'Verified in code' || claim.state === 'Proven in app'
+        ? '✓ '
+        : claim.state === 'Not proven'
+          ? '✕ '
+          : ''}
       {claim.state}
     </Animated.Text>
   );
@@ -71,9 +81,11 @@ export function AcceptanceClaimList({
   renderDetails,
   hasDetails,
   onBusyChange,
+  drafts,
   testIDPrefix = 'companion-ac-row',
 }: {
   rows: readonly AcceptanceClaimRow[];
+  drafts?: CriterionDraftActions;
   disabled?: boolean;
   onBusyChange?: (busy: boolean) => void;
   onRecord?: (id: string, verdict: 'confirmed' | 'rejected', reason?: string) => Promise<void>;
@@ -165,7 +177,66 @@ export function AcceptanceClaimList({
               </Text>
             </Pressable>
           )}
-          {claim.judgment && claim.judgment.claim.status?.proofMode !== 'state' ? (
+          {drafts && claim.source && canDraftCriterion(claim.source) ? (
+            <View style={{ width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {claim.draft ? (
+                <Pressable
+                  style={button}
+                  accessibilityRole="button"
+                  testID={`criterion-undo-${claim.id}`}
+                  disabled={disabled || busy}
+                  onPress={() => drafts.model.undo(claim.id)}
+                >
+                  <Text style={{ color: palette.text }}>Undo</Text>
+                </Pressable>
+              ) : (
+                <>
+                  <Pressable
+                    style={button}
+                    accessibilityRole="button"
+                    testID={`criterion-confirm-${claim.id}`}
+                    disabled={disabled || busy || !drafts.model.ready}
+                    onPress={() => drafts.choose(claim.id, 'confirm')}
+                  >
+                    <Text style={{ color: palette.text }}>Confirm</Text>
+                  </Pressable>
+                  <Pressable
+                    style={button}
+                    accessibilityRole="button"
+                    testID={`criterion-skip-${claim.id}`}
+                    disabled={disabled || busy || !drafts.model.ready || !drafts.canSkip(claim.id)}
+                    onPress={() => drafts.choose(claim.id, 'skip')}
+                  >
+                    <Text style={{ color: palette.text }}>Skip</Text>
+                  </Pressable>
+                </>
+              )}
+              {claim.draft ? (
+                <Text style={{ color: palette.secondary }}>Pending approval</Text>
+              ) : null}
+              {claim.draft ? (
+                <TextInput
+                  testID={`criterion-note-${claim.id}`}
+                  accessibilityLabel={claim.draft.choice === 'skip' ? 'Skip reason' : 'Note'}
+                  value={claim.draft.note}
+                  editable={!disabled && !busy}
+                  onChangeText={(note) => drafts.choose(claim.id, claim.draft!.choice, note)}
+                  style={{ ...button, color: palette.text, flex: 1 }}
+                  returnKeyType="done"
+                />
+              ) : null}
+              {drafts.model.error &&
+              (!drafts.model.error.claimId || drafts.model.error.claimId === claim.id) ? (
+                <>
+                  <Text accessibilityRole="alert">{drafts.model.error.message}</Text>
+                  <Pressable style={button} onPress={drafts.model.error.retry}>
+                    <Text style={{ color: palette.text }}>Retry</Text>
+                  </Pressable>
+                </>
+              ) : null}
+            </View>
+          ) : null}
+          {!drafts && claim.judgment && claim.judgment.claim.status?.proofMode !== 'state' ? (
             <VisualClaimJudgment
               row={claim.judgment}
               onRecord={onRecord}

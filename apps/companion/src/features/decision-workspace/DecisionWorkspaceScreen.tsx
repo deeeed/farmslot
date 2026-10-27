@@ -20,6 +20,7 @@ import {
   evidenceAttestationAvailable,
   improvementApplyOutcome,
   type ImprovementApplyResult,
+  isPublishApprovalAction,
   isValidEvidenceAttestationReason,
   liveGateParkView,
   Methods,
@@ -39,6 +40,8 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
+  applyCriterionDraftSkips,
+  criterionDraftReason,
   gateReviewLineageOptions,
   resultDecisionView,
   ReviewDispatchViewModel,
@@ -58,6 +61,7 @@ import {
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedRefresh } from '../../hooks/useConnectedRefresh';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
+import { useCriterionDrafts } from '../../hooks/useCriterionDrafts';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import { useReread } from '../../hooks/useReread';
 import { useRunAcceptance } from '../../hooks/useRunAcceptance';
@@ -222,6 +226,7 @@ export default function DecisionDetailScreen({
   const router = useRouter();
   const isFocused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
+  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const connection = useConnectedTransport();
@@ -232,11 +237,10 @@ export default function DecisionDetailScreen({
   const removeDecision = useDecisionStore((s) => s.removeDecision);
   const [decision, setDecision] = useState<DecisionDetail | null>(storeDecision ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [evidenceReason, setEvidenceReason] = useState<{ decisionId: string; text: string } | null>(
+  const [evidenceReason, setEvidenceReason] = useState<{ scope: string; text: string } | null>(
     null,
   );
-  const attestationReason =
-    evidenceReason && evidenceReason.decisionId === decision?.id ? evidenceReason.text : '';
+
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [documentViewer, setDocumentViewer] = useState<DecisionDocumentContent | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
@@ -374,6 +378,18 @@ export default function DecisionDetailScreen({
   const runPosture = runPostureStatus.state?.posture;
   // The gate review's publish guard applies here too: this tab sends the same actions.
   const humanGate = useHumanGateGuard(client, sourceRun, decision);
+  const codeReviewScope = JSON.stringify([
+    sourceRunId,
+    decision?.id,
+    client?.authenticatedPrincipal?.id,
+    gatewayUrl,
+  ]);
+  const criterionDrafts = useCriterionDrafts(
+    codeReviewScope,
+    decision?.payload?.kind === 'ready' ? (decision.payload.prPackage?.packageHash ?? '') : '',
+  );
+  const reasonInput = evidenceReason?.scope === codeReviewScope ? evidenceReason.text : '';
+  const attestationReason = criterionDraftReason(criterionDrafts.entries, reasonInput);
   const [acceptingGateId, setAcceptingGateId] = useState<string | null>(null);
   const supersedingResultId = supersedingResultDecisionId(decision, sourceRun);
   useEffect(() => {
@@ -784,8 +800,76 @@ export default function DecisionDetailScreen({
               Alert.alert('Publish approval is disabled', withheldNow);
               return;
             }
-            client
-              .request(method, params)
+            const submit = async () => {
+              if (
+                !isPublishApprovalAction(actionId) ||
+                !criterionDrafts.entries.length ||
+                !sourceRun ||
+                decision.payload?.kind !== 'ready'
+              )
+                return client.request(method, params);
+              const drafts = [...criterionDrafts.entries];
+              const appliedClaims = new Set<string>();
+              const owner = client.authenticatedPrincipal?.id;
+              const next = await applyCriterionDraftSkips({
+                run: sourceRun,
+                decision,
+                drafts,
+                execution: (id) =>
+                  humanGate?.acceptance.evidenceModel?.claimOverrideCandidate(id)?.recipeRunId,
+                request: (method, params) =>
+                  client.request<import('@farmslot/protocol').RunOverrideClaimResult>(
+                    method,
+                    params,
+                    null,
+                  ),
+                assertCurrent: () => {
+                  if (
+                    useConnectionStore.getState().authorityEpoch !== authorityEpoch ||
+                    useConnectionStore.getState().client !== client ||
+                    client.authenticatedPrincipal?.id !== owner
+                  )
+                    throw new Error('The signed-in authority changed.');
+                },
+                applied: (run, gate, claimId) => {
+                  appliedClaims.add(claimId);
+                  criterionDrafts.rebind(
+                    gate.payload?.kind === 'ready'
+                      ? (gate.payload.prPackage?.packageHash ?? '')
+                      : '',
+                    claimId,
+                    drafts.filter((entry) => !appliedClaims.has(entry.claimId)),
+                  );
+                  setSourceRun(run);
+                },
+              });
+              const nextAction = next.actions.some(({ id }) => id === actionId)
+                ? actionId
+                : actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+                    next.actions.some(({ id }) => id === 'approve-publish')
+                  ? 'approve-publish'
+                  : actionId;
+              const reasons = gateActionReasons(
+                nextAction,
+                attestationReason,
+                evidenceAttestationAvailable(
+                  next.payload?.kind === 'ready' ? next.payload.gateReadiness : undefined,
+                  nextAction,
+                ),
+              );
+              const request = decisionResolveRequest(
+                { ...decisionWithRunContext!, ...next },
+                nextAction,
+                resourcePosture,
+                selectionData,
+                reasons.evidenceAttestationReason,
+                reasons.reason,
+              );
+              const result = await client.request(request.method, request.params, null);
+              criterionDrafts.clear();
+              return result;
+            };
+            void submit()
               .then((result) => {
                 if (method === Methods.IMPROVEMENT_APPLY) {
                   const outcome = improvementApplyOutcome(result as ImprovementApplyResult);
@@ -843,6 +927,8 @@ export default function DecisionDetailScreen({
     [
       applyPostureGate,
       attestationReason,
+      authorityEpoch,
+      criterionDrafts,
       client,
       decision,
       decisionWithRunContext,
@@ -1968,9 +2054,27 @@ export default function DecisionDetailScreen({
                         : undefined
                     }
                     onFocusClaim={focusGateClaim}
-                    attestationReason={attestationReason}
+                    drafts={{
+                      model: criterionDrafts,
+                      canSkip: () => true,
+                      choose: (id, choice, note) => {
+                        const claim = humanGate.acceptance.evidenceModel?.claims.find(
+                          (claim) => claim.id === id,
+                        );
+                        if (claim)
+                          criterionDrafts.choose(
+                            claim,
+                            choice,
+                            note,
+                            humanGate.acceptance.evidenceModel?.claimOverrideCandidate(id)
+                              ?.recipeRunId,
+                          );
+                      },
+                    }}
+                    criterionDrafts={criterionDrafts.entries}
+                    attestationReason={reasonInput}
                     onAttestationReason={(text) =>
-                      setEvidenceReason({ decisionId: decision.id, text })
+                      setEvidenceReason({ scope: codeReviewScope, text })
                     }
                     onResolve={(action, selection) => resolveAction(action.id, selection)}
                     acceptingFindings={acceptingGateId === decision.id}

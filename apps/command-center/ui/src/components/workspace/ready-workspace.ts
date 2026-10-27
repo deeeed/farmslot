@@ -21,6 +21,7 @@ import {
 import {
   acceptanceClaimRows,
   anotherReviewRoundParams,
+  codeReviewNoteSuggestion,
   publicationGateBlockers,
   publicationGateCriteria,
   publicationGateView,
@@ -131,7 +132,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     this._evidenceLoaded = false;
     this._evidenceLoading = true;
     this._evidenceError = '';
-    this._evidenceModel = this._reviewEvidenceModel();
+    this._evidenceModel = this._reviewEvidenceModel(undefined, undefined, true);
     this._claimOverrideId = null;
     this._claimOverrideReason = '';
     this._visualReviewReasons = {};
@@ -213,9 +214,11 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private _reviewEvidenceModel(
     source?: RunRecipeRunsForRunResult['recordedEvidence'],
     readErrors?: string[],
+    evidencePending = false,
   ): EvidenceReviewModel {
     return createEvidenceReviewModel({
       context: 'pr-preview',
+      evidencePending,
       gateDecision: this.decision,
       criteria: publicationGateCriteria(this._payload),
       ledger: this._payload?.acceptanceStatus,
@@ -263,8 +266,43 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     );
     return true;
   }
+  protected override _criterionExecution(claimId: string): string | undefined {
+    return this._evidenceModel?.claimOverrideCandidate(claimId)?.recipeRunId;
+  }
+  private _draftUnsubscribe?: () => void;
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._draftUnsubscribe = this._criterionDrafts.subscribe(() => this.requestUpdate());
+  }
+  override disconnectedCallback(): void {
+    this._draftUnsubscribe?.();
+    super.disconnectedCallback();
+  }
   private _visualReviewControls() {
     return {
+      drafts:
+        !this.decision?.resolvedAt && gateway.authenticatedPrincipal?.subjectKind === 'person'
+          ? {
+              model: this._criterionDrafts,
+              canSkip: () => true,
+              choose: (id: string, choice: 'confirm' | 'skip', note?: string) => {
+                const claim = this._evidenceModel?.claims.find((claim) => claim.id === id);
+                if (!claim || this._actionsPaused || this._acting) return;
+                const candidate = this._evidenceModel?.claimOverrideCandidate(id);
+                this._criterionDrafts.choose(
+                  claim,
+                  choice,
+                  note ??
+                    (choice === 'confirm'
+                      ? codeReviewNoteSuggestion(this._payload?.gateSummary?.review)
+                      : ''),
+                  candidate?.recipeRunId,
+                );
+                this._confirmTimer.clear();
+                this._pendingConfirm = null;
+              },
+            }
+          : undefined,
       judgmentRows: this._evidenceModel?.judgmentRows(gateway.authenticatedPrincipal) ?? [],
       busy: this._acting || this._refreshingPackage,
       feedback: this._visualJudgmentFeedback,
@@ -286,6 +324,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     return renderAcceptancePanel(
       { schemaVersion: 1, criteria: [] },
       {
+        expanded: true,
+        criteria: publicationGateCriteria(this._payload),
+        criterionDrafts: this._criterionDrafts.entries,
+        attestationReason: this._evidenceAttestationReason,
         evidenceModel: model,
         judgments: { ...controls, rows: controls.judgmentRows },
         overrideEditor: {
@@ -298,9 +340,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
             this._claimOverrideReason = reason;
           },
         },
-        markUntestable: this.decision?.resolvedAt
-          ? undefined
-          : (claimId, reason) => void this._skipCriterion(claimId, reason),
+        markUntestable:
+          this._visualReviewControls().drafts || this.decision?.resolvedAt
+            ? undefined
+            : (claimId, reason) => void this._skipCriterion(claimId, reason),
         evidenceHref: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
         openEvidence: ({ criterion, evidence, index }) => {
           this._lightboxRecipeRunId = this._evidenceRecipeRunId;
@@ -387,6 +430,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       gate: this.decision,
       actions: this.decision?.actions ?? [],
       judgmentRows: controls.judgmentRows,
+      criterionDrafts: this._criterionDrafts.entries,
+      attestationReason: this._evidenceAttestationReason,
       pendingVisualClaimIds: model?.pendingVisualClaimIds,
       readiness: payload.gateReadiness,
       resolved,
@@ -673,6 +718,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       publicationTarget: this._publicationTarget,
       pendingConfirm: this._pendingConfirm,
       attestationReason: this._evidenceAttestationReason,
+      criterionDrafts: this._criterionDrafts.entries,
+      claims: this._evidenceModel?.claims,
       attesting: this._attestingDecisionId === this.decision?.id,
       chooseAttestation: () => {
         this._attestingDecisionId = this.decision?.id ?? null;
@@ -755,7 +802,9 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       evidenceCount: this._evidenceArtifacts(payload).length,
       qualityCount: this._qualityItemCount(payload),
       inputCount: this._inputItemCount(payload),
-      diffCount: formatDiffFileCount(this._diffSplit()),
+      diffCount: this._branchDiffLoaded
+        ? formatDiffFileCount(this._diffSplit())
+        : String(payload.diffStat?.files ?? '…'),
       setActiveTab: (tab) => this._setActiveTab(tab),
     });
   }
@@ -897,7 +946,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       payload,
       artifacts,
       criteria: this._renderClaimReview(),
-      loading: this._evidenceLoading && !this.mockData,
+      loading: (this._packagePending || this._evidenceLoading) && !this.mockData,
       error: this._evidenceError,
       retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence(true)),
       selectionToolbar: this._renderEvidenceSelectionToolbar(payload),
@@ -920,6 +969,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     const controls = this._visualReviewControls();
     return {
       rows: acceptanceClaimRows({
+        criterionDrafts: this._criterionDrafts.entries,
+        attestationReason: this._evidenceAttestationReason,
         claims: model.claims.map((claim) => ({
           ...claim,
           evidenceLinked: claim.evidence.length > 0,

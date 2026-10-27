@@ -154,6 +154,17 @@ export function GateReviewScreen({
                   evidenceModel={acceptance.evidenceModel}
                   judgmentRows={acceptance.evidenceModel?.judgmentRows(acceptance.reviewer)}
                   onRecordVisualReview={recordVisualReview}
+                  initiallyExpanded
+                  attestationReason={viewModel.attestationReason}
+                  criterionDrafts={viewModel.draftActions.model.entries}
+                  drafts={
+                    viewModel.decision.actions.some(
+                      ({ id }) =>
+                        id === 'approve-publish-evidence-attested' || id === 'approve-publish',
+                    )
+                      ? viewModel.draftActions
+                      : undefined
+                  }
                   onMarkUntestable={actions.markUntestable}
                   acceptanceStatus={acceptance.acceptanceStatus}
                   acceptanceCriteria={acceptance.acceptanceCriteria}
@@ -252,6 +263,8 @@ export function GateReviewScreen({
           }}
           attestationReason={viewModel.attestationReason}
           onAttestationReason={actions.setAttestationReason}
+          drafts={viewModel.draftActions}
+          criterionDrafts={viewModel.draftActions.model.entries}
           acceptingFindings={acceptingDecisionId === viewModel.decision.id}
           onAcceptFindings={() => setAcceptingDecisionId(viewModel.decision.id)}
         />

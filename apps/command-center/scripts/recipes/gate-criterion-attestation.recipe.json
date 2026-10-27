@@ -1,0 +1,79 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Gate criterion draft and attestation proof",
+  "description": "Manual browser/RPC proof. Uses the source UI, real credential authentication and existing receipt writers with isolated source/readiness fixtures. It does not publish a PR, start a worker or use a device. Requires an isolated Agent Chrome CDP endpoint and an unchanged prior source extraction with matching installed dependencies.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["proof_root", "before_source"],
+    "properties": {
+      "proof_root": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_./-]+$"
+      },
+      "before_source": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_./-]+$"
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "visible-criteria",
+      "claim": "Criterion text is visible before evidence loads and in the existing media review header."
+    },
+    {
+      "id": "draft-choices",
+      "claim": "Confirm, Skip and Undo update locally and survive an actual document reload with approval counts."
+    },
+    {
+      "id": "one-approval",
+      "claim": "One approval records the exact notes in the existing attestation and the skip in the existing override receipt."
+    },
+    {
+      "id": "causal-control",
+      "claim": "The prior source has no per-criterion confirmation action under the same browser and gateway fixture."
+    }
+  ],
+  "workflow": {
+    "entry": "positive",
+    "nodes": {
+      "positive": {
+        "action": "command",
+        "intent": "Confirm and skip real mounted rows, reload, undo and approve through existing RPCs.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/positive\" --code-review",
+        "timeout_ms": 600000,
+        "next": "positive-observed"
+      },
+      "positive-observed": {
+        "action": "assert_output",
+        "intent": "Require actual DOM observations, durable receipts and owned teardown.",
+        "source": "positive",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "proves": ["visible-criteria", "draft-choices", "one-approval"],
+        "next": "control"
+      },
+      "control": {
+        "action": "command",
+        "intent": "The same fixture on prior source has no confirmation action.",
+        "cmd": "FARMSLOT_GATE_PROOF_SOURCE=\"{{params.before_source}}\" TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/control\" --code-review --expect-missing-confirmation",
+        "timeout_ms": 600000,
+        "next": "control-observed"
+      },
+      "control-observed": {
+        "action": "assert_output",
+        "intent": "Require the causal control and clean resource teardown.",
+        "source": "control",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "proves": ["causal-control"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

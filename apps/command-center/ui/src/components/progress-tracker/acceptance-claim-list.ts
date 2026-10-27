@@ -1,6 +1,11 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
-import { type AcceptanceClaimRow, type VisualJudgmentFeedback } from '@farmslot/review-dispatch';
+import {
+  type AcceptanceClaimRow,
+  canDraftCriterion,
+  type CriterionDraftActions,
+  type VisualJudgmentFeedback,
+} from '@farmslot/review-dispatch';
 import { publicationGateCssVariables } from '@farmslot/theme';
 
 import { fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -11,6 +16,7 @@ import {
 
 export interface AcceptanceClaimListActions {
   busy?: boolean;
+  drafts?: CriterionDraftActions;
   feedback?: VisualJudgmentFeedback;
   reviewReason?: (id: string) => string;
   changeReviewReason?: (id: string, reason: string) => void;
@@ -35,6 +41,7 @@ export function renderAcceptanceClaimList(
       const verdict =
         claim.source?.status?.verdict ??
         (claim.source?.evidenceLinked ? 'evidence-linked' : 'none');
+      const drafts = claim.source && canDraftCriterion(claim.source) ? actions.drafts : undefined;
       const visual = claim.judgment?.claim.status?.proofMode !== 'state';
       return html`<li
         class="ac-row ac-${verdict}"
@@ -63,14 +70,22 @@ export function renderAcceptanceClaimList(
         ${html`<span
           class="gate-state ac-verdict"
           data-state=${claim.tone}
+          data-review-complete=${String(
+            claim.state === 'Verified in code' || claim.state === 'Proven in app',
+          )}
           title=${claim.detail}
           role="status"
-          >${claim.state}</span
+          >${claim.state === 'Verified in code' || claim.state === 'Proven in app'
+            ? '✓ '
+            : claim.state === 'Not proven'
+              ? '✕ '
+              : ''}${claim.state}</span
         >`}
         ${actions.canFocus?.(claim.id) === false
           ? nothing
           : html`<button
               class="gate-secondary"
+              data-testid=${`criterion-evidence-${claim.id}`}
               type="button"
               ?disabled=${!actions.focusClaim}
               @click=${() => void actions.focusClaim?.(claim.id)}
@@ -80,7 +95,68 @@ export function renderAcceptanceClaimList(
                 ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
                 : ''}<span class="gate-sr-only"> for ${claim.id}</span>
             </button>`}
-        ${claim.judgment && visual
+        ${drafts
+          ? html`<div class="criterion-draft-actions">
+              ${claim.draft
+                ? html`<button
+                    type="button"
+                    class="gate-secondary"
+                    data-testid=${`criterion-undo-${claim.id}`}
+                    ?disabled=${actions.busy}
+                    @click=${() => drafts.model.undo(claim.id)}
+                  >
+                    Undo
+                  </button>`
+                : html` <button
+                      type="button"
+                      class="gate-primary"
+                      data-testid=${`criterion-confirm-${claim.id}`}
+                      ?disabled=${actions.busy || !drafts.model.ready}
+                      @click=${() => drafts.choose(claim.id, 'confirm')}
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      class="gate-secondary"
+                      data-testid=${`criterion-skip-${claim.id}`}
+                      ?disabled=${actions.busy || !drafts.model.ready || !drafts.canSkip(claim.id)}
+                      @click=${() => drafts.choose(claim.id, 'skip')}
+                    >
+                      Skip
+                    </button>`}
+              ${claim.draft
+                ? html`<span>Pending approval</span
+                    ><label
+                      >${claim.draft.choice === 'skip' ? 'Skip reason' : 'Note'}<input
+                        data-testid=${`criterion-note-${claim.id}`}
+                        type="text"
+                        .value=${claim.draft.note}
+                        ?disabled=${actions.busy}
+                        @input=${(event: Event) =>
+                          drafts.choose(
+                            claim.id,
+                            claim.draft!.choice,
+                            (event.target as HTMLInputElement).value,
+                          )}
+                        @keydown=${(event: KeyboardEvent) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            (event.target as HTMLInputElement).blur();
+                          }
+                        }}
+                    /></label>`
+                : nothing}
+              ${drafts.model.error &&
+              (!drafts.model.error.claimId || drafts.model.error.claimId === claim.id)
+                ? html`<span role="alert">${drafts.model.error.message}</span
+                    ><button class="gate-secondary" @click=${drafts.model.error.retry}>
+                      Retry
+                    </button>`
+                : nothing}
+            </div>`
+          : nothing}
+        ${!drafts && claim.judgment && visual
           ? renderVisualClaimJudgment({
               row: claim.judgment,
               busy: actions.busy || !actions.recordReview,
@@ -105,12 +181,12 @@ export function acceptanceClaimListStyles() {
     .acceptance-claim-list li { display: grid; grid-template-columns: 50px minmax(160px, 1fr) auto auto auto; gap: ${spacing.md}; align-items: center; padding: ${spacing.sm} 0; border-top: 1px solid var(--gate-border); }
     .acceptance-claim-list .ac-id { width: auto; color: var(--gate-secondary); font-family: ${fonts.mono}; }
     .acceptance-claim-list .gate-claim-text { overflow-wrap: anywhere; color: var(--gate-text); min-width: 0; }
-    .gate-claim-text summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; min-height: 44px; align-content: center; }
+    .gate-claim-text summary { display: block; cursor: pointer; min-height: 44px; align-content: center; }
     .gate-claim-text[open] summary { display: block; -webkit-line-clamp: unset; }
     .gate-claim-text p { margin: 0; padding: 4px 0; }
     .acceptance-claim-list .gate-state { display: inline-flex; align-items: center; gap: 6px; justify-self: start; color: var(--gate-text); font-size: ${fonts.sizeSm}; font-weight: 600; border: 0; border-radius: 999px; padding: 2px 10px; white-space: nowrap; background: var(--gate-surface); text-transform: none; cursor: default; }
-    .acceptance-claim-list .gate-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
     ${['proven', 'verified', 'checked', 'issue', 'pending', 'untestable'].map((tone) => `.acceptance-claim-list .gate-state[data-state="${tone}"] { color: var(--gate-${tone}); background: var(--gate-${tone}Surface); }`).join('')}
+    .acceptance-claim-list .gate-state[data-review-complete="true"]::before { display: none; }
     .acceptance-claim-list .gate-state[data-state="checked"] { animation: gate-checked 0.25s ease-out; }
     @keyframes gate-checked { from { opacity: 0.5; transform: translateY(3px); } to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) { .acceptance-claim-list .gate-state { animation: none !important; } }
@@ -118,6 +194,9 @@ export function acceptanceClaimListStyles() {
     .acceptance-claim-list button:disabled { opacity: 0.65; cursor: not-allowed; }
     .acceptance-claim-list :focus-visible { outline: 2px solid var(--gate-accent); outline-offset: 2px; }
     .acceptance-claim-list .gate-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .criterion-draft-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; grid-column:2 / -1; }
+    .criterion-draft-actions label { display:flex; align-items:center; gap:8px; }
+    .criterion-draft-actions input { font:inherit; padding:8px; color:var(--gate-text); background:var(--gate-surface); border:1px solid var(--gate-border); border-radius:6px; min-height:28px; }
     .acceptance-claim-details { grid-column: 1 / -1; min-width: 0; }
     .acceptance-claim-details summary, .acceptance-claim-details button { min-height: 44px; min-width: 44px; cursor: pointer; }
     @media (max-width: 1000px) { .acceptance-claim-list li { grid-template-columns: 44px minmax(0,1fr) auto; gap: ${spacing.sm}; } .acceptance-claim-list li > button { grid-column: 2; justify-self: start; } }

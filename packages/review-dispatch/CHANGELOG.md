@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Confirm code-review criteria in the publication gate with notes included in the existing attestation, and keep criterion text visible while evidence loads.
+
 - Keep saved fleet recovery rows visible while current inspection runs or fails, with release guarded until inspection succeeds.
 
 - Share fleet workspace rows, safe bulk release, discard confirmation and recovery progress between both operator apps.

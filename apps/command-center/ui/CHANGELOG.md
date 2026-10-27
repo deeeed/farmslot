@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Confirm code-review criteria in the publication gate with notes included in the existing attestation, and keep criterion text visible while evidence loads.
+
 - Show saved gate details and fleet recovery rows while current readiness refreshes, keep slow reads local, and load source diffs when opened.
 
 - Open shared Companion links in Command Center after checking the configured gateway binding, with an exact supported selection or an unavailable reason.

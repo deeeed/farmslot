@@ -16,7 +16,9 @@ import {
   withArtifactBundleDigest,
 } from '@farmslot/protocol';
 import {
+  applyCriterionDraftSkips,
   buildArtifactUrlResolver,
+  criterionDraftReason,
   ReviewDispatchViewModel,
   reviewLineagesForRun,
 } from '@farmslot/review-dispatch';
@@ -196,7 +198,18 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._hydratePublicationTarget();
       void this._beginRecovery();
     }
-    if (this.decision) this._syncDecisionActionState();
+    if (this.decision) {
+      this._syncDecisionActionState();
+      this._criterionDrafts.setScope(
+        JSON.stringify([
+          gateway.gatewayUrl,
+          gateway.authenticatedPrincipalId,
+          this.runId,
+          this.decision.id,
+        ]),
+        this._payload?.prPackage?.packageHash ?? '',
+      );
+    }
     if (this.decision) this._hydratePublicationTarget();
     if (this.decision) this._hydrateEvidenceSelection();
     if (this.hideRecipeTab && this._activeTab === 'recipe') {
@@ -224,6 +237,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._diffError = '';
       this._fileDiffError = '';
       this._diffLoading = false;
+      this._branchDiffLoaded = false;
       this._fileDiffLoading = false;
     }
     if ((changed.has('slotId') || sourceChanged) && this._initialized) {
@@ -601,6 +615,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       if (!current()) return;
       this._diffError = '';
       this._diffFiles = result.files;
+      this._branchDiffLoaded = true;
       this._diffTestPatterns = result.testFilePatterns ?? null;
       const selected = visibleDiffSelection(this._diffSplit().visible, this._selectedFile);
       if (selected) {
@@ -709,10 +724,16 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _syncDecisionActionState(): void {
-    const key = readyDecisionActionStateKey(this.decision);
+    const key = JSON.stringify([
+      this.runId,
+      readyDecisionActionStateKey(this.decision),
+      this._payload?.prPackage?.packageHash,
+      gateway.credentialGeneration,
+      gateway.authenticatedPrincipalId,
+    ]);
     if (key === this._decisionActionStateKey) return;
     this._decisionActionStateKey = key;
-    this._acting = false;
+    if (!this._draftApprovalInFlight) this._acting = false;
     this._pendingConfirm = null;
     this._evidenceAttestationReason = '';
     this._actionMessage = '';
@@ -836,6 +857,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (applied) this._closeReviewRequestModal();
   }
 
+  protected _criterionExecution(_claimId: string): string | undefined {
+    return undefined;
+  }
+  private _draftApprovalInFlight = false;
+
   async _resolve(actionId: string, extraSelectionData: Record<string, unknown> = {}) {
     if (
       this.actionsBlocked ||
@@ -870,17 +896,75 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           'Still waiting for the gateway; it checks the gate before applying it.';
     }, DECISION_RESOLVE_SLOW_MS);
     let failure: unknown;
+    const drafts = [...this._criterionDrafts.entries];
+    const appliedClaims = new Set<string>();
+    this._draftApprovalInFlight = approving && drafts.length > 0;
+    const reason = criterionDraftReason(drafts, this._evidenceAttestationReason);
+    const authority = JSON.stringify([
+      gateway.gatewayUrl,
+      gateway.authenticatedPrincipalId,
+      gateway.credentialGeneration,
+    ]);
     try {
+      let decision = this.decision;
+      if (approving && drafts.length && this.run) {
+        decision = await applyCriterionDraftSkips({
+          run: this.run,
+          decision,
+          drafts,
+          execution: (claimId) => this._criterionExecution(claimId),
+          request: (method, params) =>
+            gateway.request<import('@farmslot/protocol').RunOverrideClaimResult>(method, params, {
+              timeout: null,
+            }),
+          assertCurrent: () => {
+            if (
+              !stillShown() ||
+              authority !==
+                JSON.stringify([
+                  gateway.gatewayUrl,
+                  gateway.authenticatedPrincipalId,
+                  gateway.credentialGeneration,
+                ])
+            )
+              throw new Error('The gate or signed-in authority changed.');
+          },
+          applied: (run, next, claimId) => {
+            appliedClaims.add(claimId);
+            this.run = run;
+            this.decision = next;
+            this._criterionDrafts.rebind(
+              next.payload?.kind === 'ready' ? (next.payload.prPackage?.packageHash ?? '') : '',
+              claimId,
+              drafts.filter((entry) => !appliedClaims.has(entry.claimId)),
+            );
+          },
+        });
+        if (!decision.actions.some(({ id }) => id === actionId)) {
+          if (
+            actionId === 'approve-publish-evidence-attested' &&
+            decision.actions.some(({ id }) => id === 'approve-publish')
+          )
+            actionId = 'approve-publish';
+          else
+            throw new Error(
+              'The gate actions changed after saving skips. Review the gate before approving.',
+            );
+        }
+      }
       await gateway.request(
         Methods.RUN_RESOLVE_DECISION,
         buildRunResolveDecisionParams({
           runId: this.runId,
-          decision: this.decision,
+          decision,
           actionId,
           ...publicationApprovalReasonFields(
             actionId,
-            this._evidenceAttestationReason,
-            evidenceAttestationAvailable(payload?.gateReadiness, actionId),
+            reason,
+            evidenceAttestationAvailable(
+              decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
+              actionId,
+            ),
           ),
           ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
           publicationTarget: this._publicationTarget,
@@ -895,6 +979,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     } finally {
       clearTimeout(slow);
     }
+    this._draftApprovalInFlight = false;
     // A failed request can still have been applied (a lost reply, or a second click whose
     // first submission won): report what the gateway did, not how the request ended.
     const outcome: DecisionOutcome =
@@ -903,6 +988,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         : await decisionOutcome(runId, decisionId, actionId);
     if (!stillShown()) return;
     if (outcome.kind === 'applied') {
+      if (approving) this._criterionDrafts.clear();
       this._actionMessage = requestingReview
         ? 'Review requested; preparing the reviewer.'
         : readyDecisionSuccessMessage(approving);

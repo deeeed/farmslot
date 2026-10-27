@@ -759,8 +759,15 @@ export class EvidenceReviewer extends LitElement {
     const items = this.playerItems();
     return html`
       <header>
-        <h2>Evidence review${current ? html` · ${current.id}` : nothing}</h2>
-        <button class="btn" @click=${() => this.close()}>Close</button>
+        <div>
+          <h2>Evidence review${current ? html` · ${current.id}` : nothing}</h2>
+          ${current
+            ? html`<p data-testid="evidence-review-criterion">${current.text}</p>`
+            : nothing}
+        </div>
+        <button class="btn" data-testid="evidence-review-close" @click=${() => this.close()}>
+          Close
+        </button>
       </header>
       <div class="body" style="--nav-width:${this.navWidth}px">
         <nav aria-label="Acceptance criteria">

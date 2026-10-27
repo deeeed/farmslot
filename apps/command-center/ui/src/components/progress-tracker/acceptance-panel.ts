@@ -32,6 +32,7 @@ import type {
 import {
   acceptanceClaimRows,
   acceptancePanelPresentation,
+  acceptanceTimingCaption,
   untestableOverrideView,
 } from '@farmslot/review-dispatch';
 
@@ -510,13 +511,15 @@ function renderRowDetails(
           </ul>`
         : nothing}
       ${view.timing && view.timing !== 'measured'
-        ? html`<div class="ac-note">${view.timing}</div>`
+        ? html`<div class="ac-note">${acceptanceTimingCaption(view.timing)}</div>`
         : nothing}
       ${criterion?.note ? html`<div class="ac-note">${criterion.note}</div>` : nothing}
       ${criterion?.engineVerdict
         ? html`<div class="ac-note">Engine verdict: ${criterion.engineVerdict}</div>`
         : nothing}
-      ${markUntestable && model?.claimOverrideCandidate(view.id)
+      ${markUntestable &&
+      !(criterion?.proofMode === 'review' && criterion.verdict === 'proven') &&
+      model?.claimOverrideCandidate(view.id)
         ? html`<div class="ac-override">
             ${renderUntestableOverride(view.id, editor, markUntestable)}
           </div>`
@@ -571,6 +574,9 @@ export function renderUntestableOverride(
 export function renderAcceptancePanel(
   ledger: AcceptanceStatusLedger,
   options: {
+    expanded?: boolean;
+    criterionDrafts?: import('@farmslot/review-dispatch').CriterionDraft[];
+    attestationReason?: string;
     registration?: AcceptanceRegistration;
     evidenceModel?: EvidenceReviewModel;
     judgments?: AcceptanceClaimListActions & { rows: readonly EvidenceReviewJudgmentRow[] };
@@ -625,7 +631,8 @@ export function renderAcceptancePanel(
       class="ac-panel"
       data-testid="acceptance-panel"
       ?data-proof-steps=${Boolean(options.showOccurrences)}
-      ?open=${view.defaultOpen ||
+      ?open=${options.expanded ||
+      view.defaultOpen ||
       Boolean(options.error) ||
       Boolean(model?.errors.length) ||
       Boolean(model?.claims.some((claim) => claim.kind === 'qa-case'))}
@@ -678,6 +685,8 @@ export function renderAcceptancePanel(
           : nothing}
         ${renderAcceptanceClaimList(
           acceptanceClaimRows({
+            criterionDrafts: options.criterionDrafts,
+            attestationReason: options.attestationReason,
             criteria: options.criteria,
             ledger,
             registration: options.registration,

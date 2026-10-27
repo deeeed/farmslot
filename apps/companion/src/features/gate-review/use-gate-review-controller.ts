@@ -9,6 +9,7 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   Events,
   evidenceAttestationAvailable,
+  isPublishApprovalAction,
   isValidEvidenceAttestationReason,
   Methods,
   type Run,
@@ -16,6 +17,9 @@ import {
   type RunGetResult,
 } from '@farmslot/protocol';
 import {
+  applyCriterionDraftSkips,
+  codeReviewNoteSuggestion,
+  criterionDraftReason,
   gateReviewLineageOptions,
   ReviewDispatchViewModel,
   reviewLineagesForRun,
@@ -24,6 +28,7 @@ import {
 
 import type { MediaViewerItem } from '../../components/MediaViewer';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
+import { useCriterionDrafts } from '../../hooks/useCriterionDrafts';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import type { RunAcceptance } from '../../hooks/useRunAcceptance';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
@@ -81,6 +86,7 @@ export interface GateReviewViewModel {
   authHeaders: ArtifactHttpHeaders;
   sendingActionId: string | null;
   attestationReason: string;
+  draftActions: import('@farmslot/review-dispatch').CriterionDraftActions;
   /** A refresh that failed after the gate was already on screen. */
   error: string | null;
 }
@@ -113,7 +119,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const [sendingActionId, setSendingActionId] = useState<string | null>(null);
   const [media, setMedia] = useState<GateReviewMedia | null>(null);
   useEffect(() => setMedia(null), [authorityEpoch, runId, decisionId]);
-  const [evidenceReason, setEvidenceReason] = useState<{ decisionId: string; text: string } | null>(
+  const [evidenceReason, setEvidenceReason] = useState<{ scope: string; text: string } | null>(
     null,
   );
   const requestRef = useRef(0);
@@ -166,6 +172,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     requestRef.current += 1;
     setRun(null);
     setLoadError(null);
+    setEvidenceReason(null);
   }, [authorityEpoch, gatewayUrl, refresh]);
 
   useEffect(() => {
@@ -197,8 +204,38 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const gate = useHumanGateGuard(client, run, decision);
   // Send re-checks the gate as it is when the operator confirms, not as it was
   // when the confirmation opened.
-  const attestationReason =
-    evidenceReason?.decisionId === decision?.id ? (evidenceReason?.text ?? '') : '';
+  const confirmationScope = JSON.stringify([
+    runId,
+    decisionId,
+    client?.authenticatedPrincipal?.id,
+    gatewayUrl,
+  ]);
+  const snapshot =
+    decision?.payload?.kind === 'ready' ? (decision.payload.prPackage?.packageHash ?? '') : '';
+  const criterionDrafts = useCriterionDrafts(confirmationScope, snapshot);
+  const reasonInput = evidenceReason?.scope === confirmationScope ? evidenceReason.text : '';
+  const attestationReason = criterionDraftReason(criterionDrafts.entries, reasonInput);
+  const draftActions = {
+    model: criterionDrafts,
+    canSkip: () => true,
+    choose: (id: string, choice: 'confirm' | 'skip', note?: string) => {
+      const claim = gate?.acceptance.evidenceModel?.claims.find((claim) => claim.id === id);
+      if (!claim) return;
+      criterionDrafts.choose(
+        claim,
+        choice,
+        note ??
+          (choice === 'confirm'
+            ? codeReviewNoteSuggestion(
+                decision?.payload?.kind === 'ready'
+                  ? decision.payload.gateSummary?.review
+                  : undefined,
+              )
+            : ''),
+        gate?.acceptance.evidenceModel?.claimOverrideCandidate(id)?.recipeRunId,
+      );
+    },
+  };
   const latestRef = useRef({ run, decision, gate, attestationReason });
   latestRef.current = { run, decision, gate, attestationReason };
 
@@ -227,10 +264,22 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       media,
       guard: gate.guard,
       actions: gate.actions,
-      attestationReason,
+      attestationReason: reasonInput,
+      draftActions,
       authHeaders,
     };
-  }, [attestationReason, authHeaders, decision, gate, gatewayUrl, media, reviewPicker, run]);
+  }, [
+    draftActions,
+    reasonInput,
+    attestationReason,
+    authHeaders,
+    decision,
+    gate,
+    gatewayUrl,
+    media,
+    reviewPicker,
+    run,
+  ]);
 
   const openEvidence = useCallback(
     (criterionId: string, path: string) => {
@@ -338,8 +387,73 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
               return;
             }
             setSendingActionId(action.id);
-            client
-              .request(confirmed.method, confirmed.params)
+            const drafts = [...criterionDrafts.entries];
+            const appliedClaims = new Set<string>();
+            const owner = client.authenticatedPrincipal?.id;
+            const submit = async () => {
+              let next = latest.decision!;
+              if (isPublishApprovalAction(action.id) && drafts.length) {
+                next = await applyCriterionDraftSkips({
+                  run: latest.run!,
+                  decision: next,
+                  drafts,
+                  execution: (id) =>
+                    gate?.acceptance.evidenceModel?.claimOverrideCandidate(id)?.recipeRunId,
+                  request: (method, params) =>
+                    client.request<import('@farmslot/protocol').RunOverrideClaimResult>(
+                      method,
+                      params,
+                      null,
+                    ),
+                  assertCurrent: () => {
+                    if (
+                      useConnectionStore.getState().authorityEpoch !== authorityEpoch ||
+                      useConnectionStore.getState().client !== client ||
+                      latestRef.current.run?.id !== run.id ||
+                      latestRef.current.decision?.id !== decision.id ||
+                      client.authenticatedPrincipal?.id !== owner
+                    )
+                      throw new Error('The gate or signed-in authority changed.');
+                  },
+                  applied: (updated, gate, claimId) => {
+                    appliedClaims.add(claimId);
+                    criterionDrafts.rebind(
+                      gate.payload?.kind === 'ready'
+                        ? (gate.payload.prPackage?.packageHash ?? '')
+                        : '',
+                      claimId,
+                      drafts.filter((entry) => !appliedClaims.has(entry.claimId)),
+                    );
+                    setRun(updated);
+                  },
+                });
+              }
+              const actionId = next.actions.some(({ id }) => id === action.id)
+                ? action.id
+                : action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+                    next.actions.some(({ id }) => id === 'approve-publish')
+                  ? 'approve-publish'
+                  : action.id;
+              const reasons = gateActionReasons(
+                actionId,
+                latest.attestationReason,
+                evidenceAttestationAvailable(
+                  next.payload?.kind === 'ready' ? next.payload.gateReadiness : undefined,
+                  actionId,
+                ),
+              );
+              const request = decisionResolveRequest(
+                decisionDetailFromRun(latest.run!, next),
+                actionId,
+                null,
+                selectionData,
+                reasons.evidenceAttestationReason,
+                reasons.reason,
+              );
+              await client.request(request.method, request.params, null);
+              if (isPublishApprovalAction(action.id)) criterionDrafts.clear();
+            };
+            void submit()
               .then(() => {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 removeDecision(decision.id);
@@ -351,7 +465,16 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         },
       ]);
     },
-    [attestationReason, client, decision, refresh, removeDecision, run],
+    [
+      attestationReason,
+      authorityEpoch,
+      criterionDrafts,
+      client,
+      decision,
+      refresh,
+      removeDecision,
+      run,
+    ],
   );
 
   const state = gateReviewScreenState({ run, decision, viewModel, loadError, sendingActionId });
@@ -444,7 +567,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       openEvidence,
       openLog,
       resolve,
-      setAttestationReason: (text: string) => setEvidenceReason({ decisionId, text }),
+      setAttestationReason: (text: string) => setEvidenceReason({ scope: confirmationScope, text }),
     },
   };
 }
