@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Before fresh run workers start, reuse healthy managed runtime or boot stopped pack resources in server-first order, preserving runtime ownership and pressure checks.
+
 - Automatically reuse clean published idle slots before asking for a slot, and safely return settled checkouts to main while preserving local work and replay evidence.
 
 - Complete artifact-only comparison trials from their retained evidence without requiring an output-review decision, and recognize completed scripted commands in their flow-owned worker role.

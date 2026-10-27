@@ -24,7 +24,13 @@ import {
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
 // ─── Placeholder helpers ───
-import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
+import {
+  getProjectField,
+  loadProjectVars,
+  loadSlotVars,
+  type RawProjectJson,
+  resolveSlot,
+} from '../core/config.js';
 import { execLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { withProjectMachineEnv } from '../core/project-env.js';
@@ -1315,7 +1321,10 @@ export async function reconcileFailedDeviceControl(input: {
 export function resourceControlTimeoutMs(
   resourceType: string,
   action: ResourceControlAction,
+  launchSeconds = 0,
 ): number {
+  if (action === 'boot' && Number.isFinite(launchSeconds) && launchSeconds > 0)
+    return Math.max(resourceType === 'device' ? 120_000 : 30_000, launchSeconds * 1000);
   return resourceType === 'device' && action === 'boot' ? 120_000 : 30_000;
 }
 
@@ -1372,7 +1381,14 @@ async function executeResourceControlWithSources(
   }
 
   const expanded = expandTemplate(hookCmd, slotVars, projectVars, extraVars);
-  const timeoutMs = resourceControlTimeoutMs(resourceDef.type, action);
+  const timeoutMs = resourceControlTimeoutMs(
+    resourceDef.type,
+    action,
+    Number(
+      getProjectField(projectJson, 'timeouts.prepare_preflight_s') ||
+        getProjectField(projectJson, 'timeouts.build_compile_s'),
+    ),
+  );
 
   // Check for unresolved required variables after expansion
   if (hasUnresolvedPlaceholders(expanded)) {

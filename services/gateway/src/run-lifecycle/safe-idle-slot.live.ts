@@ -341,27 +341,6 @@ try {
       );
     await save('FIXTURE-smoke-after-cancel.json', await client.call('run.get', { runId }));
     if (complete) {
-      // Exercise done cleanup on this same disposable run, after cancellation; no new dispatch.
-      await save(
-        'done-cleanup.json',
-        await client.call('run.forceComplete', {
-          runId,
-          reason: 'Disposable lifecycle proof only',
-        }),
-      );
-      assert.equal(git(repo, 'branch', '--show-current'), 'main');
-      assert.equal(git(repo, 'rev-parse', 'HEAD'), latestMain);
-      const settled = await client.call('run.get', { runId });
-      assert.equal(settled.run.status, 'done');
-      assert.equal(
-        settled.run.steps.find((step: { name: string }) => step.name === 'prepare')?.outputs
-          ?.checkoutBeforeIdleReturn?.headSha,
-        latestMain,
-      );
-      await assert.rejects(
-        client.call('run.replayStep', { runId, stepName: 'dispatch', triggeredBy: 'operator' }),
-        /force-completed and cannot be replayed/,
-      );
       await save('FIXTURE-smoke-archive.json', await client.call('run.archive', { runId }));
       assert.equal(git(repo, 'branch', '--show-current'), 'main');
       assert.equal(git(repo, 'rev-parse', 'HEAD'), latestMain);

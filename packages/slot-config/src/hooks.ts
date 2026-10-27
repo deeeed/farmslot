@@ -125,7 +125,9 @@ function expandTemplateInternal(
   const slotHost = slotVars.host.replace(/\.local$/, '');
   const isLocal =
     slotHost === 'localhost' || slotHost === '127.0.0.1' || slotHost === localHostname;
-  const farmslotDir = isLocal ? farmslotRoot : REMOTE_AGENT_DIR;
+  const farmslotDir = isLocal
+    ? farmslotRoot
+    : slotVars.machineEnv?.FARMSLOT_WORKSPACE?.trim() || REMOTE_AGENT_DIR;
   result = result.replaceAll('{{farmslot_dir}}', farmslotDir);
   result = result.replaceAll('{{FARMSLOT_DIR}}', farmslotDir);
   // Legacy aliases

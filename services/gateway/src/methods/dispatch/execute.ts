@@ -54,6 +54,7 @@ import {
   shellQuote,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
+import { ensureRunRuntimeReady } from '../../fleet/runtime-ready.js';
 import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
@@ -1553,6 +1554,15 @@ export async function dispatchExecute(
     await updateSlotStatus(params.slotId, { app: selectedApp });
   }
 
+  // Retained native reconciliation returned above. This boundary also covers
+  // replay and skip-prepare fallbacks that launch a fresh worker.
+  if (currentRun && !options.nativeRetainedFrom)
+    await ensureRunRuntimeReady(
+      params.slotId,
+      currentRun.id,
+      runPressureGate,
+      options.assertCurrent,
+    );
   await runRecipeGate();
 
   // 3. Copy task to worker
