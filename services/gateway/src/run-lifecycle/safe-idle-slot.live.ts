@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const code = fileURLToPath(new URL('../../../../../', import.meta.url));
+const code = fileURLToPath(new URL('../../../../', import.meta.url));
 const output = process.env.FARMSLOT_SAFE_IDLE_PROOF_OUT;
 assert.ok(output, 'Set FARMSLOT_SAFE_IDLE_PROOF_OUT outside the checkout');
 const lane = output;
@@ -18,12 +19,26 @@ const beforeOptions = {
   escape: tmux('show-options', '-sv', 'escape-time'),
   status: tmux('show-options', '-gv', 'status-left-length'),
 };
-await writeFile(
-  path.join(lane, 'CREATE-ONCE.json'),
-  JSON.stringify({ source: code, createdAt: new Date().toISOString() }) + '\n',
-  { flag: 'wx' },
+const retainedPath = path.join(lane, 'FIXTURE-smoke-owned-root.json');
+const retained = existsSync(retainedPath) ? JSON.parse(await readFile(retainedPath, 'utf8')) : null;
+assert.ok(
+  !existsSync(path.join(lane, 'FIXTURE-smoke-run-created.json')),
+  'Inspect/replay the existing owned run; never create a replacement',
 );
-const root = await realpath(await mkdtemp(path.join(tmpdir(), 'safe-idle-slot-smoke-')));
+if (!retained)
+  await writeFile(
+    path.join(lane, 'CREATE-ONCE.json'),
+    JSON.stringify({ source: code, createdAt: new Date().toISOString() }) + '\n',
+    { flag: 'wx' },
+  );
+const root = retained
+  ? await realpath(retained.root)
+  : await realpath(await mkdtemp(path.join(tmpdir(), 'safe-idle-slot-smoke-')));
+assert.ok(root.startsWith((await realpath(tmpdir())) + path.sep + 'safe-idle-slot-smoke-'));
+assert.ok(
+  !existsSync(path.join(root, 'repo/.git')),
+  'Setup retry only; inspect the retained Git fixture',
+);
 const project = 'safe-idle-proof';
 const slot = 'safe-idle-owned-slot';
 const repo = path.join(root, 'repo');
@@ -64,7 +79,13 @@ for (const name of [
   'CLAUDE.md',
   'package.json',
 ])
-  await symlink(path.join(code, name), path.join(root, name));
+  if (!retained) await symlink(path.join(code, name), path.join(root, name));
+  else
+    assert.equal(
+      await realpath(path.join(root, name)),
+      await realpath(path.join(code, name)),
+      'Retained fixture source must match',
+    );
 const quote = (v: string) => `'${v.replaceAll("'", "'\\''")}'`;
 await writeFile(
   path.join(root, 'bin/farmslot'),
