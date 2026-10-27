@@ -1,0 +1,231 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Conditional file edits keep worker changes and drafts safe",
+  "description": "Use a private farm with four local slots (ready, working, review gate, and one whose run switches), one slot on a real farmslot node with conditional writes and one on a node whose handshake omits them, a fake gh PR with a review thread and a fake git that can slow one base. Two admin principals sign in; the principal change uses the real login path, a second tab of the same origin signing in as the second admin with a connection link, and the return to the first admin is the first tab's next document on the login this browser profile saved. Lane-side preloads strip the node flag and, at one checkpoint, the gateway capability, and hold the gateway's first two writes of one ready-slot file for 8 s so the proof types while a save is in flight; no product switch. The offline step stops the gateway and opens the working slot's untracked file. A pre-flight aborts unless gh, codexbar, claude, cursor-agent, ssh, zsh and bash resolve to fakes on each service's PATH and in its login shell. Also covers the D08 slot-workspace targets: slot PR, review threads, R2-B1 and R3-B1. No GitHub, provider, native or worker CLI execution.",
+  "proofTargets": [
+    {
+      "id": "slotPrDetected",
+      "claim": "The ready slot's PR is found through the fake gh before its first branch diff, which asks for the PR's base."
+    },
+    {
+      "id": "slotSlowBaseIgnored",
+      "claim": "R3-B1: a slow first branch diff for the PR base, delayed by the fake git, cannot overwrite the newer base chosen while it was in flight."
+    },
+    {
+      "id": "slotReviewThreads",
+      "claim": "The slot workspace's Comments tab renders the PR's review thread from the fake gh."
+    },
+    {
+      "id": "slotPrRecoveryRetry",
+      "claim": "R2-B1: when gh fails once during reconnect recovery the base is kept, and the first later success applies the PR's new base."
+    },
+    {
+      "id": "editsWorkerChangeAfterSave",
+      "claim": "A ready slot autosaves with the hash it read; a worker changing the file after that save shows a notice and keeps the user's version as a draft."
+    },
+    {
+      "id": "editsTypingDuringSave",
+      "claim": "Text typed while an autosave is in flight stays in the editor and in the draft, rebased on the saved text, and reaches disk with the next save, whose expectedHash is the hash the first save returned."
+    },
+    {
+      "id": "editsRefusedSaveKeepsDraft",
+      "claim": "On a busy slot the save is explicit; after the page reads a worker's change to the file, saving the draft is refused, the draft is kept and both versions show, and the user keeps theirs once and mine once."
+    },
+    {
+      "id": "editsGateWarning",
+      "claim": "A slot at a pending review gate shows that a save requires a new review."
+    },
+    {
+      "id": "editsStaleRunDraft",
+      "claim": "When the slot moves to another run, a draft for the old run is read-only with copy and discard, and a save naming the old run is refused."
+    },
+    {
+      "id": "editsNodeWithoutConditionalWrites",
+      "claim": "A slot on a node with conditional writes saves with a hash; on a node without them the gateway refuses a conditional write and the editor stays read-only."
+    },
+    {
+      "id": "editsOfflineUntrackedFile",
+      "claim": "With the gateway stopped, selecting the working slot's untracked file renders it from the held active-run diff, read-only for being offline, with no fs.read frame."
+    },
+    {
+      "id": "editsWithoutCapability",
+      "claim": "With a gateway that does not advertise capabilities.conditionalFileWrites the editor is read-only and drafts are still listed."
+    },
+    {
+      "id": "editsReconnectSendsNoDraft",
+      "claim": "With unsaved drafts held, a reconnect and a reload send no fs.write frame and the drafts stay held."
+    },
+    {
+      "id": "editsDraftsDeletedOnSignOut",
+      "claim": "Sign-out shows the unsaved-draft count, then deletes the drafts from IndexedDB."
+    },
+    {
+      "id": "editsDraftsDeletedOnPrincipalChange",
+      "claim": "When a second tab of the same origin signs in as the second admin, the tab that connects and finds the first admin's drafts shows the unsaved-draft count and deletes them from IndexedDB."
+    },
+    {
+      "id": "editsDraftsDeletedOnPrincipalReturn",
+      "claim": "After the second admin leaves a draft, the first admin returns: the first tab's next document connects as the first admin, shows the second admin's unsaved-draft count and deletes those drafts from IndexedDB."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-conditional-edits.mjs",
+        "timeout_ms": 3000000,
+        "intent": "Edit files in the real slot workspace against two real nodes and fake gh.",
+        "next": "slotPrDetected"
+      },
+      "slotPrDetected": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"slotPrDetected\":true",
+        "intent": "The slot PR is found and its base drives the first branch diff.",
+        "proves": ["slotPrDetected"],
+        "next": "slotSlowBaseIgnored"
+      },
+      "slotSlowBaseIgnored": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"slotSlowBaseIgnored\":true",
+        "intent": "A slow first branch diff never overwrites the newer base.",
+        "proves": ["slotSlowBaseIgnored"],
+        "next": "slotReviewThreads"
+      },
+      "slotReviewThreads": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"slotReviewThreads\":true",
+        "intent": "The PR review thread renders in the slot workspace.",
+        "proves": ["slotReviewThreads"],
+        "next": "slotPrRecoveryRetry"
+      },
+      "slotPrRecoveryRetry": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"slotPrRecoveryRetry\":true",
+        "intent": "After one failed lookup the first later success applies its base.",
+        "proves": ["slotPrRecoveryRetry"],
+        "next": "editsWorkerChangeAfterSave"
+      },
+      "editsWorkerChangeAfterSave": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsWorkerChangeAfterSave\":true",
+        "intent": "A worker change after a save shows a notice and keeps a draft.",
+        "proves": ["editsWorkerChangeAfterSave"],
+        "next": "editsTypingDuringSave"
+      },
+      "editsTypingDuringSave": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsTypingDuringSave\":true",
+        "intent": "Typing during a save stays and is saved next with the new hash.",
+        "proves": ["editsTypingDuringSave"],
+        "next": "editsRefusedSaveKeepsDraft"
+      },
+      "editsRefusedSaveKeepsDraft": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsRefusedSaveKeepsDraft\":true",
+        "intent": "A refused save keeps the draft, shows both, and either is kept.",
+        "proves": ["editsRefusedSaveKeepsDraft"],
+        "next": "editsGateWarning"
+      },
+      "editsGateWarning": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsGateWarning\":true",
+        "intent": "A review-gate slot warns that a save needs a new review.",
+        "proves": ["editsGateWarning"],
+        "next": "editsStaleRunDraft"
+      },
+      "editsStaleRunDraft": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsStaleRunDraft\":true",
+        "intent": "A draft for an old run is read-only and its save is refused.",
+        "proves": ["editsStaleRunDraft"],
+        "next": "editsNodeWithoutConditionalWrites"
+      },
+      "editsNodeWithoutConditionalWrites": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsNodeWithoutConditionalWrites\":true",
+        "intent": "A node without conditional writes is refused and read-only.",
+        "proves": ["editsNodeWithoutConditionalWrites"],
+        "next": "editsOfflineUntrackedFile"
+      },
+      "editsOfflineUntrackedFile": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsOfflineUntrackedFile\":true",
+        "intent": "Offline, an untracked file opens from held content.",
+        "proves": ["editsOfflineUntrackedFile"],
+        "next": "editsWithoutCapability"
+      },
+      "editsWithoutCapability": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsWithoutCapability\":true",
+        "intent": "Without the capability the editor is read-only; drafts list.",
+        "proves": ["editsWithoutCapability"],
+        "next": "editsReconnectSendsNoDraft"
+      },
+      "editsReconnectSendsNoDraft": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsReconnectSendsNoDraft\":true",
+        "intent": "A reconnect and a reload never send a draft.",
+        "proves": ["editsReconnectSendsNoDraft"],
+        "next": "editsDraftsDeletedOnSignOut"
+      },
+      "editsDraftsDeletedOnSignOut": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsDraftsDeletedOnSignOut\":true",
+        "intent": "Sign-out shows the draft count, then deletes the drafts.",
+        "proves": ["editsDraftsDeletedOnSignOut"],
+        "next": "editsDraftsDeletedOnPrincipalChange"
+      },
+      "editsDraftsDeletedOnPrincipalChange": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsDraftsDeletedOnPrincipalChange\":true",
+        "intent": "A principal change shows the count and deletes old drafts.",
+        "proves": ["editsDraftsDeletedOnPrincipalChange"],
+        "next": "editsDraftsDeletedOnPrincipalReturn"
+      },
+      "editsDraftsDeletedOnPrincipalReturn": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"editsDraftsDeletedOnPrincipalReturn\":true",
+        "intent": "The return to the first admin deletes the second's drafts.",
+        "proves": ["editsDraftsDeletedOnPrincipalReturn"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
