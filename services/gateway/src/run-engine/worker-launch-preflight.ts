@@ -40,6 +40,7 @@ import { workerSourceProbeCommand } from './worker-source-preflight.js';
 import {
   checkToolchainObservation,
   parseToolchainObservation,
+  readLaunchPackPins,
   toolchainProbeCommand,
 } from './worker-toolchain-preflight.js';
 
@@ -61,15 +62,6 @@ async function packageVersion(name: string): Promise<string> {
   if (!isRecord(value) || typeof value.version !== 'string')
     throw new Error(`Missing ${name} package version`);
   return value.version;
-}
-
-async function declaredPackPins(project: ProjectVars): Promise<string> {
-  try {
-    return await readFile(path.join(project.projectFixturesDir, '.tool-versions'), 'utf8');
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return '';
-    throw error;
-  }
 }
 
 function workerTaskDir(run: Run | undefined, vars: SlotVars, project: ProjectVars): string | null {
@@ -195,7 +187,7 @@ export async function admitWorkerLaunch(
               status: 'mismatch',
               detail: `${input.vars.machine} node wire ${node.protocolVersion}; expected ${PROTOCOL_VERSION}. Update the selected node through the supported route, then retry.`,
             };
-          const sources = currentProjectSources();
+          const sources = currentProjectSources() ?? project.sourceContext;
           if (sources) {
             try {
               await verifyExecutionSources(
@@ -225,8 +217,11 @@ export async function admitWorkerLaunch(
       {
         name: 'toolchain',
         inspect: async (signal, timeout) => {
-          const pins = await declaredPackPins(project);
-          const result = await execute(toolchainProbeCommand(pins), signal, timeout);
+          const pins = await readLaunchPackPins({
+            fixturesDir: project.projectFixturesDir,
+            bound: Boolean(currentProjectSources() ?? project.sourceContext),
+          });
+          const result = await execute(toolchainProbeCommand(pins ?? ''), signal, timeout);
           if (typeof result !== 'string') return result;
           const raw: unknown = JSON.parse(result);
           if (isRecord(raw) && raw.nodeMissing === true)
@@ -236,7 +231,7 @@ export async function admitWorkerLaunch(
             };
           const observation = parseToolchainObservation(result);
           return observation
-            ? checkToolchainObservation(observation, input.vars.slotId)
+            ? checkToolchainObservation(observation, input.vars.slotId, pins !== null)
             : { status: 'unverified', detail: 'Toolchain observation is invalid.' };
         },
       },

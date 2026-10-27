@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import { satisfies, valid, validRange } from 'semver';
 
 import { isRecord } from '@farmslot/protocol';
@@ -5,6 +8,22 @@ import { isRecord } from '@farmslot/protocol';
 import { shellQuote } from '../core/tmux.js';
 
 import type { LaunchProbeResult } from './worker-preflight.js';
+
+export interface LaunchPackDeclaration {
+  fixturesDir: string;
+  bound: boolean;
+}
+
+/** A current mutable pack cannot redefine the toolchain of a retained legacy task. */
+export async function readLaunchPackPins(source: LaunchPackDeclaration): Promise<string | null> {
+  if (!source.bound) return null;
+  try {
+    return await readFile(path.join(source.fixturesDir, '.tool-versions'), 'utf8');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return '';
+    throw error;
+  }
+}
 
 export type LaunchTool = 'node' | 'yarn' | 'yarnNode' | 'ruby';
 export interface ToolVersion {
@@ -28,15 +47,16 @@ export function toolchainProbeCommand(packPins: string): string {
 const fs=require('node:fs'), cp=require('node:child_process');
 const read=(file)=>{try{return fs.readFileSync(file,'utf8').trim()}catch(e){if(e.code==='ENOENT')return '';throw e}};
 const requirements=[];
+const rubyDeclared=/^\s*ruby\s+\S+/m.test(process.argv[1]);
 const add=(tool,range,source)=>{if(range)requirements.push({tool,range,source})};
-const pins=(text,source)=>{for(const row of text.split(/\n/)){const [tool,version]=row.trim().split(/\s+/);if(tool==='nodejs')add('node',version,source);if(tool==='ruby')add('ruby',version,source);if(tool==='yarn')add('yarn',version,source)}};
+const pins=(text,source)=>{for(const row of text.split(/\n/)){const [tool,version]=row.trim().split(/\s+/);if(tool==='nodejs')add('node',version,source);if(tool==='ruby' && rubyDeclared)add('ruby',version,source);if(tool==='yarn')add('yarn',version,source)}};
 const raw=read('package.json'),pkg=raw?JSON.parse(raw):{};
 add('node',read('.nvmrc'),'.nvmrc');
 add('node',pkg.engines?.node,'package.json engines.node');
 add('yarn',pkg.engines?.yarn,'package.json engines.yarn');
 if(typeof pkg.packageManager==='string' && pkg.packageManager.startsWith('yarn@'))add('yarn',pkg.packageManager.slice(5).split('+')[0],'package.json packageManager');
 pins(read('.tool-versions'),'.tool-versions');
-add('ruby',read('.ruby-version'),'.ruby-version');
+if(rubyDeclared)add('ruby',read('.ruby-version'),'.ruby-version');
 pins(process.argv[1],'selected pack toolchain pins');
 const probe=(binary,args)=>{const r=cp.spawnSync(binary,args,{encoding:'utf8',env:{...process.env,COREPACK_ENABLE_NETWORK:'0'}});if(r.error?.code==='ENOENT')return {missing:true};if(r.error || r.status!==0)return {unavailable:r.error?.message || 'probe exited '+r.status};return {version:r.stdout.trim()}};
 const tools={node:{version:process.version},yarn:{},yarnNode:{},ruby:{}};
@@ -87,6 +107,7 @@ export function parseToolchainObservation(raw: string): ToolchainObservation | u
 export function checkToolchainObservation(
   observation: ToolchainObservation,
   slotId: string,
+  packDeclarationVerified = true,
 ): LaunchProbeResult {
   const unverified: string[] = [];
   for (const requirement of observation.requirements) {
@@ -122,6 +143,12 @@ export function checkToolchainObservation(
         };
     }
   }
+  if (!unverified.length && !packDeclarationVerified)
+    return {
+      status: 'unverified',
+      detail:
+        'Product toolchains match; this legacy task has no bound pack toolchain declaration. Retained inputs were preserved.',
+    };
   return unverified.length
     ? { status: 'unverified', detail: unverified.join('; ') }
     : {

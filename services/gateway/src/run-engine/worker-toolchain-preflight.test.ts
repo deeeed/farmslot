@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
 import {
   checkToolchainObservation,
   parseToolchainObservation,
+  readLaunchPackPins,
   type ToolchainObservation,
+  toolchainProbeCommand,
 } from './worker-toolchain-preflight.js';
 
 function observation(): ToolchainObservation {
@@ -79,4 +86,38 @@ test('malformed probe responses are not accepted as typed observations', () => {
   assert.equal(parseToolchainObservation('{"requirements":[{}],"tools":{}}'), undefined);
   const value = observation();
   assert.deepEqual(parseToolchainObservation(JSON.stringify(value)), value);
+});
+
+test('an unbound current pack never overrides a retained checkout declaration', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'launch-pack-declaration-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, '.tool-versions'), 'nodejs 24.22.1\n');
+  assert.equal(await readLaunchPackPins({ fixturesDir: directory, bound: false }), null);
+  assert.equal(
+    await readLaunchPackPins({ fixturesDir: directory, bound: true }),
+    'nodejs 24.22.1\n',
+  );
+  const retained: ToolchainObservation = {
+    requirements: [{ tool: 'node', range: '24.13.0', source: '.nvmrc' }],
+    tools: { node: { version: 'v24.13.0' }, yarn: {}, yarnNode: { version: 'v24.13.0' }, ruby: {} },
+  };
+  const result = checkToolchainObservation(retained, 'retained-slot', false);
+  assert.equal(result.status, 'unverified');
+  assert.match(result.detail, /Product toolchains match.*no bound pack/);
+});
+
+test('a product Ruby file does not invent a pack Ruby requirement', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'launch-node-only-pack-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, '.ruby-version'), '9.9.9\n');
+  const result = await promisify(execFile)('/bin/sh', ['-c', toolchainProbeCommand('')], {
+    cwd: directory,
+  });
+  const actual = parseToolchainObservation(result.stdout);
+  assert.ok(actual);
+  assert.equal(
+    actual.requirements.some((entry) => entry.tool === 'ruby'),
+    false,
+  );
+  assert.deepEqual(actual.tools.ruby, {});
 });
