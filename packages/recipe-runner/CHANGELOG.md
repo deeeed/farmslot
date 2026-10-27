@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Harness 0.94.5 verifies Extension RPC readiness through the registered background API and checks optional Perps probes independently.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.46.1 - 2026-10-21
