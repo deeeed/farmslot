@@ -42,6 +42,7 @@ import {
 import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
+  parseTypedArtifactManifestRefs,
 } from '../live-recipe/context.js';
 import { parseQaResult } from '../qa/completion.js';
 import { readAcceptanceStatusLedger } from '../tasks/acceptance-status.js';
@@ -228,6 +229,24 @@ async function workerEvidenceManifestPaths(
   ];
 }
 
+async function workerRecipeArtifactPaths(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  workerArtifactsDir: string,
+  roots: readonly string[],
+): Promise<string[]> {
+  const paths = new Set<string>();
+  for (const root of new Set(roots)) {
+    const file = path.join(workerArtifactsDir, root, 'artifact-manifest.json');
+    if (!(await slotFileExists(vars, file))) continue;
+    const refs = parseTypedArtifactManifestRefs(await slotReadFile(vars, file), file, root);
+    for (const ref of refs ?? []) {
+      paths.add(ref.path.slice('artifacts/'.length));
+      if (ref.timelinePath) paths.add(ref.timelinePath.slice('artifacts/'.length));
+    }
+  }
+  return [...paths];
+}
+
 async function retainedEvidenceManifest(
   taskDir: string,
   io?: PublicationManifestReadIO,
@@ -396,9 +415,21 @@ export async function refreshArtifactMirror(
   // also reject this refresh; a partially copied artifact mirror is not
   // trustworthy. recipe-runs history is copied separately (promoted snapshot only).
   const workerArtifactsExist = await slotFileExists(vars, workerArtifactsDir);
-  const manifestPaths = workerArtifactsExist
+  const evidencePaths = workerArtifactsExist
     ? await workerEvidenceManifestPaths(vars, workerArtifactsDir)
     : [];
+  const snapshotRoot = promotedPointer?.relativeArtifactRoot ?? null;
+  // Retain the recorded package's complete index, independently of PR curation.
+  // Unindexed screenshots remain excluded as raw recorder spool.
+  const manifestPaths = [
+    ...new Set([
+      ...evidencePaths,
+      ...(await workerRecipeArtifactPaths(vars, workerArtifactsDir, [
+        ...(snapshotRoot ? [snapshotRoot] : []),
+        ...referencedRecipeRunRoots(evidencePaths),
+      ])),
+    ]),
+  ];
   const citedPaths = workerArtifactsExist
     ? await workerPrBodyCitedPaths(vars, workerArtifactsDir)
     : [];
@@ -436,7 +467,6 @@ export async function refreshArtifactMirror(
     ...outputPaths,
     ...gateReviewArtifactPaths(run),
   ];
-  const snapshotRoot = promotedPointer?.relativeArtifactRoot ?? null;
   const scan = workerArtifactsExist
     ? await scanPublishPackage(vars, workerArtifactsDir, {
         namedPaths,

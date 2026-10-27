@@ -420,7 +420,7 @@ function normalizeTypedArtifactManifestPath(value: string, artifactPrefix = ''):
   return `artifacts/${path.posix.join(artifactPrefix, normalized)}`;
 }
 
-function parseTypedArtifactManifestRefs(
+export function parseTypedArtifactManifestRefs(
   raw: string | null,
   manifestPath: string,
   artifactPrefix = '',
