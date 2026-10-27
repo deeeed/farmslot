@@ -53,6 +53,7 @@ export async function browserPersistenceAttempts(
   root: string,
   projectRoot: string,
   headSha: string,
+  screenshotCount = 1,
 ) {
   const taskDir = path.join(root, 'browser-task');
   const profile = path.join(root, 'browser-profile');
@@ -267,13 +268,18 @@ export async function browserPersistenceAttempts(
                     : 'The original session must show its saved value.',
                   next: 'shot',
                 },
-                shot: {
-                  action: 'ui.screenshot',
-                  path: 'proof.png',
-                  ...(index ? { ac: 'AC-1', role: 'after' } : {}),
-                  intent: 'The saved value remains visible for review.',
-                  next: 'done',
-                },
+                ...Object.fromEntries(
+                  Array.from({ length: screenshotCount }, (_, i) => [
+                    i === 0 ? 'shot' : `shot-${i}`,
+                    {
+                      action: 'ui.screenshot',
+                      path: i === 0 ? 'proof.png' : `screenshots/proof-${i}.png`,
+                      ...(index ? { ac: 'AC-1', role: 'after' } : {}),
+                      intent: 'The saved value remains visible for review.',
+                      next: i + 1 === screenshotCount ? 'done' : `shot-${i + 1}`,
+                    },
+                  ]),
+                ),
                 done: { action: 'end', status: 'pass' },
               },
             },
