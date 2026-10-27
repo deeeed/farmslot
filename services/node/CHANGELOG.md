@@ -4,7 +4,7 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
-- Mirror project task templates during node deployment, removing deleted templates so hosted task init reads the current contract.
+- Mirror project task templates and checklists during node deployment, removing deleted files so hosted task init reads the current contract.
 - Report failed dev worker CLI verification as node health until a later successful verification.
 - `deploy-node.sh` builds the node CLI snapshot's importable packages (`yarn workspace @farmslot/recipe-cli build`) before it is stamped, so task tooling retained from it can be loaded by plain node, such as QA finalize and `farmslot-agent artifact-check`. A failed build keeps its log and installs nothing.
 
