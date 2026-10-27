@@ -771,10 +771,10 @@ actual launch environment. Recheck the binding after asynchronous probes and
 immediately before starting the worker. Cancellation, pause, replay, a changed
 owner or changed launch inputs MUST prevent an obsolete check from launching.
 A pass MUST NOT be reused for another launch or generation. Current attempt
-means the launch owner's current `Run.engineState.generation`. Replay uses its
-new generation; resume observes the existing owner rather than inventing a new
-attempt. Retained-resource admission follows the existing lifecycle records,
-even when the resource was originally created by an older attempt.
+means the launch owner's current `Run.engineState.generation`, as supplied by
+`run.replayStep` or `run.resume` under their existing lifecycle rules. Preflight
+MUST NOT create a generation. Retained-resource admission follows the existing
+lifecycle records, even when the resource was created by an older attempt.
 
 ### Exactly three checks
 
