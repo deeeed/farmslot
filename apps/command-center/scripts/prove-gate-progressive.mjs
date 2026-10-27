@@ -2,22 +2,29 @@
 // Manual browser/RPC proof with an isolated real gateway and held transport replies.
 // TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs <new-output-directory> [--withhold-snapshot]
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { ChildProcess, execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mock } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { createServer as createViteServer } from 'vite';
 import WebSocket, { WebSocketServer } from 'ws';
 
 const exec = promisify(execFile);
-const source = fileURLToPath(new URL('../../../', import.meta.url));
+const source =
+  process.env.FARMSLOT_GATE_PROOF_SOURCE ?? fileURLToPath(new URL('../../../', import.meta.url));
+const sourceModule = (file) => import(pathToFileURL(path.join(source, file)).href);
 const output = path.resolve(process.argv[2]);
 const control = process.argv.includes('--withhold-snapshot');
-const fleetProof = process.argv.includes('--fleet');
+const costProof = process.argv.includes('--fleet-cost');
+const baseline = process.argv.includes('--baseline');
+const fleetProof = process.argv.includes('--fleet') || costProof;
+const ancestryInputFile = process.env.FARMSLOT_GATE_PROOF_ANCESTRY;
 await mkdir(output, { recursive: false, mode: 0o700 });
 const root = await mkdtemp(path.join(os.tmpdir(), 'gate-progressive-'));
 const home = path.join(root, 'home');
@@ -62,6 +69,10 @@ let release = false,
 let coldNavigationFailures = 0;
 let holdFleet = false;
 let gatePaintMs;
+let costResult;
+let ancestryInput, ancestryRepo;
+let countLaunches = false;
+const launches = { workspace: 0, compare: 0 };
 const cleanupFailures = [];
 const env = {
   ...process.env,
@@ -203,8 +214,24 @@ try {
   );
   // The unrelated PTY module changes shared tmux options on import. The
   // existing test fence forbids every PTY/tmux operation in this read-only proof.
-  await import('../../../services/gateway/src/runtime/mock-pty.test-support.ts');
-  store = await import('../../../services/gateway/src/runs/store.ts');
+  await sourceModule('services/gateway/src/runtime/mock-pty.test-support.ts');
+  if (costProof) {
+    const original = ChildProcess.prototype.spawn;
+    mock.method(ChildProcess.prototype, 'spawn', function (options) {
+      const result = Reflect.apply(original, this, [options]);
+      if (countLaunches && this.pid) {
+        if (options.args.some((arg) => arg.includes('FARMSLOT_WORKSPACE_PROBE')))
+          launches.workspace++;
+        if (
+          path.basename(options.file) === 'gh' &&
+          options.args.some((arg) => arg.includes('/compare/'))
+        )
+          launches.compare++;
+      }
+      return result;
+    });
+  }
+  store = await sourceModule('services/gateway/src/runs/store.ts');
   run = store.createRun({
     flowType: 'dev',
     project: 'gate-proof',
@@ -256,9 +283,29 @@ try {
       },
     ],
   });
-  const { createGatewayAuthRuntime } =
-    await import('../../../services/gateway/src/security/auth.ts');
-  const { createWebSocketServer } = await import('../../../services/gateway/src/server.ts');
+  if (costProof) {
+    assert(ancestryInputFile, 'Provide the real published ancestry input');
+    ancestryInput = JSON.parse(await readFile(ancestryInputFile, 'utf8'));
+    const input = ancestryInput;
+    assert(/^[\w.-]+\/[\w.-]+$/.test(input.repository));
+    for (const key of ['headSha', 'defaultSha']) assert(/^[a-f0-9]{40}$/.test(input[key]));
+    assert(path.isAbsolute(input.objectSource));
+    ancestryRepo = path.join(root, 'published-ancestry');
+    const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const ancestryGit = (...args) => exec('git', ['-C', ancestryRepo, ...args], { env: gitEnv });
+    await exec('git', ['init', '-q', ancestryRepo], { env: gitEnv });
+    await ancestryGit(
+      'fetch',
+      '--depth=1',
+      '--no-tags',
+      pathToFileURL(input.objectSource).href,
+      input.headSha,
+    );
+    await ancestryGit('update-ref', 'HEAD', input.headSha);
+    assert.equal((await ancestryGit('rev-parse', 'HEAD')).stdout.trim(), input.headSha);
+  }
+  const { createGatewayAuthRuntime } = await sourceModule('services/gateway/src/security/auth.ts');
+  const { createWebSocketServer } = await sourceModule('services/gateway/src/server.ts');
   const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
   const person = auth.writer.createPrincipal({ type: 'person', displayName: 'Gate proof' }, [
     { role: 'admin', scope: { kind: 'global' } },
@@ -309,6 +356,18 @@ try {
           bytes: bytes.length,
           ok: frame.ok,
           held: hold,
+          ...(req.method === 'fleet.status' && frame.ok
+            ? {
+                workspace: {
+                  publication: frame.payload?.fleet?.slots[0]?.workspace?.publication ?? null,
+                  observedAt: frame.payload?.fleet?.slots[0]?.workspace?.observedAt ?? null,
+                  error:
+                    frame.payload?.fleet?.slots[0]?.workspaceError ??
+                    frame.payload?.fleet?.slots[0]?.workspace?.error ??
+                    null,
+                },
+              }
+            : {}),
         });
       if (hold)
         held.push(() => {
@@ -328,8 +387,7 @@ try {
     });
   });
   const proxyPort = await listen(proxyServer);
-  const { loadProfiles, saveProfiles } =
-    await import('../../../packages/cli/src/gateway-profiles.ts');
+  const { loadProfiles, saveProfiles } = await sourceModule('packages/cli/src/gateway-profiles.ts');
   const profiles = loadProfiles();
   profiles.gateways['gate-proof'] = {
     url: `ws://127.0.0.1:${proxyPort}/ws`,
@@ -379,7 +437,157 @@ try {
     ),
   );
   if (releaseNotes.open) await cdp('click', route, 'whats-new-modal >>> button.primary');
-  if (fleetProof) {
+  if (costProof) {
+    const input = ancestryInput;
+    assert(input && ancestryRepo, 'Published ancestry must be prepared before service startup');
+    const { refIncludedInMergedPullRequest, readMergedPreparePullRequests } = await sourceModule(
+      'services/gateway/src/methods/slot/unmerged-work.ts',
+    );
+    const { execOnSlot, loadSlotVars } = await sourceModule('services/gateway/src/core/index.ts');
+    const vars = { ...(await loadSlotVars('recovery-proof-slot')), remoteRepo: ancestryRepo };
+    await cdp(
+      'eval',
+      route,
+      `const {getState,isHydrating}=await import('/src/state.ts');const end=Date.now()+30000;while(isHydrating(getState(),'fleet')||getState().fleet?.slots.length!==1){if(Date.now()>end)throw Error('Fleet did not become ready');await new Promise(r=>setTimeout(r,50))}return {mounted:!!document.querySelector('fleet-canvas'),slots:getState().fleet.slots.length};`,
+    );
+    await cdp('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
+    const readInspection = async () =>
+      JSON.parse(
+        await cdp(
+          'eval',
+          route,
+          `await new Promise(requestAnimationFrame);const end=Date.now()+125000;let root;for(;;){root=document.querySelector('fleet-canvas')?.shadowRoot?.querySelector('fleet-refresh-modal')?.shadowRoot;if(root?.querySelector('article[data-slot]')&&!root.querySelector('[role=status]')?.textContent?.includes('Checking current'))break;if(Date.now()>end)throw Error('Actual inspection did not settle');await new Promise(r=>setTimeout(r,50))}return {text:root.textContent.replace(/\\s+/g,' '),rows:root.querySelectorAll('article[data-slot]').length};`,
+        ),
+      );
+    let admission = await readInspection();
+    await save('warm-admission-first.json', {
+      admission,
+      replies: events.filter((e) => e.responseTo === 'fleet.status'),
+    });
+    if (!admission.text.includes('main · baseline')) {
+      // One existing UI Retry after the failed inspection cache expires.
+      const last = events.filter((e) => e.responseTo === 'fleet.status').at(-1);
+      assert(last, 'Require the actual completed inspection reply');
+      const retryAt = started + last.receivedMs + 15_050;
+      while (Date.now() < retryAt)
+        await new Promise((resolve) => setTimeout(resolve, Math.min(100, retryAt - Date.now())));
+      await cdp(
+        'click',
+        route,
+        'fleet-canvas >>> fleet-refresh-modal >>> footer button:last-of-type',
+      );
+      admission = await readInspection();
+    }
+    await save('warm-admission.json', {
+      admission,
+      replies: events.filter((e) => e.responseTo === 'fleet.status'),
+    });
+    assert(
+      admission.rows === 1 && admission.text.includes('main · baseline'),
+      'Require real healthy workspace facts in the mounted dialog before the warm minute',
+    );
+    const windowStart = Date.now();
+    const rpcMs = [];
+    const observations = [];
+    let read = 0;
+    countLaunches = true;
+    while (Date.now() - windowStart < 60_000) {
+      const observed = JSON.parse(
+        await cdp(
+          'eval',
+          route,
+          `const {gateway}=await import('/src/gateway-client.ts');const start=performance.now();const result=await gateway.request('fleet.status',{},120000);const slot=result.fleet.slots[0];return {elapsedMs:performance.now()-start,slots:result.fleet.slots.length,mounted:!!document.querySelector('fleet-canvas'),publication:slot?.workspace?.publication??null,observedAt:slot?.workspace?.observedAt??null,error:slot?.workspaceError??slot?.workspace?.error??null};`,
+        ),
+      );
+      assert(observed.mounted && observed.slots === 1);
+      rpcMs.push(observed.elapsedMs);
+      observations.push(observed);
+      if (read % 4 === 0)
+        assert(
+          await refIncludedInMergedPullRequest(
+            vars,
+            'HEAD',
+            'main',
+            input.repository,
+            execOnSlot,
+            readMergedPreparePullRequests,
+            { allowFetch: false, defaultSha: input.defaultSha, timeoutMs: 10_000 },
+          ),
+        );
+      read++;
+      await save(`read-window-${read}.json`, {
+        observations: [...observations],
+        launches: { ...launches },
+        elapsedMs: Date.now() - windowStart,
+      });
+      const next = windowStart + read * 5000;
+      while (Date.now() < Math.min(next, windowStart + 60_000))
+        await new Promise((resolve) => setTimeout(resolve, Math.min(100, next - Date.now())));
+    }
+    countLaunches = false;
+    const elapsedMs = Date.now() - windowStart;
+    const sourceHashes = {};
+    for (const name of [
+      'workspace.ts',
+      'workspace-version.ts',
+      'workspace-probe.ts',
+      'unmerged-work.ts',
+    ]) {
+      try {
+        sourceHashes[name] = createHash('sha256')
+          .update(await readFile(path.join(source, 'services/gateway/src/methods/slot', name)))
+          .digest('hex');
+      } catch (error) {
+        // The unchanged baseline predates the metadata reader.
+        if (!baseline || name !== 'workspace-version.ts' || error.code !== 'ENOENT') throw error;
+        sourceHashes[name] = null;
+      }
+    }
+    costResult = {
+      baseline,
+      elapsedMs,
+      calls: rpcMs.length,
+      rpcMs,
+      observations,
+      launches: { ...launches },
+      perMinute: Object.fromEntries(
+        Object.entries(launches).map(([key, value]) => [key, (value * 60_000) / elapsedMs]),
+      ),
+      sourceHashes,
+      ancestry: {
+        repository: input.repository,
+        headSha: input.headSha,
+        defaultSha: input.defaultSha,
+      },
+      scope:
+        'Isolated singleton fleet in actual Command Center plus real published GitHub ancestry. This is not a full production-fleet latency measurement.',
+    };
+    await save('read-cost.json', costResult);
+    assert(rpcMs.length >= 8, 'Require repeated actual client reads over the minute');
+    if (baseline) {
+      assert(launches.workspace >= 3, 'The prior cache must reproduce repeated full probes');
+      assert(launches.compare >= 3, 'The prior ancestry reader must reproduce repeated compares');
+    } else {
+      assert(
+        observations.every((value) => value.publication === 'baseline' && !value.error),
+        'Require actual healthy facts throughout the warm minute',
+      );
+      assert(Number.isFinite(Date.parse(observations[0].observedAt)));
+      assert.equal(
+        new Set(observations.map((value) => value.observedAt)).size,
+        1,
+        'Passive reuse must preserve the original observation time',
+      );
+      assert.equal(
+        launches.workspace,
+        0,
+        'Unchanged metadata must avoid full probes during the warm minute',
+      );
+      assert.equal(launches.compare, 1, 'The actual immutable SHA pair must be compared once');
+      assert(Math.max(...rpcMs) < 10_000, 'Each fleet.status must finish under ten seconds');
+    }
+    await cdp('screenshot', route, path.join(output, 'fleet-cost.png'));
+  } else if (fleetProof) {
     holdFleet = true;
     started = Date.now();
     await cdp('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
@@ -549,7 +757,14 @@ try {
   if (primaryError) throw primaryError;
   await save('result.json', {
     status: 'PASS',
-    mode: fleetProof ? 'fleet' : control ? 'causal-negative' : 'progressive',
+    mode: costProof
+      ? 'fleet-cost'
+      : fleetProof
+        ? 'fleet'
+        : control
+          ? 'causal-negative'
+          : 'progressive',
+    ...(costResult ? { cost: costResult } : {}),
     paintMs: gatePaintMs,
     targetMs: 2000,
     targetMet: fleetProof ? undefined : !control,
@@ -602,6 +817,12 @@ console.log(
   JSON.stringify({
     status: 'PASS',
     output,
-    mode: fleetProof ? 'fleet' : control ? 'causal-negative' : 'progressive',
+    mode: costProof
+      ? 'fleet-cost'
+      : fleetProof
+        ? 'fleet'
+        : control
+          ? 'causal-negative'
+          : 'progressive',
   }),
 );
