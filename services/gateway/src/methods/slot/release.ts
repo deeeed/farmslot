@@ -150,6 +150,7 @@ export interface SlotReleaseOptions {
     epoch: number;
     verifyWork: () => Promise<void>;
     discardLocalWork: boolean;
+    skipRecycle?: boolean;
   };
 }
 
@@ -171,6 +172,7 @@ function releaseCoalesceKey(params: SlotReleaseParams, options?: SlotReleaseOpti
     machineTransitionHeld: options?.machineTransitionHeld ?? false,
     expectedSlotEpoch: options?.expectedSlotEpoch ?? null,
     workspaceRecovery: options?.workspaceRecovery?.id ?? null,
+    skipRecycle: options?.workspaceRecovery?.skipRecycle ?? false,
   });
 }
 
@@ -930,17 +932,22 @@ async function slotReleaseImpl(
     idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
 
-    // Recycle app
-    step('recycle', 'Recycling app...');
-    const recycleCmd = vars.recycleCmd
-      ? expandRecycleCmd(vars)
-      : expandHook('recycle', projectJson, vars, projectVars);
-    if (recycleCmd) {
-      await assertReleaseClaim();
-      await execOnSlot(vars, recycleCmd);
-      step('recycle', 'App recycled');
+    // Automatic recovery stays cold. Explicit manual recovery keeps its recycle policy.
+    if (options?.workspaceRecovery?.skipRecycle) {
+      step('recycle', 'Workspace recovery keeps runtime stopped');
     } else {
-      step('recycle', 'No recycle command configured');
+      // Recycle app
+      step('recycle', 'Recycling app...');
+      const recycleCmd = vars.recycleCmd
+        ? expandRecycleCmd(vars)
+        : expandHook('recycle', projectJson, vars, projectVars);
+      if (recycleCmd) {
+        await assertReleaseClaim();
+        await execOnSlot(vars, recycleCmd);
+        step('recycle', 'App recycled');
+      } else {
+        step('recycle', 'No recycle command configured');
+      }
     }
   }
 
@@ -975,7 +982,8 @@ async function slotReleaseImpl(
         runner: null,
         model: null,
         app: null,
-        current_run_id: null,
+        // Recovery retains its named owner until fixtures and the final ready CAS verify.
+        ...(options?.workspaceRecovery ? {} : { current_run_id: null }),
         current_flow_type: null,
         current_ticket_or_pr: null,
         current_mode: null,

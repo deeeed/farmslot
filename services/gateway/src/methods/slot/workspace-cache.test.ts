@@ -371,7 +371,7 @@ test('unchanged Git metadata cannot retain an active-owner refusal after the Run
   invalidateSlotWorkspaceObservations('cache-slot');
   const active = await enrichFleetWorkspaces(await loadFleetStatus(true));
   assert.equal(active.slots[0]?.workspace?.terminalOwner, false);
-  assert.match(active.slots[0]?.workspace?.protectedReason ?? '', /still active/);
+  assert.match(active.slots[0]?.workspace?.protectedReason ?? '', /still needs this checkout/);
   const before = probes;
   updateRun(run.id, { status: 'done' });
   now += 16_000;

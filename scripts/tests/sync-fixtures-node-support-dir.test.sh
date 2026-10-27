@@ -31,6 +31,7 @@ cat > "$TMP/projects/support-test-farm/project.json" <<'EOF'
 EOF
 printf 'root={{node_support_dir}}/projects/support-test-farm\n' > "$TMP/projects/support-test-farm/fixtures/ci-parity"
 printf 'ROOT={{NODE_SUPPORT_DIR}}\n' > "$TMP/projects/support-test-farm/fixtures/tree/run.sh"
+printf 'lower={{farmslot_dir}} upper={{FARMSLOT_DIR}}\n' > "$TMP/projects/support-test-farm/fixtures/tree/farm-path.sh"
 
 sync() { bash "$TMP/scripts/sync-fixtures.sh" --slot ns-1 "$@"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -51,6 +52,8 @@ sync >/dev/null
 [ "$(cat "$TMP/repo/temp/tree/run.sh")" = "ROOT=$TMP" ] \
   || fail "default directory fixture: $(cat "$TMP/repo/temp/tree/run.sh")"
 
+[ "$(cat "$TMP/repo/temp/tree/farm-path.sh")" = "lower=$TMP upper=$TMP" ] || fail 'directory workspace aliases differ'
+
 # 3. The bash drift check (preflight-slot.sh) renders the same default, so a
 #    direct sync followed by preflight matches.
 "$FARMSLOT_CLI" internal render-fixture-template ns-1 "$TMP/projects/support-test-farm/fixtures/ci-parity" \
@@ -68,5 +71,15 @@ for hostile in 'relative/dir' '/a|b' "/a'b" '/a"b' '/a b' '/a$b' "$NEWLINE_DIR";
   printf '%s' "$out" | grep -q "invalid --node-support-dir" || fail "no error for '$hostile': $out"
   [ ! -e "$TMP/repo/temp/ci-parity" ] || fail "fixture written despite rejected '$hostile'"
 done
+
+# Remote directory roots use the same real pool-aware expansion as hook/template fixtures.
+python3 - "$TMP/pool/local.json" <<'PYREMOTE'
+import json,sys
+p=sys.argv[1]
+j=json.load(open(p)); j['host']='remote.invalid'; j['env']={'FARMSLOT_WORKSPACE':'~/selected-node-dev'}
+with open(p,'w') as f: json.dump(j,f)
+PYREMOTE
+REMOTE_ROOT=$(FARMSLOT_WORKSPACE=/wrong-gateway-root "$FARMSLOT_CLI" internal expand-template ns-1 '{{farmslot_dir}}')
+[ "$REMOTE_ROOT" = '~/selected-node-dev' ] || fail "remote pool workspace: $REMOTE_ROOT"
 
 echo "sync-fixtures --node-support-dir: all cases passed"

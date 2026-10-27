@@ -12,5 +12,7 @@ const entry = resolve(
 
 // Ignore a parent runner's relative tsconfig and use this checkout's source mappings.
 process.env.TSX_TSCONFIG_PATH = resolve(root, 'tsconfig.json');
+// Keep startup cost independent of the accumulated shared transform cache.
+process.env.TSX_DISABLE_CACHE = '1';
 await import('tsx');
 await import(pathToFileURL(entry).href);

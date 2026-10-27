@@ -18,6 +18,7 @@ import {
   Methods,
   nativeProfileSessionParams,
   type NativeSessionInfo,
+  type NativeSessionListResult,
   type NativeSessionReadResult,
   type NativeSessionSendResult,
   nativeWorkerBindingIsHeld,
@@ -403,6 +404,7 @@ export async function dispatchNativeWorker(input: {
   projectVars?: ProjectVars;
   accountLabel?: string;
   beforeInput: () => Promise<void>;
+  beforeFreshLaunch?: () => Promise<void>;
   assertCurrent?: () => void;
   emit: (event: string, payload: unknown) => void;
 }): Promise<{ dispatched: boolean }> {
@@ -797,6 +799,24 @@ export async function dispatchNativeWorker(input: {
   }
   let info: NativeSessionInfo;
   try {
+    // A durable reservation is not proof ENSURE reached the host. On an
+    // unconfirmed attempt, inspect structured host state before any creation.
+    if (input.beforeFreshLaunch && !binding.generation && !binding.handoffFrom) {
+      const listed = (await routeNativeExecution(
+        binding.ownerPrincipalId,
+        Methods.NATIVE_SESSION_LIST,
+        {
+          executionNodeId: binding.executionNodeId,
+        },
+      )) as NativeSessionListResult;
+      await admission();
+      if (listed.unavailableExecutionNodes?.length)
+        throw new Error('Native worker presence is unavailable; reconcile before launch');
+      const retainedSession = listed.sessions.find((session) => session.id === binding.sessionId);
+      if (retainedSession) checkedSession(retainedSession, binding);
+      else await input.beforeFreshLaunch();
+      await admission();
+    }
     const created = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_ENSURE, {
       ...target(binding),
       ...nativeProfileSessionParams(binding.profile),

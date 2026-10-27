@@ -89,6 +89,13 @@ try {
     path.join(context.root, 'proof-task.md'),
     '# Fleet recovery scoring proof\nNo product or model work.\n',
   );
+  // Published work now recovers automatically. Seed owned local work for the manual choice.
+  const manualWork = [context.repo, context.secondRepo].map((repo) => {
+    assert.ok(fs.realpathSync(repo).startsWith(fs.realpathSync(context.root) + path.sep));
+    const file = path.join(repo, 'manual-recovery-proof.txt');
+    fs.writeFileSync(file, 'Owned disposable work requiring confirmation\n', { flag: 'wx' });
+    return file;
+  });
   const beforeId = await run('BEFORE');
   const before = await poll(
     () => readRun(beforeId),
@@ -118,6 +125,19 @@ try {
     if(button.disabled) throw Error('Proof recovery action is disabled'); button.click(); return true;
   `,
   );
+  await poll(
+    async () =>
+      JSON.parse(
+        browser(
+          'eval',
+          route,
+          `const modal=document.querySelector('fleet-canvas')?.shadowRoot.querySelector('fleet-refresh-modal'); return Boolean(modal?.shadowRoot.querySelector('.confirm'));`,
+        ),
+      ),
+    Boolean,
+    'content-bound discard confirmation',
+  );
+  browser('click', route, 'fleet-canvas >>> fleet-refresh-modal >>> .confirm button:last-child');
   const ready = await poll(
     () => connection.call('fleet.status'),
     (value) =>
@@ -201,6 +221,8 @@ try {
     path.join(output, 'owner-card-observed.json'),
     JSON.stringify({ runId: afterId }),
   );
+  assert.equal(fs.existsSync(manualWork[0]), false, 'confirmed fixture dirt was removed');
+  fs.unlinkSync(manualWork[1]); // Restore the second fixture for the native safe-bulk proof.
   fs.writeFileSync(path.join(output, 'scoring-after.json'), JSON.stringify(after, null, 2));
   fs.writeFileSync(
     path.join(output, 'cc-scored-selection.json'),

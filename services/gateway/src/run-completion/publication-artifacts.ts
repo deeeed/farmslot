@@ -830,7 +830,23 @@ export function publicationBaselineContext(
   run: Run,
   inventory = run.output?.artifactManifest ?? [],
 ): PublicationBaselineContext {
-  return { baseSha: run.worktreeHeadAtDispatch ?? undefined, branch: run.branch, inventory };
+  const review = run.steps.find((step) => step.name === 'review')?.outputs;
+  const snapshot = review?.reviewSnapshot;
+  const fullReviewBase =
+    review?.mode !== 'warm' &&
+    isRecord(snapshot) &&
+    (snapshot.source === 'local-git' || snapshot.source === 'github-pr') &&
+    typeof snapshot.baseSha === 'string' &&
+    /^[a-f0-9]{40}$/iu.test(snapshot.baseSha) &&
+    typeof snapshot.headSha === 'string' &&
+    /^[a-f0-9]{40}$/iu.test(snapshot.headSha)
+      ? snapshot.baseSha
+      : undefined;
+  return {
+    baseSha: fullReviewBase ?? run.worktreeHeadAtDispatch ?? undefined,
+    branch: run.branch,
+    inventory,
+  };
 }
 
 export interface PublicationManifestReadIO {
