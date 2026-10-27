@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Keep remote slot-action and resource command timeouts separate from node-support resolution, matching local execution. A slow source check previously reduced browser lease cleanup to a 1 ms node request and blocked the same run from reacquiring its browser.
+- Verify release fixtures with the same expanded paths and installer additions as slot checks, and refuse prepare while workspace recovery is pending.
 
 - Shorten autonomous task instructions by removing the extra permission caveat.
 - Remove the local CI-parity worker step and its completion receipt requirement.

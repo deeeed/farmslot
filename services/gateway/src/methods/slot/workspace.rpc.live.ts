@@ -82,7 +82,7 @@ fi
     git(seed, 'config', 'user.email', 'fixture@example.invalid');
     git(seed, 'config', 'commit.gpgsign', 'false');
     git(seed, 'config', 'core.hooksPath', '/dev/null');
-    await writeFile(path.join(seed, '.gitignore'), 'fixture.txt\n');
+    await writeFile(path.join(seed, '.gitignore'), 'fixture.txt\n.agent/\n');
     await writeFile(path.join(seed, 'file.txt'), 'base\n');
     git(seed, 'add', '.');
     git(seed, 'commit', '-qm', 'test: baseline');
@@ -98,6 +98,7 @@ fi
     git(repo, 'commit', '-qm', 'test: published slot work');
     git(repo, 'push', '-q', '-u', 'origin', 'previous');
     await writeFile(path.join(root, 'projects/proof/fixtures/fixture.txt'), 'synced fixture\n');
+    await writeFile(path.join(root, 'projects/proof/fixtures/runtime.txt'), 'runtime fixture\n');
     await writeFile(
       path.join(root, 'projects/proof/project.json'),
       JSON.stringify({
@@ -105,7 +106,12 @@ fi
         default_branch: 'main',
         hooks: { recycle: 'sh "$FARMSLOT_ROOT/bin/recycle-proof"' },
         scripted: { commands: { proof: { command: 'true', timeout_ms: 5000 } } },
-        fixtures: { templates: [{ src: 'fixture.txt', dst: 'fixture.txt' }] },
+        fixtures: {
+          templates: [
+            { src: 'fixture.txt', dst: 'fixture.txt' },
+            { src: 'runtime.txt', dst: '{{runtime_dir}}/runtime.txt' },
+          ],
+        },
       }),
     );
     const linkedRepo = path.join(root, 'linked-checkout');
@@ -152,7 +158,7 @@ fi
       dev: '-',
       devserver: '-',
       cdp: '-',
-      fixtures: '0/1',
+      fixtures: '0/2',
       branch: 'previous',
       head_sha: git(repo, 'rev-parse', 'HEAD'),
       agent: 'idle',
@@ -377,7 +383,10 @@ fi
       throw new Error('UI proof did not return its cleanup signal');
     }
 
-    const { inspectSlotWorkspace } = await import('./workspace.js');
+    const { inspectSlotWorkspace: inspectWorkspace } = await import('./workspace.js');
+    // Manual real-Git proof observations use the existing recovery read budget.
+    const inspectSlotWorkspace = (slotId: string) =>
+      inspectWorkspace(slotId, { timeoutMs: 120_000 });
     const store = await import('../../runs/store.js');
     const activeOwner = store.createRun(
       {
@@ -462,6 +471,15 @@ fi
     const coldHeld = await core.readSlotRow('proof-slot');
     assert.equal(coldHeld?.lifecycle, 'held');
     assert.equal(coldHeld?.warm, false, 'Full teardown is cold even when the next probe fails');
+    await assert.rejects(
+      call('slot.prepare', { slotId: 'proof-slot', branch: 'main' }),
+      /Slot recovery must be retried through slot\.refresh/,
+    );
+    assert.deepEqual(
+      await core.readSlotRow('proof-slot'),
+      coldHeld,
+      'Refused prepare preserves the recovery marker and identity',
+    );
     const retryCold = await inspectSlotWorkspace('proof-slot');
     const recovered = await call<SlotRefreshResult>('slot.refresh', {
       slotId: 'proof-slot',
@@ -479,6 +497,10 @@ fi
     assert.equal(git(repo, 'branch', '--show-current'), 'main');
     assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
     assert.equal(await readFile(path.join(repo, 'fixture.txt'), 'utf8'), 'synced fixture\n');
+    assert.equal(
+      await readFile(path.join(repo, '.agent/runtime.txt'), 'utf8'),
+      'runtime fixture\n',
+    );
     const row = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8')).slots[0];
     assert.equal(row.lifecycle, 'ready');
     assert.equal(row.current_run_id, null);
@@ -490,7 +512,15 @@ fi
       await writeFile(
         path.join(output, 'cold-retry.json'),
         JSON.stringify(
-          { pass: true, postReleaseFailure, coldHeld, recovered, coldOnRetry: row.warm === false },
+          {
+            pass: true,
+            postReleaseFailure,
+            coldHeld,
+            recovered,
+            coldOnRetry: row.warm === false,
+            pendingRecoveryPrepareRefused: true,
+            expandedRuntimeFixture: '.agent/runtime.txt',
+          },
           null,
           2,
         ) + '\n',
