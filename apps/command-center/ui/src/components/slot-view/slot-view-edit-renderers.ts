@@ -40,7 +40,7 @@ export function renderSlotViewSaveControl(view: SlotView) {
     <button
       class="sv-save-btn ${view._saveFeedback}"
       data-testid="file-save"
-      ?disabled=${view._saveFeedback === 'saving' || !view._workspaceReads.ready}
+      ?disabled=${view._saveFeedback === 'saving'}
       @click=${view._saveFile}
       title="Save (writes to disk)"
     >

@@ -40,13 +40,35 @@ export function noteSlotViewReadAccess(view: SlotView, path: string, readable: b
   void refreshSlotViewDrafts(view);
 }
 
+/**
+ * The slot a refusal to check edits was learned for, and its node as it was then: the node
+ * reconnecting, or changing what it advertises, is asked again.
+ */
+function conditionalWritesKey(view: SlotView): string {
+  const machine = view._slot?.machine ?? null;
+  const node = view._nodesQuery.state.data?.nodes.find((entry) => entry.machine === machine);
+  return JSON.stringify([
+    view.slotId,
+    machine,
+    node?.connectedAt ?? null,
+    node?.conditionalWrites ?? null,
+  ]);
+}
+
+/** The shown slot's node cannot check edits: that slot alone goes read-only. */
+export function refuseSlotViewConditionalWrites(view: SlotView): void {
+  view._conditionalWritesRefused = new Set(view._conditionalWritesRefused).add(
+    conditionalWritesKey(view),
+  );
+}
+
 /** Decision 4's capability and host, and the run binding, for any write to this slot. */
 function slotViewWriteBlock(view: SlotView) {
   return {
     connected: gateway.connectionState === 'connected',
     capability: gateway.authenticatedConnection?.capabilities?.conditionalFileWrites === true,
     host:
-      !view._conditionalWritesRefused &&
+      !view._conditionalWritesRefused.has(conditionalWritesKey(view)) &&
       slotConditionalWrites(view._slot, view._nodesQuery.state.data?.nodes),
     // A workspace shown for a run the slot no longer serves takes no writes for it.
     staleRun: Boolean(
@@ -55,11 +77,16 @@ function slotViewWriteBlock(view: SlotView) {
   };
 }
 
-/** Why the open file is read-only (decision 4), or undefined when it can be edited. */
+/**
+ * Why the open file is read-only (decision 4), or undefined when it can be edited. Readiness is
+ * the file's own `fs.read`, not the whole workspace: other reads refreshing never block it.
+ */
 export function slotViewReadOnly(view: SlotView, path: string): SlotViewReadOnlyReason | undefined {
   return slotViewReadOnlyReason({
     ...slotViewWriteBlock(view),
-    ready: view._workspaceReads.ready,
+    ready:
+      view._workspaceReads.stateOf(Methods.FS_READ, { slotId: view.slotId, path })?.status ===
+      'ready',
     content: view._liveFileContents.get(path),
     hash: view._liveFileHashes.get(path),
   });
@@ -92,6 +119,29 @@ function draftIdentity(key: DraftKey): string {
 function armingKey(view: SlotView, path: string): string | undefined {
   const key = draftKey(view, path);
   return key && draftIdentity(key);
+}
+
+/** The view still shows this draft: same scope, slot, run and path. */
+function shows(view: SlotView, identity: string, path: string): boolean {
+  return armingKey(view, path) === identity;
+}
+
+/**
+ * The shown draft's autosave, when a save for another draft held it back: the view takes one
+ * save at a time. A draft is never retried after its own refusal.
+ */
+function resumeShownAutosave(view: SlotView, settled: string): void {
+  const path = view._activeFile;
+  const identity = armingKey(view, path);
+  const draft = view._fileDrafts.get(path);
+  if (
+    identity &&
+    identity !== settled &&
+    draft &&
+    draft.editedContent !== draft.baseContent &&
+    view._autosaveArmed.get(identity) === gateway.resourceConnectionId
+  )
+    scheduleSlotViewAutosave(view, path);
 }
 
 /** Identities with a save in flight: their drafts are kept, so the reply can tell what changed. */
@@ -160,7 +210,11 @@ export async function refreshSlotViewDrafts(view: SlotView): Promise<void> {
   );
 }
 
-/** Every edit updates the file's draft; an edit back to the base removes it. */
+/**
+ * Every edit updates the file's draft; an edit back to the base removes it. An accepted edit is
+ * kept under the draft it was typed in, even when the view moves on before its turn comes; only
+ * the draft still shown is published, armed and scheduled.
+ */
 export async function editSlotViewFile(
   view: SlotView,
   path: string,
@@ -170,27 +224,33 @@ export async function editSlotViewFile(
   const key = draftKey(view, path);
   if (!store || !key || !slotViewEditable(view, path)) return;
   const identity = draftIdentity(key);
+  // The file as last read is the base of a draft this edit starts.
+  const liveContent = view._liveFileContents.get(path) ?? '';
+  const liveHash = view._liveFileHashes.get(path) ?? null;
   await inOrder(identity, async () => {
-    if (armingKey(view, path) !== identity) return;
-    const existing = view._fileDrafts.get(path);
-    const baseContent = existing?.baseContent ?? view._liveFileContents.get(path) ?? '';
-    const baseHash = existing ? existing.baseHash : (view._liveFileHashes.get(path) ?? null);
+    const existing = await store.get(key);
+    const baseContent = existing?.baseContent ?? liveContent;
+    const baseHash = existing ? existing.baseHash : liveHash;
     // While a save is in flight the draft stays, even back at its base: that is still an edit
     // the reply must keep over the saved text.
-    if (content === baseContent && !savesInFlight.has(identity)) {
+    const draft =
+      content === baseContent && !savesInFlight.has(identity)
+        ? undefined
+        : await store.put({
+            ...key,
+            baseContent,
+            baseHash,
+            editedContent: content,
+            state: 'current',
+          });
+    if (!draft) await store.delete(key);
+    if (!shows(view, identity, path)) return;
+    if (!draft) {
       view._fileDrafts = new Map([...view._fileDrafts].filter(([file]) => file !== path));
-      await store.delete(key);
       return;
     }
     // A draft started by typing on this connection autosaves; a restored one waits for a save.
     if (!existing) armSlotViewAutosave(view, path);
-    const draft = await store.put({
-      ...key,
-      baseContent,
-      baseHash,
-      editedContent: content,
-      state: 'current',
-    });
     view._fileDrafts = new Map(view._fileDrafts).set(path, draft);
     scheduleSlotViewAutosave(view, path);
   });
@@ -231,15 +291,10 @@ export function slotViewFileQuery(view: SlotView, path: string) {
 }
 
 /** A refused save keeps the draft; the file is read again so both versions can be shown. */
-async function showSlotViewConflict(view: SlotView, path: string, mine: string): Promise<void> {
+async function readSlotViewConflict(view: SlotView, path: string, mine: string) {
   const current = await getResourceCache()?.retry(slotViewFileQuery(view, path));
   const theirs = current?.data;
-  view._saveConflict = {
-    path,
-    mine,
-    theirs: theirs?.content,
-    theirsHash: theirs?.hash ?? null,
-  };
+  return { path, mine, theirs: theirs?.content, theirsHash: theirs?.hash ?? null };
 }
 
 /**
@@ -300,8 +355,9 @@ async function completeSlotViewSave(
       : undefined;
   if (!kept) await store.delete(sent);
   const path = sent.path;
-  if (armingKey(view, path) !== identity) {
+  if (!shows(view, identity, path)) {
     view._saveFeedback = '';
+    resumeShownAutosave(view, identity);
     return;
   }
   view._fileDrafts = kept
@@ -318,10 +374,14 @@ async function completeSlotViewSave(
     if (view._saveFeedback === 'saved') view._saveFeedback = '';
   }, 2000);
   if (kept) scheduleSlotViewAutosave(view, path);
+  resumeShownAutosave(view, identity);
   void refreshSlotViewDrafts(view);
 }
 
-/** A refusal keeps the latest text of the draft that was sent; another slot's view is untouched. */
+/**
+ * A refusal keeps the latest text of the draft that was sent. The view hears of it only while it
+ * still shows that draft, checked again after the file is read for a conflict.
+ */
 async function refuseSlotViewSave(
   view: SlotView,
   store: DraftStore,
@@ -335,18 +395,26 @@ async function refuseSlotViewSave(
   const refusal = slotViewSaveRefusal(error);
   if (refusal?.kind === 'run') await store.put({ ...latest, state: 'stale-run' });
   const path = sent.path;
-  if (armingKey(view, path) !== identity) return;
+  const conflict =
+    refusal?.kind === 'hash' && shows(view, identity, path)
+      ? await readSlotViewConflict(view, path, latest.editedContent)
+      : undefined;
+  if (!shows(view, identity, path)) {
+    resumeShownAutosave(view, identity);
+    return;
+  }
   if (refusal?.kind !== 'hash') view._saveRefused = path;
-  if (refusal?.kind === 'hash') await showSlotViewConflict(view, path, latest.editedContent);
+  if (conflict) view._saveConflict = conflict;
   else if (refusal?.kind === 'run') {
     view._fileDrafts = new Map([...view._fileDrafts].filter(([file]) => file !== path));
     view._editNotice =
       'The slot now serves another run. Your edit is kept as a read-only draft to copy.';
   } else if (refusal?.kind === 'unsupported') {
-    view._conditionalWritesRefused = true;
+    refuseSlotViewConditionalWrites(view);
     view._editNotice = "This slot's node cannot check edits, so the editor is read-only.";
-  } else
+  } else if (refusal?.kind !== 'hash')
     view._editNotice = `Save failed: ${error instanceof Error ? error.message : String(error)}`;
+  resumeShownAutosave(view, identity);
   void refreshSlotViewDrafts(view);
 }
 
@@ -356,11 +424,14 @@ export async function keepMineSlotViewConflict(view: SlotView): Promise<void> {
   const draft = conflict && view._fileDrafts.get(conflict.path);
   const store = view._draftStore;
   if (!conflict || !draft || !store) return;
+  const identity = draftIdentity(draft);
   const rebased = await store.put({
     ...draft,
     baseContent: conflict.theirs ?? '',
     baseHash: conflict.theirsHash,
   });
+  // Navigated away: the stored draft is rebased, and saving it waits for the user.
+  if (!shows(view, identity, conflict.path)) return;
   view._fileDrafts = new Map(view._fileDrafts).set(conflict.path, rebased);
   await saveSlotViewDraft(view, conflict.path);
 }
@@ -370,7 +441,9 @@ export async function keepTheirsSlotViewConflict(view: SlotView): Promise<void> 
   const conflict = view._saveConflict;
   const draft = conflict && view._fileDrafts.get(conflict.path);
   if (!conflict) return;
+  const identity = armingKey(view, conflict.path);
   if (draft) await view._draftStore?.delete(draft);
+  if (!identity || !shows(view, identity, conflict.path)) return;
   view._fileDrafts = new Map([...view._fileDrafts].filter(([file]) => file !== conflict.path));
   if (conflict.theirs !== undefined) {
     view._liveFileContents = new Map(view._liveFileContents).set(conflict.path, conflict.theirs);
@@ -400,6 +473,7 @@ export async function noteSlotViewFileRead(
   if (content === saved.content || view._fileDrafts.has(path)) return;
   const key = draftKey(view, path);
   if (!key || !view._draftStore) return;
+  const identity = draftIdentity(key);
   const draft: Draft = await view._draftStore.put({
     ...key,
     baseContent: content,
@@ -407,8 +481,9 @@ export async function noteSlotViewFileRead(
     editedContent: saved.content,
     state: 'current',
   });
-  const armed = armingKey(view, path);
-  if (armed) view._autosaveArmed.delete(armed);
+  // Kept under the draft it belongs to; the view hears of it only while it shows that draft.
+  view._autosaveArmed.delete(identity);
+  if (!shows(view, identity, path)) return;
   view._fileDrafts = new Map(view._fileDrafts).set(path, draft);
   view._fileChangedNotice = path;
   void refreshSlotViewDrafts(view);

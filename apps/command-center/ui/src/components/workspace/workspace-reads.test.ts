@@ -185,3 +185,42 @@ test('saved opened files hydrate without a connection and never grant current wo
   assert.equal(reads.owns(data), true);
   assert.equal(savedCache.read(query).observedAt, 123);
 });
+
+test('one read is found by the name read gives it, run pin included', async (t) => {
+  const params = { slotId: 'pinned-slot', path: 'opened.txt' };
+  const pinned = resourceQuery<{ content: string }>('fs.read', { ...params, runId: 'run-1' });
+  const scope = { gatewayUrl: 'ws://pinned-workspace.test' };
+  const store = createMemoryResourceStore();
+  await store.setMetadata({ scope, authority: { roles: [], workspaceAccess: 'farm' } });
+  await store.putQuery({ id: pinned.id, data: { content: 'saved' }, observedAt: 456, bytes: 18 });
+  const transport: ResourceCacheTransport = {
+    getConnection: () => ({ id: 0, connected: false, authMode: 'none', scope }),
+    onConnectionChange: () => () => {},
+    onResourceChanged: () => () => {},
+    resynchronize() {},
+    request: () => assert.fail('Offline hydration cannot issue a gateway read'),
+  };
+  const savedCache = createGatewayResourceCache({ transport, store });
+  cache = savedCache;
+  const host = new FakeControllerHost();
+  const reads = new WorkspaceReads(
+    host,
+    () => {},
+    () => 'run-1',
+  );
+  host.connect();
+  t.after(async () => {
+    host.disconnect();
+    await savedCache.dispose();
+    cache = undefined;
+    owner = 'first-owner';
+  });
+  await reads.read('fs.read', params, () => {});
+  assert.equal(reads.stateOf('fs.read', params)?.observedAt, 456);
+  assert.equal(reads.stateOf('fs.read', { ...params, path: 'other.txt' }), undefined);
+  owner = 'another-owner';
+  assert.equal(reads.stateOf('fs.read', params), undefined, 'another owner sees nothing');
+  owner = 'first-owner';
+  host.disconnect();
+  assert.equal(reads.stateOf('fs.read', params), undefined);
+});

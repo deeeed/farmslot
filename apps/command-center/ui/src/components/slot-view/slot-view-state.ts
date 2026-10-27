@@ -144,8 +144,8 @@ export abstract class SlotViewState extends LitElement {
   @state() _fileChangedNotice = '';
   /** Bumped to replace the editor's text, such as after keeping the file's own version. */
   @state() _editorRevision = 0;
-  /** The node refused a conditional write; the editor stays read-only for this slot. */
-  @state() _conditionalWritesRefused = false;
+  /** Slots whose node refused a conditional write, each with the node as it was then. */
+  @state() _conditionalWritesRefused: ReadonlySet<string> = new Set();
   readonly _nodesQuery = new ResourceQueryController<NodesListResult>(this, () =>
     this.requestUpdate(),
   );

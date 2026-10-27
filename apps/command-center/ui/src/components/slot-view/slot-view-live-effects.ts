@@ -18,6 +18,7 @@ import type { SlotView } from './slot-view.js';
 import {
   noteSlotViewFileRead,
   noteSlotViewReadAccess,
+  refuseSlotViewConditionalWrites,
   slotViewFileQuery,
   slotViewWritable,
 } from './slot-view-edit-effects.js';
@@ -516,6 +517,16 @@ function slotViewWriteRun(view: SlotView): string | null {
 }
 
 /**
+ * The slot and run a file operation was asked for. Its requests go there even if the view moves
+ * on, and its outcome is shown only while the view still shows both.
+ */
+function slotViewWriteTarget(view: SlotView) {
+  const slotId = view.slotId;
+  const runId = slotViewWriteRun(view);
+  return { slotId, runId, shown: () => view.slotId === slotId && slotViewWriteRun(view) === runId };
+}
+
+/**
  * A file operation carries the file's hash from a current read: read-only slots, and files the
  * host reports no hash for, refuse it (ADR-009 Amendment 1).
  */
@@ -525,10 +536,12 @@ async function slotViewFileHash(view: SlotView, path: string): Promise<string | 
   return current?.status === 'ready' ? current.data?.hash : undefined;
 }
 
-function refusedFileOperation(view: SlotView, error: unknown): boolean {
+/** Whether the operation was refused; the notice goes only to the slot and run it was asked for. */
+function refusedFileOperation(view: SlotView, error: unknown, shown: () => boolean): boolean {
   const refusal = slotViewSaveRefusal(error);
   if (!refusal) return false;
-  if (refusal.kind === 'unsupported') view._conditionalWritesRefused = true;
+  if (!shown()) return true;
+  if (refusal.kind === 'unsupported') refuseSlotViewConditionalWrites(view);
   view._editNotice =
     refusal.kind === 'hash'
       ? 'The file changed since it was read. Reload it and try again.'
@@ -552,6 +565,7 @@ export async function handleSlotViewTreeAction(
     view._editNotice = 'This slot is read-only here, so its files cannot be changed.';
     return;
   }
+  const target = slotViewWriteTarget(view);
 
   switch (action) {
     case 'pin-folder': {
@@ -572,13 +586,14 @@ export async function handleSlotViewTreeAction(
       if (!confirm(`Create folder ${folderPath}?`)) return;
       try {
         await gateway.request(Methods.FS_MKDIR, {
-          slotId: view.slotId,
+          slotId: target.slotId,
           path: folderPath,
-          runId: slotViewWriteRun(view),
+          runId: target.runId,
         });
-        view._reloadTree();
+        if (target.shown()) view._reloadTree();
       } catch (err) {
-        if (!refusedFileOperation(view, err)) console.error('[slot-view] mkdir failed:', err);
+        if (!refusedFileOperation(view, err, target.shown))
+          console.error('[slot-view] mkdir failed:', err);
       }
       return;
     }
@@ -593,19 +608,21 @@ export async function handleSlotViewTreeAction(
       try {
         const expectedHash = directory ? undefined : await slotViewFileHash(view, filePath);
         if (!directory && !expectedHash) {
-          view._editNotice = `${filePath} has no current hash to rename it with.`;
+          if (target.shown())
+            view._editNotice = `${filePath} has no current hash to rename it with.`;
           return;
         }
         await gateway.request(Methods.FS_RENAME, {
-          slotId: view.slotId,
+          slotId: target.slotId,
           oldPath: filePath,
           newPath: dir + newName,
-          runId: slotViewWriteRun(view),
+          runId: target.runId,
           ...(expectedHash ? { expectedHash } : {}),
         });
-        view._reloadTree();
+        if (target.shown()) view._reloadTree();
       } catch (err) {
-        if (!refusedFileOperation(view, err)) console.error('[slot-view] rename failed:', err);
+        if (!refusedFileOperation(view, err, target.shown))
+          console.error('[slot-view] rename failed:', err);
       }
       return;
     }
@@ -629,15 +646,17 @@ export async function handleSlotViewTreeAction(
       try {
         const expectedHash = directory ? undefined : await slotViewFileHash(view, filePath);
         if (!directory && !expectedHash) {
-          view._editNotice = `${filePath} has no current hash to delete it with.`;
+          if (target.shown())
+            view._editNotice = `${filePath} has no current hash to delete it with.`;
           return;
         }
         await gateway.request(Methods.FS_DELETE, {
-          slotId: view.slotId,
+          slotId: target.slotId,
           path: filePath,
-          runId: slotViewWriteRun(view),
+          runId: target.runId,
           ...(expectedHash ? { expectedHash } : {}),
         });
+        if (!target.shown()) return;
         view._openFiles = view._openFiles.filter((f) => f.path !== filePath);
         if (view._activeFile === filePath) {
           view._activeFile =
@@ -645,7 +664,8 @@ export async function handleSlotViewTreeAction(
         }
         view._reloadTree();
       } catch (err) {
-        if (!refusedFileOperation(view, err)) console.error('[slot-view] delete failed:', err);
+        if (!refusedFileOperation(view, err, target.shown))
+          console.error('[slot-view] delete failed:', err);
       }
       return;
     }
@@ -659,15 +679,17 @@ export async function createSlotViewFile(view: SlotView) {
     view._editNotice = 'This slot is read-only here, so files cannot be created.';
     return;
   }
+  const target = slotViewWriteTarget(view);
   try {
     // `expectedHash: null`: the file must not exist yet.
     const result = await gateway.request<FsWriteResult>(Methods.FS_WRITE, {
-      slotId: view.slotId,
+      slotId: target.slotId,
       path: filePath,
       content: '',
       expectedHash: null,
-      runId: slotViewWriteRun(view),
+      runId: target.runId,
     });
+    if (!target.shown()) return;
     // Cache empty content and open in edit mode
     view._liveFileContents = new Map(view._liveFileContents).set(filePath, '');
     view._liveFileHashes = new Map(view._liveFileHashes).set(filePath, result.hash);
@@ -675,7 +697,8 @@ export async function createSlotViewFile(view: SlotView) {
     view._newFilePrompt = false;
     view._newFilePath = '';
   } catch (err) {
-    if (!refusedFileOperation(view, err)) console.error('[slot-view] create file failed:', err);
+    if (!refusedFileOperation(view, err, target.shown))
+      console.error('[slot-view] create file failed:', err);
   }
 }
 

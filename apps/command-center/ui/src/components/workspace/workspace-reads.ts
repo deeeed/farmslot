@@ -80,6 +80,18 @@ export class WorkspaceReads implements ReactiveController {
   get ready() {
     return this.reads.size > 0 && [...this.reads.values()].every((r) => r.state.status === 'ready');
   }
+  /**
+   * One open read's state, named as `read` names it. Undefined when that read is not open, or the
+   * view no longer belongs to the owner that opened it.
+   */
+  stateOf(method: string, params: unknown): ResourceQueryState<unknown> | undefined {
+    if (!this.connected || this.ownerKey !== getResourceWorkspaceKey()) return undefined;
+    const pinnedRun = this.runId?.();
+    if (pinnedRun && params && typeof params === 'object' && Reflect.get(params, 'slotId'))
+      params = { ...params, runId: pinnedRun };
+    const query = resourceQuery(method as ResourceReadMethod, params, getResourceNativeOwnerId());
+    return this.reads.get(query.id)?.state;
+  }
   get error() {
     return [...this.reads.values()].find((r) => r.state.error)?.state.error?.message ?? '';
   }

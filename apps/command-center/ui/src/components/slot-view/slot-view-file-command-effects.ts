@@ -58,7 +58,6 @@ export async function runSlotViewGitAction(
 
 /** An explicit save: the editor's text becomes the file's draft, saved under its preconditions. */
 export async function saveSlotViewFile(view: SlotView): Promise<void> {
-  if (!view._workspaceReads.ready) return;
   const path = view._activeFile;
   const tab = view._openFiles.find((file) => file.path === path);
   if (

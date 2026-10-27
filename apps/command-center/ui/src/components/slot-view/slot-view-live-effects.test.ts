@@ -1,12 +1,23 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-const gateway = { connectionState: 'disconnected', connectionEpoch: 1 };
+const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+let reply: () => Promise<unknown> = async () => ({ ok: true });
+const gateway = {
+  connectionState: 'disconnected',
+  connectionEpoch: 1,
+  authenticatedConnection: { capabilities: { conditionalFileWrites: true } },
+  request: (method: string, params: Record<string, unknown>) => {
+    requests.push({ method, params });
+    return reply();
+  },
+};
 mock.module('../../gateway-client.js', { namedExports: { gateway } });
+let hashRead: () => Promise<unknown> = async () => ({ status: 'ready', data: { hash: 'h1' } });
 mock.module('../../resource-cache.js', {
   namedExports: {
     getEditorDraftScopeId: () => undefined,
-    getResourceCache: () => ({}),
+    getResourceCache: () => ({ retry: () => hashRead() }),
     getResourceNativeOwnerId: () => undefined,
     getResourceWorkspaceKey: () => undefined,
     subscribeResourceCache: () => () => undefined,
@@ -36,7 +47,7 @@ mock.module('../../held-run-diff.js', {
   },
 });
 
-const { handleSlotViewChangeSelect, loadSlotViewDiffContent } =
+const { handleSlotViewChangeSelect, handleSlotViewTreeAction, loadSlotViewDiffContent } =
   await import('./slot-view-live-effects.js');
 type View = Parameters<typeof loadSlotViewDiffContent>[0];
 
@@ -103,3 +114,63 @@ test(
     assert.equal(heldReads.length, 1);
   },
 );
+
+test("a file deleted from slot A after the view moved to slot B leaves B's tabs and notices alone", async () => {
+  gateway.connectionState = 'connected';
+  Object.assign(globalThis, { confirm: () => true });
+  const slotFor = (slot: string, currentRunId: string) => ({
+    slot,
+    machine: 'mac',
+    health: { ssh: 'LOCAL' },
+    currentRunId,
+  });
+  for (const outcome of ['deleted', 'refused'] as const) {
+    requests.length = 0;
+    let reloads = 0;
+    const view = Object.assign(makeView(), {
+      _slot: slotFor('slot-a', 'run-1'),
+      _isRecoveryBlocked: false,
+      _conditionalWritesRefused: new Set(),
+      _nodesQuery: { state: { data: { nodes: [] } } },
+      _openFiles: [{ path: 'src/a.ts', type: 'file', pinned: true }],
+      _activeFile: 'src/a.ts',
+      _editNotice: '',
+      _reloadTree: () => reloads++,
+    });
+    Object.assign(view._workspaceReads, { ready: true });
+    let readHash!: () => void;
+    hashRead = () =>
+      new Promise((resolve) => {
+        readHash = () => resolve({ status: 'ready', data: { hash: 'h1' } });
+      });
+    reply = async () => {
+      if (outcome === 'deleted') return { ok: true };
+      throw Object.assign(new Error('changed'), {
+        code: 'FS_CONFLICT',
+        details: { reason: 'hash' },
+      });
+    };
+    const deleting = handleSlotViewTreeAction(view, {
+      action: 'delete',
+      path: 'src/a.ts',
+      type: 'file',
+    });
+    // While A's file hash is read, the view moves to slot B, which has the same path open.
+    Object.assign(view, {
+      slotId: 'slot-b',
+      _slot: slotFor('slot-b', 'run-b'),
+      _linkedRun: { id: 'run-b', slotId: 'slot-b' },
+    });
+    readHash();
+    await deleting;
+    assert.deepEqual(
+      requests.map(({ params }) => [params.slotId, params.runId]),
+      [['slot-a', 'run-1']],
+      `${outcome}: the delete goes to the slot and run it was asked for`,
+    );
+    assert.deepEqual(view._openFiles, [{ path: 'src/a.ts', type: 'file', pinned: true }], outcome);
+    assert.equal(view._activeFile, 'src/a.ts', outcome);
+    assert.equal(view._editNotice, '', outcome);
+    assert.equal(reloads, 0, outcome);
+  }
+});

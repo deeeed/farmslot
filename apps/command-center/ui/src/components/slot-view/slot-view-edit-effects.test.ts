@@ -6,6 +6,7 @@ import {
   createDraftStore,
   createMemoryDraftStorage,
   type Draft,
+  type DraftStorage,
   type DraftStore,
 } from '@farmslot/local-store/drafts';
 import type { SlotStatus } from '@farmslot/protocol';
@@ -29,12 +30,13 @@ mock.module('../../gateway-client.js', { namedExports: { gateway } });
 
 let scopeId = 'scope-a';
 let currentFile: { content: string; hash: string } | undefined;
+let retryRead: () => Promise<unknown> = async () => ({ status: 'ready', data: currentFile });
 mock.module('../../resource-cache.js', {
   namedExports: {
     getEditorDraftScopeId: () => scopeId,
     getResourceNativeOwnerId: () => undefined,
     getResourceCache: () => ({
-      retry: async () => ({ status: 'ready', data: currentFile }),
+      retry: () => retryRead(),
       read: () => ({ status: 'error', error: { code: 'AUTH_FORBIDDEN', message: 'refused' } }),
     }),
   },
@@ -78,9 +80,9 @@ function makeView(store: DraftStore, fields: Record<string, unknown> = {}): View
     _isLive: true,
     _activeFile: 'src/value.ts',
     _linkedRun: null,
-    _conditionalWritesRefused: false,
+    _conditionalWritesRefused: new Set(),
     _nodesQuery: { state: { data: { nodes: [] } } },
-    _workspaceReads: { ready: true },
+    _workspaceReads: { ready: true, stateOf: () => ({ status: 'ready' }) },
     _liveFileContents: new Map([['src/value.ts', base]]),
     _liveFileHashes: new Map([['src/value.ts', sha256(base)]]),
     _fileDrafts: new Map(),
@@ -105,6 +107,7 @@ function reset(t: import('node:test').TestContext) {
   fleetCurrent = true;
   fleetSlots = [slot()];
   currentFile = undefined;
+  retryRead = async () => ({ status: 'ready', data: currentFile });
   now = Date.parse('2026-10-27T00:00:00Z');
   t.mock.timers.enable({ apis: ['setTimeout'] });
   return createDraftStore(createMemoryDraftStorage(), () => now);
@@ -113,6 +116,39 @@ function reset(t: import('node:test').TestContext) {
 const flush = async () => {
   for (let i = 0; i < 20; i++) await new Promise<void>((resolve) => setImmediate(resolve));
 };
+
+/** Memory storage whose writes wait while held, as a slow IndexedDB transaction would. */
+function slowStorage() {
+  const memory = createMemoryDraftStorage();
+  let held: (() => void)[] | undefined;
+  const wait = async () => {
+    if (held) await new Promise<void>((resolve) => held?.push(resolve));
+  };
+  const storage: DraftStorage = {
+    get: (id) => memory.get(id),
+    put: async (draft) => {
+      await wait();
+      await memory.put(draft);
+    },
+    delete: async (id) => {
+      await wait();
+      await memory.delete(id);
+    },
+    list: (scope) => memory.list(scope),
+    close: () => memory.close(),
+  };
+  return {
+    store: createDraftStore(storage, () => now),
+    hold: () => {
+      held = [];
+    },
+    release: () => {
+      const waiting = held ?? [];
+      held = undefined;
+      for (const resume of waiting) resume();
+    },
+  };
+}
 
 function draftFor(fields: Partial<Draft> = {}) {
   return {
@@ -290,7 +326,7 @@ test('a save refused for another run leaves a read-only draft; an unchecked host
   };
   await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 8;\n');
   await effects.saveSlotViewDraft(view, 'src/value.ts');
-  assert.equal(view._conditionalWritesRefused, true);
+  assert.equal(effects.slotViewReadOnly(view, 'src/value.ts'), 'host');
   assert.equal(effects.slotViewEditable(view, 'src/value.ts'), false);
 });
 
@@ -465,4 +501,278 @@ test("a late save reply for slot A never touches slot B's draft at the same path
   );
   assert.equal(view._liveFileContents.get('src/value.ts'), base, "B's view keeps its own file");
   assert.deepEqual(await store.list('scope-a', 'slot-a'), [], "A's reply resolved A's draft");
+});
+
+test('an edit queued behind a slow draft write is kept for its slot when the view moves on', async (t) => {
+  reset(t);
+  const { store, hold, release } = slowStorage();
+  const slotB = slot({ slot: 'slot-b', currentRunId: 'run-b' });
+  fleetSlots = [slot(), slotB];
+  const view = makeView(store);
+  hold();
+  const first = effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 80;\n');
+  await flush();
+  const second = effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 81;\n');
+  await flush();
+  // Both edits were accepted on slot A; the view moves to slot B before they are written.
+  Object.assign(view, { slotId: 'slot-b', _slot: slotB });
+  release();
+  await Promise.all([first, second]);
+  t.mock.timers.tick(effects.SLOT_VIEW_AUTOSAVE_PAUSE_MS);
+  await flush();
+  assert.deepEqual(
+    (await store.list('scope-a', 'slot-a')).map(({ editedContent }) => editedContent),
+    ['export const value = 81;\n'],
+    'A keeps the last edit typed in it',
+  );
+  assert.equal(view._fileDrafts.size, 0, "B's view shows none of A's drafts");
+  assert.equal(writes.length, 0);
+
+  Object.assign(view, { slotId: 'slot-a', _slot: fleetSlots[0] });
+  await effects.refreshSlotViewDrafts(view);
+  assert.equal(view._fileDrafts.get('src/value.ts')?.editedContent, 'export const value = 81;\n');
+});
+
+test('a conflict read back after the view moved to another slot is never shown there', async (t) => {
+  const store = reset(t);
+  const slotB = slot({ slot: 'slot-b', currentRunId: 'run-b' });
+  fleetSlots = [slot(), slotB];
+  const view = makeView(store);
+  const theirs = 'export const value = 90;\n';
+  reply = async () => {
+    throw Object.assign(new Error('changed'), {
+      code: 'FS_CONFLICT',
+      details: { reason: 'hash', currentHash: sha256(theirs) },
+    });
+  };
+  let reread!: () => void;
+  retryRead = () =>
+    new Promise((resolve) => {
+      reread = () => resolve({ status: 'ready', data: { content: theirs, hash: sha256(theirs) } });
+    });
+  await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 91;\n');
+  const saving = effects.saveSlotViewDraft(view, 'src/value.ts');
+  await flush();
+  // While A's file is read again, the view moves to slot B and its draft at the same path.
+  const restored = await store.put(
+    draftFor({ slotId: 'slot-b', runId: 'run-b', editedContent: 'export const value = 92;\n' }),
+  );
+  Object.assign(view, { slotId: 'slot-b', _slot: slotB });
+  await effects.refreshSlotViewDrafts(view);
+  reread();
+  assert.equal(await saving, false);
+  assert.equal(view._saveConflict, undefined);
+  assert.equal(effects.slotViewSaveState(view, 'src/value.ts'), 'draft');
+  await effects.keepTheirsSlotViewConflict(view);
+  assert.equal(view._fileDrafts.get('src/value.ts')?.editedContent, restored.editedContent);
+  assert.equal(view._liveFileContents.get('src/value.ts'), base);
+  assert.deepEqual(
+    (await store.list('scope-a')).map(({ slotId, editedContent }) => [slotId, editedContent]),
+    [
+      ['slot-a', 'export const value = 91;\n'],
+      ['slot-b', restored.editedContent],
+    ],
+  );
+});
+
+test("a draft typed while another file's save is pending autosaves once that save settles", async (t) => {
+  for (const outcome of ['saved', 'failed'] as const) {
+    const store = reset(t);
+    const view = makeView(store, {
+      _liveFileContents: new Map([
+        ['src/value.ts', base],
+        ['src/other.ts', base],
+      ]),
+      _liveFileHashes: new Map([
+        ['src/value.ts', sha256(base)],
+        ['src/other.ts', sha256(base)],
+      ]),
+    });
+    let settle!: () => void;
+    reply = (write) =>
+      write.params.path === 'src/other.ts'
+        ? Promise.resolve({ ok: true, hash: sha256(String(write.params.content)) })
+        : new Promise((resolve, reject) => {
+            settle = () =>
+              outcome === 'saved'
+                ? resolve({ ok: true, hash: sha256(String(write.params.content)) })
+                : reject(new Error('Gateway request timed out'));
+          });
+    await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 100;\n');
+    const saving = effects.saveSlotViewDraft(view, 'src/value.ts');
+    await flush();
+    view._activeFile = 'src/other.ts';
+    await effects.editSlotViewFile(view, 'src/other.ts', 'export const other = 101;\n');
+    t.mock.timers.tick(effects.SLOT_VIEW_AUTOSAVE_PAUSE_MS);
+    await flush();
+    assert.equal(writes.length, 1, `${outcome}: the pause came while a save was in flight`);
+    settle();
+    await saving;
+    t.mock.timers.tick(effects.SLOT_VIEW_AUTOSAVE_PAUSE_MS);
+    await flush();
+    assert.deepEqual(
+      writes.map(({ params }) => params.path),
+      ['src/value.ts', 'src/other.ts'],
+      outcome,
+    );
+    t.mock.timers.reset();
+  }
+});
+
+test("keeping the current file after the view moved on leaves the other slot's draft alone", async (t) => {
+  reset(t);
+  const { store, hold, release } = slowStorage();
+  const slotB = slot({ slot: 'slot-b', currentRunId: 'run-b' });
+  fleetSlots = [slot(), slotB];
+  const view = makeView(store);
+  const theirs = 'export const value = 110;\n';
+  currentFile = { content: theirs, hash: sha256(theirs) };
+  reply = async () => {
+    throw Object.assign(new Error('changed'), { code: 'FS_CONFLICT', details: { reason: 'hash' } });
+  };
+  await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 111;\n');
+  await effects.saveSlotViewDraft(view, 'src/value.ts');
+  assert.equal(view._saveConflict?.path, 'src/value.ts');
+  await flush();
+  const restored = await store.put(
+    draftFor({ slotId: 'slot-b', runId: 'run-b', editedContent: 'export const value = 112;\n' }),
+  );
+  hold();
+  const keeping = effects.keepTheirsSlotViewConflict(view);
+  await flush();
+  Object.assign(view, {
+    slotId: 'slot-b',
+    _slot: slotB,
+    _fileDrafts: new Map([['src/value.ts', restored]]),
+  });
+  release();
+  await keeping;
+  assert.equal(view._fileDrafts.get('src/value.ts')?.editedContent, restored.editedContent);
+  assert.equal(view._liveFileContents.get('src/value.ts'), base);
+  assert.equal(view._editorRevision, 0, "B's editor keeps its text");
+  assert.deepEqual(
+    (await store.list('scope-a')).map(({ slotId }) => slotId),
+    ['slot-b'],
+    "A's draft went as asked",
+  );
+});
+
+test('keeping my version after the view moved on rebases the draft for later and saves nothing', async (t) => {
+  reset(t);
+  const { store, hold, release } = slowStorage();
+  const slotB = slot({ slot: 'slot-b', currentRunId: 'run-b' });
+  fleetSlots = [slot(), slotB];
+  const view = makeView(store);
+  const theirs = 'export const value = 130;\n';
+  const mine = 'export const value = 131;\n';
+  currentFile = { content: theirs, hash: sha256(theirs) };
+  reply = async (write) => {
+    if (write.params.expectedHash === sha256(theirs))
+      return { ok: true, hash: sha256(String(write.params.content)) };
+    throw Object.assign(new Error('changed'), { code: 'FS_CONFLICT', details: { reason: 'hash' } });
+  };
+  await effects.editSlotViewFile(view, 'src/value.ts', mine);
+  await effects.saveSlotViewDraft(view, 'src/value.ts');
+  assert.equal(view._saveConflict?.path, 'src/value.ts');
+  await flush();
+  hold();
+  const keeping = effects.keepMineSlotViewConflict(view);
+  await flush();
+  Object.assign(view, { slotId: 'slot-b', _slot: slotB, _fileDrafts: new Map() });
+  release();
+  await keeping;
+  assert.equal(writes.length, 1, 'only the refused save was sent');
+  assert.equal(view._fileDrafts.size, 0);
+  const [kept] = await store.list('scope-a', 'slot-a');
+  assert.deepEqual(
+    { base: kept.baseContent, baseHash: kept.baseHash, edited: kept.editedContent },
+    { base: theirs, baseHash: sha256(theirs), edited: mine },
+  );
+});
+
+test("a worker's write noticed after the view moved on is kept for its slot, not shown on the other", async (t) => {
+  reset(t);
+  const { store, hold, release } = slowStorage();
+  const slotB = slot({ slot: 'slot-b', currentRunId: 'run-b' });
+  fleetSlots = [slot(), slotB];
+  const view = makeView(store);
+  const mine = 'export const value = 120;\n';
+  reply = async () => ({ ok: true, hash: sha256(mine) });
+  await effects.editSlotViewFile(view, 'src/value.ts', mine);
+  assert.equal(await effects.saveSlotViewDraft(view, 'src/value.ts'), true);
+  await flush();
+  const worker = 'export const value = 121; // worker\n';
+  hold();
+  const noting = effects.noteSlotViewFileRead(view, 'src/value.ts', worker, sha256(worker));
+  await flush();
+  Object.assign(view, { slotId: 'slot-b', _slot: slotB });
+  release();
+  await noting;
+  assert.equal(view._fileChangedNotice, '');
+  assert.equal(view._fileDrafts.has('src/value.ts'), false);
+  const [kept] = await store.list('scope-a', 'slot-a');
+  assert.deepEqual(
+    { base: kept.baseContent, edited: kept.editedContent },
+    { base: worker, edited: mine },
+  );
+});
+
+test("a file's own read decides whether it is editable, not the workspace's other reads", async (t) => {
+  const store = reset(t);
+  const asked: unknown[] = [];
+  const view = makeView(store, {
+    _liveFileContents: new Map([
+      ['src/value.ts', base],
+      ['src/other.ts', base],
+    ]),
+    _liveFileHashes: new Map([
+      ['src/value.ts', sha256(base)],
+      ['src/other.ts', sha256(base)],
+    ]),
+    // The tree's read is refreshing, so the workspace as a whole is not ready.
+    _workspaceReads: {
+      ready: false,
+      stateOf: (method: string, params: { path: string }) => {
+        asked.push([method, params]);
+        return { status: params.path === 'src/value.ts' ? 'ready' : 'loading' };
+      },
+    },
+  });
+  assert.equal(effects.slotViewReadOnly(view, 'src/value.ts'), undefined);
+  assert.deepEqual(asked[0], ['fs.read', { slotId: 'slot-a', path: 'src/value.ts' }]);
+  assert.equal(effects.slotViewReadOnly(view, 'src/other.ts'), 'hash');
+});
+
+test('a node that cannot check edits leaves only its own slot read-only', async (t) => {
+  const store = reset(t);
+  const slotB = slot({
+    slot: 'slot-b',
+    machine: 'mac-b',
+    health: { ssh: 'OK' },
+    currentRunId: 'run-b',
+  } as Partial<SlotStatus>);
+  fleetSlots = [slot(), slotB];
+  const nodeB = {
+    machine: 'mac-b',
+    pid: 1,
+    connectedAt: '2026-10-27T00:00:00Z',
+    conditionalWrites: true,
+  };
+  const nodes = (list: unknown[]) => ({ state: { data: { nodes: list } } });
+  const view = makeView(store, { slotId: 'slot-b', _slot: slotB, _nodesQuery: nodes([nodeB]) });
+  reply = async () => {
+    throw Object.assign(new Error('old node'), { code: 'FS_PRECONDITION_UNSUPPORTED' });
+  };
+  await effects.editSlotViewFile(view, 'src/value.ts', 'export const value = 140;\n');
+  assert.equal(await effects.saveSlotViewDraft(view, 'src/value.ts'), false);
+  assert.equal(effects.slotViewReadOnly(view, 'src/value.ts'), 'host');
+
+  Object.assign(view, { slotId: 'slot-a', _slot: fleetSlots[0] });
+  assert.equal(effects.slotViewReadOnly(view, 'src/value.ts'), undefined, 'slot A stays editable');
+  Object.assign(view, { slotId: 'slot-b', _slot: slotB });
+  assert.equal(effects.slotViewReadOnly(view, 'src/value.ts'), 'host', 'slot B stays read-only');
+
+  // B's node reconnecting is asked again.
+  Object.assign(view, { _nodesQuery: nodes([{ ...nodeB, connectedAt: '2026-10-27T01:00:00Z' }]) });
+  assert.equal(effects.slotViewReadOnly(view, 'src/value.ts'), undefined);
 });
