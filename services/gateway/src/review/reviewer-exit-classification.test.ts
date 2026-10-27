@@ -44,7 +44,7 @@ mock.module('../runners/native/node.js', {
     },
   },
 });
-const { readNativeWorkerSnapshot, confirmNativeWorkerStopped } =
+const { readNativeWorkerSnapshot, readNativeWorkerCommandError, confirmNativeWorkerStopped } =
   await import('../runners/native/worker-control.js');
 beforeEach(() => {
   const context: AgentContext = {
@@ -178,5 +178,63 @@ test('a completed invalid report is never reclassified as a native startup exit'
   assert.equal(
     await nativeReviewerFailure(error, async () => assert.fail('no startup observation')),
     error,
+  );
+});
+
+function failedCommandEvent(): NativeSessionReadResult['events'][number] {
+  return {
+    sessionId: 'reserved',
+    generation: 'created-generation',
+    commandId: 'command',
+    sequence: 1,
+    at: '2026-10-27T17:21:59.552Z',
+    type: 'error',
+    text: 'This content was flagged for possible cybersecurity risk.',
+    data: { error: { codexErrorInfo: 'cyberPolicy' }, willRetry: false },
+  };
+}
+
+test('failed reviewer commands retain the structured refusal while the process is still alive', async () => {
+  current.agentContexts![0]!.nativeSession!.generation = 'created-generation';
+  response.session.state = 'idle';
+  response.session.processPid = 123;
+  response.session.processStopped = false;
+  delete response.session.error;
+  response.events = [failedCommandEvent()];
+  const error = await readNativeWorkerCommandError(current.id, 'review', 'reviewer');
+  assert.equal(error?.message, failedCommandEvent().text);
+  assert.deepEqual(error?.cause, failedCommandEvent().data);
+  assert.equal(error instanceof ReviewerExitedError, false);
+});
+
+test('command failure diagnostics drain earlier history and ignore foreign commands and generations', async () => {
+  current.agentContexts![0]!.nativeSession!.generation = 'created-generation';
+  response.events = [
+    { ...failedCommandEvent(), commandId: 'older-command', text: 'old failure' },
+    { ...failedCommandEvent(), generation: 'older-generation', text: 'foreign generation' },
+    { ...failedCommandEvent(), sessionId: 'other-session', text: 'foreign session' },
+  ];
+  response.hasMore = true;
+  response.cursor = 500;
+  duringRead = () => {
+    response.events = [failedCommandEvent()];
+    response.hasMore = false;
+  };
+  const error = await readNativeWorkerCommandError(current.id, 'review', 'reviewer');
+  assert.equal(error?.message, failedCommandEvent().text);
+  response.events = [{ ...failedCommandEvent(), commandId: 'older-command' }];
+  duringRead = () => {};
+  assert.equal(await readNativeWorkerCommandError(current.id, 'review', 'reviewer'), undefined);
+});
+
+test('a replacement command cannot inherit the failed command diagnostic', async () => {
+  current.agentContexts![0]!.nativeSession!.generation = 'created-generation';
+  response.events = [failedCommandEvent()];
+  duringRead = () => {
+    current.agentContexts![0]!.nativeSession!.commandId = 'replacement';
+  };
+  await assert.rejects(
+    readNativeWorkerCommandError(current.id, 'review', 'reviewer'),
+    /command changed during failure observation/,
   );
 });

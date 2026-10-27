@@ -21,7 +21,10 @@ import { stackPrBase } from '../run-engine/stack-base.js';
 import { validateNativeRunner } from '../runners/native/manager.js';
 import { nativeReviewerOwner, nativeReviewerResultSchema } from '../runners/native/review-owner.js';
 import { cancelNativeWorkerContext, dispatchNativeWorker } from '../runners/native/worker.js';
-import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
+import {
+  readNativeWorkerCommandError,
+  readNativeWorkerSnapshot,
+} from '../runners/native/worker-control.js';
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { PromptDeliveryUncertainError, runnerDefaultSafetyTier } from '../runners/registry.js';
@@ -771,6 +774,10 @@ async function runNativeReviewAttempt(
       const command = snapshot.commands.find(
         (command) => command.commandId === context!.nativeSession!.commandId,
       );
+      if (command?.outcome === 'failed') {
+        const failure = await readNativeWorkerCommandError(runId, 'review', contextId);
+        if (failure) throw failure;
+      }
       const probe = await probeWorkerSignalForRun(runId, vars.slotId, context);
       if (probe.ok || probe.code === 'non_terminal') {
         for (const event of probe.signal?.checklistTiming?.events ?? [])

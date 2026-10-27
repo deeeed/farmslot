@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve the native provider's command failure when a reviewer exits without a terminal signal, including recovery after a gateway restart.
+
 - Let loaded nodes finish retaining task tooling within the measured task-initialization budget.
 
 - Keep before captures bound to the recorded full-review base when dispatch replay advances the worktree baseline.

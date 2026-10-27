@@ -18,6 +18,7 @@ const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
 
 type Ending =
   | 'command-failed'
+  | 'command-error'
   | 'timeout'
   | 'exit'
   | 'incomplete'
@@ -199,6 +200,10 @@ mock.module('../runners/native/worker.js', {
 });
 mock.module('../runners/native/worker-control.js', {
   namedExports: {
+    readNativeWorkerCommandError: async () =>
+      ending === 'command-error'
+        ? new Error('Provider refused this request: cybersecurity policy')
+        : undefined,
     readNativeWorkerSnapshot: async (
       _runId: string,
       _role: string,
@@ -285,20 +290,19 @@ mock.module('../runners/native/worker-control.js', {
           ending === 'exit'
             ? { state: 'closed', processStopped: true, error: 'reviewer process exited' }
             : { state: 'running', processStopped: false },
-        commands:
-          ending === 'command-failed'
-            ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed' }]
-            : ending === 'timeout' || ending === 'exit'
-              ? []
-              : [
-                  {
-                    commandId: binding.commandId,
-                    generation: binding.generation,
-                    accepted: true,
-                    state: 'completed',
-                    outcome: 'completed',
-                  },
-                ],
+        commands: ['command-failed', 'command-error'].includes(ending)
+          ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed' }]
+          : ending === 'timeout' || ending === 'exit'
+            ? []
+            : [
+                {
+                  commandId: binding.commandId,
+                  generation: binding.generation,
+                  accepted: true,
+                  state: 'completed',
+                  outcome: 'completed',
+                },
+              ],
         events: [],
         cursor: 0,
         hasMore: false,
@@ -874,4 +878,18 @@ test('an unconfirmed failed-command stop keeps the round reserved until cleanup 
   await assert.rejects(review(run.id), /process cleanup is unconfirmed/);
   assert.equal(getRun(run.id)!.reviewRoundSettlements, undefined);
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+});
+
+test('a failed native turn reports its provider refusal without a completion retry', async (t) => {
+  ending = 'command-error';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  const before = dispatchCalls;
+  await assert.rejects(review(run.id), /Provider refused this request: cybersecurity policy/);
+  assert.equal(dispatchCalls - before, 1);
+  assert.equal(completionCommands.length, 0);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.equal(context.status, 'failed');
+  assert.ok(stopped.includes(context.id));
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 0);
 });
