@@ -132,8 +132,9 @@ export interface RecordRunnerSessionOptions {
   session: RunnerSessionMetadata;
   /** Capture site, used in the incomplete-binding diagnostic. */
   captureLabel: string;
-  /** Pane used for a successful exact-pane session capture. */
+  /** Verified launch pane, including when its transcript is not available yet. */
   paneId?: string | null;
+  writeOptions?: Parameters<typeof upsertAgentContext>[3];
   now?: Date;
 }
 
@@ -142,13 +143,12 @@ export interface RunnerSessionRecordDeps {
   readRun?: typeof getRun;
 }
 
-/** Record an already-captured session on the role that owns it. */
+/** Record a captured session or exact launch pane on its owning role. */
 export async function recordRunnerSessionForRole(
   options: RecordRunnerSessionOptions,
   deps: RunnerSessionRecordDeps = { upsert: upsertAgentContext },
 ): Promise<AgentContext | null> {
   const patch = runnerSessionContextPatch(options.session, options.captureLabel, options.now);
-  if (!patch) return null;
   const run = (deps.readRun ?? getRun)(options.runId);
   const context =
     run &&
@@ -162,12 +162,20 @@ export async function recordRunnerSessionForRole(
   const target =
     capturedTarget ??
     (run && context ? runnerSessionContextTarget(run, { ...context, ...patch }) : null);
-  return deps.upsert(options.runId, options.role, {
-    ...patch,
-    ...(target ? { target } : {}),
-    ...(options.contextId ? { id: options.contextId } : {}),
-    ...(options.label ? { label: options.label } : {}),
-  });
+  // Pane capture and transcript capture are independent. A runner can start
+  // before its transcript exists; retain its exact pane for later cleanup.
+  if (!patch && !capturedTarget) return null;
+  return deps.upsert(
+    options.runId,
+    options.role,
+    {
+      ...patch,
+      ...(target ? { target } : {}),
+      ...(options.contextId ? { id: options.contextId } : {}),
+      ...(options.label ? { label: options.label } : {}),
+    },
+    options.writeOptions,
+  );
 }
 
 export interface CaptureAndRecordRunnerSessionOptions {

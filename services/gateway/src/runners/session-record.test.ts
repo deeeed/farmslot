@@ -100,6 +100,28 @@ test('recordRunnerSessionForRole writes nothing when capture produced no binding
   assert.equal(calls.length, 0);
 });
 
+test('an exact launch pane is retained even before the transcript is available', async () => {
+  const { run, fix } = aliasFixture();
+  fix.runnerSessionId = null;
+  fix.runnerSessionPath = null;
+  const { calls, upsert } = recordingUpsert();
+  await recordRunnerSessionForRole(
+    {
+      runId: run.id,
+      role: 'review-fix',
+      contextId: fix.id,
+      session: { runnerSessionId: null, runnerSessionPath: null },
+      paneId: '%42',
+      captureLabel: 'launch before transcript creation',
+    },
+    { upsert, readRun: () => run },
+  );
+  assert.deepEqual(
+    calls.map((call) => call.patch),
+    [{ id: fix.id, target: { ...fix.target, paneId: '%42' } }],
+  );
+});
+
 function aliasFixture() {
   const primary = {
     id: 'dev',

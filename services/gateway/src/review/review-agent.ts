@@ -6,6 +6,7 @@ import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type AgentContext,
   allocateReviewerContext,
+  isTerminalRunStatus,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
   type ReviewIssue,
@@ -26,6 +27,7 @@ import { executionModelFromSelection, reviewArtifactDir } from '@farmslot/review
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { readSlotRow } from '../core/state.js';
 import {
   killTmuxWindowById,
   listExactTmuxWindows,
@@ -46,7 +48,11 @@ import {
   runnerSupportsInteractivePrompt,
   sendRunnerPostLaunchPrompt,
 } from '../runners/registry.js';
-import { probeRunnerDescendantPid } from '../runners/session-process.js';
+import {
+  captureRunnerSessionMetadata,
+  probeRunnerDescendantPid,
+} from '../runners/session-process.js';
+import { recordRunnerSessionForRole } from '../runners/session-record.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { clearRunActiveTaskFile, getRun, updateRun } from '../runs/store.js';
 import {
@@ -448,6 +454,10 @@ export function selectRecoverableReviewContext(
 }
 
 interface ReviewPromptRecoveryDependencies {
+  captureRunnerSessionMetadata: typeof captureRunnerSessionMetadata;
+  recordRunnerSessionForRole: typeof recordRunnerSessionForRole;
+  getRun: typeof getRun;
+  readSlotRow: typeof readSlotRow;
   listExactTmuxWindows: typeof listExactTmuxWindows;
   resolveExactTmuxWindowPane: typeof resolveExactTmuxWindowPane;
   probeRunnerDescendantPid: typeof probeRunnerDescendantPid;
@@ -460,6 +470,10 @@ interface ReviewPromptRecoveryDependencies {
 }
 
 const defaultReviewPromptRecoveryDependencies: ReviewPromptRecoveryDependencies = {
+  captureRunnerSessionMetadata,
+  recordRunnerSessionForRole,
+  getRun,
+  readSlotRow,
   listExactTmuxWindows,
   resolveExactTmuxWindowPane,
   probeRunnerDescendantPid,
@@ -489,6 +503,7 @@ export async function resumeReviewAgentPromptDelivery(
     | 'reviewResultFile'
     | 'target'
     | 'attemptStartedAt'
+    | 'signalAttemptId'
     | 'startedAt'
     | 'nativeSession'
   >,
@@ -559,7 +574,48 @@ export async function resumeReviewAgentPromptDelivery(
 
   const taskDir = path.posix.dirname(taskMdPath);
   const reviewTarget = targetForChecklistBasename(path.posix.basename(taskMdPath));
-  const parentRun = getRun(runId);
+  const parentRun = dependencies.getRun(runId);
+  const expectedSlotId = parentRun?.slotId;
+  const expectedGeneration = parentRun?.engineState?.generation;
+  const original = structuredClone(
+    parentRun?.agentContexts?.find((entry) => entry.id === context.id),
+  );
+  const slot = await dependencies.readSlotRow(vars.slotId);
+  const expectedEpoch = slot?.slot_epoch;
+  const ownsSlot = (row: Readonly<Record<string, unknown>> | null) =>
+    row?.current_run_id === runId &&
+    row.slot_epoch === expectedEpoch &&
+    (!row.handoff_run_id || row.handoff_run_id === runId);
+  const currentAttempt = (expectedTarget: AgentContext['target'] = original?.target) => {
+    const current = dependencies.getRun(runId);
+    const reviewer = current?.agentContexts?.find((entry) => entry.id === context.id);
+    return Boolean(
+      current &&
+      original &&
+      reviewer &&
+      !isTerminalRunStatus(current.status) &&
+      current.slotId === expectedSlotId &&
+      current.slotId === vars.slotId &&
+      current.engineState?.generation === expectedGeneration &&
+      (reviewer.status === 'working' || reviewer.status === 'launching') &&
+      reviewer.attemptStartedAt === original.attemptStartedAt &&
+      reviewer.signalAttemptId === original.signalAttemptId &&
+      reviewer.taskFile === original.taskFile &&
+      reviewer.runner === original.runner &&
+      JSON.stringify(reviewer.target) === JSON.stringify(expectedTarget),
+    );
+  };
+  if (
+    !currentAttempt() ||
+    !ownsSlot(slot) ||
+    !original ||
+    original.runner !== runner ||
+    original.taskFile !== taskMdPath ||
+    original.attemptStartedAt !== context.attemptStartedAt ||
+    original.signalAttemptId !== context.signalAttemptId ||
+    original.target?.target !== context.target?.target
+  )
+    return 'indeterminate';
   const prompt = await dependencies.resolveWorkerDispatchPrompt(
     parentRun?.project ?? vars.projectName,
     {
@@ -591,7 +647,41 @@ export async function resumeReviewAgentPromptDelivery(
       runtimeDir,
     },
   );
-  return 'delivered';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const session = await dependencies.captureRunnerSessionMetadata(vars, runner, [], {
+        paneId: pane.paneId,
+        slotId: vars.slotId,
+      });
+      if (!session.runnerSessionId || !session.runnerSessionPath) return 'indeterminate';
+      const boundTarget = original.target ? { ...original.target, paneId: pane.paneId } : null;
+      const recorded = await dependencies.recordRunnerSessionForRole({
+        runId,
+        session,
+        role: 'review',
+        contextId: context.id,
+        captureLabel: 'recovered reviewer prompt',
+        paneId: pane.paneId,
+        writeOptions: {
+          guard: async () => {
+            const currentSlot = await dependencies.readSlotRow(vars.slotId);
+            return currentAttempt() && ownsSlot(currentSlot);
+          },
+          mirrorIf: (row) => ownsSlot(row) && currentAttempt(boundTarget),
+        },
+      });
+      if (!recorded) return 'indeterminate';
+      const currentSlot = await dependencies.readSlotRow(vars.slotId);
+      return currentAttempt(recorded.target) && ownsSlot(currentSlot)
+        ? 'delivered'
+        : 'indeterminate';
+    } catch (error) {
+      // The prompt was accepted. Session read/write failures must preserve that
+      // reviewer. Retry metadata once without resending its prompt, then defer.
+      console.warn(`[review] ${context.id} session recording deferred: ${String(error)}`);
+    }
+  }
+  return 'indeterminate';
 }
 
 export async function waitForRecoveredReviewerOrCleanup(
@@ -916,19 +1006,21 @@ async function recoverRunningReviewAgent(params: {
       await abandonRecoveredReviewer('invalid recovered reviewer artifact cleanup', 'blocked');
       throw terminalArtifactError;
     }
-    await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
-    const usage = context.runnerSessionPath
+    const sessionContext =
+      getRun(params.runId)?.agentContexts?.find((entry) => entry.id === context.id) ?? context;
+    await waitForSessionTranscriptToSettle(params.vars, sessionContext.runnerSessionPath ?? null);
+    const usage = sessionContext.runnerSessionPath
       ? await extractRunnerSessionUsage({
           slotId: params.slotId,
           vars: params.vars,
           runner: params.runner,
-          runnerSessionId: context.runnerSessionId ?? null,
-          runnerSessionPath: context.runnerSessionPath,
+          runnerSessionId: sessionContext.runnerSessionId ?? null,
+          runnerSessionPath: sessionContext.runnerSessionPath,
         })
       : unavailableRunnerSessionUsage({
           runner: params.runner,
-          runnerSessionId: context.runnerSessionId ?? null,
-          runnerSessionPath: context.runnerSessionPath ?? null,
+          runnerSessionId: sessionContext.runnerSessionId ?? null,
+          runnerSessionPath: sessionContext.runnerSessionPath ?? null,
           error: 'Recovered reviewer has no persisted runner session path.',
         });
     const persisted = await persistReviewOutputArtifacts({
@@ -954,12 +1046,12 @@ async function recoverRunningReviewAgent(params: {
       ...feedback,
       reviewId: context.reviewId,
       mode: params.mode,
-      reviewerSessionId: context.runnerSessionId,
+      reviewerSessionId: sessionContext.runnerSessionId,
       session: {
         mode: params.mode,
         reviewId: context.reviewId,
         continuity: params.mode === 'warm' ? 'resumed' : 'fresh',
-        sessionId: context.runnerSessionId ?? undefined,
+        sessionId: sessionContext.runnerSessionId ?? undefined,
         ...(params.mode === 'warm'
           ? { priorSessionId: context.runnerSessionId ?? undefined, priorRunId: params.runId }
           : {}),
