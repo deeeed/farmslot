@@ -8,6 +8,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.3 - 2026-10-27
+
+- Refuse worker completion when either evidence manifest names a missing media file, before changing the checklist or signal.
+
 ## 0.39.2 - 2026-10-26
 
 - Remove the local CI-parity worker step and its completion receipt requirement.
