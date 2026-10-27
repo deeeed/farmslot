@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { createGatewayResourceCache } from '../../src/client-cache/cache.js';
+import { ResourceCacheConformanceTransport } from '../../src/client-cache/conformance.js';
 import { gitBlobHash, verifyResourceContent } from '../../src/client-cache/content.js';
 import type { ResourceKey } from '../../src/client-cache/keys.js';
 import {
@@ -15,6 +16,7 @@ import {
   type ContentKey,
   createMemoryResourceStore,
   type ResourceContentPlacement,
+  type ResourceStore,
 } from '../../src/client-cache/store.js';
 import type {
   ResourceCacheConnection,
@@ -800,7 +802,11 @@ test('observed git.diff accepts includeUntracked only for a worktree diff, false
 });
 
 /** The prefetcher over the real cache and memory store, so budgets and eviction are the cache's. */
-function realCache(world: World, contentBudgetBytes: number) {
+function realCache(
+  world: World,
+  contentBudgetBytes: number,
+  store: ResourceStore = createMemoryResourceStore(),
+) {
   const connection: ResourceCacheConnection = {
     id: 1,
     connected: true,
@@ -825,6 +831,8 @@ function realCache(world: World, contentBudgetBytes: number) {
     async request<T>(method: string, params: unknown) {
       const value = params as Record<string, unknown>;
       world.calls.push({ method, params: value });
+      const code = world.fail({ method, params: value });
+      if (code) throw Object.assign(new Error(code), { code });
       const data =
         method === Methods.RUN_GET
           ? { run: world.runs.get(String(value.runId)) }
@@ -833,7 +841,6 @@ function realCache(world: World, contentBudgetBytes: number) {
     },
     resynchronize: () => {},
   };
-  const store = createMemoryResourceStore();
   const cache = createGatewayResourceCache({ transport, store, contentBudgetBytes });
   const { request, readArtifact } = gateway(world);
   const prefetcher = createContentPrefetcher({ transport, cache, request, readArtifact });
@@ -951,5 +958,96 @@ test('real cache: gate prefetch promotes held run content, which run prefetch ca
   assert.equal(after[blob(big)], undefined);
   for (const id of [blob(A_OLD), blob(A_NEW), diffHash]) assert.equal(after[id], 'prefetch/gate');
   prefetcher.dispose();
+  await cache.dispose();
+});
+
+test('real cache: a refusal cancels a run read still waiting inside the cache', async () => {
+  const world = createWorld();
+  for (const runId of ['g1', 'r2'])
+    world.runs.set(runId, { id: runId, slotId: null, decisions: [] } as unknown as Run);
+  world.fail = (call) => (call.params.runId === 'g1' ? 'AUTH_FORBIDDEN' : undefined);
+  // The second run's stored result is still loading when the first run is refused.
+  const store = createMemoryResourceStore();
+  const getQuery = store.getQuery.bind(store);
+  const loading = deferred();
+  store.getQuery = async <T>(id: string) => {
+    if (id.includes('"r2"')) await loading.promise;
+    return getQuery<T>(id);
+  };
+  const { cache, prefetcher } = realCache(world, 8000, store);
+  prefetcher.setTargets([target('g1', true), target('r2', false)]);
+  await flush();
+  assert.deepEqual(world.calls, [{ method: 'run.get', params: { runId: 'g1' } }]);
+  loading.resolve();
+  await flush();
+  assert.deepEqual(world.calls, [{ method: 'run.get', params: { runId: 'g1' } }]);
+  prefetcher.dispose();
+  await cache.dispose();
+});
+
+test('real cache: a refusal stops prefetch before its eviction write lets another read go', async () => {
+  const world = createWorld();
+  for (const runId of ['g1', 'r2'])
+    world.runs.set(runId, { id: runId, slotId: null, decisions: [] } as unknown as Run);
+  world.fail = (call) => (call.params.runId === 'g1' ? 'AUTH_FORBIDDEN' : undefined);
+  const store = createMemoryResourceStore();
+  const refused = resourceQuery(Methods.RUN_GET, { runId: 'g1' }).id;
+  await store.putQuery({ id: refused, data: { run: { id: 'g1' } }, observedAt: 1, bytes: 1 });
+  // The refused result's eviction is still being written when the second run's load completes.
+  const evicting = deferred();
+  const loading = deferred();
+  const deleteQuery = store.deleteQuery.bind(store);
+  store.deleteQuery = async (id) => {
+    if (id === refused) await evicting.promise;
+    return deleteQuery(id);
+  };
+  const getQuery = store.getQuery.bind(store);
+  store.getQuery = async <T>(id: string) => {
+    if (id.includes('"r2"')) await loading.promise;
+    return getQuery<T>(id);
+  };
+  const { cache, prefetcher } = realCache(world, 8000, store);
+  prefetcher.setTargets([target('g1', true), target('r2', false)]);
+  await flush();
+  loading.resolve();
+  await flush();
+  assert.deepEqual(world.calls, [{ method: 'run.get', params: { runId: 'g1' } }]);
+  evicting.resolve();
+  await flush();
+  assert.equal(await store.getQuery(refused), undefined);
+  assert.deepEqual(world.calls, [{ method: 'run.get', params: { runId: 'g1' } }]);
+  prefetcher.dispose();
+  await cache.dispose();
+});
+
+test('real cache: an aborted retry writes no result unless another caller shares its read', async () => {
+  const transport = new ResourceCacheConformanceTransport({
+    gatewayUrl: 'ws://prefetch.invalid/',
+    principalId: 'owner',
+    principalGeneration: 0,
+  });
+  transport.setConnection({ connected: true, id: 1 });
+  const store = createMemoryResourceStore();
+  const cache = createGatewayResourceCache({ transport, store });
+  const query = resourceQuery(Methods.RUN_GET, { runId: 'x' });
+  const alone = new AbortController();
+  const cancelled = cache.retry(query, undefined, alone.signal);
+  const first = await transport.nextRead();
+  alone.abort();
+  assert.equal(first.signal.aborted, true);
+  first.resolve({ value: 'first' });
+  await cancelled;
+  assert.equal(await store.getQuery(query.id), undefined);
+
+  const joined = new AbortController();
+  const started = cache.retry(query, undefined, joined.signal);
+  const second = await transport.nextRead();
+  const sharing = cache.retry(query);
+  await flush();
+  joined.abort();
+  assert.equal(second.signal.aborted, false);
+  second.resolve({ value: 'second' });
+  await Promise.all([started, sharing]);
+  assert.deepEqual((await store.getQuery(query.id))?.data, { value: 'second' });
   await cache.dispose();
 });

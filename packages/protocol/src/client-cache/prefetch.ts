@@ -290,7 +290,8 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
 
   async function readRun(runId: string, signal: AbortSignal): Promise<Run> {
     const since = Date.now();
-    const state = await cache.retry(resourceQuery<RunGetResult>(Methods.RUN_GET, { runId }));
+    const query = resourceQuery<RunGetResult>(Methods.RUN_GET, { runId });
+    const state = await cache.retry(query, undefined, signal);
     return freshData(state, since, signal).run;
   }
 
@@ -487,7 +488,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       includeUntracked: true,
     });
     const placement = { origin: 'prefetch' as const, cohort: write.cohort };
-    const diff = freshData(await cache.retry(query, placement), since, write.signal);
+    const diff = freshData(await cache.retry(query, placement, write.signal), since, write.signal);
     state.head = diff.headSha;
     if (
       diff.mergeBaseSha &&

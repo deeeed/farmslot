@@ -51,6 +51,8 @@ interface PendingRead {
   promise: Promise<void>;
   /** Set only while every caller sharing this read is a prefetch. */
   prefetch?: ResourceContentPlacement;
+  /** Another caller joined, so the starting caller's abort no longer cancels the read. */
+  shared?: boolean;
 }
 interface QueryEntry {
   query: ResourceQuery;
@@ -574,11 +576,14 @@ export function createGatewayResourceCache(
     entry: QueryEntry,
     observedOnly = false,
     placement?: ResourceContentPlacement,
+    signal?: AbortSignal,
   ): Promise<void> {
     const prefetch = placement?.origin === 'prefetch' ? placement : undefined;
     await barrier;
+    if (signal?.aborted) return;
     await entry.hydration;
     if (
+      signal?.aborted ||
       disposed ||
       !usable ||
       entries.get(entry.query.id) !== entry ||
@@ -618,6 +623,7 @@ export function createGatewayResourceCache(
       return;
     }
     if (entry.pending?.version === version) {
+      entry.pending.shared = true;
       // Any caller that is not a prefetch makes the shared read an opened one.
       const shared = entry.pending.prefetch;
       entry.pending.prefetch =
@@ -873,6 +879,9 @@ export function createGatewayResourceCache(
             () => evictingStore.deleteQuery(nativeHistoryStorageId(entry.query)),
           );
           notify(entry);
+          // An authorization refusal settles its callers in the reply's own task, so a prefetch
+          // stops before a store callback can release another read. The eviction is queued.
+          if (failure.code === 'AUTH_FORBIDDEN' || failure.code === 'AUTH_REQUIRED') return;
           await eviction;
           if (
             disposed ||
@@ -901,6 +910,15 @@ export function createGatewayResourceCache(
         }
       }
     })();
+    if (signal) {
+      // A read only this caller wants stops with it: no response is written after the abort.
+      const cancel = () => {
+        if (entry.pending === pending && !pending.shared && !entry.listeners.size)
+          invalidate(entry);
+      };
+      signal.addEventListener('abort', cancel, { once: true });
+      void pending.promise.finally(() => signal.removeEventListener('abort', cancel));
+    }
     return pending.promise;
   }
 
@@ -1091,10 +1109,14 @@ export function createGatewayResourceCache(
       if (disposed) throw new Error('Resource cache is disposed');
       return entryFor(query).state as ResourceQueryState<T>;
     },
-    async retry<T>(query: ResourceQuery<T>, placement?: ResourceContentPlacement) {
+    async retry<T>(
+      query: ResourceQuery<T>,
+      placement?: ResourceContentPlacement,
+      signal?: AbortSignal,
+    ) {
       if (disposed) throw new Error('Resource cache is disposed');
       const entry = entryFor(query);
-      await fetchEntry(entry, false, placement);
+      await fetchEntry(entry, false, placement, signal);
       return entry.state as ResourceQueryState<T>;
     },
     async hasContent(key) {

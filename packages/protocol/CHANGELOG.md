@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `GatewayResourceCache.retry` accepts an abort signal; an aborted retry sends nothing and writes no result. An authorization refusal settles its callers before the eviction is written, so prefetch stops before another read leaves the cache.
+
 - Add content by identity to the resource store and cache (verified diffs, git blobs and artifacts, size caps, one byte budget shared with workspace snapshots, fetch-time write tokens and aliases) and `createContentPrefetcher`, which prefetches pending gates and active runs with an exact unified-diff applier. Observed `git.diff` accepts `includeUntracked`.
 
 - Export the review-diff identity functions (`reviewDiffHash`, `verifiedReviewDiffHash`, `reviewSnapshotIdentityText`) for clients and the gateway, and add `GitShowResult.id`, batched `git.show` types, `GitDiffParams.includeUntracked` and `GitDiffResult.mergeBaseSha`/`headSha`.

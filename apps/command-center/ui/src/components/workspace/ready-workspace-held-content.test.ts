@@ -641,3 +641,36 @@ test('an image mismatch is settled: a re-render fetches the same source no more'
   await flush();
   assert.equal(fetched.filter((path) => path === 'evidence/flaky.png').length, 2);
 });
+
+test('an image mismatch is settled per owner: another principal reads the source again', async (t) => {
+  gateway.connectionState = 'connected';
+  openCache(t);
+  let restored = false;
+  let fetches = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    fetches++;
+    return new Response(restored ? image : new Uint8Array([0x89, 0x50, 0x4e, 0x47, 5, 5]), {
+      headers: { 'content-type': 'image/png' },
+    });
+  });
+  t.mock.method(URL, 'createObjectURL', () => 'blob:restored-image');
+  t.mock.method(URL, 'revokeObjectURL', () => undefined);
+  const owned = { ...imageArtifact, path: 'evidence/unpinned.png' };
+  const url = makePresenter()._artifactUrl(owned.path, owned);
+  const load = () => loadGatewayMedia(url, new AbortController().signal);
+
+  // Principal A sees a body another retain left at the path; the artifact is then restored.
+  await assert.rejects(load(), /does not match its manifest/);
+  restored = true;
+  await assert.rejects(load(), /does not match its manifest/);
+  assert.equal(fetches, 1, 'settled for principal A');
+
+  // Principal B signs in on the same tab: a new owner cache, which reads the source again.
+  viewOwner = 'principal-b';
+  t.after(() => {
+    viewOwner = 'operator';
+  });
+  openCache(t);
+  assert.equal((await load()).url, 'blob:restored-image');
+  assert.equal(fetches, 2);
+});

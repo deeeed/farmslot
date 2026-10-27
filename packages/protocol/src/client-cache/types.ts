@@ -125,11 +125,13 @@ export interface GatewayResourceCache {
   /**
    * A `prefetch` placement persists a workspace snapshot as prefetched content: it counts toward
    * the prefetch half of the budget and evicts only what prefetch may evict. A later read the user
-   * observes, or a read without a placement, keeps it as opened.
+   * observes, or a read without a placement, keeps it as opened. Once `signal` aborts, the read
+   * is not sent, and a read no other caller or observer shares is cancelled without a result.
    */
   retry<T>(
     query: ResourceQuery<T>,
     placement?: ResourceContentPlacement,
+    signal?: AbortSignal,
   ): Promise<ResourceQueryState<T>>;
   /** Presence for this owner, without loading the bytes or changing their recency. */
   hasContent(key: ContentKey): Promise<boolean>;

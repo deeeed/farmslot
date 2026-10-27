@@ -6,12 +6,13 @@ import type { Run } from '@farmslot/protocol';
 import { type ArtifactHttpHeaders, artifactSource } from '../lib/artifact-url';
 import {
   artifactImageKey,
+  artifactImageSource,
   fetchArtifactBytes,
   fetchRunArtifactBytes,
   type GateDiffContent,
   gateDiffContent,
   gateDiffSource,
-  heldImageSource,
+  type HeldContentResult,
   openHeldContent,
 } from '../lib/held-content';
 import { getResourceCache, subscribeResourceCache } from '../lib/resource-cache';
@@ -80,9 +81,9 @@ export function useGateDiffContent(run: Run | null): GateDiffContent {
 
 /**
  * An evidence image from held content by manifest `sha256`, or read live while connected and
- * shown from its verified bytes at any size (stored as opened up to 2 MB). Without a `sha256`, or
- * when no read completes, today's URL source. Undefined while the bytes are being read, and after
- * live bytes failed verification.
+ * shown from its verified bytes at any size (stored as opened up to 2 MB); it never loads from its
+ * raw URL. Undefined while the bytes are being read, after they failed verification, and while no
+ * read completes, which is retried on reconnect. Without a `sha256`, today's URL source.
  */
 export function useArtifactImageSource(
   uri: string,
@@ -96,12 +97,14 @@ export function useArtifactImageSource(
   const [resolved, setResolved] = useState<{
     cache: typeof cache;
     identity: string;
-    source: ImageSourcePropType | undefined;
-    settled: boolean;
+    result: HeldContentResult;
   }>();
-  const current =
-    resolved && resolved.cache === cache && resolved.identity === identity ? resolved : undefined;
-  const settled = current?.settled === true;
+  const result =
+    resolved && resolved.cache === cache && resolved.identity === identity
+      ? resolved.result
+      : undefined;
+  // Verified or rejected bytes are final; only an unavailable read tries again.
+  const settled = result !== undefined && result.status !== 'unavailable';
   useEffect(() => {
     if (!keyId || settled) return;
     let active = true;
@@ -113,21 +116,16 @@ export function useArtifactImageSource(
       read: connected ? () => fetchArtifactBytes(uri, headers ?? {}, controller.signal) : undefined,
     })
       .catch(() => ({ status: 'unavailable' as const }))
-      .then((result) => {
-        if (active)
-          setResolved({
-            cache,
-            identity: `${keyId}\n${uri}`,
-            // Verified or rejected bytes are final; only an unavailable read tries again.
-            settled: result.status !== 'unavailable',
-            source: heldImageSource(result, artifactSource(uri, headers)),
-          });
+      .then((next) => {
+        if (active) setResolved({ cache, identity: `${keyId}\n${uri}`, result: next });
       });
     return () => {
       active = false;
       controller.abort();
     };
   }, [cache, connected, headers, keyId, settled, uri]);
-  if (!keyId) return artifactSource(uri, headers);
-  return current?.source;
+  return useMemo(
+    () => artifactImageSource(keyId, result, artifactSource(uri, headers)),
+    [headers, keyId, result, uri],
+  );
 }

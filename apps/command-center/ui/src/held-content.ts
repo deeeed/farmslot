@@ -24,6 +24,11 @@ export function frozenDiffAlias(runId: string, baseSha: string, headSha: string)
   return `frozen-diff:${runId}:${baseSha}:${headSha}`;
 }
 
+/** The owner content reads belong to: its cache, which a principal or profile change replaces. */
+export function contentOwner(): object | undefined {
+  return getResourceCache();
+}
+
 /** Held bytes the user opened: refreshes recency and protects them from prefetch eviction. */
 export async function openHeldContent(key: ContentKey | string): Promise<Uint8Array | undefined> {
   const cache = getResourceCache();

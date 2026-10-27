@@ -13,11 +13,11 @@ import {
 
 import {
   artifactImageKey,
+  artifactImageSource,
   fetchRunArtifactBytes,
   gateDiffContent,
   gateDiffFallsBack,
   type HeldContentResult,
-  heldImageSource,
   imageDataUri,
   openHeldContent,
 } from './held-content';
@@ -135,13 +135,33 @@ test('mismatched live bytes are a mismatch, never stored, and distinct from a fa
   }
 });
 
-test('an image whose live bytes mismatched never reloads its URL; only a failed or absent read does', () => {
-  const url = { uri: 'https://gateway.invalid/api/run-artifact?path=a.png' };
-  assert.deepEqual(heldImageSource({ status: 'ready', data: PNG }, url), { uri: PNG_URI });
-  assert.equal(heldImageSource({ status: 'unavailable' }, url), url);
-  assert.equal(heldImageSource({ status: 'mismatch' }, url), undefined);
-  // A verified image over 2 MB also renders from its verified bytes, never from its URL.
-  assert.deepEqual(heldImageSource({ status: 'ready', data: LARGE }, url), { uri: LARGE_URI });
+const IMAGE_URL = { uri: 'https://gateway.invalid/api/run-artifact?path=a.png' };
+
+test('an image with a sha256 renders only verified bytes, at any size; a mismatch never reloads its URL', () => {
+  const ready = (data: Uint8Array) => ({ status: 'ready' as const, data });
+  assert.deepEqual(artifactImageSource(imageKey.id, ready(PNG), IMAGE_URL), { uri: PNG_URI });
+  assert.deepEqual(artifactImageSource(largeKey.id, ready(LARGE), IMAGE_URL), { uri: LARGE_URI });
+  assert.equal(artifactImageSource(imageKey.id, { status: 'mismatch' }, IMAGE_URL), undefined);
+  assert.equal(artifactImageSource(imageKey.id, undefined, IMAGE_URL), undefined, 'still reading');
+  // Without a sha256 there is nothing to verify, so the URL loads as today.
+  assert.equal(artifactImageSource(undefined, undefined, IMAGE_URL), IMAGE_URL);
+});
+
+test('an unavailable read of an image with a sha256 gives no source, never its raw URL', async () => {
+  const { cache } = harness();
+  try {
+    const failed = await openHeldContent({
+      cache,
+      key: largeKey,
+      cohort: 'gate',
+      read: () => Promise.reject(new Error('connection reset')),
+    });
+    assert.deepEqual(failed, { status: 'unavailable' });
+    assert.equal(artifactImageSource(largeKey.id, failed, IMAGE_URL), undefined);
+    assert.equal(artifactImageSource(imageKey.id, { status: 'unavailable' }, IMAGE_URL), undefined);
+  } finally {
+    await cache.dispose();
+  }
 });
 
 test('a verified live image over 2 MB renders from its bytes and is not stored', async () => {
@@ -155,9 +175,7 @@ test('a verified live image over 2 MB renders from its bytes and is not stored',
     });
     assert.ok(result.status === 'ready');
     assert.equal(result.data, LARGE);
-    assert.deepEqual(heldImageSource(result, { uri: 'https://gateway.invalid/large.png' }), {
-      uri: LARGE_URI,
-    });
+    assert.deepEqual(artifactImageSource(largeKey.id, result, IMAGE_URL), { uri: LARGE_URI });
     assert.equal(await cache.hasContent(largeKey), false);
     assert.deepEqual(await store.listContent(), []);
   } finally {

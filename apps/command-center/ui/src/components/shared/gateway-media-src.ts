@@ -10,8 +10,12 @@ import { gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.
 
 const MAX_HELD_MEDIA_URLS = 2000;
 const heldMediaIds = new Map<string, string>();
-/** Sources whose body failed its manifest `sha256`: settled until the URL or identity changes. */
-const mismatchedMedia = new Set<string>();
+/**
+ * Sources whose body failed its manifest `sha256`, per owner: settled until the URL, the
+ * identity or the owner changes. Another principal reads the source again.
+ */
+const mismatchedMedia = new WeakMap<object, Set<string>>();
+const NO_OWNER = {};
 
 /**
  * Names the manifest `sha256` behind an evidence image URL, so the media seam shows only bytes
@@ -76,13 +80,15 @@ async function fetchGatewayMedia(url: string, signal: AbortSignal): Promise<Blob
 async function loadContentMedia(url: string, sha256: string, signal: AbortSignal) {
   // Loaded only when content can be held, so plain media keeps a light import graph.
   const held = await import('../../held-content.js');
+  const owner = held.contentOwner() ?? NO_OWNER;
   const key = { kind: 'artifact' as const, id: sha256 };
   const data = await held.openHeldContent(key);
   signal.throwIfAborted();
   if (data) return objectMedia(new Blob([new Uint8Array(data)]));
   // A settled mismatch is not fetched again, so a re-render cannot loop on the same body.
   const source = `${url}\n${sha256}`;
-  if (mismatchedMedia.has(source)) throw new Error('Gateway media does not match its manifest.');
+  if (mismatchedMedia.get(owner)?.has(source))
+    throw new Error('Gateway media does not match its manifest.');
   let type = '';
   const verified = await held.readVerifiedContent(
     key,
@@ -94,9 +100,10 @@ async function loadContentMedia(url: string, sha256: string, signal: AbortSignal
     'gate',
   );
   if (verified === held.CONTENT_MISMATCH) {
-    mismatchedMedia.add(source);
-    if (mismatchedMedia.size > MAX_HELD_MEDIA_URLS)
-      mismatchedMedia.delete(mismatchedMedia.values().next().value!);
+    const mismatched = mismatchedMedia.get(owner) ?? new Set<string>();
+    mismatchedMedia.set(owner, mismatched);
+    mismatched.add(source);
+    if (mismatched.size > MAX_HELD_MEDIA_URLS) mismatched.delete(mismatched.values().next().value!);
     throw new Error('Gateway media does not match its manifest.');
   }
   signal.throwIfAborted();

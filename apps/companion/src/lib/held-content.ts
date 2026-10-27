@@ -150,16 +150,18 @@ function imageType(data: Uint8Array): string {
 }
 
 /**
- * Verified bytes render as a data URI at any size, so the image shown is the one verified. A
- * mismatch renders no source, the same unavailable image as a failed load, rather than reload
- * the URL that served it. Only an unavailable read keeps the URL.
+ * What an artifact image renders. Without a manifest `sha256` (no key), its URL as today. With
+ * one, never the raw URL: verified bytes as a data URI at any size, so the image shown is the one
+ * verified; while reading, after an unavailable read or a mismatch, no source, the same
+ * unavailable image as a failed load.
  */
-export function heldImageSource<T>(
-  result: HeldContentResult,
+export function artifactImageSource<T>(
+  keyId: string | undefined,
+  result: HeldContentResult | undefined,
   urlSource: T,
 ): { uri: string } | T | undefined {
-  if (result.status === 'mismatch') return undefined;
-  return result.status === 'ready' ? { uri: imageDataUri(result.data) } : urlSource;
+  if (!keyId) return urlSource;
+  return result?.status === 'ready' ? { uri: imageDataUri(result.data) } : undefined;
 }
 
 /** `<Image>` takes no bytes, so verified image bytes render as a data URI. */
