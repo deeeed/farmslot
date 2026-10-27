@@ -643,6 +643,7 @@ export async function dispatchNativeWorker(input: {
       vars,
       projectVars: input.projectVars,
       environment: prepared.launch.environment,
+      record: (name, detail, outcome) => input.emit?.('dispatch.step', { name, detail, outcome }),
       assertCurrent: input.assertCurrent,
     });
   }

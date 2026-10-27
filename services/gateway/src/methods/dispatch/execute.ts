@@ -18,6 +18,7 @@ import {
   type PressureOverrideAudit,
   primaryRoleForFlow,
   type ReviewSessionTrace,
+  type SubStepRecord,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
@@ -1074,7 +1075,8 @@ export async function dispatchExecute(
   }
   if (!existsSync(taskFilePath)) throw new Error(`Task file not found: ${taskFilePath}`);
 
-  const step = (name: string, detail: string) => emit('dispatch.step', { name, detail });
+  const step = (name: string, detail: string, outcome?: SubStepRecord['outcome']) =>
+    emit('dispatch.step', { name, detail, ...(outcome ? { outcome } : {}) });
 
   // Parse task file for metadata
   const taskContent = await readFile(taskFilePath, 'utf-8');

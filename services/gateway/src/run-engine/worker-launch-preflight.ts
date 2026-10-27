@@ -2,7 +2,13 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import { isRecord, Methods, PROTOCOL_VERSION, type Run } from '@farmslot/protocol';
+import {
+  isRecord,
+  Methods,
+  PROTOCOL_VERSION,
+  type Run,
+  type SubStepRecord,
+} from '@farmslot/protocol';
 import { currentProjectSources } from '@farmslot/slot-config';
 
 import {
@@ -82,7 +88,7 @@ export interface WorkerLaunchPreflightInput {
   vars: SlotVars;
   projectVars?: ProjectVars;
   assertCurrent?: () => void;
-  record?: (name: string, detail: string) => void;
+  record?: (name: string, detail: string, outcome: SubStepRecord['outcome']) => void;
   wrapCommand?: (command: string) => string;
   environment?: { set: Record<string, string>; unset: string[] };
 }
@@ -177,6 +183,7 @@ export async function admitWorkerLaunch(
       } satisfies LaunchProbeResult;
     return result.stdout;
   };
+  const probeDetails = new Map<string, string>();
   await runLaunchPreflight(
     [
       {
@@ -256,12 +263,22 @@ export async function admitWorkerLaunch(
       assertCurrent,
       record: (name, result, attempts, elapsedMs) => {
         const detail = `${input.vars.slotId} ${result.status}: ${result.detail} [attempts=${attempts}, elapsed=${Math.round(elapsedMs)}ms]`;
-        input.record?.(`preflight-${name}`, detail);
+        const probeName = `preflight-${name}`;
+        probeDetails.set(probeName, detail);
+        input.record?.(
+          probeName,
+          detail,
+          result.status === 'verified' ? 'ok' : result.status === 'mismatch' ? 'failed' : 'skipped',
+        );
         if (input.runId) {
           const current = getRun(input.runId);
-          const active = current?.steps.find((step) => step.status === 'running');
+          const active =
+            current?.steps.find((step) => step.status === 'running') ??
+            current?.steps.find((step) => step.name === 'dispatch');
           if (active)
-            updateRunStep(input.runId, active.name, { detail: `preflight-${name}: ${detail}` });
+            updateRunStep(input.runId, active.name, {
+              detail: [...probeDetails].map(([probe, value]) => `${probe}: ${value}`).join('\n'),
+            });
         }
       },
     },
