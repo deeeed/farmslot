@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Check admitted source bytes, declared launch toolchains and unsettled prior cleanup before starting workers. Retry slow probes with measured budgets and report unavailable observations as unverified.
 - Bound concurrent local workspace fingerprints and start each command deadline after admission, so full-fleet reads do not cancel local inspections before they finish.
 
 - Complete artifact-only comparison trials from their retained evidence without requiring an output-review decision, and recognize completed scripted commands in their flow-owned worker role.

@@ -786,3 +786,63 @@ beside an evidence-policy gap.
   and published disclosures. Harnesses inherit the gateway checks and gain no
   authority to create either person receipt. Publish changed SDK and shared-view
   packages in a coordinated release; no native-runtime change is required.
+
+## Amendment 11: verify launch prerequisites before starting a worker, 2026-10-27
+
+**Status:** Accepted by the lead on 2026-10-27. The measured budget revision
+passed paired delta review before implementation in [#1509](https://github.com/deeeed/farmslot/pull/1509).
+**Specification:** [Worker launch preflight](../reference/fail-closed-run-lifecycle.md#worker-launch-preflight).
+
+### Decision
+
+The existing dispatch owner checks the chosen execution context before every
+worker launch, including a replay that starts a worker. Check exactly three
+things: selected pack and skills bytes plus CLI/protocol compatibility, the
+slot's actual declared toolchains, and leases or sessions from the run's prior
+attempt. A leftover excludes resources assigned to this replay by an accepted
+retention contract. Preserve ADR-054's cancel replay hold, refused-completion
+retention and review-fix reattachment. Replay releases only its remaining
+leftovers through existing cleanup before launch. Foreign resources and needed
+reviews remain protected. Reattachment through `run.resume` alone starts no
+worker and is not a new launch trigger.
+
+Bind observations to the current run generation, slot, source selection and
+launch shell. Recheck those identities before launch. An observed mismatch or
+unreleased leftover refuses launch with the check, observed and expected values,
+and the supported correction. A timeout is not evidence of a mismatch. Wait and
+retry that probe once; if still unavailable, record it as unverified and allow
+launch through existing admission fences. Never label an unverified probe passed.
+
+Each probe has its own budget, derived from measured p95 plus margin. Measure
+three executions per probe on a loaded execution host and a remote host,
+including launch-shell and transport costs, and retain p50/p95 in the shipping
+PR. Use the larger host p95, rounded up after adding the greater of that p95 or
+five seconds. The retry uses the same budget and waits one measured p95 first.
+Cleanup retains its own configured budget; the check must not shorten it or
+report unfinished cleanup as success.
+
+Use the current lifecycle owner, source receipts, toolchain probes and resource
+registries. Do not add a daemon, selector writer, alternative cleanup owner or
+client-specific policy. Preflight never repairs sources, toolchains or fixtures.
+Wallet and fixture state are outside these checks.
+
+### Rationale and consequences
+
+A task should discover launch prerequisites before consuming worker time.
+Checking the shell that starts the worker catches a valid configured binary
+whose Yarn child still resolves another runtime. Checking bound source receipts
+avoids advancing a retained run to current source merely to inspect it. The
+observed refusal gives an operator a correction. Slowness alone does not create
+a new blocker or interrupt needed reviews.
+
+### Public surface
+
+`run.create` through `farmslot run` and `run.replayStep` through `farmslot rpc`
+inherit the shared launch check. `run.resume` through `farmslot run resume`
+checks only if it reaches a new worker launch. Synchronous callers receive a
+command error; deferred failures use existing run events, `Run.error` and
+`RunStep.detail`. Command Center and Companion consume the protocol's existing
+`runStepDisplayDetail`; the CLI reads the same run records. No new command, flag,
+SDK export, package contract or harness hook is proposed. Harnesses inherit launch admission
+and keep their existing setup commands. Implementation is tracked in #1509; no
+public package contract or release is added.

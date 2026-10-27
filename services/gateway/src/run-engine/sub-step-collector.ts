@@ -1,4 +1,4 @@
-import type { SubStepRecord } from '@farmslot/protocol';
+import { isRecord, type SubStepRecord } from '@farmslot/protocol';
 
 export interface SubStepCollector {
   emit: (event: string, payload: unknown) => void;
@@ -9,20 +9,27 @@ export interface SubStepCollector {
 
 export function createSubStepCollector(): SubStepCollector {
   const records: SubStepRecord[] = [];
-  let current: { name: string; start: number; detail?: string } | null = null;
+  let current: {
+    name: string;
+    start: number;
+    detail?: string;
+    outcome?: SubStepRecord['outcome'];
+  } | null = null;
   const outputLines: string[] = [];
   const MAX_OUTPUT_LINES = 30;
 
   return {
     emit: (event: string, payload: unknown) => {
-      const p = payload as
-        | { name?: string; detail?: string; stream?: string; data?: string }
-        | undefined;
+      const p = isRecord(payload) ? payload : undefined;
       // Only the raw output channel (`script.output`) feeds the ring buffer.
       // Key on the event NAME, not payload shape, so a sibling event that
       // happens to carry a `{stream, data}` payload is never recorded as an
       // output line: one emitted line = one record.
-      if (event === 'script.output' && p?.stream && p?.data) {
+      if (
+        event === 'script.output' &&
+        typeof p?.stream === 'string' &&
+        typeof p?.data === 'string'
+      ) {
         // Output stream event — capture lines into ring buffer
         const lines = p.data.split('\n');
         for (const line of lines) {
@@ -32,27 +39,33 @@ export function createSubStepCollector(): SubStepCollector {
         }
         return;
       }
-      const name = p?.name;
+      const name = typeof p?.name === 'string' ? p.name : undefined;
+      const detail = typeof p?.detail === 'string' ? p.detail : undefined;
+      const outcome =
+        p?.outcome === 'ok' || p?.outcome === 'skipped' || p?.outcome === 'failed'
+          ? p.outcome
+          : undefined;
       if (!name) return;
       if (current && current.name !== name) {
         records.push({
           name: current.name,
-          outcome: 'ok',
+          outcome: current.outcome ?? 'ok',
           durationMs: Date.now() - current.start,
           ...(current.detail ? { detail: current.detail } : {}),
         });
       }
       if (!current || current.name !== name) {
-        current = { name, start: Date.now(), detail: p?.detail };
-      } else if (p?.detail) {
-        current.detail = p.detail;
+        current = { name, start: Date.now(), detail, outcome };
+      } else {
+        if (detail) current.detail = detail;
+        if (outcome) current.outcome = outcome;
       }
     },
     finish: () => {
       if (current) {
         records.push({
           name: current.name,
-          outcome: 'ok',
+          outcome: current.outcome ?? 'ok',
           durationMs: Date.now() - current.start,
           ...(current.detail ? { detail: current.detail } : {}),
         });
@@ -65,7 +78,7 @@ export function createSubStepCollector(): SubStepCollector {
       if (current)
         snap.push({
           name: current.name,
-          outcome: 'ok',
+          outcome: current.outcome ?? 'ok',
           durationMs: Date.now() - current.start,
           ...(current.detail ? { detail: current.detail } : {}),
         });
