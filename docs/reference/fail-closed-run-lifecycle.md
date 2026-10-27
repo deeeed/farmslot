@@ -751,3 +751,71 @@ links elsewhere MUST survive unchanged; an edited or unproven farm marker MUST
 refuse. Assert original receipts, packages, QA and execution state remain
 unchanged. Use a fixture person for adoption setup, never a real person's
 credential held by automation.
+
+## Worker launch preflight
+
+**Status:** Proposed under ADR-065 Amendment 11. This section does not authorize
+implementation or activation.
+
+### Admission point and binding
+
+The existing worker-launch owner MUST run preflight before every dispatch and
+before every replay path that starts or resumes a worker. Replay MUST first
+release that run's prior-attempt leftovers through the canonical lifecycle
+owner. Preflight MUST NOT add a second cleanup path. Paths that only read or
+reconcile an existing result MUST NOT launch a worker to perform this check.
+
+Bind the check to run id, generation, chosen slot, admitted source identity and
+actual launch environment. Recheck the binding after asynchronous probes and
+immediately before starting the worker. Cancellation, pause, replay, a changed
+owner or changed launch inputs MUST prevent an obsolete check from launching.
+A pass MUST NOT be reused for another launch or generation.
+
+### Exactly three checks
+
+1. **Code drift.** Verify the chosen node's selected pack templates and skills
+   against the source identities bound by the gateway for this launch. Verify
+   that the actual selected worker CLI and protocol versions match the gateway's
+   required versions. Read verified receipts and relevant bytes through their
+   existing owners. Never select current main, advance a marker, materialize a
+   replacement selection or rewrite a retained pin as an observation.
+2. **Toolchain.** In the chosen slot, use the worker's launch shell and wrappers
+   to observe Node, Yarn and Yarn's child Node, plus Ruby when the pack declares
+   it. Compare with the product checkout's `.nvmrc` and `engines`, and declared
+   pack pins. An override naming a valid binary does not establish which
+   runtime Yarn or the worker actually runs. Conflicting declarations, missing
+   required tools and unavailable observations MUST refuse. An undeclared Ruby
+   requirement MUST NOT be invented. Probes MUST NOT install tools, change
+   defaults, edit tracked files or mutate managed fixtures.
+3. **Prior-attempt leftovers.** Inspect existing lease and session registries
+   using run and attempt ownership. Any remaining resource from this run's
+   prior attempt MUST prevent launch until canonical replay cleanup settles.
+   Preserve foreign owners and reviews admitted for the current attempt. Mere
+   process existence does not prove that a session is a leftover. Unknown
+   ownership MUST refuse with a diagnosis rather than terminate a process.
+
+### Cost and failure
+
+Read-only checks, including remote probes and waiting for an existing cleanup
+result, MUST finish within ten seconds total. Probe budgets MUST NOT become
+cleanup command budgets. Existing cleanup keeps its configured timeout and
+ownership fences. If it remains unsettled, refuse promptly as cleanup pending;
+never cancel it, start competing cleanup or launch a worker optimistically.
+
+A refusal MUST identify the failed check, slot or node, observed and expected
+values, and the exact supported correction or retry condition. Carry this in
+the existing dispatch/replay command error and run-step failure record. Do not
+invent a successful prepare, dispatch or review receipt. Preserve prior attempts
+and required reviews; correction and retry use the same run through existing
+commands. No new RPC, flag, SDK field or harness extension is proposed.
+
+### Acceptance
+
+Regression and disposable scripted dispatch proof MUST cover mismatched selected
+source bytes, CLI/protocol mismatch, a Yarn child selecting the wrong Node,
+declared Ruby mismatch, owned leftover cleanup and foreign/current-review
+preservation. Cover unavailable probes, the total budget, pending cleanup and a
+generation change before launch. Prove failed preflight creates no worker or
+fixture mutation, then correct the declared prerequisite through its supported
+owner and retry the same run. The successful path MUST reach real dispatch and
+be cancelled and archived. Wallet and fixture validity remain outside scope.

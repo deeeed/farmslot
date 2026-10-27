@@ -786,3 +786,48 @@ beside an evidence-policy gap.
   and published disclosures. Harnesses inherit the gateway checks and gain no
   authority to create either person receipt. Publish changed SDK and shared-view
   packages in a coordinated release; no native-runtime change is required.
+
+## Amendment 11: verify launch prerequisites before starting a worker, 2026-10-27
+
+**Status:** Proposed. Implementation requires lead approval after paired review.
+**Specification:** [Worker launch preflight](../reference/fail-closed-run-lifecycle.md#worker-launch-preflight).
+
+### Decision
+
+The existing dispatch owner checks the chosen execution context before every
+worker launch, including a replay that starts a worker. Check exactly three
+things: selected pack and skills bytes plus CLI/protocol compatibility, the
+slot's actual declared toolchains, and leases or sessions from the run's prior
+attempt. Replay releases its own leftovers through existing lifecycle cleanup
+before launching again. Never release another run's resources or a current
+admitted review.
+
+Bind observations to the current run generation, slot, source selection and
+launch shell. Recheck those identities before launch. A mismatch, unavailable
+probe or pending cleanup refuses the launch with the failed check, observed and
+expected values, and the exact supported correction. Read-only inspection has a
+ten-second total budget. Cleanup retains its own configured budget; the check
+must not shorten it or report unfinished cleanup as success.
+
+Use the current lifecycle owner, source receipts, toolchain probes and resource
+registries. Do not add a daemon, selector writer, alternative cleanup owner or
+client-specific policy. Preflight never repairs sources, toolchains or fixtures.
+Wallet and fixture state are outside these checks.
+
+### Rationale and consequences
+
+A task should discover launch prerequisites before consuming worker time.
+Checking the shell that starts the worker catches a valid configured binary
+whose Yarn child still resolves another runtime. Checking bound source receipts
+avoids advancing a retained run to current source merely to inspect it. The
+bounded refusal gives an operator a correction without bypassing admission or
+interrupting needed reviews.
+
+### Public surface
+
+Existing dispatch and replay RPCs and CLI commands inherit this check. The
+existing run-step failure and command error carry its diagnosis; Command Center,
+Companion and the CLI display that same result. No new command, flag, SDK export,
+package contract or harness hook is proposed. Harnesses inherit launch admission
+and keep their existing setup commands. A future implementation records its PR
+and any required owning-package release separately.
