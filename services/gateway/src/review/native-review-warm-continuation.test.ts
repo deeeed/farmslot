@@ -155,6 +155,7 @@ mock.module('../runners/native/worker.js', {
 });
 mock.module('../runners/native/worker-control.js', {
   namedExports: {
+    readNativeWorkerCommandError: async () => undefined,
     readNativeWorkerSnapshot: async () => ({
       session: { state: commandFailed ? 'idle' : 'running', processStopped: !commandFailed },
       commands: [

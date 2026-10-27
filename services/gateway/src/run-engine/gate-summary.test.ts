@@ -763,3 +763,24 @@ test('retrospective read projection refreshes stale outcome and zero-turn snapsh
     'partial',
   );
 });
+
+test('a later reviewer failure cannot replace the captured primary worker outcome at the gate', () => {
+  const run = makeRun({
+    metrics: metrics({ outcome: 'failure', disposition: 'fixed', sessionTurns: 483 }),
+    steps: [{ name: 'monitor', status: 'done' }],
+    engineState: { publishGate: { reviews: [passingReview] } },
+  });
+  const monitor = run.steps.find((step) => step.name === 'monitor')!;
+  monitor.status = 'done';
+  for (const outcome of ['success', 'failure', 'partial', 'cancelled'] as const) {
+    monitor.outputs = { workerSignal: { status: 'complete', outcome } };
+    const summary = buildGateSummary(run, 'publication');
+    assert.equal(summary.worker.outcome, outcome);
+    assert.ok(summary.headline?.startsWith(`Worker ${outcome} in 483 turns`));
+    assert.equal(run.metrics.outcome, 'failure', 'Keep the separate pipeline outcome unchanged');
+  }
+  for (const outputs of [undefined, { workerSignal: { outcome: 'unknown' } }]) {
+    monitor.outputs = outputs;
+    assert.equal(buildGateSummary(run, 'publication').worker.outcome, 'failure');
+  }
+});

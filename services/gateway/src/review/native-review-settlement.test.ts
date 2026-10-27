@@ -18,6 +18,7 @@ const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
 
 type Ending =
   | 'command-failed'
+  | 'command-error'
   | 'timeout'
   | 'exit'
   | 'incomplete'
@@ -32,6 +33,7 @@ type Ending =
   | 'accepted-start'
   | 'inactive'
   | 'completion-turn'
+  | 'completion-provider-error'
   | 'completion-unfinished'
   | 'completion-live'
   | 'completion-restart'
@@ -104,6 +106,7 @@ mock.module('../run-engine/run-monitor.js', {
         const context = getRun(runId)!.agentContexts?.find((entry) => entry.role === 'review');
         if (
           ending !== 'completion-unfinished' &&
+          ending !== 'completion-provider-error' &&
           ending !== 'completion-interrupted' &&
           ending !== 'completion-closed-restart' &&
           context?.nativeSession?.commandId !== binding.commandId
@@ -142,6 +145,12 @@ mock.module('../run-engine/run-monitor.js', {
           },
         };
       }
+      if (ending === 'command-error')
+        return {
+          ok: false,
+          code: 'non_terminal',
+          signal: { status: 'running', timestamp: new Date().toISOString() },
+        };
       return ending === 'timeout' || ending === 'exit' || ending === 'command-failed'
         ? { ok: false, code: 'missing', message: 'no signal' }
         : { ok: true };
@@ -199,6 +208,14 @@ mock.module('../runners/native/worker.js', {
 });
 mock.module('../runners/native/worker-control.js', {
   namedExports: {
+    readNativeWorkerCommandError: async () =>
+      ending === 'completion-provider-error'
+        ? new Error('Provider refused the completion command')
+        : ending === 'command-error'
+          ? new Error('Provider refused this request: cybersecurity policy')
+          : ['completion-turn', 'completion-restart'].includes(ending)
+            ? new Error('Provider turn ended after writing valid findings')
+            : undefined,
     readNativeWorkerSnapshot: async (
       _runId: string,
       _role: string,
@@ -227,15 +244,19 @@ mock.module('../runners/native/worker-control.js', {
               generation: current.nativeSession!.generation,
               accepted: true,
               state:
-                continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
-                  ? 'completed'
-                  : 'failed',
-              outcome:
-                continued && ending === 'completion-interrupted'
-                  ? 'interrupted'
+                continued && ending === 'completion-provider-error'
+                  ? 'failed'
                   : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
                     ? 'completed'
                     : 'failed',
+              outcome:
+                continued && ending === 'completion-provider-error'
+                  ? 'failed'
+                  : continued && ending === 'completion-interrupted'
+                    ? 'interrupted'
+                    : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                      ? 'completed'
+                      : 'failed',
             },
           ],
           events: completionActivityPages?.[history?.after ?? 0] ?? [],
@@ -284,22 +305,22 @@ mock.module('../runners/native/worker-control.js', {
         session:
           ending === 'exit'
             ? { state: 'closed', processStopped: true, error: 'reviewer process exited' }
-            : { state: 'running', processStopped: false },
-        commands:
-          ending === 'command-failed'
-            ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed' }]
-            : ending === 'timeout' || ending === 'exit'
-              ? []
-              : [
-                  {
-                    commandId: binding.commandId,
-                    generation: binding.generation,
-                    accepted: true,
-                    state: 'completed',
-                    outcome: 'completed',
-                  },
-                ],
+            : { state: ending === 'command-error' ? 'idle' : 'running', processStopped: false },
+        commands: ['command-failed', 'command-error'].includes(ending)
+          ? [{ commandId: binding.commandId, state: 'failed', outcome: 'failed', accepted: true }]
+          : ending === 'timeout' || ending === 'exit'
+            ? []
+            : [
+                {
+                  commandId: binding.commandId,
+                  generation: binding.generation,
+                  accepted: true,
+                  state: 'completed',
+                  outcome: 'completed',
+                },
+              ],
         events: [],
+        pendingRequests: [],
         cursor: 0,
         hasMore: false,
       };
@@ -378,7 +399,7 @@ mock.module('./feedback.js', {
             incomplete: true,
             terminalInvalidReason: 'invalid scoped review result',
           }
-        : ending === 'incomplete'
+        : ['incomplete', 'command-error'].includes(ending)
           ? { verdict: 'pass', issues: [], incomplete: true }
           : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] },
   },
@@ -875,3 +896,32 @@ test('an unconfirmed failed-command stop keeps the round reserved until cleanup 
   assert.equal(getRun(run.id)!.reviewRoundSettlements, undefined);
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
 });
+
+test('a failed native turn reports its provider refusal without a completion retry', async (t) => {
+  ending = 'command-error';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  const before = dispatchCalls;
+  await assert.rejects(review(run.id), /Provider refused this request: cybersecurity policy/);
+  assert.equal(dispatchCalls - before, 1);
+  assert.equal(completionCommands.length, 0);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.equal(context.status, 'failed');
+  assert.ok(stopped.includes(context.id));
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 0);
+});
+
+for (const restart of [false, true]) {
+  test(`a failed completion command retains its provider cause ${restart ? 'after restart' : 'live'}`, async (t) => {
+    ending = 'completion-provider-error';
+    completionCommands.length = 0;
+    completionLaunches = 0;
+    loseCompletionReply = restart;
+    const run = await nativeRun(t);
+    if (restart) await assert.rejects(review(run.id), /completion reply lost/);
+    await assert.rejects(review(run.id), /Provider refused the completion command/);
+    assert.equal(new Set(completionCommands).size, 1);
+    assert.equal(completionLaunches, 1);
+    assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 0);
+  });
+}

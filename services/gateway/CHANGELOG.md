@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Retain exact worker panes before transcripts appear and refresh resumed reviewer session bindings so finished work does not strand slots.
 - Reopen browsers through the selected pack's rendered launcher and current pool environment, preserving saved wrappers when deployment or library roots change.
+- Preserve native reviewer failure diagnostics, including restart recovery, and keep later pipeline failures out of the primary worker's gate outcome.
 
 - Let loaded nodes finish retaining task tooling within the measured task-initialization budget.
 
