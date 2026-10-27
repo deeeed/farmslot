@@ -329,11 +329,14 @@ async function recordFrames(target, label) {
     };
     if (frame.type === 'req') row.params = summarizeParams(frame.params);
     if (frame.type === 'res' && Array.isArray(frame.payload?.entries))
-      row.entries = frame.payload.entries.map(({ path: file, status, id, size }) => ({
+      // Content presence stays: a held or too-large entry must never carry bytes.
+      row.entries = frame.payload.entries.map(({ path: file, status, id, size, content }) => ({
         path: file,
         status,
         id,
         size,
+        hasContent: content !== undefined,
+        contentLength: content?.length ?? 0,
       }));
     rows.push(row);
   });
@@ -534,65 +537,79 @@ assert(newFile.present && newFile.blobHash === newFileId, 'Its new side is held 
 assert(!slotDiff.includes('.env'), 'The held diff never names the ignored file');
 assert.deepEqual(scanned.store.hits, [], 'No stored row or held byte carries the ignored file');
 
-// ── 3. Fix loop: a new package transfers only the new diff and bases not already held ──
-const loopStart = Date.now();
-await checkpoint('fix-loop');
-const secondRefresh = await rpc('run.refreshPublishPackage', {
-  runId: gate.runId,
-  decisionId: gate.decisionId,
+// Size eligibility comes from the fixture's own blobs, independent of what the gateway reports:
+// a side is prefetched when it is at most 1 MiB and holds no NUL byte (Content rule 4).
+const FILE_CAP = 1024 * 1024;
+const fixtureBlob = async (id) =>
+  (
+    await execute('git', ['-C', gate.repo, 'cat-file', 'blob', id], {
+      encoding: 'buffer',
+      maxBuffer: 16 * 1024 * 1024,
+    })
+  ).stdout;
+const blobFacts = (id, data) => ({
+  id,
+  bytes: data.length,
+  binary: data.includes(0),
+  eligible: data.length <= FILE_CAP && !data.includes(0),
 });
-const secondPackage = pendingPackage((await rpc('run.get', { runId: gate.runId })).run);
-assert.notEqual(secondPackage.id, firstPackage.id);
-assert.notEqual(secondPackage.reviewSnapshot.diffHash, firstPackage.reviewSnapshot.diffHash);
-await until(
-  (value) => gateHeld(value, secondPackage.reviewSnapshot.diffHash),
-  'The new package diff is held',
-  A,
-  { timeout: 120000, interval: 1000 },
-);
-await delay(4000);
-const loopEnd = Date.now();
-const loopRows = ownerFrames.rows.filter((row) => row.wall >= loopStart && row.wall <= loopEnd);
-const loop = {
-  refreshed: secondRefresh.packageId,
-  packageId: secondPackage.id,
-  diffHash: secondPackage.reviewSnapshot.diffHash,
-  diffPath: secondPackage.reviewSnapshot.diffPath,
-  gate: runTransfer(ownerFrames.rows, gate.runId, loopStart, loopEnd),
-  window: {
-    receivedBytes: sumBytes(loopRows.filter((row) => row.kind === 'ws' && row.dir === 'received')),
-    sentBytes: sumBytes(loopRows.filter((row) => row.kind === 'ws' && row.dir === 'sent')),
-    httpBytes: sumBytes(loopRows.filter((row) => row.kind === 'http')),
-    events: loopRows.filter((row) => row.type === 'event').map((row) => row.event),
-    otherReads: loopRows
-      .filter((row) => row.type === 'req' && readRun(row, { checks: true }) !== gate.runId)
-      .map((row) => row.method),
-  },
-};
-evidence.fixLoop = loop;
-await save('fix-loop', loop);
-const loopHttp = loop.gate.reads.filter((read) => read.http);
-const loopShow = loop.gate.reads.filter((read) => read.method === 'git.show');
-const statuses = loopShow.flatMap((read) => read.entries ?? []);
-assert.deepEqual(
-  loopHttp.map((read) => [read.http, read.status]),
-  [[secondPackage.reviewSnapshot.diffPath, 200]],
-  'Only the new diff is read over HTTP',
-);
-assert(loopShow.length >= 1 && loopShow.every((read) => read.have?.length));
-assert(statuses.some((entry) => entry.status === 'held'));
-assert(
-  statuses.every((entry) => entry.status === 'held' || entry.status === 'too-large'),
-  'No held base is sent again',
-);
-claims.gateReviewFixLoopBytes = true;
+/** Every side of every file the package touches, with its real id and the fixture's facts. */
+async function packageSides(text, untrackedFiles) {
+  const manifest = new Map((untrackedFiles ?? []).map((file) => [file.path, file.blobSha]));
+  const touched = parseDiff(text);
+  for (const [file, blobSha] of manifest)
+    if (!touched.some((entry) => entry.newPath === file))
+      touched.push({ newPath: file, added: true, newId: blobSha });
+  const sides = [];
+  for (const file of touched) {
+    const side = { path: file.newPath, diffMarksBinary: file.binary };
+    if (!file.added) side.base = blobFacts(file.oldId, await fixtureBlob(file.oldId));
+    if (!file.deleted) {
+      const id = manifest.get(file.newPath) ?? file.newId;
+      // An untracked file is not in the object database; read it from the slot worktree.
+      const data = manifest.has(file.newPath)
+        ? await readFile(path.join(gate.repo, file.newPath))
+        : await fixtureBlob(id);
+      side.next = blobFacts(id, data);
+    }
+    sides.push(side);
+  }
+  return sides;
+}
+/** Each eligible side is held under its own id with matching bytes; no other side is held. */
+async function checkHeldSides(sides, label) {
+  const keys = sides.flatMap((file) =>
+    [file.base, file.next].filter(Boolean).map(({ id }) => ({ kind: 'blob', id })),
+  );
+  const verified = (await inspect(A, { content: keys })).store.verified;
+  const checked = sides.map((file) => ({
+    ...file,
+    ...Object.fromEntries(
+      ['base', 'next']
+        .filter((side) => file[side])
+        .map((side) => {
+          const stored = verified.find((entry) => entry.id === file[side].id);
+          return [side, { ...file[side], held: stored.present, stored }];
+        }),
+    ),
+  }));
+  for (const file of checked)
+    for (const side of [file.base, file.next].filter(Boolean)) {
+      if (side.eligible)
+        assert(
+          side.held && side.stored.blobHash === side.id,
+          `${label}: ${file.path} ${side.id} is held by id`,
+        );
+      else assert.equal(side.held, false, `${label}: ${file.path} ${side.id} is not prefetched`);
+    }
+  return checked;
+}
 
-// ── 4. Gate diff open: five samples with nothing held, five after prefetch ──
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+/** Five gate diff opens, each on a new document so nothing is in memory. */
 async function measure(target, viewer, persistent, connected = true) {
   const samples = [];
   for (let index = 0; index < 5; index++) {
-    // Each sample is a new document, so nothing is in memory; only the owner's store holds data.
     await navigate(target, url(`${viewer}-${index}`, '#runs'));
     await until(
       (value) =>
@@ -624,35 +641,38 @@ async function measure(target, viewer, persistent, connected = true) {
     medianArtifactBytes: median(samples.map((sample) => sample.artifactBytes)),
   };
 }
-const B = await openWindow('fresh', '#runs', { left: 900, top: 39, width: 900, height: 1040 });
-const fresh = await until((value) => value.connection === 'connected', 'Second viewer', B, {
-  timeout: 60000,
-});
-assert.equal(fresh.persistent, false, 'The second viewer holds nothing and never prefetches');
-const nothingHeld = await measure(B, 'fresh', false);
-await devtools((call) => call('Target.closeTarget', { targetId: B.slice(1) }));
-await ownTabs([config.tabId]);
-const afterPrefetch = await measure(A, 'owner-measure', true);
-evidence.measurements = { nothingHeld, afterPrefetch };
-await save('gate-open-measurements', evidence.measurements);
-assert.equal(nothingHeld.samples.length + afterPrefetch.samples.length, 10);
-claims.gateReviewDiffMeasured = true;
 
-// ── 5. Gate offline: details, diff and evidence render; both sides proven from the store ──
-const held = await inspect(A, {
-  content: [{ kind: 'diff', id: secondPackage.reviewSnapshot.diffHash }],
+// ── 3. Gate offline on the untouched prefetch store: no connected gate open has happened yet ──
+const firstHeldDiff = await inspect(A, {
+  content: [{ kind: 'diff', id: firstPackage.reviewSnapshot.diffHash }],
   withText: true,
 });
-const touched = parseDiff(held.store.verified[0].text);
-const manifest = new Map(
-  (secondPackage.reviewSnapshot.untrackedFiles ?? []).map((file) => [file.path, file.blobSha]),
+const firstSides = await packageSides(
+  firstHeldDiff.store.verified[0].text,
+  firstPackage.reviewSnapshot.untrackedFiles,
 );
-// Bases the gateway answered `too-large` are over the content cap and load when opened.
-const overCap = new Set(
-  ownerFrames.rows.flatMap((row) =>
-    (row.entries ?? []).filter((entry) => entry.status === 'too-large').map((entry) => entry.path),
-  ),
+const sideList = (sides) => sides.flatMap((file) => [file.base, file.next].filter(Boolean));
+assert(
+  sideList(firstSides).some((side) => side.binary),
+  'The package touches a binary file',
 );
+assert(
+  sideList(firstSides).some((side) => !side.binary && side.bytes > FILE_CAP),
+  'The package touches an over-cap file',
+);
+// Every gate row the offline view needs, as prefetch left it: no connected open has written any.
+const gateRows = (store) =>
+  [
+    ['diff', firstPackage.reviewSnapshot.diffHash],
+    ...images.map((entry) => ['artifact', entry.sha256]),
+    ...sideList(firstSides)
+      .filter((side) => side.eligible)
+      .map((side) => ['blob', side.id]),
+  ].map(([kind, id]) => {
+    const row = store.content.find((entry) => entry.kind === kind && entry.id === id);
+    return { kind, id, origin: row?.origin, cohort: row?.cohort };
+  });
+const prefetchedRows = gateRows((await inspect(A, {})).store);
 await checkpoint('cold-outage');
 await until((value) => value.connection !== 'connected', 'Gateway gone', A);
 const offlineFrames = await recordFrames(A, 'offline');
@@ -664,7 +684,8 @@ const offlineDiff = await until(
   (value) =>
     value.connection !== 'connected' &&
     value.persistent &&
-    value.gate?.diffTable &&
+    value.gate?.header &&
+    value.gate.diffTable &&
     value.gate.tabs.some((tab) => tab.label.startsWith('Evidence')),
   'The gate details and package diff render offline',
   A,
@@ -688,61 +709,126 @@ const offlineEvidence = await until(
   { timeout: 60000 },
 );
 await image('offline-evidence', A);
-const keys = [];
-for (const file of touched) {
-  if (file.binary) continue;
-  if (!file.added) keys.push({ kind: 'blob', id: file.oldId });
-  if (!file.deleted) keys.push({ kind: 'blob', id: manifest.get(file.newPath) ?? file.newId });
-}
-for (const blobSha of manifest.values()) keys.push({ kind: 'blob', id: blobSha });
-const verified = (await inspect(A, { content: keys })).store.verified;
-const find = (id) => verified.find((entry) => entry.id === id);
-const sides = touched.map((file) => ({
-  ...file,
-  eligible: !file.binary && !overCap.has(file.oldPath),
-  base: file.binary || file.added ? undefined : find(file.oldId),
-  next: file.binary || file.deleted ? undefined : find(manifest.get(file.newPath) ?? file.newId),
-}));
-for (const [file, blobSha] of manifest)
-  if (!touched.some((entry) => entry.newPath === file))
-    sides.push({ newPath: file, added: true, eligible: true, next: find(blobSha) });
+const offlineSides = await checkHeldSides(firstSides, 'Offline');
+const offlineRowsAfterOpen = gateRows((await inspect(A, {})).store);
+// The gateway's own `too-large` answers agree with the fixture's over-cap bases.
+const tooLarge = ownerFrames.rows.flatMap((row) =>
+  (row.entries ?? []).filter((entry) => entry.status === 'too-large').map((entry) => entry.id),
+);
 // The same open with the gateway stopped: five new documents, each rendering from held content.
 const offlineHeld = await measure(A, 'owner-offline-measure', true, false);
-evidence.measurements.offlineHeld = offlineHeld;
-await save('gate-open-measurements', evidence.measurements);
-assert(offlineHeld.samples.every((sample) => sample.method === 'local' && sample.totalBytes === 0));
 const offlineRows = await offlineFrames.stop();
 await save('offline-gate', {
   offlineDiff,
   offlineEvidence,
-  overCap: [...overCap],
-  sides,
+  sides: offlineSides,
+  gateRows: { prefetched: prefetchedRows, afterOfflineOpen: offlineRowsAfterOpen },
+  tooLarge,
   offlineSentFrames: offlineRows.filter((row) => row.dir === 'sent').length,
 });
 assert(
-  sides.some((file) => file.binary),
-  'The package includes a binary file',
+  prefetchedRows.every((row) => row.origin === 'prefetch' && row.cohort === 'gate'),
+  'Every gate row the offline view uses was written by prefetch',
 );
 assert(
-  sides.some((file) => !file.binary && !file.eligible),
-  'The package includes an over-cap file',
+  tooLarge.every((id) =>
+    sideList(firstSides).some((side) => side.id === id && side.bytes > FILE_CAP),
+  ),
 );
-for (const file of sides.filter((entry) => entry.eligible)) {
-  if (!file.added)
-    assert(file.base?.present && file.base.blobHash === file.base.id, `Base of ${file.oldPath}`);
-  if (!file.deleted)
-    assert(file.next?.present && file.next.blobHash === file.next.id, `New ${file.newPath}`);
-}
-for (const file of sides.filter((entry) => !entry.eligible))
-  assert(!file.base?.present && !file.next?.present, `${file.newPath} loads when opened`);
+assert(offlineHeld.samples.every((sample) => sample.method === 'local' && sample.totalBytes === 0));
 assert.equal(offlineRows.filter((row) => row.dir === 'sent').length, 0);
 claims.gateReviewOffline = true;
 claims.gateReviewBothSides = true;
 
-// ── 6. Recovery ──
+// ── 4. Recovery ──
 await checkpoint('cold-recovery');
 await navigate(A, url('owner', '#runs'));
 await until((value) => value.connection === 'connected', 'Owner reconnects', A, {
+  timeout: 60000,
+});
+
+// ── 5. Fix loop: a new package transfers only the new diff and bases not already held ──
+const loopStart = Date.now();
+await checkpoint('fix-loop');
+const secondRefresh = await rpc('run.refreshPublishPackage', {
+  runId: gate.runId,
+  decisionId: gate.decisionId,
+});
+const secondPackage = pendingPackage((await rpc('run.get', { runId: gate.runId })).run);
+assert.notEqual(secondPackage.id, firstPackage.id);
+assert.notEqual(secondPackage.reviewSnapshot.diffHash, firstPackage.reviewSnapshot.diffHash);
+await until(
+  (value) => gateHeld(value, secondPackage.reviewSnapshot.diffHash),
+  'The new package diff is held',
+  A,
+  { timeout: 120000, interval: 1000 },
+);
+await delay(4000);
+const loopEnd = Date.now();
+const loopRows = ownerFrames.rows.filter((row) => row.wall >= loopStart && row.wall <= loopEnd);
+const secondHeldDiff = await inspect(A, {
+  content: [{ kind: 'diff', id: secondPackage.reviewSnapshot.diffHash }],
+  withText: true,
+});
+// The changed file's new side is rebuilt locally from its held base.
+const loopSides = await checkHeldSides(
+  await packageSides(
+    secondHeldDiff.store.verified[0].text,
+    secondPackage.reviewSnapshot.untrackedFiles,
+  ),
+  'Fix loop',
+);
+const loop = {
+  refreshed: secondRefresh.packageId,
+  packageId: secondPackage.id,
+  diffHash: secondPackage.reviewSnapshot.diffHash,
+  diffPath: secondPackage.reviewSnapshot.diffPath,
+  gate: runTransfer(ownerFrames.rows, gate.runId, loopStart, loopEnd),
+  sides: loopSides,
+  window: {
+    receivedBytes: sumBytes(loopRows.filter((row) => row.kind === 'ws' && row.dir === 'received')),
+    sentBytes: sumBytes(loopRows.filter((row) => row.kind === 'ws' && row.dir === 'sent')),
+    httpBytes: sumBytes(loopRows.filter((row) => row.kind === 'http')),
+    events: loopRows.filter((row) => row.type === 'event').map((row) => row.event),
+    otherReads: loopRows
+      .filter((row) => row.type === 'req' && readRun(row, { checks: true }) !== gate.runId)
+      .map((row) => row.method),
+  },
+};
+evidence.fixLoop = loop;
+await save('fix-loop', loop);
+const loopHttp = loop.gate.reads.filter((read) => read.http);
+const loopShow = loop.gate.reads.filter((read) => read.method === 'git.show');
+const entries = loopShow.flatMap((read) => read.entries ?? []);
+assert.deepEqual(
+  loopHttp.map((read) => [read.http, read.status]),
+  [[secondPackage.reviewSnapshot.diffPath, 200]],
+  'Only the new diff is read over HTTP',
+);
+assert(loopShow.length >= 1 && loopShow.every((read) => read.have?.length));
+assert(entries.some((entry) => entry.status === 'held'));
+assert(
+  entries.every((entry) => ['held', 'too-large'].includes(entry.status) && !entry.hasContent),
+  'No held or over-cap base carries content',
+);
+claims.gateReviewFixLoopBytes = true;
+
+// ── 6. Gate diff open while connected: five samples with nothing held, five after prefetch ──
+const B = await openWindow('fresh', '#runs', { left: 900, top: 39, width: 900, height: 1040 });
+const fresh = await until((value) => value.connection === 'connected', 'Second viewer', B, {
+  timeout: 60000,
+});
+assert.equal(fresh.persistent, false, 'The second viewer holds nothing and never prefetches');
+const nothingHeld = await measure(B, 'fresh', false);
+await devtools((call) => call('Target.closeTarget', { targetId: B.slice(1) }));
+await ownTabs([config.tabId]);
+const afterPrefetch = await measure(A, 'owner-measure', true);
+evidence.measurements = { nothingHeld, afterPrefetch, offlineHeld };
+await save('gate-open-measurements', evidence.measurements);
+assert.equal(nothingHeld.samples.length + afterPrefetch.samples.length, 10);
+claims.gateReviewDiffMeasured = true;
+await navigate(A, url('owner', '#runs'));
+await until((value) => value.connection === 'connected', 'Owner back on runs', A, {
   timeout: 60000,
 });
 await ownerFrames.stop();

@@ -9,11 +9,11 @@
     },
     {
       "id": "gateReviewOffline",
-      "claim": "With the gateway stopped, a new browser runtime renders the gate's details, package diff and evidence images from the store and sends no gateway frame."
+      "claim": "Right after prefetch and before any connected gate open, a new browser runtime with the gateway stopped renders the gate's details, package diff and evidence images from rows prefetch wrote, and sends no gateway frame."
     },
     {
       "id": "gateReviewBothSides",
-      "claim": "For every size-eligible touched file the store holds the base blob by id and a new side whose git blob id matches the package diff or untracked manifest; the over-cap and binary files are not prefetched."
+      "claim": "Judged from the fixture's own blob sizes and bytes, every touched side of at most 1 MiB without NUL bytes is held under its git blob id, and both ids of the over-cap and the binary file are absent; after the fix loop the changed file's new side is held too."
     },
     {
       "id": "gateReviewUntrackedEnv",
@@ -21,7 +21,7 @@
     },
     {
       "id": "gateReviewFixLoopBytes",
-      "claim": "A new package for the same gate transfers only its new diff over HTTP, and batched git.show lists the held bases and sends none of them again."
+      "claim": "A new package for the same gate transfers only its new diff over HTTP; batched git.show lists the held bases, and every held or too-large reply entry carries no content."
     },
     {
       "id": "gateReviewDiffMeasured",

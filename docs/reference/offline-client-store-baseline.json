@@ -1076,17 +1076,17 @@
       ]
     },
     {
-      "head": "8bb523f4d644917acb964b052de085f127a3b0c7",
-      "measuredAt": "2026-10-27T03:28:58.660912+00:00",
+      "head": "bee726ff88afd4442618cae58bf77fd1c450353f",
+      "measuredAt": "2026-10-27T03:53:35.038019+00:00",
       "client": "command-center-browser",
       "method": "apps/command-center/scripts/cdp.mjs baseline <tab> gate '#run/<gate>?tab=diff' '{\"runId\":\"<gate>\"}'",
-      "case": "evidence/d10-gate-review-2",
+      "case": "evidence/d10-gate-review-3",
       "runCount": 4,
       "initialBaselineRunCount": 67,
       "gateDiffOpen": {
         "nothingHeld": {
-          "medianMs": 748,
-          "medianDiffReplyMs": 728,
+          "medianMs": 703,
+          "medianDiffReplyMs": 693,
           "medianTotalBytes": 100430,
           "medianFrameBytes": 88948,
           "medianArtifactBytes": 11482,
@@ -1094,9 +1094,9 @@
             {
               "phase": "gate",
               "method": "git.diff",
-              "elapsedMs": 641,
-              "renderedMs": 641,
-              "diffReplyMs": 631,
+              "elapsedMs": 704,
+              "renderedMs": 704,
+              "diffReplyMs": 693,
               "receivedBytes": 88948,
               "artifactBytes": 11482,
               "totalBytes": 100430,
@@ -1156,9 +1156,9 @@
             {
               "phase": "gate",
               "method": "git.diff",
-              "elapsedMs": 801,
-              "renderedMs": 801,
-              "diffReplyMs": 790,
+              "elapsedMs": 703,
+              "renderedMs": 703,
+              "diffReplyMs": 696,
               "receivedBytes": 88948,
               "artifactBytes": 11482,
               "totalBytes": 100430,
@@ -1218,9 +1218,9 @@
             {
               "phase": "gate",
               "method": "git.diff",
-              "elapsedMs": 641,
-              "renderedMs": 641,
-              "diffReplyMs": 633,
+              "elapsedMs": 581,
+              "renderedMs": 581,
+              "diffReplyMs": 560,
               "receivedBytes": 88948,
               "artifactBytes": 11482,
               "totalBytes": 100430,
@@ -1280,9 +1280,9 @@
             {
               "phase": "gate",
               "method": "git.diff",
-              "elapsedMs": 748,
-              "renderedMs": 748,
-              "diffReplyMs": 728,
+              "elapsedMs": 796,
+              "renderedMs": 796,
+              "diffReplyMs": 779,
               "receivedBytes": 88948,
               "artifactBytes": 11482,
               "totalBytes": 100430,
@@ -1342,12 +1342,12 @@
             {
               "phase": "gate",
               "method": "git.diff",
-              "elapsedMs": 1274,
-              "renderedMs": 1274,
-              "diffReplyMs": 1259,
-              "receivedBytes": 88948,
+              "elapsedMs": 652,
+              "renderedMs": 652,
+              "diffReplyMs": 630,
+              "receivedBytes": 91290,
               "artifactBytes": 11482,
-              "totalBytes": 100430,
+              "totalBytes": 102772,
               "artifactReads": [
                 {
                   "path": "artifacts/diff-stat.json",
@@ -1396,6 +1396,7 @@
                 "task.progress": 1,
                 "run.list": 1,
                 "sources.status": 1,
+                "copilot.status": 1,
                 "run.recipeRunsForRun": 2,
                 "git.branchDiff": 1,
                 "git.diff": 1
@@ -1404,34 +1405,28 @@
           ]
         },
         "afterPrefetch": {
-          "medianMs": 50,
-          "medianTotalBytes": 45269,
-          "medianFrameBytes": 34164,
-          "medianArtifactBytes": 11105,
+          "medianMs": 67,
+          "medianTotalBytes": 59854,
+          "medianFrameBytes": 48372,
+          "medianArtifactBytes": 11482,
           "samples": [
             {
               "phase": "gate",
               "method": "local",
-              "elapsedMs": 64,
-              "renderedMs": 64,
-              "receivedBytes": 34164,
-              "artifactBytes": 11105,
-              "totalBytes": 45269,
+              "elapsedMs": 48,
+              "renderedMs": 48,
+              "receivedBytes": 20379,
+              "artifactBytes": 402,
+              "totalBytes": 20781,
               "artifactReads": [
                 {
-                  "path": "artifacts/diff-stat.json",
-                  "status": 200,
-                  "bytes": 751
+                  "path": "artifacts/diff-stat.json"
                 },
                 {
-                  "path": "artifacts/diff.txt",
-                  "status": 200,
-                  "bytes": 4164
+                  "path": "artifacts/diff.txt"
                 },
                 {
-                  "path": "artifacts/evidence-manifest.json",
-                  "status": 200,
-                  "bytes": 598
+                  "path": "artifacts/evidence-manifest.json"
                 },
                 {
                   "path": "artifacts/pr-description.md",
@@ -1439,19 +1434,13 @@
                   "bytes": 402
                 },
                 {
-                  "path": "artifacts/pr-package.json",
-                  "status": 200,
-                  "bytes": 3936
+                  "path": "artifacts/pr-package.json"
                 },
                 {
-                  "path": "artifacts/pr-package.md",
-                  "status": 200,
-                  "bytes": 860
+                  "path": "artifacts/pr-package.md"
                 },
                 {
-                  "path": "artifacts/report.md",
-                  "status": 200,
-                  "bytes": 394
+                  "path": "artifacts/report.md"
                 },
                 {
                   "path": "artifacts/validation-summary.md"
@@ -1469,8 +1458,8 @@
             {
               "phase": "gate",
               "method": "local",
-              "elapsedMs": 50,
-              "renderedMs": 50,
+              "elapsedMs": 88,
+              "renderedMs": 88,
               "receivedBytes": 48372,
               "artifactBytes": 11482,
               "totalBytes": 59854,
@@ -1528,20 +1517,26 @@
             {
               "phase": "gate",
               "method": "local",
-              "elapsedMs": 49,
-              "renderedMs": 49,
-              "receivedBytes": 34164,
-              "artifactBytes": 402,
-              "totalBytes": 34566,
+              "elapsedMs": 67,
+              "renderedMs": 67,
+              "receivedBytes": 48372,
+              "artifactBytes": 11482,
+              "totalBytes": 59854,
               "artifactReads": [
                 {
-                  "path": "artifacts/diff-stat.json"
+                  "path": "artifacts/diff-stat.json",
+                  "status": 200,
+                  "bytes": 751
                 },
                 {
-                  "path": "artifacts/diff.txt"
+                  "path": "artifacts/diff.txt",
+                  "status": 200,
+                  "bytes": 4164
                 },
                 {
-                  "path": "artifacts/evidence-manifest.json"
+                  "path": "artifacts/evidence-manifest.json",
+                  "status": 200,
+                  "bytes": 598
                 },
                 {
                   "path": "artifacts/pr-description.md",
@@ -1549,16 +1544,24 @@
                   "bytes": 402
                 },
                 {
-                  "path": "artifacts/pr-package.json"
+                  "path": "artifacts/pr-package.json",
+                  "status": 200,
+                  "bytes": 3936
                 },
                 {
-                  "path": "artifacts/pr-package.md"
+                  "path": "artifacts/pr-package.md",
+                  "status": 200,
+                  "bytes": 860
                 },
                 {
-                  "path": "artifacts/report.md"
+                  "path": "artifacts/report.md",
+                  "status": 200,
+                  "bytes": 394
                 },
                 {
-                  "path": "artifacts/validation-summary.md"
+                  "path": "artifacts/validation-summary.md",
+                  "status": 200,
+                  "bytes": 377
                 }
               ],
               "gatewayRequests": {
@@ -1618,8 +1621,8 @@
             {
               "phase": "gate",
               "method": "local",
-              "elapsedMs": 66,
-              "renderedMs": 66,
+              "elapsedMs": 86,
+              "renderedMs": 86,
               "receivedBytes": 48372,
               "artifactBytes": 11482,
               "totalBytes": 59854,
@@ -1677,7 +1680,7 @@
           ]
         },
         "offlineHeld": {
-          "medianMs": 55,
+          "medianMs": 42,
           "medianTotalBytes": 0,
           "medianFrameBytes": 0,
           "medianArtifactBytes": 0,
@@ -1685,8 +1688,8 @@
             {
               "phase": "gate",
               "method": "local",
-              "elapsedMs": 36,
-              "renderedMs": 36,
+              "elapsedMs": 59,
+              "renderedMs": 59,
               "receivedBytes": 0,
               "artifactBytes": 0,
               "totalBytes": 0,
@@ -1696,8 +1699,8 @@
             {
               "phase": "gate",
               "method": "local",
-              "elapsedMs": 57,
-              "renderedMs": 57,
+              "elapsedMs": 37,
+              "renderedMs": 37,
               "receivedBytes": 0,
               "artifactBytes": 0,
               "totalBytes": 0,
@@ -1707,8 +1710,8 @@
             {
               "phase": "gate",
               "method": "local",
-              "elapsedMs": 56,
-              "renderedMs": 56,
+              "elapsedMs": 40,
+              "renderedMs": 40,
               "receivedBytes": 0,
               "artifactBytes": 0,
               "totalBytes": 0,
@@ -1718,8 +1721,8 @@
             {
               "phase": "gate",
               "method": "local",
-              "elapsedMs": 35,
-              "renderedMs": 35,
+              "elapsedMs": 42,
+              "renderedMs": 42,
               "receivedBytes": 0,
               "artifactBytes": 0,
               "totalBytes": 0,
@@ -1748,22 +1751,22 @@
       },
       "fixLoopRefetch": {
         "sentBytes": 658,
-        "receivedBytes": 78070,
+        "receivedBytes": 78068,
         "httpBytes": 4163,
-        "totalBytes": 82891,
+        "totalBytes": 82889,
         "reads": [
           {
             "method": "run.get",
-            "replyBytes": 38732
-          },
-          {
-            "method": "run.get",
-            "replyBytes": 38733
+            "replyBytes": 38730
           },
           {
             "http": "artifacts/publication-packages/diff-1b2763105039c31ffa3d7ba8ce5628ebb4b91261175bb61435141498a2ee749f.diff",
             "status": 200,
             "bytes": 4163
+          },
+          {
+            "method": "run.get",
+            "replyBytes": 38733
           },
           {
             "method": "git.show",
@@ -1791,31 +1794,41 @@
                 "path": "data/large.txt",
                 "status": "too-large",
                 "id": "144da7cedafd85472f263592944ddb603c10aaf7",
-                "size": 1218894
+                "size": 1218894,
+                "hasContent": false,
+                "contentLength": 0
               },
               {
                 "path": "docs/guide.md",
                 "status": "held",
                 "id": "06b5bd7a5400b33e9881df17184b8e2df94a6a2d",
-                "size": 751
+                "size": 751,
+                "hasContent": false,
+                "contentLength": 0
               },
               {
                 "path": "docs/old.md",
                 "status": "held",
                 "id": "c532cad87f477717c867d66ded4d7b3165dd9795",
-                "size": 175
+                "size": 175,
+                "hasContent": false,
+                "contentLength": 0
               },
               {
                 "path": "src/alpha.ts",
                 "status": "held",
                 "id": "8ea111d35e051e7135c01e862d0f27cda1dd776b",
-                "size": 1511
+                "size": 1511,
+                "hasContent": false,
+                "contentLength": 0
               },
               {
                 "path": "src/beta.ts",
                 "status": "held",
                 "id": "e7542737342db197611a008dd6b780bd2b97377a",
-                "size": 1101
+                "size": 1101,
+                "hasContent": false,
+                "contentLength": 0
               }
             ]
           }
@@ -1826,7 +1839,8 @@
         "Each sample is a new document. nothingHeld is a second visible window with memory storage; afterPrefetch is the owner tab after its prefetch pass; offlineHeld is the owner tab with the gateway stopped.",
         "A connected gate open reads its file diff with git.diff (method git.diff) or shows it from held content (method local); the package diff travels over /api/run-artifact only in prefetch or when held content and the live slot diff are both unavailable. The HTTP bytes on a connected open are other package files.",
         "Fixture: one isolated gateway, one pending ready gate on a real package and three active runs, not the 67-run baseline snapshot; raw figures only, no normalized speedup claim.",
-        "Fix-loop figures are the gate prefetch reads after a new package for the same gate: requests, their replies and HTTP artifact bytes; held bases answer \"held\" and the over-cap base \"too-large\"."
+        "Fix-loop figures are the gate prefetch reads after a new package for the same gate: requests, their replies and HTTP artifact bytes; held bases answer \"held\" and the over-cap base \"too-large\", none with content.",
+        "Step order: the offline check and the offlineHeld samples run right after the first prefetch, on the first package and before any connected gate open; the fix loop follows, then nothingHeld and afterPrefetch on the second package. This replaces the d10-gate-review-2 entry, which measured offline after the connected opens."
       ]
     }
   ]
