@@ -476,6 +476,31 @@ for (const change of ['cancel', 'pause', 'replay'] as const) {
   });
 }
 
+test('find-slot wakes when a cool allowed slot becomes free while the original node stays hot', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const newlyFree = slots[2]!;
+  newlyFree.lifecycle = 'busy';
+  newlyFree.agent = 'working';
+  newlyFree.branch = 'main';
+  pressureDecisions = new Map([
+    ['macpro', loadDecision('macpro', 83 / 16)],
+    ['macwork', loadDecision('macwork', 0.4)],
+  ]);
+  run.allowedSlots = [slots[0]!.slot, newlyFree.slot];
+  expectedSlot = newlyFree.slot;
+  afterLoadWait = () => {
+    assert.equal(loadWaits.length, 1, 'selection must notice the newly free allowed capacity');
+    assert.deepEqual(claims, []);
+    newlyFree.lifecycle = 'ready';
+    newlyFree.agent = 'idle';
+  };
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, newlyFree.slot);
+  assert.deepEqual(claims, [newlyFree.slot]);
+  assert.deepEqual(loadWaits, [5_000]);
+  assert.deepEqual(refreshedSlots, [newlyFree.slot]);
+});
+
 test('an operator affinity-card pick retains explicit pressure policy on an overloaded alternative', async () => {
   reset('pr-complete', 'example-org/terminal#210');
   const warm = slots[2]!;

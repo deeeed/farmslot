@@ -10,8 +10,10 @@ import { mock, test } from 'node:test';
 class NodeSupportPendingError extends Error {}
 const sent: string[] = [];
 const sentTimeouts: number[] = [];
+const transportTimeouts: Array<number | undefined> = [];
 let deliveryPending = true;
 let deliveryMs = 0;
+let now = 0;
 
 // Real exports spread in, so every other importer of these modules still loads.
 const realConfig = await import('../core/config.js');
@@ -26,6 +28,13 @@ mock.module('../core/config.js', {
     }),
     loadProjectVars: async () => ({
       projectJson: {
+        slot_actions: {
+          retain: {
+            label: 'Retain browser',
+            command: 'bash ~/farmslot-node/projects/p-farm/scripts/stop-viewers.sh',
+            refresh: ['none'],
+          },
+        },
         resources: {
           probe: {
             type: 'process',
@@ -58,16 +67,19 @@ mock.module('./node-rpc.js', {
       _node: unknown,
       _method: string,
       params: { cmd: string; timeout: number },
+      options?: { timeout?: number },
     ) => {
       sent.push(params.cmd);
       sentTimeouts.push(params.timeout);
+      transportTimeouts.push(options?.timeout);
+      if (options?.timeout === 1) throw new realRpc.NodeRpcTimeoutError('mini', 1);
       return { stdout: '', stderr: '', exitCode: 0 };
     },
   },
 });
 const resolve = async (_target: unknown, cmd: string) => {
   if (deliveryPending) throw new NodeSupportPendingError('bundle still being delivered');
-  await new Promise((done) => setTimeout(done, deliveryMs));
+  now += deliveryMs;
   return cmd.replaceAll('~/farmslot-node/', '~/farmslot-node/support/h/');
 };
 mock.module('../node-support/remote-command.js', {
@@ -79,6 +91,7 @@ mock.module('../node-support/remote-command.js', {
 });
 
 const { executeResourceControl } = await import('./resource-manager.js');
+const { slotActionRun } = await import('../methods/slot-actions.js');
 const { ResourceCommandUnavailableError } = await import('../core/resource-command-error.js');
 
 test('shutdown during a pending delivery is unavailable, never "already stopped"', async () => {
@@ -100,18 +113,38 @@ test('once delivered, health and shutdown both run from the bundle', async () =>
   ]);
 });
 
-test('the delivery wait comes off the control hook timeout', async () => {
+test('a slow support resolution leaves health and control their execution timeouts', async (t) => {
   deliveryPending = false;
-  deliveryMs = 300;
+  deliveryMs = 31_000;
+  now = 1_000;
+  t.mock.method(Date, 'now', () => now);
+  t.after(() => {
+    deliveryMs = 0;
+  });
   sent.length = 0;
   sentTimeouts.length = 0;
+  transportTimeouts.length = 0;
   await executeResourceControl('mini-p-1', 'probe', 'shutdown');
-  deliveryMs = 0;
   const { resourceControlTimeoutMs } = await import('./resource-manager.js');
   const budget = resourceControlTimeoutMs('process', 'shutdown');
   const hookTimeout = sentTimeouts.at(-1)!;
-  assert.ok(
-    hookTimeout <= budget - 250,
-    `shutdown hook got ${hookTimeout}ms of a ${budget}ms budget after a 300ms delivery`,
-  );
+  assert.equal(sentTimeouts[0], 5_000);
+  assert.equal(hookTimeout, budget);
+  assert.equal(transportTimeouts.at(-1), budget + 10_000);
+});
+
+test('browser release keeps its command and RPC timeouts after slow support resolution', async (t) => {
+  deliveryPending = false;
+  deliveryMs = 31_000;
+  now = 1_000;
+  t.mock.method(Date, 'now', () => now);
+  t.after(() => {
+    deliveryMs = 0;
+  });
+  sentTimeouts.length = 0;
+  transportTimeouts.length = 0;
+  const result = await slotActionRun({ slotId: 'mini-p-1', actionId: 'slot:retain' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(sentTimeouts, [30_000]);
+  assert.deepEqual(transportTimeouts, [30_000]);
 });

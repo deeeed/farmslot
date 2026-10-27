@@ -1419,15 +1419,13 @@ async function executeResourceControlWithSources(
       return { ok: false, detail: `No node connected for ${machine}` };
     }
     try {
-      const startedAt = Date.now();
       const command = withProjectMachineEnv(expanded, slotVars, projectJson, projectVars);
       const cmd = await resolveRemoteFarmCommand(slotVars, command, { budgetMs: timeoutMs });
-      const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
       const execResult = (await sendNodeRequest(
         node,
         'exec',
-        { cmd, cwd: slotVars.repo, timeout: remainingMs },
-        { timeout: remainingMs + 10_000 },
+        { cmd, cwd: slotVars.repo, timeout: timeoutMs },
+        { timeout: timeoutMs + 10_000 },
       )) as { stdout: string; stderr: string; exitCode: number };
       if (execResult.exitCode === 0) {
         result = { ok: true, detail: execResult.stdout?.trim() || undefined };

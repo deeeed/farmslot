@@ -1412,18 +1412,39 @@ export async function executeFindSlotStep(
     inputs.hostLoadWaitReason = reason;
     updateRunStep(runId, 'find-slot', { inputs });
     await awaitAsQueueTime(runId, 'find-slot', async () => {
-      let loads = automaticLoads;
-      while (
-        loadBlockedSlots.every((slot) => automaticSlotLoadBlocker(slot, { automaticLoads: loads }))
-      ) {
+      for (;;) {
         await delay(5_000);
         if (runSupersededSince(getRun(runId), generation))
           throw runChangedError(runId, loadBlockedSlots[0]!.slot);
-        loads = automaticSlotLoads(
+        const currentFleet = await loadFleetStatus(true);
+        if (runSupersededSince(getRun(runId), generation))
+          throw runChangedError(runId, loadBlockedSlots[0]!.slot);
+        const currentFree = currentFleet.slots.filter(
+          (slot) =>
+            slot.project === run.project &&
+            (!allowSet || allowSet.has(slot.slot)) &&
+            isFreeSlot(slot),
+        );
+        const usable = currentFree.filter((slot) => {
+          const selected = optionsFor(slot);
+          return (
+            selected &&
+            !validateSlotForDispatch(slot, currentFleet.slots, {
+              ...selected,
+              automaticLoads: undefined,
+            })
+          );
+        });
+        const loads = automaticSlotLoads(
           capturePressureAdmissionDecisionsLightweight([
-            ...new Set(loadBlockedSlots.map((slot) => slot.machine)),
+            ...new Set(usable.map((slot) => slot.machine)),
           ]),
         );
+        if (
+          usable.length === 0 ||
+          usable.some((slot) => !automaticSlotLoadBlocker(slot, { automaticLoads: loads }))
+        )
+          break;
       }
     });
     const result = await executeFindSlotStep(runId, getRun(runId)!, generation, context);

@@ -36,7 +36,6 @@ export async function execResourceCommand(
   if (!isLocal) {
     const node = getNode(machine);
     if (node) {
-      const startedAt = Date.now();
       let remoteCmd = cmd;
       if (cmd.includes('~/farmslot-node')) {
         // Resource hooks call farm scripts too; run them from the bundle that
@@ -60,7 +59,7 @@ export async function execResourceCommand(
         return (await sendNodeRequest(node, 'exec', {
           cmd: remoteCmd,
           cwd,
-          timeout: Math.max(1, timeout - (Date.now() - startedAt)),
+          timeout,
         })) as ResourceCommandResult;
       } catch (err) {
         throw new ResourceCommandUnavailableError(

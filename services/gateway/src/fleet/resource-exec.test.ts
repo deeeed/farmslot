@@ -5,6 +5,9 @@ let localCalls = 0;
 let node: unknown;
 let remoteError: Error | undefined;
 const sentCmds: string[] = [];
+const sentTimeouts: number[] = [];
+let resolutionMs = 0;
+let now = 0;
 let bundlePending = false;
 class NodeSupportPendingError extends Error {}
 mock.module('../node-support/remote-command.js', {
@@ -12,6 +15,7 @@ mock.module('../node-support/remote-command.js', {
     NodeSupportPendingError,
     resolveSlotFarmCommand: async (_slotId: string, cmd: string) => {
       if (bundlePending) throw new NodeSupportPendingError('still being delivered');
+      now += resolutionMs;
       return cmd.replaceAll('~/farmslot-node/', '~/farmslot-node/support/h/');
     },
   },
@@ -28,15 +32,35 @@ mock.module('./machine-registry.js', { namedExports: { getNode: () => node } });
 mock.module('./node-rpc.js', {
   namedExports: {
     getSlotLocality: async () => ({ isLocal: false, machine: 'remote' }),
-    sendNodeRequest: async (_node: unknown, _method: string, params: { cmd: string }) => {
+    sendNodeRequest: async (
+      _node: unknown,
+      _method: string,
+      params: { cmd: string; timeout: number },
+    ) => {
       sentCmds.push(params.cmd);
+      sentTimeouts.push(params.timeout);
       if (remoteError) throw remoteError;
       return { stdout: 'remote', stderr: '', exitCode: 0 };
     },
   },
 });
+
 const { execResourceCommand } = await import('./resource-exec.js');
 const { ResourceCommandUnavailableError } = await import('../core/resource-command-error.js');
+
+test('a slow support resolution leaves the resource probe its execution timeout', async (t) => {
+  node = {};
+  remoteError = undefined;
+  now = 1_000;
+  resolutionMs = 31_000;
+  t.mock.method(Date, 'now', () => now);
+  t.after(() => {
+    resolutionMs = 0;
+  });
+  sentTimeouts.length = 0;
+  await execResourceCommand('slot', '/tmp', 'bash ~/farmslot-node/scripts/health.sh', 5_000);
+  assert.deepEqual(sentTimeouts, [5_000]);
+});
 
 test('remote commands never execute locally across disconnect and reconnect', async () => {
   node = undefined;
