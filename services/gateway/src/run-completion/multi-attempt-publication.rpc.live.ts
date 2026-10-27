@@ -102,8 +102,20 @@ test(
       process.env.FARMSLOT_MULTI_ATTEMPT_BROWSER_LIVE === '1'
         ? await (
             await import('./multi-attempt-browser.live-support.js')
-          ).browserPersistenceAttempts(root, repo, headSha)
+          ).browserPersistenceAttempts(root, repo, headSha, 16)
         : await sameHeadFixture(t, undefined, headSha);
+    const screenshotPaths = Array.from({ length: 16 }, (_, i) =>
+      i === 0 ? 'proof.png' : `screenshots/proof-${i}.png`,
+    );
+    if (process.env.FARMSLOT_MULTI_ATTEMPT_BROWSER_LIVE === '1') {
+      await writeFile(
+        path.join(f.taskDir, 'artifacts', f.headRoot, 'evidence-manifest.json'),
+        JSON.stringify({
+          version: 1,
+          standalone: screenshotPaths.slice(0, 14).map((file) => ({ label: file, file })),
+        }),
+      );
+    }
     await cp(f.taskDir, workerTask, { recursive: true });
     await mkdir(taskDir, { recursive: true });
     await writeFile(path.join(taskDir, 'TASK.md'), '# Disposable publication proof\n');
@@ -195,6 +207,11 @@ test(
     );
     assert.ok(prepared.selectedEvidenceKeys?.includes(`artifacts/${f.baselineRoot}/proof.png`));
     const sources = await readGateRecordedEvidenceSources(refreshed.run, prepared);
+    if (process.env.FARMSLOT_MULTI_ATTEMPT_BROWSER_LIVE === '1') {
+      for (const file of screenshotPaths) {
+        assert.ok(sources[0]?.input.artifactPaths?.includes(file), `retained screenshot ${file}`);
+      }
+    }
     assert.deepEqual(
       sources.map(({ input }) => input.claims?.recipeRunId),
       [f.head.claims.recipeRunId],

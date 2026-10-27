@@ -444,7 +444,7 @@ elif command.startswith('test -d '): sys.exit(1)
   }
 });
 
-test('node project sync updates templates and removes deleted files without deleting unrelated data', (t) => {
+test('node project sync updates templates and checklists without deleting unrelated data', (t) => {
   const deploy = fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8');
   const start = deploy.indexOf('for proj_dir in "$REPO_ROOT"/projects/*/; do');
   const end = deploy.indexOf('\n# --- Install deps', start);
@@ -463,9 +463,12 @@ test('node project sync updates templates and removes deleted files without dele
   write(source, 'projects/example/setup/check-paths.sh', '#!/bin/sh\n');
   write(source, 'projects/example/scripts/preflight.sh', '#!/bin/sh\n');
   write(source, 'projects/example/templates/worker/dev.md', 'current contract\n');
+  write(source, 'projects/example/checklists/dev/default.md', 'current checklist\n');
   write(source, 'projects/no-templates/project.json', '{}\n');
   write(target, 'projects/example/templates/worker/dev.md', 'old contract\n');
   write(target, 'projects/example/templates/worker/deleted.md', 'removed upstream\n');
+  write(target, 'projects/example/checklists/dev/default.md', 'old checklist\n');
+  write(target, 'projects/example/checklists/dev/deleted.md', 'removed upstream\n');
   write(target, 'projects/example/fixtures/retained', 'keep fixture\n');
   execFileSync(
     'bash',
@@ -490,6 +493,14 @@ test('node project sync updates templates and removes deleted files without dele
     fs.readFileSync(path.join(target, 'projects/example/fixtures/retained'), 'utf8'),
     'keep fixture\n',
   );
+  assert.equal(
+    fs.readFileSync(path.join(target, 'projects/example/checklists/dev/default.md'), 'utf8'),
+    'current checklist\n',
+  );
+  assert.equal(
+    fs.existsSync(path.join(target, 'projects/example/checklists/dev/deleted.md')),
+    false,
+  );
   for (const file of ['project.json', 'setup/check-paths.sh', 'scripts/preflight.sh']) {
     assert.equal(
       fs.readFileSync(path.join(target, 'projects/example', file), 'utf8'),
@@ -497,6 +508,7 @@ test('node project sync updates templates and removes deleted files without dele
     );
   }
   assert.equal(fs.existsSync(path.join(target, 'projects/no-templates/templates')), false);
+  assert.equal(fs.existsSync(path.join(target, 'projects/no-templates/checklists')), false);
 });
 
 // Workers run the `farmslot` on their PATH, so a node deploy that skipped the CLI
