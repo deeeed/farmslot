@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Prove progressive gate and fleet reads, package-revision recovery, and reduced passive workspace probe costs through the browser and gateway.
+
 - Keep the shared gateway running across source edits while preserving watch mode in isolated validation stacks; apply shared gateway updates through deployment.
 
 - Prove fleet release and update through a real browser action followed by unrestricted scored dispatch.

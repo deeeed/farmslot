@@ -144,6 +144,7 @@ export function renderReadyTabBar(input: {
     const gateTab = (tab: ReadyGateTab) =>
       html`<button
         role="tab"
+        data-gate-tab=${tab.id}
         class="rdy-tab ${input.activeTab === tab.id ? 'active' : ''}"
         aria-selected=${input.activeTab === tab.id}
         @click=${() => input.setActiveTab(tab.id)}
@@ -246,6 +247,7 @@ export function renderReadyDiffTab(input: {
   selectedFile: string;
   recovering: boolean;
   fileDiffLoading: boolean;
+  fileDiffError?: string;
   fileDiff: string;
   selectFile: (path: string) => void;
 }) {
@@ -293,16 +295,21 @@ export function renderReadyDiffTab(input: {
           ? html`<div class="rdy-tab-empty">
               Only test files changed — show tests to review them
             </div>`
-          : input.fileDiffLoading
-            ? renderReadyDiffSkeleton()
-            : input.fileDiff
-              ? html`
-                  <diff-review
-                    .diff=${input.fileDiff}
-                    .filename=${workspaceArtifactBasename(input.selectedFile)}
-                  ></diff-review>
-                `
-              : html`<div class="rdy-tab-empty">Select a file</div>`}
+          : input.fileDiffError
+            ? html`<div role="alert">
+                File diff unavailable: ${input.fileDiffError}
+                <button @click=${() => input.selectFile(input.selectedFile)}>Retry file</button>
+              </div>`
+            : input.fileDiffLoading
+              ? renderReadyDiffSkeleton()
+              : input.fileDiff
+                ? html`
+                    <diff-review
+                      .diff=${input.fileDiff}
+                      .filename=${workspaceArtifactBasename(input.selectedFile)}
+                    ></diff-review>
+                  `
+                : html`<div class="rdy-tab-empty">Select a file</div>`}
       </div>
     </div>
   `;

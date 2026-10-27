@@ -16,6 +16,8 @@ import {
   slotWorkspaceIdentity,
 } from '@farmslot/protocol';
 
+const FLEET_INSPECTION_TIMEOUT_MS = 120_000;
+
 export interface FleetRefreshClient {
   contextKey(): string;
   request<T>(method: string, params?: unknown, timeout?: number): Promise<T>;
@@ -117,6 +119,15 @@ export class FleetRefreshViewModel {
   private activeTargets = new Set<string>();
   private loadGeneration = 0;
   private inspectedContext: string | undefined;
+  private displayContext: string | undefined;
+  inspecting = false;
+  get canRelease(): boolean {
+    return (
+      !this.inspecting &&
+      this.inspectedContext !== undefined &&
+      this.inspectedContext === this.client.contextKey()
+    );
+  }
   constructor(
     private readonly client: FleetRefreshClient,
     private readonly makeId: () => string,
@@ -131,20 +142,30 @@ export class FleetRefreshViewModel {
   get bulkCount(): number {
     return this.rows.filter((row) => row.eligibility.bulkAllowed).length;
   }
-  async load(slotIds?: readonly string[]): Promise<void> {
+  async load(slotIds?: readonly string[], cachedSlots?: readonly SlotStatus[]): Promise<void> {
     const generation = ++this.loadGeneration;
     const context = this.client.contextKey();
     this.inspectedContext = undefined;
-    this.rows = [];
+    const saved =
+      cachedSlots ?? (this.displayContext === context ? this.rows.map((row) => row.slot) : []);
     this.summary = null;
     this.detach();
     this.scope = slotIds ? new Set(slotIds) : null;
-    this.phase = 'loading';
+    this.rows = saved
+      .filter((slot) => !this.scope || this.scope.has(slot.slot))
+      .map((slot) => ({ ...fleetWorkspaceRow(slot), slot, status: 'idle', detail: '', log: [] }));
+    this.displayContext = context;
+    this.inspecting = true;
+    this.phase = this.rows.length ? 'review' : 'loading';
     this.error = '';
     this.confirmation = null;
     this.changed();
     try {
-      const { fleet } = await this.client.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
+      const { fleet } = await this.client.request<FleetStatusResult>(
+        Methods.FLEET_STATUS,
+        {},
+        FLEET_INSPECTION_TIMEOUT_MS,
+      );
       if (generation !== this.loadGeneration) return;
       if (context !== this.client.contextKey())
         throw new Error('Farm connection changed; inspect again');
@@ -153,15 +174,31 @@ export class FleetRefreshViewModel {
         .filter((slot) => !this.scope || this.scope.has(slot.slot))
         .map((slot) => ({ ...fleetWorkspaceRow(slot), slot, status: 'idle', detail: '', log: [] }));
       this.phase = 'review';
+      this.error = '';
     } catch (error) {
+      if (generation !== this.loadGeneration) return;
+      if (context !== this.client.contextKey()) {
+        this.rows = [];
+        this.displayContext = undefined;
+      }
       this.error = error instanceof Error ? error.message : String(error);
       this.phase = 'error';
     }
+    if (generation !== this.loadGeneration) return;
+    this.inspecting = false;
     this.changed();
   }
   private sameContext(): boolean {
     if (this.inspectedContext !== undefined && this.inspectedContext === this.client.contextKey())
       return true;
+    if (this.displayContext === this.client.contextKey()) {
+      if (!this.error)
+        this.error = this.inspecting
+          ? 'Checking current workspaces; release is paused'
+          : 'Current inspection unavailable; inspect again';
+      this.changed();
+      return false;
+    }
     this.rows = [];
     this.confirmation = null;
     this.phase = 'error';
@@ -212,7 +249,11 @@ export class FleetRefreshViewModel {
   }
   private async refreshRows(): Promise<void> {
     if (!this.sameContext()) return;
-    const { fleet } = await this.client.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
+    const { fleet } = await this.client.request<FleetStatusResult>(
+      Methods.FLEET_STATUS,
+      {},
+      FLEET_INSPECTION_TIMEOUT_MS,
+    );
     if (!this.sameContext()) return;
     const current = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
     this.rows = this.rows.map((row) => {

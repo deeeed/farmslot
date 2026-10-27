@@ -7,6 +7,7 @@ import {
   type FleetRefreshSlotsResult,
   type FleetStatusResult,
   Methods,
+  SLOT_WORKSPACE_MAX_AGE_MS,
   slotRecoveryEligibility,
   type SlotRefreshResult,
   type SlotStatus,
@@ -75,11 +76,17 @@ function setup(slots: SlotStatus[]) {
   const calls: Array<{ method: string; params: unknown }> = [];
   let context = 'farm-a';
   let failRead = false;
+  let nextReadBarrier: Promise<void> | undefined;
   const events = new Map<string, (payload: unknown) => void>();
   const client: FleetRefreshClient = {
     contextKey: () => context,
     request: async <T>(method: string, params: unknown): Promise<T> => {
       calls.push({ method, params });
+      if (method === Methods.FLEET_STATUS && nextReadBarrier) {
+        const barrier = nextReadBarrier;
+        nextReadBarrier = undefined;
+        await barrier;
+      }
       if (method === Methods.FLEET_STATUS && failRead) {
         failRead = false;
         throw new Error('Read failed');
@@ -147,10 +154,129 @@ function setup(slots: SlotStatus[]) {
     failNextRead: () => {
       failRead = true;
     },
+    holdNextRead: () => {
+      let release!: () => void;
+      nextReadBarrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
     setSlots: (values: SlotStatus[]) => slots.splice(0, slots.length, ...values),
     emit: (event: string, payload: unknown) => events.get(event)?.(payload),
   };
 }
+
+test('a 37-second fleet inspection retains eligible rows without retimestamping their evidence', async (t) => {
+  const observed = Date.parse('2026-10-27T00:00:00.000Z');
+  let now = observed;
+  t.mock.method(Date, 'now', () => now);
+  const saved = [slot('slow', { observedAt: new Date(observed).toISOString() })];
+  const { model, holdNextRead } = setup(saved);
+  const releaseRead = holdNextRead();
+  const loading = model.load(['slow'], saved);
+  assert.equal(model.bulkCount, 1);
+  assert.equal(model.canRelease, false);
+  now += 37_600;
+  releaseRead();
+  await loading;
+  assert.equal(model.bulkCount, 1, 'the response must not expire before it arrives');
+  assert.equal(model.canRelease, true);
+  assert.equal(model.rows[0].slot.workspace?.observedAt, new Date(observed).toISOString());
+  now = observed + 83_000;
+  assert.equal(slotRecoveryEligibility(model.rows[0].slot).bulkAllowed, true);
+  now = observed + SLOT_WORKSPACE_MAX_AGE_MS + 1;
+  assert.equal(slotRecoveryEligibility(model.rows[0].slot).reason, 'unknown');
+  assert.equal(slotRecoveryEligibility(model.rows[0].slot).bulkAllowed, false);
+  model.dispose();
+});
+
+test('slow-inspection grace never admits busy, protected, dirty or unpublished bulk work', () => {
+  const observed = Date.parse('2026-10-27T00:00:00.000Z');
+  const check = (work: Partial<SlotWorkspace>, fields: Partial<SlotStatus> = {}) =>
+    slotRecoveryEligibility(
+      slot('protected', { ...work, observedAt: new Date(observed).toISOString() }, fields),
+      observed + 37_600,
+    );
+  assert.equal(check({ protectedReason: 'publication gate' }).allowed, false);
+  assert.equal(check({}, { agent: 'working', lifecycle: 'busy' }).allowed, false);
+  assert.equal(check({ dirtyCount: 1 }).bulkAllowed, false);
+  assert.equal(check({ publication: 'unpushed', unpublishedCount: 1 }).bulkAllowed, false);
+  assert.equal(check({ publication: 'unknown' }).allowed, false);
+  assert.equal(check({ cleanupRunId: 'cleanup' }).allowed, false);
+});
+
+test('cached recovery rows appear before inspection, scoped and without release authority', async () => {
+  const saved = [slot('shown'), slot('hidden')];
+  const { model, calls, holdNextRead } = setup(saved);
+  const releaseRead = holdNextRead();
+  const loading = model.load(['shown'], saved);
+  assert.deepEqual(
+    model.rows.map((row) => row.slotId),
+    ['shown'],
+  );
+  assert.equal(model.bulkCount, 1);
+  assert.equal(model.inspecting, true);
+  assert.equal(model.canRelease, false);
+  await model.release('shown');
+  await model.releaseIdle();
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    [Methods.FLEET_STATUS],
+  );
+  assert.equal(model.rows.length, 1);
+  releaseRead();
+  await loading;
+  assert.equal(model.inspecting, false);
+  assert.equal(model.canRelease, true);
+  model.dispose();
+});
+
+test('a failed background inspection keeps saved rows and the original error until explicit retry', async () => {
+  const saved = [slot('shown')];
+  const { model, calls, failNextRead } = setup(saved);
+  failNextRead();
+  await model.load(['shown'], saved);
+  await model.releaseIdle();
+  assert.equal(model.rows.length, 1);
+  assert.equal(model.error, 'Read failed');
+  assert.equal(model.canRelease, false);
+  assert.equal(calls.length, 1);
+  await model.load(['shown']);
+  assert.equal(model.canRelease, true);
+  assert.equal(model.error, '');
+  model.dispose();
+});
+
+test('changing farms while inspection is held clears the old cached rows on acknowledgement', async () => {
+  const saved = [slot('shown')];
+  const { model, calls, setContext, holdNextRead } = setup(saved);
+  const releaseRead = holdNextRead();
+  const loading = model.load(['shown'], saved);
+  setContext('farm-b');
+  releaseRead();
+  await loading;
+  assert.equal(model.rows.length, 0);
+  assert.equal(model.canRelease, false);
+  await model.releaseIdle();
+  assert.equal(calls.length, 1);
+  model.dispose();
+});
+
+test('late inspection cannot overwrite a newer scoped inspection', async () => {
+  const saved = [slot('first'), slot('second')];
+  const { model, holdNextRead } = setup(saved);
+  const releaseRead = holdNextRead();
+  const first = model.load(['first'], saved);
+  await model.load(['second'], saved);
+  releaseRead();
+  await first;
+  assert.deepEqual(
+    model.rows.map((row) => row.slotId),
+    ['second'],
+  );
+  assert.equal(model.canRelease, true);
+  model.dispose();
+});
 
 test('bulk freezes visible membership and never includes held, dirty, unpublished or unknown work', async () => {
   const { model, calls } = setup([
@@ -427,7 +553,8 @@ test('a failed re-inspection clears old release authority', async () => {
   await model.load(['same-slot']);
   await model.release('same-slot');
   assert.equal(calls.filter((call) => call.method === Methods.SLOT_REFRESH).length, 0);
-  assert.equal(model.rows.length, 0);
+  assert.equal(model.rows.length, 1, 'a read error retains saved rows, not release authority');
+  assert.equal(model.canRelease, false);
   model.dispose();
 });
 

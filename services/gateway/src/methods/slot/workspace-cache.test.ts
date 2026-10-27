@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
@@ -150,6 +150,30 @@ test('a verified mutation invalidates cached dirt before its TTL expires', async
   assert.equal(probes, 2);
 });
 
+test('a 37-second inspection gets its cache window after completion without changing observed time', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  let resume!: () => void;
+  let notify!: () => void;
+  const started = new Promise<void>((resolve) => {
+    notify = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  invalidateSlotWorkspaceObservations('cache-slot');
+  pausedProbe = { gate, started: notify };
+  const before = probes;
+  const pending = enrichFleetWorkspaces(await loadFleetStatus(true));
+  await started;
+  now += 37_600;
+  resume();
+  const first = await pending;
+  const next = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 1, 'slow reads must not be expired immediately on delivery');
+  assert.equal(next.slots[0]?.workspace?.observedAt, first.slots[0]?.workspace?.observedAt);
+});
+
 test('a pending inspection from an old identity settles before a new single-flight inspection', async () => {
   let resume: () => void = () => assert.fail('Probe gate missing');
   let notify: () => void = () => assert.fail('Probe start missing');
@@ -263,3 +287,96 @@ for (const kind of ['default', 'publication'] as const) {
     assert.ok(reads.some((read) => read.scope === `workspace-${kind}` && read.timeout === 5000));
   });
 }
+
+test('passive reuse is bounded, preserves observed time, and never replaces an acting inspection', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const priorProbe = { ...probe };
+  t.after(() => {
+    Object.assign(probe, priorProbe);
+  });
+  Object.assign(probe, {
+    headSha: 'a'.repeat(40),
+    localDefaultSha: 'a'.repeat(40),
+    originKey: 'metadata-stable',
+    branch: 'main',
+  });
+  const gitDir = path.join(root, 'repo/.git');
+  await mkdir(gitDir, { recursive: true });
+  t.after(() => rm(gitDir, { recursive: true, force: true }));
+  await writeFile(path.join(gitDir, 'HEAD'), 'a'.repeat(40) + '\n');
+  const index = path.join(gitDir, 'index');
+  await writeFile(index, 'fixture index');
+  await utimes(index, 1_700_000_000, 1_700_000_000);
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const before = probes;
+  const first = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  now += 16_000;
+  const reused = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 1, 'unchanged metadata avoids another full Git inspection');
+  assert.equal(reused.slots[0]?.workspace?.observedAt, first.slots[0]?.workspace?.observedAt);
+  await inspectSlotWorkspace('cache-slot');
+  assert.equal(probes, before + 2, 'acting reads always inspect actual contents');
+  await utimes(index, 1_700_000_001, 1_700_000_001);
+  now += 16_000;
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 3, 'changed index invalidates passive reuse');
+  now += 91_000;
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 4, 'unstaged and untracked dirt still gets a bounded full read');
+  invalidateSlotWorkspaceObservations('cache-slot');
+  await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(probes, before + 5, 'explicit mutation invalidation wins over unchanged metadata');
+});
+
+test('unchanged Git metadata cannot retain an active-owner refusal after the Run completes', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const gitDir = path.join(root, 'repo/.git');
+  await mkdir(gitDir, { recursive: true });
+  t.after(() => rm(gitDir, { recursive: true, force: true }));
+  await writeFile(path.join(gitDir, 'HEAD'), 'a'.repeat(40) + '\n');
+  const priorProbe = { ...probe };
+  t.after(() => {
+    Object.assign(probe, priorProbe);
+  });
+  Object.assign(probe, {
+    headSha: 'a'.repeat(40),
+    localDefaultSha: 'a'.repeat(40),
+    originKey: 'owner-transition',
+    branch: 'main',
+  });
+  const { createRun, updateRun, deleteRun } = await import('../../runs/store.js');
+  const run = createRun({
+    project: 'proof',
+    flowType: 'dev',
+    ticketOrPr: 'PROOF-1',
+    slotId: 'cache-slot',
+  });
+  t.after(async () => {
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  const statusFile = path.join(root, 'status.json');
+  const original = await readFile(statusFile, 'utf8');
+  t.after(() => writeFile(statusFile, original));
+  const status = JSON.parse(original);
+  Object.assign(status.slots[0], {
+    current_run_id: run.id,
+    lifecycle: 'busy',
+    agent: 'idle',
+    phase: null,
+  });
+  await writeFile(statusFile, JSON.stringify(status));
+  invalidateSlotWorkspaceObservations('cache-slot');
+  const active = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(active.slots[0]?.workspace?.terminalOwner, false);
+  assert.match(active.slots[0]?.workspace?.protectedReason ?? '', /still active/);
+  const before = probes;
+  updateRun(run.id, { status: 'done' });
+  now += 16_000;
+  const completed = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  assert.equal(completed.slots[0]?.workspace?.protectedReason, undefined);
+  assert.equal(completed.slots[0]?.workspace?.terminalOwner, true);
+  assert.equal(probes, before + 1, 'a changed owner disposition requires a fresh inspection');
+});

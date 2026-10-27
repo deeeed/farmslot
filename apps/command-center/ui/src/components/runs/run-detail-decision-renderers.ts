@@ -497,7 +497,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                           .runId=${run.id}
                           .actionsBlocked=${context.actionsBlocked}
                           .loadError=${context.bootstrapFailed || context.directRunRefreshFailed
-                            ? 'Run unavailable'
+                            ? 'Run refresh failed'
                             : ''}
                           .decision=${pending}
                           .run=${run}
