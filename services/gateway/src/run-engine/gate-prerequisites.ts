@@ -31,6 +31,7 @@ import {
   type RunDecision,
   type RunGatePrerequisiteReason,
   type RunGateReadiness,
+  runOutputReviewEnabled,
 } from '@farmslot/protocol';
 import { reviewFindingEntries, reviewFixInProgress } from '@farmslot/review-dispatch';
 
@@ -295,6 +296,21 @@ export async function readGateRecordedEvidence(
   }
   if (preparedPackage || (!isArtifactOnlyRun(run) && !run.acceptanceProofHold))
     return (await readGateRecordedEvidenceSources(run, preparedPackage)).map(({ input }) => input);
+  if (isArtifactOnlyRun(run) && !runOutputReviewEnabled(run)) {
+    const output = run.output;
+    if (!output || output.captureError)
+      throw new Error(
+        output?.captureError ?? 'A captured output is required. Refresh the artifact mirror.',
+      );
+    return (
+      await readFrozenPublicationRecipeSources(
+        run,
+        output.artifactManifest,
+        [],
+        output.artifactBundle,
+      )
+    ).map(({ input }) => input);
+  }
   const decision = capturedOutputReviewDecision(run);
   if (!decision)
     throw new Error('A captured output review is required. Refresh the artifact mirror.');
