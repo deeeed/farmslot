@@ -123,8 +123,14 @@ mock.module('../core/exec.js', {
         stdout: JSON.stringify(
           command.includes('nodeMissing')
             ? {
+                packageManager: null,
                 requirements: [],
-                tools: { node: { version: '24.22.1' }, yarn: {}, yarnNode: {}, ruby: {} },
+                tools: {
+                  node: { version: '24.22.1' },
+                  packageManager: {},
+                  packageManagerNode: {},
+                  ruby: {},
+                },
               }
             : { status: 'verified', detail: 'fixture retained inputs match' },
         ),
