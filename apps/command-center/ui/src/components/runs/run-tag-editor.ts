@@ -200,7 +200,7 @@ export class RunTagEditor extends LitElement {
               : reference.ref}`,
         )}
       </div>`;
-    if (tickets && !tickets.tickets.length && !tickets.pr && !this.saveTags) return nothing;
+    if (tickets && !tickets.tickets.length && !this.saveTags) return nothing;
     if (this.editing) {
       return html`
         <form
@@ -261,16 +261,7 @@ export class RunTagEditor extends LitElement {
                     >${ticket.ref}</a
                   >`
                 : html`<span class="tag-pill">${ticket.ref}</span>`,
-            )}
-            ${tickets.pr
-              ? html`<a
-                  class="tag-pill"
-                  href=${tickets.pr.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  >PR ↗</a
-                >`
-              : nothing}`
+            )}`
           : tags.length
             ? tags.map(
                 (tag) => html`
