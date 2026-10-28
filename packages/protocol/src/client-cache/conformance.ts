@@ -453,6 +453,24 @@ export async function runResourceStoreConformance(factory: StoreFactory): Promis
   }
 
   {
+    const store = await factory(scope());
+    try {
+      const entry = { id: 'rows', data: { value: 'index' }, observedAt: 1, bytes: 20 };
+      const row = (version: string) => ({ id: 'a', version, projection: { id: 'a' }, bytes: 10 });
+      await store.mergeRows!('rows', { entry, upserts: [row('v1')], deletes: [] });
+      await store.mergeRows!('rows', { entry, upserts: [row('v2')], deletes: ['a'] });
+      const read = await store.getRows!('rows');
+      verify(
+        read.rows.length === 1 && read.rows[0].version === 'v2',
+        'deletes must apply before upserts, so a row deleted and upserted in one merge stays stored',
+      );
+      passed.push('row merges apply deletes before upserts');
+    } finally {
+      await store.close();
+    }
+  }
+
+  {
     const identity = scope();
     const store = await factory(identity);
     const transport = new ResourceCacheConformanceTransport(identity);

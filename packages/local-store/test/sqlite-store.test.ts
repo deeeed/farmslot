@@ -102,7 +102,7 @@ test('SQL store runs the exported cache/store conformance against real SQLite', 
     const passed = await runResourceStoreConformance((identity) =>
       createSqliteResourceStore({ database: adapter, scope: identity }),
     );
-    assert.equal(passed.length, 21);
+    assert.equal(passed.length, 22);
     assert.equal(sqlite.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
   } finally {
     sqlite.close();
@@ -123,7 +123,7 @@ test('the Expo adapter runs the portable conformance contract through real SQLit
     const passed = await runResourceStoreConformance((identity) =>
       createSqliteResourceStore({ database: adapter, scope: identity }),
     );
-    assert.equal(passed.length, 21);
+    assert.equal(passed.length, 22);
   } finally {
     sqlite.close();
   }

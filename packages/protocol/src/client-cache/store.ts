@@ -87,7 +87,10 @@ export interface ResourceRowsMerge {
   entry: StoredResourceQuery;
   /** Inserted, or replaced whole, by id. */
   upserts: readonly StoredResourceRow[];
-  /** Removed by id; ids with no row are ignored. */
+  /**
+   * Removed by id; ids with no row are ignored. Deletes apply before upserts, so a row deleted and
+   * upserted in the same merge stays stored.
+   */
   deletes: readonly string[];
 }
 

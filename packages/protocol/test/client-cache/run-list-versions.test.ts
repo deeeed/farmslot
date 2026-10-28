@@ -70,6 +70,13 @@ function gateway(runs: Run[], versionLists = true) {
   let pageSize = 100;
   let refuse: string | undefined;
   let failPage = false;
+  let deferred: { kind: 'versions' | 'ids'; gate: Promise<void> } | undefined;
+  const release = async (kind: 'versions' | 'ids') => {
+    if (deferred?.kind !== kind) return;
+    const { gate } = deferred;
+    deferred = undefined;
+    await gate;
+  };
   const changeListeners = new Set<(payload: ResourceChangedPayload) => void>();
   const connectionListeners = new Set<(connection: ResourceCacheConnection) => void>();
   let connection: ResourceCacheConnection = {
@@ -112,7 +119,9 @@ function gateway(runs: Run[], versionLists = true) {
           versions: [...live.keys()].map((id) => ({ id, version: versions.get(id)! })),
           ...flags,
         };
-        return { data: result as T, resourceState: stamp() };
+        const reply = { data: result as T, resourceState: stamp() };
+        await release('versions');
+        return reply;
       }
       if (value.ids) {
         if (failPage) {
@@ -130,7 +139,9 @@ function gateway(runs: Run[], versionLists = true) {
             version: servedVersion.get(id) ?? versions.get(id)!,
           })),
         };
-        return { data: result as T, resourceState: stamp() };
+        const reply = { data: result as T, resourceState: stamp() };
+        await release('ids');
+        return reply;
       }
       return {
         data: { ...runListPage([...live.values()], value), ...flags } as T,
@@ -148,6 +159,12 @@ function gateway(runs: Run[], versionLists = true) {
     setPageSize: (size: number) => (pageSize = size),
     refuse: (code: string | undefined) => (refuse = code),
     failNextPage: () => (failPage = true),
+    /** Holds the next `kind` reply, as the gateway answered it then, until the returned release. */
+    defer(kind: 'versions' | 'ids') {
+      let open!: () => void;
+      deferred = { kind, gate: new Promise<void>((resolve) => (open = resolve)) };
+      return () => open();
+    },
     /** A dropped or restored socket on the same gateway epoch. */
     setConnected(connected: boolean) {
       connection = { ...connection, id: ++counter, connected };
@@ -304,6 +321,87 @@ test('a deletion survives a failed catch-up page until a merge stores it', async
   assert.deepEqual(ids(stored.last()), ['c', 'a']);
   stored.stop();
   await cold.dispose();
+});
+
+test('a run listed again before its deletion is stored stays stored', async () => {
+  const fake = gateway([run('a', 1), run('b', 2)]);
+  const store = createMemoryResourceStore();
+  const cache = createGatewayResourceCache({ transport: fake.transport, store });
+  const history = observe<RunListResult>(cache, { limit: 1000 });
+  await flush();
+  fake.failNextPage();
+  fake.remove('b');
+  fake.write(run('c', 3));
+  await flush();
+  // b's deletion waits for the next merge, and b is listed again before it.
+  fake.write(run('b', 2, { summary: 'back' }));
+  await flush();
+  const saved = await store.getRows!(RUN_LIST_COLLECTION_ID);
+  assert.deepEqual(saved.rows.map(({ id }) => id).sort(), ['a', 'b', 'c']);
+  history.stop();
+  await cache.dispose();
+
+  const copy = createMemoryResourceStore();
+  await copy.mergeRows!(RUN_LIST_COLLECTION_ID, {
+    entry: saved.entry!,
+    upserts: saved.rows,
+    deletes: [],
+  });
+  const offline = gateway([]);
+  const cold = createGatewayResourceCache({
+    transport: {
+      ...offline.transport,
+      getConnection: () => ({ ...offline.transport.getConnection(), connected: false }),
+    },
+    store: copy,
+  });
+  const stored = observe<RunListResult>(cold, { limit: 1000 });
+  await flush();
+  assert.deepEqual(ids(stored.last()), ['c', 'b', 'a']);
+  assert.equal(stored.last()?.data?.runs[1].summary, 'back');
+  stored.stop();
+  await cold.dispose();
+});
+
+test('a versions reply or page from before a reconnect never changes the collection', async () => {
+  for (const kind of ['versions', 'ids'] as const) {
+    const fake = gateway([run('a', 1), run('b', 2)]);
+    const store = createMemoryResourceStore();
+    const cache = createGatewayResourceCache({ transport: fake.transport, store });
+    const history = observe<RunListResult>(cache, { limit: 1000 });
+    await flush();
+    const release = fake.defer(kind);
+    fake.write(run('b', 2, { summary: 'old' }));
+    await flush();
+    fake.setConnected(false);
+    await flush();
+    fake.write(run('b', 2, { summary: 'new' }));
+    fake.write(run('c', 3));
+    fake.setConnected(true);
+    await flush();
+    // The old connection's reply, listing b as it was and no c, arrives last.
+    release();
+    await flush();
+    assert.deepEqual(
+      cache.runListProjections?.()?.map(({ id, summary }) => [id, summary]),
+      [
+        ['c', undefined],
+        ['b', 'new'],
+        ['a', undefined],
+      ],
+      kind,
+    );
+    const stored = await store.getRows!(RUN_LIST_COLLECTION_ID);
+    assert.deepEqual(
+      stored.rows.map(({ id, version }) => [id, version]).sort(),
+      ['a', 'b', 'c'].map((id) => [id, fake.versionsOf(id)]),
+      kind,
+    );
+    assert.equal(history.last()?.status, 'ready', kind);
+    assert.deepEqual(ids(history.last()), ['c', 'b', 'a'], kind);
+    history.stop();
+    await cache.dispose();
+  }
 });
 
 test('one runs change is one versions read for every run.list view, reading only changed ids', async () => {

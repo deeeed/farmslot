@@ -43,7 +43,7 @@ test('the browser worker adapter runs portable conformance against real SQLite W
   const { client, worker } = fixture();
   try {
     const passed = await runResourceStoreConformance((scope) => client.open(scope));
-    assert.equal(passed.length, 21);
+    assert.equal(passed.length, 22);
     const diagnostics = await client.diagnostics();
     assert.equal(diagnostics.storage, 'memory-test');
     assert.equal(diagnostics.integrity, 'ok');
