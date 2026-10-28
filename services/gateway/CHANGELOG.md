@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Send refused completion feedback to the retained worker and wait for a new signal before checking completion again.
+
 - Serve saved fleet observations immediately while workspace checks refresh in the background, keeping slow Git and network reads outside status requests.
 
 - Keep a worker-blocked run's slot lease while it waits for an answer, so dispatch cannot overwrite its in-place fix before monitoring resumes.

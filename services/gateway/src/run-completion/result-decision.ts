@@ -382,6 +382,7 @@ export async function resolveResultDecision(
   const reason = params.reason?.trim() || undefined;
   let stoppedAt: ResultDecisionStop = 'review';
   let reasonOfHold = '';
+  let workerFeedback = '';
   let resume: ReviewResult | undefined;
   let settled: Run;
   try {
@@ -400,6 +401,11 @@ export async function resolveResultDecision(
       const payload = decision.payload;
       stoppedAt = payload.stoppedAt;
       reasonOfHold = payload.reason;
+      workerFeedback = [
+        payload.refusal?.message ?? payload.reason,
+        ...(payload.refusal?.reasons.map((entry) => entry.message) ?? []),
+        ...(reason ? [`Operator feedback: ${reason}`] : []),
+      ].join('\n');
       if (
         payload.outputReviewDecisionId &&
         run.decisions.find((entry) => entry.id === payload.outputReviewDecisionId)?.resolvedAt
@@ -442,8 +448,8 @@ export async function resolveResultDecision(
               : entry,
         );
       if (actionId === 'send-back') {
-        // One write: after REVIEW the run is reviewing again; a completion replay
-        // moves it itself, and a refused replay holds it again.
+        // REVIEW resumes its fix loop. Completion stays held until feedback
+        // reaches its worker; only a new worker signal may advance it again.
         if (resume) sendBackReviews.set(params.runId, resume);
         const updated = updateRun(params.runId, {
           decisions: resolveDecisions(null),
@@ -493,7 +499,8 @@ export async function resolveResultDecision(
     if (error instanceof StaleResultDecisionError) await representResultDecision(params.runId);
     throw error;
   }
-  if (actionId === 'send-back') await sendBack(settled, stoppedAt, reasonOfHold);
+  if (actionId === 'send-back')
+    await sendBack(settled, stoppedAt, reasonOfHold, params.decisionId, workerFeedback);
   // Released outside the run lock, like other operator terminal actions.
   else if (settled.slotId && options.releaseSlot !== false)
     await releaseSettledSlot(settled, stoppedAt !== 'review');
@@ -508,14 +515,18 @@ export class StaleResultDecisionError extends Error {
   }
 }
 
-async function sendBack(run: Run, stoppedAt: ResultDecisionStop, reason: string): Promise<void> {
+async function sendBack(
+  run: Run,
+  stoppedAt: ResultDecisionStop,
+  reason: string,
+  decisionId: string,
+  feedback: string,
+): Promise<void> {
   if (stoppedAt !== 'review') {
-    // The existing completion replay from the refused step (Amendment 6). A
-    // replay that is refused leaves the run held with a fresh decision.
-    const { runReplayStep } = await import('../methods/run/replay-step.js');
+    const { sendBackCompletion } = await import('./completion-send-back.js');
     const { broadcastEvent } = await import('../server.js');
     try {
-      await runReplayStep({ runId: run.id, stepName: stoppedAt }, broadcastEvent);
+      await sendBackCompletion(run, decisionId, feedback, broadcastEvent);
     } catch (error) {
       if (isHeldForResultDecision(getRun(run.id) ?? run)) {
         try {

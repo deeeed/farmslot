@@ -17,6 +17,7 @@ import {
   type RunReplayStepParams,
   type RunStep,
   type SlotReleaseParams,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
@@ -30,6 +31,16 @@ let starts: string[] = [];
 let replayError: Error | null = null;
 let onReplay: (() => void) | null = null;
 let failPersist: string | null = null;
+let slotOwner: string | undefined;
+let delivery: 'confirmed' | 'queued' | 'unconfirmed' | 'not-attempted' = 'confirmed';
+let afterDelivery: (() => void) | undefined;
+let feedback: Array<{ key: string; text: string; contextId?: string }> = [];
+const priorSignal: WorkerSignal = {
+  status: 'complete',
+  outcome: 'success',
+  timestamp: '2026-10-28T00:16:00.000Z',
+  attemptId: 'retained-attempt',
+};
 const analyticsDir = mkdtempSync(path.join(tmpdir(), 'result-decision-analytics-'));
 process.env.FARMSLOT_ANALYTICS_DIR = analyticsDir;
 after(() => rmSync(analyticsDir, { recursive: true, force: true }));
@@ -49,6 +60,39 @@ mock.module('../runs/store.js', {
   },
 });
 mock.module('../server.js', { namedExports: { broadcastEvent: () => {} } });
+const state = await import('../core/state.js');
+mock.module('../core/state.js', {
+  namedExports: { ...state, readSlotField: async () => slotOwner ?? run.id },
+});
+const instructions = await import('../runners/operator-instruction.js');
+mock.module('../runners/operator-instruction.js', {
+  namedExports: {
+    ...instructions,
+    deliverOperatorInstruction: async (
+      _run: Run,
+      key: string,
+      text: string,
+      _observeSince?: number,
+      contextId?: string,
+    ) => {
+      feedback.push({ key, text, contextId });
+      afterDelivery?.();
+      return delivery;
+    },
+  },
+});
+const monitor = await import('../run-engine/run-monitor.js');
+mock.module('../run-engine/run-monitor.js', {
+  namedExports: {
+    ...monitor,
+    probeWorkerSignalForRun: async () => ({
+      ok: true,
+      code: 'ready',
+      message: 'Current retained worker signal',
+      signal: priorSignal,
+    }),
+  },
+});
 const backlog = await import('../backlog/store.js');
 mock.module('../backlog/store.js', {
   namedExports: { ...backlog, markBacklogRunObserved: async () => undefined },
@@ -66,6 +110,18 @@ mock.module('../methods/run/replay-step.js', {
       if (replayError) throw replayError;
       onReplay?.();
       return { run };
+    },
+    continuePRCompletionStep: async (
+      runId: string,
+      stepName: 'monitor' | 'review' | 'complete',
+      _emit: (event: string, payload: unknown) => void,
+      acknowledge: () => Promise<boolean>,
+    ) => {
+      if (!(await acknowledge())) return { run, continued: false };
+      replays.push({ runId, stepName, triggeredBy: 'operator' });
+      if (replayError) throw replayError;
+      onReplay?.();
+      return { run, continued: true };
     },
   },
 });
@@ -113,6 +169,10 @@ beforeEach(() => {
   replays = [];
   releases = [];
   starts = [];
+  slotOwner = undefined;
+  delivery = 'confirmed';
+  afterDelivery = undefined;
+  feedback = [];
 });
 
 const findings = [
@@ -211,6 +271,17 @@ async function heldQa(): Promise<Run> {
     manifestDigest: '22a45970',
     reportPath: 'artifacts/report.html',
   };
+  run.agentContexts = [
+    {
+      id: 'retained-worker',
+      role: 'primary',
+      label: 'Worker',
+      status: 'idle',
+      runId: run.id,
+      slotId: 'macwork-mmt-1',
+      runnerSessionId: 'retained-session',
+    },
+  ];
   run.steps.find((step) => step.name === S.COMPLETE)!.detail =
     'A declared deterministic check has no current passing receipt.';
   const decision = await buildResultDecision(run, 'complete');
@@ -291,11 +362,100 @@ test('Close of a refused completion is the named discard and is not a success', 
   ]);
 });
 
-test('Send back of a refused completion is its completion replay', async () => {
+test('Send back delivers the refusal to the retained worker and resumes only monitoring', async () => {
   await heldQa();
-  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  const decisionId = pending().id;
+  await resolveResultDecision({ runId: run.id, decisionId, actionId: 'send-back' });
 
-  assert.deepEqual(replays, [{ runId: run.id, stepName: 'complete' }]);
+  assert.deepEqual(replays, [{ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }]);
+  assert.equal(feedback.length, 1);
+  assert.equal(feedback[0].key, `completion-send-back:${decisionId}`);
+  assert.equal(feedback[0].contextId, 'retained-worker');
+  assert.match(feedback[0].text, /A declared deterministic check has no current passing receipt/);
+  assert.match(feedback[0].text, /new terminal signal/);
+  assert.deepEqual(
+    run.steps.find((step) => step.name === S.DISPATCH)?.outputs?.completionSendBackSignal,
+    priorSignal,
+  );
+  assert.deepEqual(starts, [], 'COMPLETE is never started by the decision handler');
+});
+
+for (const stoppedAt of ['complete', 'finalize'] as const) {
+  test(`a reattached publishing worker receives its exact ${stoppedAt} video refusal and note`, async () => {
+    await heldQa();
+    const refusal = 'Declared video is outside the selected recipe attempt.';
+    run.flowType = 'dev';
+    run.transport = 'tmux';
+    run.completionPolicy = undefined;
+    run.steps = stepsAt('dev', stoppedAt, {});
+    run.steps.find((step) => step.name === stoppedAt)!.detail = refusal;
+    run.agentContexts![0].role = 'dev';
+    run.decisions = [await buildResultDecision(run, stoppedAt)];
+    const generation = run.engineState!.generation!;
+    await resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep the accepted evidence and fix this declaration.',
+    });
+    assert.match(feedback[0].text, /Declared video is outside the selected recipe attempt/);
+    assert.match(feedback[0].text, /Operator feedback: Keep the accepted evidence/);
+    assert.equal(feedback[0].contextId, 'retained-worker');
+    assert.equal(run.agentContexts![0].runnerSessionId, 'retained-session');
+    assert.equal(run.engineState!.generation, generation + 1);
+    assert.deepEqual(replays, [{ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }]);
+  });
+}
+
+for (const outcome of ['queued', 'unconfirmed', 'not-attempted'] as const) {
+  test(`completion feedback ${outcome} keeps a pending decision and never replays`, async () => {
+    await heldQa();
+    delivery = outcome;
+    await assert.rejects(
+      resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+      new RegExp(`delivery is ${outcome}`),
+    );
+    assert.equal(run.status, 'needs-decision');
+    assert.ok(pending());
+    assert.deepEqual(replays, []);
+    assert.equal(run.steps.find((step) => step.name === S.DISPATCH)?.outputs, undefined);
+  });
+}
+
+test('completion send-back refuses a foreign slot before delivering feedback', async () => {
+  await heldQa();
+  slotOwner = 'successor-run';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /no longer owns its slot/,
+  );
+  assert.deepEqual(feedback, []);
+  assert.deepEqual(replays, []);
+  assert.equal(run.status, 'needs-decision');
+});
+
+test('a cancel during feedback delivery cannot replay or revive the run', async () => {
+  await heldQa();
+  afterDelivery = () => Object.assign(run, { status: 'cancelled' });
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /lost its retained worker or run generation/,
+  );
+  assert.equal(run.status, 'cancelled');
+  assert.deepEqual(replays, []);
+});
+
+test('an unrecorded signal baseline cannot start monitoring or change freshness', async () => {
+  await heldQa();
+  failPersist = 'completion send-back signal baseline';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /disk full/,
+  );
+  assert.equal(run.status, 'needs-decision');
+  assert.ok(pending());
+  assert.deepEqual(replays, []);
+  assert.equal(run.steps.find((step) => step.name === S.DISPATCH)?.outputs, undefined);
 });
 
 test('an action on a replaced output snapshot is refused and the decision re-presented', async () => {
@@ -437,7 +597,7 @@ test('restart re-projection replaces the failure record, and the next result is 
   let { records } = await readAllAnalyticsRecords();
   assert.deepEqual(aggregateAnalytics(records, {}, at).failureByStep, {});
 
-  // Send back replays COMPLETE, which now passes.
+  // The monitor double models the later worker completion for this analytics check.
   onReplay = () =>
     Object.assign(run, { status: 'done', metrics: { ...run.metrics, outcome: 'success' } });
   await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
