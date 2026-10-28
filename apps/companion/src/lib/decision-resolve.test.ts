@@ -253,4 +253,3 @@ test('a confirmed resolve is sent only through its literal resolve transport', a
   );
   assert.equal(sent.length, 3, 'a claim override is never sent as a resolve');
 });
-

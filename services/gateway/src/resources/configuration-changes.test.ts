@@ -38,7 +38,7 @@ writeFileSync(
   }),
 );
 writeFileSync(
-  path.join(root, '.farm-status.json'),
+  path.join(root, 'fixture-status.json'),
   JSON.stringify({
     checkedAt: new Date().toISOString(),
     slots: [
@@ -59,7 +59,8 @@ process.env.FARMSLOT_ROOT = root;
 process.env.FARMSLOT_HOME = path.join(root, 'home');
 process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
 process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
-process.env.FARMSLOT_TEST_STATUS_FILE = path.join(root, '.farm-status.json');
+process.env.NODE_TEST_CONTEXT = '1';
+process.env.FARMSLOT_TEST_STATUS_FILE = path.join(root, 'fixture-status.json');
 // Optional registration starts absent, as on a fresh host. Never inspect personal stores.
 const privateOs = { ...os, homedir: () => path.join(root, 'external-home') };
 mock.module('node:os', { defaultExport: privateOs, namedExports: privateOs });

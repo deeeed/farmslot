@@ -13,7 +13,7 @@ import type { ResourceChangedPayload } from '@farmslot/protocol/transport/events
 import '../runtime/mock-pty.test-support.js';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fleet-writer-publication-')));
-const statusPath = path.join(root, '.farm-status.json');
+const statusPath = path.join(root, 'fixture-status.json');
 const overrides = {
   FARMSLOT_ROOT: root,
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
