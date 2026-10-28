@@ -22,8 +22,9 @@ const fixture = JSON.parse(await readFile(path.join(root, 'fixture.json'), 'utf8
 const artifacts = path.join(root, 'client');
 await mkdir(artifacts, { recursive: true });
 const WebSocket = createRequire(path.join(source, 'package.json'))('ws');
-const CDP = 'http://127.0.0.1:19222';
-const UI = 'http://127.0.0.1:5208/';
+// The Desktop runtime proof points these at the packaged app; the browser proof keeps the defaults.
+const CDP = `http://127.0.0.1:${process.env.FARMSLOT_GATE_REVIEW_CDP_PORT ?? 19222}`;
+const UI = `http://127.0.0.1:${process.env.FARMSLOT_GATE_REVIEW_UI_PORT ?? 5208}/`;
 const PROBE = path.join(source, 'apps/command-center/scripts/probes/offline-gate-review.js');
 const probeSource = await readFile(PROBE, 'utf8');
 const gate = fixture.gate;

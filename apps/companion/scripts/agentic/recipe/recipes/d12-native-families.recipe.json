@@ -1,0 +1,277 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "D12 native Companion: client families in one boot",
+  "description": "DRAFT SKELETON (lane staging; not in the product tree). One reserved iOS simulator, one launch of the development dev client, and one deliberate cold restart, against a private gateway and store proxy from the D12 controller. Phases in order: online fill, reconnect, offline cold start, new-epoch recovery. The run-list-version-fill steps are placeholders until the D12 code and its app observer exist. Each command runs scripts/agentic/prove-d12-native.mjs (to be written), which prints one JSON receipt per phase and asks the controller for checkpoints (change runs, fail one artifact read, stop or start the gateway) through request files, as in D11.",
+  "paramsSchema": {
+    "type": "object",
+    "required": ["gate_decision_id", "gate_run_id", "gate_slot_id"],
+    "additionalProperties": false,
+    "properties": {
+      "gate_decision_id": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9-]+$"
+      },
+      "gate_run_id": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9-]+$"
+      },
+      "gate_slot_id": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9-]+$"
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "d12RunListVersionFill",
+      "claim": "PLACEHOLDER (D12 code): the cold fill stores the version index and filter projection of every live run and full rows up to the bound; after K runs change, a reconnect and the new-epoch catch-up read only changed and missing ids; offline totals come from the projections."
+    },
+    {
+      "id": "d12CompanionReconnect",
+      "claim": "After the app's socket closes it reconnects by itself, and a mounted evidence image whose first read failed online shows after the reconnect without a reload."
+    },
+    {
+      "id": "d12CompanionGateReviewOffline",
+      "claim": "After prefetch and a cold restart with the gateway stopped, the pending gate opens with its details, diff, both sides and evidence images, and the app sends no gateway frame."
+    },
+    {
+      "id": "d12CompanionModelCatalog",
+      "claim": "The runner model catalog read online is restored offline after the cold restart with the same model ids."
+    },
+    {
+      "id": "d12CompanionUpstream",
+      "claim": "Upstream data read online (PRs, saved GitHub accounts, runner seats) is restored offline with its original times and recovers on a new gateway epoch."
+    }
+  ],
+  "workflow": {
+    "entry": "online",
+    "nodes": {
+      "online": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs online",
+        "timeout_ms": 180000,
+        "intent": "Wait until the app is connected and prefetch holds the gate package.",
+        "next": "assert-online"
+      },
+      "assert-online": {
+        "action": "assert_output",
+        "source": "online",
+        "stream": "stdout",
+        "match": "\"gatePackageHeld\"\\s*:\\s*true",
+        "intent": "Require a connected receipt with the gate package held by prefetch.",
+        "proves": ["d12CompanionGateReviewOffline"],
+        "next": "run-list-fill"
+      },
+      "run-list-fill": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs run-list-fill",
+        "timeout_ms": 180000,
+        "intent": "PLACEHOLDER (D12): read the cold fill from the app observer.",
+        "next": "assert-run-list-fill"
+      },
+      "assert-run-list-fill": {
+        "action": "assert_output",
+        "source": "run-list-fill",
+        "stream": "stdout",
+        "match": "\"runListColdFill\"\\s*:\\s*true",
+        "intent": "PLACEHOLDER (D12): every live run has a version and a projection.",
+        "proves": ["d12RunListVersionFill"],
+        "next": "catalog-online"
+      },
+      "catalog-online": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs catalog-online",
+        "timeout_ms": 90000,
+        "intent": "Record the model ids the app read from the fake runner catalogs.",
+        "next": "assert-catalog-online"
+      },
+      "assert-catalog-online": {
+        "action": "assert_output",
+        "source": "catalog-online",
+        "stream": "stdout",
+        "match": "\"catalogModels\"\\s*:\\s*[1-9]",
+        "intent": "Require a nonempty catalog read online.",
+        "proves": ["d12CompanionModelCatalog"],
+        "next": "upstream-online"
+      },
+      "upstream-online": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs upstream-online",
+        "timeout_ms": 90000,
+        "intent": "Open the PR screen online and record its rows and their times.",
+        "next": "assert-upstream-online"
+      },
+      "assert-upstream-online": {
+        "action": "assert_output",
+        "source": "upstream-online",
+        "stream": "stdout",
+        "match": "\"upstreamRows\"\\s*:\\s*[1-9]",
+        "intent": "Require upstream rows read online.",
+        "proves": ["d12CompanionUpstream"],
+        "next": "reconnect"
+      },
+      "reconnect": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs reconnect {{params.gate_run_id}}",
+        "timeout_ms": 180000,
+        "intent": "Change K runs, fail one image read, then drop the socket once.",
+        "next": "assert-reconnect"
+      },
+      "assert-reconnect": {
+        "action": "assert_output",
+        "source": "reconnect",
+        "stream": "stdout",
+        "match": "\"imageRecoveredWithoutReload\"\\s*:\\s*true",
+        "intent": "Require the reconnect and the image recovery in the same screen.",
+        "proves": ["d12CompanionReconnect"],
+        "next": "reconnect-image"
+      },
+      "reconnect-image": {
+        "action": "ui.screenshot",
+        "path": "screenshots/reconnect-image.png",
+        "intent": "Record the recovered evidence image.",
+        "covers": ["d12CompanionReconnect"],
+        "next": "assert-run-list-reconnect"
+      },
+      "assert-run-list-reconnect": {
+        "action": "assert_output",
+        "source": "reconnect",
+        "stream": "stdout",
+        "match": "\"runListCatchUp\"\\s*:\\s*true",
+        "intent": "PLACEHOLDER (D12): the reconnect read exactly the K changed ids.",
+        "proves": ["d12RunListVersionFill"],
+        "next": "offline"
+      },
+      "offline": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs offline",
+        "timeout_ms": 180000,
+        "intent": "Stop the gateway and proxy, then make the one deliberate cold restart.",
+        "next": "assert-offline"
+      },
+      "assert-offline": {
+        "action": "assert_output",
+        "source": "offline",
+        "stream": "stdout",
+        "match": "\"coldOfflineFrames\"\\s*:\\s*0",
+        "intent": "Require a cold start with the gateway down and no gateway frame.",
+        "proves": ["d12CompanionGateReviewOffline"],
+        "next": "assert-run-list-offline"
+      },
+      "assert-run-list-offline": {
+        "action": "assert_output",
+        "source": "offline",
+        "stream": "stdout",
+        "match": "\"runListOfflineTotals\"\\s*:\\s*true",
+        "intent": "PLACEHOLDER (D12): offline totals equal the live count, from the store alone.",
+        "proves": ["d12RunListVersionFill"],
+        "next": "gate-offline"
+      },
+      "gate-offline": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs gate-offline {{params.gate_decision_id}} {{params.gate_run_id}} {{params.gate_slot_id}}",
+        "timeout_ms": 120000,
+        "intent": "Open the pending gate offline by deep link and check it against the fixture.",
+        "next": "gate-screen"
+      },
+      "gate-screen": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-gate-review",
+        "expected": "visible",
+        "intent": "The gate review screen renders offline.",
+        "next": "capture-gate"
+      },
+      "capture-gate": {
+        "action": "ui.screenshot",
+        "path": "screenshots/gate-offline.png",
+        "intent": "Record the offline gate review.",
+        "covers": ["d12CompanionGateReviewOffline"],
+        "next": "assert-gate-offline"
+      },
+      "assert-gate-offline": {
+        "action": "assert_output",
+        "source": "gate-offline",
+        "stream": "stdout",
+        "match": "\"gateOfflineComplete\"\\s*:\\s*true",
+        "intent": "Require details, diff, both sides and verified images, no frames.",
+        "proves": ["d12CompanionGateReviewOffline"],
+        "next": "catalog-offline"
+      },
+      "catalog-offline": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs catalog-offline",
+        "timeout_ms": 90000,
+        "intent": "Compare the restored catalog with the online read.",
+        "next": "assert-catalog-offline"
+      },
+      "assert-catalog-offline": {
+        "action": "assert_output",
+        "source": "catalog-offline",
+        "stream": "stdout",
+        "match": "\"catalogRestoredSame\"\\s*:\\s*true",
+        "intent": "Require the same model ids offline.",
+        "proves": ["d12CompanionModelCatalog"],
+        "next": "upstream-offline"
+      },
+      "upstream-offline": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs upstream-offline",
+        "timeout_ms": 90000,
+        "intent": "Open the PR screen offline and compare it with the online read.",
+        "next": "prs-screen"
+      },
+      "prs-screen": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-prs",
+        "expected": "visible",
+        "intent": "The PR screen renders offline.",
+        "next": "capture-prs"
+      },
+      "capture-prs": {
+        "action": "ui.screenshot",
+        "path": "screenshots/upstream-offline.png",
+        "intent": "Record the restored upstream rows.",
+        "covers": ["d12CompanionUpstream"],
+        "next": "assert-upstream-offline"
+      },
+      "assert-upstream-offline": {
+        "action": "assert_output",
+        "source": "upstream-offline",
+        "stream": "stdout",
+        "match": "\"upstreamRestoredSame\"\\s*:\\s*true",
+        "intent": "Require the same rows with their original times offline.",
+        "proves": ["d12CompanionUpstream"],
+        "next": "recover"
+      },
+      "recover": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs recover",
+        "timeout_ms": 240000,
+        "intent": "Start the gateway on a new epoch and wait for the app to recover.",
+        "next": "assert-recover"
+      },
+      "assert-recover": {
+        "action": "assert_output",
+        "source": "recover",
+        "stream": "stdout",
+        "match": "\"upstreamRecovered\"\\s*:\\s*true",
+        "intent": "Require upstream recovery on the new epoch.",
+        "proves": ["d12CompanionUpstream"],
+        "next": "assert-run-list-catch-up"
+      },
+      "assert-run-list-catch-up": {
+        "action": "assert_output",
+        "source": "recover",
+        "stream": "stdout",
+        "match": "\"runListRecoverCatchUp\"\\s*:\\s*true",
+        "intent": "PLACEHOLDER (D12): the new-epoch catch-up read exactly the K2 changed ids.",
+        "proves": ["d12RunListVersionFill"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

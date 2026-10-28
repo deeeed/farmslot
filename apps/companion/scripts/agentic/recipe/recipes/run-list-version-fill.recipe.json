@@ -1,0 +1,117 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Run list version lists: empty-store fill, catch-up and offline totals",
+  "description": "Run on an isolated, paired iOS dev client against a gateway with version lists and a fixture of at least 120 live runs, some active, one row of about 2.5 MB. IOS_SIMULATOR and METRO_PORT select its own stack; FARMSLOT_D12_CHECKPOINTS names the controller directory that holds and releases the reconnect, changes runs, stops and restarts the gateway, and cold-restarts the app. The D12 native boot runs the same phases through prove-d12-native.mjs with --trigger=false, and wipes the container before its first launch instead of reset-store.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "proofTargets": [
+    {
+      "id": "run-list-version-fill",
+      "claim": "An empty store fills through one version read and run.list { ids } pages, each within the 60 s request timeout and at most 2 MB except a page carrying one larger row alone, and history then shows every live run with no 80-row limit."
+    },
+    {
+      "id": "run-list-catch-up",
+      "claim": "After five runs change, the client reads exactly those ids in pages and no full run list."
+    },
+    {
+      "id": "run-list-offline-totals",
+      "claim": "A cold start with the gateway stopped shows the whole stored history and its total, and sends no run list read."
+    },
+    {
+      "id": "run-list-recover-catch-up",
+      "claim": "Three runs changed while the gateway was down are the only ids read on its new epoch."
+    }
+  ],
+  "workflow": {
+    "entry": "reset-store",
+    "nodes": {
+      "reset-store": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-run-list-version-fill.mjs reset-store",
+        "timeout_ms": 90000,
+        "intent": "Relaunch the app with only its resource store deleted.",
+        "next": "assert-reset"
+      },
+      "assert-reset": {
+        "action": "assert_output",
+        "source": "reset-store",
+        "stream": "stdout",
+        "match": "\"runListStoreReset\"\\s*:\\s*true",
+        "intent": "Require the store reset receipt.",
+        "proves": ["run-list-version-fill"],
+        "next": "cold-fill"
+      },
+      "cold-fill": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-run-list-version-fill.mjs cold-fill --expect-oversized",
+        "timeout_ms": 240000,
+        "intent": "Open history in the connected app and read the fill until it settles.",
+        "next": "assert-cold-fill"
+      },
+      "assert-cold-fill": {
+        "action": "assert_output",
+        "source": "cold-fill",
+        "stream": "stdout",
+        "match": "\"runListColdFill\"\\s*:\\s*true",
+        "intent": "Require one version read first, bounded pages and the whole history.",
+        "proves": ["run-list-version-fill"],
+        "next": "catch-up"
+      },
+      "catch-up": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-run-list-version-fill.mjs catch-up --count 5",
+        "timeout_ms": 240000,
+        "intent": "Hold the reconnect, change five runs, release it and read the catch-up.",
+        "next": "assert-catch-up"
+      },
+      "assert-catch-up": {
+        "action": "assert_output",
+        "source": "catch-up",
+        "stream": "stdout",
+        "match": "\"runListCatchUp\"\\s*:\\s*true",
+        "intent": "Require pages for exactly the changed ids and no full run list read.",
+        "proves": ["run-list-catch-up"],
+        "next": "offline-totals"
+      },
+      "offline-totals": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-run-list-version-fill.mjs offline-totals",
+        "timeout_ms": 240000,
+        "intent": "Stop the gateway, relaunch the app and read the stored history.",
+        "next": "assert-offline-totals"
+      },
+      "assert-offline-totals": {
+        "action": "assert_output",
+        "source": "offline-totals",
+        "stream": "stdout",
+        "match": "\"runListOfflineTotals\"\\s*:\\s*true",
+        "intent": "Require the whole stored history and total with no run list reply.",
+        "proves": ["run-list-offline-totals"],
+        "next": "recover-catch-up"
+      },
+      "recover-catch-up": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-run-list-version-fill.mjs recover-catch-up --count 3",
+        "timeout_ms": 240000,
+        "intent": "Change three runs while the gateway is down and read the new epoch.",
+        "next": "assert-recover-catch-up"
+      },
+      "assert-recover-catch-up": {
+        "action": "assert_output",
+        "source": "recover-catch-up",
+        "stream": "stdout",
+        "match": "\"runListRecoverCatchUp\"\\s*:\\s*true",
+        "intent": "Require pages on the new epoch for exactly the three changed ids.",
+        "proves": ["run-list-recover-catch-up"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
