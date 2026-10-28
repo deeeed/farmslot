@@ -4,6 +4,7 @@ import {
   parseGitHubRef,
   type PrIntegrationStatus,
   type Run,
+  runLinkedTicketRefs,
   type RunTicketData,
   taskTitleText,
 } from '@farmslot/protocol';
@@ -101,20 +102,12 @@ export async function fetchPRData(
     screenshots: [],
     labels: [],
     prIntegration: buildPrIntegrationNote(prData.mergeable, prData.mergeStateStatus),
+    ...(run.ticketData?.jiraKey ? { jiraKey: run.ticketData.jiraKey } : {}),
+    ...(run.ticketData?.linkedTickets ? { linkedTickets: run.ticketData.linkedTickets } : {}),
   };
 
-  // Extract ALL Jira keys referenced in the PR body (deduped, first-occurrence order).
-  // PRs routinely link multiple tickets ("Fixes PROJ-123, PROJ-456"); we fetch them all
-  // in parallel and expose them to templates as a single LINKED_TICKETS block.
-  const jiraKeys: string[] = [];
-  const seenKeys = new Set<string>();
-  for (const m of prData.body.matchAll(/\b([A-Z]+-\d+)\b/g)) {
-    const key = m[1];
-    if (!seenKeys.has(key)) {
-      seenKeys.add(key);
-      jiraKeys.push(key);
-    }
-  }
+  // Operator additions stay editable metadata, never promoted into dispatch ticket data.
+  const jiraKeys = runLinkedTicketRefs({ ticketOrPr: run.ticketOrPr, ticketData: run.ticketData });
 
   if (jiraKeys.length > 0) {
     try {
