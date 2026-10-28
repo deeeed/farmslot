@@ -160,6 +160,7 @@ writeFileSync(
   path.join(root, '.farm-status.json'),
   JSON.stringify({ slots: [{ slot: 'readiness-slot', lifecycle: 'ready' }] }),
 );
+await import(path.join(code, 'services/gateway/src/projects/gateway-status-process.ts'));
 const { loadProjectVars } = await import(path.join(code, 'services/gateway/src/core/config.ts'));
 await loadProjectVars('proof');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import(
