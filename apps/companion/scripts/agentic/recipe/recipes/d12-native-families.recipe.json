@@ -32,7 +32,7 @@
     },
     {
       "id": "d12CompanionGateReviewOffline",
-      "claim": "After prefetch and a cold restart with the gateway stopped, the pending gate opens with its details, diff, both sides and evidence images, and the app sends no gateway frame."
+      "claim": "After prefetch and a cold restart with the gateway stopped, the pending gate opens with its details and evidence images loaded and verified, its run Diff screen renders the package diff, both sides are held, and the app sends no gateway frame."
     },
     {
       "id": "d12CompanionModelCatalog",
@@ -171,7 +171,7 @@
         "action": "command",
         "cmd": "node scripts/agentic/prove-d12-native.mjs gate-offline {{params.gate_decision_id}} {{params.gate_run_id}} {{params.gate_slot_id}}",
         "timeout_ms": 120000,
-        "intent": "Open the pending gate offline by deep link and check it against the fixture.",
+        "intent": "Open the pending gate offline; check its details and images.",
         "next": "gate-screen"
       },
       "gate-screen": {
@@ -186,14 +186,44 @@
         "path": "screenshots/gate-offline.png",
         "intent": "Record the offline gate review.",
         "covers": ["d12CompanionGateReviewOffline"],
+        "next": "assert-gate-review"
+      },
+      "assert-gate-review": {
+        "action": "assert_output",
+        "source": "gate-offline",
+        "stream": "stdout",
+        "match": "\"gateReviewOffline\"\\s*:\\s*true",
+        "intent": "Require loaded, verified images and held both sides, no frames.",
+        "proves": ["d12CompanionGateReviewOffline"],
+        "next": "gate-diff-offline"
+      },
+      "gate-diff-offline": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs gate-diff-offline {{params.gate_run_id}}",
+        "timeout_ms": 120000,
+        "intent": "Open the gate run's Diff screen offline and wait for its package diff.",
+        "next": "diff-screen"
+      },
+      "diff-screen": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-diff",
+        "expected": "visible",
+        "intent": "The run Diff screen renders offline.",
+        "next": "capture-diff"
+      },
+      "capture-diff": {
+        "action": "ui.screenshot",
+        "path": "screenshots/gate-diff-offline.png",
+        "intent": "Record the offline gate diff.",
+        "covers": ["d12CompanionGateReviewOffline"],
         "next": "assert-gate-offline"
       },
       "assert-gate-offline": {
         "action": "assert_output",
-        "source": "gate-offline",
+        "source": "gate-diff-offline",
         "stream": "stdout",
         "match": "\"gateOfflineComplete\"\\s*:\\s*true",
-        "intent": "Require details, diff, both sides and verified images, no frames.",
+        "intent": "Require the review, the rendered diff and no gateway frame.",
         "proves": ["d12CompanionGateReviewOffline"],
         "next": "catalog-offline"
       },

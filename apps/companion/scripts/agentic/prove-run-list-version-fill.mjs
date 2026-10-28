@@ -10,12 +10,9 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 
+import { catchUpHolds, offlineTotalsHold, pageReport } from './run-list-version-fill-checks.mjs';
+
 const PHASES = ['reset-store', 'cold-fill', 'catch-up', 'offline-totals', 'recover-catch-up'];
-/** Version lists rule 4: pages of at most 2 MB, gateway-enforced; one larger row comes alone. */
-const PAGE_BYTES = 2 * 1024 * 1024;
-const FRAMING_BYTES = 64 * 1024;
-/** Decision 7: each page within Companion's run list request timeout. */
-const PAGE_MS = 60_000;
 const HISTORY_RUN_LIST_LIMIT = 80;
 
 const { values, positionals } = parseArgs({
@@ -99,33 +96,6 @@ async function checkpoint(action, args = {}) {
 
 const settled = (state) =>
   state.pendingRunLists === 0 && state.history?.status === 'ready' && Boolean(state.history);
-
-/** Pages carry at most 2 MB, except a page that carries a single row over the cap. */
-function pageReport(frames) {
-  const pages = frames.filter((frame) => frame.kind === 'ids');
-  const oversized = pages.filter((page) => page.responseBytes > PAGE_BYTES + FRAMING_BYTES);
-  return {
-    versionReads: frames.filter((frame) => frame.kind === 'versions').length,
-    listReads: frames.filter((frame) => frame.kind === 'list').length,
-    pages: pages.length,
-    maxPageMs: Math.max(0, ...pages.map((page) => page.requestMs)),
-    maxPageBytes: Math.max(0, ...pages.map((page) => page.responseBytes)),
-    oversizedPage: oversized.length > 0 && oversized.every((page) => page.rows === 1),
-    pagesWithinBounds:
-      pages.every((page) => page.ok && page.requestMs < PAGE_MS) &&
-      oversized.every((page) => page.rows === 1),
-    requestedIds: [...new Set(pages.flatMap((page) => page.requestedIds ?? []))],
-  };
-}
-
-/** The ids read after a change are exactly the changed runs; no full reread. */
-function catchUpHolds(report, changed, count) {
-  const read = new Set(report.requestedIds);
-  const exact = changed
-    ? read.size === changed.length && changed.every((id) => read.has(id))
-    : read.size === count;
-  return report.versionReads >= 1 && report.listReads === 0 && report.pagesWithinBounds && exact;
-}
 
 function print(receipt) {
   console.log(JSON.stringify({ phase, ...receipt }));
@@ -244,12 +214,7 @@ if (phase === 'reset-store') {
     'run-list-version-fill:open-history',
   );
   const expected = values['expect-total'] ? Number(values['expect-total']) : undefined;
-  const ok =
-    state.frames.length === 0 &&
-    state.history.rows === state.history.totalCount &&
-    (expected === undefined
-      ? state.history.totalCount >= minRuns
-      : state.history.totalCount === expected);
+  const ok = offlineTotalsHold(state, { expected, minRuns });
   print({
     ok,
     runListOfflineTotals: ok,
@@ -257,6 +222,7 @@ if (phase === 'reset-store') {
     historyStatus: state.history.status,
     historyRuns: state.history.rows,
     totalCount: state.history.totalCount,
-    framesSent: state.frames.length,
+    framesSent: state.framesSent,
+    runListReplies: state.frames.length,
   });
 }

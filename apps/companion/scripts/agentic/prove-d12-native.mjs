@@ -7,9 +7,11 @@
 //
 // App observer this driver reads (dev only, ref `d12-native`):
 //   { status, launchId, epoch, connectionId, framesSent, gate: { decisionId, packageHeld, opened, details,
-//     diff, bothSides, images: [{ sha256, verified }] }, catalog: { models: [id] },
-//   upstream: { prs: [{ number, observedAt }] }, image: { id, state, mountId } }
+//     diff, images: [{ sha256, loaded }], held: { diff, bothSides, images: [{ sha256, verified }] } },
+//   catalog: { models: [id] }, upstream: { prs: [{ number, observedAt }] }, image: { id, state, mountId } }
 // `launchId` is new for each app process; `framesSent` counts gateway application frames it has sent.
+// Gate rendering claims come from mounted screens only (`diff`: the run Diff screen renders this
+// gate's package diff; `images[].loaded`: an ArtifactImage mount loaded it); `held` is the store.
 //
 // Controller checkpoints this driver asks for: `open-url {url}`, `fail-artifact-once {id}`,
 // `proxy-hold` (closes the app's socket at the store proxy and holds its reconnect), `proxy-release`,
@@ -30,6 +32,7 @@ const PHASES = [
   'reconnect',
   'offline',
   'gate-offline',
+  'gate-diff-offline',
   'catalog-offline',
   'upstream-offline',
   'recover',
@@ -213,23 +216,51 @@ if (phase === 'online') {
   receipt({ coldOfflineFrames: settled.framesSent, status: state.status });
   runList('offline-totals', ['--trigger=false', '--expect-total', total]);
 } else if (phase === 'gate-offline') {
+  // The gate review screen: its details, and its evidence images, each loaded by a mounted image and
+  // verified in the store. Both sides of the diff are store-level; no Companion screen renders them.
   const [decisionId, runId, slotId] = args;
   assert.equal(decisionId, fixture.gate.decisionId);
   assert.equal(runId, fixture.gate.runId);
   assert.equal(slotId, fixture.gate.slotId);
   await checkpoint('open-url', { url: gateUrl });
+  const expected = fixture.gate.images.map((image) => image.sha256);
+  const covers = (rows, key) =>
+    expected.every((sha) => rows?.some((row) => row.sha256 === sha && row[key]));
   const state = await until(
-    (value) => value.gate?.opened && value.gate.details && value.gate.diff && value.gate.bothSides,
-    'The gate opens offline',
+    (value) => value.gate?.opened && value.gate.details && covers(value.gate.images, 'loaded'),
+    'The gate review opens offline with its images',
   );
-  const expected = fixture.gate.images.map((image) => image.sha256).sort();
-  const verified = state.gate.images
-    .filter((image) => image.verified)
-    .map((image) => image.sha256)
-    .sort();
+  const review = {
+    opened: true,
+    details: true,
+    imagesLoaded: true,
+    imagesVerified: covers(state.gate.held?.images, 'verified'),
+    bothSides: state.gate.held?.bothSides === true,
+    framesSent: state.framesSent,
+  };
+  await writeState({ gateReview: review });
+  receipt({
+    gateReviewOffline: review.imagesVerified && review.bothSides && review.framesSent === 0,
+    ...review,
+  });
+} else if (phase === 'gate-diff-offline') {
+  // The gate's package diff, rendered by the run Diff screen.
+  const [runId] = args;
+  assert.equal(runId, fixture.gate.runId);
+  const { gateReview } = await readState();
+  await checkpoint('open-url', { url: `${scheme}:///workspace/run/${runId}/diff` });
+  const state = await until(
+    (value) => value.gate?.diff === true,
+    'The run Diff screen renders the gate diff',
+  );
   receipt({
     gateOfflineComplete:
-      JSON.stringify(verified) === JSON.stringify(expected) && state.framesSent === 0,
+      Boolean(gateReview) &&
+      gateReview.imagesVerified &&
+      gateReview.bothSides &&
+      gateReview.framesSent === 0 &&
+      state.framesSent === 0,
+    diff: true,
     framesSent: state.framesSent,
   });
 } else if (phase === 'catalog-offline') {
