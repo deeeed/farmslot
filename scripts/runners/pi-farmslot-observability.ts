@@ -18,10 +18,12 @@ function obsDir() {
   return process.env.FARMSLOT_OBS_DIR || path.join(process.cwd(), '.agent', '.observability');
 }
 
-function sessionIdFrom(ctx: { sessionManager?: { getSessionFile?: () => string | null } }) {
+function sessionFrom(ctx: { sessionManager?: { getSessionFile?: () => string | null } }) {
   const file = ctx.sessionManager?.getSessionFile?.() ?? '';
-  if (!file) return `pi-session-${process.pid}`;
-  return path.basename(file).replace(/\.jsonl?$/, '') || `pi-session-${process.pid}`;
+  return {
+    sessionId: path.basename(file).replace(/\.jsonl?$/, '') || `pi-session-${process.pid}`,
+    transcriptPath: file || undefined,
+  };
 }
 
 function promptText(value: unknown): string | null {
@@ -139,7 +141,7 @@ export default async function (pi: {
       writePiHook({
         obsDir: obsDir(),
         event: 'SessionStart',
-        sessionId: sessionIdFrom(ctx),
+        ...sessionFrom(ctx),
         cwd: ctx.cwd,
       });
       ctx.ui?.setStatus?.('farmslot', farmslotStatusLine());
@@ -148,7 +150,7 @@ export default async function (pi: {
       if (ctx.hasUI === false) return;
       await deliverTaskOnce({
         obsDir: obsDir(),
-        sessionId: sessionIdFrom(ctx),
+        sessionId: sessionFrom(ctx).sessionId,
         sendUserMessage: pi.sendUserMessage?.bind(pi),
       });
     },
@@ -165,7 +167,7 @@ export default async function (pi: {
       writePiHook({
         obsDir: obsDir(),
         event: 'UserPromptSubmit',
-        sessionId: sessionIdFrom(ctx),
+        ...sessionFrom(ctx),
         promptText: text,
         cwd: ctx.cwd,
       });
@@ -181,7 +183,7 @@ export default async function (pi: {
       writePiHook({
         obsDir: obsDir(),
         event: 'PreToolUse',
-        sessionId: sessionIdFrom(ctx),
+        ...sessionFrom(ctx),
         toolName: event.toolName,
         cwd: ctx.cwd,
       });
@@ -197,7 +199,7 @@ export default async function (pi: {
       writePiHook({
         obsDir: obsDir(),
         event: 'PostToolUse',
-        sessionId: sessionIdFrom(ctx),
+        ...sessionFrom(ctx),
         toolName: event.toolName,
         cwd: ctx.cwd,
       });
@@ -228,7 +230,7 @@ export default async function (pi: {
         obsDir: obsDir(),
         event: terminalFailure ? 'StopFailure' : 'Stop',
         failure: terminalFailure,
-        sessionId: sessionIdFrom(ctx),
+        ...sessionFrom(ctx),
         cwd: ctx.cwd,
       });
     },

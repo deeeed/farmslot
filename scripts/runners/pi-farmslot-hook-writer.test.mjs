@@ -6,6 +6,29 @@ import test from 'node:test';
 
 import { piTurnFailure, runnerPromptDigest, writePiHook } from './pi-farmslot-hook-writer.mjs';
 
+test('Pi session hooks retain the native transcript path through prompt and stop snapshots', (t) => {
+  const obsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-session-hook-'));
+  t.after(() => fs.rmSync(obsDir, { recursive: true, force: true }));
+  const sessionId = '2026-10-28T12-56-59-228Z_pi-session';
+  const transcriptPath = path.join(obsDir, `${sessionId}.jsonl`);
+  writePiHook({
+    obsDir,
+    event: 'SessionStart',
+    sessionId,
+    transcriptPath,
+    env: { TMUX_PANE: '%7' },
+  });
+  writePiHook({ obsDir, event: 'UserPromptSubmit', sessionId, env: { TMUX_PANE: '%7' } });
+  writePiHook({ obsDir, event: 'Stop', sessionId, env: { TMUX_PANE: '%7' } });
+  const session = JSON.parse(
+    fs.readFileSync(path.join(obsDir, 'sessions', `${sessionId}.json`), 'utf8'),
+  );
+  const pane = JSON.parse(fs.readFileSync(path.join(obsDir, 'panes', '%257.json'), 'utf8'));
+  assert.equal(session.transcript_path, transcriptPath);
+  assert.equal(pane.transcript_path, transcriptPath);
+  assert.equal(session.session_id, sessionId);
+});
+
 test('UserPromptSubmit matches the gateway sentinel digest then Stop closes the turn', () => {
   const obsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-hook-writer-'));
   const prompt = 'Read TASK.md and execute.';

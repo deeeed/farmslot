@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Extract exact Pi assistant tokens and runner-reported session cost.
+
 - Resolve remote reopen, resource hooks and directory fixtures through the slot pool workspace while preserving captured sources and local repo roots.
 
 - Validate dynamic project approvalPolicy overrides.

@@ -103,6 +103,7 @@ import type {
   SlotVars,
 } from './observability-types.js';
 import { lineHasAuthBlockerPhrase, readPaneStateFromCapture } from './pane-state-script.js';
+import { createPiHookObservability } from './pi-observability.js';
 import {
   type LaunchAckSignalSnapshot,
   probeRunnerHandoffAck,
@@ -116,6 +117,7 @@ import {
 import {
   claudeSessionUsageProvider,
   codexSessionUsageProvider,
+  piSessionUsageProvider,
   type RunnerSessionUsageProvider,
 } from './session-usage-provider.js';
 
@@ -601,7 +603,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsEffort: (_model, effort) => isPiThinkingLevel(effort.trim().toLowerCase()),
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'event-driven',
-    sessionUsageProvider: null,
+    sessionUsageProvider: piSessionUsageProvider,
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.pi,
   },
   opencode: {
@@ -708,7 +710,7 @@ const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   codex: codexSessionObservability,
   cursor: createCursorLogObservability(),
   grok: grokLogObservability,
-  pi: claudeHookObservability,
+  pi: createPiHookObservability(),
 };
 
 export function getRunnerObservability(runnerId?: string | null): RunnerObservability | null {
