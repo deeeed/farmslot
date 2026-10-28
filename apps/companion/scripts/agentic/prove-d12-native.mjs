@@ -23,10 +23,20 @@ import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const [phase, ...args] = process.argv.slice(2);
+// The recipe names each phase's budget, below its node timeout, so a phase that runs out still
+// prints its last observation before the recipe stops it.
+const budgetArg = process.argv.slice(2).find((arg) => arg.startsWith('--budget-ms='));
+const [phase, ...args] = process.argv.slice(2).filter((arg) => arg !== budgetArg);
+const budget = Number(budgetArg?.slice('--budget-ms='.length));
+assert(
+  Number.isInteger(budget) && budget > 0,
+  'The recipe names the phase budget with --budget-ms=',
+);
+const phaseEnd = Date.now() + budget;
 const PHASES = [
   'online',
   'run-list-fill',
+  'catalog-open',
   'catalog-online',
   'upstream-online',
   'reconnect',
@@ -72,7 +82,7 @@ async function observe(ref = 'd12-native') {
   return result.observations?.d12Native ?? result.observations?.offlineBaseline;
 }
 async function until(check, label, timeout = 90000) {
-  const end = Date.now() + timeout;
+  const end = Math.min(Date.now() + timeout, phaseEnd);
   let last;
   while (Date.now() < end) {
     last = await observe().catch((error) => ({ observeError: error.message }));
@@ -88,7 +98,7 @@ async function checkpoint(action, args = {}) {
   const request = path.join(checkpoints, `${step}-request.json`);
   await writeFile(`${request}.tmp`, JSON.stringify({ case: config.name, action, args }));
   await rename(`${request}.tmp`, request);
-  const end = Date.now() + 180000;
+  const end = Math.min(Date.now() + 180000, phaseEnd);
   while (Date.now() < end) {
     try {
       return JSON.parse(await readFile(path.join(checkpoints, `${step}-ack.json`), 'utf8'));
@@ -114,11 +124,15 @@ function runList(name, extra = []) {
       encoding: 'utf8',
       env: { ...process.env, FARMSLOT_D12_CASE: config.name },
       stdio: ['ignore', 'pipe', 'inherit'],
-      timeout: 240000,
+      timeout: Math.max(1, phaseEnd - Date.now()),
     },
   );
   process.stdout.write(result.stdout ?? '');
-  assert.equal(result.status, 0, `prove-run-list-version-fill ${name} failed`);
+  assert.equal(
+    result.status,
+    0,
+    `prove-run-list-version-fill ${name} failed${result.error ? `: ${result.error.message}` : ''}`,
+  );
 }
 const receipt = (fields) => console.log(JSON.stringify({ phase, ...fields }));
 const sameModels = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
@@ -146,9 +160,13 @@ if (phase === 'online') {
     total,
     ...(fixture.oversizedRunId ? ['--expect-oversized'] : []),
   ]);
-} else if (phase === 'catalog-online') {
-  // The catalog is read only while a picker is mounted; the gate review screen mounts one.
+} else if (phase === 'catalog-open') {
+  // The catalog is read only while a review picker is open. The gate review screen's picker sits
+  // behind its request-review trigger, which the recipe taps once this screen is up.
   await checkpoint('open-url', { url: gateUrl });
+  const state = await until((value) => value.gate?.opened === true, 'The gate review screen is up');
+  receipt({ gateReviewOpen: true, catalogModels: state.catalog?.models?.length ?? 0 });
+} else if (phase === 'catalog-online') {
   const state = await until((value) => value.catalog?.models?.length > 0, 'Catalog read online');
   // The picker may show a visible subset; every model it reads comes from the fixture's catalogs.
   const known = new Set(fixture.catalog.models.map((model) => model.id));

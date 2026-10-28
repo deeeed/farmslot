@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "D12 native Companion: client families in one boot",
-  "description": "DRAFT SKELETON (lane staging; not in the product tree). One reserved iOS simulator, one launch of the development dev client, and one deliberate cold restart, against a private gateway and store proxy from the D12 controller. Phases in order: online fill, reconnect, offline cold start, new-epoch recovery. The run-list-version-fill steps are placeholders until the D12 code and its app observer exist. Each command runs scripts/agentic/prove-d12-native.mjs (to be written), which prints one JSON receipt per phase and asks the controller for checkpoints (change runs, fail one artifact read, stop or start the gateway) through request files, as in D11.",
+  "description": "One reserved iOS simulator, one launch of the development dev client and one deliberate cold restart, against a private gateway and store proxy from the D12 native controller. Phases in order: online fill, model catalog and PR rows online, reconnect with one failed image read, offline cold start, the gate review and its diff offline, catalog and PR rows offline, new-epoch recovery. Each command runs scripts/agentic/prove-d12-native.mjs with a phase budget below its node timeout; it prints one JSON receipt per phase and asks the controller for checkpoints (deep links, a failed artifact read, holding the socket, changing runs, stopping or starting the gateway, the cold restart) through request files, as in D11. Isolation: the gateway and fixture see only logged fake CLIs, a case HOME and tmux directory and a dead local proxy; Metro runs headless and offline behind the same dead proxy; IDB calls reach the controller's own companion. Git outside the case fails the audit, except exactly these read-only calls with cwd apps/companion, each recorded: expo-updates' runtime-version check from Metro's process tree (`git --help`, `git rev-parse --show-toplevel`) and the recipe runner's source provenance from its own tree (`git rev-parse HEAD`, `git status --porcelain=v1 --untracked-files=no --ignore-submodules=none`).",
   "paramsSchema": {
     "type": "object",
     "required": ["gate_decision_id", "gate_run_id", "gate_slot_id"],
@@ -24,7 +24,7 @@
   "proofTargets": [
     {
       "id": "d12RunListVersionFill",
-      "claim": "PLACEHOLDER (D12 code): the cold fill stores the version index and filter projection of every live run and full rows up to the bound; after K runs change, a reconnect and the new-epoch catch-up read only changed and missing ids; offline totals come from the projections."
+      "claim": "The cold fill stores the version index and filter projection of every live run and full rows up to the bound; after K runs change, a reconnect and the new-epoch catch-up read only changed and missing ids; offline totals come from the projections."
     },
     {
       "id": "d12CompanionReconnect",
@@ -48,7 +48,7 @@
     "nodes": {
       "online": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs online",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs online --budget-ms=160000",
         "timeout_ms": 180000,
         "intent": "Wait until the app is connected and prefetch holds the gate package.",
         "next": "assert-online"
@@ -64,9 +64,9 @@
       },
       "run-list-fill": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs run-list-fill",
-        "timeout_ms": 180000,
-        "intent": "PLACEHOLDER (D12): read the cold fill from the app observer.",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs run-list-fill --budget-ms=380000",
+        "timeout_ms": 400000,
+        "intent": "Read the cold version-list fill from the app observer.",
         "next": "assert-run-list-fill"
       },
       "assert-run-list-fill": {
@@ -74,15 +74,35 @@
         "source": "run-list-fill",
         "stream": "stdout",
         "match": "\"runListColdFill\"\\s*:\\s*true",
-        "intent": "PLACEHOLDER (D12): every live run has a version and a projection.",
+        "intent": "Every live run has a version and a projection, with no full list read.",
         "proves": ["d12RunListVersionFill"],
+        "next": "catalog-open"
+      },
+      "catalog-open": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs catalog-open --budget-ms=100000",
+        "timeout_ms": 120000,
+        "intent": "Open the gate review screen online.",
+        "next": "catalog-trigger-visible"
+      },
+      "catalog-trigger-visible": {
+        "action": "ui.wait_for",
+        "test_id": "companion-publish-gate-review-open",
+        "expected": "visible",
+        "intent": "The gate's request-review trigger is shown.",
+        "next": "catalog-trigger"
+      },
+      "catalog-trigger": {
+        "action": "ui.press",
+        "test_id": "companion-publish-gate-review-open",
+        "intent": "Open the review picker, which reads the runner model catalogs.",
         "next": "catalog-online"
       },
       "catalog-online": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs catalog-online",
-        "timeout_ms": 90000,
-        "intent": "Record the model ids the app read from the fake runner catalogs.",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs catalog-online --budget-ms=100000",
+        "timeout_ms": 120000,
+        "intent": "Record the model ids the open picker read from the fake runner catalogs.",
         "next": "assert-catalog-online"
       },
       "assert-catalog-online": {
@@ -96,8 +116,8 @@
       },
       "upstream-online": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs upstream-online",
-        "timeout_ms": 90000,
+        "cmd": "node scripts/agentic/prove-d12-native.mjs upstream-online --budget-ms=100000",
+        "timeout_ms": 120000,
         "intent": "Open the PR screen online and record its rows and their times.",
         "next": "assert-upstream-online"
       },
@@ -112,8 +132,8 @@
       },
       "reconnect": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs reconnect {{params.gate_run_id}}",
-        "timeout_ms": 180000,
+        "cmd": "node scripts/agentic/prove-d12-native.mjs reconnect {{params.gate_run_id}} --budget-ms=660000",
+        "timeout_ms": 680000,
         "intent": "Change K runs, fail one image read, then drop the socket once.",
         "next": "assert-reconnect"
       },
@@ -138,14 +158,14 @@
         "source": "reconnect",
         "stream": "stdout",
         "match": "\"runListCatchUp\"\\s*:\\s*true",
-        "intent": "PLACEHOLDER (D12): the reconnect read exactly the K changed ids.",
+        "intent": "The reconnect read exactly the changed ids.",
         "proves": ["d12RunListVersionFill"],
         "next": "offline"
       },
       "offline": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs offline",
-        "timeout_ms": 180000,
+        "cmd": "node scripts/agentic/prove-d12-native.mjs offline --budget-ms=320000",
+        "timeout_ms": 340000,
         "intent": "Stop the gateway and proxy, then make the one deliberate cold restart.",
         "next": "assert-offline"
       },
@@ -163,13 +183,13 @@
         "source": "offline",
         "stream": "stdout",
         "match": "\"runListOfflineTotals\"\\s*:\\s*true",
-        "intent": "PLACEHOLDER (D12): offline totals equal the live count, from the store alone.",
+        "intent": "Offline totals equal the live count, from the store alone.",
         "proves": ["d12RunListVersionFill"],
         "next": "gate-offline"
       },
       "gate-offline": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs gate-offline {{params.gate_decision_id}} {{params.gate_run_id}} {{params.gate_slot_id}}",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs gate-offline {{params.gate_decision_id}} {{params.gate_run_id}} {{params.gate_slot_id}} --budget-ms=100000",
         "timeout_ms": 120000,
         "intent": "Open the pending gate offline; check its details and images.",
         "next": "gate-screen"
@@ -199,7 +219,7 @@
       },
       "gate-diff-offline": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs gate-diff-offline {{params.gate_run_id}}",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs gate-diff-offline {{params.gate_run_id}} --budget-ms=100000",
         "timeout_ms": 120000,
         "intent": "Open the gate run's Diff screen offline and wait for its package diff.",
         "next": "diff-screen"
@@ -229,8 +249,8 @@
       },
       "catalog-offline": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs catalog-offline",
-        "timeout_ms": 90000,
+        "cmd": "node scripts/agentic/prove-d12-native.mjs catalog-offline --budget-ms=100000",
+        "timeout_ms": 120000,
         "intent": "Compare the restored catalog with the online read.",
         "next": "assert-catalog-offline"
       },
@@ -245,8 +265,8 @@
       },
       "upstream-offline": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs upstream-offline",
-        "timeout_ms": 90000,
+        "cmd": "node scripts/agentic/prove-d12-native.mjs upstream-offline --budget-ms=100000",
+        "timeout_ms": 120000,
         "intent": "Open the PR screen offline and compare it with the online read.",
         "next": "prs-screen"
       },
@@ -275,8 +295,8 @@
       },
       "recover": {
         "action": "command",
-        "cmd": "node scripts/agentic/prove-d12-native.mjs recover",
-        "timeout_ms": 240000,
+        "cmd": "node scripts/agentic/prove-d12-native.mjs recover --budget-ms=560000",
+        "timeout_ms": 580000,
         "intent": "Start the gateway on a new epoch and wait for the app to recover.",
         "next": "assert-recover"
       },
@@ -294,7 +314,7 @@
         "source": "recover",
         "stream": "stdout",
         "match": "\"runListRecoverCatchUp\"\\s*:\\s*true",
-        "intent": "PLACEHOLDER (D12): the new-epoch catch-up read exactly the K2 changed ids.",
+        "intent": "The new-epoch catch-up read exactly the changed ids.",
         "proves": ["d12RunListVersionFill"],
         "next": "done"
       },
