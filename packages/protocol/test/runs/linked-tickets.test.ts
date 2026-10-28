@@ -25,6 +25,13 @@ const ticket: RunTicketData = {
   screenshots: [],
   labels: [],
   jiraKey: 'TEAM-100',
+  linkedTickets: ['TEAM-200', 'TEAM-300'].map((ref) => ({
+    ref,
+    url: `https://tracker.example/browse/${ref}`,
+    title: 'Explicit related ticket',
+    description: '',
+    source: 'jira' as const,
+  })),
 };
 function run(overrides: Partial<Run> = {}): Run {
   return {
@@ -52,7 +59,7 @@ function run(overrides: Partial<Run> = {}): Run {
   };
 }
 
-test('one covered-ticket union uses canonical, ticket sections, AC prefixes and manual refs, without incidental prose links', () => {
+test('one ticket union uses only structured source and operator refs', () => {
   const source = run({ linkedTicketRefs: ['TEAM-400', 'TEAM-200'] });
   const before = structuredClone(source);
   assert.deepEqual(runLinkedTicketRefs(source), ['TEAM-100', 'TEAM-200', 'TEAM-300', 'TEAM-400']);
@@ -126,11 +133,13 @@ test('prefetched tickets work for PR runs and known browse roots link operator-a
   assert.deepEqual(view.operatorRefs, ['TEAM-600']);
 });
 
-test('unresolved URLs keep the covered key visible rather than inventing a tracker host', () => {
-  const view = runLinkedTicketsView(run({ links: undefined }));
+test('unresolved URLs keep the explicit key visible rather than inventing a tracker host', () => {
+  const view = runLinkedTicketsView(
+    run({ links: undefined, ticketData: { ...ticket, linkedTickets: undefined } }),
+  );
   assert.deepEqual(
     view.tickets.map((t) => t.url),
-    [null, null, null],
+    [null],
   );
 });
 
@@ -158,4 +167,26 @@ test('compact PR sources precede the tickets without repeating the recorded PR l
       })),
     ]);
   }
+});
+
+// Ticket-shaped strings in a PR description and its criteria are not references.
+test('PR body headings and acceptance text never infer tickets', () => {
+  const source = run({
+    ticketOrPr: 'example/repo#38127',
+    ticketData: {
+      ...ticket,
+      jiraKey: undefined,
+      linkedTickets: undefined,
+      description: '# TAT-9999\nHIP-3 and EIP-1193\nAC-1: TAT-9999 is prose.',
+      acceptanceCriteria: ['[TAT-9999] Demonstrate HIP-3', 'AC-1: A criterion'],
+    },
+  });
+  const before = structuredClone(source);
+  const view = runLinkedTicketsView(source);
+  assert.deepEqual(view.tickets, []);
+  assert.deepEqual(view.references, [
+    { ref: 'example/repo#38127', url: 'https://github.com/example/repo/pull/38127' },
+  ]);
+  assert.deepEqual(view.pr, { label: 'PR', url: 'https://github.com/example/repo/pull/10' });
+  assert.deepEqual(source, before);
 });
