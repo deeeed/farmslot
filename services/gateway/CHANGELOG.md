@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Retain task-local recipe actions with run artifacts and restore them when a follow-up inherits the recipe, including on another node; reject inheritance when required action files are unavailable.
+- Refuse worker launch when a declared toolchain command exits unsuccessfully, including an installed Yarn shim with no version for the pinned Node.
 
 - Send refused completion feedback to the retained worker and wait for a new signal before checking completion again.
 
