@@ -1,0 +1,73 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Refused completion returns to its retained worker",
+  "description": "Private authenticated gateway fixture with a controlled instruction adapter and file-backed worker loop. Proves gateway sequencing and saved signal freshness; does not launch or certify a real provider pane.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["proof_root"],
+    "properties": {
+      "proof_root": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_./-]+$"
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "refusal-delivered",
+      "claim": "The real send-back RPC forwards the exact completion refusal to its selected retained adapter context."
+    },
+    {
+      "id": "old-signal-ignored",
+      "claim": "The previous file signal cannot enter COMPLETE after send-back, including an independently read persisted snapshot."
+    },
+    {
+      "id": "new-signal-continues",
+      "claim": "A later file signal enters COMPLETE through the monitor continuation without another dispatch."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "intent": "Exercise send-back through a private authenticated gateway and retained worker fixture.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks services/gateway/scripts/prove-completion-send-back.mjs \"{{params.proof_root}}\"",
+        "timeout_ms": 60000,
+        "next": "delivered"
+      },
+      "delivered": {
+        "action": "assert_output",
+        "intent": "Require the exact refusal at the selected adapter context.",
+        "source": "prove",
+        "stream": "stdout",
+        "contains": "\"exactRefusalDelivered\":true",
+        "proves": ["refusal-delivered"],
+        "next": "old"
+      },
+      "old": {
+        "action": "assert_output",
+        "intent": "Require COMPLETE to wait while the previous source signal remains.",
+        "source": "prove",
+        "stream": "stdout",
+        "contains": "\"oldSignalIgnored\":true",
+        "proves": ["old-signal-ignored"],
+        "next": "fresh"
+      },
+      "fresh": {
+        "action": "assert_output",
+        "intent": "Require the next source signal to enter COMPLETE through monitoring.",
+        "source": "prove",
+        "stream": "stdout",
+        "contains": "\"newSignalReachedComplete\":true",
+        "proves": ["new-signal-continues"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
