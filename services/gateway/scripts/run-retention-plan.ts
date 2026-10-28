@@ -6,6 +6,8 @@ import path from 'node:path';
 import type { Run } from '@farmslot/protocol';
 import { loadAllRunRecords } from '@farmslot/run-bundle';
 
+import '../src/projects/read-only-status-process.js';
+
 import {
   gatewayRetentionRoots,
   retentionContext,

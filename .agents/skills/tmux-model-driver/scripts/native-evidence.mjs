@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import '../../../../services/gateway/src/projects/read-only-status-process.ts';
+
 import {
   applyClaudeInterruptionProbe,
   buildClaudeInterruptionProbeCommand,

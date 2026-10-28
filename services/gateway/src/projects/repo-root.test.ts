@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { poolDir, projectsDir } from '../core/config.js';
 import { statusFile } from '../fleet/state.js';
 
-import { farmslotRoot, resolveFarmslotRoot, resolveStatusFilePath } from './repo-root.js';
+import { assertStatusFileWritable, farmslotRoot, resolveFarmslotRoot, resolveStatusFilePath } from './repo-root.js';
 
 const expectedRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -21,7 +21,7 @@ assert.equal(
   resolveStatusFilePath(expectedRoot),
 );
 assert.equal(
-  resolveStatusFilePath(expectedRoot, {}, ['node', 'src/index.ts'], true),
+  resolveStatusFilePath(expectedRoot, {}, ['node', 'src/index.ts'], 'gateway'),
   path.join(expectedRoot, '.farm-status.json'),
 );
 assert.throws(
@@ -50,7 +50,7 @@ for (const [label, env, argv] of [
       slots: [{ slot: 'owned-review', current_run_id: 'review-run', slot_epoch: 76 }],
     });
     writeFileSync(live, prior);
-    const target = resolveStatusFilePath(root, env, argv, true);
+    const target = resolveStatusFilePath(root, env, argv, 'gateway');
     writeFileSync(target, JSON.stringify({ slots: [{ slot: 'slot-terminal-overlap' }] }));
     assert.equal(readFileSync(live, 'utf8'), prior);
     assert.notEqual(target, live);
@@ -86,7 +86,7 @@ test('explicit test overrides cannot select the shared store through file or dir
           root,
           { NODE_TEST_CONTEXT: '1', FARMSLOT_TEST_STATUS_FILE: selected },
           ['node', 'fixture.test.ts'],
-          true,
+          'gateway',
         ),
       /must not point to the shared fleet status store/,
     );
@@ -101,4 +101,25 @@ test('explicit test overrides cannot select the shared store through file or dir
     /must not point to the shared fleet status store/,
   );
   assert.equal(readFileSync(live, 'utf8'), prior);
+});
+
+
+test('an explicit private override preserves the shared sentinel and permits private writes', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'private-status-override-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const shared = path.join(root, '.farm-status.json');
+  writeFileSync(shared, 'shared-sentinel');
+  const privatePath = path.join(root, 'fixture-status.json');
+  const selected = resolveStatusFilePath(root, { NODE_TEST_CONTEXT: '1', FARMSLOT_TEST_STATUS_FILE: privatePath }, ['node', 'test.ts']);
+  assert.equal(selected, privatePath);
+  assert.doesNotThrow(() => assertStatusFileWritable(selected, root));
+  writeFileSync(selected, '{"slots":[]}');
+  assert.equal(readFileSync(shared, 'utf8'), 'shared-sentinel');
+});
+
+test('explicit readers can resolve shared status but cannot authorize a shared write', () => {
+  const shared = path.join(expectedRoot, '.farm-status.json');
+  assert.equal(resolveStatusFilePath(expectedRoot, {}, ['node', 'reader.ts'], 'read-only'), shared);
+  assert.throws(() => assertStatusFileWritable(shared, expectedRoot, 'read-only'), /reader access is read-only/);
+  assert.doesNotThrow(() => assertStatusFileWritable(shared, expectedRoot, 'gateway'));
 });

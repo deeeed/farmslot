@@ -236,6 +236,22 @@ async function main(): Promise<void> {
     assert.notEqual(laneCode, 0, 'an ordinary lane script cannot resolve the shared store');
     assert.match(refusal, /requires gateway bootstrap/);
     assert.equal(await readFile(status, 'utf8'), before);
+    const reader = path.join(root, 'reader-proof.mjs');
+    await writeFile(
+      reader,
+      `import ${JSON.stringify(new URL('./read-only-status-process.js', import.meta.url).href)};\n` +
+      `import assert from 'node:assert/strict';\n` +
+      `import { readSlotRow, updateSlotStatus } from ${JSON.stringify(new URL('../core/state.js', import.meta.url).href)};\n` +
+      `assert.equal((await readSlotRow('owned-review')).slot_epoch,76);\n` +
+      `await assert.rejects(updateSlotStatus('owned-review',{slot_epoch:0}),/reader access is read-only/);\n`,
+    );
+    execFileSync(process.execPath, ['--import', 'tsx', reader], {
+      cwd: source, env, timeout: 90_000, stdio: ['ignore', log.fd, log.fd],
+    });
+    execFileSync(process.execPath, ['--import', 'tsx', path.join(source, 'services/gateway/scripts/run-retention-plan.ts')], {
+      cwd: source, env, timeout: 90_000, stdio: ['ignore', log.fd, log.fd],
+    });
+    assert.equal(await readFile(status, 'utf8'), before, 'operator reader never changes the lease');
     gateway.send({ complete: true });
     await waitMessage('completed');
     assert.equal(await readFile(path.join(root, 'review-result'), 'utf8'), 'complete');

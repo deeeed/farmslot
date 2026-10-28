@@ -6,6 +6,7 @@ import { mock, test } from 'node:test';
 
 import type { TaskProgressResult } from '@farmslot/protocol';
 
+import '../runtime/isolated-test-process.test-support.js';
 import '../runtime/mock-pty.test-support.js';
 
 // Same fixture shape as watcher-subtask.test.ts: mock.module replaces a module

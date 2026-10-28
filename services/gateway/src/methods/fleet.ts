@@ -294,7 +294,7 @@ export function newestActiveRunForSlot(
   slotId: string,
   currentOwnerId?: string | null,
 ): Run | null {
-  const candidates = runs.filter((run) => run.slotId === slotId && !isSlotFreedByPark(run));
+  const candidates = runs.filter((run) => run.slotId === slotId && !runReleasedSlot(run));
   if (candidates.length === 0) return null;
   const recordedOwner = candidates.find((run) => run.id === currentOwnerId);
   if (recordedOwner) return recordedOwner;
@@ -309,7 +309,7 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   row: T,
   activeRun: Run | null,
 ): T {
-  if (!activeRun) return row;
+  if (!activeRun || runReleasedSlot(activeRun)) return row;
   // Before FIND_SLOT claims it, run.slotId is only a request. A refresh must not
   // manufacture that claim and make the request fail its own busy-slot check.
   if (slotPinIsRequestOnly(activeRun, row)) return row;
@@ -479,21 +479,32 @@ export function buildFleetRefreshSnapshot(
   activeRuns: Run[],
   checkedAt: string,
 ) {
-  assertRunningStepLeases(currentRows, activeRuns);
+  const lostLeases = missingRunningStepLeases(currentRows, activeRuns);
   const prevSlots: Record<string, PreviousSlotStatus> = {};
   for (const row of currentRows) {
     prevSlots[String(row.slot)] = row as PreviousSlotStatus;
   }
-  const slots = results.map((r) =>
-    reconcileRefreshSlotRowWithActiveRun(
-      buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
-      newestActiveRunForSlot(
-        activeRuns,
-        r.slot,
-        prevSlots[r.slot]?.current_run_id as string | undefined,
-      ),
-    ),
-  );
+  const slots = results.map((r) => {
+    const previous = prevSlots[r.slot] ?? {};
+    const row = buildRefreshSlotRow(r, previous);
+    const reason = lostLeases.get(r.slot);
+    if (reason) {
+      const { slot_epoch: _epoch, ...observed } = row;
+      return {
+        ...observed,
+        ...('slot_epoch' in previous ? { slot_epoch: previous.slot_epoch } : {}),
+        lifecycle: 'held',
+        phase: 'occupied',
+        held_reason: reason,
+        dispatchable: false,
+      };
+    }
+    return reconcileRefreshSlotRowWithActiveRun(
+      row,
+      newestActiveRunForSlot(activeRuns, r.slot, previous.current_run_id),
+    );
+  });
+
   const preserved = preserveClaimedRowsUnknownToProbe(
     currentRows,
     new Set(results.map((r) => r.slot)),
@@ -520,18 +531,38 @@ export function preserveClaimedRowsUnknownToProbe(
   });
 }
 
-/** A refresh may observe a running lease, never manufacture a replacement epoch for it. */
-function assertRunningStepLeases(rows: Array<Record<string, unknown>>, runs: Run[]): void {
+/** A completed release stays released while later steps wait for an operator. */
+function runReleasedSlot(run: Run): boolean {
+  return (
+    isSlotFreedByPark(run) ||
+    run.steps.some(
+      (step) =>
+        step.name === 'complete' &&
+        step.status === 'done' &&
+        step.outputs?.slotDisposition === 'released',
+    )
+  );
+}
+
+/** Quarantine only the lost lease; healthy slots must keep refreshing. */
+function missingRunningStepLeases(
+  rows: Array<Record<string, unknown>>,
+  runs: Run[],
+): Map<string, string> {
+  const lost = new Map<string, string>();
   for (const run of runs) {
     const step = run.steps.find((entry) => entry.status === 'running');
-    if (!step || !run.slotId || isSlotFreedByPark(run)) continue;
+    if (!step || !run.slotId || runReleasedSlot(run)) continue;
     const row = rows.find((entry) => entry.slot === run.slotId);
     if (slotPinIsRequestOnly(run, row)) continue;
     if (row?.current_run_id === run.id || row?.handoff_run_id === run.id) continue;
-    throw new Error(
-      `Cannot refresh fleet: running ${step.name} for run ${run.id} lost slot ${run.slotId}; refusing to rebuild its lease or epoch`,
-    );
+    // Preserve the existing ci-watch release policy: it no longer occupies a ready row.
+    if (run.status === 'ci-watching' && row?.lifecycle === 'ready' && !row.current_run_id) continue;
+    const reason = `Running ${step.name} for run ${run.id} lost its lease; refusing to rebuild ownership or epoch`;
+    lost.set(run.slotId, reason);
+    console.error(`[fleet.refresh] ${run.slotId}: ${reason}`);
   }
+  return lost;
 }
 
 export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
