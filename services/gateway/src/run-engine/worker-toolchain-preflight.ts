@@ -25,7 +25,8 @@ export async function readLaunchPackPins(source: LaunchPackDeclaration): Promise
   }
 }
 
-export type LaunchTool = 'node' | 'yarn' | 'yarnNode' | 'ruby';
+type PackageManager = 'npm' | 'yarn' | 'pnpm';
+export type LaunchTool = 'node' | 'packageManager' | 'packageManagerNode' | 'ruby';
 export interface ToolVersion {
   version?: string;
   missing?: boolean;
@@ -33,11 +34,12 @@ export interface ToolVersion {
   exitCode?: number;
 }
 export interface ToolRequirement {
-  tool: 'node' | 'yarn' | 'ruby';
+  tool: 'node' | PackageManager | 'ruby';
   range: string;
   source: string;
 }
 export interface ToolchainObservation {
+  packageManager: PackageManager | null;
   requirements: ToolRequirement[];
   tools: Record<LaunchTool, ToolVersion>;
 }
@@ -50,23 +52,30 @@ const read=(file)=>{try{return fs.readFileSync(file,'utf8').trim()}catch(e){if(e
 const requirements=[];
 const rubyDeclared=/^\s*ruby\s+\S+/m.test(process.argv[1]);
 const add=(tool,range,source)=>{if(range)requirements.push({tool,range,source})};
-const pins=(text,source)=>{for(const row of text.split(/\n/)){const [tool,version]=row.trim().split(/\s+/);if(tool==='nodejs')add('node',version,source);if(tool==='ruby' && rubyDeclared)add('ruby',version,source);if(tool==='yarn')add('yarn',version,source)}};
+const pins=(text,source)=>{for(const row of text.split(/\n/)){const [tool,version]=row.trim().split(/\s+/);if(tool==='nodejs')add('node',version,source);if(tool==='ruby' && rubyDeclared)add('ruby',version,source);if(tool===packageManager)add(tool,version,source)}};
 const raw=read('package.json'),pkg=raw?JSON.parse(raw):{};
+const declared=typeof pkg.packageManager==='string'?pkg.packageManager:null;
+const managers={'package-lock.json':'npm','yarn.lock':'yarn','pnpm-lock.yaml':'pnpm'};
+const lock=Object.keys(managers).find(file=>fs.existsSync(file));
+const packageManager=declared?declared.split('@')[0]:(managers[lock]||null);
 add('node',read('.nvmrc'),'.nvmrc');
 add('node',pkg.engines?.node,'package.json engines.node');
-add('yarn',pkg.engines?.yarn,'package.json engines.yarn');
-if(typeof pkg.packageManager==='string' && pkg.packageManager.startsWith('yarn@'))add('yarn',pkg.packageManager.slice(5).split('+')[0],'package.json packageManager');
+if(packageManager){add(packageManager,declared?declared.slice(packageManager.length+1).split('+')[0]:'*',declared?'package.json packageManager':lock);add(packageManager,pkg.engines?.[packageManager],'package.json engines.'+packageManager)}
 pins(read('.tool-versions'),'.tool-versions');
 if(rubyDeclared)add('ruby',read('.ruby-version'),'.ruby-version');
 pins(process.argv[1],'selected pack toolchain pins');
 const probe=(binary,args)=>{const r=cp.spawnSync(binary,args,{encoding:'utf8',env:{...process.env,COREPACK_ENABLE_NETWORK:'0'}});if(r.error?.code==='ENOENT')return {missing:true};if(r.error || r.status!==0)return {unavailable:r.error?.message || 'probe exited '+r.status,...(Number.isInteger(r.status)?{exitCode:r.status}:{})};return {version:r.stdout.trim()}};
-const tools={node:{version:process.version},yarn:{},yarnNode:{},ruby:{}};
-if(requirements.some(r=>r.tool==='node'||r.tool==='yarn')){
- tools.yarn=probe('yarn',['--version']);
- tools.yarnNode=probe('yarn',['node','-p','process.version']);
+const tools={node:{version:process.version},packageManager:{},packageManagerNode:{},ruby:{}};
+if(packageManager==='npm'){
+ const result=probe('npm',['version','--json']);
+ if(result.version){const versions=JSON.parse(result.version);tools.packageManager={version:versions.npm};tools.packageManagerNode={version:versions.node}}
+ else {tools.packageManager=result;tools.packageManagerNode=result}
+}else if(packageManager==='yarn'||packageManager==='pnpm'){
+ tools.packageManager=probe(packageManager,['--version']);
+ tools.packageManagerNode=probe(packageManager,packageManager==='yarn'?['node','-p','process.version']:['exec','node','-p','process.version']);
 }
 if(requirements.some(r=>r.tool==='ruby'))tools.ruby=probe('ruby',['-e','print RUBY_VERSION']);
-process.stdout.write(JSON.stringify({requirements,tools}));`;
+process.stdout.write(JSON.stringify({packageManager,requirements,tools}));`;
   // The shell can prove a missing interpreter before JavaScript can read declarations.
   return `if command -v node >/dev/null 2>&1; then node -e ${shellQuote(program)} ${shellQuote(packPins)}; else printf '%s' '{"nodeMissing":true}'; fi`;
 }
@@ -90,24 +99,43 @@ export function parseToolchainObservation(raw: string): ToolchainObservation | u
   const value: unknown = JSON.parse(raw);
   if (!isRecord(value) || !Array.isArray(value.requirements) || !isRecord(value.tools))
     return undefined;
+  const packageManager = value.packageManager;
+  if (
+    packageManager !== null &&
+    packageManager !== 'npm' &&
+    packageManager !== 'yarn' &&
+    packageManager !== 'pnpm'
+  )
+    return undefined;
   const requirements: ToolRequirement[] = [];
   for (const entry of value.requirements) {
     if (
       !isRecord(entry) ||
-      !['node', 'yarn', 'ruby'].includes(String(entry.tool)) ||
+      !['node', 'npm', 'yarn', 'pnpm', 'ruby'].includes(String(entry.tool)) ||
       typeof entry.range !== 'string' ||
       typeof entry.source !== 'string'
     )
       return undefined;
-    if (entry.tool !== 'node' && entry.tool !== 'yarn' && entry.tool !== 'ruby') return undefined;
+    if (
+      entry.tool !== 'node' &&
+      entry.tool !== 'npm' &&
+      entry.tool !== 'yarn' &&
+      entry.tool !== 'pnpm' &&
+      entry.tool !== 'ruby'
+    )
+      return undefined;
     requirements.push({ tool: entry.tool, range: entry.range, source: entry.source });
   }
   const node = toolVersion(value.tools.node);
-  const yarn = toolVersion(value.tools.yarn);
-  const yarnNode = toolVersion(value.tools.yarnNode);
+  const manager = toolVersion(value.tools.packageManager);
+  const managerNode = toolVersion(value.tools.packageManagerNode);
   const ruby = toolVersion(value.tools.ruby);
-  return node && yarn && yarnNode && ruby
-    ? { requirements, tools: { node, yarn, yarnNode, ruby } }
+  return node && manager && managerNode && ruby
+    ? {
+        packageManager,
+        requirements,
+        tools: { node, packageManager: manager, packageManagerNode: managerNode, ruby },
+      }
     : undefined;
 }
 
@@ -119,26 +147,36 @@ export function checkToolchainObservation(
   const unverified: string[] = [];
   for (const requirement of observation.requirements) {
     const tools: LaunchTool[] =
-      requirement.tool === 'node' ? ['node', 'yarnNode'] : [requirement.tool];
+      requirement.tool === 'node'
+        ? observation.packageManager
+          ? ['node', 'packageManagerNode']
+          : ['node']
+        : [requirement.tool === 'ruby' ? 'ruby' : 'packageManager'];
     for (const tool of tools) {
       const actual = observation.tools[tool];
+      const name =
+        tool === 'packageManager'
+          ? observation.packageManager
+          : tool === 'packageManagerNode'
+            ? `${observation.packageManager}Node`
+            : tool;
       const correction = `Run the selected pack setup/check-paths in ${slotId} and retry this run`;
       if (actual.missing)
         return {
           status: 'mismatch',
-          detail: `${slotId} ${tool} is missing; expected ${requirement.range} from ${requirement.source}. ${correction}.`,
+          detail: `${slotId} ${name} is missing; expected ${requirement.range} from ${requirement.source}. ${correction}.`,
         };
       if (actual.exitCode !== undefined && actual.exitCode !== 0)
         return {
           status: 'mismatch',
-          detail: `${slotId} ${tool} exited ${actual.exitCode}; expected ${requirement.range} from ${requirement.source}. ${correction}.`,
+          detail: `${slotId} ${name} exited ${actual.exitCode}; expected ${requirement.range} from ${requirement.source}. ${correction}.`,
         };
       if (!actual.version) {
-        unverified.push(`${tool}: ${actual.unavailable ?? 'version unavailable'}`);
+        unverified.push(`${name}: ${actual.unavailable ?? 'version unavailable'}`);
         continue;
       }
       if (!valid(actual.version)) {
-        unverified.push(`${tool}: unreadable version ${actual.version}`);
+        unverified.push(`${name}: unreadable version ${actual.version}`);
         continue;
       }
       const range = validRange(requirement.range);
@@ -151,7 +189,7 @@ export function checkToolchainObservation(
       if (!satisfies(actual.version, range))
         return {
           status: 'mismatch',
-          detail: `${slotId} ${tool} resolved ${actual.version}; expected ${requirement.range} from ${requirement.source}. ${correction}.`,
+          detail: `${slotId} ${name} resolved ${actual.version}; expected ${requirement.range} from ${requirement.source}. ${correction}.`,
         };
     }
   }
@@ -167,7 +205,7 @@ export function checkToolchainObservation(
     : {
         status: 'verified',
         detail: observation.requirements.length
-          ? 'Declared Node, Yarn/child Node and Ruby versions match the launch shell.'
+          ? 'Declared Node, selected package-manager/child Node and Ruby versions match the launch shell.'
           : 'No toolchain versions declared.',
       };
 }
