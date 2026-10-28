@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
+import type { RecipeActionManifestDocument } from '@farmslot/protocol';
+
 import '../runtime/mock-pty.test-support.js';
 
 const root = await mkdtemp(path.join(tmpdir(), 'inherited-task-actions-'));
@@ -32,17 +34,19 @@ const { retainCapturedRunArtifacts, retainedRunTaskDirectory } =
 const { copyTaskDirSubdirectories } = await import('../tasks/sidecars.js');
 
 const action = 'fixture.retained_probe';
-const files = {
-  'task-actions/manifest.json': JSON.stringify({
-    $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
-    actions: {
-      [action]: {
-        description: 'Read the restored fixture.',
-        examples: [{ action, intent: 'Verify restored task inputs.', next: 'done' }],
-        schema: { type: 'object', properties: {}, additionalProperties: false },
-      },
+const actionManifest: RecipeActionManifestDocument = {
+  $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+  actions: {
+    [action]: {
+      description: 'Read the restored fixture.',
+      execution_capabilities: ['host-read-export'],
+      examples: [{ action, intent: 'Verify restored task inputs.', next: 'done' }],
+      schema: { type: 'object', properties: {}, additionalProperties: false },
     },
-  }),
+  },
+};
+const files = {
+  'task-actions/manifest.json': JSON.stringify(actionManifest),
   'task-actions/actions/probe.cjs': 'module.exports = () => ({ restored: true });\n',
   'task-actions/fixtures/input.bin': Buffer.from([0xff, 0, 0x80, 1]),
 };
