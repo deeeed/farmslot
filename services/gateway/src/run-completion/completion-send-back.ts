@@ -5,10 +5,7 @@ import { readSlotField } from '../core/state.js';
 import { continuePRCompletionStep } from '../methods/run/replay-step.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
-import {
-  deliverOperatorInstruction,
-  OperatorInstructionNotAttemptedError,
-} from '../runners/operator-instruction.js';
+import { deliverOperatorInstructionWithIntent } from '../runners/operator-instruction-intent.js';
 import { getRun, persistRunNow, updateRunStep } from '../runs/store.js';
 import {
   normalizeWorkerSignal,
@@ -149,11 +146,17 @@ export async function sendBackCompletion(
       `Keep the existing task and evidence ownership rules. When fixed, use the primary task marking command to write a new terminal signal at ${context.signalFile ?? 'the primary SIGNAL.json'}. The previous completion signal will not be reused.`,
     ].join('\n\n'),
   };
-  const persistDelivery = (next: CompletionDelivery, reason: string) =>
+  const persistDelivery = (next: CompletionDelivery, reason: string, clearStartedAt?: number) =>
     withRunTransition(run.id, async () => {
       const latest = await assertOwner();
       const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)!;
       const previousOutputs = step.outputs;
+      if (clearStartedAt !== undefined) {
+        const saved = savedDelivery(latest);
+        if (!saved || saved.key !== next.key || saved.startedAt !== clearStartedAt) return;
+        const { startedAt: _startedAt, ...untouched } = saved;
+        next = untouched;
+      }
       updateRunStep(run.id, PipelineSteps.DISPATCH, {
         outputs: {
           ...previousOutputs,
@@ -169,40 +172,24 @@ export async function sendBackCompletion(
       }
     });
   if (!delivery.confirmed) {
-    const observeSince = delivery.startedAt;
-    const pending = { ...delivery, startedAt: delivery.startedAt ?? Date.now() };
-    await persistDelivery(pending, 'completion send-back signal baseline');
-    const clearUntouched = async () => {
-      const { startedAt: _startedAt, ...untouched } = pending;
-      await persistDelivery(untouched, 'untouched completion feedback can retry');
-    };
-    let outcome: Awaited<ReturnType<typeof deliverOperatorInstruction>>;
-    try {
-      outcome = await deliverOperatorInstruction(
-        await assertOwner(),
-        pending.key,
-        pending.text,
-        observeSince,
-        context.id,
-        pending.key,
-      );
-    } catch (error) {
-      if (error instanceof OperatorInstructionNotAttemptedError) {
-        try {
-          await clearUntouched();
-        } catch (clearError) {
-          throw new AggregateError(
-            [error, clearError],
-            'Completion feedback failed and its untouched intent could not be reset',
-          );
-        }
-      }
-      throw error;
-    }
-    if (outcome === 'not-attempted') await clearUntouched();
-    if (outcome !== 'confirmed')
-      throw new Error(`Completion feedback delivery is ${outcome}; the run remains held.`);
-    delivery = { ...pending, confirmed: true };
+    const intent = delivery;
+    const result = await deliverOperatorInstructionWithIntent(
+      assertOwner,
+      { key: intent.key, text: intent.text, contextId: context.id, commandId: intent.key },
+      {
+        recordPending: async (begin) => {
+          const window = begin(intent.startedAt);
+          const { startedAt } = window;
+          await persistDelivery({ ...intent, startedAt }, 'completion send-back signal baseline');
+          return window;
+        },
+        clearPending: (startedAt) =>
+          persistDelivery(intent, 'untouched completion feedback can retry', startedAt),
+      },
+    );
+    if (result.delivery !== 'confirmed')
+      throw new Error(`Completion feedback delivery is ${result.delivery}; the run remains held.`);
+    delivery = { ...intent, startedAt: result.startedAt, confirmed: true };
     await persistDelivery(delivery, 'completion feedback delivered');
   }
   const key = delivery.key;

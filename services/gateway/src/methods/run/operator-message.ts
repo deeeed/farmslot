@@ -15,10 +15,7 @@ import { readSlotField } from '../../core/state.js';
 import { resolveWorkerTaskDir } from '../../review/templates.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { readNativeWorkerSnapshot } from '../../runners/native/worker-control.js';
-import {
-  deliverOperatorInstruction,
-  OperatorInstructionNotAttemptedError,
-} from '../../runners/operator-instruction.js';
+import { deliverOperatorInstructionWithIntent } from '../../runners/operator-instruction-intent.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { currentSessionPrincipal } from '../../security/work-originator.js';
 import {
@@ -130,73 +127,75 @@ export async function operatorMessage(
   if (!relative) throw new Error('Operator instruction task directory is unavailable');
   const taskDir = path.posix.join(vars.remoteRepo, relative);
   await syncAcceptanceRegistration(run.id, params.slotId, vars, taskDir);
-  const intent = await withRunTransition(run.id, async () => {
-    const latest = getRun(run.id);
-    if (
-      !latest?.acceptanceRegistration ||
-      isTerminalRunStatus(latest.status) ||
-      latest.slotId !== params.slotId ||
-      (latest.engineState?.generation ?? 0) !== generation ||
-      (await readSlotField(params.slotId, 'current_run_id')) !== latest.id
-    )
-      throw new Error('Operator instruction lost its run or slot owner before delivery');
-    const unit = latest.acceptanceRegistration.units.find(({ id }) => id === unitId)!;
-    if (unit.delivery?.status === 'confirmed') return null;
-    const startedAt = unit.delivery?.startedAt ?? Date.now();
-    await persistRunNow(
-      updateRun(run.id, {
-        acceptanceRegistration: {
-          ...latest.acceptanceRegistration,
-          units: latest.acceptanceRegistration.units.map((row) =>
-            row.id === unitId
-              ? { ...row, delivery: { ...unit.delivery!, status: 'pending', startedAt } }
-              : row,
-          ),
-        },
-      }),
-      'operator instruction delivery intent',
-    );
-    return { unit, startedAt };
-  });
-  if (!intent) return { operatorMessageId: id, delivery: 'confirmed' };
-  const { startedAt } = intent;
-  const clearUntouchedIntent = () =>
-    withRunTransition(run.id, async () => {
-      const current = getRun(run.id);
-      if (!current?.acceptanceRegistration || (current.engineState?.generation ?? 0) !== generation)
-        return;
-      await persistRunNow(
-        updateRun(run.id, {
-          acceptanceRegistration: {
-            ...current.acceptanceRegistration,
-            units: current.acceptanceRegistration.units.map((unit) => {
-              if (unit.id !== unitId || !unit.delivery || unit.delivery.startedAt !== startedAt)
-                return unit;
-              const delivery = { ...unit.delivery };
-              delete delivery.startedAt;
-              return { ...unit, delivery };
+  const result = await deliverOperatorInstructionWithIntent(
+    async () => getRun(run.id)!,
+    {
+      key: unitId,
+      text: acceptanceInstructionPrompt(prior),
+      contextId: prior.delivery?.contextId,
+      commandId: id,
+    },
+    {
+      recordPending: (begin) =>
+        withRunTransition(run.id, async () => {
+          const latest = getRun(run.id);
+          if (
+            !latest?.acceptanceRegistration ||
+            isTerminalRunStatus(latest.status) ||
+            latest.slotId !== params.slotId ||
+            (latest.engineState?.generation ?? 0) !== generation ||
+            (await readSlotField(params.slotId, 'current_run_id')) !== latest.id
+          )
+            throw new Error('Operator instruction lost its run or slot owner before delivery');
+          const unit = latest.acceptanceRegistration.units.find(({ id }) => id === unitId)!;
+          if (unit.delivery?.status === 'confirmed') return null;
+          const window = begin(unit.delivery?.startedAt);
+          const { startedAt } = window;
+          await persistRunNow(
+            updateRun(run.id, {
+              acceptanceRegistration: {
+                ...latest.acceptanceRegistration,
+                units: latest.acceptanceRegistration.units.map((row) =>
+                  row.id === unitId
+                    ? { ...row, delivery: { ...unit.delivery!, status: 'pending', startedAt } }
+                    : row,
+                ),
+              },
             }),
-          },
+            'operator instruction delivery intent',
+          );
+          return window;
         }),
-        'untouched operator instruction can retry',
-      );
-    });
-  let delivery: Awaited<ReturnType<typeof deliverOperatorInstruction>>;
-  try {
-    delivery = await deliverOperatorInstruction(
-      getRun(run.id)!,
-      unitId,
-      acceptanceInstructionPrompt(intent.unit),
-      intent.unit.delivery?.startedAt,
-      intent.unit.delivery?.contextId,
-      id,
-    );
-  } catch (error) {
-    if (error instanceof OperatorInstructionNotAttemptedError) await clearUntouchedIntent();
-    throw error;
-  }
+      clearPending: (startedAt) =>
+        withRunTransition(run.id, async () => {
+          const current = getRun(run.id);
+          if (
+            !current?.acceptanceRegistration ||
+            (current.engineState?.generation ?? 0) !== generation
+          )
+            return;
+          await persistRunNow(
+            updateRun(run.id, {
+              acceptanceRegistration: {
+                ...current.acceptanceRegistration,
+                units: current.acceptanceRegistration.units.map((unit) => {
+                  if (unit.id !== unitId || !unit.delivery || unit.delivery.startedAt !== startedAt)
+                    return unit;
+                  const delivery = { ...unit.delivery };
+                  delete delivery.startedAt;
+                  return { ...unit, delivery };
+                }),
+              },
+            }),
+            'untouched operator instruction can retry',
+          );
+        }),
+    },
+  );
+  const { delivery, startedAt } = result;
+  if (delivery === 'confirmed' && startedAt === undefined)
+    return { operatorMessageId: id, delivery };
   if (delivery === 'not-attempted') {
-    await clearUntouchedIntent();
     throw new Error(
       `Operator instruction was not sent. Retry with operatorMessageId ${id} when the retained worker is ready.`,
     );

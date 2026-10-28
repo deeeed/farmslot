@@ -56,13 +56,21 @@ export async function deliverOperatorInstruction(
   assertCurrent();
   const native = resolveNativeContext(run, context);
   if (native) {
-    const snapshot = await readNativeWorkerSnapshot(run.id, role, context.id);
-    if (snapshot.session.processStopped) {
+    const commandId =
+      nativeCommandId ?? nativeWorkerInstructionCommandId(run.id, native.binding, key, text);
+    const pendingRecovery = native.binding.recovery;
+    if (pendingRecovery && pendingRecovery.commandId !== commandId)
+      throw new Error('Another native worker recovery must be reconciled first');
+    // A lost successful resume reply leaves the saved generation behind the node.
+    // Only the matching recovery owner can reconcile before strict snapshot reads.
+    const snapshot = pendingRecovery
+      ? undefined
+      : await readNativeWorkerSnapshot(run.id, role, context.id);
+    if (pendingRecovery || snapshot?.session.processStopped) {
       await resumeNativeWorker(run.id, {
         purpose: 'operator-message',
         contextId: native.owner.id,
-        commandId:
-          nativeCommandId ?? nativeWorkerInstructionCommandId(run.id, native.binding, key, text),
+        commandId,
         text,
         assertCurrent,
       });

@@ -200,6 +200,7 @@ let feedbackWrites = 0,
   firstDelivery;
 let completeCallsBeforeNewSignal,
   persistedOldSignalRejected = false;
+let proofClaims;
 let failure;
 const cleanupErrors = [];
 const cleanup = [];
@@ -400,15 +401,18 @@ try {
     async () => completeCalls,
     (count) => count === 1,
   );
-  await save('result.json', {
-    status: 'PASS',
-    runId,
-    authenticatedRpc: true,
+  proofClaims = {
     exactRefusalDelivered: deliveredContext === 'retained-worker' && feedbackWrites === 1,
     oldSignalIgnored: completeCallsBeforeNewSignal === 0 && persistedOldSignalRejected,
     newSignalReachedComplete: completeCalls === 1,
     feedbackWrites,
     deliveryObservations,
+  };
+  await save('result.json', {
+    status: 'PASS',
+    runId,
+    authenticatedRpc: true,
+    ...proofClaims,
     retainedSession: 'retained-session',
     scope:
       'Gateway RPC sequencing with controlled instruction adapter and file-backed worker fixture; no real provider/pane delivery claim',
@@ -468,10 +472,6 @@ console.log(
     status: 'PASS',
     runId,
     proofRoot: output,
-    exactRefusalDelivered: deliveredContext === 'retained-worker' && feedbackWrites === 1,
-    oldSignalIgnored: completeCallsBeforeNewSignal === 0 && persistedOldSignalRejected,
-    newSignalReachedComplete: completeCalls === 1,
-    feedbackWrites,
-    deliveryObservations,
+    ...proofClaims,
   }),
 );
