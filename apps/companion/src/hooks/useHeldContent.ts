@@ -101,17 +101,20 @@ export function useGateDiffContent(run: Run | null): GateDiffContent {
   return current ?? LOADING;
 }
 
+/** `url` for an image without a `sha256`, else where its verified read stands. */
+export type ArtifactImageRead = 'url' | 'reading' | HeldContentResult['status'];
+
 /**
  * An evidence image from held content by manifest `sha256`, or read live while connected and
  * shown from its verified bytes at any size (stored as opened up to 2 MB); it never loads from its
- * raw URL. Undefined while the bytes are being read, after they failed verification, and while no
+ * raw URL. No source while the bytes are being read, after they failed verification, and while no
  * read completes, which is retried on reconnect. Without a `sha256`, today's URL source.
  */
 export function useArtifactImageSource(
   uri: string,
   headers: ArtifactHttpHeaders | undefined,
   artifact: { path: string; sha256?: string },
-): ImageSourcePropType | undefined {
+): { source: ImageSourcePropType | undefined; read: ArtifactImageRead } {
   const cache = useSyncExternalStore(subscribeResourceCache, getResourceCache, getResourceCache);
   const connected = useConnectedTransport() !== null;
   const keyId = artifactImageKey(artifact)?.id;
@@ -146,8 +149,9 @@ export function useArtifactImageSource(
       controller.abort();
     };
   }, [cache, connected, headers, keyId, settled, uri]);
-  return useMemo(
+  const source = useMemo(
     () => artifactImageSource(keyId, result, artifactSource(uri, headers)),
     [headers, keyId, result, uri],
   );
+  return { source, read: keyId ? (result?.status ?? 'reading') : 'url' };
 }

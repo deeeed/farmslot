@@ -1,22 +1,33 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { FleetStatus, ResourceChangedPayload, Run } from '@farmslot/protocol';
+import type {
+  FleetStatus,
+  GatewayAuthConnectResult,
+  ResourceChangedPayload,
+  Run,
+} from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
   createMemoryResourceStore,
+  type GatewayResourceCache,
   type ResourceCacheConnection,
   type ResourceCacheTransport,
   resourceDependenciesForRead,
+  type ResourceQuery,
+  type ResourceQueryState,
   type ResourceReadMethod,
   type ResourceReadResult,
 } from '@farmslot/protocol/client-cache';
 
 import {
+  HISTORY_RUN_LIST_LIMIT,
   nativeCollectionReadTimeout,
   NativeRunCollections,
   type NativeRunCollectionSnapshot,
   nativeRunHistoryQuery,
+  nativeRunListVersionLists,
+  nativeVersionedRunHistoryQuery,
 } from './gateway-run-sync';
 
 function run(id: string, status: Run['status'] = 'done'): Run {
@@ -192,4 +203,85 @@ test('a history request before owner hydration stays requested and native read d
     collections.dispose();
     await cache.dispose();
   }
+});
+
+/** A cache that records each observed query and answers reads from what the test stores. */
+function recordingCache() {
+  const observing = new Map<string, number>();
+  const states = new Map<string, ResourceQueryState<unknown>>();
+  const cache = {
+    observe(query: ResourceQuery<unknown>) {
+      observing.set(query.id, (observing.get(query.id) ?? 0) + 1);
+      return () => observing.set(query.id, (observing.get(query.id) ?? 1) - 1);
+    },
+    read(query: ResourceQuery<unknown>) {
+      return states.get(query.id) ?? { status: 'loading' };
+    },
+  } as unknown as GatewayResourceCache;
+  const observed = (query: ResourceQuery<unknown>) => (observing.get(query.id) ?? 0) > 0;
+  return { cache, states, observed };
+}
+
+test('a gateway with version lists observes the whole history; an older one keeps the 80-row read', async () => {
+  assert.deepEqual(nativeVersionedRunHistoryQuery.params, { sort: 'newest' });
+  assert.deepEqual(nativeRunHistoryQuery.params, { limit: HISTORY_RUN_LIST_LIMIT, sort: 'newest' });
+  const { cache, observed } = recordingCache();
+  const collections = new NativeRunCollections(() => {});
+  try {
+    collections.bind(cache, 'owner', true);
+    await collections.openHistory();
+    assert.equal(observed(nativeVersionedRunHistoryQuery), true);
+    assert.equal(observed(nativeRunHistoryQuery), false);
+    assert.equal(collections.historyLimit(), null, 'no row cap with version lists');
+
+    collections.bind(cache, 'owner', false);
+    assert.equal(observed(nativeVersionedRunHistoryQuery), false);
+    assert.equal(observed(nativeRunHistoryQuery), true);
+    assert.equal(collections.historyLimit(), HISTORY_RUN_LIST_LIMIT);
+  } finally {
+    collections.dispose();
+  }
+});
+
+test('offline with the capability unknown, history shows the stored whole collection, else the 80 rows', async () => {
+  const { cache, states, observed } = recordingCache();
+  const shown: NativeRunCollectionSnapshot[] = [];
+  const collections = new NativeRunCollections((snapshot) => shown.push(snapshot));
+  try {
+    collections.bind(cache, 'owner', null);
+    await collections.openHistory();
+    assert.equal(observed(nativeVersionedRunHistoryQuery), true);
+    assert.equal(observed(nativeRunHistoryQuery), true);
+    const limited = { status: 'stale', data: { runs: [run('limited')], totalCount: 1 } } as const;
+    states.set(nativeRunHistoryQuery.id, limited);
+    assert.equal(collections.historyObservation(), limited, 'a store from an older gateway');
+    const whole = { status: 'stale', data: { runs: [run('a'), run('b')], totalCount: 2 } } as const;
+    states.set(nativeVersionedRunHistoryQuery.id, whole);
+    assert.equal(collections.historyObservation(), whole, 'the whole collection comes first');
+    collections.bind(cache, 'owner', true);
+    assert.equal(observed(nativeRunHistoryQuery), false, 'authentication settles the variant');
+    assert.equal(shown.at(-1)?.history, whole);
+  } finally {
+    collections.dispose();
+  }
+  const capabilities = (versionLists?: boolean): GatewayAuthConnectResult['capabilities'] => ({
+    httpBearerAuth: true,
+    voiceInstructionFormatting: false,
+    ...(versionLists === undefined
+      ? {}
+      : { resourceChanges: { version: 1, epoch: 'e', versionLists } }),
+  });
+  assert.equal(nativeRunListVersionLists(capabilities(true), false), true);
+  assert.equal(nativeRunListVersionLists(capabilities(false), true), false);
+  assert.equal(nativeRunListVersionLists(capabilities(), true), false, 'a gateway before ADR-071');
+  assert.equal(nativeRunListVersionLists(undefined, true), false);
+  assert.equal(nativeRunListVersionLists(undefined, false), null, 'offline before authentication');
+});
+
+test('a version read and each catch-up page get the full request deadline', () => {
+  assert.equal(nativeCollectionReadTimeout('run.list', { versions: true }), 60_000);
+  assert.equal(nativeCollectionReadTimeout('run.list', { ids: ['a', 'b'] }), 60_000);
+  assert.equal(nativeCollectionReadTimeout('run.list', { active: true, ids: ['a'] }), 60_000);
+  assert.equal(nativeCollectionReadTimeout('run.list', { active: true }), 20_000);
+  assert.equal(nativeCollectionReadTimeout('run.list', undefined), 60_000);
 });

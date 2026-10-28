@@ -54,19 +54,21 @@ if (phase === 'cold') {
 const deadline = Date.now() + 60_000;
 while (Date.now() < deadline) {
   const state = await observe();
-  const sample = state?.samples.find((entry) => entry.phase === phase);
   if (phase === 'cold' && state?.timingSource === 'unavailable')
     throw new Error('Native startup timing is unavailable; refusing a cold-start baseline');
-  if (sample && state.status === 'connected') {
+  // Run list reads end at the merged run list, after a version-list read's last catch-up page.
+  const sample =
+    phase === 'diff' ? state?.samples.find((entry) => entry.phase === phase) : state?.merged;
+  if (sample?.phase === phase && state.status === 'connected') {
     console.log(
       JSON.stringify(
         {
           ...sample,
           timing:
             phase === 'cold'
-              ? 'React Native startup startTime to first run.list reply after JSON parsing'
+              ? 'React Native startup startTime to the merged run list, at its last run.list reply after JSON parsing'
               : phase === 'reconnect'
-                ? 'socket close event to first run.list reply after JSON parsing'
+                ? 'socket close event to the merged run list, at its last run.list reply after JSON parsing'
                 : 'open gate diff to matching git.diff reply after JSON parsing',
           bytes: 'received UTF-8 gateway application frames through that reply',
         },

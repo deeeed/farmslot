@@ -2,20 +2,26 @@ import {
   type ConfigProjectsResult,
   type DecisionListResult,
   type FleetStatusResult,
+  type GatewayAuthConnectResult,
   mergeRunListObservations,
   Methods,
   type RunListResult,
 } from '@farmslot/protocol';
 import {
   type GatewayResourceCache,
+  type ResourceQuery,
   resourceQuery,
   type ResourceQueryState,
   type ResourceReadMethod,
 } from '@farmslot/protocol/client-cache';
 
-/** Recent history stays on demand and under the existing mobile websocket bound. */
+/**
+ * Recent history stays on demand. A gateway without version lists sends it whole on every read,
+ * so there it stays under the existing mobile websocket bound.
+ */
 export const HISTORY_RUN_LIST_LIMIT = 80;
 export const RUN_LIST_ACTIVE_TIMEOUT_MS = 20_000;
+/** Also each version-list read and catch-up page: every one is its own request. */
 export const RUN_LIST_HISTORY_TIMEOUT_MS = 60_000;
 export const nativeActiveRunsQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, {
   active: true,
@@ -24,6 +30,21 @@ export const nativeRunHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LI
   limit: HISTORY_RUN_LIST_LIMIT,
   sort: 'newest',
 });
+/** With version lists, history is a view of the shared row collection: every live run. */
+export const nativeVersionedRunHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, {
+  sort: 'newest',
+});
+
+/**
+ * History for a gateway with or without version lists. `null` is a capability not yet known,
+ * offline before authentication: both stored variants are read, the whole collection first.
+ */
+export function nativeRunHistoryQueries(
+  versionLists: boolean | null,
+): ResourceQuery<RunListResult>[] {
+  if (versionLists === null) return [nativeVersionedRunHistoryQuery, nativeRunHistoryQuery];
+  return [versionLists ? nativeVersionedRunHistoryQuery : nativeRunHistoryQuery];
+}
 export const nativeDecisionsQuery = resourceQuery<DecisionListResult>(Methods.DECISION_LIST);
 export const nativeFleetQuery = resourceQuery<FleetStatusResult>(Methods.FLEET_STATUS);
 /** Farm owners only; it names each project's default branch. */
@@ -31,13 +52,29 @@ export const configurationProjectsQuery = resourceQuery<ConfigProjectsResult>(
   Methods.CONFIG_PROJECTS,
 );
 
+/**
+ * Whether the gateway serves version lists, from the last authentication's capabilities, which
+ * outlive a dropped socket. Unknown (`null`) only while disconnected before any authentication.
+ */
+export function nativeRunListVersionLists(
+  capabilities: GatewayAuthConnectResult['capabilities'] | undefined,
+  connected: boolean,
+): boolean | null {
+  if (capabilities) return capabilities.resourceChanges?.versionLists === true;
+  return connected ? false : null;
+}
+
 export function nativeCollectionReadTimeout(
   method: ResourceReadMethod,
   params: unknown,
 ): number | undefined {
   if (method === Methods.DECISION_LIST) return 30_000;
   if (method !== Methods.RUN_LIST) return undefined;
-  return params && typeof params === 'object' && Reflect.get(params, 'active') === true
+  if (!params || typeof params !== 'object') return RUN_LIST_HISTORY_TIMEOUT_MS;
+  // A version read and each `ids` page must each finish within the request timeout.
+  if (Reflect.get(params, 'versions') === true || Array.isArray(Reflect.get(params, 'ids')))
+    return RUN_LIST_HISTORY_TIMEOUT_MS;
+  return Reflect.get(params, 'active') === true
     ? RUN_LIST_ACTIVE_TIMEOUT_MS
     : RUN_LIST_HISTORY_TIMEOUT_MS;
 }
@@ -56,17 +93,30 @@ export class NativeRunCollections {
   private workspaceKey?: string;
   private version = 0;
   private historyRequested = false;
+  private versionLists: boolean | null = false;
   private stops: Array<() => void> = [];
-  private stopHistory?: () => void;
+  private historyStops: Array<() => void> = [];
   constructor(private readonly publish: (snapshot: NativeRunCollectionSnapshot) => void) {}
 
-  bind(cache: GatewayResourceCache | undefined, workspaceKey: string | undefined): void {
-    if (cache === this.cache && workspaceKey === this.workspaceKey) return;
+  /** `versionLists` is the gateway's capability, or `null` while it is not yet known. */
+  bind(
+    cache: GatewayResourceCache | undefined,
+    workspaceKey: string | undefined,
+    versionLists: boolean | null = false,
+  ): void {
+    if (cache === this.cache && workspaceKey === this.workspaceKey) {
+      if (versionLists === this.versionLists) return;
+      this.versionLists = versionLists;
+      this.observeHistory();
+      this.emit();
+      return;
+    }
     const sameOwner = workspaceKey !== undefined && workspaceKey === this.workspaceKey;
     this.release();
     if (!sameOwner && this.workspaceKey !== undefined) this.historyRequested = false;
     this.cache = cache;
     this.workspaceKey = workspaceKey;
+    this.versionLists = versionLists;
     this.emit();
     if (!cache) return;
     const version = this.version;
@@ -76,18 +126,19 @@ export class NativeRunCollections {
     this.stops.push(cache.observe(nativeActiveRunsQuery, changed));
     this.stops.push(cache.observe(nativeDecisionsQuery, changed));
     this.stops.push(cache.observe(nativeFleetQuery, changed));
-    if (this.historyRequested) this.stopHistory = cache.observe(nativeRunHistoryQuery, changed);
+    this.observeHistory();
   }
 
   async openHistory(): Promise<void> {
-    const cache = this.cache;
     this.historyRequested = true;
-    if (!cache || this.stopHistory) return;
-    const version = this.version;
-    this.stopHistory = cache.observe(nativeRunHistoryQuery, () => {
-      if (version === this.version && this.cache === cache) this.emit();
-    });
+    if (!this.cache || this.historyStops.length) return;
+    this.observeHistory();
     this.emit();
+  }
+
+  /** The history row bound this gateway reads under; none with version lists. */
+  historyLimit(): number | null {
+    return this.versionLists === false ? HISTORY_RUN_LIST_LIMIT : null;
   }
 
   async retryDecisions(): Promise<void> {
@@ -102,18 +153,40 @@ export class NativeRunCollections {
     this.emit();
   }
 
+  private observeHistory(): void {
+    for (const stop of this.historyStops) stop();
+    this.historyStops = [];
+    const cache = this.cache;
+    if (!cache || !this.historyRequested) return;
+    const version = this.version;
+    const changed = () => {
+      if (version === this.version && this.cache === cache) this.emit();
+    };
+    for (const query of nativeRunHistoryQueries(this.versionLists))
+      this.historyStops.push(cache.observe(query, changed));
+  }
+
   private release(): void {
     this.version++;
     for (const stop of this.stops) stop();
     this.stops = [];
-    this.stopHistory?.();
-    this.stopHistory = undefined;
+    for (const stop of this.historyStops) stop();
+    this.historyStops = [];
+  }
+
+  /** With the capability unknown, the stored whole collection when held, else the 80 rows. */
+  historyObservation(): ResourceQueryState<RunListResult> | undefined {
+    const cache = this.cache;
+    if (!cache || !this.historyRequested) return undefined;
+    const [shown, fallback] = nativeRunHistoryQueries(this.versionLists).map((query) =>
+      cache.read(query),
+    );
+    return fallback && shown.data === undefined ? fallback : shown;
   }
 
   private emit(): void {
     const active = this.cache?.read(nativeActiveRunsQuery) ?? { status: 'loading' };
-    const history =
-      this.cache && this.historyRequested ? this.cache.read(nativeRunHistoryQuery) : undefined;
+    const history = this.historyObservation();
     this.publish({
       fleet: this.cache?.read(nativeFleetQuery) ?? { status: 'loading' },
       active,

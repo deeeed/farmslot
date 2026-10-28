@@ -1,0 +1,212 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import test, { mock } from 'node:test';
+
+import {
+  HUMAN_GATE_DECISION_TYPE,
+  Methods,
+  reviewDiffHash,
+  reviewSnapshotIdentityText,
+} from '@farmslot/protocol';
+import {
+  type ContentKey,
+  gitBlobHash,
+  resourceQuery,
+  type ResourceQueryState,
+} from '@farmslot/protocol/client-cache';
+
+import { createOfflineClientStoreBaseline } from '../lib/offline-client-store-baseline';
+
+const bytes = (text: string) => new TextEncoder().encode(text);
+const blob = (text: string) => gitBlobHash(bytes(text));
+const OLD = 'one\ntwo\n';
+const NEW = 'one\n2\n';
+const DIFF = [
+  'diff --git a/src/a.ts b/src/a.ts',
+  `index ${blob(OLD)}..${blob(NEW)} 100644`,
+  '--- a/src/a.ts',
+  '+++ b/src/a.ts',
+  '@@ -1,2 +1,2 @@',
+  ' one',
+  '-two',
+  '+2',
+  '',
+].join('\n');
+const DIFF_HASH = reviewDiffHash(reviewSnapshotIdentityText(DIFF, []));
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 7, 8, 9]);
+const PNG_SHA = createHash('sha256').update(PNG).digest('hex');
+const run = {
+  id: 'run-gate',
+  slotId: 'slot-gate',
+  decisions: [
+    {
+      id: 'gate-1',
+      type: HUMAN_GATE_DECISION_TYPE,
+      payload: {
+        kind: 'ready',
+        prPackage: {
+          id: 'package-1',
+          reviewSnapshot: {
+            source: 'local-git',
+            diffPath: 'review/package.diff',
+            diffHash: DIFF_HASH,
+            capturedAt: '2026-10-28T00:00:00.000Z',
+          },
+          evidenceManifest: [
+            { path: 'evidence/after.png', purpose: 'screenshot', sha256: PNG_SHA },
+            { path: 'evidence/log.txt', purpose: 'log', sha256: 'f'.repeat(64) },
+          ],
+        },
+      },
+    },
+  ],
+};
+
+function world() {
+  const states = new Map<string, ResourceQueryState<unknown>>([
+    [
+      resourceQuery(Methods.DECISION_LIST).id,
+      {
+        status: 'stale',
+        data: {
+          decisions: [
+            {
+              id: 'gate-1',
+              type: HUMAN_GATE_DECISION_TYPE,
+              runMeta: { runId: 'run-gate' },
+              payload: { kind: 'ready' },
+            },
+          ],
+        },
+      },
+    ],
+    [resourceQuery(Methods.RUN_GET, { runId: 'run-gate' }).id, { status: 'stale', data: { run } }],
+    [
+      resourceQuery(Methods.RUNNER_VISIBLE_MODELS_GET, {}, 'owner').id,
+      { status: 'stale', data: { runners: [{ runner: 'codex' }, { runner: 'cursor' }] } },
+    ],
+    [
+      resourceQuery(Methods.RUNNER_MODEL_CATALOG, { runner: 'codex' }).id,
+      { status: 'stale', data: { models: [{ id: 'gpt-b' }, { id: 'gpt-a' }] } },
+    ],
+    [
+      resourceQuery(Methods.RUNNER_MODEL_CATALOG, { runner: 'cursor' }).id,
+      { status: 'stale', data: { models: [{ id: 'gpt-a' }, { id: 'sonnet' }] } },
+    ],
+    [
+      resourceQuery(Methods.PR_LIST).id,
+      {
+        status: 'stale',
+        observedAt: 5,
+        sourceObservation: { status: 'ready', observedAt: 42 },
+        data: { prs: [{ pr: 7 }, { pr: 9 }] },
+      },
+    ],
+  ]);
+  const content = new Map<string, Uint8Array>([
+    [`diff:${DIFF_HASH}`, bytes(DIFF)],
+    [`blob:${blob(OLD)}`, bytes(OLD)],
+    [`blob:${blob(NEW)}`, bytes(NEW)],
+    [`artifact:${PNG_SHA}`, PNG],
+  ]);
+  const id = (key: ContentKey) => `${key.kind}:${key.id}`;
+  const cache = {
+    read: (query: { id: string }) => states.get(query.id) ?? { status: 'loading' },
+    hasContent: async (key: ContentKey) => content.has(id(key)),
+    readContent: async (key: ContentKey) => content.get(id(key)),
+  } as never;
+  return { cache, content };
+}
+
+let connection = { status: 'disconnected', client: undefined as unknown };
+mock.module('../store/connection', {
+  namedExports: { useConnectionStore: { getState: () => connection } },
+});
+mock.module('../lib/resource-cache', {
+  namedExports: { getResourceCache: () => undefined, getResourceNativeOwnerId: () => undefined },
+});
+// Loaded after the mocks; this package compiles to CJS, so no top-level await.
+const load = () => import('./d12-native-proof');
+
+const inputs = (cache: never, ready = true) => ({
+  status: 'disconnected',
+  launchId: 'launch-1',
+  epoch: 'epoch-1',
+  connectionId: 2,
+  framesSent: 0,
+  cache,
+  owner: 'owner',
+  gateScreens: [{ decisionId: 'gate-1', ready, details: ready }],
+  image: { id: PNG_SHA, state: 'loaded' as const, mountId: 3 },
+});
+
+test('the d12-native observation reports the gate, catalog, upstream and image the screens show', async () => {
+  const proof = await load();
+  const { cache } = world();
+  assert.deepEqual(await proof.d12NativeObservation(inputs(cache)), {
+    status: 'disconnected',
+    launchId: 'launch-1',
+    epoch: 'epoch-1',
+    connectionId: 2,
+    framesSent: 0,
+    gate: {
+      decisionId: 'gate-1',
+      packageHeld: true,
+      opened: true,
+      details: true,
+      diff: true,
+      bothSides: true,
+      images: [{ sha256: PNG_SHA, verified: true }],
+    },
+    catalog: { models: ['gpt-a', 'gpt-b', 'sonnet'] },
+    upstream: {
+      prs: [
+        { number: 7, observedAt: 42 },
+        { number: 9, observedAt: 42 },
+      ],
+    },
+    image: { id: PNG_SHA, state: 'loaded', mountId: 3 },
+  });
+});
+
+test('missing or wrong held content and an unopened screen are reported, never assumed', async () => {
+  const proof = await load();
+  const { cache, content } = world();
+  content.delete(`blob:${blob(OLD)}`);
+  content.set(`artifact:${PNG_SHA}`, new Uint8Array([1, 2, 3]));
+  const gate = (await proof.d12NativeObservation(inputs(cache, false))).gate!;
+  assert.equal(gate.opened, false);
+  assert.equal(gate.details, false);
+  assert.equal(gate.bothSides, false, 'a base blob is missing');
+  assert.deepEqual(gate.images, [{ sha256: PNG_SHA, verified: false }]);
+  content.delete(`diff:${DIFF_HASH}`);
+  const empty = (await proof.d12NativeObservation(inputs(cache))).gate!;
+  assert.equal(empty.packageHeld, false);
+  assert.equal(empty.diff, false);
+  assert.equal(empty.bothSides, false);
+  const none = await proof.d12NativeObservation({ ...inputs(cache), cache: undefined as never });
+  assert.equal(none.gate, undefined);
+  assert.deepEqual(none.catalog, { models: [] });
+});
+
+test('the observer reports the image that failed until that same mount loads, and counts sent frames', async () => {
+  const proof = await load();
+  const meter = createOfflineClientStoreBaseline(() => {});
+  connection = { status: 'connected', client: { offlineBaseline: meter } };
+  meter.sent({ type: 'req', id: '1', method: 'run.get', params: { runId: 'a' } });
+  proof.reportArtifactImage({ id: 'other', state: 'loaded', mountId: 1 });
+  proof.reportArtifactImage({ id: PNG_SHA, state: 'failed', mountId: 2 });
+  proof.reportArtifactImage({ id: 'later', state: 'loading', mountId: 3 });
+  const read = async (ref = 'd12-native') =>
+    (await proof.observeD12Native(ref)).observations.d12Native;
+  const failed = await read();
+  assert.deepEqual(failed.image, { id: PNG_SHA, state: 'failed', mountId: 2 });
+  assert.equal(failed.framesSent, 1);
+  assert.equal(typeof failed.launchId, 'string');
+  proof.reportArtifactImage({ id: PNG_SHA, state: 'loaded', mountId: 2 });
+  assert.deepEqual((await read()).image, { id: PNG_SHA, state: 'loaded', mountId: 2 });
+  assert.equal((await read('d12-native:reset')).framesSent, 0);
+  assert.equal((await read()).launchId, failed.launchId, 'one launch id per process');
+  proof.forgetArtifactImage(2);
+  assert.equal((await read()).image?.mountId, 3);
+});

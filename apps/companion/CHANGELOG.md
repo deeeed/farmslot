@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- On gateways with version lists, run history shows every live run instead of the latest 80, filled and caught up in pages that each finish within the 60 s request timeout. Older gateways keep the 80-row read. The offline-store baseline measures run list reads to the merged list, after the last page.
+
 - Run and slot Diff screens observe the prefetched active-run diff online and offline. The slot diff base is the stack base, then the project's default branch, then main.
 
 - Prefetch pending gates, then active runs, into the device store. The gate package diff on the run Diff tab and evidence images up to 2 MB open from held content offline; live reads are shown and stored only when their bytes match `diffHash` or the manifest `sha256`, and a mismatch says so instead of loading the same file.

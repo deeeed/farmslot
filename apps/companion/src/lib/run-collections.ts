@@ -6,7 +6,12 @@ import { useDecisionStore } from '../store/decisions';
 import { useFleetStore } from '../store/fleet';
 import { useRunStore } from '../store/runs';
 
-import { nativeDecisionsQuery, nativeFleetQuery, NativeRunCollections } from './gateway-run-sync';
+import {
+  nativeDecisionsQuery,
+  nativeFleetQuery,
+  NativeRunCollections,
+  nativeRunListVersionLists,
+} from './gateway-run-sync';
 import { notifyDecision } from './notifications';
 import {
   getResourceCache,
@@ -58,6 +63,10 @@ function bind(): void {
   collections.bind(
     farm && !state.signedOut ? getResourceCache() : undefined,
     getResourceWorkspaceKey(),
+    nativeRunListVersionLists(
+      state.client?.authenticatedConnection?.capabilities,
+      state.status === 'connected',
+    ),
   );
 }
 
@@ -73,6 +82,8 @@ export function initializeNativeRunCollections(): () => void {
 }
 
 export const openNativeRunHistory = () => collections.openHistory();
+export const nativeRunHistoryLimit = () => collections.historyLimit();
+export const nativeRunHistoryObservation = () => collections.historyObservation();
 export const retryNativeDecisions = () => collections.retryDecisions();
 
 export function assertNativeFleetReady(): FleetStatus {
