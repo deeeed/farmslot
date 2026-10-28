@@ -78,6 +78,7 @@ import {
   normalizeWorkerSignal,
   parseStrictIsoMs,
   signalFreshAfterAll,
+  signalNewerThanRecorded,
 } from '../tasks/worker-signals.js';
 import {
   artifactContractWorkerInstruction,
@@ -583,18 +584,12 @@ export function isWorkerSignalFreshForRun(run: FreshnessRunContext, signal: Work
   if (sentBackSignal !== undefined) {
     // Survives monitor replay and gateway restart, including native leases and
     // bound attempts whose launch times deliberately remain unchanged.
-    const baseline = normalizeWorkerSignal(sentBackSignal);
-    const baselineAt = baseline.ok ? parseStrictIsoMs(baseline.signal.timestamp) : null;
-    const signalAt = parseStrictIsoMs(signal.timestamp);
-    if (baselineAt === null || signalAt === null || signalAt <= baselineAt) return false;
+    if (!signalNewerThanRecorded(sentBackSignal, signal)) return false;
   }
   const monitorOutputs = run.steps.find((s) => s.name === PipelineSteps.MONITOR)?.outputs;
   if (monitorOutputs?.reason === 'interactive-worker-operator-owned') {
     // Resume must not consume the same finding and immediately pause again.
-    const held = normalizeWorkerSignal(monitorOutputs.workerSignal);
-    const heldAt = held.ok ? parseStrictIsoMs(held.signal.timestamp) : null;
-    const signalAt = parseStrictIsoMs(signal.timestamp);
-    if (heldAt === null || signalAt === null || signalAt <= heldAt) return false;
+    if (!signalNewerThanRecorded(monitorOutputs.workerSignal, signal)) return false;
   }
   const context = matchingSignalContext(run, signal);
   const native = context?.nativeSession;

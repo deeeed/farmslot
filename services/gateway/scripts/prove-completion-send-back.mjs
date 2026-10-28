@@ -167,11 +167,20 @@ const transport = await load('services/gateway/src/runners/operator-instruction.
 mock.module(moduleUrl('services/gateway/src/runners/operator-instruction.ts'), {
   namedExports: {
     ...transport,
-    deliverOperatorInstruction: async (_run, key, text, _since, contextId) => {
+    deliverOperatorInstruction: async (_run, key, text, since, contextId, commandId) => {
       deliveredContext = contextId;
+      if (firstDelivery) {
+        assert.deepEqual({ key, text, contextId, commandId }, firstDelivery);
+        assert.equal(typeof since, 'number');
+        deliveryObservations++;
+        await save('delivery-reconciled.json', { key, contextId, commandId, since });
+        return 'confirmed';
+      }
+      firstDelivery = { key, text, contextId, commandId };
       await writeFile(feedbackFile, text, { flag: 'wx' });
-      await save('delivery.json', { key, contextId, text, fixtureAdapter: true });
-      return 'confirmed';
+      feedbackWrites++;
+      await save('delivery.json', { key, contextId, text, commandId, fixtureAdapter: true });
+      return 'unconfirmed';
     },
   },
 });
@@ -186,6 +195,11 @@ mock.module(moduleUrl('services/gateway/src/run-engine/run-monitor.ts'), {
     },
   },
 });
+let feedbackWrites = 0,
+  deliveryObservations = 0,
+  firstDelivery;
+let completeCallsBeforeNewSignal,
+  persistedOldSignalRejected = false;
 let failure;
 const cleanupErrors = [];
 const cleanup = [];
@@ -326,18 +340,36 @@ try {
   }).connect();
   const originalDispatch = { ...run.steps.find((step) => step.name === 'dispatch') };
   await save('before.json', { runId, generation: 7, prior, fixtureRoot: root });
+  await assert.rejects(
+    client.call('run.resolveDecision', {
+      runId,
+      decisionId: run.decisions[0].id,
+      actionId: 'send-back',
+      reason: 'Correct the declaration and keep accepted evidence.',
+    }),
+    /delivery is unconfirmed/,
+  );
+  assert.equal(monitorReads, 0);
+  assert.equal(completeCalls, 0);
+  const retry = (await client.call('run.get', { runId, view: 'snapshot' })).run;
+  const decision = retry.decisions.find(
+    (entry) => !entry.resolvedAt && entry.payload?.kind === 'result-decision',
+  );
+  assert.ok(decision);
   await client.call('run.resolveDecision', {
     runId,
-    decisionId: run.decisions[0].id,
+    decisionId: decision.id,
     actionId: 'send-back',
-    reason: 'Correct the declaration and keep accepted evidence.',
   });
+  assert.equal(feedbackWrites, 1);
+  assert.equal(deliveryObservations, 1);
   await deadline(
     'Monitor never started before COMPLETE',
     async () => ({ monitorReads, completeCalls }),
     (value) => value.monitorReads >= 3 || value.completeCalls > 0,
   );
-  assert.equal(completeCalls, 0, 'COMPLETE must wait for new source evidence');
+  completeCallsBeforeNewSignal = completeCalls;
+  assert.equal(completeCallsBeforeNewSignal, 0, 'COMPLETE must wait for new source evidence');
   assert.equal(deliveredContext, 'retained-worker');
   assert.match(
     await readFile(feedbackFile, 'utf8'),
@@ -354,7 +386,8 @@ try {
     'retained-session',
   );
   const persisted = JSON.parse(await readFile(path.join(root, 'runs', `${runId}.json`), 'utf8'));
-  assert.equal(monitor.isWorkerSignalFreshForRun(persisted, prior), false);
+  persistedOldSignalRejected = !monitor.isWorkerSignalFreshForRun(persisted, prior);
+  assert.equal(persistedOldSignalRejected, true);
   await save('waiting.json', {
     run: waiting,
     monitorReads,
@@ -371,9 +404,11 @@ try {
     status: 'PASS',
     runId,
     authenticatedRpc: true,
-    exactRefusalDelivered: true,
-    oldSignalIgnored: true,
-    newSignalReachedComplete: true,
+    exactRefusalDelivered: deliveredContext === 'retained-worker' && feedbackWrites === 1,
+    oldSignalIgnored: completeCallsBeforeNewSignal === 0 && persistedOldSignalRejected,
+    newSignalReachedComplete: completeCalls === 1,
+    feedbackWrites,
+    deliveryObservations,
     retainedSession: 'retained-session',
     scope:
       'Gateway RPC sequencing with controlled instruction adapter and file-backed worker fixture; no real provider/pane delivery claim',
@@ -433,8 +468,10 @@ console.log(
     status: 'PASS',
     runId,
     proofRoot: output,
-    exactRefusalDelivered: true,
-    oldSignalIgnored: true,
-    newSignalReachedComplete: true,
+    exactRefusalDelivered: deliveredContext === 'retained-worker' && feedbackWrites === 1,
+    oldSignalIgnored: completeCallsBeforeNewSignal === 0 && persistedOldSignalRejected,
+    newSignalReachedComplete: completeCalls === 1,
+    feedbackWrites,
+    deliveryObservations,
   }),
 );

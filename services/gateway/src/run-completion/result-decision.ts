@@ -404,7 +404,6 @@ export async function resolveResultDecision(
       workerFeedback = [
         payload.refusal?.message ?? payload.reason,
         ...(payload.refusal?.reasons.map((entry) => entry.message) ?? []),
-        ...(reason ? [`Operator feedback: ${reason}`] : []),
       ].join('\n');
       if (
         payload.outputReviewDecisionId &&
@@ -500,7 +499,7 @@ export async function resolveResultDecision(
     throw error;
   }
   if (actionId === 'send-back')
-    await sendBack(settled, stoppedAt, reasonOfHold, params.decisionId, workerFeedback);
+    await sendBack(settled, stoppedAt, reasonOfHold, params.decisionId, workerFeedback, reason);
   // Released outside the run lock, like other operator terminal actions.
   else if (settled.slotId && options.releaseSlot !== false)
     await releaseSettledSlot(settled, stoppedAt !== 'review');
@@ -521,12 +520,13 @@ async function sendBack(
   reason: string,
   decisionId: string,
   feedback: string,
+  note?: string,
 ): Promise<void> {
   if (stoppedAt !== 'review') {
     const { sendBackCompletion } = await import('./completion-send-back.js');
     const { broadcastEvent } = await import('../server.js');
     try {
-      await sendBackCompletion(run, decisionId, feedback, broadcastEvent);
+      await sendBackCompletion(run, decisionId, feedback, broadcastEvent, note);
     } catch (error) {
       if (isHeldForResultDecision(getRun(run.id) ?? run)) {
         try {

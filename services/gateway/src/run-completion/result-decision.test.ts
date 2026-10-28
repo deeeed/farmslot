@@ -34,13 +34,21 @@ let failPersist: string | null = null;
 let slotOwner: string | undefined;
 let delivery: 'confirmed' | 'queued' | 'unconfirmed' | 'not-attempted' = 'confirmed';
 let afterDelivery: (() => void) | undefined;
-let feedback: Array<{ key: string; text: string; contextId?: string }> = [];
+let deliveryError: Error | undefined;
+let feedback: Array<{
+  key: string;
+  text: string;
+  contextId?: string;
+  observeSince?: number;
+  commandId?: string;
+}> = [];
 const priorSignal: WorkerSignal = {
   status: 'complete',
   outcome: 'success',
   timestamp: '2026-10-28T00:16:00.000Z',
   attemptId: 'retained-attempt',
 };
+let currentSignal = priorSignal;
 const analyticsDir = mkdtempSync(path.join(tmpdir(), 'result-decision-analytics-'));
 process.env.FARMSLOT_ANALYTICS_DIR = analyticsDir;
 after(() => rmSync(analyticsDir, { recursive: true, force: true }));
@@ -72,10 +80,12 @@ mock.module('../runners/operator-instruction.js', {
       _run: Run,
       key: string,
       text: string,
-      _observeSince?: number,
+      observeSince?: number,
       contextId?: string,
+      commandId?: string,
     ) => {
-      feedback.push({ key, text, contextId });
+      feedback.push({ key, text, contextId, observeSince, commandId });
+      if (deliveryError) throw deliveryError;
       afterDelivery?.();
       return delivery;
     },
@@ -86,10 +96,10 @@ mock.module('../run-engine/run-monitor.js', {
   namedExports: {
     ...monitor,
     probeWorkerSignalForRun: async () => ({
-      ok: true,
-      code: 'ready',
+      ok: monitor.isWorkerSignalFreshForRun(run, currentSignal),
+      code: monitor.isWorkerSignalFreshForRun(run, currentSignal) ? 'ready' : 'stale',
       message: 'Current retained worker signal',
-      signal: priorSignal,
+      signal: currentSignal,
     }),
   },
 });
@@ -173,6 +183,8 @@ beforeEach(() => {
   delivery = 'confirmed';
   afterDelivery = undefined;
   feedback = [];
+  deliveryError = undefined;
+  currentSignal = priorSignal;
 });
 
 const findings = [
@@ -280,8 +292,11 @@ async function heldQa(): Promise<Run> {
       runId: run.id,
       slotId: 'macwork-mmt-1',
       runnerSessionId: 'retained-session',
+      signalAttemptId: priorSignal.attemptId,
+      signalFile: '.task/fixture/SIGNAL.json',
     },
   ];
+  run.steps.find((step) => step.name === S.MONITOR)!.outputs = { workerSignal: priorSignal };
   run.steps.find((step) => step.name === S.COMPLETE)!.detail =
     'A declared deterministic check has no current passing receipt.';
   const decision = await buildResultDecision(run, 'complete');
@@ -373,6 +388,7 @@ test('Send back delivers the refusal to the retained worker and resumes only mon
   assert.equal(feedback[0].contextId, 'retained-worker');
   assert.match(feedback[0].text, /A declared deterministic check has no current passing receipt/);
   assert.match(feedback[0].text, /new terminal signal/);
+  assert.match(feedback[0].text, /\.task\/fixture\/SIGNAL.json/);
   assert.deepEqual(
     run.steps.find((step) => step.name === S.DISPATCH)?.outputs?.completionSendBackSignal,
     priorSignal,
@@ -418,9 +434,111 @@ for (const outcome of ['queued', 'unconfirmed', 'not-attempted'] as const) {
     assert.equal(run.status, 'needs-decision');
     assert.ok(pending());
     assert.deepEqual(replays, []);
-    assert.equal(run.steps.find((step) => step.name === S.DISPATCH)?.outputs, undefined);
+    const intent = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+      ?.completionSendBackDelivery;
+    assert.ok(intent && typeof intent === 'object' && 'confirmed' in intent);
+    assert.equal(intent.confirmed, false);
   });
 }
+
+test('a failed replay and restart reuse confirmed feedback without rejecting its saved signal', async () => {
+  await heldQa();
+  replayError = new Error('Frozen contract temporarily unavailable');
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /Frozen contract/,
+  );
+  const first = feedback[0];
+  const dispatch = run.steps.find((step) => step.name === S.DISPATCH)!;
+  dispatch.outputs = JSON.parse(JSON.stringify(dispatch.outputs));
+  await representResultDecisions([run]);
+  replayError = null;
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  assert.equal(feedback.length, 1, 'Confirmed feedback must not be sent twice');
+  assert.equal(feedback[0].key, first.key);
+  assert.equal(replays.length, 2);
+  assert.equal(replays[1].stepName, 'monitor');
+});
+
+test('uncertain native delivery keeps its command and observes the original acceptance window', async () => {
+  await heldQa();
+  run.transport = 'native';
+  deliveryError = new Error('Native resume acknowledgement timed out');
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep accepted evidence.',
+    }),
+    /acknowledgement timed out/,
+  );
+  deliveryError = undefined;
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  assert.equal(feedback.length, 2);
+  assert.equal(feedback[1].key, feedback[0].key);
+  assert.equal(feedback[1].text, feedback[0].text);
+  assert.equal(feedback[1].commandId, feedback[0].commandId);
+  assert.equal(feedback[0].observeSince, undefined);
+  assert.equal(typeof feedback[1].observeSince, 'number');
+  assert.equal(replays.length, 1);
+});
+
+test('a queued instruction can continue on its next signal without moving the original floor', async () => {
+  await heldQa();
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /delivery is queued/,
+  );
+  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
+  delivery = 'confirmed';
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  assert.equal(feedback[1].key, feedback[0].key);
+  assert.deepEqual(
+    run.steps.find((step) => step.name === S.DISPATCH)?.outputs?.completionSendBackSignal,
+    priorSignal,
+  );
+  assert.equal(monitor.isWorkerSignalFreshForRun(run, currentSignal), true);
+});
+
+test('a later consumed worker signal starts a new feedback operation for another refusal', async () => {
+  await heldQa();
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
+  run.steps.find((step) => step.name === S.MONITOR)!.outputs = { workerSignal: currentSignal };
+  await holdRunForResultDecision(run.id, 'complete', 'Completion refused again');
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  assert.equal(feedback.length, 2);
+  assert.notEqual(feedback[1].key, feedback[0].key);
+});
+
+test('an unrecorded delivery confirmation reconciles its original intent on retry', async () => {
+  await heldQa();
+  failPersist = 'completion feedback delivered';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /disk full/,
+  );
+  failPersist = null;
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  assert.equal(feedback[1].key, feedback[0].key);
+  assert.equal(typeof feedback[1].observeSince, 'number');
+  assert.equal(replays.length, 1);
+});
+
+test('a definitely untouched delivery retries its original command as a new send', async () => {
+  await heldQa();
+  delivery = 'not-attempted';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /not-attempted/,
+  );
+  delivery = 'confirmed';
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  assert.equal(feedback[1].key, feedback[0].key);
+  assert.equal(feedback[1].observeSince, undefined);
+});
 
 test('completion send-back refuses a foreign slot before delivering feedback', async () => {
   await heldQa();

@@ -25,6 +25,10 @@
     {
       "id": "new-signal-continues",
       "claim": "A later file signal enters COMPLETE through the monitor continuation without another dispatch."
+    },
+    {
+      "id": "uncertain-delivery-reconciled",
+      "claim": "A second send-back reconciles the original uncertain instruction instead of sending another one."
     }
   ],
   "workflow": {
@@ -44,7 +48,7 @@
         "stream": "stdout",
         "contains": "\"exactRefusalDelivered\":true",
         "proves": ["refusal-delivered"],
-        "next": "old"
+        "next": "reconciled"
       },
       "old": {
         "action": "assert_output",
@@ -67,6 +71,15 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "reconciled": {
+        "action": "assert_output",
+        "intent": "Require one observation of the original instruction on retry.",
+        "source": "prove",
+        "stream": "stdout",
+        "contains": "\"deliveryObservations\":1",
+        "proves": ["uncertain-delivery-reconciled"],
+        "next": "old"
       }
     }
   }
