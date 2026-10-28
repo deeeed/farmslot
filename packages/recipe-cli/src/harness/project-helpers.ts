@@ -11,7 +11,12 @@ import { isRecord, type RecipeConformanceSource } from '@farmslot/protocol';
 
 import { optionValues } from './command-contract.js';
 import { recipeConformanceIdentity } from './conformance.js';
-import { readProject, recipePackageRoot, resolveHarnessContext } from './context.js';
+import {
+  readProject,
+  readProjectPool,
+  recipePackageRoot,
+  resolveHarnessContext,
+} from './context.js';
 import { ProjectBindingError } from './context-state.js';
 import {
   type ProjectRecipeHost,
@@ -282,11 +287,8 @@ export async function withTaskProjectHost<T>(
       tokens: ['--target', selected.target],
       adapter: false,
     });
-    if (context.slot?.value && context.slot.poolFile) {
-      const pool: unknown = JSON.parse(fs.readFileSync(context.slot.poolFile, 'utf8'));
-      const root = isRecord(pool) && isRecord(pool.env) ? pool.env[variable] : undefined;
-      if (typeof root === 'string' && root.trim()) poolProviderRoot = fs.realpathSync(root);
-    }
+    const root = readProjectPool(context)?.env?.[variable];
+    if (typeof root === 'string' && root.trim()) poolProviderRoot = fs.realpathSync(root);
   }
   const retained = (file: string): string => {
     if (

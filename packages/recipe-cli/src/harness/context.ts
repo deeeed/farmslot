@@ -26,6 +26,7 @@ import {
   findSlotByRepo,
   resolveSlotPoolDir,
   SlotByRepoError,
+  type SlotPoolEntry,
 } from '@farmslot/protocol/node/slot-by-repo';
 import { resolveRecipeLibrarySources } from '@farmslot/recipe-runner';
 
@@ -631,6 +632,23 @@ const providerOutputRoots = new WeakMap<HarnessContext, string[]>();
 const providerAttestedCommits = new WeakMap<HarnessContext, string>();
 const importedProviderSources = new Map<string, string>();
 
+type ProjectContextPoolSlot = Pick<SlotPoolEntry, 'id' | 'platform'> & {
+  project?: string;
+  app?: string;
+};
+interface ProjectContextPool {
+  project?: string;
+  env?: Record<string, string>;
+  slots?: ProjectContextPoolSlot[];
+}
+
+/** Pool metadata for project and provider selection after the slot lookup. */
+export function readProjectPool(context: HarnessContext): ProjectContextPool | undefined {
+  return context.slot?.value && context.slot.poolFile
+    ? (JSON.parse(fs.readFileSync(context.slot.poolFile, 'utf8')) as ProjectContextPool)
+    : undefined;
+}
+
 /** Read project metadata and resolve defaults without importing executable code. */
 export async function resolveProjectContext(
   options: ResolveProjectContextOptions,
@@ -681,19 +699,7 @@ export async function resolveProjectContext(
       (entry) => !registered.some((existing) => existing.config.name === entry.config.name),
     ),
   ];
-  const pool =
-    context.slot?.value && context.slot.poolFile
-      ? (JSON.parse(fs.readFileSync(context.slot.poolFile, 'utf8')) as {
-          project?: string;
-          env?: Record<string, string>;
-          slots?: Array<{
-            id: string;
-            project?: string;
-            app?: string;
-            platform?: string;
-          }>;
-        })
-      : undefined;
+  const pool = readProjectPool(context);
   const poolSlot = context.slot?.value ? (context.slot.poolSlot ?? context.slot.value) : undefined;
   const slot = pool?.slots?.find((entry) => entry.id === poolSlot);
   const projectFlag = optionValues(options.tokens, '--project').at(-1);
