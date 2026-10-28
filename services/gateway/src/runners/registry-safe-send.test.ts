@@ -58,6 +58,8 @@ let exitAfterLiteralSend = false;
 let exitBeforeMutation = false;
 let foregroundProbeUnknown = false;
 const mutationRetryOptions: Array<boolean | undefined> = [];
+const promptInputCommands: string[] = [];
+let acknowledgePromptInput = false;
 beforeEach(() => {
   foregroundCommand = 'claude';
   foregroundRunnerPresent = true;
@@ -65,6 +67,8 @@ beforeEach(() => {
   exitBeforeMutation = false;
   foregroundProbeUnknown = false;
   mutationRetryOptions.length = 0;
+  promptInputCommands.length = 0;
+  acknowledgePromptInput = false;
 });
 
 mock.module('./claude-observability.js', {
@@ -191,7 +195,8 @@ mock.module('../core/exec.js', {
     execArgvOnSlot: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execFileArgv: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execOnSlot: async (_slotVars: SlotVars, cmd: string, options?: { noRetry?: boolean }) => {
-      if (cmd.includes('send-keys') || cmd.includes('send-text')) {
+      if (cmd.includes('send-keys') || cmd.includes('send-text') || cmd.includes('paste-buffer')) {
+        promptInputCommands.push(cmd);
         mutationRetryOptions.push(options?.noRetry);
         if (cmd.includes('execution-host guard') && !foregroundRunnerPresent)
           return { exitCode: 85, stdout: '', stderr: 'execution-host input guard refused' };
@@ -200,11 +205,20 @@ mock.module('../core/exec.js', {
           failedPromptSends -= 1;
           return { exitCode: failedPromptSendExitCode, stdout: '', stderr: 'target missing' };
         }
-        // A literal payload (-l) is the message being TYPED; a bare send is a
+        // Literal typing or bracketed paste carries text; a bare send is a
         // key like Enter. The distinction is what separates fresh-send from
         // submit-existing in assertions.
-        if (cmd.includes(' -l ')) {
+        if (cmd.includes(' -l ') || cmd.includes('paste-buffer')) {
           callOrder.push('tmux:send-literal');
+          if (acknowledgePromptInput) {
+            promptAcceptedReading = {
+              value: true,
+              source: 'hook',
+              confidence: 'high',
+              observedAt: Date.now(),
+              exactPromptMatch: true,
+            };
+          }
           if (exitAfterLiteralSend) {
             foregroundCommand = 'zsh';
             foregroundRunnerPresent = false;
@@ -218,6 +232,9 @@ mock.module('../core/exec.js', {
       if (cmd.includes('#{pane_current_command}')) {
         callOrder.push('input:foreground');
         return { exitCode: 0, stdout: `%1|123|${foregroundCommand}`, stderr: '' };
+      }
+      if (cmd.includes("'#{pane_id}'")) {
+        return { exitCode: 0, stdout: '%1\n', stderr: '' };
       }
       if (cmd.includes('FARMSLOT_RUNNER_PATTERN=')) {
         callOrder.push('input:process');
@@ -305,6 +322,70 @@ const {
 test('initial prompt capability rejects unknown runner ids', () => {
   assert.equal(runnerSupportsInitialPromptArg('claude'), true);
   assert.equal(runnerSupportsInitialPromptArg('unregistered-runner'), false);
+});
+
+test('post-launch paste preserves the full prompt, rechecks both input stages and requires exact acknowledgement', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = null;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    exactPromptMatch: false,
+  };
+  acknowledgePromptInput = true;
+  let mutations = 0;
+  await withRunnerPromptMutationBoundary(
+    () => {
+      mutations += 1;
+    },
+    () =>
+      sendRunnerPostLaunchPrompt(vars, target, 'codex', message, 'TASK.md', '[test]', {
+        readyTimeoutMs: 100,
+        stabilityPolls: 1,
+        pollIntervalMs: 0,
+        verifyWaitMs: 0,
+        requirePromptDigest: true,
+        softAcceptOnHandoffAck: false,
+      }),
+  );
+  assert.equal(mutations, 1);
+  assert.equal(promptInputCommands.length, 2);
+  assert.match(promptInputCommands[0]!, /paste-buffer -d -p/);
+  assert.match(promptInputCommands[1]!, /send-keys -t '%1' Enter/);
+  assert.ok(promptInputCommands.every((command) => command.includes('execution-host guard')));
+  assert.deepEqual(mutationRetryOptions, [true, true]);
+});
+
+test('post-launch paste holds uncertain delivery if the runner exits before submit', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = null;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    exactPromptMatch: false,
+  };
+  exitAfterLiteralSend = true;
+  await assert.rejects(
+    sendRunnerPostLaunchPrompt(vars, target, 'codex', message, 'TASK.md', '[test]', {
+      readyTimeoutMs: 100,
+      stabilityPolls: 1,
+      pollIntervalMs: 0,
+      verifyWaitMs: 0,
+      requirePromptDigest: true,
+      softAcceptOnHandoffAck: false,
+    }),
+    PromptDeliveryUncertainError,
+  );
+  assert.equal(promptInputCommands.length, 1, 'no submit is sent to the replacement shell');
+  assert.match(promptInputCommands[0]!, /paste-buffer -d -p/);
 });
 
 test('launch observation requires exact high-confidence acceptance and never touches the pane', async () => {

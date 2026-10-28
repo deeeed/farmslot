@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Deliver Codex dispatch instructions through a task-local file and verify the exact short pointer, preserving long task paths during interactive startup.
+- Deliver Codex dispatch instructions through a task-local file and bracketed paste, verifying the exact short pointer and preserving long task paths during interactive startup.
 
 - Retain task-local recipe actions with run artifacts and restore them when a follow-up inherits the recipe, including on another node; reject inheritance when required action files are unavailable.
 - Check the repository's declared or lockfile-selected npm, Yarn or pnpm during worker launch, so npm Terminal checkouts do not require unrelated Yarn shims.

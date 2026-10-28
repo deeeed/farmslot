@@ -45,6 +45,7 @@ import { execOnSlot } from '../core/exec.js';
 import { slotWriteFiles } from '../core/slot-io.js';
 import {
   firstWindowTarget,
+  pasteTmuxText,
   resolveTmuxPaneId,
   resolveTmuxSession,
   shellQuote,
@@ -214,6 +215,8 @@ export interface RunnerDefinition {
   needsPostLaunchPrompt: boolean;
   /** Keep the full dispatch instruction out of the interactive input stream. */
   fileBackedDispatchPrompt?: boolean;
+  /** Use the terminal's paste framing instead of a stream of literal keystrokes. */
+  postLaunchPromptTransport?: 'bracketed-paste';
   /** Supports an explicit opt-in first instruction as a CLI argument. */
   supportsInitialPromptArg?: boolean;
   /** Runner starts with the task in argv and must clear safe launch blockers before dispatch can trust task execution. */
@@ -393,6 +396,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
     fileBackedDispatchPrompt: true,
+    postLaunchPromptTransport: 'bracketed-paste',
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     interruptKeys: ['C-c'],
@@ -3892,10 +3896,47 @@ export async function sendRunnerPostLaunchPrompt(
         });
     }
     const sentAtMs = Date.now();
-    const promptResult = await execRunnerInput(vars, target, runner, (paneId) => {
-      promptMutationStore.getStore()?.started();
-      return sendCommand(paneId);
-    });
+    let promptResult: ExecResult;
+    if (
+      !shouldSubmitOnly &&
+      getRunnerDefinition(runner).postLaunchPromptTransport === 'bracketed-paste'
+    ) {
+      let inputStarted = false;
+      let pasteCompleted = false;
+      try {
+        console.log(`[${logPrefix}] using bracketed paste for post-launch prompt in ${target}`);
+        await pasteTmuxText(vars, target, message, {
+          submitKey: runnerPromptSubmitKey(runner),
+          executeInput: async (paneId, command) => {
+            const result = await execRunnerInput(vars, paneId, runner, () => {
+              if (!inputStarted) promptMutationStore.getStore()?.started();
+              inputStarted = true;
+              return command;
+            });
+            if (result.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE && !pasteCompleted) {
+              inputStarted = false;
+              promptMutationStore.getStore()?.confirmedUntouched?.();
+            }
+            if (result.exitCode === 0) pasteCompleted = true;
+            return result;
+          },
+        });
+        promptResult = { exitCode: 0, stdout: '', stderr: '' };
+      } catch (error) {
+        if (inputStarted) {
+          throw new PromptDeliveryUncertainError(
+            `Prompt paste to ${target} is uncertain: ${(error as Error).message}`,
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+    } else {
+      promptResult = await execRunnerInput(vars, target, runner, (paneId) => {
+        promptMutationStore.getStore()?.started();
+        return sendCommand(paneId);
+      });
+    }
     if (promptResult.exitCode !== 0) {
       if (shouldSubmitOnly || promptResult.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE) {
         promptMutationStore.getStore()?.confirmedUntouched?.();
