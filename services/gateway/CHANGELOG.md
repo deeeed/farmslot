@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Serve run list versions: `run.list` with `versions: true` returns every live run's row version (the sha256 of the served row, stable across restarts), and `ids` returns rows in the order asked, in pages of up to 2 MB. `capabilities.resourceChanges.versionLists` is on, and `listRuns` filters with the protocol's shared run-list predicate.
+
 - Check `expectedHash` and `runId` on `fs.write`, `fs.rename` and `fs.delete`. Creates are exclusive, the slot's run is read fresh from the status file, and a failed check returns `FS_CONFLICT` with its details. A conditional edit on a node without `conditionalWrites` fails with `FS_PRECONDITION_UNSUPPORTED`. `fs.read` returns the file hash, and node error details now reach the client. Review gates, recovered ones included, record the run's artifact bundle.
 
 - `git.diff` reports full index ids, and an untracked file that would overflow the reply is listed as a binary new file instead of failing the diff. Package diffs are written atomically.

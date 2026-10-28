@@ -26,7 +26,6 @@ import {
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   FLOW_STEPS,
   type FlowType,
-  isActiveListRun,
   isCompletionPrerequisiteFailure,
   isReviewMode,
   isReviewValidationDepth,
@@ -45,6 +44,7 @@ import {
   type Run,
   type RunCreateParams,
   type RunLane,
+  runListPage,
   type RunStatus,
   type RunStep,
   type RunStepStatus,
@@ -1139,6 +1139,19 @@ export function getAllRuns(): Run[] {
   return [...runs.values()];
 }
 
+/** Live runs in the order asked. Repeated ids are served once; ids with no live run are skipped. */
+export function getLiveRunsByIds(ids: readonly string[]): Run[] {
+  const seen = new Set<string>();
+  const found: Run[] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const run = runs.get(id);
+    if (run) found.push(run);
+  }
+  return found;
+}
+
 export interface ListRunsFilter {
   status?: RunStatus;
   active?: boolean;
@@ -1190,91 +1203,8 @@ export function listRunsForSlotHistory(
 }
 
 export function listRuns(filter?: ListRunsFilter): { runs: Run[]; totalCount: number } {
-  let result = [...runs.values()];
-
-  if (filter?.status) {
-    result = result.filter((r) => r.status === filter.status);
-  } else if (filter?.active) {
-    result = result.filter(isActiveListRun);
-  }
-
-  if (filter?.flowType) {
-    result = result.filter((r) => r.flowType === filter.flowType);
-  }
-  if (filter?.project) {
-    result = result.filter((r) => r.project === filter.project);
-  }
-  if (filter?.prNumber != null) {
-    result = result.filter((r) => r.prNumber === filter.prNumber);
-  }
-  if (filter?.familyId) {
-    result = result.filter((r) => r.familyId === filter.familyId);
-  }
-  if (filter?.lane) {
-    result = result.filter((r) => r.lane === filter.lane);
-  }
-  if (filter?.variant !== undefined) {
-    result = result.filter((r) => (r.variant ?? null) === (filter.variant ?? null));
-  }
-  if (filter?.outcome) {
-    result = result.filter((r) => r.metrics.outcome === filter.outcome);
-  }
-  if (filter?.dateFrom) {
-    result = result.filter((r) => r.createdAt >= filter.dateFrom!);
-  }
-  if (filter?.dateTo) {
-    result = result.filter((r) => r.createdAt <= filter.dateTo!);
-  }
-  if (filter?.search) {
-    const q = filter.search.toLowerCase();
-    result = result.filter(
-      (r) =>
-        r.ticketOrPr.toLowerCase().includes(q) ||
-        Boolean(r.summary?.toLowerCase().includes(q)) ||
-        Boolean(r.tags?.some((tag) => tag.includes(q))),
-    );
-  }
-  const tagFilter = normalizeRunTags(filter?.tags);
-  if (tagFilter.length > 0) {
-    result = result.filter((r) => {
-      const runTags = new Set(normalizeRunTags(r.tags));
-      return tagFilter.every((tag) => runTags.has(tag));
-    });
-  }
-
-  const totalCount = result.length;
-
-  const sort = filter?.sort ?? 'newest';
-  switch (sort) {
-    case 'oldest':
-      result.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-      break;
-    case 'duration':
-      result.sort((a, b) => (b.metrics.durationMs ?? 0) - (a.metrics.durationMs ?? 0));
-      break;
-    case 'grade': {
-      const gradeOrder: Record<string, number> = { good: 3, ok: 2, bad: 1 };
-      result.sort(
-        (a, b) =>
-          (gradeOrder[b.humanGrade?.recipe_semantic ?? ''] ?? 0) -
-          (gradeOrder[a.humanGrade?.recipe_semantic ?? ''] ?? 0),
-      );
-      break;
-    }
-    default:
-      result.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }
-
-  // Active, family, PR and tag lists are complete by default; only the open-ended list pages.
-  const limit =
-    filter?.limit ??
-    (filter?.active ||
-    filter?.familyId ||
-    filter?.prNumber != null ||
-    normalizeRunTags(filter?.tags).length > 0
-      ? result.length
-      : 500);
-  return { runs: result.slice(0, limit), totalCount };
+  // The client cache answers run.list from its stored rows with this same shared predicate.
+  return runListPage([...runs.values()], filter ?? {});
 }
 
 export function listRunTags(): Array<{ tag: string; count: number }> {

@@ -881,7 +881,7 @@ test('resource capabilities and principal generations reach farm, node and nativ
       assert.deepEqual(auth.capabilities.resourceChanges, {
         version: 1,
         epoch: resourceRevisions.epoch,
-        versionLists: false,
+        versionLists: true,
         observedReads: 1,
         workspaceReads: 1,
         upstreamObservers: {

@@ -782,7 +782,7 @@ async function handleMessage(
         resourceChanges: {
           version: 1,
           epoch: resourceRevisions.epoch,
-          versionLists: false,
+          versionLists: true,
           observedReads: 1,
           workspaceReads: 1,
           ...(collectorMethods.length

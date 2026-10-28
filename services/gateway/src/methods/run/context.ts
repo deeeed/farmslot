@@ -36,7 +36,14 @@ import { refreshRunGateReadiness } from '../../run-engine/gate-prerequisites.js'
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
 import { reconcilePublicationPackageForInspection } from '../../run-engine/publish-package-refresh.js';
 import { trimRunForList } from '../../runs/list-trim.js';
-import { getRun, listRuns, listRunsForSlotHistory } from '../../runs/store.js';
+import { runListIdsPage, runListVersions } from '../../runs/list-version.js';
+import {
+  getAllRuns,
+  getLiveRunsByIds,
+  getRun,
+  listRuns,
+  listRunsForSlotHistory,
+} from '../../runs/store.js';
 
 import { readRunRecordedEvidence } from './evidence-review.js';
 
@@ -80,6 +87,20 @@ export async function runGet(params: RunGetParams): Promise<RunGetResult> {
 }
 
 export async function runList(params: RunListParams): Promise<RunListResult> {
+  if (params.versions === true) {
+    // Every live run in the store's order, ignoring filters, limit, sort and ids.
+    // Summary flags still apply, over all of them.
+    const live = getAllRuns();
+    const summaries = attachRunListSummaries({ runs: live, totalCount: live.length }, params);
+    return { ...summaries, runs: [], versions: runListVersions(live) };
+  }
+  if (params.ids !== undefined) {
+    if (!Array.isArray(params.ids) || params.ids.some((id) => typeof id !== 'string'))
+      throw new GatewayMethodError('INVALID_PARAMS', 'ids must be an array of run ids');
+    // A catch-up page: filters, limit, sort and summary flags do not apply.
+    const page = runListIdsPage(getLiveRunsByIds(params.ids));
+    return { runs: page.runs, totalCount: page.runs.length, versions: page.versions };
+  }
   // No gate-summary enrichment here on purpose: the list surface renders run
   // summaries, not decision payloads. The lazy backfill happens where decisions
   // are consumed individually (runGet/runForSlot via presentRun, and
