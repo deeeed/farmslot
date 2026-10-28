@@ -15,6 +15,9 @@ const entry = fileURLToPath(import.meta.url);
 const source = path.resolve(path.dirname(entry), '../../../..');
 
 async function child(phase: string, root: string): Promise<void> {
+  assert.equal(process.env.FARMSLOT_BACKLOG_FILE, path.join(root, 'backlog.json'));
+  assert.equal(process.env.FARMSLOT_DISPATCH_QUEUE_FILE, path.join(root, 'dispatch-queue.json'));
+  await import('./gateway-status-process.js');
   const store = await import('../runs/store.js');
   const { withNativeReviewMutation, withNativeReviewOperation } =
     await import('../review/native-review-operation.js');
@@ -93,14 +96,32 @@ async function stop(process: ChildProcess): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const started = performance.now();
   const root = await mkdtemp(path.join(os.tmpdir(), 'review-status-restart-'));
+  const sentinels = {
+    backlog: path.join(root, 'external-backlog.json'),
+    queue: path.join(root, 'external-queue.json'),
+  };
+  const sentinelBytes = JSON.stringify({ sentinel: 'external stores must remain untouched' });
+  for (const file of Object.values(sentinels)) await writeFile(file, sentinelBytes);
+  const inherited = {
+    PATH: process.env.PATH,
+    HOME: path.join(root, 'user-home'),
+    FARMSLOT_BACKLOG_FILE: sentinels.backlog,
+    FARMSLOT_DISPATCH_QUEUE_FILE: sentinels.queue,
+  };
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...inherited,
     FARMSLOT_ROOT: root,
     FARMSLOT_HOME: path.join(root, 'home'),
+    FARMSLOT_NATIVE_STATE_DIR: path.join(root, 'native'),
+    TMPDIR: path.join(root, 'tmp'),
+    TMUX_TMPDIR: path.join(root, 'tmux'),
     FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
     FARMSLOT_POOL_DIR: path.join(root, 'pool'),
     FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
+    FARMSLOT_BACKLOG_FILE: path.join(root, 'backlog.json'),
+    FARMSLOT_DISPATCH_QUEUE_FILE: path.join(root, 'dispatch-queue.json'),
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     GATEWAY_HOST: '127.0.0.1',
     FARMSLOT_BRANCH_WATCHERS: '0',
@@ -111,7 +132,8 @@ async function main(): Promise<void> {
   delete env.FARMSLOT_TEST_STATUS_FILE;
   delete env.TMUX;
   delete env.TMUX_PANE;
-  for (const name of ['home', 'runs', 'pool', 'projects']) await mkdir(path.join(root, name));
+  for (const name of ['home', 'runs', 'pool', 'projects', 'user-home', 'native', 'tmp', 'tmux'])
+    await mkdir(path.join(root, name));
   await mkdir(path.join(root, 'scripts'));
   await mkdir(path.join(root, 'services/gateway'), { recursive: true });
   await writeFile(path.join(root, 'CLAUDE.md'), '# Isolated regression fixture\n');
@@ -196,12 +218,33 @@ async function main(): Promise<void> {
       before,
       'direct test preserves the live lease across gateway restart',
     );
+    const laneWriter = path.join(root, 'lane-writer.mjs');
+    await writeFile(
+      laneWriter,
+      `import { resolveStatusFilePath } from ${JSON.stringify(new URL('./repo-root.js', import.meta.url).href)};\nresolveStatusFilePath();\n`,
+    );
+    const laneProcess = spawn(process.execPath, ['--import', 'tsx', laneWriter], {
+      cwd: source,
+      env,
+      stdio: ['ignore', log.fd, 'pipe'],
+    });
+    let refusal = '';
+    assert.ok(laneProcess.stderr);
+    laneProcess.stderr.setEncoding('utf8');
+    laneProcess.stderr.on('data', (chunk: string) => { refusal += chunk; });
+    const [laneCode] = await once(laneProcess, 'exit');
+    assert.notEqual(laneCode, 0, 'an ordinary lane script cannot resolve the shared store');
+    assert.match(refusal, /requires gateway bootstrap/);
+    assert.equal(await readFile(status, 'utf8'), before);
     gateway.send({ complete: true });
     await waitMessage('completed');
     assert.equal(await readFile(path.join(root, 'review-result'), 'utf8'), 'complete');
+    for (const file of Object.values(sentinels))
+      assert.equal(await readFile(file, 'utf8'), sentinelBytes, 'external store preserved');
     console.log(
       JSON.stringify({
         pass: true,
+        elapsedMs: performance.now() - started,
         root,
         firstPid,
         restartedPid: gateway.pid,

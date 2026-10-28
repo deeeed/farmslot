@@ -9,6 +9,7 @@ import { markGhostSlots } from '../fleet/state.js';
 import { isFreeSlot } from './dispatch/slot-scoring.js';
 import { makeRun } from './run/test-fixtures.js';
 import {
+  buildFleetRefreshSnapshot,
   buildRefreshSlotRow,
   fleetStaleThresholdMs,
   fleetStatus,
@@ -21,6 +22,57 @@ import {
   reconcileRefreshSlotRowWithActiveRun,
   slotHeadRefreshUpdate,
 } from './fleet.js';
+
+test('refresh preserves the owner and epoch of a running review through idle probes', () => {
+  const run = makeRun({
+    id: 'review-run',
+    slotId: 'macwork-mm-4',
+    status: 'reviewing',
+    steps: [{ name: 'review', status: 'running' }],
+  });
+  const row = makeRefreshRow({ current_run_id: run.id, slot_epoch: 76 });
+  const refreshed = buildFleetRefreshSnapshot(
+    [row],
+    [makeRefreshRow({ agent: 'idle' })],
+    [run],
+    'now',
+  ).slots[0]!;
+  assert.equal(refreshed.current_run_id, run.id);
+  assert.equal(refreshed.slot_epoch, 76);
+  assert.equal(refreshed.dispatchable, false);
+});
+
+test('refresh refuses missing or reassigned leases instead of reconstructing running-step epochs', () => {
+  for (const name of ['prepare', 'dispatch', 'monitor', 'review', 'complete'] as const) {
+    const run = makeRun({
+      id: 'running-run',
+      slotId: 'macwork-mm-4',
+      status: 'reviewing',
+      steps: [{ name, status: 'running' }],
+    });
+    for (const rows of [[], [makeRefreshRow()], [makeRefreshRow({ current_run_id: 'other' })]])
+      assert.throws(
+        () => buildFleetRefreshSnapshot(rows, [makeRefreshRow()], [run], 'now'),
+        /refusing to rebuild its lease or epoch/,
+      );
+    assert.doesNotThrow(() =>
+      buildFleetRefreshSnapshot(
+        [makeRefreshRow({ handoff_run_id: run.id })],
+        [makeRefreshRow()],
+        [run],
+        'now',
+      ),
+    );
+  }
+  const request = makeRun({
+    status: 'slot-finding',
+    steps: [{ name: 'find-slot', status: 'running' }],
+  });
+  assert.doesNotThrow(() => buildFleetRefreshSnapshot([], [makeRefreshRow()], [request], 'now'));
+  assert.doesNotThrow(() =>
+    buildFleetRefreshSnapshot([], [makeRefreshRow()], [makeRun({ steps: [] })], 'now'),
+  );
+});
 
 function makeRefreshRow(overrides: Record<string, unknown> = {}) {
   return {

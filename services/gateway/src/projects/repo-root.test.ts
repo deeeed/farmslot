@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,7 +21,7 @@ assert.equal(
   resolveStatusFilePath(expectedRoot),
 );
 assert.equal(
-  resolveStatusFilePath(expectedRoot, {}, ['node', 'src/index.ts']),
+  resolveStatusFilePath(expectedRoot, {}, ['node', 'src/index.ts'], true),
   path.join(expectedRoot, '.farm-status.json'),
 );
 assert.throws(
@@ -50,9 +50,55 @@ for (const [label, env, argv] of [
       slots: [{ slot: 'owned-review', current_run_id: 'review-run', slot_epoch: 76 }],
     });
     writeFileSync(live, prior);
-    const target = resolveStatusFilePath(root, env, argv);
+    const target = resolveStatusFilePath(root, env, argv, true);
     writeFileSync(target, JSON.stringify({ slots: [{ slot: 'slot-terminal-overlap' }] }));
     assert.equal(readFileSync(live, 'utf8'), prior);
     assert.notEqual(target, live);
   });
 }
+
+test('lane scripts require explicit gateway bootstrap before resolving shared status', () => {
+  assert.throws(
+    () => resolveStatusFilePath(expectedRoot, {}, ['node', 'lane-proof.mjs']),
+    /requires gateway bootstrap/,
+  );
+});
+
+test('explicit test overrides cannot select the shared store through file or directory aliases', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'fleet-status-alias-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const live = path.join(root, '.farm-status.json');
+  const prior = '{"slots":[{"slot_epoch":76}]}';
+  writeFileSync(live, prior);
+  const fileAlias = path.join(root, 'test-status.json');
+  const dirAlias = path.join(root, 'alias');
+  symlinkSync(live, fileAlias);
+  symlinkSync(root, dirAlias);
+  mkdirSync(path.join(root, 'scripts'));
+  mkdirSync(path.join(root, 'services/gateway'), { recursive: true });
+  writeFileSync(path.join(root, 'CLAUDE.md'), '# Shared farm');
+  writeFileSync(path.join(root, 'scripts/dev.sh'), '');
+  writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
+  for (const selected of [live, fileAlias, path.join(dirAlias, '.farm-status.json')]) {
+    assert.throws(
+      () =>
+        resolveStatusFilePath(
+          root,
+          { NODE_TEST_CONTEXT: '1', FARMSLOT_TEST_STATUS_FILE: selected },
+          ['node', 'fixture.test.ts'],
+          true,
+        ),
+      /must not point to the shared fleet status store/,
+    );
+  }
+  assert.throws(
+    () =>
+      resolveStatusFilePath(
+        path.join(root, 'different-private-root'),
+        { NODE_TEST_CONTEXT: '1', FARMSLOT_TEST_STATUS_FILE: fileAlias },
+        ['node', 'fixture.test.ts'],
+      ),
+    /must not point to the shared fleet status store/,
+  );
+  assert.equal(readFileSync(live, 'utf8'), prior);
+});

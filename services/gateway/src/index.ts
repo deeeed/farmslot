@@ -17,6 +17,8 @@ import { dirname, resolve } from 'node:path';
 import { type EvalTrialStartParams, Events, primaryRoleForFlow } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import './projects/gateway-status-process.js';
+
 import {
   initAutoRecovery,
   routeEventToAutoRecovery,

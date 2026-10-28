@@ -403,33 +403,46 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
   // before entering the chain would drop any claim (owner + epoch) that
   // landed while the probes ran.
   const checkedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-  await rewriteStatusFile((current) => {
-    // Sampled INSIDE the chain: a run finishing (or a slot releasing) while
-    // the slow probes ran must be seen by the reconcile below.
-    const activeRuns = listRuns({ active: true }).runs;
-    const prevSlots: Record<string, PreviousSlotStatus> = {};
-    for (const row of current?.slots ?? []) {
-      prevSlots[String(row.slot)] = row as PreviousSlotStatus;
-    }
-    const slots = results.map((r) =>
-      reconcileRefreshSlotRowWithActiveRun(
-        buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
-        newestActiveRunForSlot(
-          activeRuns,
-          r.slot,
-          prevSlots[r.slot]?.current_run_id as string | undefined,
-        ),
-      ),
-    );
-    const preserved = preserveClaimedRowsUnknownToProbe(
+  await rewriteStatusFile((current) =>
+    // Resolve runs inside the write chain, after the slow probes.
+    buildFleetRefreshSnapshot(
       current?.slots ?? [],
-      new Set(results.map((r) => r.slot)),
-    );
-    return { checked_at: checkedAt, slots: [...slots, ...preserved] };
-  });
+      results,
+      listRuns({ active: true }).runs,
+      checkedAt,
+    ),
+  );
 
   const fleet = await enrichFleetWorkspaces(await loadFleetStatus(true));
   return { fleet };
+}
+
+export function buildFleetRefreshSnapshot(
+  currentRows: Array<Record<string, unknown>>,
+  results: SlotCheckResult[],
+  activeRuns: Run[],
+  checkedAt: string,
+) {
+  assertRunningStepLeases(currentRows, activeRuns);
+  const prevSlots: Record<string, PreviousSlotStatus> = {};
+  for (const row of currentRows) {
+    prevSlots[String(row.slot)] = row as PreviousSlotStatus;
+  }
+  const slots = results.map((r) =>
+    reconcileRefreshSlotRowWithActiveRun(
+      buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
+      newestActiveRunForSlot(
+        activeRuns,
+        r.slot,
+        prevSlots[r.slot]?.current_run_id as string | undefined,
+      ),
+    ),
+  );
+  const preserved = preserveClaimedRowsUnknownToProbe(
+    currentRows,
+    new Set(results.map((r) => r.slot)),
+  );
+  return { checked_at: checkedAt, slots: [...slots, ...preserved] };
 }
 
 /**
@@ -449,6 +462,20 @@ export function preserveClaimedRowsUnknownToProbe(
     if (probedSlotIds.has(String(row.slot))) return false;
     return Boolean(row.current_run_id || row.handoff_run_id);
   });
+}
+
+/** A refresh may observe a running lease, never manufacture a replacement epoch for it. */
+function assertRunningStepLeases(rows: Array<Record<string, unknown>>, runs: Run[]): void {
+  for (const run of runs) {
+    const step = run.steps.find((entry) => entry.status === 'running');
+    if (!step || !run.slotId || isSlotFreedByPark(run)) continue;
+    const row = rows.find((entry) => entry.slot === run.slotId);
+    if (slotPinIsRequestOnly(run, row)) continue;
+    if (row?.current_run_id === run.id || row?.handoff_run_id === run.id) continue;
+    throw new Error(
+      `Cannot refresh fleet: running ${step.name} for run ${run.id} lost slot ${run.slotId}; refusing to rebuild its lease or epoch`,
+    );
+  }
 }
 
 export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
