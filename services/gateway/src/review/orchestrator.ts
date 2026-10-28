@@ -924,6 +924,10 @@ async function completeReviewFix(
   if (signal.status !== 'complete' || fixDelta.snapshot.source !== 'local-git') return undefined;
   const delta = fixDelta.snapshot;
   const noSourceChanges = fixDeltaIsKnownEmpty(delta);
+  const prior = result.reviewSnapshot;
+  // An empty current fix can follow changes made after this review's verdict.
+  if (noSourceChanges && prior?.headSha && delta.fixHeadSha && prior.headSha !== delta.fixHeadSha)
+    return undefined;
   const run = deps.getRun(runId);
   const before = run?.engineState?.reviewInputsAtLaunch;
   const after = noSourceChanges && run && before ? await deps.readFixedInputs(run) : null;
@@ -942,7 +946,6 @@ async function completeReviewFix(
       start,
     );
   }
-  const prior = result.reviewSnapshot;
   if (
     fixDelta.sourceLinesChanged === undefined ||
     fixDelta.sourceLinesChanged > 50 ||

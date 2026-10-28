@@ -50,7 +50,10 @@ import {
   runReviewRoundBudget,
 } from '../review/review-round-budget.js';
 import { readReviewedInputs, reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
-import { reviewResultArtifactPath } from '../review/terminal-result.js';
+import {
+  acceptedReviewFixPredecessor,
+  reviewResultArtifactPath,
+} from '../review/terminal-result.js';
 import { assertReviewCommentLines } from '../review-publication/validate-comments.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
 import type { InheritedAcceptanceCandidate } from '../run-completion/inherited-acceptance.js';
@@ -469,7 +472,7 @@ async function scanPackageForPublicationSecrets(
   );
 }
 
-/** Completed reviews whose structured result artifact records the same verdict. */
+/** Validate reviewer artifacts, including the original verdict an accepted fix extends. */
 export async function reviewsWithValidResults(
   run: Run,
   readReviewResult: GatePrerequisiteReaders['reviewResult'] = readers.reviewResult,
@@ -478,7 +481,8 @@ export async function reviewsWithValidResults(
   for (const review of qualifyingTerminalReviewInputs(
     run.engineState?.publishGate?.reviews ?? [],
   )) {
-    const artifact = reviewResultArtifactPath(review);
+    const input = acceptedReviewFixPredecessor(review) ?? review;
+    const artifact = reviewResultArtifactPath(input);
     const raw = artifact ? await readReviewResult(run, artifact) : undefined;
     if (raw) {
       const result = parseStructuredReviewFeedback(
@@ -486,7 +490,7 @@ export async function reviewsWithValidResults(
         artifact!,
         await loadReviewApprovalPolicy(run.project),
       );
-      if (!result.incomplete && result.verdict === review.verdict) valid.push(review);
+      if (!result.incomplete && result.verdict === input.verdict) valid.push(review);
     }
   }
   return valid;

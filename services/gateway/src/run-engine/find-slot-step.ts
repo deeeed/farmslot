@@ -54,6 +54,7 @@ import { automaticSlotLoads } from '../methods/dispatch/pressure-admission.js';
 import {
   activeRunIds,
   activeRunSlotIds,
+  assertAllowedSlotSelection,
   automaticSlotLoadBlocker,
   companionResourceBlocker,
   compareSlotLoads,
@@ -1394,11 +1395,7 @@ async function findSlotAttempt(
                 `Picked slot '${pickedSlotId}' is not eligible (${ineligible ?? 'not in the fleet'}); pick a slot again`,
               );
             }
-            if (allowSet && !allowSet.has(pickedSlotId)) {
-              throw new Error(
-                `Picked slot '${pickedSlotId}' is not in the allowed slot list; pick a slot again`,
-              );
-            }
+            assertAllowedSlotSelection(run, pickedSlotId);
             if (run.sourcePlan)
               await refreshRunSourcePlan(runId, {
                 nodeId: picked.machine,
@@ -1601,11 +1598,7 @@ async function findSlotAttempt(
           `Picked slot '${pickedSlotId}' is not eligible (${ineligible ?? 'not in the fleet'}); pick a slot again`,
         );
       }
-      if (allowSet && !allowSet.has(pickedSlotId)) {
-        throw new Error(
-          `Picked slot '${pickedSlotId}' is not in the allowed slot list; pick a slot again`,
-        );
-      }
+      assertAllowedSlotSelection(run, pickedSlotId);
       if (run.sourcePlan)
         await refreshRunSourcePlan(runId, {
           nodeId: picked.machine,

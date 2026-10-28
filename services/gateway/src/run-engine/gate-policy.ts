@@ -37,6 +37,7 @@ import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/revi
 import type { ReviewResult } from '../review/orchestrator.js';
 import { preserveUnchangedReviewFindings } from '../review/retained-findings.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
+import { acceptedReviewFixPredecessor } from '../review/terminal-result.js';
 import { resolveSelectedEvidenceRef } from '../run-completion/evidence-paths.js';
 import { assertPublicationEvidenceSelection } from '../run-completion/publication-evidence-policy.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -630,23 +631,9 @@ function reviewSnapshotDiffMatchesPackage(
   const session = review?.session;
   const deltaFallback = review?.mode === 'cold' ? session?.fallback : undefined;
   if (review && (review.mode === 'warm' || deltaFallback)) {
-    const fix = review.attempts?.at(-1);
-    const priorSnapshot = review.attempts?.at(-2)?.reviewSnapshot;
     // Gateway acceptance extends the captured delta without claiming another reviewer turn.
-    const acceptedFix =
-      deltaFallback &&
-      fix?.verdict === 'pass' &&
-      !fix.session &&
-      fix.timeline?.some(
-        (segment) => segment.kind === 'worker-fix' && segment.verdict === 'pass',
-      ) &&
-      fix.fixDelta?.source === 'local-git' &&
-      priorSnapshot?.source === 'local-git' &&
-      fix.fixDelta.fixBaseSha === priorSnapshot.headSha &&
-      fix.fixDelta.fixHeadSha === snapshot.headSha &&
-      priorSnapshot.baseRef === snapshot.baseRef &&
-      priorSnapshot.baseSha === snapshot.baseSha;
-    const compared = acceptedFix && priorSnapshot ? priorSnapshot : snapshot;
+    const acceptedFix = deltaFallback ? acceptedReviewFixPredecessor(review) : undefined;
+    const compared = acceptedFix?.reviewSnapshot ?? snapshot;
     // A fresh fallback keeps its authorized delta, whose base can differ from
     // the publication package's full contribution. Its new baseline is head.
     const rangeMatches = deltaFallback

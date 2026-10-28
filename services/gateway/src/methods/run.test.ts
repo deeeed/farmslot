@@ -28,6 +28,7 @@ import { farmslotRoot } from '../fleet/state.js';
 import { admitReviewRound } from '../review/review-round-budget.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { jiraTicketData, manualTicketData } from '../run-completion/test-fixtures.js';
+import { createEngineDecision } from '../run-engine/engine-decisions.js';
 import { overwriteRetainedFixture, retainRunFixture } from '../run-engine/test-fixtures.js';
 import type { VisualRepairAdmission } from '../run-engine/visual-repair.js';
 import {
@@ -68,6 +69,65 @@ const acceptorAuthority = {
     personSessionId: 'acceptor-session',
   }),
 };
+
+for (const reason of ['no_suitable_slot', 'branch_affinity_nudge']) {
+  test(`an out-of-filter ${reason} pick leaves the same decision open for a valid pick`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const run = createRun({
+      flowType: 'dev',
+      mode: 'interactive',
+      project: 'slot-choice',
+      ticketOrPr: 'MANUAL-SLOT-CHOICE',
+      transport: 'tmux',
+      allowedSlots: ['allowed-slot'],
+    });
+    t.after(async () => {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    });
+    const waiting = createEngineDecision(
+      run.id,
+      reason,
+      'Choose a slot',
+      [
+        { id: 'pick', label: 'Pick', style: 'primary' },
+        { id: 'abort', label: 'Abort', style: 'danger' },
+      ],
+      undefined,
+      { readProgress: async () => ({ kind: 'idle' }) },
+    );
+    await Promise.resolve();
+    const decision = getRun(run.id)!.decisions.at(-1)!;
+    await assert.rejects(
+      runResolveDecision(
+        {
+          runId: run.id,
+          decisionId: decision.id,
+          actionId: 'pick',
+          selectionData: { slotId: 'outside-slot' },
+        },
+        () => {},
+      ),
+      /not in the allowed slot list; pick a slot again/,
+    );
+    assert.equal(decision.resolvedAt, undefined);
+    assert.equal(decision.selectionData, undefined);
+    assert.equal(getRun(run.id)!.status, 'blocked');
+    await runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'pick',
+        selectionData: { slotId: 'allowed-slot' },
+      },
+      () => {},
+    );
+    assert.equal(await waiting, 'pick');
+    assert.equal(getRun(run.id)!.decisions.length, 1);
+    assert.equal(getRun(run.id)!.decisions[0]?.selectionData?.slotId, 'allowed-slot');
+  });
+}
+
 test('a human-gate WARM request refuses a lost retained session before consuming the gate', async (t) => {
   const run = createRun({
     flowType: 'dev',

@@ -777,6 +777,12 @@ export function failedRunSlotCleanup(
   return 'none';
 }
 
+export function assertAllowedSlotSelection(run: Pick<Run, 'allowedSlots'>, slotId: string): void {
+  if (run.allowedSlots?.length && !run.allowedSlots.includes(slotId)) {
+    throw new Error(`Picked slot '${slotId}' is not in the allowed slot list; pick a slot again`);
+  }
+}
+
 /**
  * Eligibility gate for an operator-picked slot id (decision-card 'pick'):
  * selectionData is unconstrained, so the id must resolve to a live pool
