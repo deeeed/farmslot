@@ -760,3 +760,65 @@ test('settlement while COMPLETE waits for admission does not skip the ordinary c
   assert.equal(completionCalls, 1);
   assert.equal(store.getRun(run.id)!.engineState?.generation ?? 0, 0);
 });
+
+test('a retained paused visual hold replays COMPLETE without reviewer acknowledgement', async (t) => {
+  const f = await fixture(t);
+  await settleUnit(f.taskDir, f.run.id, 'derive-acceptance', 1, f.sync);
+  const current = store.getRun(f.run.id)!;
+  const proof = {
+    registrationRevision: current.acceptanceRegistration!.revision,
+    contractRevision: current.acceptanceExecutionContract!.revision,
+    headSha: 'a'.repeat(40),
+  };
+  const decision = {
+    id: 'retained-output-review',
+    type: 'engine_output_review' as const,
+    title: 'Review completion proof',
+    description: 'Retained hold',
+    actions: [],
+    createdAt: '2026-10-28T00:00:00Z',
+    payload: {
+      kind: 'output-review' as const,
+      completionProof: proof,
+      manifestDigest: 'b'.repeat(64),
+      reportPath: 'artifacts/report.md',
+    },
+  };
+  store.updateRun(
+    f.run.id,
+    Object.assign(
+      {
+        status: 'paused' as const,
+        metrics: { ...current.metrics, outcome: 'partial' as const },
+        decisions: [decision],
+        steps: current.steps.map((step) => ({
+          ...step,
+          status: step.name === 'complete' ? ('pending' as const) : ('done' as const),
+        })),
+      },
+      { acceptanceProofHold: { ...proof, state: 'held', decisionId: decision.id } },
+    ),
+  );
+  const { runReplayStep } = await import('../methods/run/replay-step.js');
+  await runReplayStep({ runId: f.run.id, stepName: 'complete' }, () => {});
+  assert.equal(store.getRun(f.run.id)!.status, 'completing');
+  assert.equal(
+    store.getRun(f.run.id)!.metrics.outcome,
+    'partial',
+    'replay preserves worker metrics until normal completion settles',
+  );
+  const { captureRunOutput } = await import('../run-completion/output.js');
+  await captureRunOutput(f.run.id, false, true);
+  assert.equal(
+    store
+      .getRun(f.run.id)!
+      .decisions.some(
+        ({ payload, resolvedAt }) => payload?.kind === 'output-review' && !resolvedAt,
+      ),
+    false,
+  );
+  completionCalls = 0;
+  await executeCompleteStep(f.run.id, lifecycleContext);
+  assert.equal(completionCalls, 1);
+  assert.equal(store.getRun(f.run.id)!.status, 'completing');
+});

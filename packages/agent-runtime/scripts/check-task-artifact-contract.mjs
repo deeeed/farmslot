@@ -487,6 +487,8 @@ if (contractPath && terminalCommand && existsSync(contractPath)) {
   }
 }
 const isReviewTerminal = terminalContract?.flowType === 'review';
+const owningFlow =
+  readJsonArtifact('inputs/handoff.json', 'handoff')?.flow ?? terminalContract?.flowType;
 const hasRecipe = fileExists('artifacts/recipe.json');
 
 // A reviewer must be able to report ISSUES when worker-owned proof is invalid.
@@ -594,7 +596,7 @@ if (
   // ADR-062 Amendment 18: only the run's publication code review checks a `review` claim.
   if (
     terminalCommand === 'complete' &&
-    terminalContract?.flowType !== 'pr-complete' &&
+    owningFlow !== 'pr-complete' &&
     terminalContract?.publicationReview !== true
   ) {
     for (const row of Array.isArray(ledger?.criteria) ? ledger.criteria : []) {
@@ -609,6 +611,7 @@ if (
   }
   if (
     terminalCommand === 'complete' &&
+    owningFlow !== 'pr-complete' &&
     terminalContract?.claimReviewGate === true &&
     ledger?.schemaVersion === 2
   ) {

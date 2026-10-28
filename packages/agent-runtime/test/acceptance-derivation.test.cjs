@@ -151,7 +151,7 @@ test('the declared derivation is the first child and cannot be bypassed by marki
   assert.match(readFileSync(path.join(dir, 'CHECKLIST.md'), 'utf8'), /\[ \] \*\*2\./);
 });
 
-test('qualified originals coexist with fresh derived proof without changing parent references', (t) => {
+test('original evidence coexists with required derived proof without changing parent references', (t) => {
   const { dir, registration, project } = fixture(t);
   registration.units[0].result = {
     schemaVersion: 1,
@@ -194,10 +194,7 @@ test('qualified originals coexist with fresh derived proof without changing pare
   setDerivedClaims(dir, claims);
   assert.deepEqual(acceptanceContractIssues(dir), []);
   assert.equal(readFileSync(referencePath, 'utf8'), before);
-  assert.match(
-    acceptanceContractIssues(dir, { requireFresh: true }).join(';'),
-    /AC-1 has no engine verdict/,
-  );
+  assert.deepEqual(acceptanceContractIssues(dir, { requireFresh: true }), []);
   writeFileSync(
     path.join(dir, 'artifacts/acceptance-status.json'),
     JSON.stringify({ ...claims, criteria: [] }),

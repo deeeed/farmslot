@@ -18,13 +18,14 @@ export function runGatewayPostLaunchPrompt({
   timeoutMs = 120_000,
   artifactsDir,
   requirePromptDigest = false,
+  taskDir,
 }) {
   fs.mkdirSync(artifactsDir, { recursive: true });
   const blockerSnapshotPath = `${artifactsDir}/dispatch-launch.txt`;
 
   const snippet = `
 import os from 'node:os';
-import { sendRunnerPostLaunchPrompt } from './services/gateway/src/runners/registry.ts';
+import { prepareRunnerDispatchPrompt, sendRunnerPostLaunchPrompt } from './services/gateway/src/runners/registry.ts';
 
 const vars = {
   slotId: 'runner-validate-local',
@@ -51,11 +52,12 @@ const vars = {
 };
 
 try {
+  const message = ${taskDir ? `await prepareRunnerDispatchPrompt(vars, ${JSON.stringify(runner)}, ${JSON.stringify(message)}, ${JSON.stringify(taskDir)})` : JSON.stringify(message)};
   await sendRunnerPostLaunchPrompt(
     vars,
     ${JSON.stringify(target)},
     ${JSON.stringify(runner)},
-    ${JSON.stringify(message)},
+    message,
     ${JSON.stringify(marker)},
     'dispatch-prompt-smoke',
     {
@@ -66,7 +68,7 @@ try {
       requirePromptDigest: ${requirePromptDigest},
     },
   );
-  console.log(JSON.stringify({ ok: true, blockerSnapshotPath: ${JSON.stringify(blockerSnapshotPath)} }));
+  console.log(JSON.stringify({ ok: true, deliveredPrompt: message, blockerSnapshotPath: ${JSON.stringify(blockerSnapshotPath)} }));
 } catch (error) {
   console.log(JSON.stringify({
     ok: false,
@@ -194,10 +196,10 @@ if (!result.delivered) process.exit(1);
 }
 
 /** Read the production runner-native turn state for an exact tmux pane. */
-export function runGatewayTurnState({ repo, target, runner, timeoutMs = 30_000 }) {
+export function runGatewayTurnState({ repo, target, runner, timeoutMs = 30_000, prompt, sinceMs }) {
   const snippet = `
 import os from 'node:os';
-import { readRunnerTurnState } from './services/gateway/src/runners/registry.ts';
+import { getRunnerObservability, readRunnerTurnState } from './services/gateway/src/runners/registry.ts';
 const vars = {
   slotId: 'runner-validate-local', machine: os.hostname(), platform: 'local', host: 'localhost',
   sshUser: os.userInfo().username, osType: process.platform === 'darwin' ? 'darwin' : 'linux',
@@ -206,7 +208,22 @@ const vars = {
   slotMode: 'dispatch', slotEnabled: true, sshTarget: \`\${os.userInfo().username}@localhost\`,
   remoteRepo: ${JSON.stringify(repo)}, projectName: '', resourceVars: {},
 };
-const state = await readRunnerTurnState(vars, ${JSON.stringify(target)}, ${JSON.stringify(runner)});
+let acceptance;
+if (${prompt !== undefined}) {
+  const observer = getRunnerObservability(${JSON.stringify(runner)});
+  const binding = await observer?.getSessionBinding?.(vars, ${JSON.stringify(target)});
+  acceptance = binding && await observer?.promptAcceptedInSession?.(
+    vars, ${JSON.stringify(target)}, binding.sessionId, binding.sessionPath,
+    ${JSON.stringify(prompt)}, ${JSON.stringify(sinceMs)},
+  );
+}
+let state = await readRunnerTurnState(vars, ${JSON.stringify(target)}, ${JSON.stringify(runner)}, acceptance?.turnToken);
+if (${prompt !== undefined}) {
+  state = acceptance?.value === true && acceptance.exactPromptMatch === true &&
+    acceptance.source === 'signal' && acceptance.confidence === 'high' &&
+    typeof acceptance.turnToken === 'string' && acceptance.turnToken.length > 0 &&
+    state?.turnToken === acceptance.turnToken ? { ...state, acceptance } : null;
+}
 process.stdout.write(JSON.stringify({ state }) + '\\n');
 `;
   const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {

@@ -1838,3 +1838,19 @@ test('PR completion records unbound visual ticket claims without publication-pol
   });
   assert.equal(assessment.readiness.state, 'ready', JSON.stringify(assessment.readiness.reasons));
 });
+
+test('PR completion still refuses failed worker-derived requirements', async () => {
+  const run = makeRun({ flowType: 'pr-complete', status: 'completing', lane: 'production' });
+  const assessed = await collectRunGateAssessment(run, null, {
+    deterministic: passed,
+    progress: idle,
+    acceptance: async () => ({
+      criteria: [{ id: 'AC-2', text: 'Fix the reported state invariant' }],
+      ledger: null,
+      issues: ['AC-2 is failed'],
+    }),
+    recordedEvidence: async () => assert.fail('PR completion uses the worker validation result'),
+  });
+  assert.equal(assessed.readiness.state, 'not-ready');
+  assert.ok(assessed.readiness.reasons.some(({ code }) => code === 'acceptance-incomplete'));
+});

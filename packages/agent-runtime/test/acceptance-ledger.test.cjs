@@ -486,3 +486,68 @@ test('PR completion still requires worker proof for derived requirements without
     assert.deepEqual(acceptanceContractIssues(dir), [], mode);
   }
 });
+
+test('PR completion CI-fix checks its own report without requiring reviews of shared criteria', (t) => {
+  const dir = taskFixture(t, {
+    attemptId: 'completion',
+    flow: 'pr-complete',
+    task: { acceptanceCriteria: ['Original review AC'] },
+  });
+  writeFileSync(
+    path.join(dir, 'inputs/acceptance-registration.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      generation: 0,
+      registration: {
+        schemaVersion: 1,
+        runId: 'completion',
+        revision: 1,
+        original: [{ id: 'AC-1', text: 'Original review AC' }],
+        derived: [
+          {
+            id: 'AC-2',
+            text: 'Fix review',
+            proofMode: 'review',
+            source: {
+              kind: 'review-comment',
+              sourceId: 'comment:1',
+              sourceVersion: '1',
+              obligationIndex: 0,
+            },
+          },
+        ],
+        units: [],
+      },
+    }),
+  );
+  const ledger = engineClaims(
+    ['Original review AC', 'Fix review'],
+    ['awaiting-review', 'awaiting-review'],
+  );
+  ledger.criteria.forEach((row) => {
+    row.proofMode = 'review';
+  });
+  writeFileSync(ledgerFile(dir), JSON.stringify(ledger));
+  const contract = path.join(dir, 'inputs/ci-fix-worker-terminal-contract.json');
+  writeFileSync(
+    contract,
+    JSON.stringify({
+      schemaVersion: 1,
+      flowType: 'ci-fix',
+      publicationReview: false,
+      commands: {
+        complete: {
+          report: 'artifacts/ci-fix-report.md',
+          artifacts: ['artifacts/ci-fix-report.md'],
+        },
+      },
+    }),
+  );
+  const refused = check(dir, '--contract', contract, '--terminal', 'complete');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /ci-fix-report.md/);
+  assert.doesNotMatch(refused.stderr, /no code review/);
+  writeFileSync(path.join(dir, 'artifacts/ci-fix-report.md'), 'Scoped fix checks passed.');
+  const completed = check(dir, '--contract', contract, '--terminal', 'complete');
+  assert.equal(completed.status, 0, completed.stderr);
+});

@@ -6,8 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Complete PR follow-ups without visual or reviewer holds, retaining linked criteria and evidence.
 - Keep run ticket lists tied to explicit references instead of inferring Jira keys from PR body text.
+- Preserve long Codex task paths with a task-local dispatch prompt and guarded bracketed paste for post-launch delivery and recovery, retaining exact acknowledgement checks.
 - Keep automatic placement queued when node load rises during safe slot reuse, and reconsider the originally allowed slots.
-
 - Retain task-local recipe actions with run artifacts and restore them when a follow-up inherits the recipe, including on another node; reject inheritance when required action files are unavailable.
 - Check the repository's declared or lockfile-selected npm, Yarn or pnpm during worker launch, so npm Terminal checkouts do not require unrelated Yarn shims.
 

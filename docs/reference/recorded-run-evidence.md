@@ -1611,7 +1611,7 @@ Plain steers on opted-out templates retain normal delivery and create no registr
 
 Original linked criteria and parent proof remain recorded with their IDs, text, provenance and verdicts. They MUST NOT block PR completion, including when unbound, unassessed or marked `requireFresh`. Completion MUST NOT invent passing verdicts for them.
 
-Derived review-comment and operator requirements retain the worker's completion checks. Missing or failed worker proof still refuses completion. Visual, mixed and review-mode evidence may remain awaiting judgment; PR completion MUST NOT request or wait for a reviewer or person to settle it. Deterministic checks, reports and pushed-head identity remain required.
+Derived review-comment and operator requirements retain the worker's completion checks. The gateway consumes that canonical worker ledger validation rather than applying publication-evidence policy to completion. Missing or failed worker proof still refuses completion. Visual, mixed and review-mode evidence may remain awaiting judgment; PR completion MUST NOT request or wait for a reviewer or person to settle it. Deterministic checks, reports and pushed-head identity remain required.
 
 PR completion MUST NOT add a REVIEW step, captured-output `output-review` decision or `mark-reviewed` continuation. Its acceptance execution contract records definitions, inheritance and registration identity without granting reviewer capabilities. Ordinary publication gates, QA and artifact-output reviews retain their existing policy.
 
