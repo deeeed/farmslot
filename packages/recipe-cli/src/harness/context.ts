@@ -832,7 +832,7 @@ export async function resolveProjectContext(
     }
   };
   const attestedCommits = new Map<string, string>();
-  const sourceRoot = (ref: ExecutionTemplateSourceRoot): string => {
+  const sourceRoot = (ref: ExecutionTemplateSourceRoot, poolSelected = false): string => {
     if (ref.sourceId) {
       if (!options.resolveSourceBinding)
         throw new ProjectBindingError(
@@ -858,7 +858,7 @@ export async function resolveProjectContext(
         'register the project before resolving provider or library root references',
       );
     const value = ref.env
-      ? environment[ref.env]
+      ? ((poolSelected ? pool?.env?.[ref.env] : undefined) ?? environment[ref.env])
       : path.resolve(options.resolveSourceBinding ? root : checkoutRoot, ref.projectPath!);
     if (!value)
       throw new ProjectBindingError(
@@ -868,7 +868,7 @@ export async function resolveProjectContext(
       );
     return existingSourceRoot(value, ref.env ?? ref.projectPath);
   };
-  const providerRoot = recipe.provider.root ? sourceRoot(recipe.provider.root) : undefined;
+  const providerRoot = recipe.provider.root ? sourceRoot(recipe.provider.root, true) : undefined;
   const providerCommit = providerRoot ? attestedCommits.get(providerRoot) : undefined;
   const provider = resolveProvider(
     recipe.provider,

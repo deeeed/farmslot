@@ -193,3 +193,17 @@ Migrate every active consumer before enabling the hosted cutover, then delete th
 ### Public surface and consequences
 
 The [hosted task specification](../reference/project-recipe-contract.md#hosted-task-initialization) defines node-local initialization, private transport, static-task boundaries and retries. The root CLI and gateway consume the existing `@farmslot/agent-runtime` task producer and `@farmslot/recipe-cli/harness` binding/verifier APIs. No second installer, task store, engine, writer or recorder is introduced. Content approval precedes implementation in this same PR.
+
+## Amendment 6: Pool-selected harness versions, 2026-10-28
+
+**Status:** Accepted by Arthur's direction through the lead, 2026-10-28. F191 supersedes the provider-version freeze in Amendments 3 and 5.
+
+### Decision and rationale
+
+A task's recorded harness version is a recommendation. New and existing runs use the runtime provider selected by their slot's pool. A different recorded version produces a warning and continues; it requires neither a receipt upgrade nor an operator exception. A stale gateway environment cannot override the pool's provider selection.
+
+Preserve original task provenance and evidence. Record the package version, module, root and source fingerprint actually used, and retain the existing integrity checks on execution. Task scope, acceptance identities, terminal contracts and operator gates remain owned by their existing contracts. Non-provider retained inputs keep their existing integrity policy.
+
+### Public surface and consequences
+
+The existing recipe/task routes and `withTaskProjectHost` in `@farmslot/recipe-cli/harness` own selection and reporting. The recipe skill's executable resolver consumes that host instead of enforcing a second version lock. No new flag, provider registry or approval flow is added. The [runtime-provider specification](../reference/project-recipe-contract.md#pool-selected-runtime-providers) defines the warning and actual-execution record. Qualify the matching CLI and provider installations before rollout.

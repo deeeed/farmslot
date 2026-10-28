@@ -11,7 +11,7 @@ import { isRecord, type RecipeConformanceSource } from '@farmslot/protocol';
 
 import { optionValues } from './command-contract.js';
 import { recipeConformanceIdentity } from './conformance.js';
-import { readProject, recipePackageRoot } from './context.js';
+import { readProject, recipePackageRoot, resolveHarnessContext } from './context.js';
 import { ProjectBindingError } from './context-state.js';
 import {
   type ProjectRecipeHost,
@@ -23,7 +23,7 @@ interface TaskProjectSelection {
   identity: TaskRecipeBindingIdentity | null;
   packRoot?: string;
   checkoutRoot?: string;
-  provider?: { ref: string; module: string; root: string; export: string };
+  provider?: { ref: string; module: string; root: string; export: string; version?: string };
   runtimeDir?: string;
   farmRuntimeDir?: string;
   artifactDir?: string;
@@ -119,6 +119,7 @@ function readSelection(taskDir: string): TaskProjectSelection {
       module: provider.module,
       root: provider.root,
       export: provider.export,
+      ...(typeof provider.version === 'string' ? { version: provider.version } : {}),
     },
   };
 }
@@ -263,7 +264,36 @@ export async function withTaskProjectHost<T>(
   )
     throw new Error('An unbound task has no project provider.');
   const provider = selection.provider;
+  const selectedPackRoot = selection.packRoot;
+  const packInput = receipt.retainedInputs.find(
+    (entry) =>
+      selectedPackRoot === entry.source ||
+      selectedPackRoot.startsWith(`${entry.source}${path.sep}`),
+  );
+  if (!packInput) throw new Error('The task project configuration was not retained.');
+  const packRoot = path.join(packInput.path, path.relative(packInput.source, selectedPackRoot));
+  const config = readProject(path.join(packRoot, 'project.json'));
+  if (!config.recipe) throw new Error('The retained project has no recipe declaration.');
+  let poolProviderRoot: string | undefined;
+  const variable = config.recipe.provider.root?.env;
+  if (variable) {
+    const context = await resolveHarnessContext({
+      ...options,
+      tokens: ['--target', selected.target],
+      adapter: false,
+    });
+    if (context.slot?.value && context.slot.poolFile) {
+      const pool: unknown = JSON.parse(fs.readFileSync(context.slot.poolFile, 'utf8'));
+      const root = isRecord(pool) && isRecord(pool.env) ? pool.env[variable] : undefined;
+      if (typeof root === 'string' && root.trim()) poolProviderRoot = fs.realpathSync(root);
+    }
+  }
   const retained = (file: string): string => {
+    if (
+      poolProviderRoot &&
+      (file === provider.root || file.startsWith(`${provider.root}${path.sep}`))
+    )
+      return path.join(poolProviderRoot, path.relative(provider.root, file));
     const input =
       receipt.retainedInputs.find((entry) => entry.source === file) ??
       receipt.retainedInputs.find((entry) => file.startsWith(`${entry.source}${path.sep}`));
@@ -326,8 +356,6 @@ export async function withTaskProjectHost<T>(
   const invocation = options.invocation
     ? { ...options.invocation, argv: rewrite(options.invocation.argv, false) }
     : undefined;
-  const config = readProject(retained(path.join(selection.packRoot, 'project.json')));
-  if (!config.recipe) throw new Error('The retained project has no recipe declaration.');
   return withProjectRecipeHostContext(
     {
       ...options,
@@ -367,9 +395,14 @@ export async function withTaskProjectHost<T>(
             recipe: {
               ...config.recipe,
               provider: {
-                module: path.relative(provider.root, provider.module),
+                module: poolProviderRoot
+                  ? config.recipe.provider.module
+                  : path.relative(provider.root, provider.module),
                 root: { projectPath: retained(provider.root) },
                 export: provider.export,
+                ...(poolProviderRoot && config.recipe.provider.package
+                  ? { package: config.recipe.provider.package }
+                  : {}),
               },
               libraries: selected.libraries.map((library) => {
                 if (!library.path)
@@ -385,7 +418,32 @@ export async function withTaskProjectHost<T>(
         },
       ],
     },
-    invoke,
+    async (host) => {
+      if (poolProviderRoot) {
+        const actual = host.context.project!.provider;
+        const warning =
+          provider.version !== actual.version
+            ? `Task recorded harness ${provider.version ?? 'unknown'}; using pool-selected ${actual.version ?? 'unknown'} (${actual.root}).`
+            : undefined;
+        fs.mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+        fs.writeFileSync(
+          path.join(taskDir, 'artifacts/provider-execution.json'),
+          JSON.stringify(
+            {
+              schemaVersion: 1,
+              recordedAt: new Date().toISOString(),
+              recommendedVersion: provider.version ?? null,
+              provider: actual,
+              ...(warning ? { warning } : {}),
+            },
+            null,
+            2,
+          ) + '\n',
+        );
+        if (warning) console.warn(warning);
+      }
+      return invoke(host);
+    },
     receipt.pin,
   );
 }
