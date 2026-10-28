@@ -4,10 +4,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Show only explicit run ticket references; headings and acceptance criteria no longer add tickets.
-
-- Allow a stored run snapshot for progressive display without verifying live action readiness, and keep workspace inspections fresh through slow fleet reads with a shared two-minute bound.
-
 - Allow combined findings approval and evidence attestation when every review reason explicitly permits accepting findings.
 
 - Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
@@ -25,6 +21,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Register source-linked PR-completion criteria without replacing original obligations, and bind readiness to acceptance and proof-contract revisions.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.73.2 - 2026-10-28
+
+- Show only explicit run ticket references; headings and acceptance criteria no longer add tickets.
+
+- Allow a stored run snapshot for progressive display without verifying live action readiness, and keep workspace inspections fresh through slow fleet reads with a shared two-minute bound.
 
 ## 0.73.1 - 2026-10-26
 
