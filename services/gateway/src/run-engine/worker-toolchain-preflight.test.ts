@@ -129,6 +129,35 @@ test('Node-only repos do not invent a package-manager requirement', async (t) =>
   assert.deepEqual(calls, []);
 });
 
+test('package-lock.json wins over residual Yarn and pnpm lockfiles', async (t) => {
+  const { actual, calls } = await probeProject(
+    t,
+    {
+      'package-lock.json': '{}',
+      'yarn.lock': '',
+      'pnpm-lock.yaml': '',
+    },
+    managerScripts,
+  );
+  assert.equal(checkToolchainObservation(actual, 'slot').status, 'verified');
+  assert.equal(actual.packageManager, 'npm');
+  assert.deepEqual(calls, ['npm']);
+});
+
+test('yarn.lock wins over a residual pnpm lockfile', async (t) => {
+  const { actual, calls } = await probeProject(
+    t,
+    {
+      'yarn.lock': '',
+      'pnpm-lock.yaml': '',
+    },
+    managerScripts,
+  );
+  assert.equal(checkToolchainObservation(actual, 'slot').status, 'verified');
+  assert.equal(actual.packageManager, 'yarn');
+  assert.deepEqual(calls, ['yarn', 'yarn']);
+});
+
 test('a failed selected npm command still refuses launch', async (t) => {
   const { actual } = await probeProject(t, { 'package-lock.json': '{}' }, {});
   const result = checkToolchainObservation(actual, 'slot');
