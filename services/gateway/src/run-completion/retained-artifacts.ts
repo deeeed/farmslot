@@ -368,6 +368,9 @@ export async function retainCapturedRunArtifacts(input: {
           artifacts.push({
             path: file,
             purpose: 'task-input',
+            ...(directory === 'task-actions'
+              ? { sha256: await sha256File(path.join(taskDir, file)) }
+              : {}),
             sizeBytes: (await stat(path.join(taskDir, file))).size,
           });
       }
@@ -400,6 +403,10 @@ export async function retainCapturedRunArtifacts(input: {
       input.run.taskFile,
       input.run.engineState?.generation,
       input.manifestDigest,
+      ...artifacts
+        .filter((artifact) => artifact.path.startsWith('task-actions/'))
+        .sort((a, b) => a.path.localeCompare(b.path))
+        .map(({ path, sha256 }) => [path, sha256]),
     ]),
     policy: await retentionPolicy(),
     allowChanged: input.allowChanged,
@@ -513,13 +520,16 @@ export async function retainRunArtifacts(runId: string): Promise<RunBundleRetain
   return { ref: result.ref, missingData: result.missingData };
 }
 
-/** Group discovery uses only the immutable manifest and lightweight execution metadata. */
-export async function retainedRecipeRunGroups(
-  run: Run,
-  ref = retainedRunBundleRef(run),
-): Promise<RecipeRunArtifactGroup[]> {
+interface RetainedRecipeRunSummary {
+  root: string;
+  raw: unknown;
+  recipeRunId: string | null;
+  promoted: boolean;
+}
+
+/** One metadata selection policy for retained reports and inherited recipe inputs. */
+export async function retainedRecipeRunSummaries(run: Run, ref = retainedRunBundleRef(run)) {
   const inventory = await retainedRunArtifactManifest(run, ref);
-  const taskDir = await retainedRunTaskDirectory(run, ref);
   const paths = new Set(inventory.map(({ path }) => path));
   const pointer = paths.has('artifacts/latest-valid-recipe-run.json')
     ? sanitizeLatestValidRecipeRunPointer(
@@ -533,7 +543,7 @@ export async function retainedRecipeRunGroups(
         .map(({ path: file }) => path.posix.dirname(file)),
     ),
   ];
-  const groups: RecipeRunArtifactGroup[] = [];
+  const summaries: RetainedRecipeRunSummary[] = [];
   for (const root of ['artifacts', ...roots.filter((root) => root !== 'artifacts')]) {
     let raw: unknown = null;
     if (paths.has(`${root}/summary.json`)) {
@@ -548,6 +558,21 @@ export async function retainedRecipeRunGroups(
     const recipeRunId =
       isRecord(raw) && typeof raw.recipeRunId === 'string' ? raw.recipeRunId : null;
     const promoted = Boolean(pointer && root === `artifacts/${pointer.relativeArtifactRoot}`);
+    summaries.push({ root, raw, recipeRunId, promoted });
+  }
+  return { inventory, summaries };
+}
+
+/** Group discovery uses only the immutable manifest and lightweight execution metadata. */
+export async function retainedRecipeRunGroups(
+  run: Run,
+  ref = retainedRunBundleRef(run),
+): Promise<RecipeRunArtifactGroup[]> {
+  const { inventory, summaries } = await retainedRecipeRunSummaries(run, ref);
+  const taskDir = await retainedRunTaskDirectory(run, ref);
+  const paths = new Set(inventory.map(({ path }) => path));
+  const groups: RecipeRunArtifactGroup[] = [];
+  for (const { root, raw, recipeRunId, promoted } of summaries) {
     const artifacts = inventory
       .filter(({ path: file }) => file.startsWith(`${root}/`))
       .map((artifact) => ({

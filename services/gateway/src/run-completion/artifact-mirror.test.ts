@@ -242,6 +242,14 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
     await readFile(path.join(taskDir, 'artifacts/pr-package.json'), 'utf8'),
     '{"gateway":true}\n',
   );
+  const refresh = () =>
+    refreshArtifactMirror(makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile }));
+  await rm(path.join(workerTaskDir, 'task-actions/actions/probe.cjs'));
+  await refresh();
+  assert.equal(existsSync(path.join(taskDir, 'task-actions/actions/probe.cjs')), false);
+  await rm(path.join(workerTaskDir, 'task-actions'), { recursive: true });
+  await refresh();
+  assert.equal(existsSync(path.join(taskDir, 'task-actions')), false);
 });
 
 // Local-branch integrity for refreshArtifactMirror (fs.copyFile). Remote multi-chunk

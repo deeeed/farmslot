@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -32,6 +32,7 @@ const { scanArtifacts } = await import('../run-completion/publication-artifacts.
 const { retainCapturedRunArtifacts, retainedRunTaskDirectory } =
   await import('../run-completion/retained-artifacts.js');
 const { copyTaskDirSubdirectories } = await import('../tasks/sidecars.js');
+const { digestRecipeLibrary } = await import('@farmslot/recipe-runner');
 
 const action = 'fixture.retained_probe';
 const actionManifest: RecipeActionManifestDocument = {
@@ -51,7 +52,7 @@ const files = {
   'task-actions/fixtures/input.bin': Buffer.from([0xff, 0, 0x80, 1]),
 };
 
-async function fixture(withActions = true) {
+async function fixture(mode: 'complete' | 'missing' | 'partial' = 'complete') {
   const directory = await mkdtemp(path.join(root, 'parent-'));
   await mkdir(path.join(directory, 'artifacts'), { recursive: true });
   await writeFile(path.join(directory, 'TASK.md'), '# Parent\n');
@@ -60,12 +61,17 @@ async function fixture(withActions = true) {
     makeRecipeJson({ start: { action, next: 'end' }, end: { action: 'end' } }),
   );
   await mkdir(path.join(directory, 'artifacts/recipe-runs/proof-6'), { recursive: true });
+  for (const [relative, content] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(directory, relative)), { recursive: true });
+    await writeFile(path.join(directory, relative), content);
+  }
+  const digest = await digestRecipeLibrary(path.join(directory, 'task-actions'));
   await writeFile(
     path.join(directory, 'artifacts/recipe-runs/proof-6/summary.json'),
     JSON.stringify({
       recipeRunId: 'proof-1',
       status: 'pass',
-      taskActions: [{ action, official: false }],
+      taskActions: [{ action, official: false, digest }],
     }),
   );
   await writeFile(
@@ -77,12 +83,8 @@ async function fixture(withActions = true) {
       updatedAt: '2026-04-15T00:00:00.000Z',
     }),
   );
-  if (withActions) {
-    for (const [relative, content] of Object.entries(files)) {
-      await mkdir(path.dirname(path.join(directory, relative)), { recursive: true });
-      await writeFile(path.join(directory, relative), content);
-    }
-  }
+  if (mode === 'missing') await rm(path.join(directory, 'task-actions'), { recursive: true });
+  if (mode === 'partial') await rm(path.join(directory, 'task-actions/actions/probe.cjs'));
   const parent = makeRun({
     id: path.basename(directory),
     familyId: path.basename(directory),
@@ -90,10 +92,11 @@ async function fixture(withActions = true) {
     taskFile: path.join(directory, 'TASK.md'),
   });
   const artifacts = await scanArtifacts(directory);
+  const manifestDigest = createHash('sha256').update(JSON.stringify(artifacts)).digest('hex');
   await retainCapturedRunArtifacts({
     run: parent,
     artifacts,
-    manifestDigest: createHash('sha256').update(JSON.stringify(artifacts)).digest('hex'),
+    manifestDigest,
     commit: async (ref) => {
       parent.artifactBundle = ref;
     },
@@ -107,7 +110,7 @@ async function fixture(withActions = true) {
     flowType: 'pr-complete',
   });
   const childTask = path.join(root, child.id);
-  return { parent, child, childTask, retained };
+  return { parent, child, childTask, retained, directory, artifacts, manifestDigest };
 }
 
 test('a retained recipe restores its complete task actions after the source task is removed', async () => {
@@ -133,10 +136,48 @@ test('a retained recipe restores its complete task actions after the source task
 });
 
 test('inheritance refuses a recipe whose recorded task actions were not retained', async () => {
-  const f = await fixture(false);
+  const f = await fixture('missing');
   await assert.rejects(
     materializeInheritedContext(f.child, f.childTask, [f.parent, f.child]),
     /Cannot inherit recipe.*task-actions.*fixture\.retained_probe/,
+  );
+});
+
+test('an action-only edit creates a new capture without rewriting the previous bundle', async () => {
+  const f = await fixture();
+  const previous = f.parent.artifactBundle;
+  assert.ok(previous);
+  await writeFile(path.join(root, 'runs', `${f.parent.id}.json`), JSON.stringify(f.parent));
+  await cp(f.retained, f.directory, { recursive: true });
+  const implementation = path.join(f.directory, 'task-actions/actions/probe.cjs');
+  await chmod(implementation, 0o600);
+  const changed = 'module.exports = () => ({ updated: true });\n';
+  await writeFile(implementation, changed);
+  await retainCapturedRunArtifacts({
+    run: f.parent,
+    artifacts: f.artifacts,
+    manifestDigest: f.manifestDigest,
+    commit: async (ref) => {
+      f.parent.artifactBundle = ref;
+    },
+  });
+  assert.notEqual(f.parent.artifactBundle?.bundleDigest, previous.bundleDigest);
+  const current = await retainedRunTaskDirectory(f.parent);
+  assert.equal(
+    await readFile(path.join(current, 'task-actions/actions/probe.cjs'), 'utf8'),
+    changed,
+  );
+  assert.equal(
+    await readFile(path.join(f.retained, 'task-actions/actions/probe.cjs'), 'utf8'),
+    files['task-actions/actions/probe.cjs'],
+  );
+});
+
+test('inheritance refuses an implementation removed before capture even when its manifest remains', async () => {
+  const f = await fixture('partial');
+  await assert.rejects(
+    materializeInheritedContext(f.child, f.childTask, [f.parent, f.child]),
+    /Cannot inherit recipe.*task-actions.*implementation/,
   );
 });
 

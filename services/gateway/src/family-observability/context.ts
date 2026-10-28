@@ -1,13 +1,8 @@
 import { access, copyFile, cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-  type FlowType,
-  isRecord,
-  type Run,
-  type RunCreateParams,
-  sanitizeLatestValidRecipeRunPointer,
-} from '@farmslot/protocol';
+import { type FlowType, isRecord, type Run, type RunCreateParams } from '@farmslot/protocol';
+import { digestRecipeLibrary, readRecipeLibraryManifest } from '@farmslot/recipe-runner';
 
 import { makeOwnerWritable, replaceReadOnlyDestination } from '../core/owned-copy.js';
 import {
@@ -15,9 +10,9 @@ import {
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
 import {
-  readOptionalRetainedRunText,
   readRetainedRunText,
   retainedArtifactRun,
+  retainedRecipeRunSummaries,
   retainedRunArtifactManifest,
   selectedRetainedRecipeGroup,
 } from '../run-completion/retained-artifacts.js';
@@ -650,16 +645,38 @@ export async function materializeInheritedContext(
 
   const recipe = manifest.inheritedArtifacts.find((entry) => entry.artifact === 'recipe');
   const actions = manifest.inheritedArtifacts.find((entry) => entry.artifact === 'task-actions');
-  if (recipe?.status === 'resolved' && actions?.status === 'missing') {
+  if (recipe?.status === 'resolved') {
     const source = relevantRuns.find(
       (entry) => entry.id === (recipe.sourceRunId ?? run.parentRunId),
     );
     if (source) {
-      const required = await recordedTaskActions(source);
-      if (required.length)
-        throw new Error(
-          `Cannot inherit recipe: retained task-actions/ for ${source.id} are missing: ${required.join(', ')}.`,
-        );
+      const { inventory, summaries } = await retainedRecipeRunSummaries(source);
+      const selected = selectedRetainedRecipeGroup(summaries)?.raw;
+      const required =
+        isRecord(selected) && Array.isArray(selected.taskActions)
+          ? selected.taskActions.filter(
+              (entry): entry is Record<string, unknown> =>
+                isRecord(entry) && typeof entry.action === 'string',
+            )
+          : [];
+      if (actions?.status === 'missing') {
+        const names = required.length
+          ? required.map((entry) => entry.action)
+          : inventory
+              .filter((entry) => entry.path.startsWith('task-actions/'))
+              .map((entry) => entry.path);
+        if (names.length)
+          throw new Error(
+            `Cannot inherit recipe: retained task-actions/ for ${source.id} are missing: ${names.join(', ')}.`,
+          );
+      } else if (required.length) {
+        const root = path.join(taskAbsDir, 'task-actions');
+        const digest = await digestRecipeLibrary(root, await readRecipeLibraryManifest(root));
+        if (required.some((entry) => entry.digest !== digest))
+          throw new Error(
+            `Cannot inherit recipe: retained task-actions/ implementation for ${source.id} does not match the recorded recipe run.`,
+          );
+      }
     }
   }
 
@@ -682,55 +699,6 @@ export async function materializeInheritedContext(
   invalidateLiveRecipeContextMemo(run.id);
 
   return manifest;
-}
-
-async function recordedTaskActions(run: Run): Promise<string[]> {
-  const inventory = await retainedRunArtifactManifest(run);
-  const rawPointer = await readOptionalRetainedRunText(
-    run,
-    'artifacts/latest-valid-recipe-run.json',
-  );
-  const pointer = rawPointer ? sanitizeLatestValidRecipeRunPointer(JSON.parse(rawPointer)) : null;
-  const summaries = await Promise.all(
-    inventory
-      .filter((entry) => path.posix.basename(entry.path) === 'summary.json')
-      .sort(
-        (a, b) =>
-          Number(b.path === 'artifacts/summary.json') - Number(a.path === 'artifacts/summary.json'),
-      )
-      .map(async (entry) => {
-        let summary: unknown = null;
-        const text = await readRetainedRunText(run, entry.path);
-        try {
-          summary = JSON.parse(text);
-        } catch (error) {
-          // Match retained recipe selection: malformed history is not a declaration.
-          if (!(error instanceof SyntaxError)) throw error;
-        }
-        return {
-          summary,
-          recipeRunId:
-            isRecord(summary) && typeof summary.recipeRunId === 'string'
-              ? summary.recipeRunId
-              : null,
-          promoted: Boolean(
-            pointer && entry.path === `artifacts/${pointer.relativeArtifactRoot}/summary.json`,
-          ),
-        };
-      }),
-  );
-  const selected = selectedRetainedRecipeGroup(summaries)?.summary;
-  const declared =
-    isRecord(selected) && Array.isArray(selected.taskActions)
-      ? selected.taskActions.flatMap((entry) =>
-          isRecord(entry) && typeof entry.action === 'string' ? [entry.action] : [],
-        )
-      : [];
-  return declared.length
-    ? declared
-    : inventory
-        .filter((entry) => entry.path.startsWith('task-actions/'))
-        .map((entry) => entry.path);
 }
 
 export function buildFollowUpScopeContractSection(
