@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Initialize and verify hosted tasks with the slot's selected provider environment, so a stale gateway provider cannot override the pool selection.
 - Retain task-local recipe actions with run artifacts and restore them when a follow-up inherits the recipe, including on another node; reject inheritance when required action files are unavailable.
 - Check the repository's declared or lockfile-selected npm, Yarn or pnpm during worker launch, so npm Terminal checkouts do not require unrelated Yarn shims.
 
