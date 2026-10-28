@@ -26,7 +26,11 @@ import {
   setPressureAdmissionEnabled,
 } from './pressure-admission-control.js';
 import { resolveDispatchPreviewFromFleet } from './preview.js';
-import { findBestSlot, type SlotSelectionPlans } from './slot-scoring.js';
+import {
+  AutomaticSlotLoadWaitError,
+  findBestSlot,
+  type SlotSelectionPlans,
+} from './slot-scoring.js';
 
 /** The lightweight capture reads the kill switch from FARMSLOT_HOME. */
 async function withTempControlHome<T>(run: () => Promise<T>): Promise<T> {
@@ -258,6 +262,57 @@ function loadDecision(machine: string, load1: number): PressureAdmissionDecision
     },
   };
 }
+
+test('only load-only automatic preview refusals carry an engine wait', () => {
+  const hot = slot({ slot: 'hot', machine: 'hot' });
+  const params = { project: 'demo-farm', flowType: 'dev' as const, ticketOrPr: 'TASK-1' };
+  const overload = new Map([['hot', loadDecision('hot', 1.72)]]);
+  const resolve = (candidate: SlotStatus, pressureDecisions = overload) =>
+    resolveDispatchPreviewFromFleet(params, [candidate], undefined, { pressureDecisions });
+  assert.throws(
+    () => resolve(hot),
+    (error: unknown) => {
+      assert.ok(error instanceof AutomaticSlotLoadWaitError);
+      assert.equal(error.wait.slotId, 'hot');
+      assert.match(error.wait.reason, /Waiting for node load.*1\.72 >= 1\.50/);
+      return true;
+    },
+  );
+  for (const blocked of [
+    { ...hot, repoBlocker: 'unresolved repository ownership' },
+    { ...hot, lifecycle: 'busy' as const, agent: 'working' as const },
+  ])
+    assert.throws(
+      () => resolve(blocked),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error instanceof AutomaticSlotLoadWaitError, false);
+        return true;
+      },
+    );
+  const rejected = decisionFor('hot', 'sustained');
+  assert.equal(rejected.outcome, 'rejected');
+  const pressureDecisions = new Map<string, PressureAdmissionDecision>([
+    [
+      'hot',
+      {
+        ...rejected,
+        evidence: {
+          ...rejected.evidence,
+          samples: rejected.evidence.samples.map((sample) => ({ ...sample, load1: 1.72 })),
+        },
+      },
+    ],
+  ]);
+  assert.throws(
+    () => resolve(hot, pressureDecisions),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error instanceof AutomaticSlotLoadWaitError, false);
+      return true;
+    },
+  );
+});
 
 test('automatic placement skips load 83/16 with refusal disabled and ranks allowed nodes by load/core', () => {
   const slots = [

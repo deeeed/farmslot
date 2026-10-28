@@ -1,7 +1,6 @@
 import type { Run, RunTicketData } from '../contracts/runs.js';
 import { githubPullUrl, parseGitHubPullUrl, parseGitHubRef } from '../integrations/github-ref.js';
 
-const JIRA_KEY = /\b[A-Z][A-Z0-9]*-\d+\b/g;
 const EXACT_JIRA_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
 
 export interface RunTicketSource {
@@ -30,7 +29,7 @@ export function parseRunLinkedTicketRefs(draft: string): string[] {
   return normalizeRunLinkedTicketRefs(text ? text.split(/[\s,]+/) : []);
 }
 
-/** Covered keys, derived without changing the frozen ticket or task inputs. */
+/** Explicit source and operator refs; prose never adds ticket identities. */
 export function runLinkedTicketRefs(run: RunTicketSource): string[] {
   const ticket = run.ticketData;
   const values = [
@@ -38,20 +37,10 @@ export function runLinkedTicketRefs(run: RunTicketSource): string[] {
     ticket?.jiraKey,
     ...(ticket?.linkedTickets?.map((t) => t.ref) ?? []),
   ];
-  const headingRefs = (ticket?.description ?? '')
-    .split('\n')
-    .filter((line) => /^\s*(?:#{1,6}\s|h[1-6]\.\s)/.test(line))
-    .flatMap((line) => line.match(JIRA_KEY) ?? []);
-  const criterionRefs = (ticket?.acceptanceCriteria ?? []).flatMap((criterion) => {
-    const prefix = criterion.match(/^\s*(?:AC[- ]?\d+\s*[:.)-]?\s*)?\[?([A-Z][A-Z0-9]*-\d+)\b/);
-    return prefix ? [prefix[1]] : [];
-  });
   const canonical = values.flatMap((value) =>
     value && EXACT_JIRA_KEY.test(value.toUpperCase()) ? [value.toUpperCase()] : [],
   );
-  return [
-    ...new Set([...canonical, ...headingRefs, ...criterionRefs, ...(run.linkedTicketRefs ?? [])]),
-  ];
+  return [...new Set([...canonical, ...(run.linkedTicketRefs ?? [])])];
 }
 
 export interface LinkedRunTicketView {
