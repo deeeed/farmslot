@@ -18,13 +18,14 @@ export function runGatewayPostLaunchPrompt({
   timeoutMs = 120_000,
   artifactsDir,
   requirePromptDigest = false,
+  taskDir,
 }) {
   fs.mkdirSync(artifactsDir, { recursive: true });
   const blockerSnapshotPath = `${artifactsDir}/dispatch-launch.txt`;
 
   const snippet = `
 import os from 'node:os';
-import { sendRunnerPostLaunchPrompt } from './services/gateway/src/runners/registry.ts';
+import { prepareRunnerDispatchPrompt, sendRunnerPostLaunchPrompt } from './services/gateway/src/runners/registry.ts';
 
 const vars = {
   slotId: 'runner-validate-local',
@@ -51,11 +52,12 @@ const vars = {
 };
 
 try {
+  const message = ${taskDir ? `await prepareRunnerDispatchPrompt(vars, ${JSON.stringify(runner)}, ${JSON.stringify(message)}, ${JSON.stringify(taskDir)})` : JSON.stringify(message)};
   await sendRunnerPostLaunchPrompt(
     vars,
     ${JSON.stringify(target)},
     ${JSON.stringify(runner)},
-    ${JSON.stringify(message)},
+    message,
     ${JSON.stringify(marker)},
     'dispatch-prompt-smoke',
     {
@@ -66,7 +68,7 @@ try {
       requirePromptDigest: ${requirePromptDigest},
     },
   );
-  console.log(JSON.stringify({ ok: true, blockerSnapshotPath: ${JSON.stringify(blockerSnapshotPath)} }));
+  console.log(JSON.stringify({ ok: true, deliveredPrompt: message, blockerSnapshotPath: ${JSON.stringify(blockerSnapshotPath)} }));
 } catch (error) {
   console.log(JSON.stringify({
     ok: false,

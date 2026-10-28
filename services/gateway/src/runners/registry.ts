@@ -42,6 +42,7 @@ import {
 import { writeAuditRecord } from '../auto-recovery/audit-writer.js';
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { slotWriteFiles } from '../core/slot-io.js';
 import {
   firstWindowTarget,
   resolveTmuxPaneId,
@@ -211,6 +212,8 @@ export interface RunnerDefinition {
   requiresExplicitTerminationIdentity?: boolean;
   supportsInteractivePrompt: boolean;
   needsPostLaunchPrompt: boolean;
+  /** Keep the full dispatch instruction out of the interactive input stream. */
+  fileBackedDispatchPrompt?: boolean;
   /** Supports an explicit opt-in first instruction as a CLI argument. */
   supportsInitialPromptArg?: boolean;
   /** Runner starts with the task in argv and must clear safe launch blockers before dispatch can trust task execution. */
@@ -389,6 +392,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['codex'],
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    fileBackedDispatchPrompt: true,
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     interruptKeys: ['C-c'],
@@ -3219,6 +3223,23 @@ export async function sendRunnerInstructionSafely(
     `[${logPrefix}] runner ${runner} stayed busy; skipped sending duplicate/queued prompt to ${target}`,
   );
   return false;
+}
+
+/** The returned text is also the exact prompt used for acknowledgement and session binding. */
+export async function prepareRunnerDispatchPrompt(
+  vars: SlotVars,
+  runnerId: string,
+  message: string,
+  taskDir: string,
+): Promise<string> {
+  if (!getRunnerDefinition(runnerId).fileBackedDispatchPrompt) return message;
+  const file = path.posix.join(taskDir, 'DISPATCH-PROMPT.md');
+  await slotWriteFiles(
+    vars,
+    path.posix.isAbsolute(taskDir) ? taskDir : path.posix.join(vars.remoteRepo, taskDir),
+    [{ path: 'DISPATCH-PROMPT.md', content: Buffer.from(message).toString('base64'), mode: 0o600 }],
+  );
+  return `Read ${JSON.stringify(file)} and follow its instructions.`;
 }
 
 export async function sendRunnerPostLaunchPrompt(
