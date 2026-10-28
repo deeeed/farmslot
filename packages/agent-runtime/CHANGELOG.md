@@ -2,13 +2,15 @@
 
 ## Unreleased
 
-- Wait for Codex review folder consent before completing terminal startup; provisional startup frames no longer bypass Open restricted.
-
 - Ship the acceptance-contract TypeScript declaration in the public package.
 
 - Support acknowledged acceptance derivation and revision-bound proof destinations for PR completion.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.39.7 - 2026-10-28
+
+- Wait for Codex review folder consent before completing terminal startup; provisional startup frames no longer bypass Open restricted.
 
 ## 0.39.6 - 2026-10-28
 
