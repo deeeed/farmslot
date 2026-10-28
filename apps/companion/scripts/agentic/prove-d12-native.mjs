@@ -19,7 +19,7 @@
 // `cold-restart` (the one deliberate restart) and `gateway-start` (a new epoch).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -46,6 +46,7 @@ assert(checkpoints, 'FARMSLOT_D12_CHECKPOINTS names the controller checkpoint di
 const config = JSON.parse(await readFile(process.env.FARMSLOT_D12_NATIVE_PROOF, 'utf8'));
 const fixture = JSON.parse(await readFile(path.join(config.caseRoot, 'fixture.json'), 'utf8'));
 const stateFile = path.join(config.caseRoot, 'client', 'd12-native-state.json');
+await mkdir(path.dirname(stateFile), { recursive: true });
 const scheme = 'farmslot-development';
 // The gate review route needs its run, or the screen has no run query and stays loading.
 const gateUrl = `${scheme}:///gate-review/${fixture.gate.decisionId}?runId=${fixture.gate.runId}`;

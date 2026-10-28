@@ -22,9 +22,12 @@ const fixture = JSON.parse(await readFile(path.join(root, 'fixture.json'), 'utf8
 const artifacts = path.join(root, 'client');
 await mkdir(artifacts, { recursive: true });
 const WebSocket = createRequire(path.join(source, 'package.json'))('ws');
-// The Desktop runtime proof points these at the packaged app; the browser proof keeps the defaults.
+// The Desktop runtime proof points these at the Desktop's CDP port and the Vite server its
+// development UI loads; the probe reads the store through Vite's module URLs, which a bundled UI
+// does not have. The browser proof keeps the defaults.
 const CDP = `http://127.0.0.1:${process.env.FARMSLOT_GATE_REVIEW_CDP_PORT ?? 19222}`;
 const UI = `http://127.0.0.1:${process.env.FARMSLOT_GATE_REVIEW_UI_PORT ?? 5208}/`;
+const DESKTOP = process.env.FARMSLOT_GATE_REVIEW_DESKTOP === '1';
 const PROBE = path.join(source, 'apps/command-center/scripts/probes/offline-gate-review.js');
 const probeSource = await readFile(PROBE, 'utf8');
 const gate = fixture.gate;
@@ -453,7 +456,11 @@ const A = '@' + config.tabId;
 // ── 1. A real package for the pending gate; the first connection prefetches the gate first ──
 const ownerFrames = await recordFrames(A, 'owner');
 // A stored identity from an earlier principal may open its store before sign-in; never this one.
-const signedOut = await until((value) => value.auth, 'The new principal starts signed out', A);
+const signedOut = await until(
+  (value) => (DESKTOP ? new URL(value.href).pathname === '/settings' : value.auth),
+  'The new principal starts signed out',
+  A,
+);
 assert.notEqual(signedOut.scope?.principalId, fixture.actor.principalId);
 const firstRefresh = await rpc('run.refreshPublishPackage', {
   runId: gate.runId,
@@ -476,7 +483,15 @@ evidence.firstPackage = {
   images: images.map(({ path: file, sha256, sizeBytes }) => ({ path: file, sha256, sizeBytes })),
 };
 const loginAt = Date.now();
-assert((await cdp(['login', A])).authenticated);
+if (DESKTOP) {
+  // A new Desktop profile signs in on its connection page, which also names the gateway; the
+  // accepted sign-in then loads the app, whose connection is awaited here instead.
+  await cdp(['fill', A, '#gateway-url', config.gatewayUrl]);
+  await cdp(['login', A]);
+  await until((value) => value.connection === 'connected', 'The Desktop app connects', A, {
+    timeout: 60000,
+  });
+} else assert((await cdp(['login', A])).authenticated);
 await dismissUpdateNotice(A);
 const gateHeld = (value, diffHash) =>
   value.store?.content.some((entry) => entry.kind === 'diff' && entry.id === diffHash) &&
@@ -740,6 +755,14 @@ assert(offlineHeld.samples.every((sample) => sample.method === 'local' && sample
 assert.equal(offlineRows.filter((row) => row.dir === 'sent').length, 0);
 claims.gateReviewOffline = true;
 claims.gateReviewBothSides = true;
+if (DESKTOP) {
+  // D10 limit 5 is the offline review in the Desktop runtime. The fix loop, the connected
+  // measurements, a second window and the operator refusal stay with the browser proof.
+  await ownerFrames.stop();
+  await save('result', { claims, evidence });
+  console.log(JSON.stringify(claims));
+  process.exit(0);
+}
 
 // ── 4. Recovery ──
 await checkpoint('cold-recovery');
