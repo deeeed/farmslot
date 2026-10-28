@@ -87,6 +87,7 @@ import {
   detectRunnerLaunchBlocker,
   execRunnerKeys,
   normalizeRunner,
+  prepareRunnerDispatchPrompt,
   PromptDeliveryUncertainError,
   runnerDefaultModel,
   runnerDefaultSafetyTier,
@@ -1759,10 +1760,15 @@ export async function dispatchExecute(
   // 5. Launch agent
   step('launch', 'Launching agent...');
   const workerTaskFile = `${workerTaskDir}/TASK.md`;
-  const taskPrompt = await resolveWorkerDispatchPrompt(vars.projectName, {
-    taskFile: workerTaskFile,
-    taskDir: workerTaskDir,
-  });
+  const taskPrompt = await prepareRunnerDispatchPrompt(
+    vars,
+    runner,
+    await resolveWorkerDispatchPrompt(vars.projectName, {
+      taskFile: workerTaskFile,
+      taskDir: workerTaskDir,
+    }),
+    workerTaskDir,
+  );
   const sessionFilesBefore = await listRunnerSessionFiles(vars, runner);
   const safetyTier = resolveDispatchSafetyTier({
     paramsTier: params.safetyTier,

@@ -129,7 +129,12 @@ export async function pasteTmuxText(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   text: string,
-  options: { submitKey?: 'Enter' | 'C-m'; execute?: typeof execOnSlot } = {},
+  options: {
+    submitKey?: 'Enter' | 'C-m';
+    execute?: typeof execOnSlot;
+    /** Authorize each input against the resolved pane; metadata and cleanup use execute. */
+    executeInput?: (paneId: string, command: string) => Promise<ExecResult>;
+  } = {},
 ): Promise<void> {
   const execute = options.execute ?? execOnSlot;
   const deadline = Date.now() + 20_000;
@@ -138,6 +143,8 @@ export async function pasteTmuxText(
   checkPasteResult(resolved, `resolve pane ${target}`);
   const pane = resolved.stdout.trim();
   if (!/^%\d+$/u.test(pane)) throw new Error(`tmux target ${target} did not resolve to one pane`);
+  const input = (body: string) =>
+    options.executeInput ? options.executeInput(pane, tmuxShellSnippet(body)) : command(body);
   const key = JSON.stringify([vars.machine, pane]);
   const previous = pasteQueues.get(key) ?? Promise.resolve();
   let release!: () => void;
@@ -155,14 +162,14 @@ export async function pasteTmuxText(
       bufferMayExist = true;
       const write = await command(`set-buffer -b ${shellQuote(bufferName)} -- ${shellQuote(text)}`);
       checkPasteResult(write, `set-buffer for ${pane}`);
-      const paste = await command(
+      const paste = await input(
         `paste-buffer -d -p -b ${shellQuote(bufferName)} -t ${shellQuote(pane)}`,
       );
       checkPasteResult(paste, `paste-buffer to ${pane}`);
       bufferMayExist = false;
     }
     if (options.submitKey) {
-      const submit = await command(`send-keys -t ${shellQuote(pane)} ${options.submitKey}`);
+      const submit = await input(`send-keys -t ${shellQuote(pane)} ${options.submitKey}`);
       checkPasteResult(submit, `submit to ${pane}`);
     }
   } catch (failure) {
