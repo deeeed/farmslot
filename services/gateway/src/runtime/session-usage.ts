@@ -1,9 +1,10 @@
 import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 import { expandTemplate, runSessionUsage } from '@farmslot/slot-config';
 
-import type { SlotVars } from '../core/config.js';
+import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { verifiedRunnerSessionArchivePath } from '../runners/session-archive.js';
 
 function parseNumberLine(lines: string[], prefix: string): number | null {
@@ -144,6 +145,30 @@ export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
   try {
     const archived = await verifiedRunnerSessionArchivePath(run);
     if (!archived) {
+      const recovered = await getRunnerSessionUsageProvider(run.metrics.runner)?.recoverSession?.(
+        run,
+      );
+      if (recovered && run.slotId && !usesReviewChainSessionTotal(run)) {
+        const { contextId, ...binding } = recovered;
+        const usage = await extractRunnerSessionUsage({
+          slotId: run.slotId,
+          vars: await loadSlotVars(run.slotId),
+          runner: run.metrics.runner,
+          ...binding,
+        });
+        return {
+          ...run,
+          agentContexts: run.agentContexts?.map((context) =>
+            context.id === contextId ? { ...context, ...binding } : context,
+          ),
+          metrics: {
+            ...run.metrics,
+            ...binding,
+            ...runnerUsageMetrics(usage),
+            sessionUsageError: usage.error,
+          },
+        };
+      }
       const reason =
         run.metrics.sessionUsageError ??
         run.metrics.runnerSessionArchive?.reason ??

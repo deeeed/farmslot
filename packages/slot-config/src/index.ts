@@ -21,6 +21,7 @@ export {
   INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
   INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES,
   pinnedIncrementalSessionUsageState,
+  readPiAssistantUsage,
   runSessionUsage,
   sampleSessionUsageIncremental,
 } from './session-usage.js';
