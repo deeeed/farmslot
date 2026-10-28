@@ -12,6 +12,7 @@ import {
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
+import { withMachineEnv } from '../core/project-env.js';
 import { isShellHomePath } from '../core/remote-paths.js';
 import {
   slotDeletePath,
@@ -53,7 +54,10 @@ export async function hostedTaskCommand(slot: SlotVars, args: readonly string[])
   const supportArg = isShellHomePath(support) ? support : shellQuote(support);
   const script =
     'farm="$1"; support="$2"; shift 2; unset FARMSLOT_ROOT; export FARMSLOT_POOL_DIR="${FARMSLOT_POOL_DIR:-$farm/pool}" FARMSLOT_PROJECTS_DIR="${FARMSLOT_PROJECTS_DIR:-$support/projects}" FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
-  return `bash -c ${shellQuote(script)} hosted-task ${shellQuote(farm)} ${supportArg} ${args.map(shellQuote).join(' ')}`;
+  return withMachineEnv(
+    `bash -c ${shellQuote(script)} hosted-task ${shellQuote(farm)} ${supportArg} ${args.map(shellQuote).join(' ')}`,
+    slot,
+  );
 }
 
 /** The gateway transports task data and mirrors the one producer's final bytes. */

@@ -126,6 +126,35 @@ test('partial initialization refuses before any gateway sidecar replaces retaine
   );
 });
 
+test('local task initialization uses the pool provider instead of the gateway provider', async (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-local-provider-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fixtureFarm = root;
+  const cli = path.join(root, 'installed-cli');
+  fs.writeFileSync(
+    cli,
+    `#!${process.execPath}\nprocess.stdout.write(process.env.MM_HARNESS_PACKAGE_ROOT);\n`,
+    { mode: 0o755 },
+  );
+  const selectedProvider = path.join(root, 'pool-provider');
+  const slot = {
+    ...fixtureSlot(root),
+    machineEnv: { MM_HARNESS_PACKAGE_ROOT: selectedProvider },
+  };
+  const command = await hostedTaskCommand(slot, ['internal', 'task-init', 'request.json']);
+  const output = execFileSync('/bin/bash', ['-c', command], {
+    env: {
+      ...process.env,
+      FARMSLOT_CLI: cli,
+      MM_HARNESS_PACKAGE_ROOT: path.join(root, 'stale-provider'),
+    },
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 4000,
+  });
+  assert.equal(output, selectedProvider);
+});
+
 test('transport forwards node pool and captured pack roots through the installed CLI', async (t) => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-node-command-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -139,7 +168,7 @@ test('transport forwards node pool and captured pack roots through the installed
   const cli = path.join(root, 'installed-cli');
   fs.writeFileSync(
     cli,
-    `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({args:process.argv.slice(2),root:process.env.FARMSLOT_ROOT??null,pool:process.env.FARMSLOT_POOL_DIR,projects:process.env.FARMSLOT_PROJECTS_DIR}));\n`,
+    `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({args:process.argv.slice(2),root:process.env.FARMSLOT_ROOT??null,pool:process.env.FARMSLOT_POOL_DIR,projects:process.env.FARMSLOT_PROJECTS_DIR,provider:process.env.MM_HARNESS_PACKAGE_ROOT}));\n`,
     { mode: 0o755 },
   );
   const slot = {
@@ -147,6 +176,7 @@ test('transport forwards node pool and captured pack roots through the installed
     host: 'remote.invalid',
     machine: 'remote-node',
     sshTarget: 'remote.invalid',
+    machineEnv: { MM_HARNESS_PACKAGE_ROOT: path.join(root, 'pool-provider') },
   };
   const command = await hostedTaskCommand(slot, ['internal', 'slot-vars', 'fixture-1']);
   assert.match(
@@ -155,7 +185,11 @@ test('transport forwards node pool and captured pack roots through the installed
     'the existing content-addressed remapper must see the support reference',
   );
   const selected = remapRemoteFarmRefs(command, support, ['scripts', 'projects/fixture']);
-  const env: NodeJS.ProcessEnv = { ...process.env, FARMSLOT_CLI: cli };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    FARMSLOT_CLI: cli,
+    MM_HARNESS_PACKAGE_ROOT: path.join(root, 'stale-provider'),
+  };
   delete env.FARMSLOT_ROOT;
   delete env.FARMSLOT_POOL_DIR;
   delete env.FARMSLOT_PROJECTS_DIR;
@@ -170,5 +204,6 @@ test('transport forwards node pool and captured pack roots through the installed
     root: null,
     pool: path.join(fixtureFarm, 'pool'),
     projects: path.join(support, 'projects'),
+    provider: path.join(root, 'pool-provider'),
   });
 });

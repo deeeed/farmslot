@@ -97,6 +97,95 @@ function fixture(t: TestContext) {
   return { root, pack, checkout, installed, taskDir, options };
 }
 
+test('a task recorded with harness 0.94.1 resumes on pool 0.94.6 with a warning', async (t) => {
+  const f = fixture(t);
+  const providerSource = fs.readFileSync(path.join(f.pack, 'provider.mjs'), 'utf8');
+  const providers = ['0.94.1', '0.94.6'].map((version) => {
+    const root = path.join(f.root, version);
+    fs.mkdirSync(root);
+    fs.writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({
+        name: 'fixture-harness',
+        version,
+        type: 'module',
+        exports: { './provider': './provider.mjs' },
+        files: ['provider.mjs'],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(root, 'provider.mjs'),
+      providerSource.replace('reasons:[]', `reasons:['${version}']`),
+    );
+    return root;
+  });
+  const pool = path.join(f.root, 'pool');
+  fs.mkdirSync(pool);
+  const writePool = (provider: string) =>
+    fs.writeFileSync(
+      path.join(pool, 'local.json'),
+      JSON.stringify({
+        host: 'localhost',
+        project: 'example',
+        env: { FIXTURE_HARNESS_ROOT: provider },
+        slots: [{ id: 'one', repo: f.checkout }],
+      }),
+    );
+  const config = {
+    ...f.options.projects![0]!.config,
+    recipe: {
+      adapter: 'headless',
+      provider: {
+        module: 'fixture-harness/provider',
+        package: 'fixture-harness',
+        root: { env: 'FIXTURE_HARNESS_ROOT' },
+      },
+    },
+  };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(config));
+  const options: ProjectRecipeHostOptions = {
+    ...f.options,
+    projects: [{ root: f.pack, config }],
+    slotPoolDir: pool,
+    load: { env: { FIXTURE_HARNESS_ROOT: providers[0]! } },
+  };
+  writePool(providers[0]!);
+  await withProjectRecipeHost(options, async (host) => {
+    assert.equal(host.context.project?.provider.version, '0.94.1');
+    retainTaskExecution(
+      f.taskDir,
+      await projectTaskExecution(host, {
+        executable: path.join(f.installed, 'farmslot'),
+        packageRoot: f.installed,
+        distributionRoot: f.installed,
+      }),
+    );
+  });
+  const originalReceipt = fs.readFileSync(
+    path.join(f.taskDir, 'artifacts/harness-provenance.json'),
+  );
+  writePool(providers[1]!);
+  const warning = t.mock.method(console, 'warn', () => {});
+  await withTaskProjectHost(options, f.taskDir, async (host) => {
+    assert.equal(host.context.project?.provider.version, '0.94.6');
+    assert.deepEqual((await host.provider.runtime.runtimeStatus(f.checkout)).reasons, ['0.94.6']);
+  });
+  assert.match(
+    String(warning.mock.calls[0]?.arguments[0]),
+    /recorded harness 0\.94\.1; using pool-selected 0\.94\.6/,
+  );
+  const actual = JSON.parse(
+    fs.readFileSync(path.join(f.taskDir, 'artifacts/provider-execution.json'), 'utf8'),
+  );
+  assert.equal(actual.provider.version, '0.94.6');
+  assert.equal(actual.provider.root, providers[1]);
+  assert.ok(actual.provider.identity.sourceFingerprint);
+  assert.deepEqual(
+    fs.readFileSync(path.join(f.taskDir, 'artifacts/harness-provenance.json')),
+    originalReceipt,
+  );
+});
+
 test('retained provider gates survive a provider update and ordinary source edits', async (t) => {
   const f = fixture(t);
   await withProjectRecipeHost(f.options, async (host) => {

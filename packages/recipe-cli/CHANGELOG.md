@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.32.0 - 2026-10-28
+
+- Use the pool-selected runtime provider for new and retained tasks, warn when the recorded harness version differs, and record the provider actually executed.
+
 ## 0.31.0 - 2026-10-23
 
 - Align with `@farmslot/protocol` 0.65.0 and `@farmslot/agent-runtime` 0.38.0.
