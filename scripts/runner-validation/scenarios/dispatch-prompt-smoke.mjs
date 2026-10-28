@@ -4,10 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { DEFAULT_PROMPT, PROMPT_MARKER } from '../lib/common.mjs';
-import { runnerPromptDigest } from '../lib/digest.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { runGatewayPostLaunchPrompt, runGatewayTurnState } from '../lib/gateway-post-launch.mjs';
-import { hookDigestTurnEvidence, readHookLines } from '../lib/hooks.mjs';
+import { readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
 import { pollHookRows } from '../lib/wait.mjs';
@@ -83,6 +82,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       runnerAdapter.buildInteractiveLaunchCommand(repo, '.agent', model ?? undefined),
     ]);
 
+    const sentSinceMs = Date.now();
     const gatewayResult = runGatewayPostLaunchPrompt({
       repo,
       target: paneId,
@@ -115,7 +115,30 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     }
 
     let pane = capturePane(paneId, 80);
-    if (hookDriven) {
+    if (fileBacked) {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const state = runGatewayTurnState({
+          repo,
+          target: paneId,
+          runner,
+          prompt: gatewayResult.deliveredPrompt,
+          sinceMs: sentSinceMs,
+        });
+        if (
+          state?.value === 'idle' &&
+          state.source === 'signal' &&
+          state.confidence === 'high' &&
+          !state.failure
+        ) {
+          report.nativeTurn = state;
+          report.responseCompleted = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      pane = capturePane(paneId, 80);
+    } else if (hookDriven) {
       const hookRows = pollHookRows(
         hookLogPath,
         beforeHookCount,
@@ -124,13 +147,6 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       );
       report.hookEvents = hookRows.map((row) => row.hook_event_name || row.event).filter(Boolean);
       report.responseCompleted = report.hookEvents.includes('Stop');
-      if (fileBacked) {
-        report.nativeTurn = hookDigestTurnEvidence(
-          hookRows,
-          runnerPromptDigest(gatewayResult.deliveredPrompt),
-        );
-        report.responseCompleted = Boolean(report.nativeTurn);
-      }
       pane = capturePane(paneId, 80);
     } else if (runnerAdapter.OBSERVABILITY_SCOPE === 'pane-only') {
       // sendRunnerPostLaunchPrompt already verified delivery. Pane-only Cursor
