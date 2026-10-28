@@ -4,6 +4,7 @@ import {
   type DecisionAction,
   DEFAULT_BRANCH,
   type DispatchPreviewParams,
+  type DispatchPreviewResult,
   Events,
   isDispatchScoreStale,
   ReviewQaConfigurationError,
@@ -56,6 +57,8 @@ import {
   activeRunSlotIds,
   assertAllowedSlotSelection,
   automaticSlotLoadBlocker,
+  automaticSlotLoadWait,
+  AutomaticSlotLoadWaitError,
   companionResourceBlocker,
   compareSlotLoads,
   findBestSlot,
@@ -69,6 +72,7 @@ import {
   SLOT_CLAIM_REFUSED_CODE,
   slotClaimBlockedByRelease,
   slotClaimBlocker,
+  type SlotLoadWait,
   slotRepoBlocker,
   slotScore,
   type SlotSelectionOptions,
@@ -127,7 +131,7 @@ interface StepIO {
 }
 
 interface FindSlotAttempt extends StepIO {
-  hostLoadWait?: { reason: string; slotId: string };
+  hostLoadWait?: SlotLoadWait;
 }
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -1433,11 +1437,7 @@ async function findSlotAttempt(
 
   const loadBlockedSlots = freeSlots.filter((slot) => {
     const selected = optionsFor(slot);
-    return (
-      selected &&
-      automaticSlotLoadBlocker(slot, selected) &&
-      !validateSlotForDispatch(slot, fleet.slots, { ...selected, automaticLoads: undefined })
-    );
+    return selected && automaticSlotLoadWait(slot, fleet.slots, selected);
   });
   if (!run.slotId && eligibleFreeSlots.length === 0 && loadBlockedSlots.length > 0) {
     const reason = `Waiting for node load: ${[...new Set(loadBlockedSlots.map((slot) => automaticSlotLoadBlocker(slot, selectionOptions)))].join(' ')}`;
@@ -1662,26 +1662,35 @@ async function findSlotAttempt(
     };
   }
 
-  const result = await previewWhenSlotClaimable(runId, generation, run.slotId || undefined, () =>
-    dispatchPreview(
-      {
-        ...buildDispatchPreviewParamsForRun(run),
-        // A lower-load unsafe candidate must not win again after another was recovered.
-        ...(reusableSlotId ? { allowedSlots: [reusableSlotId] } : {}),
-        targetBranch,
-        ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
-        ...(skipPrepare ? { skipPrepare } : {}),
-      },
-      // Delayed engine preview: the audit principal was resolved and persisted
-      // at run.create; never re-derive it from ambient context here.
-      {
-        ...(run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {}),
-        includeProfileFit: false,
-        sourcePlans,
-        ...capabilitySelection,
-      },
-    ),
-  );
+  let result: DispatchPreviewResult;
+  try {
+    result = await previewWhenSlotClaimable(runId, generation, run.slotId || undefined, () =>
+      dispatchPreview(
+        {
+          ...buildDispatchPreviewParamsForRun(run),
+          // A lower-load unsafe candidate must not win again after another was recovered.
+          ...(reusableSlotId ? { allowedSlots: [reusableSlotId] } : {}),
+          targetBranch,
+          ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
+          ...(skipPrepare ? { skipPrepare } : {}),
+        },
+        // Delayed engine preview: the audit principal was resolved and persisted
+        // at run.create; never re-derive it from ambient context here.
+        {
+          ...(run.pressureOverride
+            ? { overridePrincipalId: run.pressureOverride.principalId }
+            : {}),
+          includeProfileFit: false,
+          sourcePlans,
+          ...capabilitySelection,
+        },
+      ),
+    );
+  } catch (error) {
+    if (!run.slotId && error instanceof AutomaticSlotLoadWaitError)
+      return { inputs, hostLoadWait: error.wait };
+    throw error;
+  }
   // Automatic selection already excluded pressure-rejected machines; a
   // rejection here means an explicit slot (or a pinned affinity slot) sits on
   // a rejected machine and no valid current override was supplied. Fail the
