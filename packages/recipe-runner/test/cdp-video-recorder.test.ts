@@ -16,7 +16,7 @@ test('createCdpVideoRecorder exposes web cdp-screencast recorder metadata', () =
   assert.equal(typeof recorder.start, 'function');
 });
 
-test('a proof snapshot remains in the encoded originals after another repaint in its bucket', async (t) => {
+test('proof snapshots survive encoder overload and recording resumes after the queue drains', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'cdp-snapshot-source-'));
   let active: ActiveVideoRecording | undefined;
   let stopped = false;
@@ -32,11 +32,12 @@ test('a proof snapshot remains in the encoded originals after another repaint in
     encoder,
     `#!${process.execPath}\nconst fs=require('node:fs'),path=require('node:path');
 const args=process.argv.slice(2),list=args[args.indexOf('-i')+1];
-const frames=fs.readFileSync(list,'utf8').split('\\n').filter(line=>line.startsWith('file ')).map(line=>fs.readFileSync(path.join(path.dirname(list),line.slice(6,-1)),'utf8'));
+const frames=fs.readFileSync(list,'utf8').split('\\n').filter(line=>line.startsWith('file ')).map(line=>fs.readFileSync(path.join(path.dirname(list),line.slice(6,-1))).subarray(0,16).toString());
 fs.writeFileSync(args.at(-1),JSON.stringify(frames));\n`,
     { mode: 0o700 },
   );
   let listener: ((params: Record<string, unknown>) => void) | undefined;
+  const acknowledged: unknown[] = [];
   const start = Date.now();
   const emit = (offset: number, text: string) =>
     listener!({
@@ -62,7 +63,8 @@ fs.writeFileSync(args.at(-1),JSON.stringify(frames));\n`,
       };
     },
     close() {},
-    async call(method: string) {
+    async call(method: string, params: Record<string, unknown> = {}) {
+      if (method === 'Page.screencastFrameAck') acknowledged.push(params.sessionId);
       if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
       if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
       if (method === 'Runtime.evaluate') return { result: { value: Date.now() } };
@@ -80,10 +82,26 @@ fs.writeFileSync(args.at(-1),JSON.stringify(frames));\n`,
   const snapshot = path.join(root, 'proof.png');
   await active.snapshot!(snapshot);
   emit(3, 'count=2');
+  // Queue two 6 MiB frames without yielding. The next two must be dropped,
+  // rather than growing the queue or interrupting the recording.
+  for (const [index, value] of ['a', 'b', 'c', 'd'].entries()) {
+    emit((index + 1) * 100, value.repeat(6 * 1024 * 1024));
+  }
+  await active.snapshot!(path.join(root, 'after-pressure.png'));
+  emit(150, 'late-repaint');
+  emit(600, 'count=3');
   stopped = true;
   const result = await active.stop();
   const encoded = JSON.parse(await readFile(path.join(root, result.segments[0]!.path), 'utf8'));
   assert.equal(await readFile(snapshot, 'utf8'), 'count=1');
   assert.ok(encoded.includes('count=1'), 'the source frame must survive sampling');
-  assert.ok(encoded.includes('count=2'), 'the final repaint must also survive');
+  assert.ok(encoded.includes('count=2'), 'the next repaint must also survive');
+  assert.ok(encoded.includes('a'.repeat(16)));
+  assert.ok(encoded.includes('b'.repeat(16)));
+  assert.ok(!encoded.includes('c'.repeat(16)), 'over-budget frames must be dropped');
+  assert.ok(!encoded.includes('d'.repeat(16)), 'the queue must stay bounded');
+  assert.ok(!encoded.includes('late-repaint'), 'late source frames must be dropped');
+  assert.ok(encoded.includes('count=3'), 'capture must recover after draining');
+  assert.equal(result.interruption, undefined);
+  assert.deepEqual(acknowledged, [1, 4, 101, 201, 301, 401, 151, 601]);
 });

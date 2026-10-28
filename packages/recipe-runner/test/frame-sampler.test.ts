@@ -31,8 +31,23 @@ test('continuous capture stays bounded by source-clock buckets', () => {
   retained.push(sampler.finish()!);
   assert.equal(retained.length, 10);
   assert.equal(retained.at(-1)?.timestampMs, 999);
-  assert.throws(
-    () => sampler.accept({ timestampMs: 0, receivedAtUnixMs: 0, data: '' }),
-    /backwards/,
-  );
+  assert.equal(sampler.accept({ timestampMs: 0, receivedAtUnixMs: 0, data: '' }), undefined);
+});
+
+test('late and invalid timestamps do not replace a pending repaint or reset the source clock', () => {
+  const sampler = new RecordingFrameSampler(10);
+  const frame = (timestampMs: number, data: string) => ({
+    timestampMs,
+    receivedAtUnixMs: 1000,
+    data,
+  });
+  assert.equal(sampler.accept(frame(1000, 'first')), undefined);
+  assert.equal(sampler.accept(frame(1100, 'latest'))?.data, 'first');
+  for (const timestamp of [1050, NaN, Infinity, -Infinity]) {
+    assert.equal(sampler.accept(frame(timestamp, 'discarded')), undefined);
+  }
+  assert.deepEqual(sampler.finish(), frame(1100, 'latest'));
+  assert.equal(sampler.accept(frame(1150, 'settled')), undefined);
+  assert.equal(sampler.accept(frame(1200, 'after'))?.data, 'settled');
+  assert.deepEqual(sampler.finish(), frame(1200, 'after'));
 });
