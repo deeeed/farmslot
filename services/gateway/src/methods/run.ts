@@ -202,6 +202,7 @@ import {
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
+import { assertAllowedSlotSelection } from './dispatch/slot-scoring.js';
 import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
   assertTicketRefMatchesProjectRepo,
@@ -2074,6 +2075,12 @@ export async function resolveRunDecision(
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }
   const resumeNative = params.actionId === NATIVE_WORKER_RESUME_ACTION;
+  if (
+    params.actionId === 'pick' &&
+    ['engine_no_suitable_slot', 'engine_branch_affinity_nudge'].includes(decision.type) &&
+    typeof params.selectionData?.slotId === 'string'
+  )
+    assertAllowedSlotSelection(existing, params.selectionData.slotId);
   if (
     resumeNative &&
     (existing.transport !== 'native' ||
