@@ -116,6 +116,15 @@ function requireHandoffAcceptanceCriteria(taskDir) {
   return criteriaFromHandoff(handoff, taskDir);
 }
 
+/** PR completion checks worker-derived requirements; original ACs remain evidence. */
+function workerAcceptanceCriteria(taskDir) {
+  const criteria = requireHandoffAcceptanceCriteria(taskDir);
+  if (readJson(path.join(taskDir, HANDOFF_INPUT)).flow !== 'pr-complete') return criteria;
+  const { registration } = readJson(path.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT));
+  const derived = new Set((registration?.derived ?? []).map(({ id }) => id));
+  return criteria.filter(({ id }) => derived.has(id));
+}
+
 /** One message shape for a handoff the acceptance rule cannot read. */
 function handoffReadRefusal(detail) {
   return (
@@ -349,7 +358,12 @@ function acceptanceContractIssues(taskDir, options = {}) {
         `Acceptance derivation ${unit.id} is pending${unit.error ? `: ${unit.error}` : '; complete the source classification subtask'}.`,
     );
   if (criteria.length === 0) return [];
+  const completion = readJson(path.join(taskDir, HANDOFF_INPUT)).flow === 'pr-complete';
   const known = new Set(criteria.map(({ id }) => id));
+  if (completion) {
+    criteria = workerAcceptanceCriteria(taskDir);
+    if (!criteria.length) return [];
+  }
   try {
     const inherited = inheritedCriterionIdsForTask(taskDir, criteria, options.requireFresh);
     criteria = criteria.filter(({ id }) => !inherited.has(id));
@@ -398,13 +412,13 @@ function acceptanceContractIssues(taskDir, options = {}) {
       );
       continue;
     }
-    const reviewDeferred =
+    const retainedReviewEvidence =
+      completion &&
       entry.verdict === 'awaiting-review' &&
-      entry.proofMode === 'review' &&
-      options.deferReviewCriteria?.includes(criterion.id);
+      ['visual', 'mixed', 'review'].includes(entry.proofMode);
     if (
-      options.deferClaimVerdicts !== true &&
-      !reviewDeferred &&
+      (completion || options.deferClaimVerdicts !== true) &&
+      !retainedReviewEvidence &&
       (entry.verdict === 'failed' ||
         entry.verdict === 'awaiting-review' ||
         (!options.allowWeak && (entry.verdict === 'missing' || entry.verdict === 'weak')))
@@ -425,6 +439,7 @@ module.exports = {
   ACCEPTANCE_VERDICTS,
   AcceptanceRefusal,
   acceptanceContractIssues,
+  workerAcceptanceCriteria,
   acceptanceCriterionId,
   acceptanceRowExecution,
   acceptanceStatusList,

@@ -20,7 +20,6 @@ import {
 } from '../core/slot-io.js';
 import { persistRunNow, updateRun } from '../runs/store.js';
 
-import { acceptanceProofDestinations } from './acceptance-registration.js';
 import { readAcceptanceStatusLedger } from './acceptance-status.js';
 
 /** The caller holds this run's transition, or owns its pre-dispatch task write. */
@@ -65,19 +64,12 @@ export async function syncAcceptanceExecutionContract(
     // retains the engine-owned IDs; completion independently requalifies the parent.
     inheritedCriterionIds: [...inheritedIds],
   };
-  const destinations = acceptanceProofDestinations(
-    proofModes
-      .filter(({ id }) => !content.inheritedCriterionIds.includes(id))
-      .map(({ proofMode }) => proofMode),
-    run,
-  );
-  const nextContent = { ...content, ...destinations };
   const previous = run.acceptanceExecutionContract;
   const { revision: _revision, ...priorContent } = previous ?? { revision: 0 };
   const revision =
-    previous && isDeepStrictEqual(nextContent, priorContent)
+    previous && isDeepStrictEqual(content, priorContent)
       ? previous
-      : { ...nextContent, revision: (previous?.revision ?? 0) + 1 };
+      : { ...content, revision: (previous?.revision ?? 0) + 1 };
   const bytes = `${JSON.stringify(revision, null, 2)}\n`;
   const frozenPath = `inputs/acceptance-contracts/${revision.revision}.json`;
   if (
@@ -88,7 +80,7 @@ export async function syncAcceptanceExecutionContract(
   if (!(await owns())) throw new Error('Acceptance execution contract lost its task owner');
   if (revision !== previous)
     await persistRunNow(
-      updateRun(run.id, { acceptanceExecutionContract: revision, acceptanceProofHold: undefined }),
+      updateRun(run.id, { acceptanceExecutionContract: revision }),
       'acceptance execution contract selected',
     );
   const frozenExists = await slotFileExists(io, path.join(taskDir, frozenPath));

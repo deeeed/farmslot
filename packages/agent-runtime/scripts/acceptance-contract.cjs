@@ -28,8 +28,6 @@ function effectiveAcceptanceContract(taskDir, base, baseBytes) {
     !Number.isSafeInteger(revision.revision) ||
     revision.revision < 1 ||
     !Array.isArray(revision.proofModes) ||
-    typeof revision.claimReviewGate !== 'boolean' ||
-    typeof revision.publicationReview !== 'boolean' ||
     revision.baseContractHash !== createHash('sha256').update(frozenBase).digest('hex')
   )
     throw new Error(
@@ -61,11 +59,11 @@ function effectiveAcceptanceContract(taskDir, base, baseBytes) {
     proofModes.set(row.id, row);
   }
   const {
-    handoffAcceptanceCriteria,
+    workerAcceptanceCriteria,
     readAcceptanceLedger,
     inheritedCriterionIdsForTask,
   } = require('./acceptance-ledger.cjs');
-  const criteria = handoffAcceptanceCriteria(taskDir);
+  const criteria = workerAcceptanceCriteria(taskDir);
   const inherited = inheritedCriterionIdsForTask(taskDir, criteria);
   const recordedInherited = revision.inheritedCriterionIds ?? [];
   if (
@@ -78,10 +76,6 @@ function effectiveAcceptanceContract(taskDir, base, baseBytes) {
     if (inherited.has(criterion.id)) continue;
     const row = ledger?.criteria?.find((candidate) => candidate.id === criterion.id);
     const mode = criterion.proofMode ?? row?.proofMode;
-    if (['visual', 'mixed'].includes(mode) && base.claimReviewSupported === false)
-      throw new Error(
-        `${criterion.id}: captured visual completion review is unsupported for this run policy.`,
-      );
     if (
       mode &&
       (proofModes.get(criterion.id)?.proofMode !== mode ||
@@ -93,11 +87,6 @@ function effectiveAcceptanceContract(taskDir, base, baseBytes) {
   }
   return {
     ...base,
-    claimReviewGate: revision.claimReviewGate,
-    publicationReview: revision.publicationReview,
-    acceptanceReviewCriteria: revision.proofModes
-      .filter(({ id, proofMode }) => proofMode === 'review' && !inherited.has(id))
-      .map(({ id }) => id),
     inheritedAcceptanceCriteria: [...inherited],
   };
 }

@@ -1103,21 +1103,21 @@ closures retain the existing secret scan and publication approval requirements.
 
 ### Decision
 
-A `pr-complete` run keeps the original PR's parent-run or ticket criteria by default. A first derive-acceptance subtask adds one criterion per unresolved actionable review comment, linked to its source, and one per extra operator instruction. Derivation is enabled only when the selected `pr-complete.md` or interactive template declares that subtask. Authenticated interactive steers can append obligations through the same registration owner.
+A `pr-complete` run records the original PR's parent-run or linked ticket criteria as evidence only; they never block completion. A first derive-acceptance subtask adds one criterion per unresolved actionable review comment, linked to its source, and one per extra operator instruction. Derivation is enabled only when the selected `pr-complete.md` or interactive template declares that subtask. Authenticated interactive steers can append obligations through the same registration owner.
 
 The engine registers proposals in the existing acceptance registry and ledger projection. Original IDs and order stay fixed; new IDs append. Retries are idempotent by source identity. Neither a template nor a worker can replace the original criteria or write authoritative verdicts. ADR-055 owns comment intake; task init freezes its authoritative completion snapshot for every entry point, including review bots. The retained worker classifies comments and instructions, and engine validation enforces snapshot coverage. ADR-060 owns the subtask lifecycle.
 
-Amendment 12 inheritance becomes per criterion: eligible original criteria may keep their approved parent proof, with its original provenance. Derived criteria require their own qualified proof. `requireFresh` still requires child proof. An added criterion never acquires a parent's verdict merely because the parent passed.
+Original criteria keep their recorded provenance and verdicts. Derived review-comment and operator requirements retain checks the worker can satisfy. Evidence-only criteria are never stamped as proven merely to finish the run.
 
-PR completion supports `state`, `visual`, `mixed` and `review` through the requirements in the specification. Visual and mixed criteria enable the existing captured-output claim review decision after monitoring and before completion. Fresh review-mode criteria conditionally activate the existing REVIEW step at the pushed PR head. For PR completion, this extends Amendment 18's gate-only rule: a qualifying structured step result with recorded criterion coverage suffices, without a HUMAN_GATE or prepared publication package. Neither requirement authorizes publishing a new PR. Derivation alone adds no review for state-only completion or eligible inherited proof; the PR's existing review obligations remain. A needed re-review is warm and covers changed code or reviewed evidence only.
+PR completion MUST NOT wait for a reviewer or person. The captured visual-proof hold and conditional REVIEW step are removed as of 2026-10-28. Linked criteria, captures and unassessed claims remain evidence; completion does not qualify visual judgments. Worker-owned checks for derived requirements, deterministic checks, report contracts and pushed-head identity remain in force.
 
 The registration revision participates in completion and gate identity. New instructions cannot leave an earlier ready decision valid. Frozen task inputs, parent evidence and previous gate snapshots remain immutable. Command Center and Companion consume the same registered list, provenance and verdict projection.
 
 ### Rationale and consequences
 
-Completion currently displays ticket criteria while review fixes and operator obligations remain outside the panel. It also stamps both review capabilities false for ordinary PR completion, making fresh visual, mixed and review-mode claims impossible to finish. Registration and the proof destination must agree before completion.
+Registration keeps ticket criteria, review fixes and operator obligations visible. A captured visual-review hold stranded a PR-completion run on an empty review screen. PR completion records that evidence without adding a review decision.
 
-Extend the shared protocol and existing registry, contract resolver, completion guard and client presentation. Do not add a second ledger, verdict writer or client-specific acceptance model. Existing runs keep their selected template and frozen contract until an explicit supported migration. Implementation is approved; this decision authorizes no live-run migration or replay.
+Extend the shared protocol and existing registry, contract resolver, completion guard and client presentation. Do not add a second ledger, verdict writer or client-specific acceptance model. Existing runs keep their selected template and frozen contract until an explicit supported migration. F194 authorizes normal COMPLETE replay after deployment for the affected held run; no operator review acknowledgement is required.
 
 ### Public surface and delivery
 

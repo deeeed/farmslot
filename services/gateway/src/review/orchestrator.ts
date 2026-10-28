@@ -143,7 +143,6 @@ import {
 export { handleReviewFsChanged } from './progress.js';
 
 export interface ReviewResult {
-  acceptanceReviewCoverage?: import('@farmslot/protocol').AcceptanceReviewCriterion[];
   reviewedInputsFingerprint?: string;
   reviewId?: string;
   mode?: ReviewMode;
@@ -299,38 +298,9 @@ export async function executeReview(
 ): Promise<ReviewResult> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
-  const result = await withNativeReviewOperation(run, async () => {
-    const result = await executeOwnedReview(runId, slotId, options);
-    if (run.flowType !== 'pr-complete' || run.acceptanceContractVersion !== 1) return result;
-    const current = getRun(runId)!;
-    const coverage = structuredClone(current.engineState?.reviewAcceptanceAtLaunch ?? []);
-    const reviewedInputsFingerprint = current.engineState?.reviewInputsAtLaunch;
-    const bound = { ...result, acceptanceReviewCoverage: coverage, reviewedInputsFingerprint };
-    if (result.reviewId) {
-      const { buildPublishGateReviewStatus } = await import('../run-engine/gate-policy.js');
-      const reviews = current.engineState?.publishGate?.reviews ?? [];
-      const status = buildPublishGateReviewStatus({
-        source: 'dispatch',
-        priorReviewCount: reviews.length,
-        reviewResult: bound,
-        requestedRunner: result.runner ?? null,
-        reviewId: result.reviewId,
-      });
-      status.source = 'pipeline';
-      status.acceptanceReviewCoverage = coverage;
-      status.reviewedInputsFingerprint = reviewedInputsFingerprint;
-      updateRun(runId, {
-        engineState: {
-          ...current.engineState,
-          publishGate: {
-            ...current.engineState?.publishGate,
-            reviews: [...reviews.filter(({ id }) => id !== status.id), status],
-          },
-        },
-      });
-    }
-    return bound;
-  });
+  const result = await withNativeReviewOperation(run, () =>
+    executeOwnedReview(runId, slotId, options),
+  );
   // Pipeline and publication reviews both end here: a pass is what was reviewed.
   if (result.verdict === 'pass' && !result.skipped) {
     await recordReviewedInputs(runId).catch((err: Error) =>

@@ -26,7 +26,6 @@ import {
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type PlanningContextProjection,
-  prCompletionClaimReviewSupported,
   type RepeatReviewContext,
   type Run,
   runOutputReviewEnabled,
@@ -1313,7 +1312,6 @@ export async function writeTaskFile(
   terminalContract.recordedEvidenceContractVersion = run.recordedEvidenceContractVersion ?? 0;
   if (run.acceptanceContractVersion === 1) {
     terminalContract.acceptanceContractVersion = 1;
-    terminalContract.claimReviewSupported = prCompletionClaimReviewSupported(run);
   }
   const humanGate =
     run.steps.some((step) => step.name === 'human-gate' && step.status !== 'skipped') &&

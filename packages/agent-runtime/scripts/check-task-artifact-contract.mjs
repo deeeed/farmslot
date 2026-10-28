@@ -592,7 +592,11 @@ if (
   let deferClaimVerdicts = false;
   const ledger = readAcceptanceLedger(taskDir);
   // ADR-062 Amendment 18: only the run's publication code review checks a `review` claim.
-  if (terminalCommand === 'complete' && terminalContract?.publicationReview !== true) {
+  if (
+    terminalCommand === 'complete' &&
+    terminalContract?.flowType !== 'pr-complete' &&
+    terminalContract?.publicationReview !== true
+  ) {
     for (const row of Array.isArray(ledger?.criteria) ? ledger.criteria : []) {
       if (
         row?.proofMode === 'review' &&
@@ -614,10 +618,6 @@ if (
     deferClaimVerdicts = integrityIssues.length === 0;
   }
   for (const issue of acceptanceContractIssues(taskDir, {
-    deferReviewCriteria:
-      terminalContract?.publicationReview === true
-        ? terminalContract.acceptanceReviewCriteria
-        : undefined,
     allowWeak: terminalContract?.acceptance?.allowWeak === true,
     requireFresh: terminalContract?.acceptance?.requireFresh === true,
     deferClaimVerdicts,

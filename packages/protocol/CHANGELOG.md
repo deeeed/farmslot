@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- PR completion retains evidence without adding reviewer or captured-output holds.
+
 - Allow a stored run snapshot for progressive display without verifying live action readiness, and keep workspace inspections fresh through slow fleet reads with a shared two-minute bound.
 
 - Allow combined findings approval and evidence attestation when every review reason explicitly permits accepting findings.

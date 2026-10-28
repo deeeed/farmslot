@@ -140,17 +140,7 @@ export async function readVisualReviewSource(
         Object.values(result.packages).some((root) => file.path.startsWith(`artifacts/${root}/`)),
       );
     }
-    sources = run.acceptanceProofHold
-      ? await readFrozenPublicationRecipeSources(
-          run,
-          inventory,
-          [],
-          output.artifactBundle,
-          run.acceptanceProofHold.headSha,
-        )
-      : await readFrozenRecordedEvidenceSources(run, inventory, [], output.artifactBundle);
-    if (run.acceptanceProofHold)
-      assertRecordedEvidenceRevision(sources, { headSha: run.acceptanceProofHold.headSha });
+    sources = await readFrozenRecordedEvidenceSources(run, inventory, [], output.artifactBundle);
   }
   if (snapshotIdentity !== visualReviewSnapshotIdentity(run, decisionId))
     throw new Error('Captured visual review changed while its evidence was read.');

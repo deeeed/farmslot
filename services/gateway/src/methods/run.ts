@@ -2041,7 +2041,7 @@ export async function resolveRunDecision(
         ? await (
             await import('../run-completion/output-close.js')
           ).closeRunOutput(params.runId, params.decisionId, undefined, overrideSnapshot)
-        : await acknowledgeRunOutput(params.runId, params.decisionId, overrideSnapshot, emit);
+        : await acknowledgeRunOutput(params.runId, params.decisionId, overrideSnapshot);
     emit(Events.RUN_UPDATED, { run });
     emit(Events.RUN_DECISION_RESOLVED, {
       runId: run.id,

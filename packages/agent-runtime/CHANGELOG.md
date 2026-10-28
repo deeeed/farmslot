@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- PR completion keeps linked criteria as evidence and checks worker-derived requirements without waiting for review.
+
 - Ship the acceptance-contract TypeScript declaration in the public package.
 
 - Support acknowledged acceptance derivation and revision-bound proof destinations for PR completion.
