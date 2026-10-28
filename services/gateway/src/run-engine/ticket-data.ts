@@ -106,8 +106,8 @@ export async function fetchPRData(
     ...(run.ticketData?.linkedTickets ? { linkedTickets: run.ticketData.linkedTickets } : {}),
   };
 
-  // Linked content is fetched only for structured dispatch and operator references.
-  const jiraKeys = runLinkedTicketRefs(run);
+  // Operator additions stay editable metadata, never promoted into dispatch ticket data.
+  const jiraKeys = runLinkedTicketRefs({ ticketOrPr: run.ticketOrPr, ticketData: run.ticketData });
 
   if (jiraKeys.length > 0) {
     try {

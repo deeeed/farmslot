@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import type { Run, RunTicketData } from '@farmslot/protocol';
+import { type Run, runLinkedTicketRefs, type RunTicketData } from '@farmslot/protocol';
 
 const runs = new Map<string, Run>();
 let body = '';
@@ -126,7 +126,7 @@ const explicit: RunTicketData = {
   ],
 };
 
-test('PR templates receive linked content only for explicit dispatch and operator refs', async () => {
+test('PR templates enrich dispatch refs without promoting operator additions', async () => {
   body = 'HIP-3, AC-1 and TAT-9999 are prose.';
   const source = run({
     ticketData: structuredClone(explicit),
@@ -135,14 +135,13 @@ test('PR templates receive linked content only for explicit dispatch and operato
   runs.set('run', source);
   requestedKeys.length = 0;
   await fetchPRData('run');
-  assert.deepEqual(requestedKeys, ['TAT-4184', 'TAT-4187', 'TAT-5000']);
+  assert.deepEqual(requestedKeys, ['TAT-4184', 'TAT-4187']);
   assert.deepEqual(runs.get('run')!.linkedTicketRefs, source.linkedTicketRefs);
   assert.deepEqual(
     runs.get('run')!.ticketData!.linkedTickets?.map((t) => [t.ref, t.description]),
     [
       ['TAT-4184', 'Content TAT-4184'],
       ['TAT-4187', 'Content TAT-4187'],
-      ['TAT-5000', 'Content TAT-5000'],
     ],
   );
 });
@@ -158,4 +157,22 @@ test('a missing Jira config does not erase explicit dispatch references or their
   } finally {
     configured = true;
   }
+});
+
+test('removing an operator addition after PR enrichment preserves only dispatch references', async () => {
+  body = '# TAT-9999\nHIP-3 and AC-1 are not tickets.';
+  runs.set('run', run({ ticketData: structuredClone(explicit), linkedTicketRefs: ['TAT-5000'] }));
+  await fetchPRData('run');
+  const enriched = runs.get('run')!;
+  assert.deepEqual(runLinkedTicketRefs(enriched), ['TAT-4184', 'TAT-4187', 'TAT-5000']);
+  // The existing run.linkedTickets.set RPC changes only this metadata field.
+  runs.set('run', { ...enriched, linkedTicketRefs: [] });
+  await fetchPRData('run');
+  const removed = runs.get('run')!;
+  assert.deepEqual(runLinkedTicketRefs(removed), ['TAT-4184', 'TAT-4187']);
+  assert.deepEqual(
+    removed.ticketData!.linkedTickets?.map((t) => t.ref),
+    ['TAT-4184', 'TAT-4187'],
+  );
+  assert.equal(removed.ticketData!.jiraKey, 'TAT-4184');
 });
