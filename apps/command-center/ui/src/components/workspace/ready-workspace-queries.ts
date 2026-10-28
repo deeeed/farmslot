@@ -2,6 +2,7 @@ import type { ReactiveController } from 'lit';
 
 import {
   Methods,
+  type Run,
   type RunDecision,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -17,17 +18,21 @@ import type { ReadyWorkspaceActionPresenter } from './ready-workspace-action-pre
 /** Run and frozen-evidence reads share the same owner as the containing run view. */
 export class ReadyWorkspaceQueries implements ReactiveController {
   readonly run: ResourceQueryController<RunGetResult>;
+  /** Stored run facts, shown only until the ordinary read has data; never ready for commands. */
+  readonly snapshot: ResourceQueryController<RunGetResult>;
   readonly evidence: ResourceQueryController<RunRecipeRunsForRunResult>;
   private scope = '';
   private confirmationScope = '';
   private synchronizing = false;
   private generation = 0;
   private previousRunState?: object;
+  private previousSnapshotState?: object;
   private previousEvidenceState?: object;
   private ageClock?: ReturnType<typeof setInterval>;
 
   constructor(private readonly view: ReadyWorkspaceActionPresenter) {
     this.run = new ResourceQueryController(view, () => this.sync());
+    this.snapshot = new ResourceQueryController(view, () => this.sync());
     this.evidence = new ResourceQueryController(view, () => this.sync());
     view.addController(this);
   }
@@ -44,10 +49,24 @@ export class ReadyWorkspaceQueries implements ReactiveController {
     this.view._retireWorkspaceCommands();
   }
 
+  /** The ordinary read's run, or the stored snapshot while that read is pending or failed. */
+  get displayRun(): Run | undefined {
+    const ordinary = this.run.belongsToWorkspace ? this.run.state.data : undefined;
+    const run = ordinary
+      ? ordinary.run
+      : this.snapshot.belongsToWorkspace
+        ? this.snapshot.state.data?.run
+        : undefined;
+    return run?.id === this.view.runId ? run : undefined;
+  }
+
+  /** True while the gate shown comes from the stored snapshot. */
+  get showsSnapshot(): boolean {
+    return !(this.run.belongsToWorkspace && this.run.state.data) && Boolean(this.displayRun);
+  }
+
   get decision(): RunDecision | undefined {
-    return this.run.belongsToWorkspace && this.run.state.data?.run.id === this.view.runId
-      ? this.run.state.data.run.decisions.find(({ id }) => id === this.view.decision?.id)
-      : undefined;
+    return this.displayRun?.decisions.find(({ id }) => id === this.view.decision?.id);
   }
 
   get ready(): boolean {
@@ -98,6 +117,12 @@ export class ReadyWorkspaceQueries implements ReactiveController {
       this.run.setQuery(
         this.view.runId ? resourceQuery(Methods.RUN_GET, { runId: this.view.runId }) : undefined,
       );
+      // Shares run detail's snapshot observation while run.get checks live gate prerequisites.
+      this.snapshot.setQuery(
+        this.view.runId && !(this.run.belongsToWorkspace && this.run.state.data)
+          ? resourceQuery(Methods.RUN_GET, { runId: this.view.runId, view: 'snapshot' })
+          : undefined,
+      );
       const decision = this.decision;
       const payload = decision?.payload;
       this.evidence.setQuery(
@@ -129,9 +154,11 @@ export class ReadyWorkspaceQueries implements ReactiveController {
       }
       if (
         this.previousRunState !== this.run.state ||
+        this.previousSnapshotState !== this.snapshot.state ||
         this.previousEvidenceState !== this.evidence.state
       ) {
         this.previousRunState = this.run.state;
+        this.previousSnapshotState = this.snapshot.state;
         this.previousEvidenceState = this.evidence.state;
         this.view._sharedWorkspaceQueriesChanged();
       }

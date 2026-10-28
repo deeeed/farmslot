@@ -151,12 +151,9 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     return this._usesMockData ? this.decision : this._queries.decision;
   }
 
+  /** Display run; commands first require the ordinary read through _beginWorkspaceCommand. */
   get _canonicalRun() {
-    return this._usesMockData
-      ? this.run
-      : this._queries.run.belongsToWorkspace && this._queries.run.state.data?.run.id === this.runId
-        ? this._queries.run.state.data.run
-        : null;
+    return this._usesMockData ? this.run : (this._queries.displayRun ?? null);
   }
 
   override get _packagePending(): boolean {

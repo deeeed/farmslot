@@ -561,11 +561,15 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   override render() {
     const payload = this._payload;
     if (!payload) return renderReadyWorkspaceEmpty();
-    return html` ${!this._queries.run.ready && this._queries.run.state.observedAt
+    const ordinary = this._queries.run.state;
+    return html` ${!this._queries.run.ready && (ordinary.observedAt || this._queries.showsSnapshot)
       ? html`<p class="rdy-saved-state" role="status">
-          Saved gate ·
-          ${sourceObservationAge(this._queries.run.state.observedAt)}${this._queries.run.state.error
-            ? ` · ${this._queries.run.state.error.message}`
+          ${ordinary.observedAt
+            ? `Saved gate · ${sourceObservationAge(ordinary.observedAt)}`
+            : ordinary.error
+              ? 'Stored gate'
+              : 'Stored gate · checking current readiness'}${ordinary.error
+            ? ` · ${ordinary.error.message}`
             : ''}
         </p>`
       : nothing}
