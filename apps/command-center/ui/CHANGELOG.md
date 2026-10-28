@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- On gateways with version lists, the run list's total and filtered counts cover every live run, even while some rows are still loading or were not stored offline. The run list exposes its read state as `data-runs-status` and `data-runs-observed-at` for proofs and the reconnect baseline.
+
 - Edit slot workspace files when the gateway advertises conditional writes. Each save carries the hash it read and the slot's run; on a conflict you keep yours or theirs. Unsaved edits stay on the device as drafts for up to 30 days. The editor is read-only, with the reason shown, when the host, hash, encoding, run or connection rules editing out. Sign-out shows the unsaved count before deleting drafts, and when another user connects the previous user's drafts are deleted with a notice. Workspace diffs read the held active-run diff offline, and review workspaces pass the review digest.
 
 - The owner tab prefetches pending gates, then active runs, into the persistent store and pauses while hidden. Gate package diffs and evidence images open from held content offline; live reads are shown and stored only when their bytes match `diffHash` or the manifest `sha256`, and a mismatch says so instead of loading the same file.

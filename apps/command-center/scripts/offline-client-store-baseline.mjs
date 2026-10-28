@@ -34,7 +34,11 @@ export async function observeIdleGatewayReads({ connect, tab, methods, durationM
   }
 }
 
-/** Measure production reads triggered by navigation, reload, or a socket disconnect. */
+/**
+ * Measure production reads triggered by navigation, reload, or a socket disconnect. On a gateway
+ * with version lists, cold and reconnect end at the run list's merged ready state: the first
+ * run.list reply is then only the version index, and the rows it lists arrive in `ids` pages.
+ */
 export async function measureOfflineClientStore({ connect, tab, phase, route, gatewayUrl, match }) {
   assert(
     ['cold', 'reconnect', 'diff', 'gate'].includes(phase),
@@ -48,7 +52,14 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
   const requests = new Map();
   const sockets = new Map();
   let receivedBytes = 0;
+  // Each received frame's time and size, to count bytes through a merged ready state.
+  const received = [];
+  const pages = [];
   let startedAt;
+  let readyAt;
+  // The page's wall clock when the measurement began, to tell a new observation from a saved one.
+  let startedWall;
+  let versionRead = false;
   let armed = false;
   let firstRunList;
   let resolveRead;
@@ -81,17 +92,21 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
           ? frame.method === 'git.diff' &&
             Object.entries(match).every(([name, value]) => frame.params?.[name] === value)
           : frame.method === 'run.list';
+      if (frame.method === 'run.list' && frame.params?.versions === true) versionRead = true;
       if (wanted)
         requests.set(key, {
           method: frame.method,
           timestamp: params.timestamp,
           inventory: !frame.params?.active,
+          page: Array.isArray(frame.params?.ids),
         });
     } else if (
       method === 'Network.webSocketFrameReceived' &&
       ['res', 'event'].includes(frame.type)
     ) {
-      receivedBytes += Buffer.byteLength(raw, 'utf8');
+      const bytes = Buffer.byteLength(raw, 'utf8');
+      receivedBytes += bytes;
+      received.push({ at: params.timestamp, bytes });
       const request = requests.get(key);
       if (frame.type !== 'res' || !request) return;
       requests.delete(key);
@@ -99,17 +114,22 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
         rejectRead(new Error(`${request.method} failed: ${frame.error?.code ?? 'unknown'}`));
         return;
       }
+      if (request.page) {
+        pages.push({ at: params.timestamp, bytes });
+        return;
+      }
       if (phase !== 'diff') {
-        firstRunList ??= { at: params.timestamp, responseBytes: Buffer.byteLength(raw, 'utf8') };
+        firstRunList ??= { at: params.timestamp, responseBytes: bytes };
         if (!request.inventory) return;
       }
       resolveRead({
         method: request.method,
         responseAt: params.timestamp,
         requestAt: request.timestamp,
-        responseBytes: Buffer.byteLength(raw, 'utf8'),
+        responseBytes: bytes,
         receivedBytes,
-        runCount: frame.payload?.runs?.length,
+        // A version reply lists every live run and carries no rows.
+        runCount: frame.payload?.versions?.length ?? frame.payload?.runs?.length,
       });
     }
   });
@@ -122,6 +142,11 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
     armed = true;
     timer = setTimeout(() => rejectRead(new Error('Timed out waiting for gateway read')), 30_000);
     if (phase === 'cold') {
+      const wall = await client.call('Runtime.evaluate', {
+        expression: 'Date.now()',
+        returnByValue: true,
+      });
+      startedWall = wall.result.value;
       await client.call('Page.reload', { ignoreCache: true });
     } else if (phase === 'diff') {
       const url = new URL(tab.url);
@@ -143,13 +168,14 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
         functionDeclaration: `function(gatewayUrl) {
           let count = 0;
           const closedAt = performance.now();
+          const closedWall = Date.now();
           for (const socket of this) {
             if (socket.readyState !== WebSocket.OPEN) continue;
             if (new URL(socket.url).pathname !== '/ws' && socket.url !== gatewayUrl) continue;
             socket.close(1000, 'Reconnect measurement');
             count++;
           }
-          return {count, closedAt};
+          return {count, closedAt, closedWall};
         }`,
         arguments: [{ value: gatewayUrl }],
         returnByValue: true,
@@ -161,14 +187,33 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
       startedAt =
         metrics.metrics.find(({ name }) => name === 'NavigationStart').value +
         closed.result.value.closedAt / 1000;
+      startedWall = closed.result.value.closedWall;
     }
   };
   try {
     const [, result] = await Promise.all([trigger(), read]);
     const after = await client.call('Performance.getMetrics');
-    if (phase === 'cold')
-      startedAt = after.metrics.find(({ name }) => name === 'NavigationStart').value;
+    const navigationStart = after.metrics.find(({ name }) => name === 'NavigationStart').value;
+    if (phase === 'cold') startedAt = navigationStart;
+    // An older gateway ends at its one full reply, exactly as the D07 baseline measured.
+    const merged = (phase === 'cold' || phase === 'reconnect') && versionRead;
+    if (merged) {
+      // The cache stamps observedAt when the catch-up merge completes; the page's time origin maps
+      // that wall time onto the navigation's CDP clock.
+      const ready = await client.call('Runtime.evaluate', {
+        expression: RUN_LIST_READY_AFTER(startedWall),
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      assert(
+        !ready.exceptionDetails,
+        ready.exceptionDetails?.exception?.description ?? 'The run list did not become ready',
+      );
+      readyAt =
+        navigationStart + (ready.result.value.observedAt - ready.result.value.timeOrigin) / 1000;
+    }
     assert(result.responseAt >= startedAt, 'Read predates this measurement');
+    if (merged) assert(readyAt >= result.responseAt, 'The run list was ready before its read');
     const destination = await client.call('Runtime.evaluate', {
       expression: 'location.hash',
       returnByValue: true,
@@ -204,13 +249,22 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
         after.metrics.find(({ name }) => name === 'NavigationStart').value +
         rendered.result.value.paintedAt / 1000;
     }
+    const catchUp = pages.filter(({ at }) => at <= readyAt);
     return {
       phase,
       method: result.method,
-      elapsedMs: Math.round((result.responseAt - startedAt) * 1000),
+      elapsedMs: Math.round(((merged ? readyAt : result.responseAt) - startedAt) * 1000),
       requestMs: Math.round((result.responseAt - result.requestAt) * 1000),
-      receivedBytes: result.receivedBytes,
+      receivedBytes: merged
+        ? received.filter(({ at }) => at <= readyAt).reduce((sum, { bytes }) => sum + bytes, 0)
+        : result.receivedBytes,
       responseBytes: result.responseBytes,
+      ...(merged
+        ? {
+            catchUpPages: catchUp.length,
+            catchUpBytes: catchUp.reduce((sum, { bytes }) => sum + bytes, 0),
+          }
+        : {}),
       ...(result.renderedAt === undefined
         ? {}
         : { renderedMs: Math.round((result.renderedAt - startedAt) * 1000) }),
@@ -221,9 +275,12 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
             firstRunListResponseBytes: firstRunList.responseBytes,
           }
         : {}),
-      timing: `${phase === 'reconnect' ? 'socket close' : 'navigation'} to ${phase === 'diff' ? 'matching diff' : 'inventory run.list'} reply, CDP monotonic timestamps`,
-      bytes:
-        'received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing',
+      timing: `${phase === 'reconnect' ? 'socket close' : 'navigation'} to ${
+        merged
+          ? "the run list's merged ready state (the cache's observedAt for the catch-up merge)"
+          : `${phase === 'diff' ? 'matching diff' : 'inventory run.list'} reply`
+      }, CDP monotonic timestamps`,
+      bytes: `received UTF-8 gateway application frames through ${merged ? 'that state' : 'that reply'}; excludes Vite and websocket framing`,
     };
   } finally {
     armed = false;
@@ -232,6 +289,22 @@ export async function measureOfflineClientStore({ connect, tab, phase, route, ga
     client.close();
   }
 }
+
+/**
+ * Waits in the page for the run list to report a ready observation stamped after `since` (wall
+ * milliseconds), and returns that stamp with the page's time origin.
+ */
+const RUN_LIST_READY_AFTER = (since) => `(async()=>{
+  const deadline=Date.now()+30000;
+  while(Date.now()<deadline){
+    const list=${DEEP_FIND}(document,'run-list');
+    const observedAt=Number(list?.getAttribute('data-runs-observed-at'));
+    if(list?.getAttribute('data-runs-status')==='ready'&&observedAt>${Number(since)})
+      return {observedAt,timeOrigin:performance.timeOrigin};
+    await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  throw Error('Open the run list (#runs) and wait for it to become ready before measuring');
+})()`;
 
 // Gate workspaces render inside run detail's shadow root, so lookups cross shadow roots.
 const DEEP_FIND = `((function find(root,selector){const hit=root.querySelector(selector);if(hit)return hit;for(const node of root.querySelectorAll('*'))if(node.shadowRoot){const found=find(node.shadowRoot,selector);if(found)return found;}}))`;

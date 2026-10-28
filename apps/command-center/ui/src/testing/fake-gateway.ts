@@ -29,6 +29,8 @@ interface FakeGatewayResponse {
 export interface FakeGateway {
   authPayload?: unknown;
   resourceEpoch?: string;
+  /** The `resourceChanges.versionLists` capability the next `auth.connect` reply advertises. */
+  versionLists?: boolean;
   responseForRequest?: (request: FakeGatewayRequest) => FakeGatewayResponse | undefined;
   beforeRestore?: () => void | Promise<void>;
   /** Every socket the client opened, oldest first. */
@@ -122,7 +124,7 @@ export function installFakeGateway(t: TestContext, principalId = 'operator'): Fa
                         resourceChanges: {
                           version: 1,
                           epoch: fake.resourceEpoch,
-                          versionLists: false,
+                          versionLists: fake.versionLists ?? false,
                           observedReads: 1,
                         },
                       }

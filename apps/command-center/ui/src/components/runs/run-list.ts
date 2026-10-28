@@ -78,9 +78,12 @@ import {
 } from './run-list-inventory.js';
 import {
   activeRunsForGlobalFilters,
+  countRunListProjections,
   filterRunList,
   isArchivableRun,
   runGradeColor,
+  type RunListFilters,
+  runListObservationAttributes,
   runProgressSummary,
   showsRunProgress,
   TERMINAL_STATUSES,
@@ -294,6 +297,13 @@ export class RunList extends RunListState {
     }
   }
 
+  protected override updated(changed: Map<string, unknown>): void {
+    super.updated(changed);
+    if (!changed.has('runsObservation')) return;
+    for (const [name, value] of Object.entries(runListObservationAttributes(this.runsObservation)))
+      this.setAttribute(name, value);
+  }
+
   async refreshTagFilter() {
     const [tag] = normalizeRunTags([this.tagFilter]);
     this.tagFilter = tag ?? '';
@@ -387,13 +397,10 @@ export class RunList extends RunListState {
     `;
   }
 
-  private get filteredRuns(): readonly Run[] {
-    return filterRunList({
+  private get listFilters(): RunListFilters {
+    return {
       familyFilter: this.familyFilter,
-      familyRuns: this.familyRuns,
       tagFilter: this.tagFilter,
-      tagRuns: this.tagRuns,
-      runs: this.runs,
       globalFilters: this.globalFilters,
       slotMachines: slotMachineMap(this.fleet?.slots ?? []),
       tab: this.tab,
@@ -401,6 +408,15 @@ export class RunList extends RunListState {
       flowFilter: this.flowFilter,
       laneFilter: this.laneFilter,
       searchQuery: this.searchQuery,
+    };
+  }
+
+  private get filteredRuns(): readonly Run[] {
+    return filterRunList({
+      ...this.listFilters,
+      familyRuns: this.familyRuns,
+      tagRuns: this.tagRuns,
+      runs: this.runs,
       sortBy: this.sortBy,
     });
   }
@@ -639,10 +655,15 @@ export class RunList extends RunListState {
     const compareAllowed =
       selectedRuns.length === 2 && canCompareRuns(selectedRuns[0], selectedRuns[1]);
     const selectedRunId = this.selectedRunId;
+    // With version lists, every live run's projection counts, even while some rows are not held.
+    const projections = getResourceCache()?.runListProjections?.();
+    const counts = projections
+      ? countRunListProjections(projections, this.listFilters)
+      : { total: this.runs.length, filtered: filtered.length };
 
     return html`
       ${renderRunListToolbar({
-        totalCount: this.runs.length,
+        totalCount: counts.total,
         tab: this.tab,
         activeCount,
         manageMode: this.manageMode,
@@ -663,8 +684,8 @@ export class RunList extends RunListState {
         flowFilter: this.flowFilter,
         laneFilter: this.laneFilter,
         sortBy: this.sortBy,
-        filteredCount: filtered.length,
-        totalCount: this.runs.length,
+        filteredCount: counts.filtered,
+        totalCount: counts.total,
         flowOptions: FLOW_OPTIONS,
         laneOptions: LANE_OPTIONS,
         sortOptions: SORT_OPTIONS,

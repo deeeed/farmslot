@@ -36,7 +36,7 @@ test('idle measurement counts matching outgoing reads without retaining request 
   assert(closed);
 });
 
-function fixture(frames, { closeCount = 1 } = {}) {
+function fixture(frames, { closeCount = 1, merged } = {}) {
   let receive;
   let closed = false;
   const socket = {
@@ -48,6 +48,14 @@ function fixture(frames, { closeCount = 1 } = {}) {
             { name: 'NavigationStart', value: 10 },
           ],
         };
+      if (method === 'Runtime.evaluate' && params.expression === 'Date.now()')
+        return { result: { value: 999_000 } };
+      if (method === 'Runtime.evaluate' && params.expression.includes('data-runs-observed-at'))
+        return merged
+          ? { result: { value: merged } }
+          : {
+              exceptionDetails: { exception: { description: 'Error: Open the run list (#runs)' } },
+            };
       if (method === 'Runtime.evaluate')
         return {
           result: {
@@ -69,7 +77,7 @@ function fixture(frames, { closeCount = 1 } = {}) {
             });
         });
         if (method === 'Runtime.callFunctionOn')
-          return { result: { value: { count: closeCount, closedAt: 50 } } };
+          return { result: { value: { count: closeCount, closedAt: 50, closedWall: 999_000 } } };
       }
       return {};
     },
@@ -105,6 +113,7 @@ test('bulk and first-list timings remain distinct and Vite bytes are excluded', 
     Buffer.byteLength(JSON.stringify(active) + JSON.stringify(inventory)),
   );
   assert.equal(result.runCount, 1);
+  assert.equal(result.catchUpPages, undefined, "an older gateway's cold start ends at its reply");
   assert(f.isClosed());
 });
 
@@ -137,6 +146,7 @@ test('reconnect excludes native-object discovery and refuses a missing socket', 
   ];
   const result = await measureOfflineClientStore({ ...fixture(frames), phase: 'reconnect' });
   assert.equal(result.elapsedMs, 350);
+  assert.equal(result.catchUpPages, undefined, "an older gateway's reconnect ends at its reply");
   const missing = fixture([], { closeCount: 0 });
   await assert.rejects(
     measureOfflineClientStore({ ...missing, phase: 'reconnect' }),
@@ -214,4 +224,121 @@ test('a connected gate open names the live file diff and its reply time', async 
   assert.equal(result.artifactBytes, 0);
   assert.equal(result.totalBytes, result.receivedBytes);
   assert(f.isClosed());
+});
+
+test('a version-list reconnect ends at the merged ready state, not at the version reply', async () => {
+  const versions = {
+    type: 'res',
+    id: 'versions',
+    ok: true,
+    payload: { runs: [], totalCount: 2, versions: [{ id: 'a' }, { id: 'b' }] },
+  };
+  const first = { type: 'res', id: 'page-1', ok: true, payload: { runs: ['a'] } };
+  const second = { type: 'res', id: 'page-2', ok: true, payload: { runs: ['b'] } };
+  const later = { type: 'event', event: 'resource.changed' };
+  const f = fixture(
+    [
+      [
+        'Sent',
+        { type: 'req', id: 'versions', method: 'run.list', params: { versions: true } },
+        10.1,
+      ],
+      ['Received', versions, 10.15],
+      ['Sent', { type: 'req', id: 'page-1', method: 'run.list', params: { ids: ['a'] } }, 10.16],
+      ['Received', first, 10.3],
+      ['Sent', { type: 'req', id: 'page-2', method: 'run.list', params: { ids: ['b'] } }, 10.31],
+      ['Received', second, 10.45],
+      ['Received', later, 10.6],
+    ],
+    // The cache stamped the merge 460 ms after the page's time origin.
+    { merged: { observedAt: 1_000_460, timeOrigin: 1_000_000 } },
+  );
+  const result = await measureOfflineClientStore({ ...f, phase: 'reconnect' });
+  assert.equal(result.elapsedMs, 410, 'socket close to merged ready');
+  assert.equal(result.firstRunListMs, 100, 'the version reply comes first');
+  assert.equal(result.runCount, 2);
+  assert.equal(result.catchUpPages, 2);
+  const size = (frame) => Buffer.byteLength(JSON.stringify(frame));
+  assert.equal(result.catchUpBytes, size(first) + size(second));
+  assert.equal(result.receivedBytes, size(versions) + size(first) + size(second));
+});
+
+test('a reconnect with nothing changed ends when the run list is ready after the version reply', async () => {
+  const f = fixture(
+    [
+      [
+        'Sent',
+        { type: 'req', id: 'versions', method: 'run.list', params: { versions: true } },
+        10.1,
+      ],
+      ['Received', { type: 'res', id: 'versions', ok: true, payload: { runs: [] } }, 10.15],
+    ],
+    { merged: { observedAt: 1_000_200, timeOrigin: 1_000_000 } },
+  );
+  const result = await measureOfflineClientStore({ ...f, phase: 'reconnect' });
+  assert.equal(result.elapsedMs, 150);
+  assert.equal(result.catchUpPages, 0);
+});
+
+test('a version-list reconnect is refused without the run list open to report its ready state', async () => {
+  const f = fixture([
+    ['Sent', { type: 'req', id: 'versions', method: 'run.list', params: { versions: true } }, 10.1],
+    ['Received', { type: 'res', id: 'versions', ok: true, payload: { runs: [] } }, 10.15],
+  ]);
+  await assert.rejects(
+    measureOfflineClientStore({ ...f, phase: 'reconnect' }),
+    /Open the run list/,
+  );
+  assert(f.isClosed());
+});
+
+test('a version-list cold start ends at the merged ready state, not at the version reply', async () => {
+  const versions = {
+    type: 'res',
+    id: 'versions',
+    ok: true,
+    payload: { runs: [], totalCount: 1, versions: [{ id: 'a' }] },
+  };
+  const page = { type: 'res', id: 'page', ok: true, payload: { runs: ['a'] } };
+  const later = { type: 'event', event: 'resource.changed' };
+  const f = fixture(
+    [
+      [
+        'Sent',
+        { type: 'req', id: 'versions', method: 'run.list', params: { versions: true } },
+        10.1,
+      ],
+      ['Received', versions, 10.15],
+      ['Sent', { type: 'req', id: 'page', method: 'run.list', params: { ids: ['a'] } }, 10.16],
+      ['Received', page, 10.3],
+      ['Received', later, 10.6],
+    ],
+    // The cache stamped the merge 350 ms after the page's time origin.
+    { merged: { observedAt: 1_000_350, timeOrigin: 1_000_000 } },
+  );
+  const result = await measureOfflineClientStore({ ...f, phase: 'cold' });
+  assert.equal(result.elapsedMs, 350, 'navigation to merged ready');
+  assert.equal(result.firstRunListMs, 150, 'the version reply comes first');
+  assert.equal(result.catchUpPages, 1);
+  const size = (frame) => Buffer.byteLength(JSON.stringify(frame));
+  assert.equal(result.receivedBytes, size(versions) + size(page));
+  assert.match(result.timing, /merged ready/);
+});
+
+test("an older gateway's reconnect ends at its single full reply, as the D07 baseline measured", async () => {
+  const reply = { type: 'res', id: 'list', ok: true, payload: { runs: ['a'] } };
+  const f = fixture(
+    [
+      ['Sent', { type: 'req', id: 'list', method: 'run.list', params: { limit: 1000 } }, 10.1],
+      ['Received', reply, 10.4],
+      ['Received', { type: 'event', event: 'resource.changed' }, 10.6],
+    ],
+    // A later ready stamp must not move the end of a reconnect without version lists.
+    { merged: { observedAt: 1_000_900, timeOrigin: 1_000_000 } },
+  );
+  const result = await measureOfflineClientStore({ ...f, phase: 'reconnect' });
+  assert.equal(result.elapsedMs, 350);
+  assert.equal(result.receivedBytes, Buffer.byteLength(JSON.stringify(reply)));
+  assert.match(result.timing, /inventory run\.list reply/);
+  assert.equal(result.catchUpPages, undefined);
 });
