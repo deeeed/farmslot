@@ -56,6 +56,17 @@ const binary = process.env.FARMSLOT_REVIEW_EXPECT_BINARY;
 if (binary) assert.ok(launch.includes(binary), 'Launch must use the configured machine executable');
 
 if (run.metrics.runner === 'codex') {
+  assert.equal(launchReceipt.codexHandshake, 'done');
+  assert.equal(
+    launchReceipt.folderAccess,
+    'restricted',
+    'Provisional composer is not folder consent',
+  );
+  assert.equal(
+    readFileSync(path.join(run.reviewWorkspace.taskPath, '.terminal-folder-access-claim'), 'utf8'),
+    run.id,
+    'Restricted consent must belong to this exact launch',
+  );
   assert.ok(
     launch.includes('trust_level=\\\"untrusted\\\"'),
     'The farm source trust must be explicit',
