@@ -1897,6 +1897,58 @@ test('runReviewRetryLoop: continues after a fix-signal timeout when budget remai
   assert.deepEqual(calls.markStatus, ['failed', 'complete']);
 });
 
+test('runReviewRetryLoop: an empty completed fix re-reviews a head changed since the retained verdict', async () => {
+  const reviewedHead = '25c2070c1f9e0edceb3411a19ac7f738d9bbbf55';
+  const fixedHead = '1ec7a14571b25d0030410d5d9abbbf1d72c194d2';
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixDeltaFiles: 0,
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  deps.getRun = () => makeRun({ engineState: { reviewInputsAtLaunch: 'unchanged' } });
+  deps.readFixedInputs = async () => ({ fingerprint: 'unchanged', legacyFingerprint: 'unchanged' });
+  deps.captureHeadSha = async () => fixedHead;
+  const reviewAgent = deps.runReviewAgent;
+  deps.runReviewAgent = async (...args) => ({
+    ...(await reviewAgent(...args)),
+    reviewSnapshot: {
+      source: 'local-git',
+      headSha: fixedHead,
+      capturedAt: new Date().toISOString(),
+    },
+  });
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: {
+      verdict: 'issues',
+      issues: ISSUES,
+      reviewId: 'review-2',
+      reviewSnapshot: {
+        source: 'local-git',
+        headSha: reviewedHead,
+        capturedAt: new Date().toISOString(),
+      },
+    },
+    retryCount: 0,
+    deps,
+  });
+  assert.equal(calls.reviewAgent, 1);
+  assert.deepEqual(calls.modes, ['warm']);
+  assert.deepEqual(calls.reviewIds, ['review-2']);
+  assert.equal(calls.rereviews[0]?.lastReviewedHeadSha, reviewedHead);
+  assert.equal(result.verdict, 'pass');
+  const gateReview = buildPublishGateReviewStatus({
+    source: 'human-gate',
+    priorReviewCount: 1,
+    reviewResult: result,
+    requestedRunner: 'codex',
+    reviewId: 'review-2',
+  });
+  assert.equal(gateReview.reviewedHeadSha, fixedHead);
+  assert.equal(gateReview.unresolvedCount, 0);
+});
+
 test('runReviewRetryLoop: an empty completed fix returns unchanged findings to the gate', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: ['issues', 'issues', 'issues'],
@@ -1911,7 +1963,15 @@ test('runReviewRetryLoop: an empty completed fix returns unchanged findings to t
   const result = await runReviewRetryLoop({
     ...baseArgs,
     maxRetries: 3,
-    reviewResult: { verdict: 'issues', issues: ISSUES },
+    reviewResult: {
+      verdict: 'issues',
+      issues: ISSUES,
+      reviewSnapshot: {
+        source: 'local-git',
+        headSha: 'base-head',
+        capturedAt: new Date().toISOString(),
+      },
+    },
     retryCount: 0,
     deps,
   });

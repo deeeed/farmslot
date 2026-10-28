@@ -13,6 +13,79 @@ import { reviewsWithValidResults } from '../run-engine/gate-prerequisites.js';
 import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 import { makeRun } from './test-fixtures.js';
 
+test('an accepted small fix validates its original structured verdict without another review', async () => {
+  const base = '1ec7a14571b25d0030410d5d9abbbf1d72c194d2';
+  const head = '7f0a2f51fca7c78aa0a8e90867b5c06abdb900de';
+  const issues = [
+    { file: 'orderbook.ts', description: 'Handle decimal boundaries', severity: 'major' as const },
+  ];
+  const snapshot = (headSha: string) => ({
+    source: 'local-git' as const,
+    baseSha: 'review-base',
+    baseRef: 'origin/main',
+    headSha,
+    capturedAt: '2026-10-27T23:34:01Z',
+  });
+  const prior: ReviewAttempt = {
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues,
+    reviewSnapshot: snapshot(base),
+    artifactPaths: ['artifacts/retained/review-loop-1/review-result.json'],
+  };
+  const fix: ReviewAttempt = {
+    mode: 'cold',
+    loopNumber: 2,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    issues: [],
+    reviewSnapshot: snapshot(head),
+    fixDelta: {
+      source: 'local-git',
+      fixBaseSha: base,
+      fixHeadSha: head,
+      capturedAt: '2026-10-27T23:33:52Z',
+    },
+    timeline: [
+      {
+        kind: 'worker-fix',
+        loopNumber: 2,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        startedAt: '2026-10-27T23:33:39Z',
+      },
+    ],
+    artifactPaths: ['artifacts/retained/review-loop-2/fix-delta.diff'],
+  };
+  const review: ReviewStatus = {
+    id: 'retained',
+    mode: 'cold',
+    reviewerSessionId: 'retained-session',
+    verdict: 'pass',
+    unresolvedCount: 0,
+    loopNumber: 1,
+    reviewSnapshot: snapshot(head),
+    reviewedHeadSha: head,
+    attempts: [prior, fix],
+  };
+  const run = makeRun({ taskFile: undefined, engineState: { publishGate: { reviews: [review] } } });
+  const read = async (_run: typeof run, artifact: string) => {
+    assert.equal(artifact, prior.artifactPaths![0]);
+    return JSON.stringify({ schemaVersion: 1, verdict: 'issues', issues });
+  };
+  assert.deepEqual(await reviewsWithValidResults(run, read), [review]);
+  assert.deepEqual(await reviewsWithValidResults(run, async () => undefined), []);
+  run.engineState!.publishGate!.reviews = [
+    {
+      ...review,
+      attempts: [prior, { ...fix, fixDelta: { ...fix.fixDelta!, fixBaseSha: 'unrelated' } }],
+    },
+  ];
+  assert.deepEqual(await reviewsWithValidResults(run, read), []);
+});
+
 test('an unchanged blocked fix retains its last reviewed findings and snapshot', async () => {
   const head = 'c'.repeat(40);
   const issues = [{ file: 'evidence-manifest.json', description: 'AC-1 needs person acceptance' }];
