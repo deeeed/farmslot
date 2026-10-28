@@ -57,6 +57,7 @@ function observeRunListVersionFill(ref: string) {
           totalCount: history.data?.totalCount,
         },
         pendingRunLists: meter?.pendingRunLists() ?? 0,
+        framesSent: meter?.framesSent() ?? 0,
         frames: meter?.runListFrames() ?? [],
       },
     },

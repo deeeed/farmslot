@@ -5,6 +5,7 @@ import {
   type GatewayAuthConnectResult,
   mergeRunListObservations,
   Methods,
+  RUN_LIST_UNLIMITED,
   type RunListResult,
 } from '@farmslot/protocol';
 import {
@@ -30,9 +31,13 @@ export const nativeRunHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LI
   limit: HISTORY_RUN_LIST_LIMIT,
   sort: 'newest',
 });
-/** With version lists, history is a view of the shared row collection: every live run. */
+/**
+ * With version lists, history is a view of the shared row collection: every live run. The open
+ * list would page at 500 rows, so it asks for all of them.
+ */
 export const nativeVersionedRunHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, {
   sort: 'newest',
+  limit: RUN_LIST_UNLIMITED,
 });
 
 /**
@@ -136,9 +141,11 @@ export class NativeRunCollections {
     this.emit();
   }
 
-  /** The history row bound this gateway reads under; none with version lists. */
+  /** The row bound of the history this gateway reads, from its query; none when unlimited. */
   historyLimit(): number | null {
-    return this.versionLists === false ? HISTORY_RUN_LIST_LIMIT : null;
+    const [shown] = nativeRunHistoryQueries(this.versionLists);
+    const limit = (shown.params as { limit?: number }).limit;
+    return limit === undefined || limit === RUN_LIST_UNLIMITED ? null : limit;
   }
 
   async retryDecisions(): Promise<void> {

@@ -126,3 +126,40 @@ test('a version-list reconnect is measured to its last catch-up page, logging ea
   assert.equal(meter.connection(), 2);
   assert.equal(meter.runListFrames().length, 2, 'the frame log outlives a phase change');
 });
+
+test('the merged sample ends when the cache stamped the merge, with the bytes received by then', () => {
+  const spin = (ms: number) => {
+    const end = performance.now() + ms;
+    while (performance.now() < end);
+  };
+  const meter = createOfflineClientStoreBaseline(() => assert.fail('Unexpected transport change'));
+  meter.begin('reconnect');
+  const receive = (
+    frame: { type: 'res'; id: string; ok: true; payload: unknown } | { type: 'event' },
+  ) => {
+    const raw = JSON.stringify(frame);
+    meter.received(raw, frame as never);
+    return Buffer.byteLength(raw);
+  };
+  meter.sent({ type: 'req', id: 'versions', method: 'run.list', params: { versions: true } });
+  let bytes = receive({
+    type: 'res',
+    id: 'versions',
+    ok: true,
+    payload: { runs: [], versions: [] },
+  });
+  meter.sent({ type: 'req', id: 'page', method: 'run.list', params: { ids: ['a'] } });
+  bytes += receive({ type: 'res', id: 'page', ok: true, payload: { runs: [{ id: 'a' }] } });
+  const lastReply = meter.snapshot().at(-1)!;
+  // The merge into the store takes a while, and an unrelated frame lands before it is stamped.
+  spin(30);
+  bytes += receive({ type: 'event' });
+  spin(5);
+  const mergedWall = Date.now();
+  spin(5);
+  receive({ type: 'event' });
+  const merged = meter.merged({ status: 'ready', observedAt: mergedWall })!;
+  assert(merged.elapsedMs >= lastReply.elapsedMs + 30, 'the merge time, not the last reply');
+  assert.equal(merged.receivedBytes, bytes, 'bytes through the merge, not after it');
+  assert.equal(merged.runListReplies, 2);
+});

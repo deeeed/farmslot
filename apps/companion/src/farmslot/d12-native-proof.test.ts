@@ -137,6 +137,8 @@ const inputs = (cache: never, ready = true) => ({
   cache,
   owner: 'owner',
   gateScreens: [{ decisionId: 'gate-1', ready, details: ready }],
+  diffScreens: [{ runId: 'run-gate', packageDiff: true }],
+  images: [{ id: PNG_SHA, state: 'loaded' as const, mountId: 3 }],
   image: { id: PNG_SHA, state: 'loaded' as const, mountId: 3 },
 });
 
@@ -155,8 +157,8 @@ test('the d12-native observation reports the gate, catalog, upstream and image t
       opened: true,
       details: true,
       diff: true,
-      bothSides: true,
-      images: [{ sha256: PNG_SHA, verified: true }],
+      images: [{ sha256: PNG_SHA, loaded: true }],
+      held: { diff: true, bothSides: true, images: [{ sha256: PNG_SHA, verified: true }] },
     },
     catalog: { models: ['gpt-a', 'gpt-b', 'sonnet'] },
     upstream: {
@@ -177,16 +179,46 @@ test('missing or wrong held content and an unopened screen are reported, never a
   const gate = (await proof.d12NativeObservation(inputs(cache, false))).gate!;
   assert.equal(gate.opened, false);
   assert.equal(gate.details, false);
-  assert.equal(gate.bothSides, false, 'a base blob is missing');
-  assert.deepEqual(gate.images, [{ sha256: PNG_SHA, verified: false }]);
+  assert.equal(gate.held.bothSides, false, 'a base blob is missing');
+  assert.deepEqual(gate.held.images, [{ sha256: PNG_SHA, verified: false }]);
   content.delete(`diff:${DIFF_HASH}`);
   const empty = (await proof.d12NativeObservation(inputs(cache))).gate!;
   assert.equal(empty.packageHeld, false);
-  assert.equal(empty.diff, false);
-  assert.equal(empty.bothSides, false);
+  assert.equal(empty.held.diff, false);
+  assert.equal(empty.held.bothSides, false);
   const none = await proof.d12NativeObservation({ ...inputs(cache), cache: undefined as never });
   assert.equal(none.gate, undefined);
   assert.deepEqual(none.catalog, { models: [] });
+});
+
+test('held bytes alone never claim a rendered gate: the diff screen and each image load must report it', async () => {
+  const proof = await load();
+  const { cache } = world();
+  const unrendered = {
+    ...inputs(cache),
+    diffScreens: [],
+    images: [],
+  };
+  const gate = (await proof.d12NativeObservation(unrendered)).gate!;
+  assert.deepEqual(gate.held, {
+    diff: true,
+    bothSides: true,
+    images: [{ sha256: PNG_SHA, verified: true }],
+  });
+  assert.equal(gate.diff, false, 'no Diff screen rendered the package diff');
+  assert.deepEqual(gate.images, [{ sha256: PNG_SHA, loaded: false }]);
+  const otherRun = { ...unrendered, diffScreens: [{ runId: 'run-other', packageDiff: true }] };
+  assert.equal((await proof.d12NativeObservation(otherRun)).gate!.diff, false);
+  const failedMount = {
+    ...unrendered,
+    images: [
+      { id: PNG_SHA, state: 'loaded' as const, mountId: 3 },
+      { id: PNG_SHA, state: 'failed' as const, mountId: 4 },
+    ],
+  };
+  assert.deepEqual((await proof.d12NativeObservation(failedMount)).gate!.images, [
+    { sha256: PNG_SHA, loaded: false },
+  ]);
 });
 
 test('the observer reports the image that failed until that same mount loads, and counts sent frames', async () => {

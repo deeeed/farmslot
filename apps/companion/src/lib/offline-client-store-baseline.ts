@@ -30,6 +30,7 @@ export interface RunListFrame {
 }
 
 const RUN_LIST_FRAMES = 200;
+const ARRIVALS = 2000;
 /** A request with no reply after this has failed or timed out, and no longer counts as pending. */
 const PENDING_RUN_LIST_MS = 60_000;
 
@@ -88,6 +89,10 @@ export function createOfflineClientStoreBaseline(interrupt: () => void) {
   let receivedBytes = 0;
   // Wall clock, like a query's observedAt.
   let phaseBegan = Date.now();
+  // Maps a wall-clock observedAt onto the frame clock (performance.now()).
+  const wallOrigin = Date.now() - performance.now();
+  /** Received bytes so far after each frame of this phase, on the frame clock. */
+  const arrivals: Array<{ at: number; bytes: number }> = [];
   let target: { runId?: string; slotId?: string } | undefined;
   const encoder = new TextEncoder();
   return {
@@ -111,6 +116,7 @@ export function createOfflineClientStoreBaseline(interrupt: () => void) {
       startedAt = next === 'cold' ? (nativeStart ?? 0) : performance.now();
       receivedBytes = 0;
       phaseBegan = Date.now();
+      arrivals.length = 0;
       pending.clear();
       samples.length = 0;
       // A reconnect begins when the socket closes; its unanswered reads died with it.
@@ -142,6 +148,8 @@ export function createOfflineClientStoreBaseline(interrupt: () => void) {
     received(raw: string, frame: ResponseFrame | { type: 'event' }) {
       const bytes = encoder.encode(raw).byteLength;
       receivedBytes += bytes;
+      arrivals.push({ at: performance.now(), bytes: receivedBytes });
+      if (arrivals.length > ARRIVALS) arrivals.shift();
       if (frame.type !== 'res') return;
       const listed = runLists.get(frame.id);
       if (listed) {
@@ -196,9 +204,10 @@ export function createOfflineClientStoreBaseline(interrupt: () => void) {
     /** run.list reads still awaiting a reply on this socket. */
     pendingRunLists,
     /**
-     * Decision 8: a run list read ends at the merged run list, after a version-list read's last
-     * catch-up page, not at its small version reply. Undefined until no run.list read is pending
-     * and the run list was read since the phase began.
+     * Decision 8: a run list read ends at the merged run list, when the cache stamped its catch-up
+     * merge (`observedAt`, on the frame clock), not at the last reply. Its bytes are those received
+     * by then. Undefined until no run.list read is pending and the run list was read since the
+     * phase began.
      */
     merged(runs: { status: string; observedAt?: number }): OfflineBaselineSample | undefined {
       const read = samples.filter(
@@ -208,12 +217,21 @@ export function createOfflineClientStoreBaseline(interrupt: () => void) {
       if (
         phase === 'diff' ||
         !last ||
+        runs.observedAt === undefined ||
         pendingRunLists() > 0 ||
         runs.status !== 'ready' ||
-        (runs.observedAt ?? 0) < phaseBegan
+        runs.observedAt < phaseBegan
       )
         return undefined;
-      return { ...last, runListReplies: read.length };
+      // The merge follows its last reply; millisecond wall time cannot place it earlier.
+      const endedAt = Math.max(runs.observedAt - wallOrigin, startedAt + last.elapsedMs);
+      const bytes = arrivals.filter((arrival) => arrival.at <= endedAt + 1).at(-1)?.bytes;
+      return {
+        ...last,
+        elapsedMs: Math.round(endedAt - startedAt),
+        receivedBytes: bytes ?? last.receivedBytes,
+        runListReplies: read.length,
+      };
     },
     connection: () => connection,
     /** Request frames sent since launch or the last reset; a cold offline start sends none. */

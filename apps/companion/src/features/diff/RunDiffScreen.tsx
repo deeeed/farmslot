@@ -14,6 +14,7 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { MobileDiffViewer } from '../../components/MobileDiffViewer';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
+import { observeD12RunDiff, type RunDiffFrame } from '../../farmslot/d12-native-proof';
 import { observeNativeDiffFrame } from '../../farmslot/run-collections-proof';
 import { useActiveRunDiffQuery, useGateDiffContent } from '../../hooks/useHeldContent';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
@@ -176,6 +177,12 @@ export default function DiffViewerScreen() {
   );
   const gateDiffText = gateDiff.status === 'ready' ? gateDiff.text : '';
   const gateDiffActive = !gateDiffFallsBack(gateDiff);
+  // Dev-only recipe evidence: this screen renders its gate's package diff.
+  const d12Frame = useRef<RunDiffFrame>({ runId: '', packageDiff: false });
+  d12Frame.current = { runId, packageDiff: Boolean(gateDiffText) };
+  useEffect(() => {
+    if (__DEV__) return observeD12RunDiff(() => d12Frame.current);
+  }, []);
   const recipeRunUrlParam =
     selectedRecipeRun && selectedRecipeRun.groupKind !== CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
       ? selectedRecipeRun.id

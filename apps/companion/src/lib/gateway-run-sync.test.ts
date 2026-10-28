@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type {
-  FleetStatus,
-  GatewayAuthConnectResult,
-  ResourceChangedPayload,
-  Run,
+import {
+  type FleetStatus,
+  type GatewayAuthConnectResult,
+  type ResourceChangedPayload,
+  type Run,
+  RUN_LIST_UNLIMITED,
+  type RunListParams,
 } from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
@@ -223,7 +225,10 @@ function recordingCache() {
 }
 
 test('a gateway with version lists observes the whole history; an older one keeps the 80-row read', async () => {
-  assert.deepEqual(nativeVersionedRunHistoryQuery.params, { sort: 'newest' });
+  assert.deepEqual(nativeVersionedRunHistoryQuery.params, {
+    sort: 'newest',
+    limit: RUN_LIST_UNLIMITED,
+  });
   assert.deepEqual(nativeRunHistoryQuery.params, { limit: HISTORY_RUN_LIST_LIMIT, sort: 'newest' });
   const { cache, observed } = recordingCache();
   const collections = new NativeRunCollections(() => {});
@@ -284,4 +289,76 @@ test('a version read and each catch-up page get the full request deadline', () =
   assert.equal(nativeCollectionReadTimeout('run.list', { active: true, ids: ['a'] }), 60_000);
   assert.equal(nativeCollectionReadTimeout('run.list', { active: true }), 20_000);
   assert.equal(nativeCollectionReadTimeout('run.list', undefined), 60_000);
+});
+
+test("with version lists, every completed run reaches history, past the open list's 500 rows", async () => {
+  const runs = Array.from({ length: 501 }, (_, index) => ({
+    ...run(`done-${String(index).padStart(3, '0')}`),
+    createdAt: new Date(Date.UTC(2026, 0, 1) + index * 60_000).toISOString(),
+  }));
+  const live = new Map(runs.map((entry) => [entry.id, entry]));
+  const reads: RunListParams[] = [];
+  const connection: ResourceCacheConnection = {
+    id: 1,
+    connected: true,
+    authMode: 'token',
+    scope: { gatewayUrl: 'ws://history.invalid/', principalId: 'owner', principalGeneration: 0 },
+    authority: { roles: [], workspaceAccess: 'farm' },
+    capabilities: {
+      httpBearerAuth: true,
+      voiceInstructionFormatting: false,
+      resourceChanges: { version: 1, epoch: 'history', versionLists: true },
+    },
+  };
+  const transport: ResourceCacheTransport = {
+    getConnection: () => connection,
+    onConnectionChange: () => () => {},
+    onResourceChanged: () => () => {},
+    resynchronize: () => {},
+    async request<T>(method: ResourceReadMethod, params: unknown) {
+      assert.equal(method, 'run.list');
+      const value = (params ?? {}) as RunListParams;
+      reads.push(value);
+      const served = value.ids ? value.ids.map((id) => live.get(id)!) : [];
+      const data = value.versions
+        ? {
+            runs: [],
+            totalCount: live.size,
+            versions: runs.map(({ id }) => ({ id, version: 'v1' })),
+          }
+        : {
+            runs: served,
+            totalCount: served.length,
+            versions: served.map(({ id }) => ({ id, version: 'v1' })),
+          };
+      return {
+        data: data as T,
+        resourceState: {
+          epoch: 'history',
+          dependencies: [{ key: { family: 'runs', scope: 'farm' }, revision: 1 }],
+        },
+      };
+    },
+  };
+  const cache = createGatewayResourceCache({ transport, store: createMemoryResourceStore() });
+  const collections = new NativeRunCollections(() => {});
+  try {
+    collections.bind(cache, 'owner', true);
+    await collections.openHistory();
+    for (let turn = 0; turn < 200 && collections.historyObservation()?.status !== 'ready'; turn++)
+      await new Promise((resolve) => setImmediate(resolve));
+    const history = collections.historyObservation()!;
+    assert.equal(history.status, 'ready');
+    assert.equal(history.data?.totalCount, 501);
+    assert.equal(history.data?.runs.length, 501, 'no run past the 500th is dropped');
+    assert.equal(history.data?.runs[0]?.id, 'done-500', 'newest first');
+    assert.equal(collections.historyLimit(), null, 'the observer reports no cap, matching it');
+    assert(
+      reads.every((params) => params.versions || params.ids),
+      'only version reads and pages',
+    );
+  } finally {
+    collections.dispose();
+    await cache.dispose();
+  }
 });

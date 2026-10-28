@@ -1,7 +1,8 @@
 /**
- * Dev-only `d12-native` recipe observer for the D12 native boot (prove-d12-native.mjs). It reads
- * the shared cache entries and held content the screens render, and the frames mounted screens
- * report, so it shows what the user sees. It never reads the gateway or drives app state.
+ * Dev-only `d12-native` recipe observer for the D12 native boot (prove-d12-native.mjs). Rendering
+ * claims come only from what mounted screens and images report; what the store holds is reported
+ * apart, under `gate.held`, so stored bytes alone never claim a rendered gate. It never reads the
+ * gateway or drives app state.
  */
 import {
   HUMAN_GATE_DECISION_TYPE,
@@ -45,11 +46,17 @@ export interface GateReviewFrame {
   ready: boolean;
   details: boolean;
 }
+/** Whether a mounted run Diff screen renders its open gate's package diff. */
+export interface RunDiffFrame {
+  runId: string;
+  packageDiff: boolean;
+}
 
 const images = new Map<number, ArtifactImageFrame>();
 let lastFailed: number | undefined;
 let lastMounted: number | undefined;
 const gateScreens = new Set<() => GateReviewFrame>();
+const diffScreens = new Set<() => RunDiffFrame>();
 
 export function reportArtifactImage(frame: ArtifactImageFrame): void {
   if (!images.has(frame.mountId)) lastMounted = frame.mountId;
@@ -65,6 +72,12 @@ export function observeD12GateReview(read: () => GateReviewFrame): () => void {
     gateScreens.delete(read);
   };
 }
+export function observeD12RunDiff(read: () => RunDiffFrame): () => void {
+  diffScreens.add(read);
+  return () => {
+    diffScreens.delete(read);
+  };
+}
 
 type ProofCache = Pick<GatewayResourceCache, 'read' | 'hasContent' | 'readContent'>;
 
@@ -77,6 +90,9 @@ export interface D12NativeInputs {
   cache: ProofCache | undefined;
   owner?: string;
   gateScreens: readonly GateReviewFrame[];
+  diffScreens: readonly RunDiffFrame[];
+  /** Every mounted ArtifactImage. */
+  images: readonly ArtifactImageFrame[];
   /** The mount that most recently failed while still mounted, else the latest mount. */
   image?: ArtifactImageFrame;
 }
@@ -112,8 +128,14 @@ async function verified(
   return data ? { data, verified: verifyResourceContent(key, data, untracked) } : undefined;
 }
 
-/** The first pending ready gate in the shared decisions observation, as its screens show it. */
-async function gateObservation(cache: ProofCache, screens: readonly GateReviewFrame[]) {
+/**
+ * The first pending ready gate in the shared decisions observation. `opened`, `details`, `diff`
+ * and each image's `loaded` are what mounted renderers report; `held` is what the store holds.
+ */
+async function gateObservation(
+  cache: ProofCache,
+  { gateScreens, diffScreens, images: mounted }: D12NativeInputs,
+) {
   const pending = (cache.read(nativeDecisionsQuery).data?.decisions ?? []).find(
     (decision) => decision.type === HUMAN_GATE_DECISION_TYPE && decision.payload?.kind === 'ready',
   );
@@ -131,7 +153,15 @@ async function gateObservation(cache: ProofCache, screens: readonly GateReviewFr
   });
   const source = gateDiffSource(run);
   const diff = source ? await verified(cache, source.key, source.untrackedFiles) : undefined;
-  const screen = screens.find((frame) => frame.decisionId === pending.id);
+  const screen = gateScreens.find((frame) => frame.decisionId === pending.id);
+  // An image counts as rendered once a mount loaded it and none of its mounts failed.
+  const loaded = (sha256: string) => {
+    const shown = mounted.filter((frame) => frame.id === sha256);
+    return (
+      shown.some((frame) => frame.state === 'loaded') &&
+      shown.every((frame) => frame.state === 'loaded' || frame.state === 'loading')
+    );
+  };
   const held = async () => {
     if (!source || !(await cache.hasContent(source.key))) return false;
     for (const { key, cached } of imageKeys)
@@ -143,17 +173,21 @@ async function gateObservation(cache: ProofCache, screens: readonly GateReviewFr
     packageHeld: await held(),
     opened: screen?.ready === true,
     details: screen?.details === true,
-    diff: diff?.verified === true,
-    // No Companion screen renders both sides; this is what prefetch holds for them.
-    bothSides:
-      diff?.verified === true &&
-      (await bothSidesHeld(cache, new TextDecoder().decode(diff.data), source?.untrackedFiles)),
-    images: await Promise.all(
-      imageKeys.map(async ({ key }) => ({
-        sha256: key.id,
-        verified: (await verified(cache, key))?.verified === true,
-      })),
-    ),
+    diff: diffScreens.some((frame) => frame.runId === runId && frame.packageDiff),
+    images: imageKeys.map(({ key }) => ({ sha256: key.id, loaded: loaded(key.id) })),
+    held: {
+      diff: diff?.verified === true,
+      // No Companion screen renders both sides; this is what prefetch holds for them.
+      bothSides:
+        diff?.verified === true &&
+        (await bothSidesHeld(cache, new TextDecoder().decode(diff.data), source?.untrackedFiles)),
+      images: await Promise.all(
+        imageKeys.map(async ({ key }) => ({
+          sha256: key.id,
+          verified: (await verified(cache, key))?.verified === true,
+        })),
+      ),
+    },
   };
 }
 
@@ -188,7 +222,7 @@ export async function d12NativeObservation(inputs: D12NativeInputs) {
     epoch: inputs.epoch,
     connectionId: inputs.connectionId,
     framesSent: inputs.framesSent,
-    gate: cache ? await gateObservation(cache, inputs.gateScreens) : undefined,
+    gate: cache ? await gateObservation(cache, inputs) : undefined,
     catalog: cache ? catalogObservation(cache, inputs.owner) : { models: [] },
     upstream: cache ? upstreamObservation(cache) : { prs: [] },
     image: inputs.image,
@@ -212,6 +246,8 @@ export async function observeD12Native(ref: string) {
         cache: getResourceCache(),
         owner: getResourceNativeOwnerId(),
         gateScreens: [...gateScreens].map((read) => read()),
+        diffScreens: [...diffScreens].map((read) => read()),
+        images: [...images.values()],
         image: failed ?? (lastMounted === undefined ? undefined : images.get(lastMounted)),
       }),
     },
