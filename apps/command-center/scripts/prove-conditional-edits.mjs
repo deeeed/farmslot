@@ -179,12 +179,17 @@ const dropGatewaySocket = (target) =>
     await call('Runtime.releaseObjectGroup', { objectGroup: 'conditional-edits-proof' });
     return closed.result.value;
   }, target);
-/** Real pointer input at the centre of the first matching element, searched across shadow roots. */
+/**
+ * Real pointer input at the centre of the first matching element, searched across shadow roots.
+ * A slow render gets up to 10 s for the element to appear before the click fails.
+ */
 const clickElement = (target, selector, textIncludes) =>
   devtools(async (call) => {
     await call('Page.bringToFront');
-    const { result, exceptionDetails } = await call('Runtime.evaluate', {
-      expression: `(() => {
+    let found;
+    for (const end = Date.now() + 10000; ; await delay(250)) {
+      found = await call('Runtime.evaluate', {
+        expression: `(() => {
         const all = (root, found = []) => {
           found.push(...root.querySelectorAll(${JSON.stringify(selector)}));
           for (const node of root.querySelectorAll('*')) if (node.shadowRoot) all(node.shadowRoot, found);
@@ -199,8 +204,11 @@ const clickElement = (target, selector, textIncludes) =>
         const rect = element.getBoundingClientRect();
         return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
       })()`,
-      returnByValue: true,
-    });
+        returnByValue: true,
+      });
+      if (!found.exceptionDetails || Date.now() >= end) break;
+    }
+    const { result, exceptionDetails } = found;
     if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? selector);
     for (const type of ['mousePressed', 'mouseReleased'])
       await call('Input.dispatchMouseEvent', {
@@ -233,15 +241,19 @@ const editorWidth = (target) =>
     target,
     `const all=(root,found=[])=>{found.push(...root.querySelectorAll('.monaco-editor'));for(const node of root.querySelectorAll('*'))if(node.shadowRoot)all(node.shadowRoot,found);return found;};return Math.max(0,...all(document).filter((node)=>node.getClientRects().length>0).map((node)=>node.getBoundingClientRect().width))`,
   ]);
-/** A busy slot can open its run drawer and task panel beside the editor; close them for room. */
+/**
+ * A busy slot can open its run drawer and task panel beside the editor, and on a loaded host they
+ * can open late. For up to 20 s, every 500 ms, close whichever is visible until the editor has room.
+ */
 async function ensureEditorRoom(target) {
-  for (const selector of [
-    '.sv-review-header button.sv-task-panel-close:not([title])',
-    '.sv-task-panel-header .sv-task-panel-close',
-  ]) {
-    if ((await editorWidth(target)) >= 300) return;
-    await clickElement(target, selector).catch(() => undefined);
-    await delay(400);
+  const end = Date.now() + 20000;
+  while ((await editorWidth(target)) < 300 && Date.now() < end) {
+    for (const selector of [
+      '.sv-review-header button.sv-task-panel-close:not([title])',
+      '.sv-task-panel-header .sv-task-panel-close',
+    ])
+      if (await visible(target, selector)) await clickElement(target, selector);
+    await delay(500);
   }
   assert((await editorWidth(target)) >= 300, 'The editor has room to type');
 }
@@ -366,8 +378,11 @@ async function recordFrames(target, label) {
   });
   const raw = createWriteStream(path.join(artifacts, `frames-${label}.jsonl`), { mode: 0o600 });
   const rows = [];
+  let enabled;
+  const networkEnabled = new Promise((resolve) => (enabled = resolve));
   socket.on('message', (data) => {
-    const { method, params } = JSON.parse(String(data));
+    const { id, method, params } = JSON.parse(String(data));
+    if (id === 1) enabled();
     if (!['Network.webSocketFrameSent', 'Network.webSocketFrameReceived'].includes(method)) return;
     const payload = params.response.payloadData;
     const dir = method.endsWith('Sent') ? 'sent' : 'received';
@@ -425,7 +440,7 @@ async function recordFrames(target, label) {
     rows.push(row);
   });
   socket.send(JSON.stringify({ id: 1, method: 'Network.enable' }));
-  await delay(300);
+  await networkEnabled;
   return {
     rows,
     since: (wall) => rows.filter((row) => row.wall >= wall),
@@ -487,7 +502,8 @@ evidence.clearedDraftDatabases = await cdp([
      ]);
    return names`,
 ]);
-assert((await cdp(['login', A])).authenticated);
+// The login helper waits only 5 s for the connection; the wait below asserts it.
+await cdp(['login', A]);
 await dismissUpdateNotice(A);
 const signedIn = await until(
   (value) =>
@@ -568,8 +584,22 @@ if (phase('d08')) {
   if (!(await basePicker())) await clickElement(A, 'button[title^="Branch Changes"]');
   await waitFor(basePicker, 'The base picker is shown');
   await clickElement(A, '.base-btn');
-  await delay(300);
-  await typeKeys(A, { text: 'main', enter: true });
+  // The filter takes focus once the dropdown renders, and the branch list can load after it.
+  await waitFor(
+    () =>
+      cdp([
+        'eval',
+        A,
+        `const all=(root,found=[])=>{found.push(...root.querySelectorAll('.base-dropdown-input'));for(const node of root.querySelectorAll('*'))if(node.shadowRoot)all(node.shadowRoot,found);return found;};const input=all(document)[0];return Boolean(input&&input.getRootNode().activeElement===input)`,
+      ]),
+    'The base filter has focus',
+    { target: A },
+  );
+  await typeKeys(A, { text: 'main' });
+  await waitFor(() => visible(A, '.base-dropdown-item', 'main'), 'main is offered as a base', {
+    target: A,
+  });
+  await typeKeys(A, { enter: true });
   const newer = await until(
     (value) =>
       value.slot?.branchDiffBase === 'main' &&
@@ -795,9 +825,13 @@ if (phase('saves')) {
     { target: A, timeout: 30000 },
   );
   await typeInEditor(A, '// D11 typed while the save was in flight');
-  const during = await inspect(A, { indexedDb: true, editorText: true });
+  const during = await until(
+    (value) => value.slot?.editor?.value?.includes('typed while the save was in flight'),
+    'The text typed during the save shows',
+    A,
+    { interval: 250, params: { indexedDb: true, editorText: true } },
+  );
   assert(!replyTo(owner.rows, first), 'The first save is still in flight after the typing');
-  assert(during.slot.editor.value.includes('typed while the save was in flight'));
   const firstReply = await waitFor(() => replyTo(owner.rows, first), 'The first save answers', {
     target: A,
     timeout: 30000,
@@ -851,7 +885,14 @@ if (phase('saves')) {
     await typeInEditor(A, `// D11 user edit kept as ${keep}`);
     await delay(3000);
     assert.equal(fsWrites(typed, 'work', file).length, 0, 'A busy slot never autosaves');
-    const mine = (await inspect(A, { editorText: true })).slot.editor.value;
+    const mine = (
+      await until(
+        (value) => value.slot?.editor?.value?.includes(`kept as ${keep}`),
+        `${file}: the typed line shows`,
+        A,
+        { params: { editorText: true } },
+      )
+    ).slot.editor.value;
     const theirs = original + `// D11 worker change before the ${keep} save\n`;
     const wroteFrom = Date.now();
     await checkpoint('worker-write', { slot: 'work', path: file, text: theirs });
@@ -933,8 +974,12 @@ if (phase('saves')) {
 
 if (phase('runs')) {
   // A slot at a pending review gate warns that a save needs a new review.
-  const gate = await openFile('gate', 'src/edit.ts');
-  assert(gate.slot.reviewWarning, 'The review-gate slot shows the re-review warning');
+  await openFile('gate', 'src/edit.ts');
+  const gate = await until(
+    (value) => value.slot?.slotId === slots.gate.id && value.slot.reviewWarning,
+    'The review-gate slot shows the re-review warning',
+    A,
+  );
   evidence.gateWarning = gate.slot.reviewWarning;
   // Bytes that are not UTF-8 stay read-only: the read's hash cannot match the text as UTF-8.
   const latin1 = await openFile('ready', 'data/latin1.txt');
@@ -1106,7 +1151,11 @@ if (phase('offline')) {
   });
   await clickElement(A, '.file-row .file-basename', file);
   const opened = await until(
-    (value) => value.slot?.activeFile === file && value.slot.editor?.value === content,
+    (value) =>
+      value.slot?.activeFile === file &&
+      value.slot.editor?.value === content &&
+      value.slot.editor.readOnly === true &&
+      value.slot.readOnlyReason?.reason === 'offline',
     'The untracked file renders from held content',
     A,
     { timeout: 30000, params: { editorText: true } },
@@ -1277,7 +1326,14 @@ if (phase('account')) {
   // finds another principal's drafts for the same gateway profile shows the count and deletes them.
   // Admin 2 then leaves a draft, and admin 1 returns: the first tab's next document connects with the
   // login this browser profile saved for admin 1, shows admin 2's count and deletes those drafts.
-  assert((await cdp(['login', A])).authenticated);
+  await cdp(['login', A]);
+  await until(
+    (value) =>
+      value.connection === 'connected' && value.principalId === fixture.admins[0].principalId,
+    'Admin 1 signs in again',
+    A,
+    { timeout: 60000 },
+  );
   const file = 'src/edit.ts';
   await openFile('work', file, 'owner-admin1');
   await typeInEditor(A, '// D11 draft left by admin 1');
