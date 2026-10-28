@@ -261,8 +261,7 @@ export class RunTagEditor extends LitElement {
                     >${ticket.ref}</a
                   >`
                 : html`<span class="tag-pill">${ticket.ref}</span>`,
-            )}
-            }`
+            )}`
           : tags.length
             ? tags.map(
                 (tag) => html`
