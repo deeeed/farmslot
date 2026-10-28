@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import '../../../../services/gateway/src/projects/read-only-status-process.ts';
+
 import { alive, durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import {

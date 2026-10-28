@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
 
+import '../services/gateway/src/projects/read-only-status-process.js';
+
 import {
   createRetrospectiveForRun,
   readCommentsTriageSummary,

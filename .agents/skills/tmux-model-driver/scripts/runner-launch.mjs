@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import '../../../../services/gateway/src/projects/read-only-status-process.ts';
+
 import { expandTilde } from '../../../../scripts/lib/provider-accounts.mjs';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { withMachineEnv } from '../../../../services/gateway/src/core/project-env.ts';
