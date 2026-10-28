@@ -12,7 +12,7 @@ const { answerCodexFolderAccess, classifyCodexLaunchScreen } =
       sendEnter: () => void;
       folders: string[];
       claimAnswer?: () => boolean;
-      answerClaimed?: () => boolean;
+      isAnswerClaimed?: () => boolean;
       now?: () => number;
       sleep?: (ms: number) => Promise<void>;
     }) => Promise<'restricted'>;
@@ -79,18 +79,18 @@ const splash = `
 `;
 
 /** Replays panes in order (the last one repeats) on a fake clock, counting Enter presses. */
-function drive(panes: (string | null)[], claimAnswer = () => true, answerClaimed = () => false) {
+function drive(panes: (string | null)[], claimAnswer = () => true, isAnswerClaimed = () => false) {
   let clock = 0;
   let index = 0;
   const sent: string[] = [];
   const result = answerCodexFolderAccess({
-    capture: () => panes[Math.min(index++, panes.length - 1)]!,
+    capture: () => panes[Math.min(index++, panes.length - 1)] ?? null,
     sendEnter: () => {
       sent.push('Enter');
     },
     folders: [folder],
     claimAnswer,
-    answerClaimed,
+    isAnswerClaimed,
     now: () => clock,
     sleep: async (ms) => {
       clock += ms;
@@ -216,4 +216,10 @@ test('an overlapping watcher rechecks the answer claim even when its first captu
   const second = drive([ready], claimAnswer, () => claimed);
   assert.deepEqual(await Promise.all([first.result, second.result]), ['restricted', 'restricted']);
   assert.deepEqual([...first.sent, ...second.sent], ['Enter']);
+});
+
+test('consent arriving near the launch deadline keeps its full settle window', async () => {
+  const delayed = drive([...Array<string>(55).fill(splash), codex165Folder, ready]);
+  assert.equal(await delayed.result, 'restricted');
+  assert.deepEqual(delayed.sent, ['Enter']);
 });
