@@ -3237,11 +3237,12 @@ export async function prepareRunnerDispatchPrompt(
   taskDir: string,
 ): Promise<string> {
   if (!getRunnerDefinition(runnerId).fileBackedDispatchPrompt) return message;
-  const file = path.posix.join(taskDir, 'DISPATCH-PROMPT.md');
+  const filename = 'DISPATCH-PROMPT.md';
+  const file = path.posix.join(taskDir, filename);
   await slotWriteFiles(
     vars,
     path.posix.isAbsolute(taskDir) ? taskDir : path.posix.join(vars.remoteRepo, taskDir),
-    [{ path: 'DISPATCH-PROMPT.md', content: Buffer.from(message).toString('base64'), mode: 0o600 }],
+    [{ path: filename, content: Buffer.from(message).toString('base64'), mode: 0o600 }],
   );
   return `Read ${JSON.stringify(file)} and follow its instructions.`;
 }

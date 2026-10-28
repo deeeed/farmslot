@@ -388,6 +388,57 @@ test('post-launch paste holds uncertain delivery if the runner exits before subm
   assert.match(promptInputCommands[0]!, /paste-buffer -d -p/);
 });
 
+for (const code of [85, 1]) {
+  test(`post-launch paste ${code === 85 ? 'confirms untouched after guard refusal' : 'preserves uncertain input after a paste failure'}`, async (t) => {
+    callOrder.length = 0;
+    paneCaptureCount = 0;
+    paneText = '❯\nctx:12%\n';
+    paneTextByCapture = null;
+    promptAcceptedReading = {
+      value: false,
+      source: 'hook',
+      confidence: 'high',
+      observedAt: Date.now(),
+      exactPromptMatch: false,
+    };
+    failedPromptSends = 1;
+    failedPromptSendExitCode = code;
+    t.after(() => {
+      failedPromptSends = 0;
+      failedPromptSendExitCode = 85;
+    });
+    let started = 0;
+    let untouched = 0;
+    await assert.rejects(
+      withRunnerPromptMutationBoundary(
+        () => {
+          started += 1;
+        },
+        () =>
+          sendRunnerPostLaunchPrompt(vars, target, 'codex', message, 'TASK.md', '[test]', {
+            readyTimeoutMs: 100,
+            stabilityPolls: 1,
+            pollIntervalMs: 0,
+            verifyWaitMs: 0,
+            requirePromptDigest: true,
+            softAcceptOnHandoffAck: false,
+          }),
+        () => {
+          untouched += 1;
+        },
+      ),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error instanceof PromptDeliveryUncertainError, code !== 85);
+        return true;
+      },
+    );
+    assert.equal(started, 1);
+    assert.equal(untouched, code === 85 ? 1 : 0);
+    assert.equal(promptInputCommands.length, 1, 'failed paste never submits');
+  });
+}
+
 test('launch observation requires exact high-confidence acceptance and never touches the pane', async () => {
   const previousReading = promptAcceptedReading;
   try {

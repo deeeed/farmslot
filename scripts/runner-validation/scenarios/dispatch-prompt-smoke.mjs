@@ -13,6 +13,12 @@ import { pollHookRows } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'dispatch-prompt-smoke';
 
+export function dispatchSmokeLaunchCommand(adapter, repo, model) {
+  return adapter.RUNNER_ID === 'codex'
+    ? adapter.buildInteractiveLaunchCommand(repo, '.agent', model ?? undefined)
+    : adapter.buildInteractiveLaunchCommand(repo, '.agent');
+}
+
 export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDir, model }) {
   const runner = runnerAdapter.RUNNER_ID;
   const skip = runnerAdapter.skipReason?.(SCENARIO_ID);
@@ -78,9 +84,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     paneId = shell.paneId;
 
     // Production parity: interactive launch only; gateway owns blocker resolution + prompt delivery.
-    sendShellScript(paneId, repo, [
-      runnerAdapter.buildInteractiveLaunchCommand(repo, '.agent', model ?? undefined),
-    ]);
+    sendShellScript(paneId, repo, [dispatchSmokeLaunchCommand(runnerAdapter, repo, model)]);
 
     const sentSinceMs = Date.now();
     const gatewayResult = runGatewayPostLaunchPrompt({

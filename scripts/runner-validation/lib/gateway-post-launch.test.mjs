@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import os from 'node:os';
 import { mock, test } from 'node:test';
 
@@ -15,6 +16,23 @@ mock.module('node:child_process', {
   },
 });
 const { runGatewayTurnState } = await import('./gateway-post-launch.mjs');
+const { dispatchSmokeLaunchCommand } = await import('../scenarios/dispatch-prompt-smoke.mjs');
+const claudeAdapter = await import('../runners/claude.mjs');
+const codexAdapter = await import('../runners/codex.mjs');
+
+test('a model option never becomes a Claude initial prompt', (t) => {
+  t.mock.method(fs, 'existsSync', () => true);
+  const command = dispatchSmokeLaunchCommand(claudeAdapter, '/private-proof', 'sonnet');
+  assert.match(command, /--model 'opus'/);
+  assert.doesNotMatch(command, /'sonnet'/);
+});
+
+test('the Codex adapter receives the explicitly selected model', (t) => {
+  t.mock.method(fs, 'existsSync', () => true);
+  const command = dispatchSmokeLaunchCommand(codexAdapter, '/private-proof', 'gpt-5.6-terra');
+  assert.match(command, /--model 'gpt-5\.6-terra'/);
+});
+
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const prompt = 'Read "temp/tasks/long-task-path/DISPATCH-PROMPT.md" and follow its instructions.';
 const acceptance = {
