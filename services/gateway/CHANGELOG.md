@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refuse worker launch when a declared toolchain command exits unsuccessfully, including an installed Yarn shim with no version for the pinned Node.
+
 - Send refused completion feedback to the retained worker and wait for a new signal before checking completion again.
 
 - Serve saved fleet observations immediately while workspace checks refresh in the background, keeping slow Git and network reads outside status requests.
