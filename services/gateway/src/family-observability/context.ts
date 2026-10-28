@@ -1,14 +1,21 @@
 import { access, copyFile, cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { FlowType, Run, RunCreateParams } from '@farmslot/protocol';
+import { type FlowType, isRecord, type Run, type RunCreateParams } from '@farmslot/protocol';
+import { digestRecipeLibrary, readRecipeLibraryManifest } from '@farmslot/recipe-runner';
 
 import { makeOwnerWritable, replaceReadOnlyDestination } from '../core/owned-copy.js';
 import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
-import { retainedArtifactRun } from '../run-completion/retained-artifacts.js';
+import {
+  readRetainedRunText,
+  retainedArtifactRun,
+  retainedRecipeRunSummaries,
+  retainedRunArtifactManifest,
+  selectedRetainedRecipeGroup,
+} from '../run-completion/retained-artifacts.js';
 import { getAllRuns, listRuns } from '../runs/store.js';
 
 export const FOLLOW_UP_SCOPE_VERDICTS = [
@@ -31,6 +38,7 @@ type FamilyArtifactKey =
   | 'report'
   | 'learnings'
   | 'recipe'
+  | 'task-actions'
   | 'recipe-library'
   | 'recipe-quality'
   | 'recipe-coverage'
@@ -113,6 +121,14 @@ const FAMILY_ARTIFACT_SPECS: readonly FamilyArtifactSpec[] = [
     sourceRelativePath: 'artifacts/recipe.json',
     materializedRelativePath: 'inputs/inherited/recipe.json',
     seedCurrentRelativePath: 'artifacts/recipe.json',
+  },
+  {
+    key: 'task-actions',
+    label: 'Task-local recipe actions',
+    kind: 'directory',
+    sourceRelativePath: 'task-actions',
+    materializedRelativePath: 'inputs/inherited/task-actions',
+    seedCurrentRelativePath: 'task-actions',
   },
   {
     key: 'recipe-library',
@@ -560,6 +576,11 @@ export async function materializeInheritedContext(
 
     const kind: 'file' | 'directory' = spec.kind ?? 'file';
     for (const candidate of candidates) {
+      const recipeSource = manifest.inheritedArtifacts.find(
+        (entry) => entry.artifact === 'recipe',
+      )?.sourceRunId;
+      if (spec.key === 'task-actions' && recipeSource && candidate.sourceRunId !== recipeSource)
+        continue;
       const exists = await artifactSourceExists(candidate.sourcePath, kind);
       attempts.push({
         tier: candidate.tier,
@@ -570,6 +591,18 @@ export async function materializeInheritedContext(
       if (!exists || resolved) continue;
 
       const materializedPath = path.join(taskAbsDir, spec.materializedRelativePath);
+      if (spec.key === 'task-actions' && candidate.sourceRunId) {
+        const source = relevantRuns.find((entry) => entry.id === candidate.sourceRunId)!;
+        const files = (await retainedRunArtifactManifest(source)).filter((entry) =>
+          entry.path.startsWith('task-actions/'),
+        );
+        if (!files.length)
+          throw new Error(
+            `Cannot inherit recipe: task-actions were not retained for ${source.id}.`,
+          );
+        // The hash reader qualifies every file before executable inputs are copied.
+        for (const file of files) await readRetainedRunText(source, file.path);
+      }
       if (candidate.sourcePath !== materializedPath) {
         await copyArtifactSource(candidate.sourcePath, materializedPath, kind);
       }
@@ -608,6 +641,43 @@ export async function materializeInheritedContext(
         attempts,
       },
     );
+  }
+
+  const recipe = manifest.inheritedArtifacts.find((entry) => entry.artifact === 'recipe');
+  const actions = manifest.inheritedArtifacts.find((entry) => entry.artifact === 'task-actions');
+  if (recipe?.status === 'resolved') {
+    const source = relevantRuns.find(
+      (entry) => entry.id === (recipe.sourceRunId ?? run.parentRunId),
+    );
+    if (source) {
+      const { inventory, summaries } = await retainedRecipeRunSummaries(source);
+      const selected = selectedRetainedRecipeGroup(summaries)?.raw;
+      const required =
+        isRecord(selected) && Array.isArray(selected.taskActions)
+          ? selected.taskActions.filter(
+              (entry): entry is Record<string, unknown> =>
+                isRecord(entry) && typeof entry.action === 'string',
+            )
+          : [];
+      if (actions?.status === 'missing') {
+        const names = required.length
+          ? required.map((entry) => entry.action)
+          : inventory
+              .filter((entry) => entry.path.startsWith('task-actions/'))
+              .map((entry) => entry.path);
+        if (names.length)
+          throw new Error(
+            `Cannot inherit recipe: retained task-actions/ for ${source.id} are missing: ${names.join(', ')}.`,
+          );
+      } else if (required.length) {
+        const root = path.join(taskAbsDir, 'task-actions');
+        const digest = await digestRecipeLibrary(root, await readRecipeLibraryManifest(root));
+        if (required.some((entry) => entry.digest !== digest))
+          throw new Error(
+            `Cannot inherit recipe: retained task-actions/ implementation for ${source.id} does not match the recorded recipe run.`,
+          );
+      }
+    }
   }
 
   manifest.inheritedArtifacts.push(
