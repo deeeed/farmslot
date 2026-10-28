@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Complete PR follow-ups without visual or reviewer holds, retaining linked criteria and evidence.
-
+- Keep run ticket lists tied to explicit references instead of inferring Jira keys from PR body text.
 - Keep automatic placement queued when node load rises during safe slot reuse, and reconsider the originally allowed slots.
 
 - Retain task-local recipe actions with run artifacts and restore them when a follow-up inherits the recipe, including on another node; reject inheritance when required action files are unavailable.

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - PR completion retains evidence without adding reviewer or captured-output holds.
+- Show only explicit run ticket references; headings and acceptance criteria no longer add tickets.
 
 - Allow a stored run snapshot for progressive display without verifying live action readiness, and keep workspace inspections fresh through slow fleet reads with a shared two-minute bound.
 
