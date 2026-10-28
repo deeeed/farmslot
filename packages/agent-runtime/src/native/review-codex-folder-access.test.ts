@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
@@ -7,12 +8,14 @@ const { answerCodexFolderAccess, classifyCodexLaunchScreen } =
   require('../../scripts/review-codex-folder-access.cjs') as {
     answerCodexFolderAccess: (options: {
       capture: () => string | null;
+      timeoutMs?: number;
       sendEnter: () => void;
       folders: string[];
       claimAnswer?: () => boolean;
+      answerClaimed?: boolean;
       now?: () => number;
       sleep?: (ms: number) => Promise<void>;
-    }) => Promise<'restricted' | null>;
+    }) => Promise<'restricted'>;
     classifyCodexLaunchScreen: (pane: string, folders: string[]) => { kind: string };
   };
 
@@ -76,7 +79,7 @@ const splash = `
 `;
 
 /** Replays panes in order (the last one repeats) on a fake clock, counting Enter presses. */
-function drive(panes: string[], claimAnswer = () => true) {
+function drive(panes: (string | null)[], claimAnswer = () => true, answerClaimed = false) {
   let clock = 0;
   let index = 0;
   const sent: string[] = [];
@@ -87,6 +90,7 @@ function drive(panes: string[], claimAnswer = () => true) {
     },
     folders: [folder],
     claimAnswer,
+    answerClaimed,
     now: () => clock,
     sleep: async (ms) => {
       clock += ms;
@@ -103,19 +107,42 @@ test('the exact Folder access screen for the launched folder is answered with Op
   assert.equal(classifyCodexLaunchScreen(app, [folder]).kind, 'folder-access');
 
   assert.equal(classifyCodexLaunchScreen(splash, [folder]).kind, 'starting');
-  assert.equal(classifyCodexLaunchScreen(header, [folder]).kind, 'idle');
+  assert.equal(classifyCodexLaunchScreen(header, [folder]).kind, 'starting');
   const answered = drive(['', splash, header, folderAccess, '', ready]);
   assert.equal(await answered.result, 'restricted');
   assert.deepEqual(answered.sent, ['Enter']);
+});
 
-  const noPrompt = drive(['', ready]);
-  assert.equal(await noPrompt.result, null);
-  assert.deepEqual(noPrompt.sent, []);
+// Actual macpro 0.165.0 terminal capture. Only its private fixture path is normalized.
+const codex165Folder = readFileSync(
+  new URL('./fixtures/codex-0.165-folder-access.txt', import.meta.url),
+  'utf8',
+).replace('/workspace/review', folder);
+const codex165Startup = readFileSync(
+  new URL('./fixtures/codex-0.165-startup.txt', import.meta.url),
+  'utf8',
+);
 
-  // An idle composer that holds counts as ready without a prompt.
-  const idleOnly = drive(['', idle]);
-  assert.equal(await idleOnly.result, null);
-  assert.deepEqual(idleOnly.sent, []);
+test('0.165 startup composer cannot complete consent before the actual restricted screen', async () => {
+  assert.equal(classifyCodexLaunchScreen(codex165Folder, [folder]).kind, 'folder-access');
+  // The real launch receipts returned in ~4s without any claim. Both former
+  // shortcuts must keep watching while the actual folder lookup is pending.
+  for (const provisional of [codex165Startup, idle, ready]) {
+    const delayed = drive([...Array<string>(20).fill(provisional), codex165Folder, '', ready]);
+    assert.equal(await delayed.result, 'restricted');
+    assert.deepEqual(delayed.sent, ['Enter']);
+  }
+});
+
+test('unanswered consent and a dead terminal fail instead of recording a completed handshake', async () => {
+  for (const provisional of [codex165Startup, idle, ready, '']) {
+    const missing = drive([provisional]);
+    await assert.rejects(missing.result, /Folder access did not complete.*deadline/);
+    assert.deepEqual(missing.sent, []);
+  }
+  const dead = drive([null]);
+  await assert.rejects(dead.result, /terminal exited before Folder access completed/);
+  assert.deepEqual(dead.sent, []);
 });
 
 test('Trust is never chosen: a trust prompt, another folder or option 2 selected fail without a key', async () => {
@@ -168,4 +195,16 @@ test('overlapping watchers of one launch send exactly one Enter between them', a
   const second = drive(['', folderAccess, folderAccess, '', ready], claimAnswer);
   assert.deepEqual(await Promise.all([first.result, second.result]), ['restricted', 'restricted']);
   assert.deepEqual([...first.sent, ...second.sent], ['Enter']);
+});
+
+test('a replay with an already-claimed answer can finish after the modal disappeared', async () => {
+  const replay = drive(
+    [ready],
+    () => {
+      throw new Error('must not claim another answer');
+    },
+    true,
+  );
+  assert.equal(await replay.result, 'restricted');
+  assert.deepEqual(replay.sent, []);
 });

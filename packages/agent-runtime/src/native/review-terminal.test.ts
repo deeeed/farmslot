@@ -119,14 +119,14 @@ function codexReplayFixture(context: test.TestContext) {
   // Stands in for Codex: the Folder access screen until Enter or `window` seconds,
   // recording an Enter if one arrives, then a working turn.
   const entered = path.join(directory, 'entered');
-  const startCodex = (window: number) =>
+  const startCodex = (window: number, cleared: boolean) =>
     assert.equal(
       tmux(
         'new-session',
         '-d',
         '-s',
         session,
-        `cat '${screen}'; if read -t ${window} answer; then touch '${entered}'; fi; clear; echo '• Working (1s • esc to interrupt)'; sleep 300`,
+        `${cleared ? '' : `cat '${screen}'; if read -t ${window} answer; then touch '${entered}'; fi; clear; `}echo '• Working (1s • esc to interrupt)'; sleep 300`,
       ).status,
       0,
     );
@@ -138,10 +138,10 @@ function codexReplayFixture(context: test.TestContext) {
     stopCodex();
     rmSync(directory, { recursive: true, force: true });
   });
-  const replay = (claimed: boolean) => {
+  const replay = (claimed: boolean, cleared = false) => {
     if (claimed) writeFileSync(path.join(directory, '.terminal-folder-access-claim'), session);
     // An Enter ends the wait at once; the claimed case needs a window to prove none came.
-    startCodex(claimed ? 1 : 10);
+    startCodex(claimed ? 1 : 10, cleared);
     assert.equal(
       tmux('set-option', '-t', session, '@farmslot-review-workspace', session).status,
       0,
@@ -186,3 +186,17 @@ test('a Codex launch replayed after its answer never sends a second Enter', tmux
   assert.equal(saved.codexHandshake, 'done');
   assert.equal(saved.folderAccess, 'restricted');
 });
+
+test(
+  'a replay after restricted consent settled retains the owned answer without another key',
+  tmuxSkip,
+  (context) => {
+    const { marker, replay, entered } = codexReplayFixture(context);
+    const replayed = replay(true, true);
+    assert.equal(replayed.status, 0, replayed.stderr);
+    assert.equal(existsSync(entered), false);
+    const saved = JSON.parse(readFileSync(marker, 'utf8'));
+    assert.equal(saved.codexHandshake, 'done');
+    assert.equal(saved.folderAccess, 'restricted');
+  },
+);

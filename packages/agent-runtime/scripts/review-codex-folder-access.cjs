@@ -19,19 +19,15 @@ const ENDINGS = [
 // need review" (enter confirm · esc skip); unknown ones must fail, not wait out.
 const PROMPT_MARKERS =
   /folder access|open restricted|trust this folder|trust and continue|trust all|hooks need review|update available|enter continue|enter confirm|esc quit|esc back|esc skip|press enter|\(y\/n\)/i;
-const WORKING = /esc to interrupt/;
-const COMPOSER = /\? for shortcuts/;
-// The boot splash, and a header frame right after it, already paint the composer
-// footer before Folder access appears, so an idle composer only counts as ready
-// once it has held this long.
-const LOADING = /OpenAI Codex \(v[^)]*\) loading/;
-const IDLE_READY_MS = 1_500;
+// Codex 0.165 paints its editable startup composer while folder consent is
+// still pending. Neither an idle footer nor "esc to interrupt" completes this
+// handshake: this untrusted review must observe and answer Open restricted.
 
 const collapse = (text) => text.replace(/\s+/g, ' ').trim();
 
 /**
  * Classify a captured Codex pane: the exact Folder access screen for one of
- * `folders`, any other prompt, a working turn, an idle composer, or starting.
+ * `folders`, any other prompt, or starting. Composer text is not startup evidence.
  */
 function classifyCodexLaunchScreen(pane, folders) {
   const text = collapse(pane);
@@ -44,8 +40,6 @@ function classifyCodexLaunchScreen(pane, folders) {
       return { kind: 'folder-access' };
   }
   if (PROMPT_MARKERS.test(text)) return { kind: 'prompt' };
-  if (WORKING.test(text)) return { kind: 'working' };
-  if (!LOADING.test(text) && COMPOSER.test(text)) return { kind: 'idle' };
   return { kind: 'starting' };
 }
 
@@ -57,18 +51,16 @@ const excerpt = (pane) =>
     .join('\n');
 
 /**
- * Watch a freshly launched Codex pane until it is working on the prompt, or idle
- * at its composer for IDLE_READY_MS. Returns 'restricted' when it answered the
- * Folder access screen, null otherwise. Throws on any other prompt, or when the
- * screen is still there after its one answer. `claimAnswer` must atomically claim
- * the launch's single answer (false when another watcher of the same launch, or
- * an earlier interrupted one, already holds it); without the claim Folder access
- * is only waited out.
+ * Watch this untrusted review launch until the exact Folder access screen has
+ * been answered and disappeared. Other prompts, a dead terminal, or a deadline
+ * before that handshake fail the launch. `claimAnswer` atomically claims its
+ * single Enter; a replay may only wait for the already-claimed answer to settle.
  */
 async function answerCodexFolderAccess({
   capture,
   sendEnter,
   claimAnswer = () => true,
+  answerClaimed = false,
   folders,
   timeoutMs = 15_000,
   settleMs = 2_000,
@@ -77,24 +69,18 @@ async function answerCodexFolderAccess({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
   const deadline = now() + timeoutMs;
-  let answeredAt = null;
-  let idleSince = null;
+  let answeredAt = answerClaimed ? now() : null;
   while (now() < deadline) {
     await sleep(pollMs);
     const pane = capture();
-    // The session ended; the run monitor reports a dead reviewer.
-    if (pane === null) break;
+    if (pane === null) throw new Error('Codex terminal exited before Folder access completed');
     const screen = classifyCodexLaunchScreen(pane, folders);
-    if (screen.kind === 'working') break;
-    if (screen.kind === 'idle') {
-      idleSince ??= now();
-      if (now() - idleSince >= IDLE_READY_MS) break;
-      continue;
-    }
-    idleSince = null;
     if (screen.kind === 'prompt')
       throw new Error(`Codex showed an unexpected launch prompt:\n${excerpt(pane)}`);
-    if (screen.kind !== 'folder-access') continue;
+    if (screen.kind !== 'folder-access') {
+      if (answeredAt !== null && now() - answeredAt >= settleMs) return 'restricted';
+      continue;
+    }
     if (answeredAt === null) {
       if (claimAnswer()) sendEnter();
       answeredAt = now();
@@ -104,7 +90,7 @@ async function answerCodexFolderAccess({
       );
     }
   }
-  return answeredAt === null ? null : 'restricted';
+  throw new Error('Codex Folder access did not complete before the launch deadline');
 }
 
 module.exports = { answerCodexFolderAccess, classifyCodexLaunchScreen };
