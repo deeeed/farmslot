@@ -14,6 +14,7 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceCacheConformanceTransport } from '../../protocol/src/client-cache/conformance.js';
+import { createDraftStore, createMemoryDraftStorage } from '../src/drafts.js';
 import { createExpoSqliteDriver } from '../src/native.js';
 import {
   createSqliteResourceStore,
@@ -101,7 +102,7 @@ test('SQL store runs the exported cache/store conformance against real SQLite', 
     const passed = await runResourceStoreConformance((identity) =>
       createSqliteResourceStore({ database: adapter, scope: identity }),
     );
-    assert.equal(passed.length, 20);
+    assert.equal(passed.length, 21);
     assert.equal(sqlite.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
   } finally {
     sqlite.close();
@@ -122,7 +123,7 @@ test('the Expo adapter runs the portable conformance contract through real SQLit
     const passed = await runResourceStoreConformance((identity) =>
       createSqliteResourceStore({ database: adapter, scope: identity }),
     );
-    assert.equal(passed.length, 20);
+    assert.equal(passed.length, 21);
   } finally {
     sqlite.close();
   }
@@ -173,7 +174,7 @@ test('sixth scope evicts the least recently used store including read access', a
   }
 });
 
-test('schema 4 rebuilds an older store and keeps content as exact SQLite blobs', async () => {
+test('the current schema rebuilds an older store and keeps content as exact SQLite blobs', async () => {
   const { sqlite, adapter } = database();
   const old = await createSqliteResourceStore({
     database: adapter,
@@ -183,8 +184,8 @@ test('schema 4 rebuilds an older store and keeps content as exact SQLite blobs',
   await old.putQuery({ id: 'q', data: { value: 'schema 2' }, observedAt: 1, bytes: 20 });
   const store = await createSqliteResourceStore({ database: adapter, scope: scope('blob') });
   try {
-    assert.equal(RESOURCE_STORE_SCHEMA_VERSION, 4);
-    assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 4);
+    assert.equal(RESOURCE_STORE_SCHEMA_VERSION, 5);
+    assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 5);
     assert(old.deleted);
     assert.equal(await store.getQuery('q'), undefined);
     const data = new Uint8Array(1024 * 1024 + 256).map((_, index) => index % 256);
@@ -260,7 +261,7 @@ const schema3 = [
   'PRAGMA user_version = 3',
 ];
 
-test('a real schema 3 database is rebuilt as schema 4: rows are cleared and drafts are kept', async () => {
+test('a real schema 3 database is rebuilt as the current schema: rows are cleared and drafts are kept', async () => {
   const { sqlite, adapter } = database();
   const identity = scope('schema-3');
   for (const statement of schema3) sqlite.exec(statement);
@@ -281,7 +282,10 @@ test('a real schema 3 database is rebuilt as schema 4: rows are cleared and draf
     sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count;
   const store = await createSqliteResourceStore({ database: adapter, scope: identity });
   try {
-    assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 4);
+    assert.equal(
+      sqlite.prepare('PRAGMA user_version').get()?.user_version,
+      RESOURCE_STORE_SCHEMA_VERSION,
+    );
     assert.deepEqual(
       sqlite
         .prepare('PRAGMA table_info(resource_queries)')
@@ -316,6 +320,89 @@ test('a real schema 3 database is rebuilt as schema 4: rows are cleared and draf
     assert.equal(saved?.cohort, 'gate');
     assert.equal(sqlite.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
     assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally {
+    await store.close();
+    sqlite.close();
+  }
+});
+
+// Schema 4 as released: schema 3 plus prefetch origin and cohort on query rows.
+const schema4 = schema3.map((statement) =>
+  statement
+    .replace(
+      'accessed_at INTEGER NOT NULL DEFAULT 0,\n    PRIMARY KEY (store_id, id)',
+      'accessed_at INTEGER NOT NULL DEFAULT 0,\n    origin TEXT,\n    cohort TEXT,\n    PRIMARY KEY (store_id, id)',
+    )
+    .replace('PRAGMA user_version = 3', 'PRAGMA user_version = 4'),
+);
+
+test('a real schema 4 database is rebuilt as schema 5 with run rows, and drafts are kept', async () => {
+  const { sqlite, adapter } = database();
+  const identity = scope('schema-4');
+  for (const statement of schema4) sqlite.exec(statement);
+  assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 4);
+  assert.deepEqual(
+    sqlite
+      .prepare('PRAGMA table_info(resource_queries)')
+      .all()
+      .map(({ name }) => name),
+    ['store_id', 'id', 'data', 'observed_at', 'bytes', 'accessed_at', 'origin', 'cohort'],
+  );
+  sqlite
+    .prepare('INSERT INTO resource_stores (id, scope_id, metadata, last_used) VALUES (1, ?, ?, 1)')
+    .run(resourceStoreScopeId(identity), JSON.stringify({ scope: identity }));
+  sqlite
+    .prepare("INSERT INTO resource_queries VALUES (1, ?, ?, 1, 17, 2, 'prefetch', 'gate')")
+    .run('run.list:{}', JSON.stringify({ runs: [] }));
+  sqlite
+    .prepare("INSERT INTO resource_content VALUES (1, 'blob', 'held', ?, 3, 'opened', 'gate', 3)")
+    .run(new Uint8Array([1, 2, 3]));
+  sqlite.exec("CREATE TABLE drafts (text TEXT); INSERT INTO drafts VALUES ('keep draft')");
+  const drafts = createDraftStore(createMemoryDraftStorage());
+  const draft = await drafts.put({
+    scopeId: resourceStoreScopeId(identity),
+    slotId: 'slot',
+    runId: null,
+    path: 'file.ts',
+    baseContent: 'base',
+    baseHash: null,
+    editedContent: 'edited',
+    state: 'current',
+  });
+  const count = (table: string) =>
+    sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count;
+  const store = await createSqliteResourceStore({ database: adapter, scope: identity });
+  try {
+    assert.equal(sqlite.prepare('PRAGMA user_version').get()?.user_version, 5);
+    assert.deepEqual(
+      sqlite
+        .prepare('PRAGMA table_info(resource_rows)')
+        .all()
+        .map(({ name }) => name),
+      ['store_id', 'query_id', 'id', 'version', 'projection', 'body', 'bytes'],
+    );
+    assert.deepEqual(
+      sqlite
+        .prepare('PRAGMA foreign_key_list(resource_rows)')
+        .all()
+        .map(({ table, from, to, on_delete }) => ({ table, from, to, on_delete })),
+      [
+        { table: 'resource_queries', from: 'store_id', to: 'store_id', on_delete: 'CASCADE' },
+        { table: 'resource_queries', from: 'query_id', to: 'id', on_delete: 'CASCADE' },
+      ],
+    );
+    assert.equal(await store.getQuery('run.list:{}'), undefined);
+    for (const table of ['resource_queries', 'resource_content', 'resource_rows'])
+      assert.equal(count(table), 0);
+    assert.deepEqual(
+      sqlite
+        .prepare('SELECT text FROM drafts')
+        .all()
+        .map(({ text }) => text),
+      ['keep draft'],
+    );
+    assert.deepEqual(await drafts.get(draft), draft);
+    assert.equal(sqlite.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
   } finally {
     await store.close();
     sqlite.close();
@@ -414,5 +501,178 @@ test('a prefetched slot diff keeps its placement in SQLite and cannot evict open
   } finally {
     await cache.dispose();
     sqlite.close();
+  }
+});
+
+const runList = 'run.list:{"versions":true}';
+const entry = (bytes: number) => ({ id: runList, data: { totalCount: 2 }, observedAt: 1, bytes });
+const run = (id: string, version: string, body?: unknown) => ({
+  id,
+  version,
+  projection: { status: 'running', id },
+  ...(body === undefined ? {} : { body }),
+  bytes: 40,
+});
+
+test('run rows merge by id, drop absent bodies, survive putQuery and cascade on deletion', async () => {
+  const { sqlite, adapter } = database();
+  const store = await createSqliteResourceStore({ database: adapter, scope: scope('rows') });
+  const rows = () => sqlite.prepare('SELECT COUNT(*) AS count FROM resource_rows').get()?.count;
+  try {
+    await store.mergeRows!(runList, {
+      entry: entry(120),
+      upserts: [run('a', 'v1', { title: 'A' }), run('b', 'v1', null)],
+      deletes: [],
+    });
+    await store.mergeRows!(runList, {
+      entry: entry(90),
+      upserts: [run('a', 'v2'), run('c', 'v1', { title: 'C' })],
+      deletes: ['b', 'unknown'],
+    });
+    const saved = await store.getRows!(runList);
+    assert.deepEqual(saved.entry?.data, { totalCount: 2 });
+    assert.deepEqual(
+      saved.rows.sort((x, y) => x.id.localeCompare(y.id)),
+      [run('a', 'v2'), run('c', 'v1', { title: 'C' })],
+    );
+    assert.equal('body' in saved.rows[0], false);
+    assert.deepEqual(await store.listQueries(), [
+      { id: runList, observedAt: 1, accessedAt: 1, bytes: 90 },
+    ]);
+    assert.equal((await store.byteTotals()).queries, 90);
+    await store.mergeRows!(runList, {
+      entry: entry(1),
+      upserts: [run('n', 'v1', null)],
+      deletes: [],
+    });
+    assert.deepEqual(
+      (await store.getRows!(runList)).rows.find((value) => value.id === 'n'),
+      run('n', 'v1', null),
+    );
+    await store.putQuery({ ...entry(5), data: { totalCount: 3 } });
+    assert.equal(rows(), 3);
+    await store.deleteQuery(runList);
+    assert.equal(rows(), 0);
+    assert.deepEqual(await store.getRows!(runList), { rows: [] });
+    await store.mergeRows!(runList, { entry: entry(1), upserts: [run('a', 'v3')], deletes: [] });
+    await store.deleteAll();
+    assert.equal(rows(), 0);
+    await store.mergeRows!(runList, { entry: entry(1), upserts: [run('late', 'v1')], deletes: [] });
+    assert.deepEqual(await store.getRows!(runList), { rows: [] });
+    assert.equal(rows(), 0);
+    await assert.rejects(
+      store.mergeRows!('other', { entry: entry(1), upserts: [], deletes: [] }),
+      /own entry/,
+    );
+  } finally {
+    await store.close();
+    sqlite.close();
+  }
+});
+
+test('a failed row merge rolls back the entry, its deletes and its upserts', async () => {
+  const { sqlite, adapter } = database();
+  const store = await createSqliteResourceStore({ database: adapter, scope: scope('rollback') });
+  try {
+    await store.mergeRows!(runList, {
+      entry: entry(10),
+      upserts: [run('a', 'v1', { title: 'A' }), run('b', 'v1', { title: 'B' })],
+      deletes: [],
+    });
+    const before = await store.getRows!(runList);
+    const statement = adapter.run;
+    let inserts = 0;
+    adapter.run = async (sql, params) => {
+      if (sql.includes('INSERT INTO resource_rows') && ++inserts === 2)
+        throw new Error('disk full');
+      await statement(sql, params);
+    };
+    await assert.rejects(
+      store.mergeRows!(runList, {
+        entry: entry(99),
+        upserts: [run('a', 'v2'), run('c', 'v1', { title: 'C' })],
+        deletes: ['b'],
+      }),
+      /disk full/,
+    );
+    adapter.run = statement;
+    assert.deepEqual(await store.getRows!(runList), before);
+    assert.equal(sqlite.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
+  } finally {
+    await store.close();
+    sqlite.close();
+  }
+});
+
+test('a hydrate reads the entry and its rows without a merge landing between them', async () => {
+  const { sqlite, adapter } = database();
+  const store = await createSqliteResourceStore({ database: adapter, scope: scope('hydrate') });
+  try {
+    await store.mergeRows!(runList, {
+      entry: entry(10),
+      upserts: [run('a', 'v1', { title: 'A' })],
+      deletes: [],
+    });
+    let entered!: () => void;
+    let release!: () => void;
+    const holding = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const query = adapter.all;
+    // Hold the entry read: a merge queued now must wait until the rows are read too.
+    adapter.all = async (sql, params) => {
+      if (sql.includes('FROM resource_queries')) {
+        entered();
+        await held;
+      }
+      return query(sql, params);
+    };
+    const reading = store.getRows!(runList);
+    await holding;
+    const merging = store.mergeRows!(runList, {
+      entry: { ...entry(20), data: { totalCount: 1 } },
+      upserts: [],
+      deletes: ['a'],
+    });
+    release();
+    const hydrated = await reading;
+    await merging;
+    adapter.all = query;
+    assert.deepEqual(hydrated.entry?.data, { totalCount: 2 });
+    assert.deepEqual(
+      hydrated.rows.map(({ id, version }) => ({ id, version })),
+      [{ id: 'a', version: 'v1' }],
+    );
+    assert.deepEqual(await store.getRows!(runList), {
+      entry: { ...entry(20), data: { totalCount: 1 }, accessedAt: 1 },
+      rows: [],
+    });
+  } finally {
+    await store.close();
+    sqlite.close();
+  }
+});
+
+test('deleting a scope from a connection that never opened a store removes its run rows', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'local-store-rows-'));
+  const filename = join(directory, 'resources.sqlite');
+  const first = database(new DatabaseSync(filename));
+  const store = await createSqliteResourceStore({ database: first.adapter, scope: scope('scope') });
+  await store.mergeRows!(runList, { entry: entry(1), upserts: [run('a', 'v1', {})], deletes: [] });
+  await store.close();
+  first.sqlite.close();
+  const second = database(new DatabaseSync(filename, { enableForeignKeyConstraints: false }));
+  try {
+    await deleteSqliteResourceStoreScope(second.adapter, resourceStoreScopeId(scope('scope')));
+    assert.equal(
+      second.sqlite.prepare('SELECT COUNT(*) AS count FROM resource_rows').get()?.count,
+      0,
+    );
+  } finally {
+    second.sqlite.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 });

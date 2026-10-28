@@ -2,6 +2,7 @@ import type {
   ContentKey,
   ResourceContentOrigin,
   ResourceContentPlacement,
+  ResourceRowsMerge,
   ResourceStoreMetadata,
   ResourceStoreScope,
   StoredResourceContent,
@@ -40,6 +41,8 @@ export type StoreWorkerRequest =
     }
   | { id: number; operation: 'setMetadata'; handle: number; metadata: ResourceStoreMetadata }
   | { id: number; operation: 'putQuery'; handle: number; entry: StoredResourceQuery }
+  | { id: number; operation: 'getRows'; handle: number; key: string }
+  | { id: number; operation: 'mergeRows'; handle: number; key: string; merge: ResourceRowsMerge }
   | {
       id: number;
       operation: 'hasContent' | 'getContent' | 'deleteContent';

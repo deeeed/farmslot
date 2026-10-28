@@ -4,6 +4,7 @@ import {
   resourceStoreScopeId,
   type StoredResourceContent,
   type StoredResourceQuery,
+  type StoredResourceRows,
 } from '@farmslot/protocol/client-cache';
 
 import type {
@@ -157,6 +158,15 @@ export class ResourceStoreWorkerClient {
             })
           : [];
         return available() ? value : [];
+      },
+      async getRows(key) {
+        const value = available()
+          ? await request<StoredResourceRows>({ operation: 'getRows', handle, key })
+          : { rows: [] };
+        return available() ? value : { rows: [] };
+      },
+      async mergeRows(key, merge) {
+        if (available()) await request({ operation: 'mergeRows', handle, key, merge });
       },
       async hasContent(key) {
         const value = available()

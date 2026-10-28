@@ -75,6 +75,12 @@ export function createStoreWorkerHandler(
           case 'listQueries':
             value = await store.listQueries();
             break;
+          case 'getRows':
+            value = await store.getRows?.(request.key);
+            break;
+          case 'mergeRows':
+            value = await store.mergeRows?.(request.key, request.merge);
+            break;
           case 'hasContent':
             value = await store.hasContent(request.key);
             break;

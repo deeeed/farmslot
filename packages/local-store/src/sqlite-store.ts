@@ -8,6 +8,7 @@ import {
   type StoredResourceContentInfo,
   type StoredResourceQuery,
   type StoredResourceQueryInfo,
+  type StoredResourceRow,
 } from '@farmslot/protocol/client-cache';
 
 export type SqliteValue = string | number | null | Uint8Array;
@@ -24,7 +25,7 @@ export interface SqliteResourceStoreOptions {
   onDeleted?: (scopeId: string) => void;
 }
 
-export const RESOURCE_STORE_SCHEMA_VERSION = 4;
+export const RESOURCE_STORE_SCHEMA_VERSION = 5;
 export const RESOURCE_STORE_LIMIT = 5;
 
 export interface ResourceSqliteDiagnostics {
@@ -57,6 +58,10 @@ interface ContentRow extends StoredResourceContentInfo {
 }
 const contentColumns =
   'c.kind, c.id, c.data, c.bytes, c.origin, c.cohort, c.accessed_at AS accessedAt';
+interface RowRecord extends Omit<StoredResourceRow, 'projection' | 'body'> {
+  projection: string;
+  body: string | null;
+}
 interface TotalsRow {
   bytes: number;
   content: number;
@@ -114,6 +119,7 @@ class DatabaseOwner {
     try {
       if (current !== version) {
         for (const id of this.handles.keys()) this.seal(id);
+        await db.run('DROP TABLE IF EXISTS resource_rows');
         await db.run('DROP TABLE IF EXISTS resource_content_aliases');
         await db.run('DROP TABLE IF EXISTS resource_content');
         await db.run('DROP TABLE IF EXISTS resource_queries');
@@ -135,6 +141,19 @@ class DatabaseOwner {
         origin TEXT,
         cohort TEXT,
         PRIMARY KEY (store_id, id)
+      )`);
+      // One row per run of a row-backed entry; putQuery's upsert keeps them, deleting the entry cascades.
+      await db.run(`CREATE TABLE IF NOT EXISTS resource_rows (
+        store_id INTEGER NOT NULL,
+        query_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        version TEXT NOT NULL,
+        projection TEXT NOT NULL,
+        body TEXT,
+        bytes INTEGER NOT NULL,
+        PRIMARY KEY (store_id, query_id, id),
+        FOREIGN KEY (store_id, query_id)
+          REFERENCES resource_queries(store_id, id) ON DELETE CASCADE
       )`);
       await db.run(`CREATE TABLE IF NOT EXISTS resource_content (
         store_id INTEGER NOT NULL REFERENCES resource_stores(id) ON DELETE CASCADE,
@@ -303,6 +322,46 @@ export async function createSqliteResourceStore(
     });
   }
 
+  async function selectQuery<T>(id: string): Promise<StoredResourceQuery<T> | undefined> {
+    const saved = (
+      await db.all<QueryRow>(
+        `SELECT id, data, observed_at AS observedAt, accessed_at AS accessedAt, bytes, origin,
+        cohort FROM resource_queries WHERE store_id = ? AND id = ?`,
+        [row.id, id],
+      )
+    )[0];
+    if (!saved) return undefined;
+    const { data, ...info } = saved;
+    return {
+      ...queryInfo(info),
+      data: JSON.parse(data) as T,
+      accessedAt: saved.accessedAt || saved.observedAt,
+    };
+  }
+
+  /** An upsert, never a replace: replacing the entry would cascade to its rows. */
+  function upsertQuery(entry: StoredResourceQuery): [string, SqliteValue[]] {
+    return [
+      `INSERT INTO resource_queries
+        (store_id, id, data, observed_at, bytes, accessed_at, origin, cohort)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM resource_stores WHERE id = ?)
+      ON CONFLICT (store_id, id) DO UPDATE SET data = excluded.data,
+        observed_at = excluded.observed_at, bytes = excluded.bytes, accessed_at = excluded.accessed_at,
+        origin = excluded.origin, cohort = excluded.cohort`,
+      [
+        row.id,
+        entry.id,
+        JSON.stringify(entry.data),
+        entry.observedAt,
+        entry.bytes,
+        entry.accessedAt ?? entry.observedAt,
+        entry.origin ?? null,
+        entry.cohort ?? null,
+        row.id,
+      ],
+    ];
+  }
+
   function readContent(sql: string, values: readonly SqliteValue[]) {
     return read(async () => {
       const saved = (await db.all<ContentRow>(sql, values))[0];
@@ -349,43 +408,81 @@ export async function createSqliteResourceStore(
       ]);
     },
     getQuery<T>(id: string) {
-      return read(async () => {
-        const saved = (
-          await db.all<QueryRow>(
-            `SELECT id, data, observed_at AS observedAt, accessed_at AS accessedAt, bytes, origin,
-            cohort FROM resource_queries WHERE store_id = ? AND id = ?`,
-            [row.id, id],
-          )
-        )[0];
-        if (!saved) return undefined;
-        const { data, ...info } = saved;
-        return {
-          ...queryInfo(info),
-          data: JSON.parse(data) as T,
-          accessedAt: saved.accessedAt || saved.observedAt,
-        };
-      }, undefined);
+      return read(() => selectQuery<T>(id), undefined);
     },
     putQuery<T>(entry: StoredResourceQuery<T>) {
-      return write(
-        `INSERT INTO resource_queries
-          (store_id, id, data, observed_at, bytes, accessed_at, origin, cohort)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM resource_stores WHERE id = ?)
-        ON CONFLICT (store_id, id) DO UPDATE SET data = excluded.data,
-          observed_at = excluded.observed_at, bytes = excluded.bytes, accessed_at = excluded.accessed_at,
-          origin = excluded.origin, cohort = excluded.cohort`,
-        [
-          row.id,
-          entry.id,
-          JSON.stringify(entry.data),
-          entry.observedAt,
-          entry.bytes,
-          entry.accessedAt ?? entry.observedAt,
-          entry.origin ?? null,
-          entry.cohort ?? null,
-          row.id,
-        ],
+      return write(...upsertQuery(entry));
+    },
+    getRows(queryId) {
+      // One serial job, so a merge cannot land between the entry and its rows.
+      return read(
+        async () => {
+          const entry = await selectQuery(queryId);
+          const rows = await db.all<RowRecord>(
+            `SELECT id, version, projection, body, bytes FROM resource_rows
+            WHERE store_id = ? AND query_id = ?`,
+            [row.id, queryId],
+          );
+          return {
+            ...(entry ? { entry } : {}),
+            rows: rows.map(({ projection, body, ...stored }) => ({
+              ...stored,
+              projection: JSON.parse(projection) as unknown,
+              ...(body === null ? {} : { body: JSON.parse(body) as unknown }),
+            })),
+          };
+        },
+        { rows: [] },
       );
+    },
+    mergeRows(queryId, merge) {
+      if (merge.entry.id !== queryId)
+        return Promise.reject(new Error('A row merge writes its own entry'));
+      return owner.serial(async () => {
+        if (!available()) return;
+        const present = await db.all<StoreRow>(
+          'SELECT id, scope_id FROM resource_stores WHERE id = ?',
+          [row.id],
+        );
+        if (!present.length) {
+          owner.seal(row.id);
+          return;
+        }
+        await db.run('BEGIN IMMEDIATE');
+        try {
+          await db.run(...upsertQuery(merge.entry));
+          for (const id of merge.deletes)
+            await db.run(
+              'DELETE FROM resource_rows WHERE store_id = ? AND query_id = ? AND id = ?',
+              [row.id, queryId, id],
+            );
+          for (const upsert of merge.upserts)
+            await db.run(
+              `INSERT INTO resource_rows (store_id, query_id, id, version, projection, body, bytes)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT (store_id, query_id, id) DO UPDATE SET version = excluded.version,
+                projection = excluded.projection, body = excluded.body, bytes = excluded.bytes`,
+              [
+                row.id,
+                queryId,
+                upsert.id,
+                upsert.version,
+                JSON.stringify(upsert.projection),
+                upsert.body === undefined ? null : JSON.stringify(upsert.body),
+                upsert.bytes,
+              ],
+            );
+          await db.run(
+            `UPDATE resource_stores SET last_used =
+            (SELECT COALESCE(MAX(last_used), 0) + 1 FROM resource_stores) WHERE id = ?`,
+            [row.id],
+          );
+          await db.run('COMMIT');
+        } catch (error) {
+          await db.run('ROLLBACK');
+          throw error;
+        }
+      });
     },
     touchQuery(id, accessedAt, origin) {
       return write(
