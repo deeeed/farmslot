@@ -108,7 +108,10 @@ test('copyPreparedTaskRootSidecars removes a stale role manifest when the fresh 
 
 test('initial staging shares one copy list and retained deliveries verify instead', async () => {
   // subtasks/ travels as a directory (ADR-060), not through TASK_ROOT_SIDECARS.
-  assert.deepEqual([...TASK_DIR_COPIED_SUBDIRS], ['assets', 'inputs', 'artifacts', 'subtasks']);
+  assert.deepEqual(
+    [...TASK_DIR_COPIED_SUBDIRS],
+    ['assets', 'inputs', 'artifacts', 'subtasks', 'task-actions'],
+  );
 
   // The node initializer and same-run legacy dispatch share the transfer list.
   const gatewaySrc = path.resolve(import.meta.dirname, '..');

@@ -353,25 +353,27 @@ export async function retainCapturedRunArtifacts(input: {
   const taskDir = input.sourceRef
     ? await retainedRunTaskDirectory(input.run, input.sourceRef)
     : path.dirname(input.run.taskFile);
-  try {
-    for (const entry of await readdir(path.join(taskDir, 'inputs'), {
-      recursive: true,
-      withFileTypes: true,
-    })) {
-      if (!entry.isFile()) continue;
-      const file = path
-        .relative(taskDir, path.join(entry.parentPath, entry.name))
-        .split(path.sep)
-        .join('/');
-      if (!artifacts.some((artifact) => artifact.path === file))
-        artifacts.push({
-          path: file,
-          purpose: 'task-input',
-          sizeBytes: (await stat(path.join(taskDir, file))).size,
-        });
+  for (const directory of ['inputs', 'task-actions']) {
+    try {
+      for (const entry of await readdir(path.join(taskDir, directory), {
+        recursive: true,
+        withFileTypes: true,
+      })) {
+        if (!entry.isFile()) continue;
+        const file = path
+          .relative(taskDir, path.join(entry.parentPath, entry.name))
+          .split(path.sep)
+          .join('/');
+        if (!artifacts.some((artifact) => artifact.path === file))
+          artifacts.push({
+            path: file,
+            purpose: 'task-input',
+            sizeBytes: (await stat(path.join(taskDir, file))).size,
+          });
+      }
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
-  } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
   for (const file of [path.basename(input.run.taskFile), 'CHECKLIST.md', ...RETAINED_TASK_INPUTS]) {
     if (artifacts.some((artifact) => artifact.path === file)) continue;

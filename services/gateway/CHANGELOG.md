@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Retain task-local recipe actions with run artifacts and restore them when a follow-up inherits the recipe, including on another node; reject inheritance when required action files are unavailable.
+
 - Send refused completion feedback to the retained worker and wait for a new signal before checking completion again.
 
 - Serve saved fleet observations immediately while workspace checks refresh in the background, keeping slow Git and network reads outside status requests.

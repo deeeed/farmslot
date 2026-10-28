@@ -621,6 +621,16 @@ export async function refreshArtifactMirror(
   invalidateArtifactTextCache(workerArtifactsDir, run.slotId);
   invalidateLiveRecipeContextMemo(run.id);
 
+  const workerActionsDir = path.join(workerTaskDir, 'task-actions');
+  if (await slotFileExists(vars, workerActionsDir)) {
+    copied += await slotCopyDir(vars, workerActionsDir, path.join(taskDir, 'task-actions'), {
+      skipUnchanged: true,
+      phase: 'mirror',
+      ...transferMeta,
+      labelPrefix: 'task-actions',
+    });
+  }
+
   // Copy TASK.md and CHECKLIST.md back (worker may have updated status or checkboxes)
   for (const document of ['TASK.md', 'CHECKLIST.md']) {
     const workerDocument = path.join(workerTaskDir, document);
