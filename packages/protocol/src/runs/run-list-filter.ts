@@ -139,6 +139,9 @@ export function sortRunList<R extends RunListFields>(
   }
 }
 
+/** A `limit` that lists every matching run, where the open-ended list would page at 500. */
+export const RUN_LIST_UNLIMITED = Number.MAX_SAFE_INTEGER;
+
 /** Active, family, PR and tag lists are complete by default; only the open-ended list pages. */
 export function runListLimit(filter: RunListFilter, matched: number): number {
   return (

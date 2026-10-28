@@ -94,6 +94,8 @@ export function isRunListCollectionRead(params: unknown): boolean {
 export class RunListCollection {
   private order: string[] = [];
   private readonly rows = new Map<string, HeldRow>();
+  /** Rows removed from memory whose deletion no merge has stored yet. */
+  private readonly unstoredDeletes = new Set<string>();
   private listed?: Map<string, string>;
   private data?: RunListCollectionData;
   private dataFlags: RunListSummaryFlags = {};
@@ -158,8 +160,10 @@ export class RunListCollection {
     const versions = result.versions ?? [];
     const listed = new Map(versions.map(({ id, version }) => [id, version]));
     // Rule 3: only the version reply decides which rows exist.
-    const deletes = [...this.rows.keys()].filter((id) => !listed.has(id));
-    for (const id of deletes) this.rows.delete(id);
+    for (const id of [...this.rows.keys()].filter((id) => !listed.has(id))) {
+      this.rows.delete(id);
+      this.unstoredDeletes.add(id);
+    }
     this.order = versions.map(({ id }) => id);
     this.listed = listed;
     this.data = {
@@ -176,7 +180,6 @@ export class RunListCollection {
         return !row?.body || row.version !== version;
       })
       .map(({ id }) => id);
-    let pendingDeletes = deletes;
     let missing: string[] = [];
     let retried = false;
     let committed = false;
@@ -199,8 +202,7 @@ export class RunListCollection {
       const servedIds = new Set(served);
       missing.push(...(last < 0 ? ask : ask.slice(0, last + 1)).filter((id) => !servedIds.has(id)));
       ask = last < 0 ? [] : ask.slice(last + 1);
-      await this.commit(served, pendingDeletes);
-      pendingDeletes = [];
+      await this.commit(served);
       committed = true;
       if (ask.length === 0 && !retried && missing.length > 0) {
         retried = true;
@@ -208,7 +210,7 @@ export class RunListCollection {
         missing = [];
       }
     }
-    if (!committed) await this.commit([], pendingDeletes);
+    if (!committed) await this.commit([]);
   }
 
   private put(run: Run, version: string): void {
@@ -223,8 +225,8 @@ export class RunListCollection {
     });
   }
 
-  /** Writes `changed` and every row whose stored body the bound now keeps or drops. */
-  private async commit(changed: readonly string[], deletes: readonly string[]): Promise<void> {
+  /** Writes `changed`, every row whose stored body the bound now keeps or drops, and deletions. */
+  private async commit(changed: readonly string[]): Promise<void> {
     const ranked = [...this.rows.entries()]
       .filter(([, row]) => row.body)
       .sort(
@@ -255,6 +257,7 @@ export class RunListCollection {
         },
       ];
     });
+    const deletes = [...this.unstoredDeletes];
     let bytes = jsonBytes(this.data);
     for (const row of this.rows.values())
       bytes += row.projectionBytes + (row.storedBody ? row.bodyBytes : 0);
@@ -270,12 +273,18 @@ export class RunListCollection {
       upserts,
       deletes,
     });
+    for (const id of deletes) this.unstoredDeletes.delete(id);
   }
 
   /** A cold start's stored collection; it stays stale until a version reply lists every row. */
   hydrate(stored: StoredResourceRows): boolean {
     if (!stored.entry || this.held) return this.held;
     this.data = stored.entry.data as RunListCollectionData;
+    // A version reply carries each summary exactly when it was asked for.
+    this.dataFlags = {
+      ...(this.data.familySummaries ? { includeFamilySummaries: true } : {}),
+      ...(this.data.projectAnalytics ? { includeProjectAnalytics: true } : {}),
+    };
     this.observedAt = stored.entry.observedAt;
     for (const row of stored.rows) {
       const projection = row.projection as RunListProjection;
@@ -345,6 +354,7 @@ export class RunListCollection {
     this.inflight = undefined;
     this.order = [];
     this.rows.clear();
+    this.unstoredDeletes.clear();
     this.listed = undefined;
     this.data = undefined;
     this.dataFlags = {};
@@ -352,9 +362,13 @@ export class RunListCollection {
     this.observedAt = undefined;
   }
 
-  /** Abandon a running read without forgetting what is held: the connection changed. */
+  /**
+   * The connection changed: abandon a running read, keeping what is held, which counts as current
+   * again only after a versions read on the new connection.
+   */
   abort(): void {
     this.inflight?.controller.abort();
     this.inflight = undefined;
+    this.listed = undefined;
   }
 }

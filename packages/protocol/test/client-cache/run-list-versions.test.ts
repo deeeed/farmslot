@@ -21,7 +21,11 @@ import type {
 import type { Run } from '../../src/contracts/runs.js';
 import { Methods } from '../../src/rpc/registry.js';
 import type { RunListParams, RunListResult } from '../../src/rpc/run.js';
-import { runListPage, runListProjection } from '../../src/runs/run-list-filter.js';
+import {
+  RUN_LIST_UNLIMITED,
+  runListPage,
+  runListProjection,
+} from '../../src/runs/run-list-filter.js';
 import type { ResourceChangedPayload } from '../../src/transport/events.js';
 
 function run(id: string, day: number, fields: Record<string, unknown> = {}): Run {
@@ -65,8 +69,10 @@ function gateway(runs: Run[], versionLists = true) {
   const servedVersion = new Map<string, string>();
   let pageSize = 100;
   let refuse: string | undefined;
+  let failPage = false;
   const changeListeners = new Set<(payload: ResourceChangedPayload) => void>();
-  const connection: ResourceCacheConnection = {
+  const connectionListeners = new Set<(connection: ResourceCacheConnection) => void>();
+  let connection: ResourceCacheConnection = {
     id: 1,
     connected: true,
     authMode: 'token',
@@ -84,7 +90,10 @@ function gateway(runs: Run[], versionLists = true) {
   });
   const transport: ResourceCacheTransport = {
     getConnection: () => connection,
-    onConnectionChange: () => () => {},
+    onConnectionChange(listener) {
+      connectionListeners.add(listener);
+      return () => connectionListeners.delete(listener);
+    },
     onResourceChanged(listener) {
       changeListeners.add(listener);
       return () => changeListeners.delete(listener);
@@ -106,6 +115,10 @@ function gateway(runs: Run[], versionLists = true) {
         return { data: result as T, resourceState: stamp() };
       }
       if (value.ids) {
+        if (failPage) {
+          failPage = false;
+          throw Object.assign(new Error('Socket closed'), { code: 'TRANSPORT_CLOSED' });
+        }
         const served = value.ids
           .filter((id) => live.has(id) && !unserved.has(id))
           .slice(0, pageSize);
@@ -134,6 +147,12 @@ function gateway(runs: Run[], versionLists = true) {
     servedVersion,
     setPageSize: (size: number) => (pageSize = size),
     refuse: (code: string | undefined) => (refuse = code),
+    failNextPage: () => (failPage = true),
+    /** A dropped or restored socket on the same gateway epoch. */
+    setConnected(connected: boolean) {
+      connection = { ...connection, id: ++counter, connected };
+      for (const listener of connectionListeners) listener(connection);
+    },
     /** A run write: a new version and one runs change. */
     write(value: Run) {
       live.set(value.id, value);
@@ -210,6 +229,81 @@ test('stored rows missing from the version reply are removed', async () => {
   ]);
   history.stop();
   await cache.dispose();
+});
+
+test('a reconnect reads versions before held rows are ready again', async () => {
+  const fake = gateway([run('a', 1), run('b', 2)]);
+  const cache = createGatewayResourceCache({
+    transport: fake.transport,
+    store: createMemoryResourceStore(),
+  });
+  const seen: Array<{ status: string; versionReads: number; runs?: string[] }> = [];
+  const stop = cache.observe(
+    resourceQuery<RunListResult>(Methods.RUN_LIST, { limit: 1000 }),
+    (state) =>
+      seen.push({
+        status: state.status,
+        versionReads: reads(fake.calls).versions,
+        runs: ids(state),
+      }),
+  );
+  await flush();
+  assert.equal(seen[seen.length - 1].status, 'ready');
+  fake.setConnected(false);
+  await flush();
+  // Changes while the socket is down: their notifications reach no one.
+  fake.remove('b');
+  fake.write(run('c', 3));
+  seen.length = 0;
+  fake.setConnected(true);
+  await flush();
+  assert.equal(reads(fake.calls).versions, 2);
+  assert.ok(seen.every(({ status, versionReads }) => status !== 'ready' || versionReads === 2));
+  assert.deepEqual(seen[seen.length - 1], { status: 'ready', versionReads: 2, runs: ['c', 'a'] });
+  stop();
+  await cache.dispose();
+});
+
+test('a deletion survives a failed catch-up page until a merge stores it', async () => {
+  const fake = gateway([run('a', 1), run('b', 2)]);
+  const store = createMemoryResourceStore();
+  const cache = createGatewayResourceCache({ transport: fake.transport, store });
+  const history = observe<RunListResult>(cache, { limit: 1000 });
+  await flush();
+  fake.failNextPage();
+  fake.remove('b');
+  fake.write(run('c', 3));
+  await flush();
+  assert.deepEqual((await store.getRows!(RUN_LIST_COLLECTION_ID)).rows.map(({ id }) => id).sort(), [
+    'a',
+    'b',
+  ]);
+  fake.changed();
+  await flush();
+  const saved = await store.getRows!(RUN_LIST_COLLECTION_ID);
+  assert.deepEqual(saved.rows.map(({ id }) => id).sort(), ['a', 'c']);
+  history.stop();
+  await cache.dispose();
+
+  const copy = createMemoryResourceStore();
+  await copy.mergeRows!(RUN_LIST_COLLECTION_ID, {
+    entry: saved.entry!,
+    upserts: saved.rows,
+    deletes: [],
+  });
+  const offline = gateway([]);
+  const cold = createGatewayResourceCache({
+    transport: {
+      ...offline.transport,
+      getConnection: () => ({ ...offline.transport.getConnection(), connected: false }),
+    },
+    store: copy,
+  });
+  const stored = observe<RunListResult>(cold, { limit: 1000 });
+  await flush();
+  assert.deepEqual(ids(stored.last()), ['c', 'a']);
+  stored.stop();
+  await cold.dispose();
 });
 
 test('one runs change is one versions read for every run.list view, reading only changed ids', async () => {
@@ -380,6 +474,48 @@ test('an empty store fills through pages, and a cold start serves the stored col
   await cold.dispose();
 });
 
+test('Command Center history hydrates cold offline with its summaries', async () => {
+  // apps/command-center/ui/src/state.ts `runHistoryQuery`.
+  const runHistoryParams = {
+    limit: 1000,
+    includeFamilySummaries: true,
+    includeProjectAnalytics: true,
+  };
+  const fake = gateway([run('a', 1), run('b', 2)]);
+  const store = createMemoryResourceStore();
+  const first = createGatewayResourceCache({ transport: fake.transport, store });
+  const filled = observe<RunListResult>(first, runHistoryParams);
+  await flush();
+  assert.equal(filled.last()?.status, 'ready');
+  const saved = await store.getRows!(RUN_LIST_COLLECTION_ID);
+  filled.stop();
+  await first.dispose();
+
+  const copy = createMemoryResourceStore();
+  await copy.mergeRows!(RUN_LIST_COLLECTION_ID, {
+    entry: saved.entry!,
+    upserts: saved.rows,
+    deletes: [],
+  });
+  const offline = gateway([]);
+  const cold = createGatewayResourceCache({
+    transport: {
+      ...offline.transport,
+      getConnection: () => ({ ...offline.transport.getConnection(), connected: false }),
+    },
+    store: copy,
+  });
+  const history = observe<RunListResult>(cold, runHistoryParams);
+  await flush();
+  assert.equal(history.last()?.status, 'stale');
+  assert.deepEqual(ids(history.last()), ['b', 'a']);
+  assert.deepEqual(history.last()?.data?.summaryMeta, summaries.summaryMeta);
+  assert.deepEqual(history.last()?.data?.familySummaries, []);
+  assert.deepEqual(history.last()?.data?.projectAnalytics, []);
+  history.stop();
+  await cold.dispose();
+});
+
 test('stored rows without a body count as missing on the next connect', async () => {
   const fake = gateway([run('a', 1), run('b', 2)]);
   const store = createMemoryResourceStore();
@@ -510,5 +646,20 @@ test('without versionLists every run.list view reads in full, as before', async 
   assert.equal(cache.runListProjections?.(), undefined);
   history.stop();
   active.stop();
+  await cache.dispose();
+});
+
+test('an unlimited history view lists every run past the open-ended 500', async () => {
+  const fake = gateway(Array.from({ length: 501 }, (_, index) => run(`r${index}`, 1)));
+  const cache = createGatewayResourceCache({
+    transport: fake.transport,
+    store: createMemoryResourceStore(),
+  });
+  const history = observe<RunListResult>(cache, { sort: 'newest', limit: RUN_LIST_UNLIMITED });
+  await flush();
+  assert.equal(history.last()?.status, 'ready');
+  assert.equal(history.last()?.data?.runs.length, 501);
+  assert.equal(history.last()?.data?.totalCount, 501);
+  history.stop();
   await cache.dispose();
 });
