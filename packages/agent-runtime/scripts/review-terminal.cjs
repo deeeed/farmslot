@@ -23,7 +23,7 @@ const target = input.session;
 async function codexHandshake(marker, claim, record, folders) {
   try {
     await answerCodexFolderAccess({
-      answerClaimed: fs.existsSync(claim),
+      answerClaimed: () => fs.existsSync(claim),
       capture: () => {
         const pane = tmux(['capture-pane', '-p', '-t', target]);
         return pane.status === 0 ? pane.stdout : null;

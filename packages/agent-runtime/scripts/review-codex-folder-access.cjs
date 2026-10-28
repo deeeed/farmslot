@@ -60,7 +60,7 @@ async function answerCodexFolderAccess({
   capture,
   sendEnter,
   claimAnswer = () => true,
-  answerClaimed = false,
+  answerClaimed = () => false,
   folders,
   timeoutMs = 15_000,
   settleMs = 2_000,
@@ -69,12 +69,13 @@ async function answerCodexFolderAccess({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
   const deadline = now() + timeoutMs;
-  let answeredAt = answerClaimed ? now() : null;
+  let answeredAt = null;
   while (now() < deadline) {
     await sleep(pollMs);
     const pane = capture();
     if (pane === null) throw new Error('Codex terminal exited before Folder access completed');
     const screen = classifyCodexLaunchScreen(pane, folders);
+    if (answeredAt === null && answerClaimed()) answeredAt = now();
     if (screen.kind === 'prompt')
       throw new Error(`Codex showed an unexpected launch prompt:\n${excerpt(pane)}`);
     if (screen.kind !== 'folder-access') {
