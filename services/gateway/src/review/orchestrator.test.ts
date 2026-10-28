@@ -1,20 +1,32 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { AgentContext, ReviewIssue, WorkerSignal } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  isQualifyingReview,
+  type ReviewIssue,
+  type WorkerSignal,
+} from '@farmslot/protocol';
 
 import {
+  assertPublicationReviewPolicySatisfied,
   buildPublishGateReviewStatus,
   CONTINUE_REVIEW_FIX_ACTION,
   gateReviewContinuation,
   pendingReviewContinuation,
   publicationGateDecisionActions,
+  publicationReviewMatchesPreparedPackage,
+  reviewFinalSnapshotMatchesPreparedPackage,
 } from '../run-engine/gate-policy.js';
 import {
   executePublishGateReviewPlan,
   resumeInterruptedPublicationReview,
 } from '../run-engine/ready-gate.js';
-import { deleteTestRunIfPresent, makeRun } from '../run-engine/test-fixtures.js';
+import {
+  deleteTestRunIfPresent,
+  makeReadyGatePackage,
+  makeRun,
+} from '../run-engine/test-fixtures.js';
 import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
 import { createRun, getRun } from '../runs/store.js';
 
@@ -1095,6 +1107,7 @@ interface ScriptedDepsOptions {
   feedbackErrors?: Array<Error | undefined>;
   fixDeltaFiles?: number;
   fixDeltaUnavailable?: boolean;
+  sourceLinesChanged?: number;
   /** Re-reviews return their lineage and reviewed head, as the reviewer does. */
   lineage?: boolean;
 }
@@ -1181,11 +1194,12 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: ReviewRetryDeps; calls: C
         };
       }
       return {
+        sourceLinesChanged: opts.sourceLinesChanged,
         snapshot: {
           source: 'local-git',
           capturedAt: new Date().toISOString(),
           fixBaseSha,
-          fixHeadSha: `head-${loopNumber}`,
+          fixHeadSha: opts.fixDeltaFiles === 0 ? fixBaseSha : `head-${loopNumber}`,
           diffPath: `artifacts/pipeline-review-loop-${loopNumber}/fix-delta.diff`,
           diffHash: `hash-${loopNumber}`,
           diffStat: {
@@ -1201,6 +1215,18 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: ReviewRetryDeps; calls: C
       };
     },
     captureHeadSha: async () => 'base-head',
+    captureFixedSnapshot: async (_vars, range) => ({
+      snapshot: {
+        source: 'local-git',
+        capturedAt: new Date().toISOString(),
+        baseRef: range?.baseRef,
+        baseSha: range?.committedBaseSha,
+        headSha: range?.committedHeadSha,
+        diffHash: 'fixed-contribution',
+      },
+    }),
+    readFixedInputs: async () => null,
+    noteFixedInputs: async () => {},
     restoreWorkerChecklistTargetFromSlot: async () => {},
     setProgressDetail: (_runId, detail) => calls.progressDetails.push(detail),
     runReviewAgent: async (
@@ -1732,7 +1758,11 @@ test(
     });
     deps.waitForWorkerSignal = async (_vars, _taskDir, _timeout, baseline, turnActive) => {
       assert.equal(baseline, '');
-      assert.equal(turnActive, undefined, 'uncertain delivery cannot claim an accepted turn');
+      assert.equal(
+        typeof turnActive,
+        'function',
+        'the inactivity watch must observe worker activity even without a delivery token',
+      );
       watching();
       return signal;
     };
@@ -1866,6 +1896,329 @@ test('runReviewRetryLoop: continues after a fix-signal timeout when budget remai
   assert.equal(calls.sendFeedback, 2);
   assert.deepEqual(calls.markStatus, ['failed', 'complete']);
 });
+
+test('runReviewRetryLoop: an empty completed fix re-reviews a head changed since the retained verdict', async () => {
+  const reviewedHead = '25c2070c1f9e0edceb3411a19ac7f738d9bbbf55';
+  const fixedHead = '1ec7a14571b25d0030410d5d9abbbf1d72c194d2';
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixDeltaFiles: 0,
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  deps.getRun = () => makeRun({ engineState: { reviewInputsAtLaunch: 'unchanged' } });
+  deps.readFixedInputs = async () => ({ fingerprint: 'unchanged', legacyFingerprint: 'unchanged' });
+  deps.captureHeadSha = async () => fixedHead;
+  const reviewAgent = deps.runReviewAgent;
+  deps.runReviewAgent = async (...args) => ({
+    ...(await reviewAgent(...args)),
+    reviewSnapshot: {
+      source: 'local-git',
+      headSha: fixedHead,
+      capturedAt: new Date().toISOString(),
+    },
+  });
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: {
+      verdict: 'issues',
+      issues: ISSUES,
+      reviewId: 'review-2',
+      reviewSnapshot: {
+        source: 'local-git',
+        headSha: reviewedHead,
+        capturedAt: new Date().toISOString(),
+      },
+    },
+    retryCount: 0,
+    deps,
+  });
+  assert.equal(calls.reviewAgent, 1);
+  assert.deepEqual(calls.modes, ['warm']);
+  assert.deepEqual(calls.reviewIds, ['review-2']);
+  assert.equal(calls.rereviews[0]?.lastReviewedHeadSha, reviewedHead);
+  assert.equal(result.verdict, 'pass');
+  const gateReview = buildPublishGateReviewStatus({
+    source: 'human-gate',
+    priorReviewCount: 1,
+    reviewResult: result,
+    requestedRunner: 'codex',
+    reviewId: 'review-2',
+  });
+  assert.equal(gateReview.reviewedHeadSha, fixedHead);
+  assert.equal(gateReview.unresolvedCount, 0);
+});
+
+test('runReviewRetryLoop: an empty completed fix returns unchanged findings to the gate', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['issues', 'issues', 'issues'],
+    fixDeltaFiles: 0,
+    fixSignals: Array.from({ length: 3 }, () => ({
+      status: 'complete' as const,
+      timestamp: new Date().toISOString(),
+    })),
+  });
+  deps.getRun = () => makeRun({ engineState: { reviewInputsAtLaunch: 'unchanged' } });
+  deps.readFixedInputs = async () => ({ fingerprint: 'unchanged', legacyFingerprint: 'unchanged' });
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 3,
+    reviewResult: {
+      verdict: 'issues',
+      issues: ISSUES,
+      reviewSnapshot: {
+        source: 'local-git',
+        headSha: 'base-head',
+        capturedAt: new Date().toISOString(),
+      },
+    },
+    retryCount: 0,
+    deps,
+  });
+  assert.equal(calls.sendFeedback, 1);
+  assert.equal(calls.reviewAgent, 0);
+  assert.equal(result.verdict, 'issues');
+  assert.deepEqual(result.issues, ISSUES);
+  assert.equal(result.retryCount, 1);
+  assert.equal(result.feedbackSent, true);
+  assert.equal(result.recoveryContinuationPending, false);
+  assert.equal(result.attempts?.length, 1, 'no reviewer round is fabricated');
+  assert.equal(result.fixDelta?.diffStat?.files, 0);
+  const gateReview = buildPublishGateReviewStatus({
+    source: 'dispatch',
+    priorReviewCount: 0,
+    reviewResult: result,
+    requestedRunner: 'codex',
+  });
+  assert.equal(gateReview.verdict, 'issues');
+  assert.deepEqual(gateReview.issues, ISSUES);
+  assert.equal(gateReview.fixDelta?.diffStat?.files, 0);
+  assert.equal(pendingReviewContinuation([gateReview]), undefined);
+});
+
+for (const missing of ['baseline', 'probe'] as const) {
+  test(`runReviewRetryLoop: an empty source delta with missing ${missing} still gets reviewed`, async () => {
+    const { deps, calls } = buildDeps({
+      reviewVerdicts: ['pass'],
+      fixDeltaFiles: 0,
+      sourceLinesChanged: 0,
+      fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+    });
+    deps.getRun = () =>
+      makeRun({ engineState: missing === 'probe' ? { reviewInputsAtLaunch: 'before' } : {} });
+    deps.readFixedInputs = async () => null;
+    const result = await runReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 1,
+      retryCount: 0,
+      deps,
+      reviewResult: { verdict: 'issues', issues: ISSUES },
+    });
+    assert.equal(calls.reviewAgent, 1);
+    assert.equal(result.verdict, 'pass');
+  });
+}
+
+test('runReviewRetryLoop: an accepted small fix after a cold delta fallback qualifies at the final gate', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: [],
+    sourceLinesChanged: 1,
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  const session = {
+    mode: 'cold' as const,
+    continuity: 'fresh' as const,
+    reviewId: 'fallback-review',
+    sessionId: 'original-reviewer',
+    lastReviewedHeadSha: 'base-head',
+    fallback: {
+      reason: 'missing-session' as const,
+      detail: 'The retained session was unavailable.',
+      comparedRanges: ['earlier-head..base-head'],
+    },
+  };
+  const priorSnapshot = {
+    source: 'local-git' as const,
+    baseRef: 'earlier-head',
+    baseSha: 'earlier-head',
+    headSha: 'base-head',
+    diffHash: 'reviewed-delta',
+    capturedAt: new Date().toISOString(),
+  };
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    retryCount: 0,
+    deps,
+    reviewResult: {
+      reviewId: session.reviewId,
+      mode: 'cold',
+      session,
+      reviewerSessionId: session.sessionId,
+      verdict: 'issues',
+      issues: ISSUES,
+      reviewSnapshot: priorSnapshot,
+    },
+  });
+  const prepared = makeReadyGatePackage({
+    headSha: 'head-2',
+    reviewSnapshot: {
+      ...priorSnapshot,
+      baseSha: 'pr-base',
+      headSha: 'head-2',
+      diffHash: 'full-pr',
+    },
+  });
+  const gateReview = buildPublishGateReviewStatus({
+    source: 'dispatch',
+    priorReviewCount: 0,
+    reviewId: session.reviewId,
+    reviewResult: result,
+    requestedRunner: 'codex',
+    reviewedPackage: prepared,
+  });
+  assert.equal(calls.reviewAgent, 0);
+  assert.equal(isQualifyingReview(gateReview), true);
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(gateReview, prepared), true);
+  assert.equal(publicationReviewMatchesPreparedPackage(gateReview, prepared), true);
+  assert.doesNotThrow(() =>
+    assertPublicationReviewPolicySatisfied(
+      makeRun({ engineState: { publishGate: { reviews: [gateReview] } } }),
+      prepared,
+    ),
+  );
+  assert.deepEqual(gateReview.session, session, 'the original reviewer trace is unchanged');
+  assert.deepEqual(gateReview.attempts?.[0]?.reviewSnapshot, priorSnapshot);
+  assert.equal(gateReview.attempts?.[1]?.session, undefined);
+  for (const field of ['fixBaseSha', 'fixHeadSha'] as const) {
+    const broken = structuredClone(gateReview);
+    const delta = broken.attempts?.at(-1)?.fixDelta;
+    assert.ok(delta);
+    delta[field] = 'unrelated-head';
+    assert.equal(reviewFinalSnapshotMatchesPreparedPackage(broken, prepared), false);
+  }
+});
+
+for (const sourceLinesChanged of [0, 50, 51, undefined]) {
+  test(`runReviewRetryLoop: completed source delta ${sourceLinesChanged} uses the re-review limit`, async () => {
+    const { deps, calls } = buildDeps({
+      reviewVerdicts: ['pass'],
+      sourceLinesChanged,
+      fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+    });
+    const result = await runReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 1,
+      reviewResult: {
+        verdict: 'issues',
+        issues: ISSUES,
+        reviewSnapshot: {
+          source: 'local-git',
+          capturedAt: new Date().toISOString(),
+          baseSha: 'main-base',
+          headSha: 'base-head',
+        },
+      },
+      retryCount: 0,
+      deps,
+    });
+    const bypass = sourceLinesChanged !== undefined && sourceLinesChanged <= 50;
+    assert.equal(calls.reviewAgent, bypass ? 0 : 1);
+    assert.equal(calls.sendFeedback, 1);
+    if (bypass) {
+      assert.equal(result.verdict, 'pass');
+      assert.deepEqual(result.issues, []);
+      assert.equal(result.attempts?.length, 2);
+      assert.equal(result.attempts?.[0]?.verdict, 'issues');
+      assert.deepEqual(result.attempts?.[0]?.issues, ISSUES);
+      assert.equal(result.attempts?.[1]?.timeline?.[0]?.kind, 'worker-fix');
+      assert.equal(result.attempts?.[1]?.session, undefined);
+      const gateReview = buildPublishGateReviewStatus({
+        source: 'dispatch',
+        priorReviewCount: 0,
+        reviewResult: result,
+        requestedRunner: 'codex',
+      });
+      assert.equal(gateReview.verdict, 'pass');
+      assert.equal(gateReview.unresolvedCount, 0);
+      assert.equal(gateReview.reviewedHeadSha, 'head-2');
+      assert.equal(result.feedbackSent, true);
+      assert.equal(result.recoveryContinuationPending, false);
+    } else {
+      assert.equal(result.verdict, 'pass');
+    }
+  });
+}
+
+test('runReviewRetryLoop: changed evidence at the same head is accepted and records current inputs', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['issues'],
+    fixDeltaFiles: 0,
+    sourceLinesChanged: 0,
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  const run = makeRun({ engineState: { reviewInputsAtLaunch: 'before' } });
+  deps.getRun = () => run;
+  deps.readFixedInputs = async () => ({ fingerprint: 'after', legacyFingerprint: 'after' });
+  deps.noteFixedInputs = async () => {
+    run.engineState = { ...run.engineState, reviewInputsAtLaunch: 'after' };
+  };
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    retryCount: 0,
+    deps,
+    reviewResult: {
+      verdict: 'issues',
+      issues: ISSUES,
+      reviewSnapshot: {
+        source: 'local-git',
+        capturedAt: new Date().toISOString(),
+        baseSha: 'main-base',
+        headSha: 'base-head',
+      },
+    },
+  });
+  assert.equal(calls.reviewAgent, 0);
+  assert.equal(result.verdict, 'pass');
+  assert.equal(run.engineState?.reviewInputsAtLaunch, 'after');
+  assert.deepEqual(result.attempts?.[0]?.issues, ISSUES);
+  assert.equal(result.reviewSnapshot?.headSha, 'base-head');
+});
+
+test('runReviewRetryLoop: a small fix without the original review baseline still needs review', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    sourceLinesChanged: 50,
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    retryCount: 0,
+    deps,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+  });
+  assert.equal(calls.reviewAgent, 1);
+});
+
+for (const status of ['failed', 'blocked'] as const) {
+  test(`runReviewRetryLoop: a small ${status} fix still runs its review`, async () => {
+    const { deps, calls } = buildDeps({
+      reviewVerdicts: ['pass'],
+      sourceLinesChanged: 1,
+      fixSignals: [{ status, timestamp: new Date().toISOString() }],
+    });
+    await runReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 1,
+      reviewResult: { verdict: 'issues', issues: ISSUES },
+      retryCount: 0,
+      deps,
+    });
+    assert.equal(calls.reviewAgent, 1);
+  });
+}
 
 test('runReviewRetryLoop: returns blocked without re-review when a blocked fix changed nothing', async () => {
   const { deps, calls } = buildDeps({

@@ -21,7 +21,10 @@ import { stackPrBase } from '../run-engine/stack-base.js';
 import { validateNativeRunner } from '../runners/native/manager.js';
 import { nativeReviewerOwner, nativeReviewerResultSchema } from '../runners/native/review-owner.js';
 import { cancelNativeWorkerContext, dispatchNativeWorker } from '../runners/native/worker.js';
-import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
+import {
+  readNativeWorkerCommandError,
+  readNativeWorkerSnapshot,
+} from '../runners/native/worker-control.js';
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { PromptDeliveryUncertainError, runnerDefaultSafetyTier } from '../runners/registry.js';
@@ -803,9 +806,13 @@ async function runNativeReviewAttempt(
         completion !== 'deferred' &&
         (['closed', 'failed'].includes(snapshot.session.state) || command?.outcome === 'failed')
       ) {
+        const failure =
+          command?.outcome === 'failed'
+            ? await readNativeWorkerCommandError(runId, 'review', contextId)
+            : undefined;
         const reason =
           snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
-        throw reviewerExitForNativeSnapshot(snapshot) ?? new Error(reason);
+        throw reviewerExitForNativeSnapshot(snapshot, failure) ?? failure ?? new Error(reason);
       }
       // Drain this lease's history before judging silence; later pages can hold
       // activity that happened while the gateway was offline.

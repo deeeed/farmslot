@@ -5,6 +5,9 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 ## Unreleased
 
 - Verify shared source trees once per status read while retaining every receipt and fresh drift checks on later reads and executions.
+
+- Resolve remote reopen, resource hooks and directory fixtures through the slot pool workspace while preserving captured sources and local repo roots.
+
 - Validate dynamic project approvalPolicy overrides.
 - Configure native review inactivity with `review.review_inactivity_timeout_min`, defaulting to ten minutes.
 

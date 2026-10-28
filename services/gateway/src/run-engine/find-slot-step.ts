@@ -13,6 +13,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
 } from '@farmslot/protocol';
+import { withProjectSources } from '@farmslot/slot-config';
 
 import { loadSlotVars } from '../core/config.js';
 import {
@@ -53,9 +54,11 @@ import { automaticSlotLoads } from '../methods/dispatch/pressure-admission.js';
 import {
   activeRunIds,
   activeRunSlotIds,
+  assertAllowedSlotSelection,
   automaticSlotLoadBlocker,
   companionResourceBlocker,
   compareSlotLoads,
+  findBestSlot,
   isCdpLive,
   isFreeSlot,
   isReplaceableWarmSlot,
@@ -121,6 +124,10 @@ import { slotCapabilityBlocker, slotCapabilityCatalogs } from './slot-capability
 interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
+}
+
+interface FindSlotAttempt extends StepIO {
+  hostLoadWait?: { reason: string; slotId: string };
 }
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -693,6 +700,35 @@ export async function executeFindSlotStep(
   generation: number,
   context: FindSlotStepContext,
 ): Promise<StepIO> {
+  let hostLoadWaitReason: string | undefined;
+  for (;;) {
+    const result = await findSlotAttempt(runId, run, generation, context);
+    if (!result.hostLoadWait)
+      return hostLoadWaitReason
+        ? { ...result, inputs: { ...result.inputs, hostLoadWaitReason } }
+        : result;
+    const { reason, slotId } = result.hostLoadWait;
+    hostLoadWaitReason = reason;
+    updateRunStep(runId, 'find-slot', {
+      inputs: { ...result.inputs, hostLoadWaitReason },
+    });
+    if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+    await awaitAsQueueTime(runId, 'find-slot', async () => {
+      await delay(5_000);
+      if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+    });
+    // Retry full selection so source refusals, capabilities and fleet eligibility
+    // recover together, without retaining a snapshot across load waits.
+    run = getRun(runId)!;
+  }
+}
+
+async function findSlotAttempt(
+  runId: string,
+  run: Run,
+  generation: number,
+  context: FindSlotStepContext,
+): Promise<FindSlotAttempt> {
   if (run.sourcePlan && run.slotId) {
     const pool = (await loadPoolConfigs()).find((pool) =>
       pool.slots.some((slot) => slot.id === run.slotId),
@@ -1012,7 +1048,7 @@ export async function executeFindSlotStep(
   const automaticLoads = run.slotId ? undefined : automaticSlotLoads(pressureDecisions);
   if (automaticLoads?.size) {
     inputs.hostLoadSelection = Object.fromEntries(automaticLoads);
-    // Persist exclusions even when every allowed node is overloaded and FIND_SLOT fails.
+    // Persist exclusions before waiting when every allowed node is overloaded.
     updateRunStep(runId, 'find-slot', { inputs });
     await persistRunNow(getRun(runId)!, 'find-slot host load selection');
   }
@@ -1359,11 +1395,7 @@ export async function executeFindSlotStep(
                 `Picked slot '${pickedSlotId}' is not eligible (${ineligible ?? 'not in the fleet'}); pick a slot again`,
               );
             }
-            if (allowSet && !allowSet.has(pickedSlotId)) {
-              throw new Error(
-                `Picked slot '${pickedSlotId}' is not in the allowed slot list; pick a slot again`,
-              );
-            }
+            assertAllowedSlotSelection(run, pickedSlotId);
             if (run.sourcePlan)
               await refreshRunSourcePlan(runId, {
                 nodeId: picked.machine,
@@ -1399,21 +1431,68 @@ export async function executeFindSlotStep(
     }
   }
 
-  if (
-    !run.slotId &&
-    freeSlots.length > 0 &&
-    freeSlots.every((slot) => automaticSlotLoadBlocker(slot, selectionOptions))
-  ) {
-    throw new Error(
-      `No allowed free slot below the automatic load threshold: ${[...new Set(freeSlots.map((slot) => automaticSlotLoadBlocker(slot, selectionOptions)))].join(' ')}`,
+  const loadBlockedSlots = freeSlots.filter((slot) => {
+    const selected = optionsFor(slot);
+    return (
+      selected &&
+      automaticSlotLoadBlocker(slot, selected) &&
+      !validateSlotForDispatch(slot, fleet.slots, { ...selected, automaticLoads: undefined })
     );
+  });
+  if (!run.slotId && eligibleFreeSlots.length === 0 && loadBlockedSlots.length > 0) {
+    const reason = `Waiting for node load: ${[...new Set(loadBlockedSlots.map((slot) => automaticSlotLoadBlocker(slot, selectionOptions)))].join(' ')}`;
+    return { inputs, hostLoadWait: { reason, slotId: loadBlockedSlots[0]!.slot } };
   }
 
-  // Human intervention when no good candidates exist
+  let reusableSlotId: string | undefined;
+  const localWorkSlots = new Set<string>();
+  const reuseReasons: Record<string, string> = {};
+  if (!run.slotId && !skipPrepare) {
+    let remaining = [...eligibleFreeSlots];
+    while (remaining.length) {
+      const candidate = findBestSlot(remaining, run.project, selectionOptions);
+      if (!candidate) break;
+      remaining = remaining.filter((slot) => slot.slot !== candidate.slot);
+      if (runSupersededSince(getRun(runId), generation))
+        throw runChangedError(runId, candidate.slot);
+      const recover = async () =>
+        (await import('../run-lifecycle/safe-idle-slot.js')).reuseSafeIdleSlot(
+          candidate.slot,
+          broadcastFn,
+        );
+      const plan = sourcePlans?.get(candidate.slot);
+      const outcome =
+        plan && 'params' in plan
+          ? await withProjectSources(plan.sources, recover)
+          : await withRunSources(run, recover);
+      if (runSupersededSince(getRun(runId), generation))
+        throw runChangedError(runId, candidate.slot);
+      if (outcome.kind === 'ready') {
+        reusableSlotId = candidate.slot;
+        break;
+      }
+      if (outcome.kind === 'local-work') localWorkSlots.add(candidate.slot);
+      reuseReasons[candidate.slot] = outcome.reason;
+      inputs.reclaimFailures = { ...reuseReasons };
+      updateRunStep(runId, 'find-slot', { inputs });
+      await persistRunNow(getRun(runId)!, 'find-slot safe reuse reasons');
+    }
+    if (!reusableSlotId && eligibleFreeSlots.length > localWorkSlots.size)
+      throw new Error(
+        `No safely reusable slot: ${Object.entries(reuseReasons)
+          .map(([slot, reason]) => `${slot}: ${reason}`)
+          .join('; ')}`,
+      );
+  }
+
+  // Scores rank safe work; they never authorize discarding local work.
   if (
     !run.slotId &&
+    !reusableSlotId &&
     (eligibleFreeSlots.length === 0 ||
-      eligibleFreeSlots.every((s) => isDispatchScoreStale(scoreCandidate(s))))
+      (!skipPrepare
+        ? localWorkSlots.size === eligibleFreeSlots.length
+        : eligibleFreeSlots.every((s) => isDispatchScoreStale(scoreCandidate(s)))))
   ) {
     const freeSlotsMissingCompanionResource =
       freeSlots.length > 0 &&
@@ -1430,6 +1509,7 @@ export async function executeFindSlotStep(
     for (const slot of projectSlots) {
       const selected = optionsFor(slot);
       if (
+        (reuseReasons[slot.slot] !== undefined && !localWorkSlots.has(slot.slot)) ||
         !isFreeSlot(slot) ||
         pickedSlotIneligibility(slot, run.project) ||
         !selected ||
@@ -1469,7 +1549,13 @@ export async function executeFindSlotStep(
         ? `No eligible free slots for **${run.project}**. Abort and dispatch again once an allowed slot is ready.`
         : reason === 'missing_required_resources'
           ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Abort and dispatch again once an allowed resource slot is ready.`
-          : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
+          : !skipPrepare
+            ? `All ${localWorkSlots.size} eligible free slot(s) hold dirty or unpushed work. Preserve or explicitly release that work before dispatch.\n${Object.entries(
+                reuseReasons,
+              )
+                .map(([slot, detail]) => `${slot}: ${detail}`)
+                .join('\n')}`
+            : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
 
     const slotPickerPayload: import('@farmslot/protocol').SlotPickerPayload = {
       kind: 'slot_picker',
@@ -1512,11 +1598,7 @@ export async function executeFindSlotStep(
           `Picked slot '${pickedSlotId}' is not eligible (${ineligible ?? 'not in the fleet'}); pick a slot again`,
         );
       }
-      if (allowSet && !allowSet.has(pickedSlotId)) {
-        throw new Error(
-          `Picked slot '${pickedSlotId}' is not in the allowed slot list; pick a slot again`,
-        );
-      }
+      assertAllowedSlotSelection(run, pickedSlotId);
       if (run.sourcePlan)
         await refreshRunSourcePlan(runId, {
           nodeId: picked.machine,
@@ -1584,6 +1666,8 @@ export async function executeFindSlotStep(
     dispatchPreview(
       {
         ...buildDispatchPreviewParamsForRun(run),
+        // A lower-load unsafe candidate must not win again after another was recovered.
+        ...(reusableSlotId ? { allowedSlots: [reusableSlotId] } : {}),
         targetBranch,
         ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
         ...(skipPrepare ? { skipPrepare } : {}),

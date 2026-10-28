@@ -827,7 +827,14 @@ async function routeAuthorizedMethod(
 
     // Fleet
     case Methods.FLEET_STATUS:
-      return fleetStatus(p as FleetStatusParams);
+      return fleetStatus(p as FleetStatusParams, undefined, (fleet) =>
+        context.broadcast({
+          type: 'event',
+          event: Events.FLEET_UPDATED,
+          payload: { fleet },
+          seq: context.nextEventSeq(),
+        }),
+      );
     case Methods.FLEET_REFRESH:
       return fleetRefresh();
 

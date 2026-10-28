@@ -108,7 +108,7 @@ writeFileSync(
   }),
 );
 writeFileSync(
-  path.join(root, '.farm-status.json'),
+  path.join(root, 'fixture-status.json'),
   JSON.stringify({
     checked_at: new Date().toISOString(),
     slots: [
@@ -130,7 +130,7 @@ Object.assign(process.env, {
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
   FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
   NODE_TEST_CONTEXT: '1',
-  FARMSLOT_TEST_STATUS_FILE: path.join(root, '.farm-status.json'),
+  FARMSLOT_TEST_STATUS_FILE: path.join(root, 'fixture-status.json'),
   FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
   FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'owner',
   FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',

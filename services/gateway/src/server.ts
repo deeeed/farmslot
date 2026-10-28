@@ -51,6 +51,7 @@ import {
 } from './fleet/resource-manager.js';
 import { loadFleetStatus, onStateChange } from './fleet/state.js';
 import { forgetGitHubAccountsClientInterest } from './integrations/github-accounts.js';
+import { observedFleetStatus, setFleetWorkspacePublisher } from './methods/fleet.js';
 import { forgetGatewayUpdateClientInterest } from './methods/gateway-status.js';
 import { resolveObservedNativeWorkspace } from './methods/native-workspace.js';
 import { forgetPRDetailClientInterest } from './methods/pr/detail-observations.js';
@@ -507,6 +508,7 @@ export function createWebSocketServer(
 export function initServerGlobals(): void {
   if (serverGlobalsInitialized) return;
   serverGlobalsInitialized = true;
+  setFleetWorkspacePublisher((fleet) => broadcastEvent(Events.FLEET_UPDATED, { fleet }));
 
   // Broadcast PTY exit events to all clients
   onPtyExit((slotId, exitCode) => {
@@ -605,6 +607,7 @@ export function resetServerGlobalsForTests(): void {
   }
   serverGlobalsInitialized = false;
   disposeServerResourceObservations();
+  setFleetWorkspacePublisher(undefined);
   if (backlogAutoDispatchInterval) {
     clearInterval(backlogAutoDispatchInterval);
     backlogAutoDispatchInterval = null;
@@ -920,7 +923,7 @@ async function handleMessage(
       : undefined;
     const read = () =>
       observed && frame.method === Methods.FLEET_STATUS
-        ? loadFleetStatus(false, true).then((fleet) => ({ fleet }))
+        ? loadFleetStatus(false, true).then(observedFleetStatus)
         : observed && frame.method === Methods.TASK_PROGRESS
           ? taskProgress(params as import('@farmslot/protocol').TaskProgressParams, {
               observed: true,

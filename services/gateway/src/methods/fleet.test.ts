@@ -9,6 +9,7 @@ import { markGhostSlots } from '../fleet/state.js';
 import { isFreeSlot } from './dispatch/slot-scoring.js';
 import { makeRun } from './run/test-fixtures.js';
 import {
+  buildFleetRefreshSnapshot,
   buildRefreshSlotRow,
   fleetStaleThresholdMs,
   fleetStatus,
@@ -19,8 +20,110 @@ import {
   parseGitHeadProbe,
   preserveClaimedRowsUnknownToProbe,
   reconcileRefreshSlotRowWithActiveRun,
+  setFleetWorkspacePublisher,
   slotHeadRefreshUpdate,
 } from './fleet.js';
+
+test('refresh preserves the owner and epoch of a running review through idle probes', () => {
+  const run = makeRun({
+    id: 'review-run',
+    slotId: 'macwork-mm-4',
+    status: 'reviewing',
+    steps: [{ name: 'review', status: 'running' }],
+  });
+  const row = makeRefreshRow({ current_run_id: run.id, slot_epoch: 76 });
+  const refreshed = buildFleetRefreshSnapshot(
+    [row],
+    [makeRefreshRow({ agent: 'idle' })],
+    [run],
+    'now',
+  ).slots[0]!;
+  assert.equal(refreshed.current_run_id, run.id);
+  assert.equal(refreshed.slot_epoch, 76);
+  assert.equal(refreshed.dispatchable, false);
+});
+
+test('lost running leases quarantine only their slots and preserve healthy refresh rows', (t) => {
+  t.mock.method(console, 'error', () => {});
+  for (const name of ['prepare', 'dispatch', 'monitor', 'review', 'complete'] as const) {
+    const run = makeRun({
+      id: 'running-run',
+      slotId: 'macwork-mm-4',
+      status: 'reviewing',
+      steps: [{ name, status: 'running' }],
+    });
+    for (const rows of [
+      [],
+      [makeRefreshRow({ slot_epoch: 76 })],
+      [makeRefreshRow({ current_run_id: 'other', slot_epoch: 77 })],
+    ]) {
+      const snapshot = buildFleetRefreshSnapshot(
+        rows,
+        [makeRefreshRow(), makeRefreshRow({ slot: 'healthy' })],
+        [run],
+        'now',
+      );
+      const lost = snapshot.slots.find((row) => row.slot === run.slotId)!;
+      assert.equal(lost.dispatchable, false);
+      assert.equal(lost.lifecycle, 'held');
+      assert.equal(lost.phase, 'occupied');
+      assert.match(String(lost.held_reason), /refusing to rebuild ownership or epoch/);
+      assert.notEqual(lost.current_run_id, run.id);
+      if (rows[0]) {
+        assert.equal(lost.slot_epoch, rows[0].slot_epoch);
+        assert.equal(lost.current_run_id, rows[0].current_run_id);
+      } else assert.equal('slot_epoch' in lost, false, 'bootstrap must not invent a lost epoch');
+      assert.equal(snapshot.slots.find((row) => row.slot === 'healthy')!.dispatchable, true);
+    }
+    assert.doesNotThrow(() =>
+      buildFleetRefreshSnapshot(
+        [makeRefreshRow({ handoff_run_id: run.id })],
+        [makeRefreshRow()],
+        [run],
+        'now',
+      ),
+    );
+  }
+  const request = makeRun({
+    status: 'slot-finding',
+    steps: [{ name: 'find-slot', status: 'running' }],
+  });
+  assert.doesNotThrow(() => buildFleetRefreshSnapshot([], [makeRefreshRow()], [request], 'now'));
+});
+
+test('a recorded completed release stays free during its running human gate', (t) => {
+  t.mock.method(console, 'error', () => {});
+  const run = makeRun({
+    id: 'no-code',
+    slotId: 'macwork-mm-4',
+    flowType: 'fix-bug',
+    status: 'human-gating',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'released' } },
+      { name: 'human-gate', status: 'running' },
+    ],
+  });
+  const row = makeRefreshRow({ slot_epoch: 76 });
+  const free = buildFleetRefreshSnapshot([row], [makeRefreshRow()], [run], 'now').slots[0]!;
+  assert.equal(free.current_run_id, null);
+  assert.equal(free.slot_epoch, 76);
+  assert.equal(free.lifecycle, 'ready');
+  assert.equal(free.dispatchable, true);
+  assert.equal(newestActiveRunForSlot([run], run.slotId!), null);
+  for (const slotDisposition of ['release-deferred', 'kept-shared-slot']) {
+    const pending = {
+      ...run,
+      steps: [
+        { name: 'complete', status: 'done' as const, outputs: { slotDisposition } },
+        run.steps[1]!,
+      ],
+    };
+    assert.equal(
+      buildFleetRefreshSnapshot([row], [makeRefreshRow()], [pending], 'now').slots[0]!.dispatchable,
+      false,
+    );
+  }
+});
 
 function makeRefreshRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -419,6 +522,64 @@ test('fresh fleet.status passes through without stale flag or background refresh
   assert.equal(calls.refresh, 0);
 });
 
+test('monitor-owned observations publish current owners and coalesce without echoing cached events', async () => {
+  let current = fleetFixture(new Date().toISOString(), [
+    slotStatusFixture({ slot: 'observed', currentRunId: 'earlier-owner' }),
+  ]);
+  let resume: () => void = () => assert.fail('Observation gate missing');
+  const held = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  let reads = 0;
+  const published: FleetStatus[] = [];
+  const deps: FleetStatusDeps = {
+    load: async () => current,
+    refresh: async () => assert.fail('A fresh status must not re-probe the fleet'),
+    workspaces: {
+      read: (fleet) => fleet,
+      refresh: async (fleet) => {
+        reads++;
+        await held;
+        return fleet;
+      },
+    },
+  };
+  const publish = (fleet: FleetStatus) => published.push(fleet);
+  setFleetWorkspacePublisher(publish);
+  try {
+    // The monitor has no per-request publisher. Server initialization registers
+    // the completion broadcaster before either monitor or UI requests run.
+    const first = await fleetStatus(undefined, deps);
+    const second = await fleetStatus(undefined, deps, publish);
+    assert.equal(first.fleet, current);
+    assert.equal(second.fleet, current);
+    assert.equal(reads, 1, 'Concurrent status reads must share their background observation');
+    assert.equal(published.length, 0);
+    current = fleetFixture(new Date(0).toISOString(), [
+      slotStatusFixture({
+        slot: 'observed',
+        currentRunId: 'current-owner',
+        workspaceError: 'Observation unavailable',
+      }),
+    ]);
+  } finally {
+    resume();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    setFleetWorkspacePublisher(undefined);
+  }
+  assert.equal(published.length, 1);
+  assert.equal(published[0]?.slots[0]?.currentRunId, 'current-owner');
+  assert.equal(published[0]?.stale, true);
+  assert.equal(published[0]?.slots[0]?.dispatchable, false);
+  // Use a fresh status again: the same completed cache must not broadcast an
+  // identical event that would invalidate and request itself indefinitely.
+  current = { ...current, checkedAt: new Date().toISOString() };
+  await fleetStatus(undefined, deps, publish);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(reads, 2);
+  assert.equal(published.length, 1);
+});
+
 test('stale fleet.status marks stale, disables dispatch, and kicks a background refresh', async () => {
   const stale = fleetFixture(new Date(0).toISOString(), [
     slotStatusFixture({ slot: 'macwork-ff-1' }),
@@ -507,11 +668,14 @@ test('reconcileRefreshSlotRowWithActiveRun preserves a releasing fence over the 
     phase: 'releasing',
     current_run_id: 'teardown-owner',
   });
-  const reconciled = reconcileRefreshSlotRowWithActiveRun(row, {
-    id: 'active-run',
-    status: 'monitoring',
-    flowType: 'fix-bug',
-  } as never);
+  const reconciled = reconcileRefreshSlotRowWithActiveRun(
+    row,
+    makeRun({
+      id: 'active-run',
+      status: 'monitoring',
+      flowType: 'fix-bug',
+    }),
+  );
   assert.equal(reconciled.phase, 'releasing', 'fence preserved');
   assert.equal(reconciled.current_run_id, 'teardown-owner', 'owner untouched');
   assert.equal(reconciled.dispatchable, false);

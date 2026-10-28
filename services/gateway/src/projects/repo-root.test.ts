@@ -1,12 +1,27 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { poolDir, projectsDir } from '../core/config.js';
 import { statusFile } from '../fleet/state.js';
 
-import { farmslotRoot, resolveFarmslotRoot, resolveStatusFilePath } from './repo-root.js';
+import {
+  assertStatusFileWritable,
+  farmslotRoot,
+  resolveFarmslotRoot,
+  resolveStatusFilePath,
+} from './repo-root.js';
 
 const expectedRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -14,11 +29,10 @@ assert.equal(resolveFarmslotRoot(path.join(expectedRoot, 'services/gateway/src')
 assert.equal(farmslotRoot, expectedRoot);
 assert.equal(poolDir, path.join(expectedRoot, 'pool'));
 assert.equal(projectsDir, path.join(expectedRoot, 'projects'));
+assert.equal(statusFile, resolveStatusFilePath(expectedRoot));
 assert.equal(
-  statusFile,
-  process.env.FARMSLOT_TEST_STATUS_FILE
-    ? path.resolve(process.env.FARMSLOT_TEST_STATUS_FILE)
-    : path.join(expectedRoot, '.farm-status.json'),
+  resolveStatusFilePath(expectedRoot, {}, ['node', 'src/index.ts']),
+  path.join(expectedRoot, '.farm-status.json'),
 );
 assert.throws(
   () =>
@@ -33,3 +47,87 @@ assert.equal(
   true,
   'scripts should resolve under repo root',
 );
+
+for (const [label, env, argv] of [
+  ['node --test', { NODE_TEST_CONTEXT: 'child-v8' }, ['node', 'fixture.ts']],
+  ['direct tsx', {}, ['node', 'tsx', 'blocked-worker-resume.test.ts']],
+] as const) {
+  test(`${label} status writes preserve the live review lease`, (t) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'fleet-status-isolation-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const live = path.join(root, '.farm-status.json');
+    const prior = JSON.stringify({
+      slots: [{ slot: 'owned-review', current_run_id: 'review-run', slot_epoch: 76 }],
+    });
+    writeFileSync(live, prior);
+    const target = resolveStatusFilePath(root, env, argv);
+    writeFileSync(target, JSON.stringify({ slots: [{ slot: 'slot-terminal-overlap' }] }));
+    assert.equal(readFileSync(live, 'utf8'), prior);
+    assert.notEqual(target, live);
+  });
+}
+
+test('lane scripts can read shared status but only the gateway can write it', () => {
+  const shared = path.join(expectedRoot, '.farm-status.json');
+  assert.equal(resolveStatusFilePath(expectedRoot, {}, ['node', 'lane-proof.mjs']), shared);
+  assert.throws(
+    () => assertStatusFileWritable(shared, expectedRoot, false),
+    /writes require gateway bootstrap/,
+  );
+  assert.doesNotThrow(() => assertStatusFileWritable(shared, expectedRoot, true));
+});
+
+test('explicit test overrides cannot select the shared store through file or directory aliases', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'fleet-status-alias-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const live = path.join(root, '.farm-status.json');
+  const prior = '{"slots":[{"slot_epoch":76}]}';
+  writeFileSync(live, prior);
+  const fileAlias = path.join(root, 'test-status.json');
+  const dirAlias = path.join(root, 'alias');
+  symlinkSync(live, fileAlias);
+  symlinkSync(root, dirAlias);
+  mkdirSync(path.join(root, 'scripts'));
+  mkdirSync(path.join(root, 'services/gateway'), { recursive: true });
+  writeFileSync(path.join(root, 'CLAUDE.md'), '# Shared farm');
+  writeFileSync(path.join(root, 'scripts/dev.sh'), '');
+  writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
+  for (const selected of [live, fileAlias, path.join(dirAlias, '.farm-status.json')]) {
+    assert.throws(
+      () =>
+        resolveStatusFilePath(
+          root,
+          { NODE_TEST_CONTEXT: '1', FARMSLOT_TEST_STATUS_FILE: selected },
+          ['node', 'fixture.test.ts'],
+        ),
+      /must not point to the shared fleet status store/,
+    );
+  }
+  assert.throws(
+    () =>
+      resolveStatusFilePath(
+        path.join(root, 'different-private-root'),
+        { NODE_TEST_CONTEXT: '1', FARMSLOT_TEST_STATUS_FILE: fileAlias },
+        ['node', 'fixture.test.ts'],
+      ),
+    /must not point to the shared fleet status store/,
+  );
+  assert.equal(readFileSync(live, 'utf8'), prior);
+});
+
+test('an explicit private override preserves the shared sentinel and permits private writes', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'private-status-override-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const shared = path.join(root, '.farm-status.json');
+  writeFileSync(shared, 'shared-sentinel');
+  const privatePath = path.join(root, 'fixture-status.json');
+  const selected = resolveStatusFilePath(
+    root,
+    { NODE_TEST_CONTEXT: '1', FARMSLOT_TEST_STATUS_FILE: privatePath },
+    ['node', 'test.ts'],
+  );
+  assert.equal(selected, privatePath);
+  assert.doesNotThrow(() => assertStatusFileWritable(selected, root));
+  writeFileSync(selected, '{"slots":[]}');
+  assert.equal(readFileSync(shared, 'utf8'), 'shared-sentinel');
+});

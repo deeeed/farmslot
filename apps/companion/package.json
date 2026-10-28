@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/mobile",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "author": "Arthur Breton",
   "homepage": "https://siteed.net/projects/farmslot-farm",
   "private": true,
@@ -78,6 +78,7 @@
     "expo": "^57.0.10",
     "expo-asset": "~57.0.8",
     "expo-camera": "~57.0.3",
+    "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.9",
     "expo-dev-client": "~57.0.10",
     "expo-file-system": "~57.0.1",

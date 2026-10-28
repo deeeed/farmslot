@@ -541,7 +541,7 @@ export function acknowledgeAcceptance(pane, runner, receiptId) {
 export function validateAnswer(actions) {
   if (!Array.isArray(actions) || actions.length < 1 || actions.length > 12)
     throw new Error('Answer requires 1 to 12 explicit actions');
-  const allowed = new Set(['Up', 'Down', 'Left', 'Right', 'Enter', 'Escape']);
+  const allowed = new Set(['Up', 'Down', 'Left', 'Right', 'S-Left', 'S-Right', 'Enter', 'Escape']);
   for (const action of actions) {
     if (typeof action === 'string' && allowed.has(action)) continue;
     if (

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -26,7 +26,7 @@ async function task(t: test.TestContext) {
 
 test('a declared check cannot reach package preparation without its frozen contract', async (t) => {
   const { root, run } = await task(t);
-  await writeFile(path.join(root, 'CHECKLIST.md'), '- [x] CI [DETERMINISTIC: ci.local_check]\n');
+  await writeFile(path.join(root, 'CHECKLIST.md'), '- [x] CI [DETERMINISTIC: checks.unit]\n');
   await assert.rejects(validateDeterministicChecksForRun(run), /no frozen task contract/);
 });
 
@@ -36,7 +36,7 @@ test('a frozen check cannot be silently accepted after the checkout is lost', as
     path.join(root, 'inputs', 'worker-terminal-contract.json'),
     JSON.stringify({
       deterministicChecks: [
-        { checklist: 'CHECKLIST.md', stepNumber: 1, reference: 'ci.local_check', command: 'true' },
+        { checklist: 'CHECKLIST.md', stepNumber: 1, reference: 'checks.unit', command: 'true' },
       ],
     }),
   );
@@ -48,6 +48,69 @@ test('legacy tasks without declarations retain their package behavior', async (t
   await writeFile(path.join(root, 'CHECKLIST.md'), '- [x] Complete\n');
   assert.deepEqual(await validateDeterministicChecksForRun(run), []);
 });
+
+for (const role of ['review-fix', 'ci-fix'] as const) {
+  for (const declaresCheck of [false, true]) {
+    test(`${role} validates its own frozen declarations after cleanup: declares=${declaresCheck}`, async (t) => {
+      const { root, run } = await task(t);
+      const checklist = role === 'review-fix' ? 'REVIEW-FIX.md' : 'CI-FIX.md';
+      const parent = JSON.stringify({
+        ...resolveWorkerTerminalContract(null, 'fix-bug'),
+        deterministicChecks: [
+          {
+            checklist: 'CHECKLIST.md',
+            stepNumber: 1,
+            reference: 'checks.unit',
+            command: 'printf frozen-parent',
+          },
+        ],
+      });
+      await writeFile(path.join(root, 'inputs/worker-terminal-contract.json'), parent);
+      await writeFile(
+        path.join(root, 'CHECKLIST.md'),
+        declaresCheck ? '- [x] Parent work\n' : '- [x] CI [DETERMINISTIC: checks.unit]\n',
+      );
+      const scoped = JSON.stringify(resolveWorkerTerminalContract(null, role));
+      await writeFile(
+        path.join(root, 'inputs', `worker-terminal-contract.${role.toUpperCase()}.json`),
+        scoped,
+      );
+      await writeFile(
+        path.join(root, checklist),
+        declaresCheck ? '- [x] CI [DETERMINISTIC: checks.unit]\n' : '- [x] Source fix complete\n',
+      );
+      run.flowType = 'fix-bug';
+      run.activeTaskFile = undefined;
+      run.agentContexts = [
+        {
+          id: role,
+          role,
+          status: 'complete',
+          label: role,
+          runId: 'fixture-run',
+          slotId: 'fixture-slot',
+          taskFile: path.join(root, checklist),
+          updatedAt: '2026-01-01T10:00:00Z',
+          completedAt: '2026-01-01T10:00:00Z',
+        },
+      ];
+      if (declaresCheck)
+        await assert.rejects(validateDeterministicChecksForRun(run), /no frozen task contract/);
+      else assert.deepEqual(await validateDeterministicChecksForRun(run), []);
+      assert.equal(
+        await readFile(path.join(root, 'inputs/worker-terminal-contract.json'), 'utf8'),
+        parent,
+      );
+      assert.equal(
+        await readFile(
+          path.join(root, 'inputs', `worker-terminal-contract.${role.toUpperCase()}.json`),
+          'utf8',
+        ),
+        scoped,
+      );
+    });
+  }
+}
 
 test('publication uses the last completed source-fix checklist after role cleanup', () => {
   const run = {
@@ -117,7 +180,7 @@ test('role cleanup preserves the entire frozen parent contract byte for byte', a
   const { root } = await task(t);
   const contractFile = path.join(root, 'inputs', 'worker-terminal-contract.json');
   const checks = [
-    { checklist: 'TASK.md', stepNumber: 1, reference: 'ci.local_check', command: 'printf frozen' },
+    { checklist: 'TASK.md', stepNumber: 1, reference: 'checks.unit', command: 'printf frozen' },
   ];
   const initialized = JSON.stringify({
     ...resolveWorkerTerminalContract({ acceptance: { require: true } }, 'dev', {
@@ -155,19 +218,8 @@ test('role cleanup preserves the entire frozen parent contract byte for byte', a
   assert.equal(role.claimReviewGate, true);
   assert.equal(role.recordedEvidenceContractVersion, 1);
   assert.equal(role.flowType, 'dev');
-  assert.equal(role.deterministicChecks[0].checklist, 'REVIEW-FIX.md');
+  assert.equal(role.deterministicChecks, undefined);
   assert.equal(await readFile(contractFile, 'utf8'), initialized);
-  const bin = path.join(root, 'bin');
-  await mkdir(bin);
-  await writeFile(path.join(bin, 'yarn'), '#!/bin/sh\nprintf "%s" "$FARMSLOT_CI_BASE_REF"\n');
-  await chmod(path.join(bin, 'yarn'), 0o755);
-  const result = spawnSync('bash', ['-c', role.deterministicChecks[0].command], {
-    cwd: root,
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FARMSLOT_CI_BASE_REF: 'other-base' },
-    encoding: 'utf8',
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'a'.repeat(40));
 });
 
 test('every nested role inherits only the frozen parent review authority', async (t) => {
@@ -278,7 +330,7 @@ test('a removed slot preserves legacy refresh but refuses retained deterministic
     import { validateDeterministicChecksForRun } from ${JSON.stringify(new URL('./worker-terminal-contract.ts', import.meta.url).href)};
     const run = ${JSON.stringify({ ...run, slotId: 'removed-ci-fixture' })};
     assert.deepEqual(await validateDeterministicChecksForRun(run), []);
-    await writeFile(${JSON.stringify(path.join(root, 'inputs/worker-terminal-contract.json'))}, JSON.stringify({ deterministicChecks: [{ checklist: 'CHECKLIST.md', stepNumber: 1, reference: 'ci.local_check', command: 'true' }] }));
+    await writeFile(${JSON.stringify(path.join(root, 'inputs/worker-terminal-contract.json'))}, JSON.stringify({ deterministicChecks: [{ checklist: 'CHECKLIST.md', stepNumber: 1, reference: 'checks.unit', command: 'true' }] }));
     await assert.rejects(validateDeterministicChecksForRun(run), /slot is missing or unavailable/);
     console.log('Removed-slot legacy refresh passes; declared checks fail closed');
   `;
@@ -302,4 +354,24 @@ test('a removed slot preserves legacy refresh but refuses retained deterministic
   );
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /declared checks fail closed/);
+});
+
+test('retained local parity declarations do not block publication without a checkout or receipt', async (t) => {
+  const { root, run } = await task(t);
+  await writeFile(path.join(root, 'CHECKLIST.md'), '- [x] CI [DETERMINISTIC: ci.local_check]\n');
+  assert.deepEqual(await validateDeterministicChecksForRun(run), []);
+  await writeFile(
+    path.join(root, 'inputs/worker-terminal-contract.json'),
+    JSON.stringify({
+      deterministicChecks: [
+        {
+          checklist: 'CHECKLIST.md',
+          stepNumber: 1,
+          reference: 'ci.local_check',
+          command: 'exit 91',
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(await validateDeterministicChecksForRun(run), []);
 });

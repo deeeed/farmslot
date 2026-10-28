@@ -234,15 +234,7 @@ or resolve publication gates.
 
 `project.json` may set `ci.local_check` to a nonempty portable shell command. The built-in project uses `yarn ci:local`; the repository quality job calls the same script. Its guard list is shared, formatting is scoped to changed files when Git supplies a base, and tests requiring a tmux server remain CI-only.
 
-PR-producing worker templates reference one `{{CI_PARITY_STEP}}` part. It materializes when a local command is configured. Projects without that field retain their existing checklist. A template can also declare a step explicitly:
-
-```markdown
-- [ ] CI parity [DETERMINISTIC: ci.local_check]
-```
-
-The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`, including `vars['ci.local_check']`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
-
-Fix-role initialization MUST bind the engine's captured pre-fix commit to `FARMSLOT_CI_BASE_REF` in the frozen CI command. Retained delivery and replay MUST use that same commit. The Terminal pack consumes it for affected-test selection; worker instructions do not carry this binding. Missing legacy context retains the existing contribution-wide check.
+The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
 
 ### Mark and receipt rules
 
@@ -252,8 +244,6 @@ Fix-role initialization MUST bind the engine's captured pre-fix commit to `FARMS
 3. Only exit zero, unchanged publishable inputs and successful receipt persistence permit checking the box. Failure, interruption and missing configuration MUST refuse completion. Bulk/terminal marks and checklist skip flags do not waive these checks. Custom mark engines that cannot produce receipts cannot satisfy declared steps.
 4. Publishable inputs are Git's tracked and nonignored untracked file inventory, paths, file permissions, file bytes or symlink targets, including tracked deletions. The task directory's owned inputs/outputs are excluded. Commit metadata is excluded, so committing identical checked content preserves a pass. Failure to identify the checkout or inputs fails closed.
 5. The artifact checker MUST reject absent, failed, interrupted or stale receipts, changed commands, and missing/changed logs, independently of checkbox state. The active role's frozen declarations apply; role initialization freezes its own materialized checklist through the same writer.
-
-Lightweight interactive development keeps the operator plan in `CHECKLIST.md`. Its generated CI-parity step is frozen in `TASK.md` and the shared part gives the existing `mark --checklist TASK.md N` invocation. The operator plan cannot waive its receipt.
 
 ### Publication and display
 

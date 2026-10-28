@@ -63,9 +63,11 @@ export function parseFiltersFromHash(hash: string = location.hash): GlobalFilter
 
 export function filtersHash(filters: GlobalFilters, hash: string = location.hash): string {
   const { route, params } = parseHashRoute(hash);
-  if (filters.projects.length > 0) params.set('projects', filters.projects.join(','));
+  if (filters.projects.length > 0 || params.has('projects'))
+    params.set('projects', filters.projects.join(','));
   else params.delete('projects');
-  if (filters.machines.length > 0) params.set('machines', filters.machines.join(','));
+  if (filters.machines.length > 0 || params.has('machines'))
+    params.set('machines', filters.machines.join(','));
   else params.delete('machines');
   return buildHash(route, params);
 }

@@ -17,6 +17,7 @@ import {
   type RunRefreshMirrorResult,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
+import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
 import { observeNativeArtifactFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
@@ -31,6 +32,7 @@ import {
   artifactUrlForEntry,
   classifyArtifact,
   countVisualArtifactPairs,
+  CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
   resolveRecipeRunSelection,
 } from '../../lib/artifact-url';
@@ -114,9 +116,11 @@ export function useArtifactViewerController() {
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
-  const [documentViewer, setDocumentViewer] = useState<{ title: string; body: string } | null>(
-    null,
-  );
+  const [documentViewer, setDocumentViewer] = useState<{
+    title: string;
+    body: string;
+    sharedArtifact: SharedRunArtifactSelection;
+  } | null>(null);
   const [artifactFilter, setArtifactFilter] = useState<ArtifactWorkspaceFilter>('all');
   const [artifactQuery, setArtifactQuery] = useState('');
   const [filterLayout, setFilterLayout] = useState<ArtifactStickyChromeLayout | null>(null);
@@ -438,13 +442,30 @@ export function useArtifactViewerController() {
     [evidenceModel],
   );
   const visualViewerItems = useMemo(
-    () => evidenceMediaItems(manifest, artifactUrlFor, artifactAuthHeaders, evidenceModel),
-    [artifactAuthHeaders, artifactUrlFor, evidenceModel, manifest],
+    () =>
+      evidenceMediaItems(manifest, artifactUrlFor, artifactAuthHeaders, evidenceModel, {
+        runId,
+        slotId: run?.slotId ?? undefined,
+        recipeRunId:
+          selectedRecipeRun?.groupKind === CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
+            ? undefined
+            : selectedRecipeRun?.id,
+      }),
+    [
+      artifactAuthHeaders,
+      artifactUrlFor,
+      evidenceModel,
+      manifest,
+      runId,
+      run?.slotId,
+      selectedRecipeRun,
+    ],
   );
   const viewerIndex = viewerUri ? visualViewerItems.findIndex((item) => item.uri === viewerUri) : 0;
 
   const openDocument = useCallback(
-    (url: string, path: string) => {
+    (url: string, path: string, recipeRunId?: string) => {
+      const sharedArtifact = { runId, path, slotId: run?.slotId ?? undefined, recipeRunId };
       documentAbortRef.current?.abort();
       const controller = new AbortController();
       documentAbortRef.current = controller;
@@ -455,7 +476,7 @@ export function useArtifactViewerController() {
         })
         .then((body) => {
           if (!controller.signal.aborted && scopeRef.current === scopeKey)
-            setDocumentViewer({ title: path.split('/').pop() ?? path, body });
+            setDocumentViewer({ title: path.split('/').pop() ?? path, body, sharedArtifact });
         })
         .catch((err: Error) => {
           // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
@@ -463,12 +484,16 @@ export function useArtifactViewerController() {
           setError(`Failed to load ${path}: ${err.message}`);
         });
     },
-    [artifactAuthHeaders, scopeKey],
+    [artifactAuthHeaders, run?.slotId, runId, scopeKey],
   );
   const openReviewDocument = useCallback(
     (entry: ArtifactManifestEntry) => {
       if (!runId) return;
-      openDocument(artifactUrlForEntry(gatewayUrl, runId, entry, artifactMirrorEpoch), entry.path);
+      openDocument(
+        artifactUrlForEntry(gatewayUrl, runId, entry, artifactMirrorEpoch),
+        entry.path,
+        entry.recipeRunId,
+      );
     },
     [artifactMirrorEpoch, gatewayUrl, openDocument, runId],
   );

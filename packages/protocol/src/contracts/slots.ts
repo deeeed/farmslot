@@ -4,6 +4,7 @@ import type { AgentContextSummary, SlotAgent } from './agents.js';
 import type { ReadinessRecord } from './readiness.js';
 import type { ResourceRollup, ResourceWatchRuntimeStats } from './resources.js';
 import type { RunLane } from './runs.js';
+import type { SlotWorkspace } from './slot-recovery.js';
 
 export type SlotLifecycle =
   | 'ready' // Idle, dispatchable.
@@ -61,6 +62,12 @@ export interface SlotHealth {
 }
 
 export interface SlotStatus {
+  workspace?: SlotWorkspace;
+  workspaceError?: string;
+  /** Current ownership topology, independent of cached Git observations. */
+  slotEpoch?: number;
+  cleanupRunId?: string | null;
+  handoffRunId?: string | null;
   slot: string;
   machine: string;
   platform: string;

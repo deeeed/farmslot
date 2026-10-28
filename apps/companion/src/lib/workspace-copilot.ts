@@ -11,7 +11,9 @@ export interface WorkspaceCopilotDraftInput {
   artifactPath?: string | null;
 }
 
-export type WorkspaceCopilotRouteParams = Record<string, string | string[] | undefined>;
+export type WorkspaceCopilotRouteParams = Readonly<
+  Record<string, string | readonly string[] | undefined>
+>;
 
 export interface FailedStepDiagnosticDraftInput {
   runId: string;
@@ -194,9 +196,9 @@ function normalizeWorkspaceFocus(value: string | null): string | null {
   return allowed.has(normalized) ? normalized : null;
 }
 
-function routeParam(value: string | string[] | undefined, enabled = true): string | null {
+function routeParam(value: string | readonly string[] | undefined, enabled = true): string | null {
   if (!enabled) return null;
-  const resolved = Array.isArray(value) ? value[0] : value;
+  const resolved = typeof value === 'string' ? value : value?.[0];
   const normalized = resolved?.trim();
   return normalized || null;
 }

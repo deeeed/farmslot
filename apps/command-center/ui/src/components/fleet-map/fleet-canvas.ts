@@ -38,6 +38,7 @@ import type {
 import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { fleetRecoverySummary } from '@farmslot/review-dispatch';
 
 import './machine-group.js';
 import './machine-pause-dialog.js';
@@ -50,19 +51,10 @@ import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
-import {
-  type AppState,
-  fleetQuery,
-  getProjectSlotTrackingConfigs,
-  getState,
-  isFleetCurrent,
-  isHydrating,
-  subscribe,
-} from '../../state.js';
+import { type AppState, fleetQuery, getState, isHydrating, subscribe } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
-import { summarizeFleetRefreshEligibility } from '../slot-actions/fleet-refresh-modal-model.js';
 import {
   buildSlotPendingWork,
   type SlotPendingWork,
@@ -111,6 +103,8 @@ export class FleetCanvas extends LitElement {
   @state() private filterProjects: string[] = [];
   @state() private filterMachines: string[] = [];
   @state() private search = '';
+  @state() private recoverySlotId = '';
+  @state() private recoveryInspectOnly = false;
   @state() private onlineMachines: Set<string> = new Set();
   @state() private nodeInfo: Map<string, NodeInfo> = new Map();
   @state() private gatewayProtocolVersion = '';
@@ -1254,122 +1248,129 @@ export class FleetCanvas extends LitElement {
 
   render() {
     return html`
-      <div class="toolbar">
-        <div class="toggle-group">
-          <button
-            class="toggle-btn ${this.groupBy === 'machine' ? 'active' : ''}"
-            @click=${() => this.setGroupBy('machine')}
-          >
-            machine
-          </button>
-          <button
-            class="toggle-btn ${this.groupBy === 'project' ? 'active' : ''}"
-            @click=${() => this.setGroupBy('project')}
-          >
-            project
-          </button>
-          <button
-            class="toggle-btn ${this.groupBy === 'resource' ? 'active' : ''}"
-            @click=${() => this.setGroupBy('resource')}
-          >
-            resource
-          </button>
-        </div>
-        <div class="toggle-group">
-          <button
-            class="toggle-btn ${this.viewMode === 'card' ? 'active' : ''}"
-            @click=${() => this.setViewMode('card')}
-          >
-            cards
-          </button>
-          <button
-            class="toggle-btn ${this.viewMode === 'list' ? 'active' : ''}"
-            data-testid="fleet-view-list"
-            @click=${() => this.setViewMode('list')}
-          >
-            list
-          </button>
-        </div>
-        <input
-          type="text"
-          placeholder="search slots..."
-          @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}
-        />
-        ${this.renderFleetRefreshTrigger()} ${this.renderProgressReadStatus()}
-        ${this.fleetObservation.status === 'stale' && this.fleetObservation.data
-          ? html`<span class="rehydrating-banner" data-fleet-freshness="stale">
-              Saved fleet, ${sourceObservationAge(this.fleetObservation.observedAt, this.now)}.
-              Actions wait for a current read.
-            </span>`
-          : ''}
-        ${this.nodeQuery.state.status === 'stale' && this.nodeQuery.state.data
-          ? html`<span class="rehydrating-banner" data-node-freshness="stale">
-              Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt, this.now)}.
-            </span>`
-          : ''}
-        ${this.nodeQuery.state.error
-          ? html`<span role="alert"
-              >Could not read nodes: ${this.nodeQuery.state.error.message}
-              <button @click=${() => this.nodeQuery.retry()}>Retry reading nodes</button>
-            </span>`
-          : ''}
-        ${this.fleetObservation.data?.fleet.stale
-          ? html`<span class="rehydrating-banner"
-              >Fleet source is stale. Actions wait for a fresh observation.</span
-            >`
-          : ''}
-        ${this.fleetObservation.status === 'unsupported'
-          ? html`<span class="rehydrating-banner"
-              >Live fleet updates are unavailable on this gateway.</span
-            >`
-          : ''}
-        ${this.fleetObservation.error
-          ? html`<span role="alert"
-              >Could not read fleet: ${this.fleetObservation.error.message}
-              <button @click=${() => getResourceCache()?.retry(fleetQuery)}>
-                Retry reading fleet
-              </button>
-            </span>`
-          : ''}
-      </div>
-      <div class="canvas">
-        ${this.groupBy === 'resource' ? this.renderResourceView() : this.renderGroupView()}
-      </div>
-      <slot-actions-modal
-        slot-id=${this.actionsModalSlotId}
-        ?open=${!!this.actionsModalSlotId}
-        @close=${() => {
-          this.actionsModalSlotId = '';
+      <div
+        style="display: contents"
+        @fleet-slot-recovery=${(event: CustomEvent<{ slotId: string; inspectOnly: boolean }>) => {
+          this.recoverySlotId = event.detail.slotId;
+          this.recoveryInspectOnly = event.detail.inspectOnly;
+          this.fleetRefreshOpen = true;
         }}
-      ></slot-actions-modal>
-      <fleet-refresh-modal
-        ?open=${this.fleetRefreshOpen}
-        @close=${() => {
-          this.fleetRefreshOpen = false;
-          this._writeUrlParams();
-        }}
-      ></fleet-refresh-modal>
+      >
+        <div class="toolbar">
+          <div class="toggle-group">
+            <button
+              class="toggle-btn ${this.groupBy === 'machine' ? 'active' : ''}"
+              @click=${() => this.setGroupBy('machine')}
+            >
+              machine
+            </button>
+            <button
+              class="toggle-btn ${this.groupBy === 'project' ? 'active' : ''}"
+              @click=${() => this.setGroupBy('project')}
+            >
+              project
+            </button>
+            <button
+              class="toggle-btn ${this.groupBy === 'resource' ? 'active' : ''}"
+              @click=${() => this.setGroupBy('resource')}
+            >
+              resource
+            </button>
+          </div>
+          <div class="toggle-group">
+            <button
+              class="toggle-btn ${this.viewMode === 'card' ? 'active' : ''}"
+              @click=${() => this.setViewMode('card')}
+            >
+              cards
+            </button>
+            <button
+              class="toggle-btn ${this.viewMode === 'list' ? 'active' : ''}"
+              data-testid="fleet-view-list"
+              @click=${() => this.setViewMode('list')}
+            >
+              list
+            </button>
+          </div>
+          <input
+            type="text"
+            placeholder="search slots..."
+            @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}
+          />
+          ${this.renderFleetRefreshTrigger()} ${this.renderProgressReadStatus()}
+          ${this.fleetObservation.status === 'stale' && this.fleetObservation.data
+            ? html`<span class="rehydrating-banner" data-fleet-freshness="stale">
+                Saved fleet, ${sourceObservationAge(this.fleetObservation.observedAt, this.now)}.
+                Actions wait for a current read.
+              </span>`
+            : ''}
+          ${this.nodeQuery.state.status === 'stale' && this.nodeQuery.state.data
+            ? html`<span class="rehydrating-banner" data-node-freshness="stale">
+                Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt, this.now)}.
+              </span>`
+            : ''}
+          ${this.nodeQuery.state.error
+            ? html`<span role="alert"
+                >Could not read nodes: ${this.nodeQuery.state.error.message}
+                <button @click=${() => this.nodeQuery.retry()}>Retry reading nodes</button>
+              </span>`
+            : ''}
+          ${this.fleetObservation.data?.fleet.stale
+            ? html`<span class="rehydrating-banner"
+                >Fleet source is stale. Actions wait for a fresh observation.</span
+              >`
+            : ''}
+          ${this.fleetObservation.status === 'unsupported'
+            ? html`<span class="rehydrating-banner"
+                >Live fleet updates are unavailable on this gateway.</span
+              >`
+            : ''}
+          ${this.fleetObservation.error
+            ? html`<span role="alert"
+                >Could not read fleet: ${this.fleetObservation.error.message}
+                <button @click=${() => getResourceCache()?.retry(fleetQuery)}>
+                  Retry reading fleet
+                </button>
+              </span>`
+            : ''}
+        </div>
+        <div class="canvas">
+          ${this.groupBy === 'resource' ? this.renderResourceView() : this.renderGroupView()}
+        </div>
+        <slot-actions-modal
+          slot-id=${this.actionsModalSlotId}
+          ?open=${!!this.actionsModalSlotId}
+          @close=${() => {
+            this.actionsModalSlotId = '';
+          }}
+        ></slot-actions-modal>
+        <fleet-refresh-modal
+          .slotIds=${this.filteredSlots.map((slot) => slot.slot)}
+          .singleSlotId=${this.recoverySlotId}
+          .inspectOnly=${this.recoveryInspectOnly}
+          ?open=${this.fleetRefreshOpen}
+          @close=${() => {
+            this.fleetRefreshOpen = false;
+            this._writeUrlParams();
+          }}
+        ></fleet-refresh-modal>
+      </div>
     `;
   }
 
   private renderFleetRefreshTrigger() {
-    const { cleanIdle, stale, eligible } = summarizeFleetRefreshEligibility(
-      this.slots,
-      getProjectSlotTrackingConfigs(),
-    );
-    const label =
-      eligible === 0
-        ? 'Refresh idle'
-        : `Refresh idle (${cleanIdle} ready${stale > 0 ? `, ${stale} stale` : ''})`;
+    const { count: eligible, canInspect } = fleetRecoverySummary(this.filteredSlots);
+    const label = eligible === 0 ? 'Release idle slots' : `Release idle slots (${eligible})`;
     return html`
       <button
         class="toggle-btn fleet-refresh-trigger ${eligible > 0 ? 'has-eligible' : ''}"
-        ?disabled=${!isFleetCurrent() || eligible === 0 || this.fleetRefreshOpen}
+        ?disabled=${!canInspect || this.fleetRefreshOpen}
         title=${eligible === 0
           ? 'No eligible slots — every slot is busy, held, or disabled'
           : 'Bulk refresh idle slots'}
         @click=${() => {
-          if (!isFleetCurrent()) return;
+          this.recoverySlotId = '';
+          this.recoveryInspectOnly = false;
           this.fleetRefreshOpen = true;
           this._writeUrlParams();
         }}

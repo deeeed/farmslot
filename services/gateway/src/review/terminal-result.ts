@@ -78,10 +78,33 @@ export function terminalReviewArtifactErrorForCompletion(
 }
 import path from 'node:path';
 
-import type { NativeSessionReadResult, ReviewStatus } from '@farmslot/protocol';
+import type { NativeSessionReadResult, ReviewAttempt, ReviewStatus } from '@farmslot/protocol';
 
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { PromptDeliveryUncertainError } from '../runners/registry.js';
+
+/** The structured reviewer result that a gateway-accepted fix extends without a new turn. */
+export function acceptedReviewFixPredecessor(review: ReviewStatus): ReviewAttempt | undefined {
+  const fix = review.attempts?.at(-1);
+  const prior = review.attempts?.at(-2);
+  const snapshot = review.reviewSnapshot;
+  const priorSnapshot = prior?.reviewSnapshot;
+  return review.verdict === 'pass' &&
+    review.unresolvedCount === 0 &&
+    fix?.verdict === 'pass' &&
+    fix.unresolvedCount === 0 &&
+    !fix.session &&
+    fix.timeline?.some((segment) => segment.kind === 'worker-fix' && segment.verdict === 'pass') &&
+    fix.fixDelta?.source === 'local-git' &&
+    snapshot?.source === 'local-git' &&
+    priorSnapshot?.source === 'local-git' &&
+    fix.fixDelta.fixBaseSha === priorSnapshot.headSha &&
+    fix.fixDelta.fixHeadSha === snapshot.headSha &&
+    priorSnapshot.baseRef === snapshot.baseRef &&
+    priorSnapshot.baseSha === snapshot.baseSha
+    ? prior
+    : undefined;
+}
 
 /** Read the attempt whose verdict is projected; a later blocked fix is audit history. */
 export function reviewResultArtifactPath(

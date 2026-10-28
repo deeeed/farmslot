@@ -16,7 +16,7 @@ test('global filters parse and update existing hash params without dropping view
 
   assert.equal(
     filtersHash({ projects: ['gateway'], machines: [] }, '#runs?family=fam-1&machines=old'),
-    '#runs?family=fam-1&projects=gateway',
+    '#runs?family=fam-1&machines=&projects=gateway',
   );
 });
 
@@ -53,4 +53,18 @@ test('changing the selected run clears detail-only step and artifact state', () 
     runsHashWithState({ run: 'run-2' }, '#runs?run=run-1&step=monitor&projects=cc'),
     '#runs?run=run-2&projects=cc',
   );
+});
+
+test('explicit empty shared filters override a browser’s previously saved selection', () => {
+  assert.deepEqual(parseFiltersFromHash('#runs?projects=&machines=&runsTab=all'), {
+    projects: [],
+    machines: [],
+  });
+});
+
+test('rewriting shared empty filters retains their explicit meaning through reload', () => {
+  const hash = filtersHash({ projects: [], machines: [] }, '#runs?projects=&machines=&runsTab=all');
+  assert.equal(hash, '#runs?projects=&machines=&runsTab=all');
+  assert.deepEqual(parseFiltersFromHash(hash), { projects: [], machines: [] });
+  assert.equal(filtersHash({ projects: [], machines: [] }, '#fleet'), '#fleet');
 });

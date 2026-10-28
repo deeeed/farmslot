@@ -9,6 +9,7 @@ import { cancelledRunSlotHold, type Run, type SlotStatus } from '@farmslot/proto
 import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunTitle } from '../../components/RunTitle';
+import { FleetRecoveryControl } from '../../features/fleet/FleetRecoveryControl';
 import { NodeSourceStatusDisclosure } from '../../features/sources/SourceStatusSection';
 import { CancelledRunSlotRelease } from '../../features/workspace-shared/CancelledRunSlotRelease';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../../lib/artifact-url';
@@ -108,6 +109,7 @@ function SlotCard({
           ) : null}
         </View>
       </View>
+      <FleetRecoveryControl slot={slot} />
       {cancelledHold ? <CancelledRunSlotRelease hold={cancelledHold} /> : null}
       {slot.taskStepProgress != null && slot.taskStepProgress > 0 && (
         <View style={styles.progressTrack}>
@@ -218,6 +220,7 @@ export default function FleetScreen() {
     <View testID="companion-screen-fleet" collapsable={false} style={baseStyles.container}>
       <View style={styles.summaryBar}>
         <Text style={styles.summaryText}>{summaryText}</Text>
+        <FleetRecoveryControl slots={filteredSlots} />
       </View>
       <ResourceReadStatus observation={observation} label="fleet" />
       {fleet?.stale ? (

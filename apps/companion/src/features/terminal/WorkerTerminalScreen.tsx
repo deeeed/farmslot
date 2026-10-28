@@ -13,8 +13,6 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  Animated,
-  Easing,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -41,6 +39,7 @@ import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
+import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-actions';
 import { getResourceCache } from '../../lib/resource-cache';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
@@ -68,6 +67,11 @@ import {
 } from '../../lib/worker-voice-nudge';
 import { useConnectionStore } from '../../store/connection';
 import { TMUX_PREFIX_BYTES, useTerminalPrefsStore } from '../../store/terminal-prefs';
+import {
+  useQuickActionVoiceTarget,
+  useSharedViewSelection,
+} from '../quick-actions/QuickActionsProvider';
+import { useQuickActionComposerInset } from '../quick-actions/use-quick-action-composer-inset';
 
 import {
   TerminalModeToggle,
@@ -120,7 +124,6 @@ export default function WorkerTerminalScreen() {
   const status = useConnectionStore((s) => s.status);
   const terminalRef = useRef<XtermTerminalViewHandle>(null);
   const terminalTailTextRef = useRef('');
-  const voicePulse = useRef(new Animated.Value(0)).current;
   const voiceRecorder = useAudioRecorder();
   const [lines, setLines] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +132,7 @@ export default function WorkerTerminalScreen() {
   const [voiceMessage, setVoiceMessage] = useState(getVoiceCopilotAvailability().message);
   const [voiceTranscript, setVoiceTranscript] = useState(draftParam);
   const [voiceDraft, setVoiceDraft] = useState('');
+  const [voiceContext, setVoiceContext] = useState('');
   const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
   const [voiceRuntimeReady, setVoiceRuntimeReady] = useState<boolean | null>(null);
   const [voiceModelState, setVoiceModelState] = useState<VoiceAsrModelState | null>(null);
@@ -235,12 +239,7 @@ export default function WorkerTerminalScreen() {
     hasVoiceEditableInstruction ||
     isPreparingVoiceRecorder ||
     isFormattingVoice;
-  const showFloatingVoiceButton = !showVoiceComposer && !voiceBusy;
-  const animateVoiceButton =
-    voiceStatus === 'recording' ||
-    voiceStatus === 'transcribing' ||
-    isPreparingVoiceRecorder ||
-    isFormattingVoice;
+  const onVoiceComposerLayout = useQuickActionComposerInset(showVoiceComposer);
   const voiceWidgetWidth = Math.max(1, voicePanelWidth - spacing.md * 2);
   const voiceWaveform = useMemo<WaveformPoint[]>(() => {
     const dataPoints = voiceRecorder.analysisData?.dataPoints ?? [];
@@ -261,10 +260,6 @@ export default function WorkerTerminalScreen() {
       ),
     );
   }, [voiceRecorder.analysisData?.dataPoints]);
-  const voiceButtonPulseStyle = {
-    opacity: voicePulse.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.48] }),
-    transform: [{ scale: voicePulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.45] }) }],
-  };
 
   const appendTerminalTail = useCallback((chunk: string) => {
     terminalTailTextRef.current = appendTerminalTailText(
@@ -383,34 +378,6 @@ export default function WorkerTerminalScreen() {
     }, [selectedVoiceModelId]),
   );
 
-  useEffect(() => {
-    if (!animateVoiceButton) {
-      voicePulse.stopAnimation();
-      voicePulse.setValue(0);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(voicePulse, {
-          toValue: 1,
-          duration: 650,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(voicePulse, {
-          toValue: 0,
-          duration: 650,
-          easing: Easing.in(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => {
-      loop.stop();
-    };
-  }, [animateVoiceButton, voicePulse]);
-
   const sendInput = useCallback(
     (data: string) => {
       if (!client || !worker) return;
@@ -486,7 +453,9 @@ export default function WorkerTerminalScreen() {
   );
 
   const sendReviewedVoiceInstruction = useCallback(async (): Promise<boolean> => {
-    const data = workerVoiceInstructionInput(voiceEditableInstruction);
+    const data = workerVoiceInstructionInput(
+      quickVoiceInstruction(voiceContext, voiceEditableInstruction),
+    );
     if (!data || !client || !worker || isSending) return false;
     setIsSending(true);
     try {
@@ -495,6 +464,7 @@ export default function WorkerTerminalScreen() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setVoiceStatus('idle');
       setVoiceMessage('Instruction sent. Tap mic for the next worker nudge.');
+      setVoiceContext('');
       setVoiceTranscript('');
       setVoiceDraft('');
       setVoiceWarning(null);
@@ -506,7 +476,7 @@ export default function WorkerTerminalScreen() {
     } finally {
       setIsSending(false);
     }
-  }, [client, isSending, voiceEditableInstruction, worker, requireWorkerInventory]);
+  }, [client, isSending, voiceContext, voiceEditableInstruction, worker, requireWorkerInventory]);
 
   const resize = useCallback(
     (size: TerminalSize) => {
@@ -651,9 +621,38 @@ export default function WorkerTerminalScreen() {
     void startVoiceRecording();
   }, [startVoiceRecording, stopVoiceRecording, voiceBusy, voiceStatus]);
 
+  const quickVoiceKey = worker ? quickVoiceWorkerKey(worker) : '';
+  useSharedViewSelection(
+    useMemo(
+      () => ({
+        pathname: '/terminal/worker',
+        params: {},
+        workerSelection: worker ?? undefined,
+      }),
+      [worker],
+    ),
+  );
+  useEffect(() => {
+    setVoiceContext('');
+  }, [quickVoiceKey]);
+  const invokeQuickVoice = useCallback(
+    (context?: string) => {
+      if (context !== undefined) setVoiceContext(context);
+      handleVoicePress();
+    },
+    [handleVoicePress],
+  );
+  useQuickActionVoiceTarget(
+    quickVoiceKey,
+    invokeQuickVoice,
+    workerReady && !voiceRuntimePending && !voiceBusy,
+    Boolean(worker),
+  );
+
   const discardVoiceDraft = useCallback(() => {
     setVoiceStatus('idle');
     setVoiceMessage('Draft discarded. Tap mic to dictate again.');
+    setVoiceContext('');
     setVoiceTranscript('');
     setVoiceDraft('');
     setVoiceWarning(null);
@@ -770,8 +769,19 @@ export default function WorkerTerminalScreen() {
         {showVoiceComposer ? (
           <View
             style={styles.voicePanel}
-            onLayout={(event) => setVoicePanelWidth(event.nativeEvent.layout.width)}
+            onLayout={(event) => {
+              setVoicePanelWidth(event.nativeEvent.layout.width);
+              onVoiceComposerLayout(event);
+            }}
           >
+            {voiceContext ? (
+              <Text
+                testID="worker-voice-context"
+                style={{ color: colors.textSecondary, fontSize: 12 }}
+              >
+                {voiceContext}
+              </Text>
+            ) : null}
             {voiceStatus === 'recording' ? (
               <ChatRecordWidget
                 state="recording"
@@ -813,6 +823,7 @@ export default function WorkerTerminalScreen() {
                 </Pressable>
                 <View style={styles.voiceInputSurface}>
                   <TextInput
+                    testID="worker-voice-instruction"
                     style={[styles.voiceTextInput, voiceInputLocked && styles.voiceTextInputLocked]}
                     value={voiceEditableInstruction}
                     onChangeText={(text) => {
@@ -852,6 +863,7 @@ export default function WorkerTerminalScreen() {
                         </Text>
                       </Pressable>
                       <Pressable
+                        testID="worker-voice-send"
                         style={[
                           styles.voiceSendButton,
                           (!connectionReady || isSending || voiceInputLocked) &&
@@ -862,7 +874,11 @@ export default function WorkerTerminalScreen() {
                       >
                         <Text style={styles.voiceSendText}>{isSending ? '…' : 'Send'}</Text>
                       </Pressable>
-                      <Pressable style={styles.voiceCancelButton} onPress={discardVoiceDraft}>
+                      <Pressable
+                        testID="worker-voice-discard"
+                        style={styles.voiceCancelButton}
+                        onPress={discardVoiceDraft}
+                      >
                         <Text style={styles.voiceCancelText}>Cancel</Text>
                       </Pressable>
                     </>
@@ -875,7 +891,9 @@ export default function WorkerTerminalScreen() {
               </View>
             )}
             {voiceBusy && voiceMessage ? (
-              <Text style={styles.voiceProgressText}>{voiceMessage}</Text>
+              <Text testID="worker-voice-progress" style={styles.voiceProgressText}>
+                {voiceMessage}
+              </Text>
             ) : null}
             {voiceWarning ? <Text style={styles.voiceWarningText}>{voiceWarning}</Text> : null}
           </View>
@@ -906,25 +924,6 @@ export default function WorkerTerminalScreen() {
             onToggleTouchKeyboard={() => setAllowTerminalTouchKeyboard(!allowTerminalTouchKeyboard)}
           />
         </View>
-        {showFloatingVoiceButton ? (
-          <Animated.View style={[styles.floatingVoiceShell, { bottom: insets.bottom + 56 }]}>
-            {animateVoiceButton ? (
-              <Animated.View style={[styles.floatingVoicePulse, voiceButtonPulseStyle]} />
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Dictate worker nudge"
-              accessibilityHint={voiceMessage || undefined}
-              style={styles.floatingVoiceButton}
-              onPress={() => {
-                setVoiceComposerOpen(true);
-                void startVoiceRecording();
-              }}
-            >
-              <Ionicons name="mic-outline" size={24} color="#fff" />
-            </Pressable>
-          </Animated.View>
-        ) : null}
       </View>
     </KeyboardAvoidingView>
   );

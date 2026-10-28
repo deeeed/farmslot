@@ -411,6 +411,18 @@ async function resumeNativeWorkerExclusive(
   if (snapshot.session.generation === intent.fromGeneration && !intent.continueLive) {
     if (!snapshot.session.processStopped)
       throw new Error('Previous native process has not confirmed cleanup');
+    const { admitWorkerLaunch } =
+      context.role === 'review'
+        ? { admitWorkerLaunch: null }
+        : await import('../../run-engine/worker-launch-preflight.js');
+    const assertPreflightCurrent = !admitWorkerLaunch
+      ? async () => {}
+      : await admitWorkerLaunch({
+          runId,
+          vars,
+          environment: prepared.launch.environment,
+          assertCurrent: assertRunCurrent,
+        });
     const { enforceDispatchPressureGate } = await import('../../methods/dispatch/execute.js');
     await enforceDispatchPressureGate({
       machine: vars.machine,
@@ -429,6 +441,7 @@ async function resumeNativeWorkerExclusive(
       recovery: { ...intent, requestedAt: intent.requestedAt ?? new Date().toISOString() },
     });
     await admit();
+    await assertPreflightCurrent();
     const resumeParams = {
       ...sessionTarget,
       ...nativeProfileSessionParams(binding.profile),

@@ -29,7 +29,7 @@ Object.assign(process.env, {
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
   FARMSLOT_HOME: path.join(root, 'home'),
   FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
-  FARMSLOT_TEST_STATUS_FILE: path.join(root, '.farm-status.json'),
+  FARMSLOT_TEST_STATUS_FILE: path.join(root, 'fixture-status.json'),
   NODE_TEST_CONTEXT: '1',
   PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH,
 });
@@ -123,7 +123,7 @@ const rows = ['holder', 'requested'].map((slot) => ({
 }));
 const writeStatus = () =>
   writeFileSync(
-    path.join(root, '.farm-status.json'),
+    path.join(root, 'fixture-status.json'),
     JSON.stringify({ checked_at: new Date().toISOString(), slots: rows }),
   );
 writeStatus();
@@ -212,7 +212,7 @@ test('selection rejects a new owner and a dirty holder after preview and restore
   writeFileSync(path.join(holderRepo, 'file.txt'), 'changed after preview\n');
   await assert.rejects(releaseBranchHolderForSelection('requested', branch), /clean tracked files/);
   assert.equal(git(holderRepo, 'rev-parse', '--abbrev-ref', 'HEAD'), branch);
-  const row = JSON.parse(readFileSync(path.join(root, '.farm-status.json'), 'utf8')).slots[0];
+  const row = JSON.parse(readFileSync(path.join(root, 'fixture-status.json'), 'utf8')).slots[0];
   assert.equal(row.lifecycle, 'ready');
   assert.equal(row.phase, null);
   git(holderRepo, 'restore', 'file.txt');
@@ -266,7 +266,7 @@ test('overlapping release restores the successful CAS snapshot instead of an obs
     writeStatus();
   });
   await assert.rejects(releaseBranchHolderForSelection('requested', branch), /clean tracked files/);
-  const row = JSON.parse(readFileSync(path.join(root, '.farm-status.json'), 'utf8')).slots[0];
+  const row = JSON.parse(readFileSync(path.join(root, 'fixture-status.json'), 'utf8')).slots[0];
   assert.equal(row.lifecycle, 'ready');
   assert.equal(row.phase, null);
   assert.equal(git(holderRepo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD');
@@ -282,7 +282,7 @@ test('production selection fences and detaches a clean pushed idle holder withou
   assert.equal(git(holderRepo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD');
   assert.equal(git(base, 'rev-parse', branch), sha);
   assert.equal(readFileSync(path.join(holderRepo, 'untracked.txt'), 'utf8'), 'keep\n');
-  const row = JSON.parse(readFileSync(path.join(root, '.farm-status.json'), 'utf8')).slots.find(
+  const row = JSON.parse(readFileSync(path.join(root, 'fixture-status.json'), 'utf8')).slots.find(
     (item: { slot: string }) => item.slot === 'holder',
   );
   assert.equal(row.lifecycle, 'ready');

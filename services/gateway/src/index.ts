@@ -23,6 +23,8 @@ import {
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import './projects/gateway-status-process.js';
+
 import { setTriagePilotObservationGuard } from './assessment/failure-triage/pilot-evidence.js';
 import {
   initAutoRecovery,

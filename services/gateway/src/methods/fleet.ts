@@ -1,7 +1,4 @@
 // methods/fleet.ts — fleet.status, fleet.refresh (native TS)
-
-import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -33,7 +30,6 @@ import {
   type RawPoolJson,
   type RawProjectJson,
   readSlotField,
-  renderFixtureTemplate,
   rewriteStatusFile,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASING_SINCE,
@@ -42,7 +38,7 @@ import {
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { fleetStaleThresholdMs, isFleetCheckedAtStale } from '../fleet/freshness.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { fixtureCheckVars } from '../node-support/ensure.js';
+import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
@@ -53,33 +49,112 @@ import {
   slotClaimBlockedByRelease,
   slotPinIsRequestOnly,
 } from './dispatch/slot-scoring.js';
+import { checkFixtureSteps } from './slot/check.js';
 import { isLinkedGitWorktreeMarker, probeDefaultBranch } from './slot/slot-tracking.js';
+import {
+  enrichFleetWorkspaces,
+  markFailedWorkspacesUnverified,
+  observedFleetWorkspaces,
+} from './slot/workspace.js';
 
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
 let fleetRefreshInFlight: Promise<FleetStatusResult> | null = null;
+let workspaceRefreshInFlight: Promise<void> | null = null;
+type FleetWorkspacePublisher = (fleet: FleetStatus) => void;
+let workspacePublisher: FleetWorkspacePublisher | undefined;
+
+export function setFleetWorkspacePublisher(publish: FleetWorkspacePublisher | undefined): void {
+  workspacePublisher = publish;
+}
 
 export { fleetStaleThresholdMs, isFleetCheckedAtStale };
+
+interface FleetWorkspaceObservations {
+  read(fleet: FleetStatus): FleetStatus;
+  refresh(fleet: FleetStatus): Promise<FleetStatus>;
+}
 
 export interface FleetStatusDeps {
   load(): Promise<FleetStatus>;
   refresh(): Promise<FleetStatusResult>;
+  workspaces?: FleetWorkspaceObservations;
 }
 
 const defaultFleetStatusDeps: FleetStatusDeps = {
   load: () => loadFleetStatus(false, true),
   refresh: () => fleetRefresh(),
+  workspaces: { read: observedFleetWorkspaces, refresh: enrichFleetWorkspaces },
 };
+
+function fleetStatusResult(fleet: FleetStatus): FleetStatusResult {
+  if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
+  return {
+    fleet: {
+      ...fleet,
+      stale: true,
+      slots: fleet.slots.map((slot) => ({ ...slot, dispatchable: false })),
+    },
+  };
+}
+
+function refreshWorkspaceObservations(
+  fleet: FleetStatus,
+  deps: FleetStatusDeps,
+  publish?: FleetWorkspacePublisher,
+): void {
+  if (workspaceRefreshInFlight || !deps.workspaces) return;
+  const workspaces = deps.workspaces;
+  const previous = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
+  workspaceRefreshInFlight = workspaces
+    .refresh(fleet)
+    .then(async () => {
+      // Owners may have changed while Git/network reads ran. Publish current
+      // rows, never the captured fleet that started the observation.
+      const current = workspaces.read(await deps.load());
+      const changed = current.slots.filter((slot) => {
+        const before = previous.get(slot.slot);
+        return (
+          before?.workspace !== slot.workspace || before?.workspaceError !== slot.workspaceError
+        );
+      });
+      // Cached fleet reads learn of every changed observation, failures included.
+      for (const slot of changed) slotResourceChanges.overlayChanged(slot.slot);
+      // A cached observation must not create a fleet.updated -> status loop.
+      if (changed.length) publish?.(fleetStatusResult(current).fleet);
+    })
+    .catch((error: unknown) => {
+      // A failed passive read keeps the saved response available. Slot failures
+      // already carry workspaceError; a later status request can retry the batch.
+      console.error(`[fleet.status] background workspace refresh failed: ${String(error)}`);
+    })
+    .finally(() => {
+      workspaceRefreshInFlight = null;
+    });
+}
+
+/** The cached fleet read: completed observations now, never waiting for background probes. */
+export function observedFleetStatus(loaded: FleetStatus): FleetStatusResult {
+  const observed = observedFleetWorkspaces(loaded);
+  // The refresh compares against main's plain rows, so a failing slot cannot loop.
+  refreshWorkspaceObservations(observed, defaultFleetStatusDeps, workspacePublisher);
+  return { fleet: markFailedWorkspacesUnverified(loaded, observed) };
+}
 
 export async function fleetStatus(
   params?: FleetStatusParams,
   deps: FleetStatusDeps = defaultFleetStatusDeps,
+  publish: FleetWorkspacePublisher | undefined = workspacePublisher,
 ): Promise<FleetStatusResult> {
   // forceRefresh means a real machine re-probe, never just a re-read of the
   // cached status file — that re-read is what produced ghost prepare hints.
   // Ghost marking happens inside loadFleetStatus, so both branches are honest.
-  const fleet = params?.forceRefresh ? (await deps.refresh()).fleet : await deps.load();
+  const loaded = params?.forceRefresh ? (await deps.refresh()).fleet : await deps.load();
+  const fleet = params?.forceRefresh
+    ? ((await deps.workspaces?.refresh(loaded)) ?? loaded)
+    : (deps.workspaces?.read(loaded) ?? loaded);
+  if (!params?.forceRefresh) refreshWorkspaceObservations(fleet, deps, publish);
   if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
   // Still stale: serve it honestly (stale flag, nothing dispatchable). Kick a
   // background re-probe only when this call did not just refresh AND probeable
@@ -91,13 +166,7 @@ export async function fleetStatus(
       console.error(`[fleet.status] background stale refresh failed: ${(err as Error).message}`);
     });
   }
-  return {
-    fleet: {
-      ...fleet,
-      stale: true,
-      slots: fleet.slots.map((slot) => ({ ...slot, dispatchable: false })),
-    },
-  };
+  return fleetStatusResult(fleet);
 }
 
 // ─── fleetRefresh — native TS port of farm-status.sh collect mode ───
@@ -127,6 +196,7 @@ interface SlotCheckResult {
 }
 
 interface PreviousSlotStatus {
+  workspace_recovery?: unknown;
   lifecycle?: string | null;
   phase?: string | null;
   warm?: boolean | null;
@@ -229,7 +299,7 @@ export function newestActiveRunForSlot(
   slotId: string,
   currentOwnerId?: string | null,
 ): Run | null {
-  const candidates = runs.filter((run) => run.slotId === slotId && !isSlotFreedByPark(run));
+  const candidates = runs.filter((run) => run.slotId === slotId && !runReleasedSlot(run));
   if (candidates.length === 0) return null;
   const recordedOwner = candidates.find((run) => run.id === currentOwnerId);
   if (recordedOwner) return recordedOwner;
@@ -244,7 +314,7 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   row: T,
   activeRun: Run | null,
 ): T {
-  if (!activeRun) return row;
+  if (!activeRun || runReleasedSlot(activeRun)) return row;
   // Before FIND_SLOT claims it, run.slotId is only a request. A refresh must not
   // manufacture that claim and make the request fail its own busy-slot check.
   if (slotPinIsRequestOnly(activeRun, row)) return row;
@@ -394,33 +464,57 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
   // before entering the chain would drop any claim (owner + epoch) that
   // landed while the probes ran.
   const checkedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-  await rewriteStatusFile((current) => {
-    // Sampled INSIDE the chain: a run finishing (or a slot releasing) while
-    // the slow probes ran must be seen by the reconcile below.
-    const activeRuns = listRuns({ active: true }).runs;
-    const prevSlots: Record<string, PreviousSlotStatus> = {};
-    for (const row of current?.slots ?? []) {
-      prevSlots[String(row.slot)] = row as PreviousSlotStatus;
-    }
-    const slots = results.map((r) =>
-      reconcileRefreshSlotRowWithActiveRun(
-        buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
-        newestActiveRunForSlot(
-          activeRuns,
-          r.slot,
-          prevSlots[r.slot]?.current_run_id as string | undefined,
-        ),
-      ),
-    );
-    const preserved = preserveClaimedRowsUnknownToProbe(
+  await rewriteStatusFile((current) =>
+    // Resolve runs inside the write chain, after the slow probes.
+    buildFleetRefreshSnapshot(
       current?.slots ?? [],
-      new Set(results.map((r) => r.slot)),
+      results,
+      listRuns({ active: true }).runs,
+      checkedAt,
+    ),
+  );
+
+  const fleet = await enrichFleetWorkspaces(await loadFleetStatus(true));
+  return { fleet };
+}
+
+export function buildFleetRefreshSnapshot(
+  currentRows: Array<Record<string, unknown>>,
+  results: SlotCheckResult[],
+  activeRuns: Run[],
+  checkedAt: string,
+) {
+  const lostLeases = missingRunningStepLeases(currentRows, activeRuns);
+  const prevSlots: Record<string, PreviousSlotStatus> = {};
+  for (const row of currentRows) {
+    prevSlots[String(row.slot)] = row as PreviousSlotStatus;
+  }
+  const slots = results.map((r) => {
+    const previous = prevSlots[r.slot] ?? {};
+    const row = buildRefreshSlotRow(r, previous);
+    const reason = lostLeases.get(r.slot);
+    if (reason) {
+      const { slot_epoch: _epoch, ...observed } = row;
+      return {
+        ...observed,
+        ...('slot_epoch' in previous ? { slot_epoch: previous.slot_epoch } : {}),
+        lifecycle: 'held',
+        phase: 'occupied',
+        held_reason: reason,
+        dispatchable: false,
+      };
+    }
+    return reconcileRefreshSlotRowWithActiveRun(
+      row,
+      newestActiveRunForSlot(activeRuns, r.slot, previous.current_run_id),
     );
-    return { checked_at: checkedAt, slots: [...slots, ...preserved] };
   });
 
-  const fleet = await loadFleetStatus(true);
-  return { fleet };
+  const preserved = preserveClaimedRowsUnknownToProbe(
+    currentRows,
+    new Set(results.map((r) => r.slot)),
+  );
+  return { checked_at: checkedAt, slots: [...slots, ...preserved] };
 }
 
 /**
@@ -440,6 +534,40 @@ export function preserveClaimedRowsUnknownToProbe(
     if (probedSlotIds.has(String(row.slot))) return false;
     return Boolean(row.current_run_id || row.handoff_run_id);
   });
+}
+
+/** A completed release stays released while later steps wait for an operator. */
+function runReleasedSlot(run: Run): boolean {
+  return (
+    isSlotFreedByPark(run) ||
+    run.steps.some(
+      (step) =>
+        step.name === 'complete' &&
+        step.status === 'done' &&
+        step.outputs?.slotDisposition === 'released',
+    )
+  );
+}
+
+/** Quarantine only the lost lease; healthy slots must keep refreshing. */
+function missingRunningStepLeases(
+  rows: Array<Record<string, unknown>>,
+  runs: Run[],
+): Map<string, string> {
+  const lost = new Map<string, string>();
+  for (const run of runs) {
+    const step = run.steps.find((entry) => entry.status === 'running');
+    if (!step || !run.slotId || runReleasedSlot(run)) continue;
+    const row = rows.find((entry) => entry.slot === run.slotId);
+    if (slotPinIsRequestOnly(run, row)) continue;
+    if (row?.current_run_id === run.id || row?.handoff_run_id === run.id) continue;
+    // Preserve the existing ci-watch release policy: it no longer occupies a ready row.
+    if (run.status === 'ci-watching' && row?.lifecycle === 'ready' && !row.current_run_id) continue;
+    const reason = `Running ${step.name} for run ${run.id} lost its lease; refusing to rebuild ownership or epoch`;
+    lost.set(run.slotId, reason);
+    console.error(`[fleet.refresh] ${run.slotId}: ${reason}`);
+  }
+  return lost;
 }
 
 export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
@@ -526,6 +654,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     // Ownership epoch is a lifecycle-protocol token: dropping it on refresh
     // would let a stale teardown's epoch guard pass again.
     slot_epoch: Number(prev.slot_epoch) || 0,
+    ...(prev.workspace_recovery ? { workspace_recovery: prev.workspace_recovery } : {}),
     handoff_run_id: prev.handoff_run_id ?? null,
     task_id: prev.task_id ?? null,
     task_file: prev.task_file ?? null,
@@ -1072,84 +1201,16 @@ async function checkCDP(vars: SlotVars, pj: RawProjectJson, pv?: ProjectVars): P
   }
 }
 
-async function checkFixtures(
+export async function checkFixtures(
   vars: SlotVars,
   pv: ProjectVars | undefined,
   pj: RawProjectJson,
 ): Promise<string> {
-  if (!pv || !pj.fixtures) return '-';
-
-  const templates = pj.fixtures.templates ?? [];
-  let total = 0;
-  let ok = 0;
-  const extraVars = await fixtureCheckVars(vars, pv, SLOT_CHECK_TIMEOUT_MS);
-
-  for (const tpl of templates) {
-    if (!tpl.src) continue; // compose entries have no src — skip for fixture check
-    const localPath = path.join(pv.projectFixturesDir, tpl.src);
-    if (!existsSync(localPath)) continue;
-    total++;
-    try {
-      const rendered = await renderFixtureTemplate(localPath, vars, pv, extraVars);
-      const localMd5 = md5(rendered);
-      const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${tpl.dst}`);
-      if (remoteMd5 && localMd5 === remoteMd5) ok++;
-    } catch {
-      /* mismatch */
-    }
-  }
-
-  // Check directories (sentinel-based)
-  const directories = pj.fixtures?.directories ?? [];
-  for (const dir of directories) {
-    total++;
-    try {
-      const dirExists = await execOnSlot(vars, `test -d '${vars.remoteRepo}/${dir.dst}'`, {
-        timeout: SLOT_CHECK_TIMEOUT_MS,
-      });
-      if (dirExists.exitCode !== 0) continue;
-      if (dir.sentinel && pv) {
-        const localSentinel = path.join(pv.projectFixturesDir, dir.src, dir.sentinel);
-        if (existsSync(localSentinel)) {
-          const content = await readFile(localSentinel, 'utf-8');
-          const localMd5 = md5(content);
-          const remoteMd5 = await getRemoteMd5(
-            vars,
-            `${vars.remoteRepo}/${dir.dst}/${dir.sentinel}`,
-          );
-          if (remoteMd5 && localMd5 === remoteMd5) ok++;
-        } else {
-          ok++; // dir exists, no local sentinel to compare
-        }
-      } else {
-        ok++; // dir exists, no sentinel configured
-      }
-    } catch {
-      /* mismatch */
-    }
-  }
-
-  if (total === 0) return '-';
-  if (ok === total) return 'OK';
-  return `${ok}/${total}`;
-}
-
-function md5(content: string): string {
-  return createHash('md5').update(content).digest('hex');
-}
-
-async function getRemoteMd5(vars: SlotVars, remotePath: string): Promise<string | null> {
-  try {
-    let r = await execOnSlot(vars, `md5sum '${remotePath}' 2>/dev/null | awk '{print $1}'`, {
-      timeout: SLOT_CHECK_TIMEOUT_MS,
-    });
-    if (r.exitCode === 0 && r.stdout.trim()) return r.stdout.trim();
-    r = await execOnSlot(vars, `md5 -q '${remotePath}' 2>/dev/null`, {
-      timeout: SLOT_CHECK_TIMEOUT_MS,
-    });
-    if (r.exitCode === 0 && r.stdout.trim()) return r.stdout.trim();
-    return null;
-  } catch {
-    return null;
-  }
+  const steps = await checkFixtureSteps(vars, pv, pj, SLOT_CHECK_TIMEOUT_MS);
+  const fixtures = steps.filter(
+    (step) => step.name.startsWith('fixture:') && step.status !== 'skip',
+  );
+  if (!fixtures.length) return 'not-required';
+  const ok = fixtures.filter((step) => step.status === 'pass').length;
+  return ok === fixtures.length ? 'OK' : `${ok}/${fixtures.length}`;
 }

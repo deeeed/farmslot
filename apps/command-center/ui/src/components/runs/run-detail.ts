@@ -62,6 +62,7 @@ import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
+import { hashParams } from '../../utils/url-state.js';
 import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
@@ -183,6 +184,10 @@ export class RunDetail extends RunDetailState {
   private readonly detailQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
     this._runObservation = state;
   });
+  @state() private _snapshotObservation: ResourceQueryState<RunGetResult> = { status: 'loading' };
+  private readonly snapshotQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
+    this._snapshotObservation = state;
+  });
   private readonly recipeQuery = new ResourceQueryController<RunRecipeRunsForRunResult>(
     this,
     (state) => {
@@ -215,9 +220,14 @@ export class RunDetail extends RunDetailState {
   private _visualReviewScope = '';
   private _evidenceGroupId: string | null = null;
   private _evidenceTaskRelative = true;
+  private _sharedPanelFocusKey = '';
 
   protected override willUpdate(changed: Map<string, unknown>): void {
-    if (['runId', 'mockData', 'mockRun', '_runObservation'].some((key) => changed.has(key))) {
+    if (
+      ['runId', 'mockData', 'mockRun', '_runObservation', '_snapshotObservation'].some((key) =>
+        changed.has(key),
+      )
+    ) {
       this.syncRun(getState());
     }
     if (changed.has('_recipeObservation')) this._acceptRecipeObservation(this._recipeObservation);
@@ -315,6 +325,20 @@ export class RunDetail extends RunDetailState {
       const pollCount = readCiWatchOutputs(ciStep?.outputs)?.pollCount;
       this._ciPoke.observePoll(this.run.id, typeof pollCount === 'number' ? pollCount : null);
     }
+    this._focusSharedPanel();
+  }
+
+  private _focusSharedPanel() {
+    if (!this.run || !isRunDetailHashForRun(this.run.id)) return;
+    const panel = hashParams().get('panel');
+    if (panel !== 'timeline' && panel !== 'evidence') return;
+    const key = `${this.run.id}:${panel}`;
+    if (key === this._sharedPanelFocusKey) return;
+    const target = this.renderRoot.querySelector(`[data-shared-run-panel="${panel}"]`);
+    if (!(target instanceof HTMLElement) || !target.getBoundingClientRect().height) return;
+    this._sharedPanelFocusKey = key;
+    target.scrollIntoView({ block: 'start' });
+    target.focus({ preventScroll: true });
   }
 
   disconnectedCallback() {
@@ -429,10 +453,21 @@ export class RunDetail extends RunDetailState {
       (observation.status === 'loading' || (observation.status === 'stale' && !observation.error));
     this._directRunRefreshFailed = Boolean(observation.error);
     this._directRunUnavailable = observation.error?.code === 'RUN_NOT_FOUND';
+    // Stored run facts render while run.get checks live gate prerequisites; only
+    // the ordinary read is ready for actions (see _assertRunReady).
+    this.snapshotQuery.setQuery(
+      this.runId && !observation.data
+        ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: this.runId, view: 'snapshot' })
+        : undefined,
+    );
+    const snapshotRun = this.snapshotQuery.belongsToWorkspace
+      ? this.snapshotQuery.state.data?.run
+      : undefined;
     const sharedRun = s.runs.find((run) => run.id === this.runId) ?? null;
     // Compact rows are placeholders while this query hydrates. Full detail and
     // its freshness belong solely to the authoritative run.get observation.
-    this.run = observation.data?.run ?? (observation.status === 'loading' ? sharedRun : null);
+    this.run =
+      observation.data?.run ?? snapshotRun ?? (observation.status === 'loading' ? sharedRun : null);
     // Reset transient nudge-decision-card state when the bound run changes or when the
     // current `branch_affinity_nudge` decision has been resolved server-side. Without this,
     // _branchNudgeShowPicker / _selectedSlotId leak into the next decision render and the
@@ -880,6 +915,8 @@ export class RunDetail extends RunDetailState {
     if (isRunDetailHashForRun(this.runId)) {
       this._applySelectedStepFromHash();
       this._applyEvidenceArtifactFromHash();
+      this._sharedPanelFocusKey = '';
+      this.requestUpdate();
     }
   };
 
@@ -1573,6 +1610,7 @@ export class RunDetail extends RunDetailState {
 
   private _renderRunEvidence(run: Run) {
     return renderRunEvidence(run, {
+      selectedSharedEvidence: hashParams().get('panel') === 'evidence',
       taskProgress: this.taskProgress,
       evidenceLightboxItems: this._evidenceLightboxItems,
       evidenceLightboxOpen: this._evidenceLightboxOpen,

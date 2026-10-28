@@ -14,14 +14,61 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Share passive PR, GitHub account and gateway-update observations across viewers, retain successful source facts through failures, and publish local checkout and PR overlay changes without panel polling.
 
+- Cached fleet reads return completed workspace observations at once, publish each background change, and show a failed inspection's last workspace as unverified.
+
+- Refuse worker launch when a declared toolchain command exits unsuccessfully, including an installed Yarn shim with no version for the pinned Node.
+
+- Send refused completion feedback to the retained worker and wait for a new signal before checking completion again.
+
+- Serve saved fleet observations immediately while workspace checks refresh in the background, keeping slow Git and network reads outside status requests.
+
+- Keep a worker-blocked run's slot lease while it waits for an answer, so dispatch cannot overwrite its in-place fix before monitoring resumes.
+
+- Retain exact worker panes before transcripts appear and refresh resumed reviewer session bindings so finished work does not strand slots.
+- Reopen browsers through the selected pack's rendered launcher and current pool environment, preserving saved wrappers when deployment or library roots change.
+- Preserve native reviewer failure diagnostics, including restart recovery, and keep later pipeline failures out of the primary worker's gate outcome.
+- Isolate test fleet status by default, restrict shared writes to the gateway, keep shared readers working, and quarantine lost running-step leases without blocking healthy fleet refreshes.
+- Keep disallowed slot choices open, re-review advanced heads after empty fixes, and validate accepted small fixes against their original reviewer artifacts.
+
+- Let loaded nodes finish retaining task tooling within the measured task-initialization budget.
+
+- Keep before captures bound to the recorded full-review base when dispatch replay advances the worktree baseline.
+- Keep native static reviewers in the selected task home so pinned checklist commands can complete.
+
+- Before fresh workers start, including pending native reservations, reuse healthy runtime or boot stopped pack resources under launch budgets, ownership and pressure checks.
+
+- Automatically reuse clean published idle slots and return settled checkouts to main while preserving local work, historical replay evidence and stopped runtime.
+- Check admitted source bytes, declared launch toolchains and unsettled prior cleanup before starting workers. Retry slow probes with measured budgets and report unavailable observations as unverified.
+- Bound concurrent local workspace fingerprints and start each command deadline after admission, so full-fleet reads do not cancel local inspections before they finish.
+
+- Complete artifact-only comparison trials from their retained evidence without requiring an output-review decision, and recognize completed scripted commands in their flow-owned worker role.
+- Reuse passive workspace observations while Git metadata is unchanged and reuse immutable ancestry comparisons by SHA pair; recovery commands still inspect current contents.
+- Serve stored run snapshots without waiting for worker and publication checks; current reads and command guards stay authoritative.
+- Retain every indexed screenshot in selected recipe packages, even when the PR evidence selection uses fewer images.
+- Require task-local adaptation for recipe and action-contract mismatches; reserve unattended blockers for external prerequisites.
+
+- Keep remote slot-action and resource command timeouts separate from node-support resolution, matching local execution. A slow source check previously reduced browser lease cleanup to a 1 ms node request and blocked the same run from reacquiring its browser.
+- Verify release fixtures with the same expanded paths and installer additions as slot checks, and refuse prepare while workspace recovery is pending.
+
+- Shorten autonomous task instructions by removing the extra permission caveat.
+- Remove the local CI-parity worker step and its completion receipt requirement.
+- Keep busy review-fix workers alive through signal inactivity, including fixes without delivery turn tokens.
+- Include configured pi providers such as LiteLLM in the model catalog while retaining built-in models.
+
+- Push completion commits for existing PRs, verify the actual remote HEAD, and refuse publication when the branch conflicts with its freshly fetched base, even when CI is disabled.
+- Stop unchanged empty review-fix cycles and accept completed evidence-only fixes or fixes of at most 50 source lines without another review, retaining the original review and fix provenance.
+- Validate nested review-fix and CI-fix declarations against their selected contract, preserving the primary checklist checks.
+
 - Ignore unrelated closed PRs on reused branch names during discovery and publication retries, preserving open, merged and run-owned PRs.
 - Keep static re-reviews warm across unrelated pool tool updates and reconcile retained handoff recovery before fallback, and keep farm-caused replacements free under the same admission.
 
 - Exclude ineligible slots from the human slot picker while preserving stale-branch decisions and explicit node-load overrides.
 
+- Release and update idle workspaces through the existing refresh RPCs, retaining ownership fences until checkout and fixtures verify and keeping failed recovery held for retry.
+
 - Keep original PR-completion criteria and append source-linked review and instruction obligations, with current-head code review and captured visual proof before completion.
 
-- Prefer lightly loaded allowed nodes for automatic slot placement, skip nodes at the load-per-core threshold, and record the selection reasons before writing the task.
+- Prefer lightly loaded allowed nodes for automatic slot placement, retry selection with fresh sources and eligibility when load is the only blocker, and record the selection reasons before writing the task.
 
 - Fetch an unfetched PR branch before the inherited-commit signature check, preserving the dispatch checkout and unsigned-work refusal.
 - Release a selected finished checkout before writing the next task, while refusing unpublished work and changed ownership.

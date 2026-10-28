@@ -23,6 +23,8 @@ export function useCopilotController() {
     viewModel: {
       runtime: state.data?.session ?? null,
       loading: state.status === 'loading',
+      // A read outcome on this connection, never a saved row still awaiting its read.
+      settled: state.status === 'ready' || state.status === 'unsupported' || Boolean(state.error),
       error: state.error?.message ?? '',
       connected: connectionStatus === 'connected',
       ready: connectionStatus === 'connected' && state.status === 'ready',

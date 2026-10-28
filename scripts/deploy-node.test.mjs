@@ -444,6 +444,73 @@ elif command.startswith('test -d '): sys.exit(1)
   }
 });
 
+test('node project sync updates templates and checklists without deleting unrelated data', (t) => {
+  const deploy = fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8');
+  const start = deploy.indexOf('for proj_dir in "$REPO_ROOT"/projects/*/; do');
+  const end = deploy.indexOf('\n# --- Install deps', start);
+  assert.ok(start > 0 && end > start);
+  const copyPhase = deploy.slice(start, end);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'project-config-sync-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source');
+  const target = path.join(root, 'node');
+  const write = (base, relative, text) => {
+    const file = path.join(base, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  };
+  write(source, 'projects/example/project.json', '{"name":"example"}\n');
+  write(source, 'projects/example/setup/check-paths.sh', '#!/bin/sh\n');
+  write(source, 'projects/example/scripts/preflight.sh', '#!/bin/sh\n');
+  write(source, 'projects/example/templates/worker/dev.md', 'current contract\n');
+  write(source, 'projects/example/checklists/dev/default.md', 'current checklist\n');
+  write(source, 'projects/no-templates/project.json', '{}\n');
+  write(target, 'projects/example/templates/worker/dev.md', 'old contract\n');
+  write(target, 'projects/example/templates/worker/deleted.md', 'removed upstream\n');
+  write(target, 'projects/example/checklists/dev/default.md', 'old checklist\n');
+  write(target, 'projects/example/checklists/dev/deleted.md', 'removed upstream\n');
+  write(target, 'projects/example/fixtures/retained', 'keep fixture\n');
+  execFileSync(
+    'bash',
+    [
+      '-euc',
+      `REPO_ROOT=$1; REMOTE_DIR=$2; RSYNC_PREFIX=; run() { bash -euc "$1"; };\n${copyPhase}`,
+      'project-sync',
+      source,
+      target,
+    ],
+    { stdio: 'pipe', timeout: 4000 },
+  );
+  assert.equal(
+    fs.readFileSync(path.join(target, 'projects/example/templates/worker/dev.md'), 'utf8'),
+    'current contract\n',
+  );
+  assert.equal(
+    fs.existsSync(path.join(target, 'projects/example/templates/worker/deleted.md')),
+    false,
+  );
+  assert.equal(
+    fs.readFileSync(path.join(target, 'projects/example/fixtures/retained'), 'utf8'),
+    'keep fixture\n',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(target, 'projects/example/checklists/dev/default.md'), 'utf8'),
+    'current checklist\n',
+  );
+  assert.equal(
+    fs.existsSync(path.join(target, 'projects/example/checklists/dev/deleted.md')),
+    false,
+  );
+  for (const file of ['project.json', 'setup/check-paths.sh', 'scripts/preflight.sh']) {
+    assert.equal(
+      fs.readFileSync(path.join(target, 'projects/example', file), 'utf8'),
+      fs.readFileSync(path.join(source, 'projects/example', file), 'utf8'),
+    );
+  }
+  assert.equal(fs.existsSync(path.join(target, 'projects/no-templates/templates')), false);
+  assert.equal(fs.existsSync(path.join(target, 'projects/no-templates/checklists')), false);
+});
+
 // Workers run the `farmslot` on their PATH, so a node deploy that skipped the CLI
 // left worker-side fixes on whatever revision the CLI was last installed at. The
 // ssh stub runs each remote command locally with HOME at a temp directory, so the

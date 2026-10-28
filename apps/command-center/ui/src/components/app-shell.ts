@@ -259,6 +259,9 @@ export class FarmApp extends LitElement {
   @state() private violationCount = 0;
   @state() private runs: Run[] = [];
   @state() private terminalRunParam = '';
+  @state() private decisionGateParam = '';
+  @state() private nativeSessionParam = '';
+  @state() private nativeNodeParam = '';
   @state() private pinnedSlots: PinnedWorkspacePreference[] = [];
   @state() private globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private tmuxWorkers: TmuxWorkerSummary[] = [];
@@ -835,6 +838,10 @@ export class FarmApp extends LitElement {
   }
 
   private parseHash() {
+    const selection = hashParams();
+    this.decisionGateParam = selection.get('gate') ?? '';
+    this.nativeSessionParam = selection.get('sessionId') ?? '';
+    this.nativeNodeParam = selection.get('executionNodeId') ?? '';
     const access = this.shownWorkspaceAccess;
     if (access !== 'farm') {
       if (access === 'native') this.route = 'native';
@@ -1918,7 +1925,10 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       case 'onboarding':
         return this.renderOnboardingScreen();
       case 'native':
-        return html`<native-session-view></native-session-view>`;
+        return html`<native-session-view
+          .initialSessionId=${this.nativeSessionParam}
+          .initialExecutionNodeId=${this.nativeNodeParam}
+        ></native-session-view>`;
       case 'fleet':
         return html`<fleet-canvas></fleet-canvas>`;
       case 'terminal':
@@ -1939,7 +1949,9 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       case 'prs':
         return html`<pr-board></pr-board>`;
       case 'decisions':
-        return html`<decision-inbox></decision-inbox>`;
+        return html`<decision-inbox
+          .selectedDecisionId=${this.decisionGateParam}
+        ></decision-inbox>`;
       case 'runs':
         return html`<run-list></run-list>`;
       case 'run':

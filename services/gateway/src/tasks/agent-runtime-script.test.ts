@@ -160,7 +160,7 @@ test('the selected remote mark engine executes the frozen CI command and writes 
   await writeFile(path.join(repo, 'app.js'), 'export const app = 1;\n');
   await writeFile(
     path.join(taskDir, 'CHECKLIST.md'),
-    '- [ ] CI parity [DETERMINISTIC: ci.local_check]\n',
+    '- [ ] CI parity [DETERMINISTIC: checks.unit]\n',
   );
   await writeFile(
     path.join(taskDir, 'inputs/worker-terminal-contract.json'),
@@ -169,7 +169,7 @@ test('the selected remote mark engine executes the frozen CI command and writes 
         {
           checklist: 'CHECKLIST.md',
           stepNumber: 1,
-          reference: 'ci.local_check',
+          reference: 'checks.unit',
           command: 'printf "real local check\\n"',
         },
       ],
@@ -254,15 +254,16 @@ test('project command expansion uses its connected installation', async (t) => {
       `node "${roots[index]}/resolve.mjs" "${roots[index]}" literal {{repo}}`,
     );
     const ciTemplate = expandTemplateWithReservedLast(
-      '{{resolver}}\n{{CI_PARITY_STEP}}\n{{feedback}}',
+      '- [ ] **1. Work** {{resolver}}\n{{CI_PARITY_STEP}}\n- [ ] **3. Finish** {{feedback}}',
       vars,
       project,
       { feedback: 'literal {{repo}}' },
       { farmslot_dir: roots[index] },
     );
     assert.ok(ciTemplate.includes(`node "${roots[index]}/resolve.mjs"`));
-    assert.ok(ciTemplate.includes('[DETERMINISTIC: ci.local_check]'));
+    assert.doesNotMatch(ciTemplate, /CI_PARITY_STEP|DETERMINISTIC: ci\.local_check/);
     assert.ok(ciTemplate.includes('literal {{repo}}'));
+    assert.match(ciTemplate, /\*\*2\. Finish\*\*/);
   }
   assert.ok(requests.every((request) => request.cwd === undefined));
 });

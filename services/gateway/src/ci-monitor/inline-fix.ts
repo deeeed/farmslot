@@ -35,6 +35,7 @@ import {
   expandSourceBindings,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
+import { withMachineEnv } from '../core/project-env.js';
 import {
   resolveExactTmuxWindowPane,
   respawnTmuxWindowWithCommand,
@@ -405,6 +406,12 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   const roleWindowName =
     run.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
       ?.window ?? null;
+  const { admitWorkerLaunch } = await import('../run-engine/worker-launch-preflight.js');
+  const assertPreflightCurrent = await admitWorkerLaunch({
+    runId,
+    vars,
+    wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
+  });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
     vars,
     primaryTarget.session,
@@ -426,6 +433,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 
+  await assertPreflightCurrent();
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
   });
@@ -473,6 +481,36 @@ export async function getSlotHeadSha(slotId: string): Promise<string | null> {
     return r.exitCode === 0 ? r.stdout.trim() : null;
   } catch {
     return null;
+  }
+}
+
+/** Bind the accepted CI-fix delivery and its primary worker to the same exact pane. */
+export async function recordCiFixRunnerSession(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  runner: string,
+  workerTarget: string,
+): Promise<void> {
+  const deliveryPane = await resolveExactTmuxWindowPane(vars, workerTarget);
+  const relaunched = await captureAndRecordRunnerSession({
+    vars,
+    runner,
+    runId,
+    role: 'ci-fix',
+    captureLabel: 'ci fix relaunch',
+    capture: { paneId: deliveryPane?.paneId ?? null, slotId: vars.slotId },
+  });
+  const relaunchedRun = getRun(runId);
+  const relaunchWorkerRole = primaryRoleForFlow(relaunchedRun?.flowType);
+  // Never fabricate a worker context the dispatch did not create.
+  if (relaunchedRun?.agentContexts?.some((ctx) => ctx.role === relaunchWorkerRole)) {
+    await recordRunnerSessionForRole({
+      runId,
+      role: relaunchWorkerRole,
+      session: relaunched,
+      paneId: deliveryPane?.paneId,
+      captureLabel: 'ci fix relaunch',
+    });
   }
 }
 
@@ -1024,26 +1062,7 @@ async function attemptInlineCIFix(
       // so this delivery owns a brand-new session that no earlier capture can
       // supply. Attribute it to the delivery pane and bind both the ci-fix role
       // and the worker role that now shares the pane.
-      const deliveryPane = await resolveExactTmuxWindowPane(vars, workerTarget);
-      const relaunched = await captureAndRecordRunnerSession({
-        vars,
-        runner,
-        runId,
-        role: 'ci-fix',
-        captureLabel: 'ci fix relaunch',
-        capture: { paneId: deliveryPane?.paneId ?? null, slotId },
-      });
-      const relaunchedRun = getRun(runId);
-      const relaunchWorkerRole = primaryRoleForFlow(relaunchedRun?.flowType);
-      // Never fabricate a worker context the dispatch did not create.
-      if (relaunchedRun?.agentContexts?.some((ctx) => ctx.role === relaunchWorkerRole)) {
-        await recordRunnerSessionForRole({
-          runId,
-          role: relaunchWorkerRole,
-          session: relaunched,
-          captureLabel: 'ci fix relaunch',
-        });
-      }
+      await recordCiFixRunnerSession(vars, runId, runner, workerTarget);
     }
     mergeCIWatchOutputPatch(runId, {
       phase: 'waiting_for_worker',

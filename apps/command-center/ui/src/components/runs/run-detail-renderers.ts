@@ -225,6 +225,7 @@ export function renderInteractiveDevGate(run: Run, ctx: InteractiveDevGateRender
 }
 
 export interface RunEvidenceRenderContext {
+  selectedSharedEvidence?: boolean;
   taskProgress?: TaskProgressStructured | null;
   evidenceLightboxItems: LightboxItem[];
   evidenceLightboxOpen: boolean;
@@ -257,13 +258,22 @@ export interface RunEvidenceRenderContext {
 }
 
 export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unknown {
+  return html`<section data-shared-run-panel="evidence" tabindex="-1">
+    ${renderRunEvidenceContent(run, ctx)}
+  </section>`;
+}
+
+function renderRunEvidenceContent(run: Run, ctx: RunEvidenceRenderContext): unknown {
   if (run.reviewWorkspaceTarget)
     return html`${renderReviewProcess(run, ctx)}${renderEvidenceLightbox(ctx)}`;
   const artifacts = collectRunEvidenceArtifacts(run);
   const evidence = runResultsSummary(run, artifacts.length);
   // A worker command log link opens here while the run is still active and has
   // no results card yet, so the lightbox renders either way.
-  if (!evidence.shouldRender) return renderEvidenceLightbox(ctx);
+  if (!evidence.shouldRender)
+    return html`${ctx.selectedSharedEvidence
+      ? html`<p>No saved evidence for this run.</p>`
+      : nothing}${renderEvidenceLightbox(ctx)}`;
   const review = [...run.decisions]
     .reverse()
     .find(
@@ -534,6 +544,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const openReviewGate = r.decisions.some(
     (decision) => !decision.resolvedAt && decision.type === 'engine_review_posting',
   );
+  const openPublicationGate = r.decisions.some(
+    (decision) =>
+      !decision.resolvedAt &&
+      decision.type === 'engine_human_gate' &&
+      decision.payload?.kind === 'ready',
+  );
   // ADR-054 `free-slot`: while the park record holds the release, the slot row
   // belongs to dispatch, not to this run. `isSlotFreedByPark` ignores `phase`,
   // and cancel deliberately skips slot release for a park-freed run, so this
@@ -747,6 +763,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         : nothing}
     </div>
     ${r.summary ? html`${renderRunTitle(r, 'header-summary')}` : nothing}
+    ${openPublicationGate ? ctx.renderGateSection(r) : nothing}
     ${r.slotTeardownSkipped
       ? html`<p role="status" data-testid="run-slot-cleanup-hint">
           Workspace cleanup deferred: ${r.slotTeardownSkipped}
@@ -1148,7 +1165,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
       ? ctx._renderRunEvidence(r)
       : nothing}
-    ${r.output && !openReviewGate ? ctx.renderGateSection(r) : nothing}
+    ${r.output && !openReviewGate && !openPublicationGate ? ctx.renderGateSection(r) : nothing}
     ${!openReviewGate
       ? renderRunReviewResult(
           r,
@@ -1157,7 +1174,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           () => void ctx._rereviewLatestHead(r),
         )
       : nothing}
-    ${r.reviewWorkspace && !r.output && !openReviewGate ? ctx.renderGateSection(r) : nothing}
+    ${r.reviewWorkspace && !r.output && !openReviewGate && !openPublicationGate
+      ? ctx.renderGateSection(r)
+      : nothing}
     ${ctx._renderAgentSessions(r)} ${renderReviewChain(r)}
     ${ctx.siblings.length
       ? html`
@@ -1226,7 +1245,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           ])}
         ></failure-triage-panel>`
       : nothing}
-    <div class="pipeline-section">
+    <div class="pipeline-section" data-shared-run-panel="timeline" tabindex="-1">
       <run-pipeline
         reason-in-header
         .run=${r}
@@ -1337,7 +1356,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       : r.reviewWorkspace
         ? html`<p data-testid="review-terminal-unavailable">${terminalUnavailable}</p>`
         : nothing}
-    ${r.reviewWorkspace || r.output ? nothing : ctx.renderGateSection(r)}
+    ${r.reviewWorkspace || r.output || openPublicationGate ? nothing : ctx.renderGateSection(r)}
     ${isRecoverableBlockedWorkerRun(r)
       ? html`<details>
           <summary class="output-file-summary">Worker recovery (advanced)</summary>

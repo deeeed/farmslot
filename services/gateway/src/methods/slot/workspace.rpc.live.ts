@@ -1,0 +1,846 @@
+// Opt-in authenticated RPC proof with real Git/fixtures and disposable slots.
+// No product checkout, model turn or tmux server. PTY is the only substituted transport.
+import assert from 'node:assert/strict';
+import { execFile, execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { mock, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
+import type { FleetStatusResult, SlotRefreshResult } from '@farmslot/protocol';
+
+import { createNativeProofFixture } from '../../runtime/native-proof-fixture.live-support.js';
+
+const uiProof = process.env.FARMSLOT_WORKSPACE_UI_PROOF === '1';
+const layoutProof = process.env.FARMSLOT_WORKSPACE_LAYOUT_PROOF === '1';
+const coldFailureOnly = process.env.FARMSLOT_WORKSPACE_COLD_FAILURE_PROOF === '1';
+const cancellationOnly = process.env.FARMSLOT_WORKSPACE_CANCEL_FAILURE_PROOF === '1';
+const source = fileURLToPath(new URL('../../../../../', import.meta.url));
+
+test(
+  'fenced recovery verifies default and fixtures; changed dirt cannot reuse confirmation',
+  { timeout: uiProof ? 8 * 60 * 60_000 : 20 * 60_000 },
+  async (t) => {
+    const output = process.env.FARMSLOT_WORKSPACE_PROOF_OUT;
+    assert.ok(output, 'set FARMSLOT_WORKSPACE_PROOF_OUT');
+    await mkdir(output, { recursive: true });
+    const root = await mkdtemp(path.join(os.tmpdir(), 'workspace-recovery-'));
+    let fixtureOwnsRoot = false;
+    t.after(() => (fixtureOwnsRoot ? undefined : rm(root, { recursive: true, force: true })));
+    for (const key of Object.keys(process.env))
+      if (/^(FARMSLOT_|GIT_CONFIG|TMUX)/.test(key)) delete process.env[key];
+    Object.assign(process.env, {
+      NODE_TEST_CONTEXT: '1',
+      FARMSLOT_NATIVE_STATE_DIR: path.join(root, 'native'),
+      FARMSLOT_HOME: path.join(root, 'home'),
+      FARMSLOT_ROOT: root,
+      FARMSLOT_POOL_DIR: path.join(root, 'pool'),
+      FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
+      FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
+      FARMSLOT_TEST_STATUS_FILE: path.join(root, 'status.json'),
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+    });
+    for (const directory of ['home', 'pool', 'projects/proof/fixtures', 'bin', 'seed'])
+      await mkdir(path.join(root, directory), { recursive: true });
+    for (const name of [
+      'scripts',
+      'packages',
+      'services',
+      'node_modules',
+      'schemas',
+      'package.json',
+      'CLAUDE.md',
+    ])
+      await symlink(path.join(source, name), path.join(root, name));
+    await writeFile(path.join(root, 'bin/tmux'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    process.env.PATH = path.join(root, 'bin') + ':' + process.env.PATH;
+    await writeFile(
+      path.join(root, 'bin/recycle-proof'),
+      `#!/bin/sh
+set -eu
+touch "$FARMSLOT_ROOT/recycle-entered"
+
+`,
+    );
+    const seed = path.join(root, 'seed'),
+      repo = path.join(root, 'checkout'),
+      remote = path.join(root, 'remote.git');
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
+    git(seed, 'init', '-q', '-b', 'main');
+    git(seed, 'config', 'user.name', 'Fixture');
+    git(seed, 'config', 'user.email', 'fixture@example.invalid');
+    git(seed, 'config', 'commit.gpgsign', 'false');
+    git(seed, 'config', 'core.hooksPath', '/dev/null');
+    await writeFile(path.join(seed, '.gitignore'), 'fixture.txt\n.agent/\n');
+    await writeFile(path.join(seed, 'file.txt'), 'base\n');
+    git(seed, 'add', '.');
+    git(seed, 'commit', '-qm', 'test: baseline');
+    execFileSync('git', ['clone', '--bare', '-q', seed, remote]);
+    execFileSync('git', ['clone', '-q', remote, repo]);
+    git(repo, 'config', 'user.name', 'Fixture');
+    git(repo, 'config', 'user.email', 'fixture@example.invalid');
+    git(repo, 'config', 'commit.gpgsign', 'false');
+    git(repo, 'config', 'core.hooksPath', '/dev/null');
+    git(repo, 'checkout', '-qb', 'previous');
+    await writeFile(path.join(repo, 'published.txt'), 'published work\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-qm', 'test: published slot work');
+    git(repo, 'push', '-q', '-u', 'origin', 'previous');
+    await writeFile(path.join(root, 'projects/proof/fixtures/fixture.txt'), 'synced fixture\n');
+    await writeFile(path.join(root, 'projects/proof/fixtures/runtime.txt'), 'runtime fixture\n');
+    await writeFile(path.join(root, 'projects/proof/fixtures/exclude'), '.agent/\n');
+    const proofProject = {
+      name: 'proof',
+      default_branch: 'main',
+      hooks: { recycle: 'sh "$FARMSLOT_ROOT/bin/recycle-proof"' },
+      scripted: { commands: { proof: { command: 'true', timeout_ms: 5000 } } },
+      fixtures: {
+        templates: [
+          { src: 'fixture.txt', dst: 'fixture.txt' },
+          { src: 'runtime.txt', dst: '{{runtime_dir}}/runtime.txt' },
+          { src: 'exclude', dst: '.git/info/exclude' },
+        ],
+      },
+    };
+    await writeFile(path.join(root, 'projects/proof/project.json'), JSON.stringify(proofProject));
+    const linkedRepo = path.join(root, 'linked-checkout');
+    const emptyRepo = path.join(root, 'no-fixtures-checkout');
+    if (!uiProof) {
+      git(repo, 'worktree', 'add', '-qb', 'previous-linked', linkedRepo, 'origin/main');
+      execFileSync('git', ['clone', '-q', remote, emptyRepo]);
+      await mkdir(path.join(root, 'projects/proof-empty'), { recursive: true });
+      await writeFile(
+        path.join(root, 'projects/proof-empty/project.json'),
+        JSON.stringify({ name: 'proof-empty', default_branch: 'main', hooks: {} }),
+      );
+    }
+    await writeFile(
+      path.join(root, 'pool/local.json'),
+      JSON.stringify({
+        machine: os.hostname(),
+        host: 'localhost',
+        ssh_user: os.userInfo().username,
+        project: 'proof',
+        platform: 'cli',
+        slots: [
+          { id: 'proof-slot', repo, session: 'workspace-proof' },
+          ...(!uiProof
+            ? [
+                { id: 'proof-linked', repo: linkedRepo, session: 'workspace-proof-linked' },
+                {
+                  id: 'proof-empty',
+                  repo: emptyRepo,
+                  session: 'workspace-proof-empty',
+                  project: 'proof-empty',
+                },
+              ]
+            : []),
+        ],
+      }),
+    );
+    const initial = {
+      slot: 'proof-slot',
+      machine: os.hostname(),
+      platform: 'cli',
+      project: 'proof',
+      ssh: 'LOCAL',
+      dev: '-',
+      devserver: '-',
+      cdp: '-',
+      fixtures: '0/3',
+      branch: 'previous',
+      head_sha: git(repo, 'rev-parse', 'HEAD'),
+      agent: 'idle',
+      enabled: true,
+      dispatchable: true,
+      lifecycle: 'ready',
+      phase: null,
+      slot_epoch: 4,
+      current_run_id: null,
+      warm: !uiProof,
+    };
+    await writeFile(
+      path.join(root, 'status.json'),
+      JSON.stringify({
+        checked_at: new Date().toISOString(),
+        slots: [
+          initial,
+          ...(!uiProof
+            ? [
+                { ...initial, slot: 'proof-linked', branch: 'previous-linked' },
+                { ...initial, slot: 'proof-empty', project: 'proof-empty', branch: 'main' },
+              ]
+            : []),
+        ],
+      }),
+    );
+    await import('../../runtime/mock-pty.test-support.js');
+    let taskSteps: typeof import('../../run-engine/task-steps.js');
+    if (uiProof) {
+      mock.module('../../run-engine/task-steps.js', {
+        namedExports: {
+          mergeInitialContextIntoTicketData: (
+            ...args: Parameters<typeof taskSteps.mergeInitialContextIntoTicketData>
+          ) => taskSteps.mergeInitialContextIntoTicketData(...args),
+          prepareProfileDecisionLabel: (
+            ...args: Parameters<typeof taskSteps.prepareProfileDecisionLabel>
+          ) => taskSteps.prepareProfileDecisionLabel(...args),
+          executeGradeStep: (...args: Parameters<typeof taskSteps.executeGradeStep>) =>
+            taskSteps.executeGradeStep(...args),
+          executeWriteTaskStep: async (
+            ...args: Parameters<typeof taskSteps.executeWriteTaskStep>
+          ) => {
+            // Keep the real claim visible long enough for the browser to observe it.
+            // Then delegate to the normal missing-catalog failure; no worker launches.
+            if (args[1].ticketOrPr === 'PROOF-2') {
+              const deadline = Date.now() + 120_000;
+              for (;;) {
+                try {
+                  const observed = JSON.parse(
+                    await readFile(path.join(output, 'owner-card-observed.json'), 'utf8'),
+                  );
+                  if (observed.runId === args[0]) break;
+                } catch (error) {
+                  if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT')
+                    throw error;
+                }
+                assert.ok(Date.now() < deadline, 'Browser did not observe the real slot owner');
+                await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+            }
+            return taskSteps.executeWriteTaskStep(...args);
+          },
+        },
+      });
+    }
+
+    const execution = await import('../../core/exec.js');
+    let failPostReleaseProbe = false;
+    let failInstallerRead = false;
+    let pauseReset = false;
+    let enterReset: () => void = () => {};
+    let resumeReset: () => void = () => {};
+    const resetEntered = new Promise<void>((resolve) => {
+      enterReset = resolve;
+    });
+    const resetResumed = new Promise<void>((resolve) => {
+      resumeReset = resolve;
+    });
+    const executeOnSlot: typeof execution.execOnSlot = async (...args) => {
+      if (pauseReset && args[1].includes('git reset --hard')) {
+        pauseReset = false;
+        enterReset();
+        await resetResumed;
+      }
+      if (/\btmux\b/.test(args[1])) return { exitCode: 1, stdout: '', stderr: '' };
+      if (
+        failInstallerRead &&
+        args[0].slotId === 'proof-slot' &&
+        args[1].startsWith('cat ') &&
+        args[1].includes('/.git/info/exclude')
+      )
+        throw new Error('Injected fixture content transport failure');
+      if (failPostReleaseProbe && args[1].includes('FARMSLOT_WORKSPACE_PROBE')) {
+        const state = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
+        const row = state.slots.find((slot: { slot: string }) => slot.slot === args[0].slotId);
+        if (
+          row?.branch === 'main' &&
+          row.phase === 'releasing' &&
+          row.workspace_recovery?.phase === 'cleanup'
+        ) {
+          failPostReleaseProbe = false;
+          throw new Error('Injected post-release identity probe failure');
+        }
+      }
+      return execution.execOnSlot(...args);
+    };
+    mock.module('../../core/exec.js', {
+      namedExports: { ...execution, execOnSlot: executeOnSlot },
+    });
+    const core = await import('../../core/index.js');
+    mock.module('../../core/index.js', { namedExports: { ...core, execOnSlot: executeOnSlot } });
+    const tmux = await import('../../core/tmux.js');
+    mock.module('../../core/tmux.js', {
+      namedExports: { ...tmux, resolveTmuxSession: async () => 'workspace-proof' },
+    });
+
+    if (uiProof) {
+      taskSteps = await import(
+        new URL('../../run-engine/task-steps.js?fleet-proof-original', import.meta.url).href
+      );
+    }
+
+    const fixture = await createNativeProofFixture(t, root);
+    fixtureOwnsRoot = true;
+    const { initServerGlobals, resetServerGlobalsForTests } = await import('../../server.js');
+    if (uiProof) {
+      initServerGlobals();
+      t.after(resetServerGlobalsForTests);
+    }
+    const connection = await fixture.client.connect();
+    t.after(() => connection.close());
+    const bulkSummaries = new Map<string, object>();
+    connection.onEvent((event) => {
+      if (
+        event.event === 'fleet.refresh.summary' &&
+        typeof event.payload === 'object' &&
+        event.payload !== null &&
+        'requestId' in event.payload &&
+        typeof event.payload.requestId === 'string'
+      )
+        bulkSummaries.set(event.payload.requestId, event.payload);
+      if (event.event === 'slot.refresh.step')
+        console.log('RECOVERY_STEP', JSON.stringify(event.payload));
+    });
+    const call = <T>(method: string, params?: unknown) =>
+      connection.call<T>(method, params, { timeoutMs: 300_000 });
+    if (uiProof) {
+      process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '0';
+      const secondRepo = path.join(root, 'checkout-two');
+      execFileSync('git', ['clone', '-q', remote, secondRepo]);
+      git(secondRepo, 'checkout', '-qb', 'previous-two');
+      const pool = JSON.parse(await readFile(path.join(root, 'pool/local.json'), 'utf8'));
+      pool.slots.push({ id: 'proof-slot-two', repo: secondRepo, session: 'workspace-proof-two' });
+      const localRepo = path.join(root, 'checkout-local');
+      execFileSync('git', ['clone', '-q', remote, localRepo]);
+      git(localRepo, 'config', 'user.name', 'Fixture');
+      git(localRepo, 'config', 'user.email', 'fixture@example.invalid');
+      git(localRepo, 'config', 'commit.gpgsign', 'false');
+      git(localRepo, 'config', 'core.hooksPath', '/dev/null');
+      git(localRepo, 'checkout', '-qb', 'local-only');
+      await writeFile(path.join(localRepo, 'local.txt'), 'unpublished work\n');
+      git(localRepo, 'add', '.');
+      git(localRepo, 'commit', '-qm', 'test: unpublished slot work');
+      await writeFile(path.join(localRepo, 'local.txt'), 'local changes needing confirmation\n');
+      git(localRepo, 'add', 'local.txt');
+      pool.slots.push({
+        id: 'proof-unpublished',
+        repo: localRepo,
+        session: 'workspace-proof-local',
+      });
+      await writeFile(path.join(root, 'pool/local.json'), JSON.stringify(pool));
+      const status = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
+      status.slots.push({
+        ...initial,
+        slot: 'proof-slot-two',
+        repo: secondRepo,
+        branch: 'previous-two',
+        head_sha: git(secondRepo, 'rev-parse', 'HEAD'),
+      });
+      status.slots.push({
+        ...initial,
+        slot: 'proof-unpublished',
+        repo: localRepo,
+        branch: 'local-only',
+        head_sha: git(localRepo, 'rev-parse', 'HEAD'),
+      });
+      if (layoutProof) {
+        for (let index = 0; index < 24; index++) {
+          const id = `proof-layout-${String(index).padStart(2, '0')}`;
+          pool.slots.push({ id, repo: path.join(root, id), session: id, enabled: false });
+          status.slots.push({
+            ...initial,
+            slot: id,
+            branch: 'main',
+            enabled: false,
+            lifecycle: 'disabled',
+            dispatchable: false,
+          });
+        }
+        await writeFile(path.join(root, 'pool/local.json'), JSON.stringify(pool));
+      }
+      await writeFile(path.join(root, 'status.json'), JSON.stringify(status));
+      await (await import('../../fleet/state.js')).loadFleetStatus(true);
+      await writeFile(
+        path.join(root, 'home/gateways.json'),
+        JSON.stringify({
+          active: 'fleet-proof',
+          gateways: {
+            'fleet-proof': {
+              url: fixture.url,
+              authMode: 'token',
+              secret: fixture.browserCredential,
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      await writeFile(
+        path.join(output, 'ui-context.json'),
+        JSON.stringify({
+          root,
+          home: path.join(root, 'home'),
+          gatewayUrl: fixture.url,
+          repo,
+          secondRepo,
+          localRepo,
+          output,
+          layoutSlots: layoutProof ? 24 : 0,
+        }),
+        { mode: 0o600 },
+      );
+      console.log('UI_PROOF_READY');
+      const end = Date.now() + 7 * 60 * 60_000;
+      while (Date.now() < end) {
+        try {
+          await readFile(path.join(output, 'ui-finished.json'));
+          return;
+        } catch (error) {
+          if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT')
+            throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      throw new Error('UI proof did not return its cleanup signal');
+    }
+
+    const { inspectSlotWorkspace: inspectWorkspace } = await import('./workspace.js');
+    // Manual real-Git proof observations use the existing recovery read budget.
+    const inspectSlotWorkspace = (slotId: string) =>
+      inspectWorkspace(slotId, { timeoutMs: 120_000 });
+    const store = await import('../../runs/store.js');
+    const activeOwner = store.createRun(
+      {
+        project: 'proof',
+        flowType: 'dev',
+        ticketOrPr: 'PROOF-PROTECTED',
+        mode: 'validation',
+        slotId: 'proof-slot',
+      },
+      { nativeOwnerPrincipalId: fixture.person.id },
+    );
+    const staleIdentity = await inspectSlotWorkspace('proof-slot');
+    await core.updateSlotStatus('proof-slot', {
+      current_run_id: activeOwner.id,
+      lifecycle: 'busy',
+      slot_epoch: staleIdentity.epoch + 1,
+    });
+    const successorRefused = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'force',
+      expectedWorkspace: staleIdentity,
+    });
+    assert.equal(successorRefused.reason, 'identity-changed');
+    const protectedCases: string[] = [];
+    for (const fields of [
+      { current_run_id: activeOwner.id, lifecycle: 'busy' },
+      { current_run_id: null, lifecycle: 'manual' },
+      { current_run_id: null, lifecycle: 'ready', handoff_run_id: activeOwner.id },
+      {
+        current_run_id: null,
+        lifecycle: 'ready',
+        handoff_run_id: null,
+        cleanup_run_id: activeOwner.id,
+      },
+    ]) {
+      await core.updateSlotStatus('proof-slot', fields);
+      const protectedWork = await inspectSlotWorkspace('proof-slot');
+      const refused = await call<SlotRefreshResult>('slot.refresh', {
+        slotId: 'proof-slot',
+        release: true,
+        mode: 'force',
+        expectedWorkspace: protectedWork,
+      });
+      assert.equal(refused.refreshed, false);
+      assert.equal(refused.reason, 'protected', JSON.stringify({ fields, refused }));
+      assert.equal(git(repo, 'branch', '--show-current'), 'previous');
+      protectedCases.push(refused.detail ?? 'protected');
+    }
+    store.updateRun(activeOwner.id, { status: 'done', completedAt: new Date().toISOString() });
+    await core.updateSlotStatus('proof-slot', {
+      current_run_id: null,
+      cleanup_run_id: null,
+      handoff_run_id: null,
+      lifecycle: 'ready',
+      phase: null,
+    });
+    git(repo, 'remote', 'set-url', 'origin', path.join(root, 'unavailable.git'));
+    const unknownWork = await inspectSlotWorkspace('proof-slot');
+    assert.equal(unknownWork.publication, 'unknown');
+    const unknownRefused = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'force',
+      expectedWorkspace: unknownWork,
+    });
+    assert.equal(unknownRefused.reason, 'unknown');
+    assert.equal(git(repo, 'branch', '--show-current'), 'previous');
+    git(repo, 'remote', 'set-url', 'origin', remote);
+    const before = await call<FleetStatusResult>('fleet.status');
+    const work = before.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.workspace;
+    assert.ok(work);
+    failPostReleaseProbe = true;
+    const postReleaseFailure = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: work,
+    });
+    assert.equal(postReleaseFailure.refreshed, false);
+    assert.match(postReleaseFailure.detail ?? '', /Injected post-release identity probe failure/);
+    const coldHeld = await core.readSlotRow('proof-slot');
+    assert.equal(coldHeld?.lifecycle, 'held');
+    assert.equal(coldHeld?.warm, false, 'Full teardown is cold even when the next probe fails');
+    await assert.rejects(
+      call('slot.prepare', { slotId: 'proof-slot', branch: 'main' }),
+      /Slot recovery must be retried through slot\.refresh/,
+    );
+    assert.deepEqual(
+      await core.readSlotRow('proof-slot'),
+      coldHeld,
+      'Refused prepare preserves the recovery marker and identity',
+    );
+    const retryCold = await inspectSlotWorkspace('proof-slot');
+    const recovered = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: retryCold,
+    });
+    assert.equal(recovered.refreshed, true, recovered.detail);
+    assert.equal(
+      await readFile(path.join(root, 'recycle-entered'), 'utf8'),
+      '',
+      'explicit manual recovery retains its project recycle hook',
+    );
+    let immediate = (await call<FleetStatusResult>('fleet.status')).fleet.slots.find(
+      (slot) => slot.slot === 'proof-slot',
+    );
+    // Recovery can invalidate an in-flight passive observation; the RPC names that transient.
+    if (immediate?.workspaceError === 'Workspace changed; inspect again')
+      immediate = (await call<FleetStatusResult>('fleet.status')).fleet.slots.find(
+        (slot) => slot.slot === 'proof-slot',
+      );
+    assert.equal(immediate?.branch, 'main');
+    assert.equal(immediate?.lifecycle, 'ready');
+    assert.equal(immediate?.workspace?.publication, 'baseline', JSON.stringify(immediate));
+    assert.equal(git(repo, 'branch', '--show-current'), 'main');
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
+    assert.equal(await readFile(path.join(repo, 'fixture.txt'), 'utf8'), 'synced fixture\n');
+    assert.equal(
+      await readFile(path.join(repo, '.agent/runtime.txt'), 'utf8'),
+      'runtime fixture\n',
+    );
+    const row = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8')).slots[0];
+    assert.equal(row.lifecycle, 'ready');
+    assert.equal(row.current_run_id, null);
+    assert.equal(row.workspace_recovery, null);
+    assert.equal(row.fixtures, 'OK');
+    assert.equal(row.warm, false, 'Full release tears down warm resources');
+    assert.equal(row.workspace, null, 'Ready observations are not persisted across later claims');
+    await writeFile(path.join(repo, '.git/info/exclude'), '.agent/\n.cache/\n');
+    failInstallerRead = true;
+    let isolatedRefresh: FleetStatusResult;
+    try {
+      isolatedRefresh = await call<FleetStatusResult>('fleet.refresh');
+    } finally {
+      failInstallerRead = false;
+    }
+    assert.equal(
+      isolatedRefresh.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.health.fixtures,
+      '2/3',
+    );
+    assert.equal(
+      isolatedRefresh.fleet.slots.find((slot) => slot.slot === 'proof-empty')?.health.fixtures,
+      'not-required',
+      'A failed fixture read must not lose sibling slot observations',
+    );
+    const restoredRefresh = await call<FleetStatusResult>('fleet.refresh');
+    assert.equal(
+      restoredRefresh.fleet.slots.find((slot) => slot.slot === 'proof-slot')?.health.fixtures,
+      'OK',
+    );
+    // The installer-read case uses a clone; linked worktrees have a .git file.
+    proofProject.fixtures.templates = proofProject.fixtures.templates.filter(
+      (template) => template.src !== 'exclude',
+    );
+    await writeFile(path.join(root, 'projects/proof/project.json'), JSON.stringify(proofProject));
+    if (coldFailureOnly) {
+      await writeFile(
+        path.join(output, 'cold-retry.json'),
+        JSON.stringify(
+          {
+            pass: true,
+            postReleaseFailure,
+            coldHeld,
+            recovered,
+            coldOnRetry: row.warm === false,
+            pendingRecoveryPrepareRefused: true,
+            expandedRuntimeFixture: '.agent/runtime.txt',
+            fleetReadFailureIsolated: true,
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
+
+    git(repo, 'checkout', 'previous');
+    await core.updateSlotStatus('proof-slot', {
+      branch: 'previous',
+      head_sha: git(repo, 'rev-parse', 'HEAD'),
+      warm: true,
+    });
+    pauseReset = true;
+    const cancelWork = await inspectSlotWorkspace('proof-slot');
+    const bulk = await call<{ requestId: string }>('fleet.refreshSlots', {
+      requestId: 'cold-cancel-proof',
+      slots: [{ slotId: 'proof-slot', release: true, mode: 'safe', expectedWorkspace: cancelWork }],
+    });
+    const waitFor = async (check: () => Promise<boolean> | boolean) => {
+      const deadline = Date.now() + 30_000;
+      while (!(await check())) {
+        assert.ok(Date.now() < deadline, 'Cancellation proof boundary did not arrive');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    };
+    await resetEntered;
+    const cancellation = await call<{ cancelled: boolean }>('fleet.refreshSlots.cancel', {
+      requestId: bulk.requestId,
+    });
+    assert.equal(cancellation.cancelled, true);
+    resumeReset();
+    await waitFor(() => bulkSummaries.has(bulk.requestId));
+    const cancelledSummary = bulkSummaries.get(bulk.requestId);
+    assert.ok(cancelledSummary && 'cancelled' in cancelledSummary);
+    assert.equal(cancelledSummary.cancelled, 1);
+    const cancelledHeld = await core.readSlotRow('proof-slot');
+    assert.equal(cancelledHeld?.lifecycle, 'held');
+    assert.equal(
+      cancelledHeld?.warm,
+      false,
+      'Completed teardown is cold when cancellation arrives during reset',
+    );
+    const cancelledWork = await inspectSlotWorkspace('proof-slot');
+    const cancelledRetry = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: cancelledWork,
+    });
+    assert.equal(cancelledRetry.refreshed, true, cancelledRetry.detail);
+    assert.equal((await core.readSlotRow('proof-slot'))?.warm, false);
+    if (cancellationOnly) {
+      await writeFile(
+        path.join(output, 'cancel-retry.json'),
+        JSON.stringify(
+          {
+            pass: true,
+            cancellation,
+            cancelledSummary,
+            cancelledHeld,
+            cancelledRetry,
+            coldOnRetry: true,
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
+    await writeFile(path.join(repo, 'file.txt'), 'first local change\n');
+    const dirty = await inspectSlotWorkspace('proof-slot');
+    await writeFile(path.join(repo, 'file.txt'), 'changed after confirmation\n');
+    const refused = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'force',
+      expectedWorkspace: dirty,
+    });
+    assert.equal(refused.refreshed, false);
+    assert.equal(refused.reason, 'identity-changed');
+    assert.equal(
+      await readFile(path.join(repo, 'file.txt'), 'utf8'),
+      'changed after confirmation\n',
+    );
+    git(repo, 'add', 'file.txt');
+    await writeFile(path.join(repo, 'untracked.txt'), 'confirmed untracked work');
+    const freshDirty = await inspectSlotWorkspace('proof-slot');
+    const confirmed = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'force',
+      expectedWorkspace: freshDirty,
+    });
+    assert.equal(confirmed.refreshed, true, confirmed.detail);
+    const template = path.join(root, 'projects/proof/fixtures/fixture.txt');
+    await rename(template, template + '.held');
+    const beforeFailure = await inspectSlotWorkspace('proof-slot');
+    const failed = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: beforeFailure,
+    });
+    assert.equal(failed.refreshed, false);
+    const held = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8')).slots[0];
+    assert.equal(held.lifecycle, 'held');
+    assert.equal(held.phase, 'occupied');
+    assert.equal(held.workspace_recovery.phase, 'fixtures');
+    assert.ok(held.workspace_recovery.completed.includes('reset'));
+    await writeFile(path.join(seed, 'main-advanced.txt'), 'main moved while recovery was held\n');
+    git(seed, 'add', 'main-advanced.txt');
+    git(seed, 'commit', '-qm', 'test: advance main during held recovery');
+    git(seed, 'push', '-q', remote, 'main');
+    const advancedMain = git(seed, 'rev-parse', 'HEAD');
+    await core.updateSlotStatus('proof-slot', {
+      lifecycle: 'busy',
+      phase: 'releasing',
+      releasing_since: '2020-01-01T00:00:00Z',
+    });
+    const restart = await promisify(execFile)(
+      process.execPath,
+      [
+        '--experimental-test-module-mocks',
+        '--import',
+        'tsx',
+        fileURLToPath(new URL('./workspace-restart.live-support.ts', import.meta.url)),
+      ],
+      { cwd: source, env: process.env, timeout: 120_000 },
+    );
+    assert.match(restart.stdout, /FRESH_PROCESS_RECOVERY_HELD/);
+    const restartedRow = await core.readSlotRow('proof-slot');
+    assert.equal(restartedRow?.lifecycle, 'held');
+    assert.equal(restartedRow?.phase, 'occupied');
+    assert.deepEqual(restartedRow?.workspace_recovery, held.workspace_recovery);
+    const reset = await core.resetSlotIf('proof-slot', () => true);
+    assert.equal(reset, false);
+    const claim = await core.claimSlotStatusIf('proof-slot', () => true, { lifecycle: 'busy' });
+    assert.equal(claim.claimed, false);
+    await rename(template + '.held', template);
+    const retryWork = await inspectSlotWorkspace('proof-slot');
+    const retried = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: retryWork,
+    });
+    assert.equal(retried.refreshed, true, retried.detail);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), advancedMain);
+    assert.equal((await core.readSlotRow('proof-slot'))?.warm, false);
+    const exclude = git(repo, 'rev-parse', '--git-path', 'info/exclude');
+    await writeFile(path.isAbsolute(exclude) ? exclude : path.join(repo, exclude), '');
+    const retained = path.join(repo, '.task/retained/artifacts/report.md');
+    await mkdir(path.dirname(retained), { recursive: true });
+    await writeFile(retained, 'Retained evidence\n');
+    await core.updateSlotStatus('proof-slot', { warm: true });
+    const baseline = await inspectSlotWorkspace('proof-slot');
+    assert.equal(baseline.dirtyCount, 0);
+    const baselineRefresh = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: baseline,
+    });
+    assert.equal(baselineRefresh.refreshed, true, baselineRefresh.detail);
+    assert.equal(await readFile(retained, 'utf8'), 'Retained evidence\n');
+    assert.equal(
+      (await core.readSlotRow('proof-slot'))?.warm,
+      true,
+      'Baseline refresh preserves warm resources',
+    );
+    const owner = store.createRun(
+      {
+        project: 'proof',
+        flowType: 'dev',
+        ticketOrPr: 'PROOF-OWNED',
+        mode: 'validation',
+        slotId: 'proof-slot',
+        runner: 'scripted',
+        scripted: { mode: 'command', commandRef: 'proof' },
+      },
+      { nativeOwnerPrincipalId: fixture.person.id },
+    );
+    store.updateRun(owner.id, { status: 'done', completedAt: new Date().toISOString() });
+    await core.updateSlotStatus('proof-slot', {
+      current_run_id: owner.id,
+      lifecycle: 'held',
+      phase: 'pr-watch',
+      agent: 'idle',
+    });
+    const ownedWorkspace = await inspectSlotWorkspace('proof-slot');
+    assert.equal(ownedWorkspace.terminalOwner, true);
+    const ownedRelease = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-slot',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: ownedWorkspace,
+    });
+    assert.equal(ownedRelease.refreshed, true, ownedRelease.detail);
+    assert.equal((await core.readSlotRow('proof-slot'))?.current_run_id, null);
+    assert.equal((await core.readSlotRow('proof-slot'))?.warm, false);
+    const linkedWork = await inspectSlotWorkspace('proof-linked');
+    const linkedRelease = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-linked',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: linkedWork,
+    });
+    assert.equal(linkedRelease.refreshed, true, linkedRelease.detail);
+    assert.equal(git(linkedRepo, 'branch', '--show-current'), 'wt/workspace-proof-linked');
+    assert.equal(git(linkedRepo, 'rev-parse', 'HEAD'), git(linkedRepo, 'rev-parse', 'origin/main'));
+    assert.equal(await readFile(path.join(linkedRepo, 'fixture.txt'), 'utf8'), 'synced fixture\n');
+    for (const [key, value] of [
+      ['user.name', 'Fixture'],
+      ['user.email', 'fixture@example.invalid'],
+      ['commit.gpgsign', 'false'],
+      ['core.hooksPath', '/dev/null'],
+    ])
+      git(emptyRepo, 'config', key, value);
+    git(emptyRepo, 'checkout', '-qb', 'squashed-deleted');
+    await writeFile(path.join(emptyRepo, 'squash.txt'), 'squashed work\n');
+    git(emptyRepo, 'add', 'squash.txt');
+    git(emptyRepo, 'commit', '-qm', 'test: branch work');
+    git(emptyRepo, 'push', '-qu', 'origin', 'squashed-deleted');
+    await writeFile(path.join(seed, 'squash.txt'), 'squashed work\n');
+    git(seed, 'add', 'squash.txt');
+    git(seed, 'commit', '-qm', 'test: squash merged work');
+    git(seed, 'push', '-q', remote, 'main');
+    git(emptyRepo, 'push', '-q', 'origin', '--delete', 'squashed-deleted');
+    git(emptyRepo, 'fetch', '-q', 'origin', 'main');
+    const emptyWork = await inspectSlotWorkspace('proof-empty');
+    assert.equal(emptyWork.publication, 'merged', 'Deleted squash branch is covered by its patch');
+    const emptyRelease = await call<SlotRefreshResult>('slot.refresh', {
+      slotId: 'proof-empty',
+      release: true,
+      mode: 'safe',
+      expectedWorkspace: emptyWork,
+    });
+    assert.equal(emptyRelease.refreshed, true, emptyRelease.detail);
+    assert.equal((await core.readSlotRow('proof-empty'))?.fixtures, 'not-required');
+    const result = {
+      postReleaseFailure,
+      cancelledHeld,
+      cancelledRetry,
+      coldOnPostReleaseProbeFailure: coldHeld?.warm === false,
+      pass: true,
+      recovered,
+      refused,
+      confirmed,
+      failed,
+      restart: { held: true, freshProcess: true },
+      retryAdvancedTo: advancedMain,
+      retried,
+      baselineRefresh,
+      ownedRelease,
+      successorRefused,
+      protectedCases,
+      unknownRefused,
+      linkedRelease,
+      emptyRelease,
+      deletedSquashMerged: emptyWork.publication === 'merged',
+      branch: git(repo, 'branch', '--show-current'),
+      head: git(repo, 'rev-parse', 'HEAD'),
+      row,
+      proof:
+        'authenticated RPC + real Git and fixture sync; UI/automatic dispatch proof remains separate',
+    };
+    await writeFile(path.join(output, 'rpc.json'), JSON.stringify(result, null, 2) + '\n');
+  },
+);

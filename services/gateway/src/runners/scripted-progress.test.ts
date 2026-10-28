@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { AgentContext, Run } from '@farmslot/protocol';
+import type { AgentContext, AgentRole, FlowType, Run } from '@farmslot/protocol';
 
 import { makeRun } from '../run-engine/test-fixtures.js';
 
@@ -26,7 +26,7 @@ interface ReceiptFixture extends RunnerTaskProgressInput {
   malformed?: boolean;
 }
 
-async function fixture() {
+async function fixture(): Promise<ReceiptFixture> {
   const repo = await mkdtemp(path.join(tmpdir(), 'scripted-progress-'));
   const context: AgentContext = {
     id: 'primary',
@@ -121,6 +121,36 @@ test('current successful command receipt proves idle with its declared cwd', asy
     },
   });
   assert.equal(progress.kind, 'idle');
+});
+
+for (const [flowType, role] of [
+  ['dev', 'dev'],
+  ['fix-bug', 'fix-bug'],
+  ['review-pr', 'review'],
+] satisfies Array<[FlowType, AgentRole]>) {
+  test(`${flowType} command receipts prove idle for the flow-owned role`, async (t) => {
+    const f = await fixture();
+    t.after(() => rm(f.vars.remoteRepo, { recursive: true, force: true }));
+    f.run.flowType = flowType;
+    f.context.id = role;
+    f.context.role = role;
+    f.signal = { ...f.signal, contextId: role, role };
+    f.run.steps[1].outputs = { workerSignal: f.signal };
+    await writeReceipts(f);
+    assert.equal(await readScriptedCommandProgress(f, declaredCommand), 'idle');
+  });
+}
+
+test('a matching receipt for another flow role remains unproven', async (t) => {
+  const f = await fixture();
+  t.after(() => rm(f.vars.remoteRepo, { recursive: true, force: true }));
+  f.run.flowType = 'dev';
+  f.context.id = 'fix-bug';
+  f.context.role = 'fix-bug';
+  f.signal = { ...f.signal, contextId: f.context.id, role: f.context.role };
+  f.run.steps[1].outputs = { workerSignal: f.signal };
+  await writeReceipts(f);
+  assert.equal(await readScriptedCommandProgress(f, declaredCommand), 'unproven');
 });
 
 const invalidCases: Array<[string, (f: ReceiptFixture) => void]> = [

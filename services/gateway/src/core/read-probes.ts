@@ -2,7 +2,7 @@ import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { NodeExecUnconfirmedError } from '../fleet/node-rpc.js';
 
 import type { SlotVars } from './config.js';
-import { execOnSlot, type ExecResult } from './exec.js';
+import { execOnSlot, type ExecResult, isLocal } from './exec.js';
 
 interface ReadProbe {
   promise: Promise<ExecResult>;
@@ -11,6 +11,19 @@ interface ReadProbe {
 }
 
 const pending = new Map<string, ReadProbe>();
+const LOCAL_WORKSPACE_PROBE_CONCURRENCY = 4;
+let localWorkspaceProbes = 0;
+const localWorkspaceWaiters: Array<() => void> = [];
+
+async function admitLocalWorkspaceProbe(): Promise<() => void> {
+  if (localWorkspaceProbes < LOCAL_WORKSPACE_PROBE_CONCURRENCY) localWorkspaceProbes++;
+  else await new Promise<void>((resolve) => localWorkspaceWaiters.push(resolve));
+  return () => {
+    const next = localWorkspaceWaiters.shift();
+    if (next) next();
+    else localWorkspaceProbes--;
+  };
+}
 
 /** Polling readers share an owned command until its process closeout settles. */
 export function readSlotProbe(
@@ -25,13 +38,20 @@ export function readSlotProbe(
   if (existing && (!existing.unconfirmed || existing.connection === connection))
     return existing.promise;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  timer.unref();
   const entry: ReadProbe = {
     connection,
     unconfirmed: false,
     promise: Promise.resolve().then(async () => {
+      // A fleet read may inspect every local checkout. Admit only a small
+      // batch, then start its command budget. Queued readers still share the
+      // flight, and recovery/remote reads retain their existing admission.
+      const release =
+        scope === 'workspace' && isLocal(vars.host, vars.machine)
+          ? await admitLocalWorkspaceProbe()
+          : undefined;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      timer.unref();
       try {
         const result = await execOnSlot(vars, command, {
           timeout,
@@ -50,6 +70,7 @@ export function readSlotProbe(
       } finally {
         clearTimeout(timer);
         if (!entry.unconfirmed && pending.get(key) === entry) pending.delete(key);
+        release?.();
       }
     }),
   };

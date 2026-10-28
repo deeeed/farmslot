@@ -62,7 +62,7 @@ export default function SlotWorkspaceScreen() {
   }
 
   return (
-    <View style={baseStyles.container}>
+    <View testID="companion-screen-slot-workspace" style={baseStyles.container}>
       <Animated.View
         pointerEvents={stickyNavVisible && navLayout !== null ? 'auto' : 'none'}
         style={[styles.stickyWorkspaceNav, stickyNavStyle]}

@@ -5,6 +5,8 @@ import type {
   ReadyGateInputSnapshot,
   ReadyGatePayload,
   RecipeRunArtifactGroup,
+  RunDecision,
+  RunOverrideClaimResult,
   RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
 import {
@@ -16,6 +18,7 @@ import {
 } from '@farmslot/protocol';
 import {
   buildArtifactUrlResolver,
+  criterionDraftReason,
   ReviewDispatchViewModel,
   reviewLineagesForRun,
 } from '@farmslot/review-dispatch';
@@ -255,6 +258,17 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       : { kind: 'other', action: current.resolvedAction ?? 'another action' };
   }
 
+  private _branchRead?: symbol;
+  private _loadedSourceIdentity?: string;
+  private get sourceIdentity(): string {
+    return JSON.stringify([
+      this.runId,
+      this.slotId,
+      this._gateDecision?.id,
+      this._payload?.prPackage?.packageHash,
+    ]);
+  }
+
   readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this._diffTestPatterns,
     onChange: () => this._onHideTestsChanged(),
@@ -283,10 +297,22 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     }
     if (!this._initialized && this._gateDecision && this.slotId) {
       this._initialized = true;
+      this._loadedSourceIdentity = this.sourceIdentity;
       this._hydratePublicationTarget();
       void this._beginRecovery();
     }
-    if (this._gateDecision) this._syncDecisionActionState();
+    if (this._gateDecision) {
+      this._syncDecisionActionState();
+      this._criterionDrafts.setScope(
+        JSON.stringify([
+          gateway.gatewayUrl,
+          gateway.authenticatedPrincipalId,
+          this.runId,
+          this._gateDecision.id,
+        ]),
+        this._payload?.prPackage?.packageHash ?? '',
+      );
+    }
     if (this._gateDecision) this._hydratePublicationTarget();
     if (this._gateDecision) this._hydrateEvidenceSelection();
     this._applyPendingPackageSelection();
@@ -305,8 +331,29 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   override updated(changed: Map<string, unknown>) {
-    if (changed.has('slotId') && this._initialized) {
+    const sourceChanged = this._loadedSourceIdentity !== this.sourceIdentity;
+    this._loadedSourceIdentity = this.sourceIdentity;
+    if (sourceChanged) {
+      this._branchRead = undefined;
+      this._fileDiffRequest = undefined;
+      this._heldDiff = undefined;
+      this._reads.releaseMethods([Methods.GIT_BRANCH_DIFF, Methods.GIT_DIFF]);
+      this._diffFiles = [];
+      this._fileDiff = '';
+      this._diffError = '';
+      this._fileDiffError = '';
+      this._diffLoading = false;
+      this._branchDiffLoaded = false;
+      this._fileDiffLoading = false;
+    }
+    if ((changed.has('slotId') || sourceChanged) && this._initialized) {
       void this._beginRecovery();
+    } else if (
+      changed.has('_activeTab') &&
+      this._activeTab === 'diff' &&
+      this._recoveryPhase === 'live'
+    ) {
+      void this._loadBranchDiff();
     }
   }
 
@@ -733,17 +780,29 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._recoveryMessage = 'Refreshing ready workspace from gateway…';
     const hydrated = await waitForRecoveryHydration(epoch);
     if (!hydrated || this._recoveryEpoch !== epoch) return;
-    await this._loadBranchDiff(epoch);
+    if (this._activeTab === 'diff') await this._loadBranchDiff(epoch);
+    else {
+      // Source browsing is independent of gate readiness. Read it only when
+      // the operator opens Diff; an unreachable slot must not cover the gate.
+      this._recoveryPhase = 'live';
+      this._recoveryMessage = '';
+    }
   }
 
   // ─── Data loading ───
 
   async _loadBranchDiff(epoch = this._recoveryEpoch || currentRecoveryEpoch()) {
-    if (!this.slotId) return;
+    if (!this.slotId || !isRecoveryEpochCurrent(epoch)) return;
+    this._recoveryEpoch = epoch;
+    const read = (this._branchRead = Symbol());
+    const identity = this.sourceIdentity;
     const captured = this._queries.capture();
-    const packageHash = this._payload?.prPackage?.packageHash;
     const current = () =>
-      captured.current() && this._payload?.prPackage?.packageHash === packageHash;
+      this._branchRead === read &&
+      this.sourceIdentity === identity &&
+      captured.current() &&
+      epoch === this._recoveryEpoch &&
+      isRecoveryEpochCurrent(epoch);
     this._diffLoading = true;
     this._reads.releaseMethods([Methods.GIT_BRANCH_DIFF]);
     try {
@@ -761,10 +820,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           this._diffTestPatterns = next.testFilePatterns ?? null;
         },
       );
-      if (!current() || epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      if (!current()) return;
       this._heldDiff = undefined;
       this._diffError = '';
       this._diffFiles = result.files;
+      this._branchDiffLoaded = true;
       this._diffTestPatterns = result.testFilePatterns ?? null;
       const selected = visibleDiffSelection(this._diffSplit().visible, this._selectedFile);
       if (selected) {
@@ -776,11 +836,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         this._fileDiff = '';
       }
     } catch (err) {
-      if (!current() || epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      if (!current()) return;
       console.error('[ready-workspace] branch diff failed:', err);
       if (this._payload?.prPackage) {
         const shown = await this._showPackageDiff();
-        if (!current() || epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+        if (!current()) return;
         if (!shown) {
           this._diffFiles = [];
           this._diffTestPatterns = null;
@@ -796,13 +856,9 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       this._recoveryPhase = 'error';
       this._recoveryMessage = 'Ready workspace failed to recover — retry when ready.';
     } finally {
-      if (captured.ownsView() && epoch === this._recoveryEpoch) this._diffLoading = false;
-      if (
-        current() &&
-        epoch === this._recoveryEpoch &&
-        isRecoveryEpochCurrent(epoch) &&
-        this._recoveryPhase !== 'error'
-      ) {
+      // A superseded read leaves the flag to its successor; a dropped connection still clears it.
+      if (this._branchRead === read && captured.ownsView()) this._diffLoading = false;
+      if (current() && this._recoveryPhase !== 'error') {
         this._recoveryPhase = 'live';
         this._recoveryMessage = '';
       }
@@ -836,16 +892,19 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     const request = {};
     this._fileDiffRequest = request;
     const captured = this._queries.capture();
-    const packageHash = this._payload?.prPackage?.packageHash;
+    const identity = this.sourceIdentity;
+    const epoch = currentRecoveryEpoch();
     const current = () =>
       captured.current() &&
       this._fileDiffRequest === request &&
       this._selectedFile === filePath &&
-      this._payload?.prPackage?.packageHash === packageHash;
+      this.sourceIdentity === identity &&
+      isRecoveryEpochCurrent(epoch);
     this._selectedFile = filePath;
     this._syncViewStateToHash();
     this._fileDiffLoading = true;
     this._fileDiff = '';
+    this._fileDiffError = '';
     const show = (diff: string) => {
       this._fileDiff = diff;
       // Only a modal showing the selected file follows it; an artifact's modal keeps its diff.
@@ -882,7 +941,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       const section = typeof held === 'string' ? heldFileDiff(held, filePath) : undefined;
       if (!current()) return;
       if (section !== undefined) show(section);
-      else this._diffError = err instanceof Error ? err.message : String(err);
+      else this._fileDiffError = err instanceof Error ? err.message : String(err);
     } finally {
       if (captured.ownsView() && this._fileDiffRequest === request) this._fileDiffLoading = false;
     }
@@ -900,10 +959,16 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _syncDecisionActionState(): void {
-    const key = readyDecisionActionStateKey(this._gateDecision);
+    const key = JSON.stringify([
+      this.runId,
+      readyDecisionActionStateKey(this._gateDecision),
+      this._payload?.prPackage?.packageHash,
+      gateway.credentialGeneration,
+      gateway.authenticatedPrincipalId,
+    ]);
     if (key === this._decisionActionStateKey) return;
     this._decisionActionStateKey = key;
-    this._acting = false;
+    if (this._draftApprovalOwner !== this._decisionOwnerKey) this._acting = false;
     this._pendingConfirm = null;
     this._evidenceAttestationReason = '';
     this._actionMessage = '';
@@ -1010,12 +1075,27 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _submitReviewRequest() {
-    if (this._acting || !this._reviewPicker.canInvoke('request-review')) return;
+    if (this._actionsPaused || this._acting || !this._reviewPicker.canInvoke('request-review'))
+      return;
     const reviewRequest = this._reviewPicker.toRequestPayload();
     const captured = this._queries.capture();
     const applied = await this._resolve('request-review', { reviewRequest });
     if (applied && captured.current()) this._closeReviewRequestModal();
   }
+
+  protected _criterionExecution(_claimId: string): string | undefined {
+    return undefined;
+  }
+  private get _decisionOwnerKey(): string {
+    return JSON.stringify([
+      this.runId,
+      this._gateDecision?.id,
+      gateway.gatewayUrl,
+      gateway.authenticatedPrincipalId,
+      gateway.credentialGeneration,
+    ]);
+  }
+  private _draftApprovalOwner: string | null = null;
 
   async _resolve(actionId: string, extraSelectionData: Record<string, unknown> = {}) {
     if (this._gateDecision?.resolvedAt) return;
@@ -1046,29 +1126,69 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           'Still waiting for the gateway; it checks the gate before applying it.';
     }, DECISION_RESOLVE_SLOW_MS);
     let failure: unknown;
+    const drafts = [...this._criterionDrafts.entries];
+    const submissionOwner = this._decisionOwnerKey;
+    if (approving && drafts.length) this._draftApprovalOwner = submissionOwner;
+    const reason = criterionDraftReason(drafts, this._evidenceAttestationReason);
     try {
-      await gateway.request(
-        Methods.RUN_RESOLVE_DECISION,
-        buildRunResolveDecisionParams({
-          runId: this.runId,
+      const send = async (decision: RunDecision, selectedAction: string, reason: string) => {
+        actionId = selectedAction;
+        return gateway.request(
+          Methods.RUN_RESOLVE_DECISION,
+          buildRunResolveDecisionParams({
+            runId: this.runId,
+            decision,
+            actionId: selectedAction,
+            ...publicationApprovalReasonFields(
+              selectedAction,
+              reason,
+              evidenceAttestationAvailable(
+                decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
+                selectedAction,
+              ),
+            ),
+            ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
+            publicationTarget: this._publicationTarget,
+            selectedEvidenceKeys: payload ? this._selectedEvidenceKeysForSubmit(payload) : [],
+            selectionData: extraSelectionData,
+          }),
+          DECISION_RESOLVE_TIMEOUT_MS,
+        );
+      };
+      if (approving && drafts.length) {
+        const run = this._canonicalRun;
+        if (!run) throw new Error('Load the current run before approving its drafts.');
+        await this._criterionDrafts.approve({
+          run,
           decision: command.decision,
           actionId,
-          ...publicationApprovalReasonFields(
-            actionId,
-            this._evidenceAttestationReason,
-            evidenceAttestationAvailable(payload?.gateReadiness, actionId),
-          ),
-          ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
-          publicationTarget: this._publicationTarget,
-          selectedEvidenceKeys: payload ? this._selectedEvidenceKeysForSubmit(payload) : [],
-          selectionData: extraSelectionData,
-        }),
-        DECISION_RESOLVE_TIMEOUT_MS,
-      );
+          reason: this._evidenceAttestationReason,
+          execution: (id) => this._criterionExecution(id),
+          requestSkip: (method, params) => {
+            if (method !== Methods.RUN_OVERRIDE_CLAIM)
+              throw new Error('Invalid criterion override request.');
+            return gateway.request<RunOverrideClaimResult>(Methods.RUN_OVERRIDE_CLAIM, params, {
+              timeout: null,
+            });
+          },
+          assertCurrent: () => {
+            if (!stillShown() || submissionOwner !== this._decisionOwnerKey)
+              throw new Error('The gate or signed-in authority changed.');
+          },
+          // Override replies bind the approval inside the model; notifications refresh the gate.
+          applied: () => undefined,
+          send,
+        });
+      } else await send(command.decision, actionId, reason);
     } catch (err) {
       failure = err;
     } finally {
       clearTimeout(slow);
+    }
+    if (this._draftApprovalOwner === submissionOwner) this._draftApprovalOwner = null;
+    if (!stillShown() || submissionOwner !== this._decisionOwnerKey) {
+      command.finish();
+      return;
     }
     // A failed request can still have been applied (a lost reply, or a second click whose
     // first submission won): report what the gateway did, not how the request ended.
@@ -1084,6 +1204,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     }
     command.finish();
     if (outcome.kind === 'applied') {
+      if (approving) this._criterionDrafts.clear();
       this._actionMessage = requestingReview
         ? 'Review requested; preparing the reviewer.'
         : readyDecisionSuccessMessage(approving);

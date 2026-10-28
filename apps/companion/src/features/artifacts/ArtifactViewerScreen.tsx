@@ -90,7 +90,7 @@ export default function ArtifactViewerScreen() {
             mediaType === 'document'
               ? isDiffArtifact
                 ? () => openDiffPath(item.path)
-                : () => openDocument(url, item.path)
+                : () => openDocument(url, item.path, item.recipeRunId)
               : undefined
           }
           documentLabel={isDiffArtifact ? 'DIFF' : undefined}
@@ -242,6 +242,7 @@ export default function ArtifactViewerScreen() {
       />
       <DocumentViewer
         visible={isFocused && !!documentViewer}
+        sharedArtifact={documentViewer?.sharedArtifact}
         title={documentViewer?.title ?? ''}
         body={documentViewer?.body ?? ''}
         onClose={actions.closeDocument}

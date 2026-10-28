@@ -1,6 +1,6 @@
 import RoadmapScreen from '../../features/planning/RoadmapScreen';
-import { useRoadmapController } from '../../features/planning/use-roadmap-controller';
+import { useRoadmapViewSharing } from '../../features/quick-actions/use-roadmap-view-sharing';
 
 export default function RoadmapRoute() {
-  return <RoadmapScreen screen={useRoadmapController()} />;
+  return <RoadmapScreen screen={useRoadmapViewSharing()} />;
 }

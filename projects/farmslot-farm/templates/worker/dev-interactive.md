@@ -81,10 +81,6 @@ bash {{recipe_validate_wrapper}} \
 - Write `recipe-coverage.md` when a recipe exists (gateway computes recipe-quality).
 - Never inject UI state — use `ui.navigate`, `ui.wait_for`, and `ui.screenshot` through the runner.
 
-## CI parity
-
-{{CI_PARITY_STEP}}
-
 ## Completion signal
 
 When the operator says the interactive session is complete:

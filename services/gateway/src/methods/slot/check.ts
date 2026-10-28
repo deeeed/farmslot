@@ -8,6 +8,7 @@ import { isMissingProjectConfigError } from '@farmslot/slot-config';
 
 import {
   execOnSlot,
+  type ExecResult,
   expandHook,
   expandPlatformField,
   expandTemplate,
@@ -23,6 +24,7 @@ import {
   withProjectMachineEnv,
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { isOptionalFixtureAbsence } from '../../fleet/fixture-absence.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { fixtureCheckVars } from '../../node-support/ensure.js';
 import {
@@ -135,7 +137,7 @@ async function slotCheckWithSources(
     }
 
     // ── 3. Fixtures ──
-    const fixtureSteps = await checkFixtures(slotVars, projectVars, projectJson);
+    const fixtureSteps = await checkFixtureSteps(slotVars, projectVars, projectJson);
     for (const step of fixtureSteps) {
       checks.push(step);
       emitStep(emit, step);
@@ -399,24 +401,11 @@ async function probeBinary(
   };
 }
 
-/**
- * A missing fixture src is not a problem when the entry is marked optional or
- * its path still carries unresolved placeholders (e.g. a dispatch-scoped
- * `{{domain}}` the slot cannot expand) — those entries only materialize for
- * deployments that provide them.
- */
-export function isOptionalFixtureAbsence(
-  tpl: { src?: string; optional?: boolean },
-  expandedSrc: string,
-): boolean {
-  if (tpl.optional) return true;
-  return /\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(expandedSrc);
-}
-
-async function checkFixtures(
+export async function checkFixtureSteps(
   vars: SlotVars,
   projectVars: ProjectVars | undefined,
   projectJson: RawProjectJson,
+  timeoutMs?: number,
 ): Promise<CheckStep[]> {
   const steps: CheckStep[] = [];
   if (!projectVars || !projectJson.fixtures) {
@@ -426,7 +415,7 @@ async function checkFixtures(
 
   const templates = projectJson.fixtures.templates ?? [];
   let mismatches = 0;
-  const extraVars = await fixtureCheckVars(vars, projectVars);
+  const extraVars = await fixtureCheckVars(vars, projectVars, timeoutMs);
 
   // Check templates (skip compose entries without src)
   for (const tpl of templates) {
@@ -453,10 +442,24 @@ async function checkFixtures(
     }
     const rendered = await renderFixtureTemplate(localPath, vars, projectVars, extraVars);
     const localMd5 = md5(rendered);
-    const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${dst}`);
+    const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${dst}`, timeoutMs);
     let matches = localMd5 === remoteMd5;
     if (!matches && remoteMd5 && (dst === '.skills.local' || dst === '.git/info/exclude')) {
-      const content = await execOnSlot(vars, `cat ${shellQuote(`${vars.remoteRepo}/${dst}`)}`);
+      let content: ExecResult;
+      try {
+        content = await execOnSlot(vars, `cat ${shellQuote(`${vars.remoteRepo}/${dst}`)}`, {
+          timeout: timeoutMs,
+        });
+      } catch (error) {
+        // A lost node read leaves this fixture unverified, without losing sibling slot checks.
+        steps.push({
+          name: `fixture:${dst}`,
+          status: 'warn',
+          detail: `${dst} read failed: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        mismatches++;
+        continue;
+      }
       matches =
         content.exitCode === 0 &&
         (dst === '.git/info/exclude'
@@ -500,7 +503,9 @@ async function checkFixtures(
     const dst = expandTemplate(dir.dst, vars, projectVars);
     const remoteDirPath = `${vars.remoteRepo}/${dst}`;
     try {
-      const dirExists = await execOnSlot(vars, `test -d ${shellQuote(remoteDirPath)}`);
+      const dirExists = await execOnSlot(vars, `test -d ${shellQuote(remoteDirPath)}`, {
+        timeout: timeoutMs,
+      });
       if (dirExists.exitCode !== 0) {
         steps.push({
           name: `fixture:${dst}/`,
@@ -515,7 +520,7 @@ async function checkFixtures(
         if (existsSync(localSentinel)) {
           const localContent = await readFile(localSentinel, 'utf-8');
           const localMd5 = md5(localContent);
-          const remoteMd5 = await getRemoteMd5(vars, `${remoteDirPath}/${dir.sentinel}`);
+          const remoteMd5 = await getRemoteMd5(vars, `${remoteDirPath}/${dir.sentinel}`, timeoutMs);
           if (!remoteMd5) {
             steps.push({
               name: `fixture:${dst}/`,
@@ -856,15 +861,22 @@ function md5(content: string): string {
   return createHash('md5').update(content).digest('hex');
 }
 
-async function getRemoteMd5(vars: SlotVars, remotePath: string): Promise<string | null> {
+async function getRemoteMd5(
+  vars: SlotVars,
+  remotePath: string,
+  timeoutMs?: number,
+): Promise<string | null> {
   try {
     // Try md5sum first (Linux), then md5 -q (macOS)
     let result = await execOnSlot(
       vars,
       `md5sum ${shellQuote(remotePath)} 2>/dev/null | awk '{print $1}'`,
+      { timeout: timeoutMs },
     );
     if (result.exitCode === 0 && result.stdout.trim()) return result.stdout.trim();
-    result = await execOnSlot(vars, `md5 -q ${shellQuote(remotePath)} 2>/dev/null`);
+    result = await execOnSlot(vars, `md5 -q ${shellQuote(remotePath)} 2>/dev/null`, {
+      timeout: timeoutMs,
+    });
     if (result.exitCode === 0 && result.stdout.trim()) return result.stdout.trim();
     return null;
   } catch {

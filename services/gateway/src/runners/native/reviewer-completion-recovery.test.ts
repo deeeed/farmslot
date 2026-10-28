@@ -110,6 +110,13 @@ mock.module('./node.js', {
   },
 });
 const { resumeNativeWorker } = await import('./worker-recovery.js');
+const strictControlModule: string = './worker-control.js?operator-recovery-probe';
+const strictControls: typeof import('./worker-control.js') = await import(strictControlModule);
+mock.module('./worker-control.js', { namedExports: { ...strictControls } });
+const instructionModule: string = '../operator-instruction.js?lost-resume-integration';
+const { deliverOperatorInstruction }: typeof import('../operator-instruction.js') = await import(
+  instructionModule
+);
 
 async function fixture(t: TestContext, stopped: boolean) {
   calls.length = 0;
@@ -309,6 +316,35 @@ for (const lost of ['resume', 'send'] as const)
     assert.equal(calls.filter((call) => call.method === NATIVE_WORKER_SEND).length, 1);
     assert.equal(getRun(run.id)!.agentContexts![0].nativeSession?.commandId, 'one-completion');
   });
+
+test('operator feedback reconciles an advanced remote generation after a lost resume reply', async (t) => {
+  const { run, context } = await fixture(t, true);
+  updateRun(run.id, { status: 'needs-decision' });
+  const send = (observeSince?: number) =>
+    deliverOperatorInstruction(
+      getRun(run.id)!,
+      'completion-feedback',
+      'Fix the refused video.',
+      observeSince,
+      context.id,
+      'same-feedback-command',
+    );
+  loseReply = 'resume';
+  await assert.rejects(send(), NodeRpcTimeoutError);
+  assert.equal(snapshot.session.generation, 'resumed');
+  assert.equal(getRun(run.id)!.agentContexts![0].nativeSession!.generation, 'original');
+  await assert.rejects(
+    strictControls.readNativeWorkerSnapshot(run.id, 'review', context.id),
+    /generation/i,
+  );
+  assert.equal(await send(100), 'confirmed');
+  assert.equal(calls.filter((call) => call.method === NATIVE_WORKER_RESUME).length, 1);
+  assert.equal(calls.filter((call) => call.method === NATIVE_WORKER_SEND).length, 1);
+  const current = getRun(run.id)!.agentContexts![0];
+  assert.equal(current.nativeSession!.generation, 'resumed');
+  assert.equal(current.nativeSession!.recovery, undefined);
+  assert.equal(current.runnerSessionId, 'saved-conversation');
+});
 
 test('unsupported saved-session resume and a paused run send no completion input', async (t) => {
   const { run, resume } = await fixture(t, true);

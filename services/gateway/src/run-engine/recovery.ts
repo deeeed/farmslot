@@ -1240,6 +1240,27 @@ export async function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators):
         ? await interruptedBlockedReleaseOwner(deps, slot.slot, active)
         : undefined;
     if (activeSlotIds.has(slot.slot) && !blockedOwner) continue;
+    const workspaceRecovery = await deps.readSlotField(slot.slot, 'workspace_recovery');
+    if (workspaceRecovery && typeof workspaceRecovery === 'object') {
+      // Recovery is operator-driven. Restart may turn its live fence into a
+      // failed hold, but must never advertise an unverified checkout as ready.
+      if (!deps.isTerminalTeardownInFlight(slot.slot) && slot.phase === SLOT_PHASE_RELEASING) {
+        await deps.updateSlotStatusIf(
+          slot.slot,
+          (row) =>
+            row.workspace_recovery !== null &&
+            row.workspace_recovery !== undefined &&
+            row.phase === SLOT_PHASE_RELEASING,
+          {
+            lifecycle: 'held',
+            phase: 'occupied',
+            held_reason: 'Workspace recovery interrupted; retry Release and update to main',
+            releasing_since: null,
+          },
+        );
+      }
+      continue;
+    }
     if (slot.lifecycle === 'held' && slot.phase === 'occupied') {
       await deps.retryOccupiedRunSlot(slot.slot);
       continue;

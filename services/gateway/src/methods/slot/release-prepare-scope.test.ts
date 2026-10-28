@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -23,6 +25,8 @@ const SLOT_ID = 'macpro-mm-1';
 const IDENTITY = '/slot/.agent/preflight.identity';
 
 let slotRow: Record<string, unknown>;
+let recycleStartsRuntime = false;
+let recycledRuntime: ChildProcess | undefined;
 let events: string[];
 let reapFails: boolean;
 let emitted: Array<{ event: string; payload: Record<string, unknown> }>;
@@ -58,6 +62,15 @@ const applies = (
 
 const execForTest = async (_vars: unknown, cmd: string) => {
   slotCommands.push(cmd);
+  if (cmd === '__proof_runtime__') {
+    recycledRuntime = spawn(
+      process.execPath,
+      ['-e', 'require("node:fs").watch(process.argv[1], () => {})', runRoot],
+      { stdio: 'ignore' },
+    );
+    await once(recycledRuntime, 'spawn');
+    return ok();
+  }
   // An editor with the checkout open (macwork-mmt-1, Cursor 44809, 10-19).
   if (cmd.startsWith('lsof -a -d cwd')) return ok('p44809\nn/slot\n');
   if (cmd.includes('git rev-parse HEAD 2>/dev/null')) return ok('5d0c1a7e\n2\n');
@@ -154,7 +167,10 @@ mock.module('../../core/index.js', {
       projectName: 'mm',
       resourceVars: cdpPort ? { cdp_port: cdpPort } : {},
     }),
-    loadProjectVars: async () => ({ runtimeDir: '.agent', projectJson: {} }),
+    loadProjectVars: async () => ({
+      runtimeDir: '.agent',
+      projectJson: recycleStartsRuntime ? { hooks: { recycle: '__proof_runtime__' } } : {},
+    }),
     readSlotField: async (_slotId: string, field: string) => slotRow[field] ?? null,
     readSlotRow: async () => slotRow,
     markSlotStatusIf: async (
@@ -180,8 +196,16 @@ mock.module('../../core/index.js', {
       predicate: (slot: Record<string, unknown>) => boolean,
       fields: Record<string, unknown>,
     ) => applies(predicate, fields),
-    resetSlotIf: async () => {
+    resetSlotIf: async (_id: string, predicate: (row: Record<string, unknown>) => boolean) => {
+      if (!predicate(slotRow)) return false;
       events.push('reset');
+      slotRow = {
+        ...slotRow,
+        current_run_id: null,
+        cleanup_run_id: null,
+        lifecycle: 'ready',
+        phase: null,
+      };
       return true;
     },
     execOnSlot: execForTest,
@@ -244,6 +268,8 @@ const emit = (event: string, payload: unknown) =>
   emitted.push({ event, payload: payload as Record<string, unknown> });
 
 beforeEach(async () => {
+  recycleStartsRuntime = false;
+  recycledRuntime = undefined;
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 1 };
   events = [];
   reapFails = false;
@@ -607,8 +633,7 @@ test('a browser session process that survives keeps the slot held and names it',
 });
 
 // Delete and archive end a cancelled run, and the run view's Release frees its slot:
-// all three release the slot its cancel kept for replay with the reset of
-// `slot release --reset` (ADR-054 amendment, 2026-10-19).
+// delete and explicit Release keep their reset policy; archive preserves local work.
 async function releaseFromRunView(): Promise<void> {
   const hold = cancelledRunSlotHold({
     slot: SLOT_ID,
@@ -631,7 +656,7 @@ const CANCELLED_SLOT_RELEASES: Array<[string, () => Promise<unknown>, boolean]> 
 ];
 
 for (const [action, release, endsRun] of CANCELLED_SLOT_RELEASES) {
-  test(`${action} of a cancelled run releases its kept slot with a reset, editor or not`, async (t) => {
+  test(`${action} of a cancelled run releases ownership under its checkout policy`, async (t) => {
     realRuns.updateRun('cancelled', { slotId: SLOT_ID });
     slotRow = {
       ...slotRow,
@@ -652,8 +677,8 @@ for (const [action, release, endsRun] of CANCELLED_SLOT_RELEASES) {
           String(call.arguments[0]),
         ),
       ).length,
-      1,
-      'the discarded work is logged once, for reflog recovery',
+      action === 'archive' ? 0 : 1,
+      'archive preserves local work; explicit reset records its discard',
     );
     assert.ok(
       !slotCommands.some((cmd) => cmd.startsWith('lsof -a -d cwd')),
@@ -678,6 +703,9 @@ test('cleanup archives a week-old cancelled run only after releasing its kept sl
   t.mock.method(console, 'log', () => {});
   let presentAtRelease: boolean | undefined;
   const slot = {
+    returnToIdle: async (): Promise<
+      import('../../run-lifecycle/safe-idle-slot.js').SafeIdleSlotResult
+    > => ({ kind: 'ready' }),
     preflight: slotReleasePreflight,
     release: (
       params: Parameters<typeof slotRelease>[0],
@@ -693,7 +721,7 @@ test('cleanup archives a week-old cancelled run only after releasing its kept sl
   assert.equal(presentAtRelease, true, 'the slot is released before the run leaves the store');
 
   assert.ok(result.runsArchived.includes('cancelled'));
-  assert.ok(events.includes('reset'), 'the kept slot was released, not orphaned');
+  assert.ok(events.includes('reset'), 'the kept ownership was released, not orphaned');
   assert.equal(slotRow.current_run_id ?? null, null);
   assert.equal(realRuns.getRun('cancelled'), undefined, 'the run was archived after');
 });
@@ -708,3 +736,46 @@ test('deleting a cancelled run leaves a slot another active run owns', async () 
   assert.ok(!events.includes('reset'));
   assert.equal(realRuns.getRun('cancelled'), undefined);
 });
+
+for (const mode of ['automatic', 'manual', 'ordinary'])
+  test(`${mode} recovery preserves its recycle policy`, async (t) => {
+    const recovery = mode !== 'ordinary';
+    recycleStartsRuntime = true;
+    slotRow.current_run_id = 'finished';
+    if (recovery) {
+      slotRow.workspace_recovery = { id: 'cold-recovery' };
+      slotRow.phase = 'releasing';
+    }
+    t.after(async () => {
+      if (
+        recycledRuntime &&
+        recycledRuntime.exitCode === null &&
+        recycledRuntime.signalCode === null
+      ) {
+        const exited = once(recycledRuntime, 'exit');
+        recycledRuntime.kill('SIGTERM');
+        await exited;
+      }
+    });
+    const result = await slotRelease(
+      { slotId: SLOT_ID, skipArtifacts: true, forceReset: !recovery },
+      emit,
+      recovery
+        ? {
+            workspaceRecovery: {
+              id: 'cold-recovery',
+              epoch: 1,
+              verifyWork: async () => {},
+              discardLocalWork: false,
+              skipRecycle: mode === 'automatic',
+            },
+          }
+        : undefined,
+    );
+    assert.equal(result.released, true);
+    assert.equal(
+      Boolean(recycledRuntime),
+      mode !== 'automatic',
+      'manual recovery and ordinary release retain recycle; automatic recovery stays cold',
+    );
+  });

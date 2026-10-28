@@ -17,8 +17,10 @@ import type { RunnerModelCatalogResult } from '@farmslot/protocol';
 import { runnerModelCatalog } from '../methods/runner-models.js';
 
 import {
+  parseCodexModelCatalog,
   parseCursorModelCatalog,
   type RunnerModelCatalogCommandSource,
+  type RunnerModelCatalogFileSource,
   type RunnerModelCatalogSource,
 } from './model-catalog.js';
 import {
@@ -374,6 +376,72 @@ test('an interested structured catalog observes replacement, removal, malformed 
   await settle();
   assert.equal(notices, quiet);
   assert.deepEqual(ids(await owner.read('codex', managed)), ['three']);
+});
+
+test('a multi-path catalog follows every merged candidate for identity and changes', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'runner-catalog-candidates-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const first = join(home, '.first', 'models.json');
+  const second = join(home, '.second', 'models.json');
+  const catalog = (...slugs: string[]) =>
+    JSON.stringify({ models: slugs.map((slug) => ({ slug, visibility: 'list' })) });
+  mkdirSync(join(home, '.first'));
+  mkdirSync(join(home, '.second'));
+  writeFileSync(first, catalog('base'));
+  writeFileSync(second, catalog('extra'));
+  const source: RunnerModelCatalogFileSource = {
+    relativePath: ['.first/models.json', '.second/models.json'],
+    parse: parseCodexModelCatalog,
+  };
+  let selected = source;
+  let notices = 0;
+  let waiter: (() => void) | undefined;
+  const owner = new RunnerModelCatalogObservation({
+    runners: () => ['multi'],
+    select: async () => selected,
+    hasInterest: () => true,
+    changed: () => {
+      notices++;
+      waiter?.();
+    },
+    home,
+  });
+  t.after(() => owner.stop());
+  const nextNotice = (change: () => void) =>
+    new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Catalog notice hung')), HANG_GUARD_MS);
+      waiter = () => {
+        clearTimeout(timer);
+        waiter = undefined;
+        resolve();
+      };
+      change();
+    });
+
+  await owner.tick();
+  // The same in-order merge as readRunnerModelCatalog.
+  assert.deepEqual(ids(await owner.read('multi', managed)), ['base', 'extra']);
+  const armed = notices;
+  await untilReported(
+    () => notices > armed,
+    (attempt) => writeFileSync(second, catalog('extra', `warm-${attempt}`)),
+  );
+
+  // A change to the later candidate alone marks the merged catalog changed.
+  await nextNotice(() => writeFileSync(second, catalog('extra-two')));
+  assert.deepEqual(ids(await owner.read('multi', managed)), ['base', 'extra-two']);
+  // The first candidate's directory is watched too; its removal leaves the later file's models.
+  await nextNotice(() => unlinkSync(first));
+  assert.deepEqual(ids(await owner.read('multi', managed)), ['extra-two']);
+
+  // A different candidate list is a different source: a new owner samples it.
+  selected = { ...source, relativePath: ['.second/models.json'] };
+  const before = notices;
+  await owner.tick();
+  assert.ok(notices > before);
+  writeFileSync(first, catalog('ignored'));
+  // A legacy read samples now; the new source no longer merges the first file.
+  assert.deepEqual(ids(await owner.read('multi')), ['extra-two']);
 });
 
 test('the catalog method keeps alias handling and unsupported runners need no source', async () => {

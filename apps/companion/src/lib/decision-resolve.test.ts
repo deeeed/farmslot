@@ -10,7 +10,11 @@ import {
   type ReviewGatePayload,
 } from '@farmslot/protocol';
 
-import { decisionResolveRequest, gateActionReasons } from './decision-resolve';
+import {
+  decisionResolveRequest,
+  gateActionReasons,
+  sendDecisionResolveRequest,
+} from './decision-resolve';
 
 test('native attestation requires the run and sends the shared reason and package identity', () => {
   const action = APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
@@ -218,3 +222,35 @@ test('combined consent sends one written reason in both existing receipt fields'
     reason: 'I accept only.',
   });
 });
+
+// Pins the decision workspace fallback: each resolve names its literal method; anything else is refused.
+test('a confirmed resolve is sent only through its literal resolve transport', async () => {
+  const sent: Array<{ method: string; timeout?: number | null }> = [];
+  const client = {
+    request: async <R>(method: string, _params?: unknown, timeout?: number | null) => {
+      sent.push({ method, timeout });
+      return { ok: true } as R;
+    },
+  };
+  for (const method of [
+    Methods.RUN_RESOLVE_DECISION,
+    Methods.IMPROVEMENT_APPLY,
+    Methods.DECISION_RESOLVE,
+  ] as const)
+    await sendDecisionResolveRequest(client, { method, params: { decisionId: 'd' } } as never);
+  assert.deepEqual(
+    sent.map(({ method }) => method),
+    [Methods.RUN_RESOLVE_DECISION, Methods.IMPROVEMENT_APPLY, Methods.DECISION_RESOLVE],
+  );
+  assert.equal(sent[0].timeout, undefined, 'the caller keeps the client default timeout');
+
+  await assert.rejects(
+    sendDecisionResolveRequest(client, {
+      method: Methods.RUN_OVERRIDE_CLAIM,
+      params: { runId: 'r', decisionId: 'd' },
+    } as never),
+    /does not send run\.overrideClaim/,
+  );
+  assert.equal(sent.length, 3, 'a claim override is never sent as a resolve');
+});
+

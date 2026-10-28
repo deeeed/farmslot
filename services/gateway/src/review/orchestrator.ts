@@ -34,6 +34,7 @@ import {
 } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { withMachineEnv } from '../core/project-env.js';
 import { onSlotReset } from '../core/state.js';
 import {
   resolveExactTmuxWindowPane,
@@ -106,7 +107,11 @@ import {
   runReviewAgent,
 } from './review-agent.js';
 import { reviewNoVerdictCapReason, runReviewRoundBudget } from './review-round-budget.js';
-import { recordReviewedInputs } from './reviewed-inputs.js';
+import {
+  noteReviewInputsAtLaunch,
+  readReviewedInputs,
+  recordReviewedInputs,
+} from './reviewed-inputs.js';
 import {
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
@@ -116,6 +121,7 @@ import {
 } from './session-mode.js';
 import {
   captureCurrentHeadSha,
+  captureCurrentReviewSnapshot,
   captureFixDeltaSnapshot,
   debugReviewLog,
   durationBetween,
@@ -225,7 +231,7 @@ export interface ReservedFixPass {
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
-const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min without a fix-progress signal
+const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min without a fix signal or runner activity
 const FEEDBACK_MAX_ACTIVE_MS = 2 * 60 * 60_000; // bound continuously progressing fix passes
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -449,7 +455,7 @@ async function executeOwnedReview(
         ) === true;
       return {
         ...recoveredFixResult,
-        usage: recoveredFixResult.attempts?.at(-1)?.usage,
+        usage: recoveredFixResult.attempts?.at(-1)?.usage ?? recoveredFixResult.usage,
         runner: reviewRunner,
         model,
         effort: effort,
@@ -523,7 +529,7 @@ async function executeOwnedReview(
       });
       return {
         ...retryResult,
-        usage: retryResult.attempts?.at(-1)?.usage,
+        usage: retryResult.attempts?.at(-1)?.usage ?? retryResult.usage,
         runner: reviewRunner,
         model,
         effort: effort,
@@ -644,7 +650,7 @@ async function executeOwnedReview(
     });
     return {
       ...retryResult,
-      usage: retryResult.attempts?.at(-1)?.usage,
+      usage: retryResult.attempts?.at(-1)?.usage ?? retryResult.usage,
       runner: reviewRunner,
       model,
       effort: effort,
@@ -733,8 +739,11 @@ export interface ReviewRetryDeps {
     loopNumber: number,
     fixBaseSha: string | null,
     artifactScope?: string | null,
-  ) => Promise<{ snapshot: ReviewFixDeltaSnapshot; artifactPaths: string[] }>;
+  ) => ReturnType<typeof captureFixDeltaSnapshot>;
   captureHeadSha: (vars: Awaited<ReturnType<typeof loadSlotVars>>) => Promise<string | null>;
+  captureFixedSnapshot: typeof captureCurrentReviewSnapshot;
+  readFixedInputs: typeof readReviewedInputs;
+  noteFixedInputs: typeof noteReviewInputsAtLaunch;
   /** Optional: worker context-window usage (%) read before each fix delivery. */
   getWorkerContextPct?: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -785,6 +794,25 @@ export async function reviewFixTurnIsActive(
   return runnerTurnLeaseIsActive(vars, target, runner, expectedTurnToken, followContinuations);
 }
 
+/** Activity postpones an inactivity failure; it does not acknowledge delivery of the fix. */
+export async function reviewFixHasActivity(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  workerRunner: string,
+  expectedTurnToken?: string,
+): Promise<boolean> {
+  const run = getRun(runId);
+  const context = run && selectAgentContext(run, { role: 'review-fix' });
+  if (!run || !context || !['working', 'launching', 'waiting'].includes(context.status))
+    return false;
+  if (run.transport === 'native') {
+    const command = expectedTurnToken ?? context.nativeCommandId;
+    return command ? nativeFixTurnIsActive(runId, command) : false;
+  }
+  const target = context.target?.target;
+  return target ? runnerTurnIsActive(vars, target, context.runner ?? workerRunner) : false;
+}
+
 // Module-level constant — wiring is fixed at module load. Tests pass their own deps struct
 // instead of reassigning here. Function declarations referenced inside the literal are
 // hoisted, so the const initializer captures live function refs even though they appear
@@ -805,6 +833,9 @@ const PRODUCTION_DEPS: ReviewRetryDeps = {
   runReviewAgent,
   captureFixDelta: (...args) => withNativeReviewMutation(() => captureFixDeltaSnapshot(...args)),
   captureHeadSha: captureCurrentHeadSha,
+  captureFixedSnapshot: captureCurrentReviewSnapshot,
+  readFixedInputs: readReviewedInputs,
+  noteFixedInputs: noteReviewInputsAtLaunch,
   getWorkerContextPct: readWorkerContextPct,
   restoreWorkerChecklistTargetFromSlot,
   setProgressDetail: setReviewProgressDetail,
@@ -841,6 +872,131 @@ export function resolveRecoveredFixBaseSha(
 function fixDeltaIsKnownEmpty(snapshot: ReviewFixDeltaSnapshot): boolean {
   if (snapshot.source !== 'local-git' || !snapshot.diffStat) return false;
   return snapshot.diffStat.files === 0 && (snapshot.untrackedFiles?.length ?? 0) === 0;
+}
+
+function stopReviewFixAtGate(
+  result: ReviewAgentResult,
+  attempts: ReviewAttempt[],
+  fixDelta: Awaited<ReturnType<ReviewRetryDeps['captureFixDelta']>>,
+  reason: string,
+  retryCount: number,
+  maxRetries: number,
+  start: number,
+): ReviewResult {
+  const retainedAttempts = attempts.map((attempt, index) =>
+    index === attempts.length - 1
+      ? {
+          ...attempt,
+          reason,
+          fixDelta: fixDelta.snapshot,
+          artifactPaths: [
+            ...new Set([...(attempt.artifactPaths ?? []), ...fixDelta.artifactPaths]),
+          ],
+        }
+      : attempt,
+  );
+  return {
+    ...result,
+    reason,
+    fixDelta: fixDelta.snapshot,
+    attempts: retainedAttempts,
+    timeline: retainedAttempts.flatMap((attempt) => attempt.timeline ?? []),
+    retryCount,
+    maxRetries,
+    feedbackSent: true,
+    recoveryContinuationPending: false,
+    durationMs: Date.now() - start,
+  };
+}
+
+async function completeReviewFix(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  signal: WorkerSignal,
+  result: ReviewAgentResult,
+  attempts: ReviewAttempt[],
+  fixDelta: Awaited<ReturnType<ReviewRetryDeps['captureFixDelta']>>,
+  retryCount: number,
+  maxRetries: number,
+  start: number,
+  deps: ReviewRetryDeps,
+): Promise<ReviewResult | undefined> {
+  if (signal.status !== 'complete' || fixDelta.snapshot.source !== 'local-git') return undefined;
+  const delta = fixDelta.snapshot;
+  const noSourceChanges = fixDeltaIsKnownEmpty(delta);
+  const prior = result.reviewSnapshot;
+  // An empty current fix can follow changes made after this review's verdict.
+  if (noSourceChanges && prior?.headSha && delta.fixHeadSha && prior.headSha !== delta.fixHeadSha)
+    return undefined;
+  const run = deps.getRun(runId);
+  const before = run?.engineState?.reviewInputsAtLaunch;
+  const after = noSourceChanges && run && before ? await deps.readFixedInputs(run) : null;
+  const evidenceChanged = !!after && after.fingerprint !== before;
+  if (noSourceChanges && delta.fixHeadSha === delta.fixBaseSha && (!before || !after))
+    return undefined;
+  if (noSourceChanges && delta.fixHeadSha === delta.fixBaseSha && !evidenceChanged) {
+    // No changed source or reviewed inputs means these findings are unchanged by construction.
+    return stopReviewFixAtGate(
+      result,
+      attempts,
+      fixDelta,
+      'Empty review fix; unchanged findings remain open at the gate.',
+      retryCount,
+      maxRetries,
+      start,
+    );
+  }
+  if (
+    fixDelta.sourceLinesChanged === undefined ||
+    fixDelta.sourceLinesChanged > 50 ||
+    !prior?.baseSha ||
+    prior.headSha !== delta.fixBaseSha ||
+    !delta.fixHeadSha ||
+    (!noSourceChanges && delta.fixHeadSha === delta.fixBaseSha)
+  )
+    return undefined;
+  const { snapshot } = await deps.captureFixedSnapshot(vars, {
+    mode: 'cold',
+    baseRef: prior.baseRef ?? undefined,
+    committedBaseSha: prior.baseSha,
+    committedHeadSha: delta.fixHeadSha,
+  });
+  if (snapshot.source !== 'local-git' || snapshot.headSha !== delta.fixHeadSha) return undefined;
+  assertNativeReviewOperationCurrent();
+  await deps.noteFixedInputs(runId);
+  const completedAt = delta.capturedAt;
+  const loopNumber = (attempts.at(-1)?.loopNumber ?? 0) + 1;
+  // This is gateway acceptance of the worker fix, not a provider review or a round admission.
+  const acceptedFix: ReviewAttempt = {
+    mode: resolveReviewMode({ explicitMode: result.mode }),
+    loopNumber,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    issues: [],
+    validationDepth: result.validationDepth,
+    reviewSnapshot: snapshot,
+    completedAt,
+    timeline: [
+      {
+        kind: 'worker-fix',
+        loopNumber,
+        startedAt: signal.timestamp,
+        completedAt,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        artifactPaths: fixDelta.artifactPaths,
+      },
+    ],
+  };
+  return stopReviewFixAtGate(
+    { ...result, verdict: 'pass', issues: [], reviewSnapshot: snapshot },
+    [...attempts, acceptedFix],
+    fixDelta,
+    'Completed small review fix accepted without another reviewer verdict.',
+    retryCount,
+    maxRetries,
+    start,
+  );
 }
 
 /**
@@ -1156,9 +1312,7 @@ export async function runReviewRetryLoop({
         taskDir,
         FEEDBACK_TIMEOUT_MS,
         fixSignalBaseline,
-        fixTurnToken
-          ? () => reviewFixTurnIsActive(vars, runId, workerRunner, fixTurnToken)
-          : undefined,
+        () => reviewFixHasActivity(vars, runId, workerRunner, fixTurnToken),
       );
       fixCompletedAt = new Date().toISOString();
       assertNativeReviewOperationCurrent();
@@ -1253,6 +1407,19 @@ export async function runReviewRetryLoop({
         unresolvedCount: workerBlockReason ? result.issues.length : 0,
         artifactPaths: fixDelta.artifactPaths,
       };
+      const completedFix = await completeReviewFix(
+        vars,
+        runId,
+        fixSignal,
+        result,
+        attempts,
+        fixDelta,
+        retryCount,
+        maxRetries,
+        start,
+        deps,
+      );
+      if (completedFix) return completedFix;
       const priorResult = result;
       debugReviewLog(`[review] run ${runId.slice(0, 8)} — re-reviewing after worker fix`);
       if (deps.setRunStatus) {
@@ -1984,6 +2151,9 @@ async function recoverReviewFixPass({
     const recheckLoop = reviewedLoop + 1;
     const priorResult: ReviewAgentResult = {
       reviewId: lineage,
+      mode: ownerReview?.mode ?? mode,
+      session: ownerReview?.session,
+      reviewerSessionId: ownerReview?.reviewerSessionId,
       verdict: 'issues',
       issues,
       validationDepth,
@@ -2118,9 +2288,7 @@ async function recoverReviewFixPass({
             taskDir,
             FEEDBACK_TIMEOUT_MS,
             rawSignal ?? '',
-            deliveredTurnToken
-              ? () => reviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
-              : undefined,
+            () => reviewFixHasActivity(vars, runId, workerRunner, deliveredTurnToken),
             () =>
               getRun(runId)?.agentContexts?.find((context) => context.id === fixContext.id)
                 ?.signalAttemptId ?? undefined,
@@ -2211,7 +2379,9 @@ async function recoverReviewFixPass({
     );
     if (runSupersededSince(getRun(runId), recoveryGeneration)) return null;
     const initialAttempt: ReviewAttempt = {
-      mode,
+      mode: priorResult.mode ?? mode,
+      session: priorResult.session,
+      usage: priorResult.usage,
       loopNumber: reviewedLoop,
       verdict: 'issues',
       unresolvedCount: issues.length,
@@ -2245,6 +2415,19 @@ async function recoverReviewFixPass({
         durationMs: Date.now() - start,
       };
     }
+    const completedFix = await completeReviewFix(
+      vars,
+      runId,
+      fixSignal,
+      priorResult,
+      ownerReview?.attempts?.length ? ownerReview.attempts : [initialAttempt],
+      fixDelta,
+      recoveredRetryCount,
+      maxRetries,
+      start,
+      PRODUCTION_DEPS,
+    );
+    if (completedFix) return completedFix;
     // Restart recovery stops at the no-verdict cap like the retry loop (ADR-063 Amendment 2).
     const capRun = getRun(runId);
     const capReason = capRun && (await reviewNoVerdictCapReason(capRun));
@@ -2911,7 +3094,7 @@ async function workerAcknowledgesFixTask(signalChanged: () => Promise<boolean>):
  * against the delivery pane and bound to the worker role as well — that role's
  * previous binding was cleared by the respawn and would otherwise stay empty.
  */
-async function recordReviewFixRunnerSession(
+export async function recordReviewFixRunnerSession(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runId: string,
   runner: string,
@@ -2950,6 +3133,7 @@ async function recordReviewFixRunnerSession(
       runId,
       role: workerRole,
       session: relaunched,
+      paneId: deliveryPane?.paneId,
       captureLabel: 'review fix relaunch',
     });
   }
@@ -2977,6 +3161,12 @@ async function relaunchWorkerForFix(
   const roleWindowName =
     parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
       ?.target?.window ?? null;
+  const { admitWorkerLaunch } = await import('../run-engine/worker-launch-preflight.js');
+  const assertPreflightCurrent = await admitWorkerLaunch({
+    runId,
+    vars,
+    wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
+  });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
     vars,
     resolved.session,
@@ -3014,6 +3204,7 @@ async function relaunchWorkerForFix(
     taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
+  await assertPreflightCurrent();
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
   });

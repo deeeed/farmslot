@@ -53,6 +53,7 @@ import {
   TaskAcceptancePanel,
 } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useGateCriterionDrafts } from '../../hooks/useGateCriterionDrafts';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { useRunAcceptance } from '../../hooks/useRunAcceptance';
@@ -70,12 +71,20 @@ import {
 } from '../../lib/artifact-url';
 import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
 import { currentFarmConnection } from '../../lib/connection-authority';
+import {
+  type DecisionDocumentContent,
+  decisionDocumentSelection,
+  decisionEvidenceMediaItems,
+} from '../../lib/decision-evidence-media';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
-import { decisionResolveRequest, gateActionReasons } from '../../lib/decision-resolve';
+import {
+  decisionResolveRequest,
+  gateActionReasons,
+  sendDecisionResolveRequest,
+} from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
 import {
-  evidenceMediaItems,
   evidenceViewerSelection,
   recordedEvidenceArtifactUrl,
   selectedEvidenceMediaItem,
@@ -279,16 +288,8 @@ export default function DecisionDetailScreen({
     !decision
       ? 'Decision is no longer pending.'
       : null);
-  const [evidenceReason, setEvidenceReason] = useState<{ decisionId: string; text: string } | null>(
-    null,
-  );
-  const attestationReason =
-    evidenceReason && evidenceReason.decisionId === decision?.id ? evidenceReason.text : '';
   const [viewerUri, setViewerUri] = useState<string | null>(null);
-  const [documentViewer, setDocumentViewer] = useState<{
-    title: string;
-    body: string;
-  } | null>(null);
+  const [documentViewer, setDocumentViewer] = useState<DecisionDocumentContent | null>(null);
   useEffect(() => {
     // ADR-063 Amendment 5: a gate lists its lineages; rows preselect their runner's latest
     // available one in WARM.
@@ -382,6 +383,12 @@ export default function DecisionDetailScreen({
   const runPosture = runPostureStatus.state?.posture;
   // The gate review's publish guard applies here too: this tab sends the same actions.
   const humanGate = useHumanGateGuard(client, sourceRun, decision);
+  const draftState = useGateCriterionDrafts({
+    runId: sourceRunId,
+    decision,
+    acceptance: humanGate?.acceptance,
+    client,
+  });
   const [acceptingGateId, setAcceptingGateId] = useState<string | null>(null);
   const supersedingResultId = supersedingResultDecisionId(decision, sourceRun);
   useEffect(() => {
@@ -593,7 +600,7 @@ export default function DecisionDetailScreen({
       }
       const gateReasons = gateActionReasons(
         actionId,
-        attestationReason,
+        draftState.attestationReason,
         evidenceAttestationAvailable(
           decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
           actionId,
@@ -601,7 +608,7 @@ export default function DecisionDetailScreen({
       );
       if (
         (gateReasons.evidenceAttestationReason !== undefined || gateReasons.reason !== undefined) &&
-        !isValidEvidenceAttestationReason(attestationReason)
+        !isValidEvidenceAttestationReason(draftState.attestationReason)
       ) {
         Alert.alert(
           'Written reason required',
@@ -639,7 +646,7 @@ export default function DecisionDetailScreen({
         return;
       }
       const reviewStillCurrent = curatedPost ? reviewPublication.captureCurrent() : null;
-      const { method, params } = decisionResolveRequest(
+      const resolveRequest = decisionResolveRequest(
         curatedPost ? decisionWithRunContext! : decision,
         actionId,
         resourcePosture,
@@ -651,6 +658,7 @@ export default function DecisionDetailScreen({
         gateReasons.evidenceAttestationReason,
         reason ?? gateReasons.reason,
       );
+      const { method } = resolveRequest;
 
       // Transition ids already on screen. `run.resolveDecision` returns before
       // reconciliation finishes, so the run it returns still carries the previous
@@ -689,10 +697,21 @@ export default function DecisionDetailScreen({
               return;
             }
             const current = captureCurrent();
-            client
-              .request(method, params)
+            const scope = draftState.model.scopeVersion;
+            // Writes stay direct; the cached run and decisions observe their notifications.
+            void draftState
+              .submit({
+                run: sourceRun,
+                decision,
+                actionId,
+                reason: draftState.reasonInput,
+                selectionData,
+                resourcePosture,
+                applied: () => {},
+                fallback: () => sendDecisionResolveRequest(client, resolveRequest),
+              })
               .then((result) => {
-                if (!current()) return;
+                if (!current() || scope !== draftState.model.scopeVersion) return;
                 if (method === Methods.IMPROVEMENT_APPLY) {
                   const outcome = improvementApplyOutcome(result as ImprovementApplyResult);
                   if (!outcome.passed) {
@@ -741,7 +760,7 @@ export default function DecisionDetailScreen({
                 });
               })
               .catch((err: Error) => {
-                if (current()) Alert.alert('Failed to resolve', err.message);
+                if (current()) draftState.reportError(scope, 'Failed to resolve')(err);
               });
           },
         },
@@ -749,7 +768,7 @@ export default function DecisionDetailScreen({
     },
     [
       applyPostureGate,
-      attestationReason,
+      draftState,
       client,
       decision,
       decisionWithRunContext,
@@ -760,6 +779,7 @@ export default function DecisionDetailScreen({
       reviewPublication,
       router,
       runPostureStatus.state,
+      sourceRun,
       sourceRunId,
       slotPicker,
     ],
@@ -768,6 +788,11 @@ export default function DecisionDetailScreen({
   const openDocumentArtifact = useCallback(
     (artifact: ArtifactManifestEntry) => {
       if (!presentation?.runId) return;
+      const sharedArtifact = decisionDocumentSelection(
+        presentation.runId,
+        sourceRun?.slotId ?? undefined,
+        artifact,
+      );
       const url = recordedEvidenceArtifactUrl(
         gatewayUrl,
         presentation.runId,
@@ -785,7 +810,8 @@ export default function DecisionDetailScreen({
           return res.text();
         })
         .then((body) => {
-          if (current()) setDocumentViewer({ title: documentTitle(artifact.path), body });
+          if (current())
+            setDocumentViewer({ title: documentTitle(artifact.path), body, sharedArtifact });
         })
         .catch((err: Error) => {
           // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
@@ -796,7 +822,14 @@ export default function DecisionDetailScreen({
           if (!controller.signal.aborted && current()) setLoadingDocument(null);
         });
     },
-    [artifactAuthHeaders, checkedEvidenceModel, gatewayUrl, presentation?.runId, captureCurrent],
+    [
+      artifactAuthHeaders,
+      checkedEvidenceModel,
+      gatewayUrl,
+      presentation?.runId,
+      captureCurrent,
+      sourceRun?.slotId,
+    ],
   );
 
   const outputReport = useRunOutputReport({
@@ -921,41 +954,30 @@ export default function DecisionDetailScreen({
     setComparisonViewerItems(null);
     setViewerUri(uri);
   };
-  const visualViewerItems = useMemo(() => {
-    if (!presentation?.runId) return [];
-    const runId = presentation.runId;
-    const items = evidenceMediaItems(
-      presentation.artifactManifest,
-      (artifact) => recordedEvidenceArtifactUrl(gatewayUrl, runId, checkedEvidenceModel, artifact),
+  const visualViewerItems = useMemo(
+    () =>
+      decisionEvidenceMediaItems({
+        runId: presentation?.runId,
+        slotId: sourceRun?.slotId ?? undefined,
+        artifacts: presentation?.artifactManifest ?? [],
+        gatewayUrl,
+        authHeaders: artifactAuthHeaders,
+        recordedModel: checkedEvidenceModel,
+        evidenceModel: humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel,
+        recipeFallbackPairs,
+      }),
+    [
       artifactAuthHeaders,
-      humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel,
-    );
-
-    for (const pair of recipeFallbackPairs) {
-      for (const artifact of [pair.before, pair.after]) {
-        items.push({
-          uri: artifact.url,
-          title: artifact.label ?? artifact.path,
-          mediaType: classifyArtifact(artifact),
-          authHeaders: artifactAuthHeaders,
-        });
-      }
-    }
-
-    const seen = new Set<string>();
-    return items.filter((item) => {
-      if (seen.has(item.uri)) return false;
-      seen.add(item.uri);
-      return true;
-    });
-  }, [
-    artifactAuthHeaders,
-    gatewayUrl,
-    presentation?.artifactManifest,
-    presentation?.runId,
-    recipeFallbackPairs,
-    checkedEvidenceModel,
-  ]);
+      gatewayUrl,
+      presentation?.artifactManifest,
+      presentation?.runId,
+      recipeFallbackPairs,
+      checkedEvidenceModel,
+      sourceRun?.slotId,
+      humanGate?.acceptance.evidenceModel,
+      outputAcceptance.evidenceModel,
+    ],
+  );
 
   if (!decision || !presentation) {
     return (
@@ -1561,6 +1583,7 @@ export default function DecisionDetailScreen({
                   (path) =>
                     recordedEvidenceArtifactUrl(gatewayUrl, presentation.runId!, model, path),
                   artifactAuthHeaders,
+                  { runId: presentation.runId!, slotId: sourceRun?.slotId ?? undefined },
                 );
                 setComparisonViewerItems([item]);
                 setViewerUri(item.uri);
@@ -1824,20 +1847,6 @@ export default function DecisionDetailScreen({
                       resolveAction('request-review', { reviewRequest })
                     }
                     onReviewEvidence={focusGateClaim}
-                    onSkip={(claimId, reason) =>
-                      gateBlockerAction((gate, runId) => {
-                        const model = humanGate.acceptance.evidenceModel;
-                        if (!client || !model) throw new Error('The gate evidence is unavailable.');
-                        return requestClaimUntestableOverride(
-                          client,
-                          runId,
-                          gate,
-                          model,
-                          claimId,
-                          reason,
-                        );
-                      })
-                    }
                     acceptingFindings={acceptingGateId === decision.id}
                     onAcceptFindingsChange={(accepting) =>
                       setAcceptingGateId(accepting ? decision.id : null)
@@ -1862,7 +1871,7 @@ export default function DecisionDetailScreen({
                     )}
                     disabled={!actionsCurrent}
                     reviewDisabled={reviewBudget?.remaining === 0}
-                    sendingActionId={null}
+                    sendingActionId={draftState.model.submissionActionId}
                     reviewPicker={reviewPicker}
                     claims={humanGate.acceptance.evidenceModel?.claims}
                     judgmentRows={humanGate.acceptance.evidenceModel?.judgmentRows(
@@ -1897,10 +1906,10 @@ export default function DecisionDetailScreen({
                         : undefined
                     }
                     onFocusClaim={focusGateClaim}
-                    attestationReason={attestationReason}
-                    onAttestationReason={(text) =>
-                      setEvidenceReason({ decisionId: decision.id, text })
-                    }
+                    drafts={draftState.actions}
+                    criterionDrafts={decision.resolvedAt ? [] : draftState.model.entries}
+                    attestationReason={draftState.reasonInput}
+                    onAttestationReason={draftState.setReason}
                     onResolve={(action, selection) => resolveAction(action.id, selection)}
                     acceptingFindings={acceptingGateId === decision.id}
                     onAcceptFindings={() => setAcceptingGateId(decision.id)}
@@ -1918,7 +1927,7 @@ export default function DecisionDetailScreen({
                     !actionsCurrent ||
                     withheldActions.has(action.id) ||
                     (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
-                      (!isValidEvidenceAttestationReason(attestationReason) ||
+                      (!isValidEvidenceAttestationReason(draftState.attestationReason) ||
                         !decisionWithRunContext?.runMeta)) ||
                     (decision.type === 'engine_review_posting' &&
                       action.id === 'post' &&
@@ -1990,6 +1999,7 @@ export default function DecisionDetailScreen({
         />
         <DocumentViewer
           visible={isFocused && !!documentViewer}
+          sharedArtifact={documentViewer?.sharedArtifact}
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
           onClose={() => setDocumentViewer(null)}

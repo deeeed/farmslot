@@ -96,7 +96,6 @@ export function retainTaskInput(
       mappings.set(original, retained);
       fs.cpSync(original, retained, {
         recursive: true,
-        preserveTimestamps: true,
         verbatimSymlinks: true,
         mode: fs.constants.COPYFILE_FICLONE,
         filter: (file) => {

@@ -210,3 +210,21 @@ test('transitionSlotStatus classifies and writes in one pass, preserving a pendi
     'a null decision writes nothing — classification cannot go stale between check and write',
   );
 });
+
+test('workspace recovery cannot be claimed or reset without verified recovery identity', async (t) => {
+  const slotId = await withStatusFixture(t, {
+    slot: 'recovery-fence',
+    slot_epoch: 3,
+    lifecycle: 'held',
+    phase: 'occupied',
+    workspace_recovery: { id: 'recovery-1' },
+  });
+  assert.equal((await claimSlotStatusIf(slotId, () => true, { lifecycle: 'busy' })).claimed, false);
+  assert.equal(await resetSlotIf(slotId, () => true), false);
+  assert.equal(await resetSlotIf(slotId, () => true, false, 'foreign'), false);
+  assert.equal((await readSlotFixture(slotId)).lifecycle, 'held');
+  assert.equal(await resetSlotIf(slotId, () => true, false, 'recovery-1'), true);
+  const ready = await readSlotFixture(slotId);
+  assert.equal(ready.lifecycle, 'ready');
+  assert.equal(ready.workspace_recovery, null);
+});

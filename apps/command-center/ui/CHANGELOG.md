@@ -16,14 +16,37 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Read review and ready-workspace diffs, review history and finding source through the shared workspace cache; saved reviews keep their frozen commit reads. CI watch status and terminal slot facts come from shared observations instead of event payloads.
 
+- Use shared worker inventory observations for pinned workspaces and split terminals, retaining saved selections and disabling actions while stale or unavailable.
+
+- Show current-checklist progress on fleet cards, slot workspaces and terminals too. All progress readers and selected-step history share persisted queries, retain read errors and saved age offline, and follow changes without per-view polling.
+
+- Keep backlog, roadmap, work graphs, queue and project observations readable offline with saved age and current-read action guards. Pool JSON editors, configuration forms and choices follow source notifications while preserving unsaved drafts and command acknowledgements, including after provider and policy saves. Configuration retries only failed reads; malformed project and provider-registration sources retain saved facts with a visible error and disabled writes.
+
+- Observe PR automation, assessments, analytics and the shared copilot through the client cache. Retain stale PR data on transport loss and require current observations before actions. PR configuration retries only failed reads in management and per-PR views; healthy configuration needs no Refresh. Triage prerequisite views follow selected evaluation receipt changes without Refresh, with Retry shown only for read errors. Assessment history and expanded run outcomes follow updates and retention expiry without panel polling. Analytics follows source writes, offers Retry for read errors and keeps an explicit relative time-window update.
+
+- Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback and verified identity handling. Sources, fleet, node inventories, runtime capabilities, worker checklist progress, run lists, load-run dialogs, slot history and workspace run context, publication and review gates, saved reviews, full run details, comparisons and baseline pickers, family views and decision inboxes retain saved observations offline with their age, disable stale actions and follow live change notifications. Review curation survives metadata refreshes; command failures remain visible and interrupted replies keep their original owner. Recipe output stays with its run and invocation; a disconnect reports uncertain delivery before another replay. Missing run details evict their saved copy, and recipe inventories update when mirrored artifacts arrive. Slot workspaces follow fleet lifecycle changes and drop copied facts when a slot or authority disappears. A reconnect clears saved run data before reads when the account lost its role while the client was closed.
+
+- Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls. Restore both workspace types offline and keep conversation controls visible beside a scrolling transcript.
+
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.30.0 - 2026-10-27
+
+- Make criterion Confirm, Skip and Undo immediate, retain drafts across reload, and show clear gate statuses, full criterion text and accurate loading counts.
+
+- Show saved gate details and fleet recovery rows while current readiness refreshes, keep slow reads local, and load source diffs when opened.
+
+- Open shared Companion links in Command Center after checking the configured gateway binding, with an exact supported selection or an unavailable reason.
+
+- Show slot publication, owner and distance behind main, with one release-and-update action and safe bulk release in the fleet view.
+
 - Show derived acceptance sources, inherited proof and pending instructions, and retain message identities across steering retries.
 
 - Keep expected inherited modes from triggering a baseline warning on CI-watch follow-ups.
+
 - Show check counts, failures, next poll and time left on CI-watch run cards and pipelines.
 
 - Show muted step durations and live elapsed time in Worker progress.
-
-- Use shared worker inventory observations for pinned workspaces and split terminals, retaining saved selections and disabling actions while stale or unavailable.
 
 - Show each run source and covered ticket once as compact inline Jira/PR links; show shared total and current-step elapsed time on the existing metadata line.
 
@@ -33,14 +56,9 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Find runs by every covered Jira key and show editable operator ticket links in run detail.
 
-- Show current-checklist progress beneath the pipeline in run lists and detail, fleet cards, slot workspaces and terminals. These readers and selected-step history share persisted queries, retain read errors and saved age offline, and follow changes without per-view polling.
-
-- Keep backlog, roadmap, work graphs, queue and project observations readable offline with saved age and current-read action guards. Pool JSON editors, configuration forms and choices follow source notifications while preserving unsaved drafts and command acknowledgements, including after provider and policy saves. Configuration retries only failed reads; malformed project and provider-registration sources retain saved facts with a visible error and disabled writes.
-
-- Observe PR automation, assessments, analytics and the shared copilot through the client cache. Retain stale PR data on transport loss and require current observations before actions. PR configuration retries only failed reads in management and per-PR views; healthy configuration needs no Refresh. Triage prerequisite views follow selected evaluation receipt changes without Refresh, with Retry shown only for read errors. Assessment history and expanded run outcomes follow updates and retention expiry without panel polling. Analytics follows source writes, offers Retry for read errors and keeps an explicit relative time-window update.
+- Show current-checklist progress beneath the pipeline in run lists and detail.
 
 - Resume the blocked worker through the gateway’s validated recovery action, including held review fixes.
-
 - Show native conversations beside slot terminals, keep open review gates visible, and reuse one structured review and fix timeline throughout run views.
 
 - Show round reviewers, modes, timings, findings and fix deltas on review steps through the shared history model.
@@ -53,12 +71,6 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - The run canvas marks the current fix worker or reviewer as the only running node, with elapsed time and an activity header. Completed reviews are marked done; node details stay within their bounds or tooltips. Ordinary review flows retain their real running node.
 
 - A gate that is not ready shows What's blocking publish at the top, with one plain action per blocker: Skip this criterion… (a criterion with a missing, weak or failed verdict), Accept findings and publish… (opens the accept form with its reason), Give it another round (spent review rounds; asks what the next round should check). Mark untestable is now Skip this criterion… everywhere, with a styled reason sheet and a clear Skip AC-n confirm instead of a raw button and textarea. A criterion's state (Needs a check, Proven, Issue) reads as a status badge rather than a button.
-- Active-development baseline; add user-facing changes here before release or package publication.
-
-- Initialize SQLite resource storage after first paint, with one owner tab, a visible memory fallback and verified identity handling. Sources, fleet, node inventories, runtime capabilities, worker checklist progress, run lists, load-run dialogs, slot history and workspace run context, publication and review gates, saved reviews, full run details, comparisons and baseline pickers, family views and decision inboxes retain saved observations offline with their age, disable stale actions and follow live change notifications. Review curation survives metadata refreshes; command failures remain visible and interrupted replies keep their original owner. Recipe output stays with its run and invocation; a disconnect reports uncertain delivery before another replay. Missing run details evict their saved copy, and recipe inventories update when mirrored artifacts arrive. Slot workspaces follow fleet lifecycle changes and drop copied facts when a slot or authority disappears. A reconnect clears saved run data before reads when the account lost its role while the client was closed.
-
-- Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls. Restore both workspace types offline and keep conversation controls visible beside a scrolling transcript.
-- Keep expected inherited modes from triggering a baseline warning on CI-watch follow-ups.
 
 ## 0.29.0 - 2026-10-21
 

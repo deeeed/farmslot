@@ -1,0 +1,163 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Progressive gate and fleet recovery reads",
+  "description": "Uses source UI, a real authenticated private gateway, held transport replies and an isolated Git workspace. Never releases a slot or starts a worker. Requires an existing isolated Agent Chrome CDP endpoint. Cost controls require an unmodified prior source archive with the same dependencies and a published ancestry input. Their isolated fleet measurement does not claim full production-fleet acceptance.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["proof_root", "baseline_source", "ancestry_input"],
+    "properties": {
+      "proof_root": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_./-]+$"
+      },
+      "baseline_source": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_./-]+$"
+      },
+      "ancestry_input": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_./-]+$"
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "gate-first-paint",
+      "claim": "Stored acceptance and paused action controls render within two seconds while the current read is held."
+    },
+    {
+      "id": "lazy-details",
+      "claim": "The stored Package opens without eager source reads; pending source reads restart when the captured package changes."
+    },
+    {
+      "id": "causal-control",
+      "claim": "Withholding the stored response prevents package details from appearing until it is released."
+    },
+    {
+      "id": "fleet-progressive",
+      "claim": "The actual fleet dialog shows its saved eligible row before current inspection completes, with release paused."
+    },
+    {
+      "id": "repeat-work-control",
+      "claim": "The prior source repeats full workspace probes and published SHA compares during the same mounted one-minute client read window."
+    },
+    {
+      "id": "passive-read-cost",
+      "claim": "Unchanged workspace reads launch no full probe during the warm minute; the real published SHA pair is compared once and each fleet.status finishes under ten seconds."
+    },
+    {
+      "id": "local-admission",
+      "claim": "A 31-slot cold status answers within two seconds without Retry; background checks produce all 30 enabled observations within fifteen seconds with at most four concurrent fingerprints, retaining sub-two-second warm reads."
+    },
+    {
+      "id": "open-fleet-observations",
+      "claim": "A mounted release dialog receives a real staged Git change immediately after monitor-owned background observation, reducing bulk eligibility without reopening."
+    }
+  ],
+  "workflow": {
+    "entry": "gate",
+    "nodes": {
+      "gate": {
+        "action": "command",
+        "intent": "Stored gate details render before the held current reply.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/gate\"",
+        "timeout_ms": 600000,
+        "next": "gate-observed"
+      },
+      "gate-observed": {
+        "action": "assert_output",
+        "intent": "Require completed browser assertions and owned teardown.",
+        "source": "gate",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "next": "causal",
+        "proves": ["gate-first-paint", "lazy-details"]
+      },
+      "causal": {
+        "action": "command",
+        "intent": "Withholding the real stored reply hides package details.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/causal\" --withhold-snapshot",
+        "timeout_ms": 600000,
+        "next": "causal-observed"
+      },
+      "causal-observed": {
+        "action": "assert_output",
+        "intent": "Require completed browser assertions and owned teardown.",
+        "source": "causal",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "next": "fleet",
+        "proves": ["causal-control"]
+      },
+      "fleet": {
+        "action": "command",
+        "intent": "Saved fleet rows stay visible while inspection is held.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/fleet\" --fleet",
+        "timeout_ms": 600000,
+        "next": "fleet-observed"
+      },
+      "fleet-observed": {
+        "action": "assert_output",
+        "intent": "Require completed browser assertions and owned teardown.",
+        "source": "fleet",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "next": "cost-before",
+        "proves": ["fleet-progressive"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "cost-before": {
+        "action": "command",
+        "intent": "Measure repeated work in the unchanged prior source.",
+        "cmd": "FARMSLOT_GATE_PROOF_ANCESTRY=\"{{params.ancestry_input}}\" FARMSLOT_GATE_PROOF_SOURCE=\"{{params.baseline_source}}\" TSX_TSCONFIG_PATH=\"{{params.baseline_source}}/services/gateway/tsconfig.json\" node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/cost-before\" --fleet-cost --baseline",
+        "timeout_ms": 600000,
+        "next": "cost-before-observed"
+      },
+      "cost-before-observed": {
+        "action": "assert_output",
+        "intent": "Require the prior source to reproduce repeated child launches.",
+        "source": "cost-before",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "proves": ["repeat-work-control"],
+        "next": "cost-after"
+      },
+      "cost-after": {
+        "action": "command",
+        "intent": "Measure current client latency and actual child launches.",
+        "cmd": "FARMSLOT_GATE_PROOF_ANCESTRY=\"{{params.ancestry_input}}\" TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/cost-after\" --fleet-cost",
+        "timeout_ms": 600000,
+        "next": "cost-after-observed"
+      },
+      "cost-after-observed": {
+        "action": "assert_output",
+        "intent": "Require actual cache savings, bounded reads and scoped teardown.",
+        "source": "cost-after",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "proves": ["passive-read-cost"],
+        "next": "local-admission"
+      },
+      "local-admission": {
+        "action": "command",
+        "intent": "Inspect a local fleet without an unbounded process burst.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx apps/command-center/scripts/prove-gate-progressive.mjs \"{{params.proof_root}}/local-admission\" --bounded-local",
+        "timeout_ms": 600000,
+        "next": "local-admission-observed"
+      },
+      "local-admission-observed": {
+        "action": "assert_output",
+        "intent": "Require real workspace rows, bounded launches and owned teardown.",
+        "source": "local-admission",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "proves": ["local-admission", "open-fleet-observations"],
+        "next": "done"
+      }
+    }
+  }
+}

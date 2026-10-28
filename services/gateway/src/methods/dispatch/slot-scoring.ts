@@ -1,4 +1,5 @@
 import {
+  blockedWorkerRecoveryStep,
   DEFAULT_BRANCH,
   DETACHED_HEAD_BRANCH,
   type DispatchPreviewParams,
@@ -307,7 +308,7 @@ export function slotScore(
   // Device and CDP are tiebreakers — prepare rebuilds these anyway
   if (!isCdpLive(slot.health.cdp)) score += CDP_MISSING_PENALTY;
   if (!slot.health.device.endsWith(':OK')) score += DEVICE_MISSING_PENALTY;
-  if (slot.health.fixtures !== 'OK') score += FIXTURE_STALE_PENALTY;
+  if (!['OK', 'not-required'].includes(slot.health.fixtures)) score += FIXTURE_STALE_PENALTY;
   return score;
 }
 
@@ -681,6 +682,20 @@ export function slotClaimBlockedByRelease(slot: SlotClaimStatus): 'occupied' | '
   return slot.phase === SLOT_PHASE_RELEASING ? 'releasing' : null;
 }
 
+interface SlotOwnerRun {
+  status: string;
+  park?: Run['park'];
+  steps?: Run['steps'];
+}
+
+function hasBlockedWorker(run: SlotOwnerRun | undefined): boolean {
+  return Boolean(
+    run?.status === 'blocked' &&
+    run.steps &&
+    blockedWorkerRecoveryStep({ status: run.status, steps: run.steps }),
+  );
+}
+
 /**
  * Claim exclusivity: an existing owner blocks the claim unless it is the
  * claiming run itself, or a run that no longer exists / has gone terminal.
@@ -690,12 +705,16 @@ export function slotClaimBlockedByRelease(slot: SlotClaimStatus): 'occupied' | '
 export function slotClaimBlockedByLiveOwner(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
-  ownerRunLookup: (id: string) => { status: string } | undefined,
+  ownerRunLookup: (id: string) => SlotOwnerRun | undefined,
 ): string | null {
   const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
   if (!owner || owner === runId) return null;
   const ownerRun = ownerRunLookup(owner);
-  if (!ownerRun || TERMINAL_RUN_STATUSES.includes(ownerRun.status as RunStatus)) return null;
+  if (
+    !ownerRun ||
+    (TERMINAL_RUN_STATUSES.includes(ownerRun.status as RunStatus) && !hasBlockedWorker(ownerRun))
+  )
+    return null;
   return `slot is claimed by live run ${owner}`;
 }
 
@@ -712,7 +731,7 @@ export function slotClaimBlockedByLiveOwner(
 export function failedRunSlotCleanup(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
-  ownerRunLookup: (id: string) => { status: string; park?: Run['park'] } | undefined,
+  ownerRunLookup: (id: string) => SlotOwnerRun | undefined,
   options: {
     /**
      * The run blocked because it declined to replace the slot's live retained
@@ -736,6 +755,10 @@ export function failedRunSlotCleanup(
   const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
   const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
   if (owner === runId) {
+    // A worker waiting for an answer still owns its checkout and live session.
+    // Releasing it here lets dispatch prepare over the uncommitted fix before
+    // fleet reconciliation restores the blocked run's lease.
+    if (hasBlockedWorker(failing)) return 'none';
     return reserved && reserved !== runId ? 'release-keep-handoff' : 'reset';
   }
   if (reserved === runId) {
@@ -752,6 +775,12 @@ export function failedRunSlotCleanup(
     return ownerLive ? 'clear-reservation' : 'reset';
   }
   return 'none';
+}
+
+export function assertAllowedSlotSelection(run: Pick<Run, 'allowedSlots'>, slotId: string): void {
+  if (run.allowedSlots?.length && !run.allowedSlots.includes(slotId)) {
+    throw new Error(`Picked slot '${slotId}' is not in the allowed slot list; pick a slot again`);
+  }
 }
 
 /**

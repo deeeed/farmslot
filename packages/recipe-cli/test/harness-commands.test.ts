@@ -24,13 +24,13 @@ function completedDeterministicTask(t: TestContext, command: string) {
   mkdirSync(path.join(dir, 'inputs'), { recursive: true });
   writeFileSync(
     path.join(dir, 'CHECKLIST.md'),
-    '## Steps\n- [ ] CI parity [DETERMINISTIC: ci.local_check]\n- [ ] Review\n',
+    '## Steps\n- [ ] CI parity [DETERMINISTIC: checks.unit]\n- [ ] Review\n',
   );
   writeFileSync(
     path.join(dir, 'inputs', 'worker-terminal-contract.json'),
     JSON.stringify({
       deterministicChecks: [
-        { checklist: 'CHECKLIST.md', stepNumber: 1, reference: 'ci.local_check', command },
+        { checklist: 'CHECKLIST.md', stepNumber: 1, reference: 'checks.unit', command },
       ],
     }),
   );

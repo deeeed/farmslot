@@ -58,7 +58,7 @@ async function fixture(t: test.TestContext, fixed: boolean) {
     projectName: 'not-installed-marker-fixture',
     resourceVars: {},
   };
-  const checklist = '- [ ] Run CI [DETERMINISTIC: ci.local_check]\n';
+  const checklist = '- [ ] Run CI [DETERMINISTIC: checks.unit]\n';
   const terminalContract = builtinTerminalContract('dev');
   const helper = fileURLToPath(
     new URL('../../../../packages/agent-runtime/scripts/mark-checklist-step.cjs', import.meta.url),
@@ -80,7 +80,7 @@ async function fixture(t: test.TestContext, fixed: boolean) {
     }),
     terminalContract,
     deterministicCommands: {
-      'ci.local_check': `${quoteMarkCommandWord(process.execPath)} -e 'process.exit(17)'`,
+      'checks.unit': `${quoteMarkCommandWord(process.execPath)} -e 'process.exit(17)'`,
     },
   });
   for (const name of ['REVIEW.md', 'REVIEW-FIX.md', 'CI-FIX.md'])

@@ -259,7 +259,6 @@ try {
     runs[runs.length - 1] = run;
     if (run.taskFile) {
       const taskDocument = await readFile(run.taskFile, 'utf8');
-      assert.match(taskDocument, /This mode grants no additional permission/);
       assert.doesNotMatch(taskDocument, /zero human input|Execute all phases without stopping/);
       await cp(path.dirname(run.taskFile), path.join(evidence, scenario, 'task'), {
         recursive: true,

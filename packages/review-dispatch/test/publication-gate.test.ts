@@ -96,7 +96,7 @@ test('review labels alone never imply proven visual meaning', () => {
   });
   assert.deepEqual(
     view.claims.map((claim) => claim.state),
-    ['Not assessed', 'Proven'],
+    ['Not proven', 'Proven in app'],
   );
 });
 
@@ -121,11 +121,11 @@ test('all AC views distinguish assertions, qualified reviews and unchecked visua
   });
   assert.deepEqual(
     rows.map((row) => row.state),
-    ['Proven', 'Verified by agent', 'Checked', 'Needs a check'],
+    ['Proven in app', 'Proven in app', 'Proven in app', 'Needs your look'],
   );
   assert.deepEqual(
     rows.map((row) => row.tone),
-    ['proven', 'verified', 'checked', 'pending'],
+    ['proven', 'proven', 'proven', 'pending'],
   );
 });
 
@@ -150,11 +150,11 @@ test('review claims read as checked in review or awaiting code review, never mis
   });
   assert.deepEqual(
     rows.map((row) => row.state),
-    ['Checked in review', 'Awaiting code review', 'Issue', 'Untestable', 'missing'],
+    ['Verified in code', 'Not proven', 'Not proven', 'Skipped', 'Not proven'],
   );
   assert.deepEqual(
     rows.map((row) => row.tone),
-    ['checked', 'pending', 'issue', 'untestable', 'pending'],
+    ['proven', 'issue', 'issue', 'untestable', 'issue'],
   );
   assert.deepEqual(
     rows.map((row) => acceptanceVerdictLabel(row.source!.status!)),
@@ -986,4 +986,116 @@ test('the mixed gate shows one combined approval with both scopes and one writte
   });
   assert.equal(confirmed.blockedReason, '');
   assert.match(confirmed.status, /accepts.*findings.*attests/);
+});
+
+test('only remaining code-review claims expose the offered attestation without a hidden choice', () => {
+  const claim = (
+    id: string,
+    proofMode: 'review' | 'state',
+    verdict: AcceptanceVerdict,
+  ): PublicationGateClaim => ({
+    id,
+    text: id,
+    status: { id, text: id, proofMode, verdict, evidence: [], recipeNodes: [] },
+  });
+  const input = {
+    actions: [EVIDENCE_ATTESTATION_ACTION],
+    readiness: evidenceOnly,
+    claims: [claim('AC-1', 'state', 'proven'), claim('AC-2', 'review', 'awaiting-review')],
+  };
+  const view = publicationGateView(input);
+  assert.equal(view.approval?.id, 'approve-publish-evidence-attested');
+  assert.equal(view.blockedReason, 'Enter an attestation reason before approving.');
+  assert.equal(
+    publicationGateView({ ...input, attestationReason: 'Read the configuration and its tests.' })
+      .blockedReason,
+    '',
+  );
+  assert.equal(publicationGateView({ ...input, actions: [] }).approval, null);
+  assert.equal(publicationGateView({ ...input, pendingVisualClaimIds: ['AC-3'] }).approval, null);
+  assert.equal(
+    publicationGateView({ ...input, claims: [...input.claims, claim('AC-3', 'state', 'missing')] })
+      .approval,
+    null,
+  );
+  assert.equal(
+    publicationGateView({
+      ...input,
+      readiness: {
+        ...evidenceOnly,
+        reasons: [
+          {
+            code: 'deterministic-not-passed',
+            prerequisite: 'deterministic',
+            message: 'CI failed.',
+          },
+        ],
+      },
+    }).approval,
+    null,
+  );
+});
+
+test('criterion statuses use the five operator outcomes while preserving engine verdicts', () => {
+  const states = acceptanceClaimRows({
+    claims: [
+      {
+        id: 'AC-1',
+        text: 'Runtime assertion',
+        status: {
+          id: 'AC-1',
+          text: 'Runtime assertion',
+          verdict: 'proven',
+          proofMode: 'state',
+          evidence: [],
+          recipeNodes: [],
+        },
+      },
+      {
+        id: 'AC-2',
+        text: 'Diff verified',
+        status: {
+          id: 'AC-2',
+          text: 'Diff verified',
+          verdict: 'proven',
+          proofMode: 'review',
+          evidence: [],
+          recipeNodes: [],
+        },
+      },
+      {
+        id: 'AC-3',
+        text: 'Visual',
+        status: {
+          id: 'AC-3',
+          text: 'Visual',
+          verdict: 'awaiting-review',
+          proofMode: 'visual',
+          evidence: [],
+          recipeNodes: [],
+        },
+      },
+      { id: 'AC-4', text: 'Missing', status: null },
+      {
+        id: 'AC-5',
+        text: 'Skipped',
+        status: {
+          id: 'AC-5',
+          text: 'Skipped',
+          verdict: 'untestable',
+          evidence: [],
+          recipeNodes: [],
+          note: 'No supported environment.',
+        },
+      },
+    ],
+  });
+  assert.deepEqual(
+    states.map(({ state }) => state),
+    ['Proven in app', 'Verified in code', 'Needs your look', 'Not proven', 'Skipped'],
+  );
+  assert.deepEqual(
+    states.map(({ tone }) => tone),
+    ['proven', 'proven', 'pending', 'issue', 'untestable'],
+  );
 });

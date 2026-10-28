@@ -1,4 +1,8 @@
-import type { FleetStatus } from '../contracts/index.js';
+import type {
+  FleetStatus,
+  SlotRecoveryRefusal,
+  SlotWorkspaceIdentity,
+} from '../contracts/index.js';
 
 import { Methods } from './registry.js';
 
@@ -22,9 +26,16 @@ export type FleetRefreshSlotStatus =
   | 'cancelled';
 
 export interface FleetRefreshSlotsParams {
-  slots: Array<{ slotId: string; mode: 'safe' | 'force' }>;
+  slots: FleetRefreshSlotRequest[];
   /** Pre-allocated bulk request id; same race-closing pattern as slot.refresh. */
   requestId?: string;
+}
+
+export interface FleetRefreshSlotRequest {
+  slotId: string;
+  mode: 'safe' | 'force';
+  release?: boolean;
+  expectedWorkspace?: SlotWorkspaceIdentity;
 }
 
 export interface FleetRefreshSlotsResult {
@@ -75,6 +86,7 @@ export interface FleetRefreshScheduledEvent {
 }
 
 export interface FleetRefreshSlotUpdateEvent {
+  reason?: SlotRecoveryRefusal;
   requestId: string;
   slotId: string;
   status: FleetRefreshSlotStatus;

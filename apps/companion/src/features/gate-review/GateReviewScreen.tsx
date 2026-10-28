@@ -10,7 +10,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { reviewRoundBudgetLabel } from '@farmslot/protocol';
-import { PUBLICATION_GATE_TABS, publicationGateCriteria } from '@farmslot/review-dispatch';
+import {
+  criterionDraftsAvailable,
+  PUBLICATION_GATE_TABS,
+  publicationGateCriteria,
+} from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
@@ -100,7 +104,6 @@ export function GateReviewScreen({
           evidenceModel={acceptance.evidenceModel}
           reviewer={acceptance.reviewer}
           busy={judging || !viewModel.commandsReady || viewModel.sendingActionId !== null}
-          onSkip={actions.markUntestable}
           acceptingFindings={acceptingDecisionId === viewModel.decision.id}
           onAcceptFindingsChange={(accepting) =>
             setAcceptingDecisionId(accepting ? viewModel.decision.id : null)
@@ -158,6 +161,16 @@ export function GateReviewScreen({
                   onRecordVisualReview={
                     viewModel.commandsReady && acceptance.commandsReady
                       ? recordVisualReview
+                      : undefined
+                  }
+                  initiallyExpanded
+                  attestationReason={viewModel.attestationReason}
+                  criterionDrafts={
+                    viewModel.decision.resolvedAt ? [] : viewModel.draftActions.model.entries
+                  }
+                  drafts={
+                    criterionDraftsAvailable(viewModel.decision)
+                      ? viewModel.draftActions
                       : undefined
                   }
                   onMarkUntestable={
@@ -266,6 +279,10 @@ export function GateReviewScreen({
           }}
           attestationReason={viewModel.attestationReason}
           onAttestationReason={actions.setAttestationReason}
+          drafts={viewModel.draftActions}
+          criterionDrafts={
+            viewModel.decision.resolvedAt ? [] : viewModel.draftActions.model.entries
+          }
           acceptingFindings={acceptingDecisionId === viewModel.decision.id}
           onAcceptFindings={() => setAcceptingDecisionId(viewModel.decision.id)}
         />

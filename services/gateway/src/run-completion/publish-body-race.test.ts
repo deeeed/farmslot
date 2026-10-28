@@ -3,23 +3,16 @@ import { execFileSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import type { ReadyGatePayload } from '@farmslot/protocol';
 import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
 import type { ExecResult } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
-import { recordPublishedDescription } from '../run-engine/finalize-step.js';
 import { deleteTestRunIfPresent } from '../run-engine/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
-import {
-  assertReadyGatePackageInputsCurrent,
-  buildPreparedDraftPrBody,
-  publishCompletionPackage,
-  renderCurrentDescription,
-} from './orchestrator.js';
 import { __setPrBodyRenderDepsForTest } from './pr-body-render.js';
 import { postProcessPRBody } from './publication-artifacts.js';
 import {
@@ -31,6 +24,22 @@ import {
 } from './ready-gate-package.js';
 import { makeRun, manualTicketData } from './test-fixtures.js';
 const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
+// These cases isolate PR prose races; publication-remote-head.test.ts exercises real push policy.
+const push = await import('./publication-push.js');
+mock.module('./publication-push.js', {
+  namedExports: {
+    ...push,
+    pushPublicationBranch: async () => {},
+    assertPublicationRemoteHead: async () => {},
+  },
+});
+const { recordPublishedDescription } = await import('../run-engine/finalize-step.js');
+const {
+  assertReadyGatePackageInputsCurrent,
+  buildPreparedDraftPrBody,
+  publishCompletionPackage,
+  renderCurrentDescription,
+} = await import('./orchestrator.js');
 
 const PROSE = '## **Description**\n\nFix the order form.\n';
 // The worker's own slot-side render: an older harness and a Command block.

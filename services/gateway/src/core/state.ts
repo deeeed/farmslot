@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 
-import { resolveStatusFilePath } from '../projects/repo-root.js';
+import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
 import { farmslotRoot } from './config.js';
 
@@ -28,6 +28,7 @@ export function onStatusCommit(listener: (snapshot: unknown) => void): void {
 }
 
 async function atomicWriteStatus(data: unknown): Promise<void> {
+  assertStatusFileWritable(statusFile);
   const tmp = `${statusFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   await writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
   await rename(tmp, statusFile);
@@ -146,7 +147,7 @@ export async function claimSlotStatusIf(
       slot = { slot: slotId, slot_epoch: 0 };
       slots.push(slot);
     }
-    if (!predicate(slot)) return;
+    if (slot.workspace_recovery || !predicate(slot)) return;
     const nextEpoch = (Number(slot.slot_epoch) || 0) + 1;
     for (const [key, value] of Object.entries(fields)) {
       slot[key] = value;
@@ -312,8 +313,26 @@ export async function resetSlotIf(
   slotId: string,
   predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
   warm = false,
+  verifiedRecoveryId?: string,
 ): Promise<boolean> {
-  const applied = await updateSlotStatusIf(slotId, predicate, slotResetFields(warm));
+  const applied = await updateSlotStatusIf(
+    slotId,
+    (row) => {
+      if (row.workspace_recovery) {
+        const recovery = row.workspace_recovery;
+        if (
+          !verifiedRecoveryId ||
+          typeof recovery !== 'object' ||
+          recovery === null ||
+          !('id' in recovery) ||
+          recovery.id !== verifiedRecoveryId
+        )
+          return false;
+      }
+      return predicate(row);
+    },
+    { ...slotResetFields(warm), ...(verifiedRecoveryId ? { workspace_recovery: null } : {}) },
+  );
   if (applied) {
     for (const listener of slotResetListeners) listener(slotId);
   }

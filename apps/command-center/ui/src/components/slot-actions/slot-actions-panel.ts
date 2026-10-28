@@ -304,7 +304,8 @@ export class SlotActionsPanel extends LitElement {
         force ? 'refresh-force' : 'refresh',
       );
       if (result && !result.refreshed) {
-        this._lastRefreshReason = result.reason;
+        this._lastRefreshReason =
+          result.reason === 'dirty' || result.reason === 'stale' ? result.reason : undefined;
       }
     });
   private _cleanup = () =>

@@ -18,6 +18,7 @@ import {
   type PressureOverrideAudit,
   primaryRoleForFlow,
   type ReviewSessionTrace,
+  type SubStepRecord,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
@@ -54,6 +55,7 @@ import {
   shellQuote,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
+import { ensureRunRuntimeReady } from '../../fleet/runtime-ready.js';
 import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
@@ -154,6 +156,7 @@ export {
   validateTicketRef,
 } from './ticket-ref.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
+import { admitWorkerLaunch } from '../../run-engine/worker-launch-preflight.js';
 
 /**
  * Wait between the pre-clear (C-c C-u) and post-clear in the launch prelude
@@ -1073,7 +1076,8 @@ export async function dispatchExecute(
   }
   if (!existsSync(taskFilePath)) throw new Error(`Task file not found: ${taskFilePath}`);
 
-  const step = (name: string, detail: string) => emit('dispatch.step', { name, detail });
+  const step = (name: string, detail: string, outcome?: SubStepRecord['outcome']) =>
+    emit('dispatch.step', { name, detail, ...(outcome ? { outcome } : {}) });
 
   // Parse task file for metadata
   const taskContent = await readFile(taskFilePath, 'utf-8');
@@ -1105,8 +1109,10 @@ export async function dispatchExecute(
   const pressureAttemptKey = `${params.runId ?? 'no-run'}:${
     currentRun ? (dispatchStartedAtMs(currentRun) ?? 'no-attempt') : 'no-attempt'
   }`;
+  let assertPreflightCurrent: () => Promise<void> = async () => {};
   const runPressureGate = async (): Promise<void> => {
     options.assertCurrent?.();
+    await assertPreflightCurrent();
     const latestRun = params.runId ? getRun(params.runId) : currentRun;
     if (
       currentRun?.transport === 'native' &&
@@ -1137,6 +1143,14 @@ export async function dispatchExecute(
     options.assertCurrent?.();
   };
   await runPressureGate();
+  if (transport !== 'native')
+    assertPreflightCurrent = await admitWorkerLaunch({
+      runId: params.runId,
+      vars,
+      projectVars,
+      assertCurrent: options.assertCurrent,
+      record: step,
+    });
 
   const branch =
     extractField(taskContent, /^\*\*Branch:\*\*\s*`?([^`\n]+)/m) ||
@@ -1291,6 +1305,8 @@ export async function dispatchExecute(
       projectVars,
       accountLabel: params.providerAccountLabel,
       beforeInput: runPressureGate,
+      beforeFreshLaunch: () =>
+        ensureRunRuntimeReady(params.slotId, currentRun.id, runPressureGate, options.assertCurrent),
       assertCurrent: options.assertCurrent,
       emit,
     });
@@ -1553,6 +1569,15 @@ export async function dispatchExecute(
     await updateSlotStatus(params.slotId, { app: selectedApp });
   }
 
+  // Retained native reconciliation returned above. This boundary also covers
+  // replay and skip-prepare fallbacks that launch a fresh worker.
+  if (currentRun && !options.nativeRetainedFrom)
+    await ensureRunRuntimeReady(
+      params.slotId,
+      currentRun.id,
+      runPressureGate,
+      options.assertCurrent,
+    );
   await runRecipeGate();
 
   // 3. Copy task to worker

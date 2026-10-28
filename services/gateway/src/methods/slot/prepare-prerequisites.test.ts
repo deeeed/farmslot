@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 
+import type { SlotRecovery } from '@farmslot/protocol';
+
 import type { ProjectVars, SlotVars } from '../../core/config.js';
 
 await import('../../runtime/mock-pty.test-support.js');
@@ -38,6 +40,23 @@ const project: ProjectVars = {
   artifactDir: '.agent/artifacts',
   projectJson: { hooks: { prerequisites: 'check-configured-paths' } },
 };
+const recovery: SlotRecovery = {
+  id: 'fixture-recovery',
+  identity: {
+    epoch: 1,
+    branch: 'main',
+    headSha: 'a'.repeat(40),
+    dirtyFingerprint: 'clean',
+    currentRunId: null,
+    cleanupRunId: null,
+    handoffRunId: null,
+    recoveryId: null,
+  },
+  completed: ['inspect', 'cleanup', 'reset', 'fixtures'],
+  phase: 'verify',
+  error: 'Fixtures did not verify',
+};
+let recoveryPending = false;
 let refused = false;
 let transportFailure = false;
 let calls: string[] = [];
@@ -93,6 +112,7 @@ mock.module('../../core/index.js', {
     loadSlotVars: async () => ({ ...vars, resourceVars: {} }),
     loadProjectVars: async () => project,
     readSlotField: async () => null,
+    readSlotRow: async () => (recoveryPending ? { workspace_recovery: recovery } : null),
     execOnSlot: executeOnSlot,
     slotWriteFiles: async () => {
       throw new Error('unexpected slot write');
@@ -123,6 +143,7 @@ beforeEach(() => {
   calls = [];
   refused = false;
   transportFailure = false;
+  recoveryPending = false;
 });
 
 test('failed prerequisites stop prepare before slot selection, retirement and checkout phases', async () => {
@@ -155,4 +176,22 @@ test('slot.check reports a prerequisite transport failure and completes sibling 
   );
   assert.ok(result.checks.some((step) => step.name === 'tmux'));
   assert.ok(events.includes('slot.check.done'));
+});
+
+test('pending workspace recovery refuses prepare before ownership and prerequisite effects', async () => {
+  recoveryPending = true;
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId }, () => undefined),
+    /Slot recovery must be retried through slot\.refresh/,
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('owner-validated recovery release keeps its internal prepare path', async () => {
+  recoveryPending = true;
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId }, () => undefined, undefined, { duringRelease: true }),
+    /missing extension checkout/,
+  );
+  assert.deepEqual(calls, ['ownership', 'prerequisites']);
 });

@@ -100,6 +100,7 @@ async function findTab(hash) {
   const pages = tabs.filter((t) => t.type === 'page');
   if (!hash || hash === '-') return pages[0];
   if (hash.startsWith('@')) return pages.find((tab) => tab.id === hash.slice(1)) ?? null;
+  if (hash.startsWith('id:')) return pages.find((page) => page.id === hash.slice(3)) ?? null;
   const needle = hash.startsWith('#') ? hash : `#${hash}`;
   // Intentionally no fallback to pages[0] when a hash is specified: silently
   // retargeting to another tab lets validation scripts "pass" against an
@@ -320,6 +321,59 @@ async function keyInTab(hash, key) {
     await call('Input.dispatchKeyEvent', { type: 'keyDown', ...event });
     await call('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
     return { key };
+  } finally {
+    close();
+  }
+}
+
+/** A real document reload for proofs; wait for its load event before evaluating the new page. */
+async function reloadTab(hash) {
+  const tab = await findTab(hash);
+  if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+  let loaded = false;
+  const navigation = [];
+  let dialog;
+  let failure;
+  const { call, close } = await connect(tab.webSocketDebuggerUrl, (event) => {
+    if (event.method === 'Page.loadEventFired') loaded = true;
+    if (
+      ['Page.frameStartedLoading', 'Page.frameStoppedLoading', 'Page.frameNavigated'].includes(
+        event.method,
+      )
+    )
+      navigation.push({
+        method: event.method,
+        frameId: event.params.frameId ?? event.params.frame?.id,
+        url: event.params.frame?.url,
+      });
+    if (event.method === 'Network.requestWillBeSent' && event.params.type === 'Document')
+      navigation.push({ method: event.method, url: event.params.request.url });
+    if (event.method === 'Network.loadingFailed')
+      navigation.push({ method: event.method, error: event.params.errorText });
+    if (event.method === 'Page.javascriptDialogOpening') {
+      dialog = { type: event.params.type, message: event.params.message };
+      if (dialog.type !== 'beforeunload') {
+        failure = new Error('Unexpected dialog during reload');
+        return;
+      }
+      void call('Page.handleJavaScriptDialog', { accept: true }).catch((error) => {
+        failure = error;
+      });
+    }
+  });
+  try {
+    await call('Page.enable');
+    await call('Network.enable');
+    await call('Page.reload');
+    const deadline = Date.now() + 15000;
+    while (!loaded) {
+      if (failure) throw failure;
+      if (Date.now() > deadline)
+        throw new Error('The requested page reload did not finish: ' + JSON.stringify(navigation));
+      await sleep(50);
+    }
+    await waitForNavigatedRoute(call, tab.url);
+    return { id: tab.id, url: tab.url, reloaded: true, ...(dialog ? { dialog } : {}) };
   } finally {
     close();
   }
@@ -759,6 +813,10 @@ try {
       die(`usage: cdp.mjs ${cmd} <hash> <selector> <value>`);
     const input = cmd === 'fill' && value === '--stdin' ? readFileSync(0, 'utf8') : value;
     console.log(JSON.stringify(await inputInTab(hash, selector, input, cmd === 'select'), null, 2));
+  } else if (cmd === 'reload') {
+    const [hash] = rest;
+    if (!hash) die('usage: cdp.mjs reload <hash>');
+    console.log(JSON.stringify(await reloadTab(hash), null, 2));
   } else if (cmd === 'viewport') {
     const [hash, width, height] = rest;
     if (!hash || width === undefined || height === undefined)
@@ -825,7 +883,7 @@ try {
     console.log(JSON.stringify(result, null, 2));
   } else {
     die(
-      'usage: cdp.mjs <tabs | goto | eval | close | focus | login | click | fill | select | viewport | screenshot | gateway> ...',
+      'usage: cdp.mjs <tabs | goto | eval | close | reload | focus | login | click | fill | select | viewport | screenshot | gateway> ...',
     );
   }
 } catch (err) {

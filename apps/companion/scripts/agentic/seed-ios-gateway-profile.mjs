@@ -91,7 +91,8 @@ db.commit(); db.close()`,
     );
     execFileSync(
       'adb',
-      ['-s', serial, 'exec-in', 'run-as', bundleId, 'dd', 'of=databases/RKStorage', 'bs=65536'],
+      // shell -T waits for dd to finish before the next operation reads the database.
+      ['-s', serial, 'shell', '-T', 'run-as', bundleId, 'dd', 'of=databases/RKStorage', 'bs=65536'],
       { input: fs.readFileSync(database), stdio: ['pipe', 'pipe', 'pipe'] },
     );
     adb('shell', 'run-as', bundleId, 'chmod', '600', 'databases/RKStorage');

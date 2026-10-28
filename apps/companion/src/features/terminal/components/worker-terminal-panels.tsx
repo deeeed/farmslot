@@ -1,7 +1,8 @@
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { type TmuxWorkerSummary } from '@farmslot/protocol';
 
+import { QuickActionsModal as Modal } from '../../quick-actions/QuickActionsModal';
 import { workerTerminalStyles as styles } from '../styles/worker-terminal.styles';
 
 export function WorkerTmuxShortcutPanel({

@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type {
   RunnerCatalogModel,
@@ -40,8 +40,8 @@ interface RunnerModelCatalogObservationOptions {
 
 interface CatalogSourceOwnerOptions {
   sample(): Promise<RunnerModelCatalogResult>;
-  /** Structured files only: watched path and the read that detects an actual catalog change. */
-  file?: { path: string; read(): RunnerModelCatalogResult };
+  /** Structured files only: every candidate the read merges, and that merged read. */
+  file?: { paths: readonly string[]; read(): RunnerModelCatalogResult };
   changed(): void;
   now(): number;
 }
@@ -68,7 +68,7 @@ class CatalogSourceOwner {
   private attemptedAt?: number;
   private error?: string;
   private pending?: Promise<void>;
-  private watcher?: NativeCatalogPreferenceSource;
+  private watchers: NativeCatalogPreferenceSource[] = [];
   private published?: string;
   private stopped = false;
 
@@ -120,8 +120,7 @@ class CatalogSourceOwner {
     if (this.stopped) return;
     this.publish();
     if (!interested) {
-      this.watcher?.close();
-      this.watcher = undefined;
+      this.closeWatchers();
       return;
     }
     this.watch();
@@ -134,25 +133,36 @@ class CatalogSourceOwner {
 
   async stop(): Promise<void> {
     this.stopped = true;
-    this.watcher?.close();
-    this.watcher = undefined;
+    this.closeWatchers();
     await this.pending;
   }
 
-  /** The existing watcher reattaches after replacement/removal and reports failure/recovery. */
+  private closeWatchers(): void {
+    for (const watcher of this.watchers) watcher.close();
+    this.watchers = [];
+  }
+
+  /** The existing watcher reattaches after replacement/removal and reports failure/recovery.
+   * One per candidate directory; each compares the merged read, so any candidate's change counts. */
   private watch(): void {
     const file = this.options.file;
     if (!file) return;
-    this.watcher ??= new NativeCatalogPreferenceSource(
-      file.path,
-      () => JSON.stringify(file.read()),
-      () => void this.refresh(),
-    );
-    try {
-      this.watcher.sample();
-    } catch (error) {
-      // The failed sample already requested the refresh that records this source error.
-      if (!(error instanceof NativeCatalogSourceUnavailable)) throw error;
+    if (!this.watchers.length)
+      this.watchers = [...new Map(file.paths.map((path) => [dirname(path), path])).values()].map(
+        (path) =>
+          new NativeCatalogPreferenceSource(
+            path,
+            () => JSON.stringify(file.read()),
+            () => void this.refresh(),
+          ),
+      );
+    for (const watcher of this.watchers) {
+      try {
+        watcher.sample();
+      } catch (error) {
+        // The failed sample already requested the refresh that records this source error.
+        if (!(error instanceof NativeCatalogSourceUnavailable)) throw error;
+      }
     }
   }
 
@@ -274,11 +284,19 @@ export class RunnerModelCatalogObservation {
     const current = this.owners.get(runner);
     // An older selection that resolves late cannot replace a newer one.
     if (this.stopped || (current && current.selection > selection)) return current;
+    // A file source reads every candidate in order and merges them; all of them are its identity.
+    const paths =
+      source && !('command' in source)
+        ? (typeof source.relativePath === 'string'
+            ? [source.relativePath]
+            : source.relativePath
+          ).map((path) => join(this.home, path))
+        : [];
     const key = source
       ? JSON.stringify(
           'command' in source
             ? [runner, 'command', source.command, source.args]
-            : [runner, 'file', join(this.home, source.relativePath)],
+            : [runner, 'file', ...paths],
         )
       : undefined;
     if (current && current.key === key) {
@@ -308,7 +326,7 @@ export class RunnerModelCatalogObservation {
           ? {}
           : {
               file: {
-                path: join(this.home, source.relativePath),
+                paths,
                 read: () => readRunnerModelCatalog(runner, source, this.home),
               },
             }),

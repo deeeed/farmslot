@@ -1,0 +1,64 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Fleet slot recovery safety and native actions",
+  "description": "ADR-042 Amendments 1 and 2 validation against disposable Git checkouts and both authenticated operator apps. Start workspace.rpc.live.ts in UI-proof mode, authenticate an owned proof device and CC tab, and set FARMSLOT_WORKSPACE_UI_PROOF_OUT plus FARMSLOT_WORKSPACE_PROOF_DEVICE. The fixture caller owns teardown. No product slot or model turn is needed.",
+  "proofTargets": [
+    {
+      "id": "recovery-selection",
+      "claim": "After a local-work decision, a real CC release and discard confirmation make the next unrestricted run select that slot without a picker decision."
+    },
+    {
+      "id": "recovery-safety",
+      "claim": "Recovery verifies default HEAD and fixtures, binds discard to actual content, preserves retained evidence, and holds failed work until a guarded retry succeeds, and keeps completed teardown cold after cancellation."
+    },
+    {
+      "id": "native-recovery",
+      "claim": "Actual Companion presses release safe idle slots, exclude unpublished work from bulk, preserve cancelled discard, refuse changed-content confirmation and complete freshly confirmed discard."
+    },
+    {
+      "id": "automatic-reuse",
+      "claim": "The only free clean merged-branch slot recovers before normal write-task/prepare/dispatch without a decision; safe settlement resets it and preserves the settlement checkout receipt."
+    }
+  ],
+  "workflow": {
+    "entry": "cc-selection",
+    "nodes": {
+      "cc-selection": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx apps/command-center/scripts/agentic/fleet-recovery-dispatch-proof.mjs",
+        "timeout_ms": 660000,
+        "intent": "Recover one stale slot through the authenticated CC fleet and inspect the next unrestricted run selection through the public gateway.",
+        "proves": ["recovery-selection"],
+        "next": "native-actions"
+      },
+      "rpc-safety": {
+        "action": "command",
+        "cmd": "FARMSLOT_WORKSPACE_UI_PROOF=0 FARMSLOT_WORKSPACE_PROOF_OUT=\"${FARMSLOT_WORKSPACE_UI_PROOF_OUT:?Set the UI fixture output}/rpc\" TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --experimental-test-module-mocks --import tsx --test services/gateway/src/methods/slot/workspace.rpc.live.ts services/gateway/src/methods/slot/workspace-probe.live.ts services/gateway/src/methods/slot/workspace-publication.live.ts",
+        "timeout_ms": 1260000,
+        "intent": "Exercise authenticated gateway refresh requests and assert independent real Git, fixture and persisted-ownership effects.",
+        "proves": ["recovery-safety"],
+        "next": "automatic-reuse"
+      },
+      "native-actions": {
+        "action": "command",
+        "cmd": "node apps/companion/scripts/agentic/fleet-recovery-proof.mjs",
+        "timeout_ms": 900000,
+        "intent": "Press the native fleet controls and verify safe bulk, cancelled discard, changed-content refusal and confirmed recovery through Git and persisted status.",
+        "proves": ["native-recovery"],
+        "next": "rpc-safety"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "automatic-reuse": {
+        "action": "command",
+        "cmd": "FARMSLOT_SAFE_IDLE_PROOF_OUT=\"${FARMSLOT_WORKSPACE_UI_PROOF_OUT:?Set the proof output}/automatic\" TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/run-lifecycle/safe-idle-slot.live.ts",
+        "timeout_ms": 660000,
+        "intent": "Dispatch one owned merged-branch fixture, cancel it, exercise done cleanup on the same run, verify the force-complete replay fence and archive. Preserve all foreign tmux sessions and options; the caller removes the retained owned scratch.",
+        "proves": ["automatic-reuse"],
+        "next": "done"
+      }
+    }
+  }
+}

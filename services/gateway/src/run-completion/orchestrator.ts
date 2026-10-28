@@ -104,7 +104,11 @@ import {
   assertPublicationEvidenceSelection,
   defaultSelectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
-import { assertPublicationBranchPushed, PUBLICATION_PUSH_TIMEOUT_MS } from './publication-push.js';
+import {
+  assertPublicationRemoteHead,
+  BRANCH_PUBLICATION_FLOWS,
+  pushPublicationBranch,
+} from './publication-push.js';
 import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
 import { publicationStatusForRun } from './publication-status.js';
 import {
@@ -213,6 +217,7 @@ export function initRunCompletion(broadcast: BroadcastFn): void {
 
 export interface CompletionResult {
   inheritedAcceptance?: InheritedAcceptanceProvenance;
+  publishedHeadSha?: string;
   prNumber: number | null;
   ciRepo: string | null;
   artifactsCopied: boolean;
@@ -1242,6 +1247,22 @@ export async function runCompletionPipeline(
     await persistRunPrNumber(runId, prNumber);
   }
 
+  if (
+    !suppressPrMutation &&
+    BRANCH_PUBLICATION_FLOWS.has(updatedRun.flowType) &&
+    ciRepo &&
+    prNumber
+  ) {
+    const headSha = await snapshotHeadSha(updatedRun);
+    if (!headSha) throw new Error('Cannot publish completion without a captured HEAD');
+    const baseBranch = await publicationBaseForRun(
+      updatedRun,
+      pv && getProjectField(pv.projectJson, 'default_branch'),
+    );
+    await pushPublicationBranch(updatedRun, headSha, baseBranch);
+    flags.publishedHeadSha = headSha;
+  }
+
   // 3. Post PR completion comment with metrics + report (skip for review-pr — post-review.sh handles it)
   // Gate on a non-empty worker report so runs that never wrote
   // artifacts/report.md (cancelled, crashed, short-circuited) don't spam the
@@ -1323,7 +1344,7 @@ export async function runCompletionPipeline(
         trustedEvidenceManifest: manifest,
       },
       undefined,
-      await snapshotHeadSha(updatedRun),
+      flags.publishedHeadSha ?? (await snapshotHeadSha(updatedRun)),
     );
     artifactUrls = published.artifactUrls;
     completionEvidenceSelection = published.selectedEvidenceKeys;
@@ -1356,6 +1377,7 @@ export async function runCompletionPipeline(
     }
   }
 
+  if (flags.publishedHeadSha) await assertPublicationRemoteHead(updatedRun, flags.publishedHeadSha);
   if (!suppressPrMutation && ciRepo && prNumber)
     await recordRunPRPublication(runId, ciRepo, prNumber);
 
@@ -1403,12 +1425,7 @@ export async function createPrFromApprovedPackage(
   }
   if (!prPackage.branch?.trim()) throw new Error('approved package is missing a branch');
   await assertCommitSignatures(vars, `refs/remotes/origin/${base}`, prPackage.headSha || 'HEAD');
-  const push = await execOnSlot(
-    vars,
-    `git -C ${shellQuote(vars.remoteRepo)} push -u origin ${shellQuote(prPackage.branch)}`,
-    { timeout: PUBLICATION_PUSH_TIMEOUT_MS },
-  );
-  assertPublicationBranchPushed(push, prPackage.branch, run.id);
+  await pushPublicationBranch(run, prPackage.headSha, base, prPackage.branch);
 
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
@@ -1595,6 +1612,8 @@ export async function publishCompletionPackage(
     if (!prNumber) {
       emit('substep', { name: 'create-pr', detail: `Creating draft PR on ${ciRepo}` });
       prNumber = await createPrFromApprovedPackage(run, ciRepo, publicationPackage);
+    } else {
+      await pushPublicationBranch(run, approvedPackage.headSha, baseBranch, approvedPackage.branch);
     }
     if (!prNumber) throw new Error('publication could not resolve or create a PR number');
     flags.prNumber = prNumber;
@@ -1702,6 +1721,8 @@ export async function publishCompletionPackage(
     const publicationStatus: PublicationStatus =
       target === 'ready' ? 'published_ready' : 'published_draft';
     flags.publicationStatus = publicationStatus;
+    await assertPublicationRemoteHead(run, approvedPackage.headSha, approvedPackage.branch);
+    flags.publishedHeadSha = approvedPackage.headSha;
     await recordRunPRPublication(runId, ciRepo, prNumber, {
       gate: {
         publicationTarget: target,

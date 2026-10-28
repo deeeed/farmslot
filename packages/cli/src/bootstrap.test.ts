@@ -32,12 +32,37 @@ async function startBootstrap(t: TestContext, args: string[]) {
   `;
   await writeFile(path.join(root, 'src/entry.ts'), entry('normal'));
   await writeFile(path.join(root, 'src/scripted-runner-entry.ts'), entry('scripted'));
-  const child = spawn(process.execPath, [path.join(root, 'bin/farmslot.mjs'), ...args], {
-    cwd: tmpdir(),
-    env: { ...process.env, TSX_TSCONFIG_PATH: 'missing-parent/tsconfig.json' },
-    stdio: 'pipe',
-    detached: true,
-  });
+  const cacheGuard = path.join(root, 'cache-guard.mjs');
+  await writeFile(
+    cacheGuard,
+    `
+    import fs from 'node:fs';
+    import { basename } from 'node:path';
+    import { syncBuiltinESMExports } from 'node:module';
+    const readDirectory = fs.readdirSync;
+    fs.readdirSync = (directory, ...options) => {
+      if (basename(String(directory)).startsWith('tsx-')) {
+        throw new Error('CLI startup scanned the shared TSX disk cache');
+      }
+      return readDirectory(directory, ...options);
+    };
+    syncBuiltinESMExports();
+  `,
+  );
+  const child = spawn(
+    process.execPath,
+    ['--import', cacheGuard, path.join(root, 'bin/farmslot.mjs'), ...args],
+    {
+      cwd: tmpdir(),
+      env: {
+        ...process.env,
+        TSX_TSCONFIG_PATH: 'missing-parent/tsconfig.json',
+        TSX_DISABLE_CACHE: '',
+      },
+      stdio: 'pipe',
+      detached: true,
+    },
+  );
   let output = '';
   let stderr = '';
   let runtimePid: number | undefined;

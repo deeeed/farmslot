@@ -22,13 +22,18 @@ shared rather than owned by the current operator.
 
 Discovery is a runner capability, queried on the gateway host:
 
-| Runner | Source                                                               |
-| ------ | -------------------------------------------------------------------- |
-| Cursor | `cursor-agent --list-models`, with a bounded timeout and output size |
-| Codex  | `.codex/models_cache.json` under the gateway user's home             |
-| Grok   | `.grok/models_cache.json` under the gateway user's home              |
-| Pi     | `.pi/agent/models-store.json` under the gateway user's home          |
-| Claude | No catalog source declared; the picker reports unsupported           |
+| Runner | Source                                                                                   |
+| ------ | ---------------------------------------------------------------------------------------- |
+| Cursor | `cursor-agent --list-models`, with a bounded timeout and output size                     |
+| Codex  | `.codex/models_cache.json` under the gateway user's home                                 |
+| Grok   | `.grok/models_cache.json` under the gateway user's home                                  |
+| Pi     | `.pi/agent/models-store.json` then `.pi/agent/models.json` under the gateway user's home |
+| Claude | No catalog source declared; the picker reports unsupported                               |
+
+Pi merges both files in order; configured models override matching built-ins.
+Either file may be absent or list no models. Without a store, discovery lists only
+configured models. An unreadable file or invalid JSON makes the catalog
+unavailable. Pi's line comments, trailing commas and BOM are supported.
 
 The Cursor catalog uses the gateway host's configured `cursor_path` when present,
 otherwise `cursor-agent` from its PATH. Remote slots can use a different binary;

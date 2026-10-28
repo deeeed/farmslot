@@ -786,6 +786,52 @@ test('refreshArtifactMirror retains selected screenshots and both referenced att
   assert.ok(existsSync(path.join(workerArtifacts, 'recipe-runs/second/screenshots/result.png')));
 });
 
+test('refreshArtifactMirror retains every indexed screenshot beyond the curated evidence selection', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-indexed-screenshots');
+  const root = 'recipe-runs/recorded';
+  const screenshots = Array.from({ length: 16 }, (_, i) => `screenshots/step-${i + 1}.png`);
+  await put(
+    `${root}/artifact-manifest.json`,
+    JSON.stringify({
+      version: 1,
+      artifacts: screenshots.map((file) => ({ type: 'screenshot', path: file })),
+    }),
+  );
+  await put(
+    'latest-valid-recipe-run.json',
+    JSON.stringify({
+      version: 1,
+      relativeArtifactRoot: root,
+    }),
+  );
+  await put(
+    'evidence-manifest.json',
+    JSON.stringify({
+      standalone: screenshots
+        .slice(0, 14)
+        .map((file) => ({ label: file, file: `${root}/${file}` })),
+    }),
+  );
+  await put(
+    `${root}/evidence-manifest.json`,
+    JSON.stringify({
+      standalone: screenshots.slice(0, 14).map((file) => ({ label: file, file })),
+    }),
+  );
+  for (const file of screenshots) await put(`${root}/${file}`, file);
+  await put(`${root}/screenshots/unindexed.png`, 'raw spool');
+
+  await refreshArtifactMirror(run);
+
+  for (const file of screenshots) {
+    assert.equal(await readFile(path.join(taskDir, 'artifacts', root, file), 'utf8'), file);
+  }
+  assert.equal(
+    existsSync(path.join(taskDir, 'artifacts', root, 'screenshots/unindexed.png')),
+    false,
+  );
+});
+
 test('refreshArtifactMirror keeps recipe packages whole by marker, within the depth bound', async (t) => {
   const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-packages');
   await put('recipe-run-1/artifact-manifest.json', '{"version":1,"artifacts":[]}\n');

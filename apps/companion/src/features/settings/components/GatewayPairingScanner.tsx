@@ -1,8 +1,9 @@
 import { type BarcodeScanningResult, CameraView } from 'expo-camera';
-import { ActivityIndicator, Modal, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { spacing } from '../../../lib/theme';
+import { QuickActionsModal as Modal } from '../../quick-actions/QuickActionsModal';
 import { pairingScannerStyles as styles } from '../styles/gateway-pairing-scanner.styles';
 
 export function GatewayPairingScanner({

@@ -22,6 +22,16 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Bind run report visual judgments to the pending output-review snapshot and block submissions when evidence, progress or review context changes.
 
+- Stop fleet recovery observations when its dialog closes; retain explicit release guards while background checks finish.
+
+- Add reversible criterion drafts and approval counts using the same gate model as Command Center.
+
+- Show saved fleet recovery rows immediately while current workspace inspection runs, retaining them on read errors.
+
+- Copy or share the current view’s Command Center link from one floating quick-action menu, with menu and long-press access to the existing voice recorder. Configure the web URL per gateway profile; Android builds now include Clipboard.
+
+- Show shared fleet workspace status, release-and-update actions, local-work confirmation and recovery progress.
+
 - Use the shared acceptance source and proof presentation, including pending instructions and exclusions, and preserve steering identities across retries. Text composers use guarded semantic delivery for both run-bound and bare-session targets.
 
 - Show shared CI-watch status and live poll/timeout countdowns as plain text on run cards and pipelines.

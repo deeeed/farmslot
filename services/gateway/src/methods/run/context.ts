@@ -73,6 +73,9 @@ export function resolveBoundTerminalRunForSlot(
 export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   const run = getRun(params.runId);
   if (!run) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
+  // The first paint must not wait for worker/source/evidence I/O. The ordinary
+  // read still reconciles current readiness; command handlers retain their guards.
+  if (params.view === 'snapshot') return { run };
   return { run: await presentRun(run), recoveryHints: runRecoveryHints(run) };
 }
 

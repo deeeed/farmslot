@@ -42,8 +42,6 @@ merge commit.
   ```
 
   Replace the example test path with explicit affected suites. Confirm every requested suite ran; do not invoke a glob as a single tsx script.
-  {{CI_PARITY_STEP}}
-
 - [ ] **7. Push** — publish the updated branch with an explicit lease against the recorded remote PR-head SHA. Record the exact push command used.
 - [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` recording: publication base, validation results, conflict resolution, exact push command and any remaining risks.
 - [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.

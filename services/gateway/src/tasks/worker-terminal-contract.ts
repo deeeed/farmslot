@@ -231,13 +231,14 @@ export async function validateTerminalSignalArtifacts(
       const contract = JSON.parse(
         await slotReadFile(vars, contractPath),
       ) as WorkerTerminalContractDocument;
-      if (contract.deterministicChecks?.length) {
+      const declaredChecks = requiredDeterministicChecks(contract);
+      if (declaredChecks.length) {
         return {
           ok: false,
           kind: 'infrastructure',
           message:
             `Artifact checker ${checker} returned ${resultLine ? 'an empty' : 'no'} deterministic-check projection, ` +
-            `but ${contractPath} declares ${contract.deterministicChecks.length} check(s). ` +
+            `but ${contractPath} declares ${declaredChecks.length} check(s). ` +
             'Verify the connected node runtime and the selected task/checklist contract; the CI receipts have not been verified.',
         };
       }
@@ -475,6 +476,14 @@ export function deterministicChecklistTaskFileForPublication(
   return fixes[0]?.taskFile ?? run.taskFile;
 }
 
+function requiredDeterministicChecks(
+  contract: WorkerTerminalContractDocument | null,
+): NonNullable<WorkerTerminalContractDocument['deterministicChecks']> {
+  return (
+    contract?.deterministicChecks?.filter((check) => check.reference !== 'ci.local_check') ?? []
+  );
+}
+
 /** Revalidate task-owned receipts on the selected checkout before publication. */
 export async function validateDeterministicChecksForRun(
   run: Run,
@@ -510,12 +519,13 @@ export async function validateDeterministicChecksForRun(
   };
   const content = await readTaskFile(input);
   const contract: WorkerTerminalContractDocument | null = content ? JSON.parse(content) : null;
-  if (!contract?.deterministicChecks?.length) {
-    for (const checklist of new Set([
-      'CHECKLIST.md',
-      'TASK.md',
-      ...(taskFile ? [path.basename(taskFile)] : []),
-    ])) {
+  const declaredChecks = requiredDeterministicChecks(contract);
+  if (!declaredChecks.length) {
+    const checklists =
+      checklist === 'REVIEW-FIX.md' || checklist === 'CI-FIX.md'
+        ? [checklist]
+        : ['CHECKLIST.md', 'TASK.md', ...(taskFile ? [path.basename(taskFile)] : [])];
+    for (const checklist of new Set(checklists)) {
       const markdown = (await readTaskFile(checklist)) ?? '';
       if (deterministicChecks.declarations(markdown, checklist).length) {
         throw new Error(
@@ -533,7 +543,7 @@ export async function validateDeterministicChecksForRun(
   // come from a verified parent; re-running the entire terminal contract here
   // would incorrectly demand a second task-bound acceptance ledger.
   const checker = await agentRuntimeScriptForSlot(vars, 'worker-terminal-contract.cjs');
-  const checklists = [...new Set(contract.deterministicChecks.map((check) => check.checklist))];
+  const checklists = [...new Set(declaredChecks.map((check) => check.checklist))];
   const evaluate = [
     'const {deterministicChecks}=require(process.argv[1]);',
     'const results=JSON.parse(process.argv[3]).map(c=>deterministicChecks.evaluate(process.argv[2],c));',
@@ -562,7 +572,7 @@ export async function validateDeterministicChecksForRun(
     !checks.length ||
     evaluated.some((item) => item.issues.length > 0) ||
     checks.some((check) => check.status !== 'passed') ||
-    contract.deterministicChecks.some(
+    declaredChecks.some(
       (expected) =>
         !checks.some(
           (check) =>
@@ -575,7 +585,7 @@ export async function validateDeterministicChecksForRun(
   ) {
     throw new Error(
       `Deterministic CI gate blocked: no verified receipts were returned for ${taskDir}/${input}, ` +
-        `which declares ${contract.deterministicChecks.length} check(s). Verify the selected task/checklist contract and rerun its CI mark step.`,
+        `which declares ${declaredChecks.length} check(s). Verify the selected task/checklist contract and rerun its CI mark step.`,
     );
   }
   return checks;

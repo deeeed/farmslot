@@ -18,8 +18,6 @@
   cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
   ```
 
-{{CI_PARITY_STEP}}
-
 - [ ] **8. Commit and push — REQUIRED before marking complete:**
   ```bash
   git status --porcelain   # must be empty after committing

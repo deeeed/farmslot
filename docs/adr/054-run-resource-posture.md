@@ -402,3 +402,76 @@ reuse may need to boot resources again; another live owner remains protected.
 No new CLI command, RPC, flag, SDK export or project field. Existing terminal
 transitions, slot cleanup outcomes and resource shutdown hooks carry the change.
 Clients and downstream harnesses consume the existing resource and slot contract.
+
+## Amendment: safe checkout return after settlement (2026-10-27)
+
+**Status:** Accepted. Lead approval on 2026-10-27; both independent amendment reviews approved proposal `7e7e6e19`. Implementation: PR #1515.
+
+### Decision
+
+A run reaching `done`, an explicit output close, or archive attempts to return its
+checkout to the configured idle branch through the existing safe release/reset
+path. The tree must be clean and work must be baseline, merged or verifiably
+pushed. Dirty, unpublished or unverified work stays intact with a visible reason;
+settled resource cleanup does not imply that the checkout was normalized.
+
+Publish-before-cleanup and existing owner, epoch, successor, native, recovery and
+capability guards remain authoritative. Retain run records, branch refs and
+recorded evidence. Cancellation still keeps the replay hold until reclamation,
+owner-bound release, delete or archive. Recoverable completion and result-decision
+holds are not automatic completion.
+
+For archive, Arthur's new instruction to preserve dirty/unpublished work replaces
+the 10-19/10-23 cancelled-archive force-reset rule. Cancelled delete and explicit
+owner-bound force release keep their current discard policy. Archive cleanup may
+stop its worker and clear its ownership while retaining its local work.
+
+Use the shared release-mode publication evidence and recovery eligibility,
+including dirt/local commits on the idle branch. Skip reset for active pinned
+warm, native or skip-prepare successors. A post-prepare replay must verify the
+recorded branch/HEAD; otherwise refuse and name prepare or earlier as its restart
+point. Archive alone does not authorize local-work discard.
+
+This replaces keep-work-only checkout retention for the named settlement paths;
+the existing resource-shutdown policy remains. Normal prepare owns fixtures.
+
+### Public surface
+
+Existing completion, output-close, archive and safe slot-release paths report
+reset or retention through current cleanup outcomes. No new command, RPC, SDK
+field, provider contract or harness operation. See
+[automatic safe reuse](../reference/recipe-runtime-capability-contract.md#automatic-safe-reuse).
+
+### Cold runtime on reuse, F169/F170 supplement (2026-10-27)
+
+Status: Accepted by the lead under the frozen #1515 scope, including companion Mobile and Extension pack hooks. Independent supplement delta review precedes implementation.
+
+After safe reset and fixture sync, every fresh worker launch health-checks the
+slot-configured managed runtime, including replay and skip-prepare fallback when
+the prepare profile omitted health. The gate covers controllable dev-server,
+browser and device resources with both health and boot hooks. Missing-hook and
+attached resources retain their existing policy. Delivery to a retained worker
+or a nudge does not boot resources.
+
+Run idempotent pack boot hooks only for stopped resources, dev server first,
+then browser or simulator, and verify health before launch. Reuse healthy
+resources without restart. Error, unknown or unavailable observations refuse
+launch, as do failed boots. Boot only after the slot claim, under dispatch
+pressure admission, passing the run ID for resource ownership. Preserve owner,
+successor, device, source and cancellation fences. Mobile and Extension companion
+packs supply their missing boot hooks through existing harness launch commands.
+
+This is part of normal dispatch, not a recurring or scheduled canary. Capability
+health reads and release remain read-only. No new daemon or pipeline enum.
+
+Captured source bindings retain priority for reopen/boot fixture paths. Otherwise,
+remote slots use their pool-env `FARMSLOT_WORKSPACE` before the legacy remote
+deployment default. Read no gateway process override. The configured deployment
+root has `projects/` directly beneath it. Local slots retain repo-root resolution.
+The private slot-config helper requires matching CLI rollout after merge.
+
+Use targeted regressions before merge. As the lead directs, after #1515 lands
+and matching source is live, run one disposable proof per Extension, Mobile and
+Terminal project, including cold runtime health/boot and configured-root reopen.
+Preserve other sessions/resources and clean only proof-owned resources. No
+recurring/scheduled smoke infrastructure or additional pre-merge canary runs.

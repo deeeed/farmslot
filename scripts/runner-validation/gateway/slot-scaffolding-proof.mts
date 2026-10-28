@@ -164,6 +164,7 @@ writeFileSync(
     hooks: {},
   }),
 );
+await import(path.join(code, 'services/gateway/src/projects/gateway-status-process.ts'));
 const store = await import(path.join(code, 'services/gateway/src/runs/store.ts'));
 const run = store.createRun({
   flowType: 'dev',

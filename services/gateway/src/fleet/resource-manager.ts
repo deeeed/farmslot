@@ -1340,7 +1340,10 @@ export async function reconcileFailedDeviceControl(input: {
 export function resourceControlTimeoutMs(
   resourceType: string,
   action: ResourceControlAction,
+  bootTimeoutMs = 0,
 ): number {
+  if (action === 'boot' && Number.isFinite(bootTimeoutMs) && bootTimeoutMs > 0)
+    return Math.max(resourceType === 'device' ? 120_000 : 30_000, bootTimeoutMs);
   return resourceType === 'device' && action === 'boot' ? 120_000 : 30_000;
 }
 
@@ -1348,6 +1351,10 @@ interface ResourceControlResult {
   ok: boolean;
   detail?: string;
   providerProcesses?: RuntimeCapabilityLease['providerProcesses'];
+}
+
+interface ResourceControlOptions {
+  bootTimeoutMs: number;
 }
 
 /** Execute a control hook and immediately re-poll the slot's resources. */
@@ -1363,10 +1370,11 @@ export async function executeResourceControl(
    */
   extraVars?: Record<string, string>,
   ownerRunId?: string,
+  options?: ResourceControlOptions,
 ): Promise<ResourceControlResult> {
   const { withSlotSources } = await import('../sources/runtime.js');
   return withSlotSources(slotId, () =>
-    executeResourceControlWithSources(slotId, resourceId, action, extraVars, ownerRunId),
+    executeResourceControlWithSources(slotId, resourceId, action, extraVars, ownerRunId, options),
   );
 }
 
@@ -1376,6 +1384,7 @@ async function executeResourceControlWithSources(
   action: ResourceControlAction,
   extraVars?: Record<string, string>,
   ownerRunId?: string,
+  options?: ResourceControlOptions,
 ): Promise<ResourceControlResult> {
   const { pool, slot } = await resolveSlot(slotId);
   if (!isSlotResourceConfigured(slot.resources, resourceId)) {
@@ -1397,7 +1406,7 @@ async function executeResourceControlWithSources(
   }
 
   const expanded = expandTemplate(hookCmd, slotVars, projectVars, extraVars);
-  const timeoutMs = resourceControlTimeoutMs(resourceDef.type, action);
+  const timeoutMs = resourceControlTimeoutMs(resourceDef.type, action, options?.bootTimeoutMs);
 
   // Check for unresolved required variables after expansion
   if (hasUnresolvedPlaceholders(expanded)) {
@@ -1444,15 +1453,13 @@ async function executeResourceControlWithSources(
       return { ok: false, detail: `No node connected for ${machine}` };
     }
     try {
-      const startedAt = Date.now();
       const command = withProjectMachineEnv(expanded, slotVars, projectJson, projectVars);
       const cmd = await resolveRemoteFarmCommand(slotVars, command, { budgetMs: timeoutMs });
-      const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
       const execResult = (await sendNodeRequest(
         node,
         'exec',
-        { cmd, cwd: slotVars.repo, timeout: remainingMs },
-        { timeout: remainingMs + 10_000 },
+        { cmd, cwd: slotVars.repo, timeout: timeoutMs },
+        { timeout: timeoutMs + 10_000 },
       )) as { stdout: string; stderr: string; exitCode: number };
       if (execResult.exitCode === 0) {
         result = { ok: true, detail: execResult.stdout?.trim() || undefined };

@@ -26,6 +26,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Register memory-only PR automation, assessment, analytics and shared copilot observations with canonical selectors and scoped change dependencies.
 
+- Allow a stored run snapshot for progressive display without verifying live action readiness, and keep workspace inspections fresh through slow fleet reads with a shared two-minute bound.
+
+- Allow combined findings approval and evidence attestation when every review reason explicitly permits accepting findings.
+
+- Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
+
+- Expose slot workspace publication, ownership and recovery identity with shared eligibility for guarded fleet release and update.
+
 - Expose current CI-watch progress and total deadlines so clients use the monitor’s configured windows.
 
 - Expose checklist timing in task progress and per-step worker durations in monthly analytics.
@@ -43,6 +51,18 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Add the opt-in node file-watch observation contract for explicit deletion and read failures, retaining the existing content-event shape for coordinated node and gateway upgrades.
 
 - Add the experimental ADR-071 resource query cache and store seam, persisted Sources/run/decision/fleet/node/capability/progress observations with shared retention bounds, bounded native history with mobile-compatible cancellation and reader-private native keys, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases. Accepted observations remain saved when a connection pauses or a view closes. Automatic refetches respect declared family publish intervals even across slow replies; deferred reads retire with their observers and connection. Saved facts hydrate through offline reconnect attempts, while authority changes fence pending storage reads. Fleet observations share one 2 MB query and leave force-refresh commands outside the cache. Read errors survive disconnects, and saved-data refreshes retain the last failure until a successful replacement arrives. A source change during a failed read schedules one replacement read; authority and not-found refusals remain final. Register bounded backlog, roadmap, work-graph, dispatch-queue and project collections with canonical planning/configuration keys. Project configuration persists within one aggregate 2 MiB bound; previews and registration metadata stay in memory, and commands stay outside cached queries.
+
+## 0.73.1 - 2026-10-26
+
+- Remove the local CI-parity worker step and its completion receipt requirement.
+
+## 0.73.0 - 2026-10-26
+
+- Expose slot workspace publication, ownership and recovery identity with shared eligibility for guarded fleet release and update.
+
+## 0.72.0 - 2026-10-25
+
+- Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
 
 ## 0.71.1 - 2026-10-26
 

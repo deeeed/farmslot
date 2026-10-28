@@ -1,9 +1,5 @@
 import { enumerateChecklistCheckboxes } from '../checklist-target.js';
 
-/** One shared part for every PR-producing worker template. */
-const CI_PARITY_PART =
-  '- [ ] **CI parity** [DETERMINISTIC: ci.local_check]. Run `{{TASK_DIR}}/mark N` for this step. Mark reuses a valid passing receipt for unchanged inputs or runs the configured check. Failure blocks completion.';
-
 /**
  * `{{NAME}}` placeholder guard shared by every template renderer (task writer,
  * agent-runtime task init, prompt templates). Pure string functions: no slot or
@@ -51,25 +47,13 @@ export function renderTemplatePlaceholders(
   source = 'template',
 ): string {
   const hasParityPart = template.includes('{{CI_PARITY_STEP}}');
-  let content = hasParityPart
-    ? template.replace(
-        /^[ \t]*\{\{CI_PARITY_STEP\}\}|\{\{CI_PARITY_STEP\}\}/gm,
-        vars['ci.local_check']?.trim() ? CI_PARITY_PART : '',
-      )
-    : template;
+  let content = template.replace(/^[ \t]*\{\{CI_PARITY_STEP\}\}|\{\{CI_PARITY_STEP\}\}/gm, '');
   assertNoUnknownPlaceholders(content, Object.keys(vars), source);
   content = content.replace(PLACEHOLDER_TOKEN_RE, (token) => vars[token.slice(2, -2)]);
-  if (hasParityPart && vars['ci.local_check']?.trim()) {
+  if (hasParityPart) {
     const lines = content.split('\n');
     for (const item of enumerateChecklistCheckboxes(content)) {
-      const label = item.rawLabel.startsWith('**CI parity**')
-        ? item.rawLabel
-            .replace('**CI parity**', `**${item.stepNumber}. CI parity**`)
-            .replace(
-              '/mark N',
-              `/mark${vars.CI_PARITY_CHECKLIST ? ` --checklist ${vars.CI_PARITY_CHECKLIST}` : ''} ${item.stepNumber}`,
-            )
-        : item.rawLabel.replace(/^(\*{0,2})\d+[.)]\s/, `$1${item.stepNumber}. `);
+      const label = item.rawLabel.replace(/^(\*{0,2})\d+[.)]\s/, `$1${item.stepNumber}. `);
       lines[item.lineIndex] = lines[item.lineIndex].replace(item.rawLabel, label);
     }
     content = lines.join('\n');

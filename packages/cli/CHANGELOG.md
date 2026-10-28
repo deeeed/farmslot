@@ -4,6 +4,12 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Use in-memory CLI transforms so a large shared disk cache does not consume hosted task initialization budgets.
+
+- Preserve gateway-authored acceptance version and claim-review support during hosted task initialization while still checking the node's configured terminal policy.
+
+- Treat slots without declared fixtures as current in fleet summaries.
+
 - Require explicit --attest-evidence consent when accepting review findings together with evidence-policy gaps.
 
 - `farmslot run gate --action request-review` continues the runner's latest available review WARM and refuses an unavailable retained session unless `--review-mode cold` is given. Review history shows the reason and compared ranges for earlier delta-scoped fallbacks.

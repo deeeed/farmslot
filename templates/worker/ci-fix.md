@@ -69,8 +69,6 @@ STATUS: pending
 
 ### Commit & Reply (steps 7-8)
 
-{{CI_PARITY_STEP}}
-
 - [ ] **7. Commit and push:**
   ```bash
   cd {{REPO}}

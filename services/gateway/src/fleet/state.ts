@@ -280,6 +280,8 @@ function normalizePublicationReview(
 }
 
 let cachedFleet: FleetStatus | null = null;
+// A workspace overlay is bound to its row's recovery owner, which slot rows do not carry.
+const workspaceRecoveryIds = new WeakMap<FleetStatus, ReadonlyMap<string, string | null>>();
 let fleetReadVersion = 0;
 onStatusCommit((snapshot) => {
   cachedFleet = null;
@@ -348,6 +350,10 @@ export function clearPrHealthOverlay(slotId: string): void {
 // ─── Branch overlay (enriched by branch-watcher, not persisted to disk) ───
 
 const branchOverlayCache = new Map<string, string>();
+const workspaceOverlayCache = new Map<string, NonNullable<SlotStatus['workspace']>>();
+export function setWorkspaceOverlay(slotId: string, workspace: SlotStatus['workspace']): void {
+  setSlotOverlay(workspaceOverlayCache, slotId, workspace ?? undefined);
+}
 
 export function setBranchOverlay(slotId: string, branch: string): void {
   setSlotOverlay(branchOverlayCache, slotId, branch);
@@ -365,6 +371,11 @@ export function clearBranchOverlay(slotId: string): void {
 // newer fields. Optionality here reflects that honestly so transformSlot's
 // defaults are compiler-enforced instead of hidden behind casts.
 interface RawSlot {
+  workspace_error?: string | null;
+  slot_epoch?: number;
+  cleanup_run_id?: string | null;
+  handoff_run_id?: string | null;
+  workspace_recovery?: { id: string } | null;
   slot: string;
   machine?: string;
   platform?: string;
@@ -485,6 +496,7 @@ function transformSlot(raw: RawSlot): SlotStatus {
   }
   return {
     slot: raw.slot,
+    ...(raw.workspace_error ? { workspaceError: raw.workspace_error } : {}),
     machine: raw.machine ?? '',
     platform: raw.platform ?? '',
     project: raw.project ?? '',
@@ -505,6 +517,9 @@ function transformSlot(raw: RawSlot): SlotStatus {
     taskId: raw.task_id ?? null,
     taskFile: raw.task_file ?? null,
     currentRunId: raw.current_run_id ?? null,
+    slotEpoch: Number(raw.slot_epoch) || 0,
+    cleanupRunId: raw.cleanup_run_id ?? null,
+    handoffRunId: raw.handoff_run_id ?? null,
     ...(raw.held_reason ? { heldReason: raw.held_reason } : {}),
     currentFlowType: raw.current_flow_type ?? null,
     currentTicketOrPr: raw.current_ticket_or_pr ?? null,
@@ -594,8 +609,25 @@ function computeResourceRollup(slot: SlotStatus): ResourceRollup {
 }
 
 function withFleetOverlays(fleet: FleetStatus): FleetStatus {
+  const recoveryIds = workspaceRecoveryIds.get(fleet);
   const slots = fleet.slots.map((base) => {
     const slot = { ...base };
+    const workspace = workspaceOverlayCache.get(slot.slot);
+    if (
+      workspace &&
+      (!slot.workspace ||
+        Date.parse(workspace.observedAt) > Date.parse(slot.workspace.observedAt)) &&
+      Date.now() - Date.parse(workspace.observedAt) < 30_000 &&
+      workspace.branch === slot.branch &&
+      workspace.epoch === (slot.slotEpoch ?? 0) &&
+      workspace.currentRunId === slot.currentRunId &&
+      workspace.cleanupRunId === (slot.cleanupRunId ?? null) &&
+      workspace.handoffRunId === (slot.handoffRunId ?? null) &&
+      workspace.recoveryId === (recoveryIds?.get(slot.slot) ?? null) &&
+      (!slot.headSha || slot.headSha === workspace.headSha)
+    )
+      slot.workspace = workspace;
+
     const overlay = taskProgressCache.get(slot.slot);
     if (overlay) {
       slot.taskPhase = overlay.taskPhase;
@@ -657,6 +689,12 @@ export async function loadFleetStatus(
       (await loadPoolConfigs()).flatMap((pool) => pool.slots.map((slot) => slot.id)),
     );
     next = markGhostSlots(transformFleet(raw), liveIds);
+    workspaceRecoveryIds.set(
+      next,
+      new Map(
+        raw.slots.map((s): [string, string | null] => [s.slot, s.workspace_recovery?.id ?? null]),
+      ),
+    );
     if (version === fleetReadVersion) {
       cachedFleet = next;
       slotResources.observe(resources, statusCheckedAt(raw));

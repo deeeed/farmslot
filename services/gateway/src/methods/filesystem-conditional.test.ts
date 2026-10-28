@@ -114,9 +114,20 @@ async function slotFixture(t: TestContext, host: string, machine: string): Promi
   return { slotId, repoDir };
 }
 
+const restoredStatus = new WeakSet<TestContext>();
+
 /** The slot's claim row in the status file, restored after the test. */
 async function claimSlot(t: TestContext, slotId: string, runId: string | null) {
   const prior = await readFile(statusFile, 'utf8').catch(() => null);
+  // Restore the status file as it was before the test's first claim. After hooks run in
+  // registration order, so one per claim would end on a later claim's rows.
+  if (!restoredStatus.has(t)) {
+    restoredStatus.add(t);
+    t.after(async () => {
+      if (prior == null) await rm(statusFile, { force: true });
+      else await writeFile(statusFile, prior);
+    });
+  }
   const data = prior ? JSON.parse(prior) : { slots: [] };
   const others = (data.slots ?? []).filter((row: { slot: string }) => row.slot !== slotId);
   await mkdir(path.dirname(statusFile), { recursive: true });
@@ -130,10 +141,6 @@ async function claimSlot(t: TestContext, slotId: string, runId: string | null) {
       ],
     })}\n`,
   );
-  t.after(async () => {
-    if (prior == null) await rm(statusFile, { force: true });
-    else await writeFile(statusFile, prior);
-  });
 }
 
 async function refused(promise: Promise<unknown>, details: FsConflictDetails) {

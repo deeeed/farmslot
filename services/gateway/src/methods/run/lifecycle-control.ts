@@ -376,13 +376,59 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
   let blocker: string | null = workerBlocker;
   const { readSlotRow } = await import('../../core/index.js');
   let fence = { before: await readSlotRow(slotId) };
+  let checkoutHasLocalWork = false;
   try {
     await releaseRunOwnedCapabilities(run);
     const runtimeBlocker = await shutdownRunSlotResources(run);
     blocker = await recordSlotTeardownBlocker(run, workerBlocker ?? runtimeBlocker);
+    if (!blocker && run.status === 'done') {
+      const before = await readSlotRow(slotId);
+      const { ownsRunSlotCleanup, updateSlotStatusIf } = await import('../../core/index.js');
+      const { reuseSafeIdleSlot } = await import('../../run-lifecycle/safe-idle-slot.js');
+      // Worker/resource shutdown is confirmed; keep the named owner through safe recovery.
+      const idle = await updateSlotStatusIf(
+        slotId,
+        (row) =>
+          ownsRunSlotCleanup(row, run.id) &&
+          row.slot_epoch === before?.slot_epoch &&
+          row.phase !== 'releasing' &&
+          !row.cleanup_run_id &&
+          !row.handoff_run_id,
+        { agent: 'idle' },
+      );
+      if (idle) {
+        const result = await reuseSafeIdleSlot(
+          slotId,
+          (await import('../../server.js')).broadcastEvent,
+          {
+            epoch: Number(before?.slot_epoch) || 0,
+            runId: run.id,
+            recordRunId: run.id,
+          },
+        );
+        if (result.kind === 'ready') return { released: true };
+        checkoutHasLocalWork = result.kind === 'local-work';
+        const { recordSlotTeardownSkipped } = await import('../../run-lifecycle/slot-teardown.js');
+        await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
+        if ((await readSlotRow(slotId))?.workspace_recovery)
+          return { released: false, skipped: result.reason };
+      }
+    }
     fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');
     const released = await releaseRunSlotOwnership(run, fence, blocker);
+    if (released && run.status === 'done' && !checkoutHasLocalWork) {
+      const { reuseSafeIdleSlot } = await import('../../run-lifecycle/safe-idle-slot.js');
+      const result = await reuseSafeIdleSlot(slotId, broadcastEvent, {
+        epoch: Number(fence.before?.slot_epoch) || 0,
+        runId: null,
+        recordRunId: run.id,
+      });
+      if (result.kind !== 'ready') {
+        const { recordSlotTeardownSkipped } = await import('../../run-lifecycle/slot-teardown.js');
+        await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
+      }
+    }
     const { loadFleetStatus } = await import('../../fleet/state.js');
     broadcastEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
     return { released, ...(blocker ? { skipped: `Workspace cleanup deferred: ${blocker}` } : {}) };

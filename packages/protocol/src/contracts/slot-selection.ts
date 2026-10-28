@@ -77,7 +77,7 @@ export function slotSelectionScore(slot: SlotStatus): number {
   if (!cdpLive(slot)) score += 100;
   if (!slot.warm) score += 10;
   if (!slot.health.device.endsWith(':OK')) score += 5;
-  if (slot.health.fixtures !== 'OK') score += 1;
+  if (!['OK', 'not-required'].includes(slot.health.fixtures)) score += 1;
   return score;
 }
 

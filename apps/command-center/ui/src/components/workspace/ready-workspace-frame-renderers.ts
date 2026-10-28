@@ -155,7 +155,7 @@ function renderReadyRecoveryOverlay(input: ReadyWorkspaceFrameInput) {
   const blocked = input.recoveryPhase === 'error';
 
   return html`
-    <div class="rdy-recovery-overlay" role="status" aria-live="polite">
+    <div class="rdy-recovery-status" role="status" aria-live="polite">
       <div class="rdy-recovery-card">
         <div class="rdy-recovery-eyebrow">
           ${blocked ? 'Recovery blocked' : 'Recovering ready workspace'}

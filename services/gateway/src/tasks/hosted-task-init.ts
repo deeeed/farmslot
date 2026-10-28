@@ -36,6 +36,10 @@ const producedTaskFiles = [
   'artifacts/harness-provenance.json',
 ] as const;
 
+// Three loaded-node samples reached 265s retaining installed CLI/provider inputs.
+// Round twice that sample p95 up to ten minutes; partial initialization is never retried.
+const HOSTED_TASK_INIT_TIMEOUT_MS = 10 * 60_000;
+
 export interface HostedTaskInput {
   binding: 'project' | 'static';
   task: Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'>;
@@ -90,7 +94,7 @@ export async function initializeHostedTaskOnSlot(
     ]);
     const command = await hostedTaskCommand(slot, ['internal', 'task-init', requestPath]);
     const result = await execOnSlot(slot, command, {
-      timeout: 120_000,
+      timeout: HOSTED_TASK_INIT_TIMEOUT_MS,
       maxBuffer: 8 * 1024 * 1024,
       noRetry: true,
     });

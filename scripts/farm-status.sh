@@ -72,7 +72,7 @@ for s in data.get('slots', []):
         if s.get('lifecycle') in ('released',) or (ssh_ok and s.get('agent') != 'working' and not s.get('dispatchable')):
             print(s['slot'])
     elif '${ACTION}' == 'sync':
-        if ssh_ok and s.get('fixtures') not in ('OK', '-'):
+        if ssh_ok and s.get('fixtures') not in ('OK', '-', 'not-required'):
             print(s['slot'])
     elif '${ACTION}' == 'recycle':
         if mode == 'custom': continue

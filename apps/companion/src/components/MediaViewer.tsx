@@ -2,7 +2,6 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -27,14 +26,16 @@ import {
   formatEvidenceReviewVideoTime,
   loadRecordingEvidenceReview,
 } from '@farmslot/adapter-sdk/evidence';
+import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
 
+import { QuickActionsModal as Modal } from '../features/quick-actions/QuickActionsModal';
 import {
   type ArtifactHttpHeaders,
   type ArtifactMediaType,
   artifactSource,
   classifyArtifact,
 } from '../lib/artifact-url';
-import { evidenceRecordingForPath } from '../lib/evidence-media-items';
+import { evidenceRecordingForPath, mediaShareView } from '../lib/evidence-media-items';
 import { gatewayFetch } from '../lib/gateway-http-auth';
 import {
   TEXT_PREVIEW_MAX_BYTES,
@@ -43,6 +44,7 @@ import {
   textPreviewTotalBytes,
 } from '../lib/text-preview';
 import { colors, fonts } from '../lib/theme';
+import { videoSourceLoadDurationMs } from '../lib/video-source-load';
 
 import { ArtifactImage } from './ArtifactImage';
 
@@ -60,6 +62,7 @@ export interface MediaViewerItem {
   resolveArtifactUrl?: (path: string) => string;
   evidenceModel?: EvidenceReviewModel;
   initialTraceIndex?: number;
+  sharedArtifact?: SharedRunArtifactSelection;
 }
 
 interface MediaViewerProps {
@@ -112,6 +115,13 @@ export function MediaViewer({
   );
   const [currentIndex, setCurrentIndex] = useState(clampedInitialIndex);
   const [zoomedUri, setZoomedUri] = useState<string | null>(null);
+  const [changedVideoItems, setChangedVideoItems] = useState<ReadonlySet<string>>(() => new Set());
+  const markVideoSelectionChanged = useCallback((uri: string) => {
+    setChangedVideoItems((previous) => (previous.has(uri) ? previous : new Set(previous).add(uri)));
+  }, []);
+  useEffect(() => {
+    if (!visible) setChangedVideoItems(new Set());
+  }, [visible]);
 
   useEffect(() => {
     if (!visible || viewerItems.length === 0) return;
@@ -135,7 +145,16 @@ export function MediaViewer({
   const mediaHeight = Math.max(180, height - topInset - bottomInset - 140);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      sharedView={mediaShareView(
+        current?.sharedArtifact,
+        Boolean(current && changedVideoItems.has(current.uri)),
+      )}
+    >
       <GestureHandlerRootView style={styles.modalRoot}>
         <SafeAreaView style={styles.backdrop} testID={testID}>
           <ScrollView
@@ -158,6 +177,7 @@ export function MediaViewer({
                   height={mediaHeight}
                   panEnabled={zoomedUri === item.uri}
                   onZoomChange={(zoomed) => setZoomedUri(zoomed ? item.uri : null)}
+                  onViewSelectionChange={markVideoSelectionChanged}
                 />
               </View>
             ))}
@@ -165,7 +185,7 @@ export function MediaViewer({
           <View style={[styles.captionBar, { top: topInset + 12 }]} pointerEvents="box-none">
             <Text
               style={styles.captionText}
-              numberOfLines={1}
+              numberOfLines={current?.evidenceModel?.selection?.claimId ? undefined : 1}
               testID={testID ? `${testID}-title` : undefined}
             >
               {current?.title ?? 'Evidence'}
@@ -224,6 +244,7 @@ function MediaSlide({
   height,
   panEnabled,
   onZoomChange,
+  onViewSelectionChange,
 }: {
   isActive: boolean;
   item: MediaViewerItem;
@@ -231,6 +252,7 @@ function MediaSlide({
   height: number;
   panEnabled?: boolean;
   onZoomChange?: (zoomed: boolean) => void;
+  onViewSelectionChange: (uri: string) => void;
 }) {
   const mediaType = item.mediaType ?? classifyArtifact(item.title ?? item.uri);
   if (mediaType === 'document') {
@@ -246,7 +268,14 @@ function MediaSlide({
   }
   if (mediaType === 'video') {
     if (!isActive) return <View style={[styles.media, { width, height }]} />;
-    return <FullscreenVideo item={item} width={width} height={height} />;
+    return (
+      <FullscreenVideo
+        item={item}
+        width={width}
+        height={height}
+        onViewSelectionChange={onViewSelectionChange}
+      />
+    );
   }
   return (
     <ZoomableImage
@@ -395,10 +424,12 @@ function FullscreenVideo({
   item,
   width,
   height,
+  onViewSelectionChange,
 }: {
   item: MediaViewerItem;
   width: number;
   height: number;
+  onViewSelectionChange: (uri: string) => void;
 }) {
   const [model, setModel] = useState<EvidenceReviewModel | null>(item.evidenceModel ?? null);
   const [openGroups, setOpenGroups] = useState<ReadonlyMap<string, boolean>>(() => new Map());
@@ -478,6 +509,7 @@ function FullscreenVideo({
   const applyPlayback = useCallback(
     (effect: EvidenceReviewPlaybackEffect) => {
       if (effect.sourceChanged && effect.clip && effect.clip.videoPath !== videoPath) {
+        onViewSelectionChange(item.uri);
         if (!item.resolveArtifactUrl || !model) {
           setError('The recording source has no artifact URL resolver.');
           player.pause();
@@ -495,7 +527,7 @@ function FullscreenVideo({
       if (effect.seekMs !== null && player.status === 'readyToPlay')
         player.currentTime = effect.seekMs / 1000;
     },
-    [item.resolveArtifactUrl, model, player, videoPath],
+    [item.resolveArtifactUrl, item.uri, model, onViewSelectionChange, player, videoPath],
   );
 
   useEffect(() => {
@@ -517,16 +549,24 @@ function FullscreenVideo({
         player.play();
       }
     };
-    if (player.status === 'readyToPlay') {
+    let sourceReady = false;
+    const syncReady = () => {
+      if (!active || player.status !== 'readyToPlay') return;
       setDurationMs(player.duration * 1000);
+      // Buffering can return to ready without restarting the selected clip.
+      if (sourceReady) return;
+      sourceReady = true;
       cue();
-    }
-    const ready = player.addListener('sourceLoad', ({ videoSource }) => {
-      if (typeof videoSource === 'object' && videoSource?.uri === uri) {
-        setDurationMs(player.duration * 1000);
-        cue();
+    };
+    syncReady();
+    const ready = player.addListener('sourceLoad', (event) => {
+      const loadedDurationMs = videoSourceLoadDurationMs(source.uri, event);
+      if (active && loadedDurationMs !== null) {
+        setDurationMs(loadedDurationMs);
+        syncReady();
       }
     });
+    const status = player.addListener('statusChange', syncReady);
     const ended = player.addListener('playToEnd', () => {
       if (!active || !model || !videoPath) return;
       const effect = model.playbackAt(videoPath, player.currentTime * 1000, player.duration * 1000);
@@ -540,19 +580,22 @@ function FullscreenVideo({
     return () => {
       active = false;
       ready.remove();
+      status.remove();
       ended.remove();
       updates.remove();
     };
-  }, [applyPlayback, model, player, uri, videoPath]);
+  }, [applyPlayback, model, player, source.uri, uri, videoPath]);
 
   const timeline = model?.recordings.find((recording) => recording.videoPath === videoPath);
   const groups = model?.timelineGroups(videoPath, undefined, durationMs) ?? [];
   return (
     <View style={[styles.media, { width, height }]}>
       <VideoView
+        testID="companion-evidence-video"
         player={player}
         style={[styles.media, { width, height }]}
         nativeControls
+        surfaceType={Platform.OS === 'android' ? 'textureView' : undefined}
         fullscreenOptions={{ enable: true }}
         allowsPictureInPicture={false}
         contentFit="contain"
@@ -566,7 +609,11 @@ function FullscreenVideo({
           <Text style={styles.detailText}>{model.selection.message}</Text>
         ) : null}
         {timeline ? (
-          <ScrollView horizontal contentContainerStyle={{ gap: 8, alignItems: 'flex-start' }}>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            contentContainerStyle={{ gap: 8, alignItems: 'flex-start' }}
+          >
             {groups.map((group) => {
               const expanded = openGroups.get(group.id) ?? group.defaultOpen;
               return (
@@ -579,6 +626,7 @@ function FullscreenVideo({
                       if (!model) return;
                       const effect = model.selectTimelineGroup(videoPath, group.id, durationMs);
                       if (effect.seekMs === null) return;
+                      onViewSelectionChange(item.uri);
                       resumePlayback.current = true;
                       applyPlayback(effect);
                       updateSelection((value) => value + 1);
@@ -642,6 +690,7 @@ function FullscreenVideo({
                                   })
                                 )
                                   return;
+                                onViewSelectionChange(item.uri);
                                 resumePlayback.current = true;
                                 applyPlayback(model.cueClip(0));
                                 updateSelection((value) => value + 1);

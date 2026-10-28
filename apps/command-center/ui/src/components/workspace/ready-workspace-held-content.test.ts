@@ -14,6 +14,7 @@ import {
   type ResourceCacheConnection,
   type ResourceStore,
 } from '@farmslot/protocol/client-cache';
+import { CriterionDraftModel } from '@farmslot/review-dispatch';
 
 import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
@@ -157,6 +158,8 @@ function openCache(t: import('node:test').TestContext) {
 function makePresenter(): Presenter {
   const view = Object.create(ReadyWorkspaceActionPresenter.prototype) as Presenter;
   Object.assign(view, {
+    // Field initializers do not run on a prototype-built view; willUpdate scopes criterion drafts.
+    _criterionDrafts: new CriterionDraftModel({ getItem: () => null, setItem: () => undefined }),
     requestUpdate: () => undefined,
     _syncViewStateToHash: () => undefined,
     runId: 'gate-run',

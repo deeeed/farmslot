@@ -1248,6 +1248,7 @@ export default function FamilyWorkspaceScreen() {
         />
         <DocumentViewer
           visible={!!documentViewer}
+          sharedArtifact={documentViewer?.sharedArtifact}
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
           onClose={() => setDocumentViewer(null)}

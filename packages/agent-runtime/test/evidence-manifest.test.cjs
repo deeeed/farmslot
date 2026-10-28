@@ -133,3 +133,46 @@ test('artifact checker reports the same manifest issues without crashing on malf
   assert.match(result.stderr, /manifest.standalone: expected array/);
   assert.doesNotMatch(result.stderr, /TypeError/);
 });
+
+function selectedMediaFixture(t) {
+  const missing = 'recipe-runs/proof-2/videos/recipe-run.mp4';
+  const { dir, run } = fixture(t, { version: 1, videos: { after: missing } });
+  fs.writeFileSync(path.join(dir, 'artifacts/pr-description.md'), '# Fixture proof\n');
+  fs.writeFileSync(path.join(dir, 'artifacts/learnings.md'), 'Retain declared evidence.\n');
+  fs.writeFileSync(
+    path.join(dir, 'inputs/handoff.json'),
+    JSON.stringify({ task: { acceptanceCriteria: [] } }),
+  );
+  const selected = path.join(dir, 'artifacts/recipe-runs/proof-2');
+  fs.mkdirSync(selected, { recursive: true });
+  fs.writeFileSync(path.join(selected, 'evidence-manifest.json'), '{"version":1}');
+  fs.writeFileSync(
+    path.join(dir, 'artifacts/latest-valid-recipe-run.json'),
+    JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/proof-2' }),
+  );
+  return { dir, run, selected };
+}
+
+test('completion refuses a missing root media reference despite a valid selected manifest', (t) => {
+  const { dir, run } = selectedMediaFixture(t);
+  const before = snapshot(dir);
+  const refused = run('complete', '--mark-last');
+  assert.notEqual(refused.status, 0, 'The selected manifest cannot hide a missing root reference');
+  assert.match(
+    refused.stderr,
+    /evidence-manifest references missing artifact: artifacts\/recipe-runs\/proof-2\/videos\/recipe-run\.mp4/,
+  );
+  assert.deepEqual(snapshot(dir), before);
+});
+
+test('completion accepts the root media reference once its recorded file exists', (t) => {
+  const { dir, run, selected } = selectedMediaFixture(t);
+  fs.mkdirSync(path.join(selected, 'videos'));
+  fs.writeFileSync(path.join(selected, 'videos/recipe-run.mp4'), 'fixture media');
+  const completed = run('complete', '--mark-last');
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status,
+    'complete',
+  );
+});

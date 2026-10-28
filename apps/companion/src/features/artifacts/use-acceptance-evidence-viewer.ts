@@ -75,8 +75,24 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
         path: item.path,
         evidenceModel: acceptance.evidenceModel ?? undefined,
         resolveArtifactUrl,
+        sharedArtifact: {
+          runId,
+          path: item.path,
+          slotId: run?.slotId ?? undefined,
+          recipeRunId: acceptance.recipeRunId ?? undefined,
+          criterionId,
+        },
       })),
-    [acceptance.evidenceModel, authHeaders, resolveArtifactUrl, viewer],
+    [
+      acceptance.evidenceModel,
+      acceptance.recipeRunId,
+      authHeaders,
+      criterionId,
+      resolveArtifactUrl,
+      run?.slotId,
+      runId,
+      viewer,
+    ],
   );
 
   const error = !active

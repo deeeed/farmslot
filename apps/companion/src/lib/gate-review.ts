@@ -250,7 +250,8 @@ export function approvePublishGuard(input: ApprovePublishGuardInput): ApprovePub
 
 /**
  * The decision's own actions with the publish approvals the guard withholds.
- * Unjudged criteria withhold every publish approval, overrides included; a
+ * Unjudged criteria withhold plain approval; an offered evidence attestation
+ * can carry the person's confirmation. A
  * latest review that is not an approval withholds the plain approvals, while the
  * review overrides stay as the gateway offers them. Open findings or a running
  * fix (`reviewBlock`) withhold every publish approval, as the gateway does. Hold
@@ -268,6 +269,11 @@ export function gateReviewActions(
       !evidenceAttestationAvailable(readiness)
     )
       return { ...action, disabledReason: 'Evidence attestation is unavailable for this gate.' };
+    if (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)
+      return {
+        ...action,
+        disabledReason: reviewBlock ?? null,
+      };
     if (!isPublishApprovalAction(action.id)) return { ...action, disabledReason: null };
     // Accepting findings is offered under the shared rule while they block (ADR-065 Amendment 8).
     if (
@@ -318,6 +324,10 @@ export function humanGateGuard(
       guard,
       decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
       run ? publicationReviewBlockingReason(run) : undefined,
+    ).map((action) =>
+      !run && isPublishApprovalAction(action.id)
+        ? { ...action, disabledReason: "The gate's run is not loaded." }
+        : action,
     ),
   };
 }

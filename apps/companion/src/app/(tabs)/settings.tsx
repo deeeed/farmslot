@@ -21,6 +21,7 @@ import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-statu
 import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
 import { AppUpdateStatusCard } from '../../components/AppUpdateStatusCard';
 import { AppVersionBanner } from '../../components/AppVersionBanner';
+import { CommandCenterUrlEditor } from '../../features/settings/components/CommandCenterUrlEditor';
 import { GatewayPairingScanner } from '../../features/settings/components/GatewayPairingScanner';
 import { useGatewayPairingController } from '../../features/settings/use-gateway-pairing-controller';
 import {
@@ -581,6 +582,7 @@ export default function SettingsScreen() {
   return (
     <ScrollView
       testID="companion-screen-settings"
+      keyboardShouldPersistTaps="handled"
       collapsable={false}
       style={baseStyles.container}
       contentContainerStyle={[
@@ -819,6 +821,7 @@ export default function SettingsScreen() {
                       {profile.authMode && profile.authMode !== 'none' ? profile.authMode : 'none'}
                     </Text>
                   </View>
+                  <CommandCenterUrlEditor profile={profile} />
                   <View style={styles.profileActions}>
                     {selected ? (
                       <View style={[styles.profileActionButton, styles.profileActionButtonActive]}>

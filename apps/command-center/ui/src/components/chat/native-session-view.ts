@@ -42,6 +42,7 @@ import {
   subscribeResourceCache,
 } from '../../resource-cache.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
+import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
 
 import type { NativeProfileSelection } from './native-profiles.js';
 import { renderNativeSessionHeader } from './native-session-header.js';
@@ -85,6 +86,8 @@ export class NativeSessionView extends LitElement {
   /** Fixture reads are supplied before connection; production always follows gateway authentication. */
   @property({ attribute: false }) fixture?: NativeSessionFixture;
   @property({ attribute: false }) worker?: NativeWorkerViewTarget;
+  @property() initialSessionId = '';
+  @property() initialExecutionNodeId = '';
   private catalogCurrent = false;
   @state() private catalog?: NativeSessionCatalogResult;
   @state() private sessions: NativeSessionInfo[] = [];
@@ -172,6 +175,24 @@ export class NativeSessionView extends LitElement {
   static styles = nativeSessionStyles;
 
   protected updated(changed: PropertyValues) {
+    if (
+      changed.has('initialSessionId') &&
+      changed.get('initialSessionId') &&
+      !this.initialSessionId &&
+      this.connected &&
+      !this.worker
+    )
+      this.select('');
+    if (
+      (changed.has('initialSessionId') || changed.has('initialExecutionNodeId')) &&
+      this.initialSessionId &&
+      this.initialExecutionNodeId &&
+      this.connected &&
+      !this.worker &&
+      (this.selectedId !== this.initialSessionId ||
+        this.selectedNodeId !== this.initialExecutionNodeId)
+    )
+      this.select(this.initialSessionId, this.initialExecutionNodeId);
     if ((changed.has('profile') || changed.has('catalog')) && this.catalog) {
       this.executionPicker.setCatalog(
         catalogForNativeRunners(
@@ -361,6 +382,13 @@ export class NativeSessionView extends LitElement {
       this.select(this.worker.binding.sessionId, this.worker.binding.executionNodeId);
       return;
     }
+    if (
+      this.initialSessionId &&
+      this.initialExecutionNodeId &&
+      (this.selectedId !== this.initialSessionId ||
+        this.selectedNodeId !== this.initialExecutionNodeId)
+    )
+      this.select(this.initialSessionId, this.initialExecutionNodeId);
     await this.refreshSessions();
     this.schedule(0);
   }
@@ -416,11 +444,23 @@ export class NativeSessionView extends LitElement {
           nativeObservationQuery<NativeSessionListResult>(Methods.NATIVE_SESSION_LIST, {}, owner),
           (state) => {
             this.inventoryError = state.error?.message ?? '';
-            this.sessions = (state.data?.sessions ?? [])
+            const sessions = state.data?.sessions ?? [];
+            this.sessions = sessions
               .filter((session) => !session.workerManaged)
               .slice()
               .reverse();
             this.unavailableNodes = state.data?.unavailableExecutionNodes ?? [];
+            if (
+              sessions.some(
+                (session) =>
+                  session.workerManaged &&
+                  session.id === this.selectedId &&
+                  session.executionNodeId === this.selectedNodeId,
+              )
+            ) {
+              this.select('');
+              if (this.initialSessionId) this.error = 'Open this task conversation from its run.';
+            }
           },
         ),
       );
@@ -474,8 +514,15 @@ export class NativeSessionView extends LitElement {
             session.id === this.selectedId &&
             session.executionNodeId === this.selectedNodeId,
         )
-      )
+      ) {
         this.select('');
+        if (this.initialSessionId) {
+          this.unavailableNodes = result.unavailableExecutionNodes ?? [];
+          this.executionPicker.setCatalog(catalogForNativeRunners(catalog.runners));
+          this.error = 'Open this task conversation from its run.';
+          return;
+        }
+      }
       this.unavailableNodes = result.unavailableExecutionNodes ?? [];
       this.executionPicker.setCatalog(catalogForNativeRunners(catalog.runners));
       if (!catalog.runners.some((option) => option.runner === this.runner)) {
@@ -873,7 +920,21 @@ export class NativeSessionView extends LitElement {
         toggleFullscreen: () => void this.toggleFullscreen(),
         requestCount: this.requests.length,
         sessionChoice: (item) => this.sessionChoice(item),
-        select: (id, node) => this.select(id, node),
+        select: (id, node = 'local') => {
+          this.select(id, node);
+          if (this.worker || this.fixture || parseHashRoute().route !== 'native') return;
+          this.initialSessionId = id;
+          this.initialExecutionNodeId = node;
+          const params = hashParams();
+          if (id) {
+            params.set('sessionId', id);
+            params.set('executionNodeId', node);
+          } else {
+            params.delete('sessionId');
+            params.delete('executionNodeId');
+          }
+          history.replaceState(null, '', buildHash('native', params));
+        },
         readError: this.pollError || this.inventoryError || this.catalogError,
         refresh: () => {
           const cache = getResourceCache();

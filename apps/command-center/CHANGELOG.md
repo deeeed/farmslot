@@ -8,6 +8,20 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Add the offline gate-review browser proof: prefetch order and the stop after a refusal, a pending gate opened offline with both sides held, an untracked file prefetched while an ignored `.env` is never read or stored, and fix-loop bytes. The client-store baseline gains a gate phase that counts gateway frames plus run-artifact bytes and names where the diff came from.
 
+- Prove fast fleet bootstrap independently of background workspace completion, retaining admission bounds and release guards.
+
+- Prove criterion confirmation, reversible drafts across reloads, and approval through the browser and existing gate actions.
+
+- Update the fleet recovery proof for automatic published-slot reuse and explicit local-work confirmation.
+
+- Prove progressive gate and fleet reads, package-revision recovery, reduced probe costs, and bounded local fingerprint admission through the browser and gateway.
+
+- Keep the shared gateway running across source edits while preserving watch mode in isolated validation stacks; apply shared gateway updates through deployment.
+
+- Prove fleet release and update through a real browser action followed by unrestricted scored dispatch.
+
+- Prove shared-link deployment binding and exact run, retained file and collection receipt through the existing browser tools.
+
 - Add read-only CI-watch card proof for check counts and live poll/timeout text.
 
 - Add a read-only browser probe for completed checklist durations and live step timing.
