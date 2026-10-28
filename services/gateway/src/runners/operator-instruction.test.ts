@@ -77,6 +77,7 @@ mock.module('./registry.js', {
 });
 
 let stopped = false;
+let resumeError: Error | undefined;
 let sendResult: Awaited<ReturnType<typeof controls.sendNativeWorkerInstruction>> = 'confirmed';
 let reads: (() => void) | undefined;
 const sends: Parameters<typeof controls.sendNativeWorkerInstruction>[0][] = [];
@@ -108,6 +109,7 @@ mock.module('./native/worker-recovery.js', {
     ) => {
       options?.assertCurrent?.();
       resumes.push(options);
+      if (resumeError) throw resumeError;
     },
   },
 });
@@ -124,6 +126,7 @@ async function fixture(t: TestContext, native = true) {
   tmuxStopped = false;
   reloadAttempts = 0;
   stopped = false;
+  resumeError = undefined;
   reads = undefined;
   sends.length = 0;
   resumes.length = 0;
@@ -224,6 +227,44 @@ test('stopped native delivery resumes only the retained context and command', as
   if (resumes[0]?.purpose !== 'operator-message') assert.fail('Expected operator-message recovery');
   assert.equal(resumes[0].contextId, 'primary');
   assert.equal(resumes[0].commandId, 'caller-command');
+  assert.equal(sends.length, 0);
+});
+
+test('an uncertain native resume retries the same caller command instead of reserving another', async (t) => {
+  const run = await fixture(t);
+  stopped = true;
+  resumeError = new Error('Native resume acknowledgement timed out');
+  await assert.rejects(
+    deliverOperatorInstruction(
+      run,
+      'completion',
+      'Fix the refused video.',
+      undefined,
+      'primary',
+      'same-completion-command',
+    ),
+    /acknowledgement timed out/,
+  );
+  resumeError = undefined;
+  assert.equal(
+    await deliverOperatorInstruction(
+      run,
+      'completion',
+      'Fix the refused video.',
+      100,
+      'primary',
+      'same-completion-command',
+    ),
+    'confirmed',
+  );
+  assert.equal(resumes.length, 2);
+  assert.equal(resumes[0]?.purpose, 'operator-message');
+  assert.equal(resumes[1]?.purpose, 'operator-message');
+  if (resumes[0]?.purpose !== 'operator-message' || resumes[1]?.purpose !== 'operator-message')
+    assert.fail('Expected retained operator-message recovery');
+  assert.equal(resumes[0].commandId, 'same-completion-command');
+  assert.equal(resumes[1].commandId, resumes[0].commandId);
+  assert.equal(resumes[1].contextId, resumes[0].contextId);
   assert.equal(sends.length, 0);
 });
 

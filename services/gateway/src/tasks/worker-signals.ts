@@ -31,6 +31,14 @@ export function parseStrictIsoMs(value: string | null | undefined): number | nul
   return parseFiniteIsoMs(value);
 }
 
+/** A consumed signal needs a strictly later, valid worker timestamp. */
+export function signalNewerThanRecorded(recorded: unknown, signal: WorkerSignal): boolean {
+  const previous = normalizeWorkerSignal(recorded);
+  const before = previous.ok ? parseStrictIsoMs(previous.signal.timestamp) : null;
+  const after = parseStrictIsoMs(signal.timestamp);
+  return before !== null && after !== null && after > before;
+}
+
 export function terminalWorkerSignalFromRaw(raw: string): WorkerSignal | undefined {
   if (!raw.trim()) return undefined;
   const parsed = JSON.parse(raw) as WorkerSignal;

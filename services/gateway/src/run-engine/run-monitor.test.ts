@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
 
+import '../runtime/mock-pty.test-support.js';
+
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 import {
   artifactContractWaiverArgs,
@@ -37,6 +39,59 @@ import {
   signalMatchesMonitorContext,
   structuredProgressMovedMinute,
 } from './run-monitor.js';
+
+test('completion send-back rejects the old signal after monitor replay and native recovery', () => {
+  const previous: WorkerSignal = {
+    status: 'complete',
+    outcome: 'success',
+    timestamp: '2026-10-28T00:16:00.000Z',
+    attemptId: 'retained-attempt',
+  };
+  for (const native of [false, true]) {
+    const run = {
+      steps: [
+        { name: 'dispatch', outputs: { completionSendBackSignal: previous } },
+        { name: 'monitor', startedAt: '2026-10-28T00:17:00.000Z' },
+      ],
+      agentContexts: [
+        {
+          id: 'retained-worker',
+          role: 'primary' as const,
+          signalAttemptId: previous.attemptId,
+          ...(native
+            ? {
+                nativeSession: {
+                  sessionId: 'session',
+                  leaseId: 'lease',
+                  commandId: 'command',
+                  ownerPrincipalId: 'owner',
+                  executionNodeId: 'node',
+                  launchRequestedAt: '2026-10-28T00:00:00.000Z',
+                },
+              }
+            : {}),
+        },
+      ],
+    };
+    assert.equal(isWorkerSignalFreshForRun(run, previous), false);
+    assert.equal(
+      isWorkerSignalFreshForRun(run, { ...previous, timestamp: '2026-10-28T00:15:59.000Z' }),
+      false,
+    );
+    assert.equal(
+      isWorkerSignalFreshForRun(run, { ...previous, timestamp: '2026-10-28T00:16:01.000Z' }),
+      true,
+    );
+    assert.equal(isWorkerSignalFreshForRun(run, { ...previous, timestamp: 'invalid' }), false);
+    assert.equal(
+      isWorkerSignalFreshForRun(
+        { ...run, steps: [{ name: 'dispatch', outputs: { completionSendBackSignal: {} } }] },
+        { ...previous, timestamp: '2026-10-28T00:16:01.000Z' },
+      ),
+      false,
+    );
+  }
+});
 
 test('monitor turns terminal runner quota and auth blockers into error violations', () => {
   for (const [runner, pane] of [
