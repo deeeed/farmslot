@@ -411,6 +411,20 @@ export function automaticSlotLoadBlocker(
   return load?.skipped ? load.reason : null;
 }
 
+export interface SlotLoadWait {
+  reason: string;
+  slotId: string;
+}
+
+export class AutomaticSlotLoadWaitError extends Error {
+  constructor(
+    message: string,
+    readonly wait: SlotLoadWait,
+  ) {
+    super(message);
+  }
+}
+
 export function findBestSlot(
   slots: SlotStatus[],
   project: string,
@@ -541,6 +555,23 @@ export function validateSlotForDispatch(
     slotCapabilityBlocker(slot.slot, options?.requiredCapabilities, options?.capabilityCatalogs) ??
     slotRepoBlocker(slot, options)
   );
+}
+
+/** Only transient automatic load exclusion can use the engine's queue/reselection path. */
+export function automaticSlotLoadWait(
+  slot: SlotStatus,
+  slots: SlotStatus[],
+  options?: SlotSelectionOptions,
+): SlotLoadWait | null {
+  const reason = automaticSlotLoadBlocker(slot, options);
+  if (
+    !reason ||
+    !isFreeSlot(slot) ||
+    options?.pressureRejectedMachines?.has(slot.machine) ||
+    validateSlotForDispatch(slot, slots, { ...options, automaticLoads: undefined })
+  )
+    return null;
+  return { slotId: slot.slot, reason: `Waiting for node load: ${reason}` };
 }
 
 /**
