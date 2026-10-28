@@ -68,6 +68,34 @@ export interface StoredResourceContent extends StoredResourceContentInfo {
   data: Uint8Array;
 }
 
+/** One row of a row-backed query entry; for the run list, one live run. */
+export interface StoredResourceRow {
+  /** Unique within its entry: the run id. */
+  id: string;
+  /** The version the row was served under. */
+  version: string;
+  /** Always kept: the JSON that filters, search, sorting and totals read. */
+  projection: unknown;
+  /** The full row as served. Absent past the bound, so the row counts as missing. */
+  body?: unknown;
+  /** UTF-8 JSON bytes of projection plus body, as the cache counts them. */
+  bytes: number;
+}
+
+export interface ResourceRowsMerge {
+  /** The owning entry, written in the same transaction. Its `bytes` covers its rows after the merge. */
+  entry: StoredResourceQuery;
+  /** Inserted, or replaced whole, by id. */
+  upserts: readonly StoredResourceRow[];
+  /** Removed by id; ids with no row are ignored. */
+  deletes: readonly string[];
+}
+
+export interface StoredResourceRows {
+  entry?: StoredResourceQuery;
+  rows: StoredResourceRow[];
+}
+
 /** Experimental store seam. deleteAll seals this incarnation against late reads and writes. */
 export interface ResourceStore {
   readonly persistent: boolean;
@@ -81,6 +109,14 @@ export interface ResourceStore {
   /** Access recency never changes observation age. Optional for older custom stores. */
   touchQuery?(id: string, accessedAt: number, origin?: ResourceContentOrigin): Promise<void>;
   listQueries(): Promise<StoredResourceQueryInfo[]>;
+  /**
+   * The entry and every row of `queryId`, from one serial read, so a hydrate never straddles a
+   * merge. Rows belong to the entry with their query id: putQuery keeps them, and deleteQuery and
+   * deleteAll remove them. Optional for older custom stores, whose run lists then stay in memory.
+   */
+  getRows?(queryId: string): Promise<StoredResourceRows>;
+  /** Writes `merge.entry`, then its deletes and upserts, in one transaction: all or nothing. */
+  mergeRows?(queryId: string, merge: ResourceRowsMerge): Promise<void>;
   /** Presence only, without loading the bytes. */
   hasContent(key: ContentKey): Promise<boolean>;
   getContent(key: ContentKey): Promise<StoredResourceContent | undefined>;
@@ -150,6 +186,7 @@ export function sameResourceAuthority(
 
 export function createMemoryResourceStore(): ResourceStore {
   const entries = new Map<string, StoredResourceQuery>();
+  const rows = new Map<string, Map<string, StoredResourceRow>>();
   const contents = new Map<string, StoredResourceContent>();
   const aliases = new Map<string, string>();
   let metadata: ResourceStoreMetadata | undefined;
@@ -190,7 +227,28 @@ export function createMemoryResourceStore(): ResourceStore {
       }
     },
     async deleteQuery(id) {
-      if (available()) entries.delete(id);
+      if (!available()) return;
+      entries.delete(id);
+      rows.delete(id);
+    },
+    async getRows(queryId) {
+      const entry = available() ? entries.get(queryId) : undefined;
+      return {
+        ...(entry ? { entry: copy(entry) } : {}),
+        rows: available() ? [...(rows.get(queryId)?.values() ?? [])].map(copy) : [],
+      };
+    },
+    async mergeRows(queryId, merge) {
+      if (!available()) return;
+      if (merge.entry.id !== queryId) throw new Error('A row merge writes its own entry');
+      // Copy everything before changing anything, so a failure leaves the store as it was.
+      const entry = copy(merge.entry);
+      const upserts = merge.upserts.map(copy);
+      const next = new Map(rows.get(queryId));
+      for (const id of merge.deletes) next.delete(id);
+      for (const row of upserts) next.set(row.id, row);
+      entries.set(queryId, entry);
+      rows.set(queryId, next);
     },
     async listQueries() {
       return available()
@@ -259,6 +317,7 @@ export function createMemoryResourceStore(): ResourceStore {
       if (deleted) return;
       deleted = true;
       entries.clear();
+      rows.clear();
       contents.clear();
       aliases.clear();
       metadata = undefined;

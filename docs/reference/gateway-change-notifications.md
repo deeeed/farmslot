@@ -257,19 +257,19 @@ waiting. Streams are never stored, and commands never pass through the store.
 
 ### Exports and fields
 
-| Name                                                                                                                                          | Owner                                              | Consumers                                         |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------- |
-| `ResourceStore`: per-query entries `{ data, observedAt, bytes }` replaced atomically, content entries by identity, `deleteAll()`, byte totals | `@farmslot/protocol/client-cache`                  | The shared cache; implemented by the stores below |
-| `createMemoryResourceStore()`                                                                                                                 | `@farmslot/protocol/client-cache`                  | Both clients, as the fallback                     |
-| `createGatewayResourceCache({ store })`                                                                                                       | `@farmslot/protocol/client-cache`                  | Both clients                                      |
-| `createSqliteResourceStore()` with React Native and browser worker adapters, and the browser drafts store                                     | `@farmslot/local-store`, private workspace package | Companion; Command Center and its desktop app     |
-| Review-diff identity functions                                                                                                                | `@farmslot/protocol`                               | Gateway package preparation; client verification  |
-| `SelfPrincipalSummary.generation`                                                                                                             | `@farmslot/protocol/rpc/principal`                 | Store and draft keys                              |
-| `GitShowResult.id` and batched `git.show`                                                                                                     | `@farmslot/protocol/rpc/git`                       | Prefetch, file views                              |
-| `mergeBaseSha`, `headSha` on `GitDiffResult`, when `base` is set                                                                              | `@farmslot/protocol/rpc/git`                       | Prefetch                                          |
-| `git.diff` option `includeUntracked`, for `target: 'worktree'`                                                                                | `@farmslot/protocol/rpc/git`                       | Prefetch                                          |
-| `capabilities.batchedContent`, `capabilities.resourceChanges.versionLists`                                                                    | `@farmslot/protocol/rpc/auth`                      | The shared cache                                  |
-| `capabilities.conditionalFileWrites`                                                                                                          | `@farmslot/protocol/rpc/auth`                      | The Command Center editor                         |
+| Name                                                                                                                                                                                         | Owner                                              | Consumers                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------- |
+| `ResourceStore`: per-query entries `{ data, observedAt, bytes }` replaced atomically, run-list rows merged by id in one transaction, content entries by identity, `deleteAll()`, byte totals | `@farmslot/protocol/client-cache`                  | The shared cache; implemented by the stores below |
+| `createMemoryResourceStore()`                                                                                                                                                                | `@farmslot/protocol/client-cache`                  | Both clients, as the fallback                     |
+| `createGatewayResourceCache({ store })`                                                                                                                                                      | `@farmslot/protocol/client-cache`                  | Both clients                                      |
+| `createSqliteResourceStore()` with React Native and browser worker adapters, and the browser drafts store                                                                                    | `@farmslot/local-store`, private workspace package | Companion; Command Center and its desktop app     |
+| Review-diff identity functions                                                                                                                                                               | `@farmslot/protocol`                               | Gateway package preparation; client verification  |
+| `SelfPrincipalSummary.generation`                                                                                                                                                            | `@farmslot/protocol/rpc/principal`                 | Store and draft keys                              |
+| `GitShowResult.id` and batched `git.show`                                                                                                                                                    | `@farmslot/protocol/rpc/git`                       | Prefetch, file views                              |
+| `mergeBaseSha`, `headSha` on `GitDiffResult`, when `base` is set                                                                                                                             | `@farmslot/protocol/rpc/git`                       | Prefetch                                          |
+| `git.diff` option `includeUntracked`, for `target: 'worktree'`                                                                                                                               | `@farmslot/protocol/rpc/git`                       | Prefetch                                          |
+| `capabilities.batchedContent`, `capabilities.resourceChanges.versionLists`                                                                                                                   | `@farmslot/protocol/rpc/auth`                      | The shared cache                                  |
+| `capabilities.conditionalFileWrites`                                                                                                                                                         | `@farmslot/protocol/rpc/auth`                      | The Command Center editor                         |
 
 ### Store
 
@@ -314,14 +314,14 @@ waiting. Streams are never stored, and commands never pass through the store.
    stored result, as Notification and revision contract requires for details.
    Other failures keep it as `stale`.
 
-| Query                                                                                                        | Bound (initial)                                                          |
-| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Run list                                                                                                     | 20 MB. The rows each client reads today, until version lists are adopted |
-| Run details (`run.get`)                                                                                      | 50 most recent runs, 20 MB in total                                      |
-| Decisions with gate packages                                                                                 | 10 MB                                                                    |
-| Fleet, slots, nodes, backlog, dispatch queue, work graphs, roadmap, projects, sources, upstream observations | 2 MB each                                                                |
-| Chat history                                                                                                 | Last 200 messages per session, 10 sessions                               |
-| Workspace files and directories the user opened                                                              | 200 entries per slot and run, inside the content budget                  |
+| Query                                                                                                        | Bound (initial)                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Run list                                                                                                     | 20 MB. The version index and filter projection of every live run; full rows active first, then newest, up to the bound |
+| Run details (`run.get`)                                                                                      | 50 most recent runs, 20 MB in total                                                                                    |
+| Decisions with gate packages                                                                                 | 10 MB                                                                                                                  |
+| Fleet, slots, nodes, backlog, dispatch queue, work graphs, roadmap, projects, sources, upstream observations | 2 MB each                                                                                                              |
+| Chat history                                                                                                 | Last 200 messages per session, 10 sessions                                                                             |
+| Workspace files and directories the user opened                                                              | 200 entries per slot and run, inside the content budget                                                                |
 
 Not persisted: previews, searches, diagnostics, analytics, doctor output and
 dispatch candidates.
@@ -334,7 +334,8 @@ above 2 s or 5 MB (initial). Until then this subsection is inactive.
 1. `run.list { versions: true }` returns `{ versions: [{ id, version }],
 totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
    run the principal may read. It ignores filters and the default row limit, and
-   excludes archived runs.
+   excludes archived runs. Versions come in the gateway's current base order,
+   which sort ties follow. That order can change across a gateway restart.
 2. `version` is opaque to clients and stable across gateway restarts for an
    unchanged row.
 3. Only the version reply decides which rows exist. Stored rows it does not list
@@ -346,8 +347,16 @@ totalCount, summaryMeta, familySummaries, projectAnalytics }` for every live
    `resourceState`. An empty store fills through the same pages.
 5. Totals for a filtered view are counted from stored rows, which then hold the
    whole collection. Before version lists, totals come from the gateway reply.
-6. Before version lists start, decide how the run list stays under its byte
-   bound and how merges avoid rewriting the whole entry.
+6. The client keeps the version index and a filter projection for every live
+   run, so the collection and filtered totals stay whole. It stores full rows
+   active runs first, then newest, up to the run list's byte bound. Rows past it
+   stay in memory and count as missing on the next cold connect. Rows are stored
+   one per run beside their query entry and merged in one transaction, so a
+   catch-up page rewrites only the rows it carries. Each run list view is
+   answered from these rows, is not stored itself, and stays `stale` until every
+   listed id is held at its listed version. Summaries come only from the gateway: an unfiltered view
+   that holds every matching run takes the version reply's summaries, and any
+   other view that asks for summaries keeps its own read.
 
 ### Content
 

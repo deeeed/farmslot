@@ -5,6 +5,7 @@ import type {
   ResourceObserversReplaceResult,
   UpstreamObservation,
 } from '../rpc/resource-observers.js';
+import type { RunListProjection } from '../runs/run-list-filter.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
 import type { ResourceReadStamp } from './keys.js';
@@ -128,6 +129,12 @@ export interface GatewayResourceCache {
    * observes, or a read without a placement, keeps it as opened. Once `signal` aborts, the read
    * is not sent, and a read no other caller or observer shares is cancelled without a result.
    */
+  /**
+   * Version lists: every live run's projection from the shared run collection, newest first.
+   * Undefined without one, before the first versions read or a stored collection's hydrate.
+   * Optional for test doubles; the shared cache always provides it.
+   */
+  runListProjections?(): readonly RunListProjection[] | undefined;
   retry<T>(
     query: ResourceQuery<T>,
     placement?: ResourceContentPlacement,

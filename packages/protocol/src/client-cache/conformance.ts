@@ -355,6 +355,104 @@ export async function runResourceStoreConformance(factory: StoreFactory): Promis
   }
 
   {
+    const store = await factory(scope());
+    try {
+      const { getRows, mergeRows } = store;
+      verify(getRows && mergeRows, 'a store must hold row-backed entries');
+      const rowsOf = (id: string) => getRows!.call(store, id);
+      const merge = (id: string, value: Parameters<NonNullable<typeof mergeRows>>[1]) =>
+        mergeRows!.call(store, id, value);
+      const entry = (value: string, bytes: number) => ({
+        id: 'rows',
+        data: { value },
+        observedAt: 1,
+        bytes,
+      });
+      const row = (id: string, version: string, body?: unknown) => ({
+        id,
+        version,
+        projection: { id },
+        ...(body === undefined ? {} : { body }),
+        bytes: 10,
+      });
+      const value = (rows: Awaited<ReturnType<typeof rowsOf>>) =>
+        (rows.entry?.data as ConformanceData | undefined)?.value;
+      const absent = await rowsOf('rows');
+      verify(absent.entry === undefined && absent.rows.length === 0, 'an absent entry has no rows');
+      const first = row('a', 'v1', { a: 1 });
+      await merge('rows', {
+        entry: entry('index', 40),
+        upserts: [first, row('b', 'v1')],
+        deletes: [],
+      });
+      first.version = 'mutated by caller';
+      let read = await rowsOf('rows');
+      verify(
+        value(read) === 'index' &&
+          read.rows.length === 2 &&
+          read.rows.find((stored) => stored.id === 'a')?.version === 'v1',
+        'a row merge must write its entry and owned copies of its rows',
+      );
+      await merge('rows', {
+        entry: entry('next', 30),
+        upserts: [row('a', 'v2')],
+        deletes: ['b', 'never-stored'],
+      });
+      read = await rowsOf('rows');
+      verify(
+        value(read) === 'next' &&
+          read.rows.length === 1 &&
+          read.rows[0].version === 'v2' &&
+          read.rows[0].body === undefined,
+        'upserts must replace whole rows by id, and deletes must ignore unknown ids',
+      );
+      verify(
+        (await store.byteTotals()).queries === 30 &&
+          (await store.listQueries()).find((listed) => listed.id === 'rows')?.bytes === 30,
+        'listings and totals must count only the entry bytes, which include its rows',
+      );
+      await store.putQuery(entry('replaced', 31));
+      read = await rowsOf('rows');
+      verify(value(read) === 'replaced' && read.rows.length === 1, 'putQuery must keep the rows');
+      let refused = false;
+      try {
+        // A BigInt has no JSON form, so this merge fails while it is being written.
+        await merge('rows', {
+          entry: entry('broken', 50),
+          upserts: [row('c', 'v1'), row('d', 'v1', 1n)],
+          deletes: ['a'],
+        });
+      } catch {
+        refused = true;
+      }
+      read = await rowsOf('rows');
+      verify(
+        refused && value(read) === 'replaced' && read.rows.length === 1 && read.rows[0].id === 'a',
+        'a failed row merge must change nothing',
+      );
+      await store.deleteQuery('rows');
+      read = await rowsOf('rows');
+      verify(
+        read.entry === undefined && read.rows.length === 0,
+        'deleteQuery must remove its rows',
+      );
+      await merge('rows', { entry: entry('again', 20), upserts: [row('a', 'v3')], deletes: [] });
+      await store.deleteAll();
+      await merge('rows', { entry: entry('late', 20), upserts: [row('b', 'v1')], deletes: [] });
+      read = await rowsOf('rows');
+      verify(
+        read.entry === undefined &&
+          read.rows.length === 0 &&
+          (await store.byteTotals()).queries === 0,
+        'a deleted store must drop its rows and late row merges',
+      );
+      passed.push('row-backed entries: atomic merges, replacement, cascades and deletion fencing');
+    } finally {
+      await store.close();
+    }
+  }
+
+  {
     const identity = scope();
     const store = await factory(identity);
     const transport = new ResourceCacheConformanceTransport(identity);

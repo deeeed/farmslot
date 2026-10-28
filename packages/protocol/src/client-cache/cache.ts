@@ -1,5 +1,6 @@
 import type { NativeSessionReadResult, NativeSessionTargetParams } from '../rpc/native-session.js';
 import { Methods } from '../rpc/registry.js';
+import type { RunListParams, RunListResult } from '../rpc/run.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
 import { ResourceCollectorAdmission } from './collector-admission.js';
@@ -14,7 +15,13 @@ import {
   readNativeHistory,
   storedNativeHistoryMatches,
 } from './native-history.js';
-import type { ResourceQuery } from './registry.js';
+import { type ResourceQuery, resourceQuery } from './registry.js';
+import {
+  isRunListCollectionRead,
+  RUN_LIST_COLLECTION_ID,
+  RunListCollection,
+  runListSummaryFlags,
+} from './run-list-versions.js';
 import {
   type ContentKey,
   createMemoryResourceStore,
@@ -37,6 +44,7 @@ import type {
   ResourceContentWriteToken,
   ResourceQueryError,
   ResourceQueryState,
+  ResourceReadResult,
 } from './types.js';
 import { isUpstreamStoredQuery, upstreamRetentionEvictions } from './upstream-retention.js';
 import {
@@ -149,6 +157,30 @@ export function createGatewayResourceCache(
   let retiringStore = false;
   let retentionSweptStore: ResourceStore | undefined;
   let unsubscribeStore = store.onDeleted(storeDeleted);
+  // Version lists: one shared run collection answers every run.list view.
+  const runList = new RunListCollection({
+    request: (params, signal) => transport.request<RunListResult>(Methods.RUN_LIST, params, signal),
+    persist: (merge) => {
+      const writingStore = store;
+      const incarnation = storeVersion;
+      if (!writingStore.mergeRows || !canPersist(connection)) return Promise.resolve();
+      const current = () =>
+        !disposed &&
+        writingStore === store &&
+        incarnation === storeVersion &&
+        !writingStore.deleted;
+      return updateStore(writingStore, current, () =>
+        writingStore.mergeRows!(RUN_LIST_COLLECTION_ID, merge),
+      );
+    },
+    maxBodyBytes: resourceQuery(Methods.RUN_LIST).maxBytes,
+  });
+  let runListLoad: { store: ResourceStore; promise: Promise<void> } | undefined;
+
+  function forgetRunList(): void {
+    runList.clear();
+    runListLoad = undefined;
+  }
 
   function updateCollectors(): void {
     collectors.update(
@@ -165,6 +197,7 @@ export function createGatewayResourceCache(
     updateCollectors();
     hydrationOwnerVersion++;
     version++;
+    forgetRunList();
     for (const entry of entries.values()) invalidate(entry, true);
     transport.resynchronize();
   }
@@ -330,9 +363,13 @@ export function createGatewayResourceCache(
     )
       return;
     const ticket = ++version;
+    runList.abort();
     // Stored facts belong to an owner, not a socket attempt. Fence a revoked
     // owner's pending I/O synchronously, before queued deletion can run.
-    if (revoke || scopeChanged || authorityChanged) hydrationOwnerVersion++;
+    if (revoke || scopeChanged || authorityChanged) {
+      hydrationOwnerVersion++;
+      forgetRunList();
+    }
     connection = next;
     usable = false;
     updateCollectors();
@@ -376,6 +413,7 @@ export function createGatewayResourceCache(
             (storedScopeChanged || storedAuthorityChanged))
         ) {
           storeVersion++;
+          forgetRunList();
           for (const entry of entries.values()) invalidate(entry, true);
           // Switching profiles retains the old profile's store; revoked authority deletes it.
           if (!switchingProfile || revoke || deletionRequired) {
@@ -446,6 +484,7 @@ export function createGatewayResourceCache(
       usable = false;
       updateCollectors();
       version++;
+      runList.abort();
       for (const entry of entries.values()) invalidate(entry);
       transport.resynchronize();
       return;
@@ -517,7 +556,8 @@ export function createGatewayResourceCache(
       const readingStore = store;
       try {
         const saved = query.persisted
-          ? await readingStore.getQuery(nativeHistoryStorageId(query))
+          ? ((isRunListView(query) ? await storedRunListView(query, readingStore) : undefined) ??
+            (await readingStore.getQuery(nativeHistoryStorageId(query))))
           : undefined;
         if (
           !disposed &&
@@ -550,6 +590,70 @@ export function createGatewayResourceCache(
         }
       }
     })();
+  }
+
+  function isRunListView(query: ResourceQuery): boolean {
+    return query.method === Methods.RUN_LIST && !isRunListCollectionRead(query.params);
+  }
+
+  /** A cold start's view, derived from the stored run collection when one is stored. */
+  async function storedRunListView(
+    query: ResourceQuery,
+    readingStore: ResourceStore,
+  ): Promise<StoredResourceQuery | undefined> {
+    if (!runList.held && readingStore.getRows) {
+      if (runListLoad?.store !== readingStore)
+        runListLoad = {
+          store: readingStore,
+          promise: readingStore.getRows(RUN_LIST_COLLECTION_ID).then((stored) => {
+            if (store === readingStore && !readingStore.deleted) runList.hydrate(stored);
+          }),
+        };
+      await runListLoad.promise;
+    }
+    const data = runList.view(query.params as RunListParams);
+    return data && runList.observedAt !== undefined
+      ? { id: query.id, data, observedAt: runList.observedAt, bytes: 0 }
+      : undefined;
+  }
+
+  /** Summary flags every observed view needs, so one versions read serves them all. */
+  function runListFlags() {
+    const flags: ReturnType<typeof runListSummaryFlags> = {};
+    for (const entry of entries.values())
+      if (entry.listeners.size && isRunListView(entry.query))
+        Object.assign(flags, runListSummaryFlags(entry.query.params as RunListParams));
+    return flags;
+  }
+
+  /** Version lists rules 3-5: a view of the shared collection after its one shared refresh. */
+  async function readRunListView(
+    entry: QueryEntry,
+    signal: AbortSignal,
+  ): Promise<ResourceReadResult<unknown> & { incomplete?: boolean }> {
+    const params = entry.query.params as RunListParams;
+    const flags = runListFlags();
+    try {
+      // A new view of a current collection needs no read: no runs change since its version reply.
+      if (!runList.complete || !runList.serves(flags) || !stampCovers(entry, runList.resourceState))
+        await runList.refresh(flags);
+    } catch (error) {
+      // A refused collection read evicts the stored collection, like every refused read.
+      if (evictionCodes.has(queryError(error).code)) {
+        const evictingStore = store;
+        forgetRunList();
+        void updateStore(
+          evictingStore,
+          () => evictingStore === store && !evictingStore.deleted,
+          () => evictingStore.deleteQuery(RUN_LIST_COLLECTION_ID),
+        );
+      }
+      throw error;
+    }
+    const data = runList.view(params);
+    if (data) return { data, resourceState: runList.resourceState, incomplete: !runList.complete };
+    // A view whose summaries the version reply cannot answer keeps its own full read.
+    return transport.request<RunListResult>(Methods.RUN_LIST, params, signal);
   }
 
   function stampCovers(entry: QueryEntry, stamp: ResourceReadStamp | undefined): boolean {
@@ -673,8 +777,12 @@ export function createGatewayResourceCache(
           if (disposed || pending.version !== version || pending.controller.signal.aborted) return;
         }
         entry.lastRequestedAt = performance.now();
-        const reply =
-          entry.query.method === Methods.NATIVE_SESSION_READ
+        const fromRunList =
+          isRunListView(entry.query) &&
+          connection.capabilities?.resourceChanges?.versionLists === true;
+        const reply: ResourceReadResult<unknown> & { incomplete?: boolean } = fromRunList
+          ? await readRunListView(entry, pending.controller.signal)
+          : entry.query.method === Methods.NATIVE_SESSION_READ
             ? await readNativeHistory(
                 entry.query.params as NativeSessionTargetParams,
                 entry.state.data as NativeSessionReadResult | undefined,
@@ -707,7 +815,9 @@ export function createGatewayResourceCache(
           supported &&
           stampCovers(entry, reply.resourceState) &&
           (!entry.query.collector || collectors.has(entry.query)) &&
-          entry.unknownGeneration === unknownGeneration;
+          entry.unknownGeneration === unknownGeneration &&
+          // A view is current only once every listed run is held at its listed version.
+          !reply.incomplete;
         const observedAt = Date.now();
         // `null` is an explicit non-upstream answer: its status follows coverage, with no source time.
         const sourceObservation = entry.query.sourceObservation?.(reply.data);
@@ -752,7 +862,9 @@ export function createGatewayResourceCache(
         // Only a real intervening invalidation needs a follow-up; missing metadata is not a retry loop.
         entry.dirty = supported && !covered && entry.dirty;
         entry.lastUsed = ++lastUsed;
-        const persistResult = entry.query.persisted && canPersist(connection);
+        // Version-list views are derived from the run collection, which is stored on its own.
+        const persistResult =
+          entry.query.persisted && canPersist(connection) && reply.incomplete === undefined;
         const serialized = persistResult
           ? JSON.stringify(
               entry.query.persistedData ? entry.query.persistedData(reply.data) : reply.data,
@@ -832,6 +944,8 @@ export function createGatewayResourceCache(
                 .filter(
                   (value) =>
                     value.id !== saved.id &&
+                    // The run collection is bounded by its own body budget, never by its views.
+                    value.id !== RUN_LIST_COLLECTION_ID &&
                     (retention.cohort === 'upstream'
                       ? isUpstreamStoredQuery(value.id)
                       : value.id.startsWith(`${entry.query.method}:`)),
@@ -1126,6 +1240,7 @@ export function createGatewayResourceCache(
       return (await readStoredContent((target) => target.hasContent(contentKey(key)))) ?? false;
     },
     readContent: (key) => readContentBytes((target) => target.getContent(contentKey(key)), false),
+    runListProjections: () => runList.projections(),
     openContent: (key) => readContentBytes((target) => target.getContent(contentKey(key)), true),
     readContentByAlias: (alias) =>
       readContentBytes((target) => target.getContentByAlias(alias), false),
