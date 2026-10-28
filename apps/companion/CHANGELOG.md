@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Stop fleet recovery observations when its dialog closes; retain explicit release guards while background checks finish.
+
 - Add reversible criterion drafts and approval counts using the same gate model as Command Center.
 
 - Show saved fleet recovery rows immediately while current workspace inspection runs, retaining them on read errors.

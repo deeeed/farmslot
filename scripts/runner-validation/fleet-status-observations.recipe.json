@@ -1,0 +1,44 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Fleet status returns saved observations under host load",
+  "description": "Run on the gateway host against an explicitly selected authenticated gateway. Retains real response timings, host load and original observation times. Never changes a slot, starts a worker or retries a timed-out request.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["proof_root"],
+    "properties": {
+      "proof_root": { "type": "string", "pattern": "^[A-Za-z0-9_./-]+$" }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "immediate-status",
+      "claim": "Three authenticated fleet.status reads return actual saved rows within two seconds on the gateway host."
+    }
+  ],
+  "workflow": {
+    "entry": "read",
+    "nodes": {
+      "read": {
+        "action": "command",
+        "intent": "Read saved fleet rows three times using the normal client deadline.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/scripts/prove-fleet-status.mjs \"{{params.proof_root}}\"",
+        "timeout_ms": 60000,
+        "next": "observed"
+      },
+      "observed": {
+        "action": "assert_output",
+        "intent": "Require real rows, measured fast replies and closed client transport.",
+        "source": "read",
+        "stream": "stdout",
+        "contains": "\"status\":\"PASS\"",
+        "proves": ["immediate-status"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

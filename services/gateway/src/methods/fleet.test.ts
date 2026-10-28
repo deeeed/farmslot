@@ -20,6 +20,7 @@ import {
   parseGitHeadProbe,
   preserveClaimedRowsUnknownToProbe,
   reconcileRefreshSlotRowWithActiveRun,
+  setFleetWorkspacePublisher,
   slotHeadRefreshUpdate,
 } from './fleet.js';
 
@@ -469,6 +470,64 @@ test('fresh fleet.status passes through without stale flag or background refresh
   assert.equal(result.fleet.stale, undefined);
   assert.equal(result.fleet.slots[0].dispatchable, true);
   assert.equal(calls.refresh, 0);
+});
+
+test('monitor-owned observations publish current owners and coalesce without echoing cached events', async () => {
+  let current = fleetFixture(new Date().toISOString(), [
+    slotStatusFixture({ slot: 'observed', currentRunId: 'earlier-owner' }),
+  ]);
+  let resume: () => void = () => assert.fail('Observation gate missing');
+  const held = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  let reads = 0;
+  const published: FleetStatus[] = [];
+  const deps: FleetStatusDeps = {
+    load: async () => current,
+    refresh: async () => assert.fail('A fresh status must not re-probe the fleet'),
+    workspaces: {
+      read: (fleet) => fleet,
+      refresh: async (fleet) => {
+        reads++;
+        await held;
+        return fleet;
+      },
+    },
+  };
+  const publish = (fleet: FleetStatus) => published.push(fleet);
+  setFleetWorkspacePublisher(publish);
+  try {
+    // The monitor has no per-request publisher. Server initialization registers
+    // the completion broadcaster before either monitor or UI requests run.
+    const first = await fleetStatus(undefined, deps);
+    const second = await fleetStatus(undefined, deps, publish);
+    assert.equal(first.fleet, current);
+    assert.equal(second.fleet, current);
+    assert.equal(reads, 1, 'Concurrent status reads must share their background observation');
+    assert.equal(published.length, 0);
+    current = fleetFixture(new Date(0).toISOString(), [
+      slotStatusFixture({
+        slot: 'observed',
+        currentRunId: 'current-owner',
+        workspaceError: 'Observation unavailable',
+      }),
+    ]);
+  } finally {
+    resume();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    setFleetWorkspacePublisher(undefined);
+  }
+  assert.equal(published.length, 1);
+  assert.equal(published[0]?.slots[0]?.currentRunId, 'current-owner');
+  assert.equal(published[0]?.stale, true);
+  assert.equal(published[0]?.slots[0]?.dispatchable, false);
+  // Use a fresh status again: the same completed cache must not broadcast an
+  // identical event that would invalidate and request itself indefinitely.
+  current = { ...current, checkedAt: new Date().toISOString() };
+  await fleetStatus(undefined, deps, publish);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(reads, 2);
+  assert.equal(published.length, 1);
 });
 
 test('stale fleet.status marks stale, disables dispatch, and kicks a background refresh', async () => {
