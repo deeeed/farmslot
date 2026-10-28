@@ -589,10 +589,16 @@ if (
   flags.has('--require-acceptance-status') ||
   (terminalCommand === 'complete' && !isReviewTerminal)
 ) {
+  const owningFlow =
+    readJsonArtifact('inputs/handoff.json', 'handoff')?.flow ?? terminalContract?.flowType;
   let deferClaimVerdicts = false;
   const ledger = readAcceptanceLedger(taskDir);
   // ADR-062 Amendment 18: only the run's publication code review checks a `review` claim.
-  if (terminalCommand === 'complete' && terminalContract?.publicationReview !== true) {
+  if (
+    terminalCommand === 'complete' &&
+    owningFlow !== 'pr-complete' &&
+    terminalContract?.publicationReview !== true
+  ) {
     for (const row of Array.isArray(ledger?.criteria) ? ledger.criteria : []) {
       if (
         row?.proofMode === 'review' &&
@@ -605,6 +611,7 @@ if (
   }
   if (
     terminalCommand === 'complete' &&
+    owningFlow !== 'pr-complete' &&
     terminalContract?.claimReviewGate === true &&
     ledger?.schemaVersion === 2
   ) {
@@ -614,10 +621,6 @@ if (
     deferClaimVerdicts = integrityIssues.length === 0;
   }
   for (const issue of acceptanceContractIssues(taskDir, {
-    deferReviewCriteria:
-      terminalContract?.publicationReview === true
-        ? terminalContract.acceptanceReviewCriteria
-        : undefined,
     allowWeak: terminalContract?.acceptance?.allowWeak === true,
     requireFresh: terminalContract?.acceptance?.requireFresh === true,
     deferClaimVerdicts,

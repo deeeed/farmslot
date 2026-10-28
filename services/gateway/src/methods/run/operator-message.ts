@@ -97,7 +97,7 @@ export async function operatorMessage(
     const fresh = registration !== run.acceptanceRegistration;
     if (fresh)
       await persistRunNow(
-        updateRun(run.id, { acceptanceRegistration: registration, acceptanceProofHold: undefined }),
+        updateRun(run.id, { acceptanceRegistration: registration }),
         'operator acceptance instruction admitted',
       );
     const reviewing = run.agentContexts?.some(

@@ -10,7 +10,6 @@ import type {
 import {
   acceptAcceptanceDerivation,
   acceptanceDerivationPending,
-  acceptanceProofDestinations,
   admitAcceptanceInstruction,
   initializeAcceptanceRegistration,
   parseAcceptanceDerivationResult,
@@ -216,20 +215,4 @@ test('typed boundary names malformed obligation and classification fields', () =
     () => parseAcceptanceDerivationResult({ ...result(), generation: -1 }),
     /generation/,
   );
-});
-
-test('all four proof destinations use the existing review gates', () => {
-  assert.deepEqual(acceptanceProofDestinations(['state']), {
-    claimReviewGate: false,
-    publicationReview: false,
-  });
-  for (const mode of ['visual', 'mixed'] as const)
-    assert.deepEqual(acceptanceProofDestinations([mode]), {
-      claimReviewGate: true,
-      publicationReview: false,
-    });
-  assert.deepEqual(acceptanceProofDestinations(['review']), {
-    claimReviewGate: false,
-    publicationReview: true,
-  });
 });

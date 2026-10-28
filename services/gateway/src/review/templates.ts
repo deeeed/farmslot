@@ -39,13 +39,12 @@ import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { PUBLISH_PACKAGE_MAX_DEPTH } from '../run-completion/publish-package-scope.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
-import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { getRun } from '../runs/store.js';
 import { ledgerFromArtifactText } from '../tasks/acceptance-status.js';
 import { farmslotDirectoryForSlot, renderRoleTemplate } from '../tasks/agent-runtime-script.js';
 import { REVIEW_FIX_CHECKLIST_TARGET } from '../tasks/checklist-target.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 
-import { reviewAcceptanceCriteria } from './acceptance-coverage.js';
 import { loadReviewApprovalPolicy } from './approval-policy.js';
 import {
   buildDescriptionCheckSection,
@@ -194,24 +193,7 @@ async function reviewCriteriaSection(
       path.posix.join(vars.remoteRepo, taskDir, ACCEPTANCE_STATUS_ARTIFACT),
     ),
   );
-  let criteria = ledger?.criteria.filter((row) => row.proofMode === 'review') ?? [];
-  if (run.flowType === 'pr-complete' && run.acceptanceContractVersion === 1) {
-    const coverage = reviewAcceptanceCriteria(run);
-    if (
-      coverage.some(
-        (criterion) =>
-          !criteria.some((row) => row.id === criterion.id && row.text === criterion.text),
-      )
-    )
-      throw new Error('PR completion review request is missing a registered review-mode criterion');
-    criteria = criteria.filter((row) => coverage.some(({ id }) => id === row.id));
-    await persistRunNow(
-      updateRun(run.id, {
-        engineState: { ...run.engineState, reviewAcceptanceAtLaunch: coverage },
-      }),
-      'frozen PR-completion review criteria',
-    );
-  }
+  const criteria = ledger?.criteria.filter((row) => row.proofMode === 'review') ?? [];
   if (!criteria.length) return '';
   return [
     '## Criteria checked in this review',

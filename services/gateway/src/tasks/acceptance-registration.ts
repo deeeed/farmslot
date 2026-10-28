@@ -8,13 +8,10 @@ import {
   type AcceptanceDerivationSource,
   type AcceptanceDerivationUnit,
   type AcceptanceObligation,
-  type AcceptanceProofMode,
   type AcceptanceRegistration,
   type AcceptanceSourceClassification,
   isRecord,
-  prCompletionClaimReviewSupported,
   type PRCompletionIntakeIdentity,
-  type Run,
 } from '@farmslot/protocol';
 
 export class AcceptanceDerivationRefusal extends Error {
@@ -246,26 +243,4 @@ Write a JSON result inside this task with \`schemaVersion: 1\`, \`runId\`, curre
 
 Submit with \`./mark sub derive-acceptance complete --mark-last --acceptance-result <task-relative-result.json>\`. The child stays running until the gateway validates coverage and returns its registration acknowledgement; retry the same result after acknowledgement. \`farmslot-agent ac\` stays read-only. A later operator instruction gets its own child unit; never reopen the settled initial unit.
 `;
-}
-
-/** Review destinations come from declarations; state-only appends request no review. */
-export function acceptanceProofDestinations(
-  modes: readonly AcceptanceProofMode[],
-  run?: Run,
-): {
-  claimReviewGate: boolean;
-  publicationReview: boolean;
-} {
-  if (
-    run &&
-    modes.some((mode) => mode === 'visual' || mode === 'mixed') &&
-    !prCompletionClaimReviewSupported(run)
-  )
-    throw new AcceptanceDerivationRefusal(
-      'Captured visual completion review is unsupported for this run policy; no criterion was downgraded',
-    );
-  return {
-    claimReviewGate: modes.some((mode) => mode === 'visual' || mode === 'mixed'),
-    publicationReview: modes.includes('review'),
-  };
 }

@@ -8,6 +8,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.6 - 2026-10-28
+
+- PR completion keeps linked criteria as evidence and checks worker-derived requirements without waiting for review.
+
 ## 0.39.5 - 2026-10-28
 
 - Cache native process metadata for up to a minute during passive polling while keeping fresh identity checks for cleanup and controls.

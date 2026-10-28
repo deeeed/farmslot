@@ -970,14 +970,6 @@ export async function continuePRCompletionStep(
       {},
       true,
     );
-    const run = getRun(runId)!;
-    if (stepName === 'complete' && run.acceptanceProofHold?.state === 'reviewed')
-      updateRun(runId, {
-        acceptanceProofHold: {
-          ...run.acceptanceProofHold,
-          resumedGeneration: run.engineState?.generation ?? 0,
-        },
-      });
     return { run: getRun(runId) ?? result.run, continued: true };
   });
 }
@@ -2140,23 +2132,6 @@ async function replayRunStep(
               const ownerIdx = decisionOwningStepIndex(d.type, flowSteps);
               return ownerIdx < 0 || ownerIdx < targetIdx;
             });
-    // Captured proof remains COMPLETE's evidence source after acknowledgement.
-    // Keep that resolved receipt across replay and uncertain-response retries.
-    const completionProofDecision =
-      existing.flowType === 'pr-complete' && existing.acceptanceProofHold?.state === 'reviewed'
-        ? existing.decisions.find(
-            ({ id, payload }) =>
-              id === existing.acceptanceProofHold?.decisionId &&
-              payload?.kind === 'output-review' &&
-              Boolean(payload.completionProof),
-          )
-        : undefined;
-    if (
-      completionProofDecision &&
-      !clearedDecisions.some(({ id }) => id === completionProofDecision.id)
-    )
-      clearedDecisions.push(completionProofDecision);
-
     // Reset run status, clear error and stale outcome
     const {
       outcome: _outcome,

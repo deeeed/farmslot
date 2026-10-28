@@ -1120,10 +1120,7 @@ export async function runCompletionPipeline(
   //    rest of the pipeline (cost extraction, report generation) is not
   //    blocked. The explicit run.refreshMirror capture returns a failure to the
   //    client instead of continuing when the mirror is incomplete.
-  const reviewedCapture = run.acceptanceProofHold?.state === 'reviewed';
-  if (reviewedCapture && !run.output?.artifactBundle)
-    throw new Error('Reviewed completion proof has no retained capture');
-  if (!isReviewPR && !reviewedCapture) {
+  if (!isReviewPR) {
     try {
       await captureRunOutput(runId, true, true, {
         requireSourceArtifacts: options?.requireArtifactMirror,

@@ -245,7 +245,6 @@ async function fixture(t: TestContext) {
     mode: run.mode,
     recordedEvidenceContractVersion: run.recordedEvidenceContractVersion,
     acceptanceContractVersion: 1,
-    claimReviewSupported: true,
     commands: {
       complete: { artifacts: [] },
       'no-change': { artifacts: [] },
@@ -637,7 +636,7 @@ test('a late instruction at REVIEW sends pending COMPLETE through MONITOR and se
   const late = store.getRun(run.id)!.acceptanceRegistration!.units.at(-1)!;
   await settleUnit(taskDir, run.id, late.id, 2, sync);
   const reviewed = await executeReviewStep(run.id, lifecycleContext);
-  assert.equal(reviewed.outputs?.reason, 'no-fresh-review-criteria');
+  assert.equal(reviewed.outputs?.reason, 'pr-complete-has-no-reviewer');
   store.updateRun(run.id, { status: 'completing' });
   await executeCompleteStep(run.id, lifecycleContext);
   assert.equal(completionCalls, 1, 'the ordinary pipeline runs once after derivation settles');
@@ -762,78 +761,64 @@ test('settlement while COMPLETE waits for admission does not skip the ordinary c
   assert.equal(store.getRun(run.id)!.engineState?.generation ?? 0, 0);
 });
 
-async function reviewedCompletion(t: TestContext) {
+test('a retained paused visual hold replays COMPLETE without reviewer acknowledgement', async (t) => {
   const f = await fixture(t);
   await settleUnit(f.taskDir, f.run.id, 'derive-acceptance', 1, f.sync);
   const current = store.getRun(f.run.id)!;
-  store.updateRun(f.run.id, {
-    status: 'completing',
-    steps: current.steps.map((step) => ({ ...step, status: 'done' })),
-    acceptanceExecutionContract: {
-      ...current.acceptanceExecutionContract!,
-      publicationReview: true,
-      proofModes: [{ id: 'AC-1', text: 'Original', proofMode: 'review' }],
+  const proof = {
+    registrationRevision: current.acceptanceRegistration!.revision,
+    contractRevision: current.acceptanceExecutionContract!.revision,
+    headSha: 'a'.repeat(40),
+  };
+  const decision = {
+    id: 'retained-output-review',
+    type: 'engine_output_review' as const,
+    title: 'Review completion proof',
+    description: 'Retained hold',
+    actions: [],
+    createdAt: '2026-10-28T00:00:00Z',
+    payload: {
+      kind: 'output-review' as const,
+      completionProof: proof,
+      manifestDigest: 'b'.repeat(64),
+      reportPath: 'artifacts/report.md',
     },
-  });
-  const { reviewAcceptanceCriteria } = await import('../review/acceptance-coverage.js');
-  const pass: import('@farmslot/protocol').ReviewStatus = {
-    id: 'pipeline-review-evidence',
-    source: 'pipeline',
-    mode: 'cold',
-    loopNumber: 1,
-    verdict: 'pass',
-    unresolvedCount: 0,
-    reviewerSessionId: 'retained-reviewer',
-    reviewedHeadSha: 'a'.repeat(40),
-    acceptanceReviewCoverage: reviewAcceptanceCriteria(store.getRun(f.run.id)!),
-    reviewedInputsFingerprint: 'f'.repeat(64),
   };
-  store.updateRun(f.run.id, { engineState: { publishGate: { reviews: [pass] } } });
-  const context = {
-    ...lifecycleContext,
-    prCompletionHead: async () => 'a'.repeat(40),
-    prCompletionInputs: async () => ({
-      fingerprint: 'e'.repeat(64),
-      legacyFingerprint: 'e'.repeat(64),
-    }),
-  };
-  return { ...f, pass, context };
-}
-
-test('changed reviewed evidence returns COMPLETE to the existing REVIEW step before pipeline effects', async (t) => {
-  const { run, context } = await reviewedCompletion(t);
-  completionCalls = 0;
-  const result = await executeCompleteStep(run.id, context);
-  assert.equal(result.outputs?.reviewQualificationPending, true);
-  assert.equal(store.getRun(run.id)!.status, 'reviewing');
-  assert.equal(completionCalls, 0);
-});
-
-test('recorded open findings stay ahead of an evidence-triggered re-review', async (t) => {
-  const { run, pass, context } = await reviewedCompletion(t);
-  completionCalls = 0;
-  const current = store.getRun(run.id)!;
-  store.updateRun(run.id, {
-    engineState: {
-      ...current.engineState,
-      publishGate: {
-        reviews: [
-          pass,
-          {
-            ...pass,
-            id: 'pipeline-review-open',
-            reviewerSessionId: 'other-reviewer',
-            verdict: 'issues',
-            unresolvedCount: 1,
-          },
-        ],
+  store.updateRun(
+    f.run.id,
+    Object.assign(
+      {
+        status: 'paused' as const,
+        metrics: { ...current.metrics, outcome: 'partial' as const },
+        decisions: [decision],
+        steps: current.steps.map((step) => ({
+          ...step,
+          status: step.name === 'complete' ? ('pending' as const) : ('done' as const),
+        })),
       },
-    },
-  });
-  context.assertGatePrerequisites = async () => {
-    throw new Error('Recorded findings need their fix first');
-  };
-  await assert.rejects(executeCompleteStep(run.id, context), /findings need their fix first/);
-  assert.equal(store.getRun(run.id)!.status, 'completing');
-  assert.equal(completionCalls, 0);
+      { acceptanceProofHold: { ...proof, state: 'held', decisionId: decision.id } },
+    ),
+  );
+  const { runReplayStep } = await import('../methods/run/replay-step.js');
+  await runReplayStep({ runId: f.run.id, stepName: 'complete' }, () => {});
+  assert.equal(store.getRun(f.run.id)!.status, 'completing');
+  assert.equal(
+    store.getRun(f.run.id)!.metrics.outcome,
+    'partial',
+    'replay preserves worker metrics until normal completion settles',
+  );
+  const { captureRunOutput } = await import('../run-completion/output.js');
+  await captureRunOutput(f.run.id, false, true);
+  assert.equal(
+    store
+      .getRun(f.run.id)!
+      .decisions.some(
+        ({ payload, resolvedAt }) => payload?.kind === 'output-review' && !resolvedAt,
+      ),
+    false,
+  );
+  completionCalls = 0;
+  await executeCompleteStep(f.run.id, lifecycleContext);
+  assert.equal(completionCalls, 1);
+  assert.equal(store.getRun(f.run.id)!.status, 'completing');
 });

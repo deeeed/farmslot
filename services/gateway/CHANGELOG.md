@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Complete PR follow-ups without visual or reviewer holds, retaining linked criteria and evidence.
 - Initialize and verify hosted tasks with the slot's selected provider environment, so a stale gateway provider cannot override the pool selection.
 - Keep run ticket lists tied to explicit references instead of inferring Jira keys from PR body text.
 - Preserve long Codex task paths with a task-local dispatch prompt and guarded bracketed paste for post-launch delivery and recovery, retaining exact acknowledgement checks.

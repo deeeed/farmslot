@@ -107,7 +107,7 @@ function terminalContract(value: unknown): value is WorkerTerminalContractDocume
         ),
     ) &&
     stringFields(value, ['mode']) &&
-    ['claimReviewGate', 'publicationReview', 'claimReviewSupported'].every((key) =>
+    ['claimReviewGate', 'publicationReview'].every((key) =>
       optional(value[key], (entry) => typeof entry === 'boolean'),
     ) &&
     optional(value.acceptanceContractVersion, (entry) => entry === 1) &&
@@ -283,7 +283,6 @@ export function hostedTerminalPolicy(
     publicationReview: _review,
     recordedEvidenceContractVersion: _version,
     acceptanceContractVersion: _acceptanceVersion,
-    claimReviewSupported: _claimReviewSupported,
     ...policy
   }: WorkerTerminalContractDocument): unknown => JSON.parse(JSON.stringify(policy));
   if (
@@ -300,7 +299,6 @@ export function hostedTerminalPolicy(
     publicationReview: task.terminalContract?.publicationReview,
     recordedEvidenceContractVersion: task.terminalContract?.recordedEvidenceContractVersion,
     acceptanceContractVersion: task.terminalContract?.acceptanceContractVersion,
-    claimReviewSupported: task.terminalContract?.claimReviewSupported,
   };
 }
 

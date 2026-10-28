@@ -6,7 +6,6 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { effectiveAcceptanceContract } = require('../scripts/acceptance-contract.cjs');
-const { acceptanceContractIssues } = require('../scripts/acceptance-ledger.cjs');
 const { engineClaims } = require('./acceptance-fixtures.cjs');
 
 function fixture(t, mode = 'state') {
@@ -47,28 +46,14 @@ function fixture(t, mode = 'state') {
   return { dir, base, baseBytes, revision, project, ledger };
 }
 
-test('effective proof destinations support every mode without changing the frozen base', (t) => {
+test('acceptance revisions never add a reviewer or claim gate to the frozen base', (t) => {
   for (const mode of ['state', 'visual', 'mixed', 'review']) {
     const { dir, base, baseBytes } = fixture(t, mode);
     const effective = effectiveAcceptanceContract(dir, base, baseBytes);
-    assert.equal(effective.claimReviewGate, mode === 'visual' || mode === 'mixed');
-    assert.equal(effective.publicationReview, mode === 'review');
+    assert.equal(effective.claimReviewGate, undefined);
+    assert.equal(effective.publicationReview, undefined);
     assert.equal(base.claimReviewGate, undefined);
-    assert.deepEqual(effective.acceptanceReviewCriteria, mode === 'review' ? ['AC-1'] : []);
   }
-});
-
-test('review deferral permits only the scheduled criterion and leaves state failures blocking', (t) => {
-  const { dir, ledger } = fixture(t, 'review');
-  assert.match(acceptanceContractIssues(dir).join(';'), /awaiting-review/);
-  assert.deepEqual(acceptanceContractIssues(dir, { deferReviewCriteria: ['AC-1'] }), []);
-  ledger.criteria[0].proofMode = 'state';
-  ledger.criteria[0].verdict = 'failed';
-  writeFileSync(path.join(dir, 'artifacts/acceptance-status.json'), JSON.stringify(ledger));
-  assert.match(
-    acceptanceContractIssues(dir, { deferReviewCriteria: ['AC-1'] }).join(';'),
-    /failed/,
-  );
 });
 
 test('stale, wrong-run, changed-base and changed immutable revisions refuse explicitly', (t) => {
@@ -110,7 +95,7 @@ test('a review-fix contract keeps its artifacts and reads the root policy revisi
     commands: { complete: { artifacts: ['artifacts/fix-report.md'] } },
   };
   const effective = effectiveAcceptanceContract(dir, role, JSON.stringify(role));
-  assert.equal(effective.claimReviewGate, true);
+  assert.equal(effective.claimReviewGate, undefined);
   assert.deepEqual(effective.commands, role.commands);
 });
 

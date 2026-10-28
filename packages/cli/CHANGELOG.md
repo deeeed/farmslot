@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Remove the retired PR-completion visual-review capability from hosted task contracts.
+
 - Use in-memory CLI transforms so a large shared disk cache does not consume hosted task initialization budgets.
 
 - Preserve gateway-authored acceptance version and claim-review support during hosted task initialization while still checking the node's configured terminal policy.
