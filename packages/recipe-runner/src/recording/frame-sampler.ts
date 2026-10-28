@@ -20,7 +20,7 @@ export class RecordingFrameSampler {
 
   accept(frame: CapturedFrame): CapturedFrame | undefined {
     if (!Number.isFinite(frame.timestampMs) || frame.timestampMs < this.lastTimestampMs)
-      throw new Error('Recording frame timestamp is invalid or moved backwards.');
+      return undefined;
     this.lastTimestampMs = frame.timestampMs;
     this.originMs ??= frame.timestampMs;
     const bucket = Math.floor(((frame.timestampMs - this.originMs) * this.maxFps) / 1000);

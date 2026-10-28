@@ -193,10 +193,8 @@ class CdpVideoRecorder implements VideoRecorder {
         .finally(() => pendingAcks.delete(ack));
       pendingAcks.add(ack);
       const queuedBytes = typeof data === 'string' ? Math.ceil((data.length * 3) / 4) : 0;
-      if (pendingBytes + queuedBytes > 16 * 1024 * 1024) {
-        captureError = new Error('CDP encoding backlog exceeds the 16 MiB queue limit.');
-        return;
-      }
+      // The frame is already acknowledged. Drop it until the encoder catches up.
+      if (pendingBytes + queuedBytes > 16 * 1024 * 1024) return;
       pendingBytes += queuedBytes;
       writeChain = writeChain
         .then(async () => {
