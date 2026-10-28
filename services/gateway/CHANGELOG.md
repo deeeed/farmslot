@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Check the repository's declared or lockfile-selected npm, Yarn or pnpm during worker launch, so npm Terminal checkouts do not require unrelated Yarn shims.
+
 - Refuse worker launch when a declared toolchain command exits unsuccessfully, including an installed Yarn shim with no version for the pinned Node.
 
 - Send refused completion feedback to the retained worker and wait for a new signal before checking completion again.
