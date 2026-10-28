@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -65,6 +65,34 @@ test('missing tools are observed mismatches, failed observations remain unverifi
   assert.equal(checkToolchainObservation(value, 'slot').status, 'unverified');
   value.tools.yarnNode = { missing: true };
   assert.equal(checkToolchainObservation(value, 'slot').status, 'mismatch');
+});
+
+test('an executable Yarn shim exiting 126 blocks launch under the pinned Node', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'launch-broken-yarn-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const binary = path.join(directory, 'bin');
+  await mkdir(binary);
+  await writeFile(path.join(directory, '.nvmrc'), process.version);
+  await writeFile(path.join(binary, 'yarn'), '#!/bin/sh\nexit 126\n', { mode: 0o755 });
+  const { stdout } = await promisify(execFile)('/bin/sh', ['-c', toolchainProbeCommand('')], {
+    cwd: directory,
+    env: { ...process.env, PATH: `${binary}:${process.env.PATH}` },
+  });
+  const actual = parseToolchainObservation(stdout);
+  assert.ok(actual);
+  assert.equal(actual.tools.yarn.exitCode, 126);
+  assert.equal(actual.tools.yarnNode.exitCode, 126);
+  const result = checkToolchainObservation(actual, 'core-slot');
+  assert.equal(result.status, 'mismatch');
+  assert.match(result.detail, /core-slot yarnNode exited 126.*\.nvmrc.*selected pack setup/);
+});
+
+test('a successful Yarn version does not admit a failed Yarn child Node', () => {
+  const value = observation();
+  value.tools.yarnNode = { unavailable: 'probe exited 126', exitCode: 126 };
+  const parsed = parseToolchainObservation(JSON.stringify(value));
+  assert.ok(parsed);
+  assert.equal(checkToolchainObservation(parsed, 'core-slot').status, 'mismatch');
 });
 
 test('no Yarn version is invented when only Node is declared', () => {

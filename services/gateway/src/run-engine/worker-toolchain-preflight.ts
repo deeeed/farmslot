@@ -30,6 +30,7 @@ export interface ToolVersion {
   version?: string;
   missing?: boolean;
   unavailable?: string;
+  exitCode?: number;
 }
 export interface ToolRequirement {
   tool: 'node' | 'yarn' | 'ruby';
@@ -58,7 +59,7 @@ if(typeof pkg.packageManager==='string' && pkg.packageManager.startsWith('yarn@'
 pins(read('.tool-versions'),'.tool-versions');
 if(rubyDeclared)add('ruby',read('.ruby-version'),'.ruby-version');
 pins(process.argv[1],'selected pack toolchain pins');
-const probe=(binary,args)=>{const r=cp.spawnSync(binary,args,{encoding:'utf8',env:{...process.env,COREPACK_ENABLE_NETWORK:'0'}});if(r.error?.code==='ENOENT')return {missing:true};if(r.error || r.status!==0)return {unavailable:r.error?.message || 'probe exited '+r.status};return {version:r.stdout.trim()}};
+const probe=(binary,args)=>{const r=cp.spawnSync(binary,args,{encoding:'utf8',env:{...process.env,COREPACK_ENABLE_NETWORK:'0'}});if(r.error?.code==='ENOENT')return {missing:true};if(r.error || r.status!==0)return {unavailable:r.error?.message || 'probe exited '+r.status,...(Number.isInteger(r.status)?{exitCode:r.status}:{})};return {version:r.stdout.trim()}};
 const tools={node:{version:process.version},yarn:{},yarnNode:{},ruby:{}};
 if(requirements.some(r=>r.tool==='node'||r.tool==='yarn')){
  tools.yarn=probe('yarn',['--version']);
@@ -74,7 +75,13 @@ function toolVersion(value: unknown): ToolVersion | undefined {
   if (!isRecord(value)) return undefined;
   if (value.missing === true) return { missing: true };
   if (typeof value.version === 'string') return { version: value.version };
-  if (typeof value.unavailable === 'string') return { unavailable: value.unavailable };
+  if (typeof value.unavailable === 'string')
+    return {
+      unavailable: value.unavailable,
+      ...(Number.isInteger(value.exitCode) && typeof value.exitCode === 'number'
+        ? { exitCode: value.exitCode }
+        : {}),
+    };
   if (Object.keys(value).length === 0) return {};
   return undefined;
 }
@@ -120,6 +127,11 @@ export function checkToolchainObservation(
         return {
           status: 'mismatch',
           detail: `${slotId} ${tool} is missing; expected ${requirement.range} from ${requirement.source}. ${correction}.`,
+        };
+      if (actual.exitCode !== undefined && actual.exitCode !== 0)
+        return {
+          status: 'mismatch',
+          detail: `${slotId} ${tool} exited ${actual.exitCode}; expected ${requirement.range} from ${requirement.source}. ${correction}.`,
         };
       if (!actual.version) {
         unverified.push(`${tool}: ${actual.unavailable ?? 'version unavailable'}`);
