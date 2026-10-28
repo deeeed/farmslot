@@ -47,7 +47,7 @@ writeFileSync(
   }),
 );
 writeFileSync(
-  path.join(root, '.farm-status.json'),
+  path.join(root, 'fixture-status.json'),
   JSON.stringify({
     checked_at: new Date().toISOString(),
     slots: [
@@ -68,7 +68,7 @@ Object.assign(process.env, {
   FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
   NODE_TEST_CONTEXT: '1',
-  FARMSLOT_TEST_STATUS_FILE: path.join(root, '.farm-status.json'),
+  FARMSLOT_TEST_STATUS_FILE: path.join(root, 'fixture-status.json'),
 });
 after(() => rmSync(root, { recursive: true, force: true }));
 const { PRRuleService } = await import('./service.js');

@@ -57,7 +57,7 @@ import { planRunSources } from '@farmslot/slot-config';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
 import { projectTaskRoots } from '../core/config.js';
-import { isolatedTestPath } from '../core/isolated-test-path.js';
+import { isGatewayTestProcess, isolatedTestPath } from '../core/isolated-test-path.js';
 import { readSlotField } from '../core/state.js';
 import { farmslotRoot, isValidSafetyTier } from '../fleet/state.js';
 import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
@@ -113,10 +113,7 @@ export function backfillLegacySafetyTier(
   return 'dangerous';
 }
 
-export function shouldUseIsolatedRunsDir(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
-  if (env.NODE_TEST_CONTEXT) return true;
-  return argv.some((arg) => /(?:^|[/\\])[^/\\]+\.test\.(?:ts|tsx|js|mjs|cjs)$/.test(arg));
-}
+export { isGatewayTestProcess as shouldUseIsolatedRunsDir } from '../core/isolated-test-path.js';
 
 // Test isolation: when running under `node --test` or the repo's common
 // `yarn exec tsx .../*.test.ts` command shape, redirect RUNS_DIR to a
@@ -125,7 +122,7 @@ export function shouldUseIsolatedRunsDir(env: NodeJS.ProcessEnv, argv: readonly 
 // path (CI fixtures, integration harnesses, etc.).
 function resolveRunsDir(): string {
   if (process.env.FARMSLOT_RUNS_DIR) return process.env.FARMSLOT_RUNS_DIR;
-  if (shouldUseIsolatedRunsDir(process.env, process.argv)) {
+  if (isGatewayTestProcess(process.env, process.argv)) {
     return isolatedTestPath('farmslot-test-runs');
   }
   return path.join(farmslotRoot, '.runs');

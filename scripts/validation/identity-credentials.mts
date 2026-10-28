@@ -40,6 +40,7 @@ try {
   process.env.FARMSLOT_GATEWAY_TOKEN = 'obsolete-proof-value';
   delete process.env.FARMSLOT_GATEWAY_PASSWORD;
 
+  await import('../../services/gateway/src/projects/gateway-status-process.js');
   const {
     CredentialStoreRuntime,
     CredentialStoreWriter,

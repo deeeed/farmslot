@@ -22,7 +22,7 @@ const environment = {
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
   FARMSLOT_HOME: path.join(root, 'home'),
   FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
-  FARMSLOT_TEST_STATUS_FILE: path.join(root, '.farm-status.json'),
+  FARMSLOT_TEST_STATUS_FILE: path.join(root, 'fixture-status.json'),
   NODE_TEST_CONTEXT: '1',
 };
 const previous = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
@@ -56,6 +56,7 @@ const commit = (name: string): string => {
 commit('seed');
 execFileSync('git', ['clone', '-q', '--bare', author, origin]);
 execFileSync('git', ['clone', '-q', origin, repo]);
+git(repo, 'config', 'commit.gpgsign', 'false');
 git(author, 'remote', 'add', 'origin', origin);
 const frozen = commit('frozen');
 const later = commit('later');

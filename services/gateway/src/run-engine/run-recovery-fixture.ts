@@ -34,7 +34,7 @@ const environment = {
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
   FARMSLOT_HOME: path.join(root, 'home'),
   FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
-  FARMSLOT_TEST_STATUS_FILE: path.join(root, '.farm-status.json'),
+  FARMSLOT_TEST_STATUS_FILE: path.join(root, 'fixture-status.json'),
   NODE_TEST_CONTEXT: '1',
 };
 const previous = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
@@ -108,7 +108,7 @@ writeFileSync(
 
 export function setSlot(owner: string | null = null): void {
   writeFileSync(
-    path.join(root, '.farm-status.json'),
+    path.join(root, 'fixture-status.json'),
     JSON.stringify({
       checked_at: new Date().toISOString(),
       slots: slots.map((slot) => ({

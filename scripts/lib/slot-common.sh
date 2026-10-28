@@ -185,32 +185,11 @@ remote() {
   fi
 }
 
-# ── update_farm_status <slot-id> <field> <value> ──────────────────
-# Updates a field in .farm-status.json for the given slot.
-# Value should be a valid JSON literal (string in quotes, null, etc.)
-# Requires PROJECT_DIR to be set by the calling script.
+# ── update_farm_status ─────────────────────────────────────────
+# Shared status is owned by the gateway; shell scripts must use lifecycle RPCs.
 update_farm_status() {
-  local slot_id="$1" field="$2" value="$3"
-  local status_file="${PROJECT_DIR:?PROJECT_DIR must be set}/.farm-status.json"
-  [ -f "$status_file" ] || return 0
-
-  python3 -c "
-import json
-with open('${status_file}') as f:
-    data = json.load(f)
-# Parse value as JSON so null/true/false map correctly to Python
-val = json.loads('${value}') if '${value}' != '' else None
-for s in data.get('slots', []):
-    if s['slot'] == '${slot_id}':
-        s['${field}'] = val
-        break
-import os, tempfile
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname('${status_file}'), suffix='.tmp')
-with os.fdopen(fd, 'w') as f:
-    json.dump(data, f, indent=2)
-    f.write('\n')
-os.rename(tmp, '${status_file}')
-"
+  echo "Direct fleet status writes are disabled; use gateway lifecycle RPCs." >&2
+  return 1
 }
 
 # ── kill_agent_in_session ──────────────────────────────────────────
