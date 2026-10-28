@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Serve saved fleet observations immediately while workspace checks refresh in the background, keeping slow Git and network reads outside status requests.
+
 - Keep a worker-blocked run's slot lease while it waits for an answer, so dispatch cannot overwrite its in-place fix before monitoring resumes.
 
 - Retain exact worker panes before transcripts appear and refresh resumed reviewer session bindings so finished work does not strand slots.

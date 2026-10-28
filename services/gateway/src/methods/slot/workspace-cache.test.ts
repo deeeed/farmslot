@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
+import { slotRecoveryEligibility } from '@farmslot/protocol';
+
 import type { SlotVars } from '../../core/index.js';
 
 import type { WorkspaceProbe } from './workspace-probe.js';
@@ -73,6 +75,7 @@ await writeFile(
 );
 await import('../../runtime/mock-pty.test-support.js');
 let probes = 0;
+let probeFailure: Error | undefined;
 interface ProbePause {
   gate: Promise<void>;
   started(): void;
@@ -126,13 +129,23 @@ mock.module('./workspace-probe.js', {
         pause.started();
         await pause.gate;
       }
+      if (probeFailure) {
+        const error = probeFailure;
+        probeFailure = undefined;
+        throw error;
+      }
       return captured;
     },
   },
 });
 const { loadFleetStatus } = await import('../../fleet/state.js');
-const { enrichFleetWorkspaces, inspectSlotWorkspace, invalidateSlotWorkspaceObservations } =
-  await import('./workspace.js');
+const {
+  enrichFleetWorkspaces,
+  inspectSlotWorkspace,
+  invalidateSlotWorkspaceObservations,
+  observedFleetWorkspaces,
+} = await import('./workspace.js');
+const { fleetStatus } = await import('../fleet.js');
 
 test('observation timestamps do not turn unchanged status reads into repeated Git inspections', async () => {
   const first = await enrichFleetWorkspaces(await loadFleetStatus(true));
@@ -148,6 +161,67 @@ test('a verified mutation invalidates cached dirt before its TTL expires', async
   const fresh = await enrichFleetWorkspaces(await loadFleetStatus(true));
   assert.equal(fresh.slots[0]?.workspace?.dirtyCount, 0);
   assert.equal(probes, 2);
+});
+
+test('fleet.status returns the last observation before a held refresh finishes', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const loaded = await loadFleetStatus(true);
+  const saved = (await enrichFleetWorkspaces(loaded)).slots[0]?.workspace;
+  assert.ok(saved);
+  now += 16_000;
+  let resume: () => void = () => assert.fail('Observation gate missing');
+  let notify: () => void = () => assert.fail('Observation start missing');
+  const started = new Promise<void>((resolve) => {
+    notify = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  pausedProbe = { gate, started: notify };
+  const before = probes;
+  const refresh = enrichFleetWorkspaces(loaded);
+  await started;
+  const status = fleetStatus();
+  try {
+    const result = await Promise.race([
+      status,
+      new Promise<undefined>((resolve) => setImmediate(() => resolve(undefined))),
+    ]);
+    assert.ok(result, 'Status must answer while the real workspace observer is still held');
+    assert.equal(result.fleet.slots[0]?.workspace, saved);
+    assert.equal(result.fleet.slots[0]?.workspace?.observedAt, saved.observedAt);
+    assert.equal(probes, before + 1);
+    const changed = {
+      ...loaded,
+      slots: loaded.slots.map((slot) => ({ ...slot, currentRunId: 'another-owner' })),
+    };
+    assert.equal(observedFleetWorkspaces(changed).slots[0]?.workspace, undefined);
+    invalidateSlotWorkspaceObservations('cache-slot');
+    assert.equal(observedFleetWorkspaces(loaded).slots[0]?.workspace, undefined);
+  } finally {
+    resume();
+    await Promise.all([refresh, status]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+});
+
+test('a failed background inspection cannot leave saved release eligibility behind', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const loaded = await loadFleetStatus(true);
+  const saved = await enrichFleetWorkspaces(loaded);
+  assert.ok(saved.slots[0]?.workspace);
+  now += 16_000;
+  probeFailure = new Error('Fixture workspace unreadable');
+  t.after(() => {
+    probeFailure = undefined;
+  });
+  await enrichFleetWorkspaces(loaded);
+  const latest = observedFleetWorkspaces(loaded).slots[0];
+  assert.equal(latest?.workspace, undefined);
+  assert.equal(latest?.workspaceError, 'Fixture workspace unreadable');
+  assert.equal(slotRecoveryEligibility(latest).allowed, false);
 });
 
 test('a 37-second inspection gets its cache window after completion without changing observed time', async (t) => {

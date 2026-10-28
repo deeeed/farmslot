@@ -16,6 +16,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.21.1 - 2026-10-28
+
+- Update open fleet recovery views when background observations finish, retaining connection and release guards.
+
 ## 0.21.0 - 2026-10-27
 
 - Keep reversible criterion drafts across reload and submit their notes through the existing publication override and attestation calls.

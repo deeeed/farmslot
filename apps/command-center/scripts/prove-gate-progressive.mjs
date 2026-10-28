@@ -380,7 +380,7 @@ try {
   const { createGatewayAuthRuntime, authorizeHttpRequest } = await sourceModule(
     'services/gateway/src/security/auth.ts',
   );
-  const { createWebSocketServer, broadcastEvent } = await sourceModule(
+  const { createWebSocketServer, broadcastEvent, initServerGlobals } = await sourceModule(
     'services/gateway/src/server.ts',
   );
   const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
@@ -418,6 +418,7 @@ try {
     res.end();
   });
   gatewaySockets = createWebSocketServer(gatewayServer, auth);
+  if (boundedLocal) initServerGlobals();
   const gatewayPort = await listen(gatewayServer);
   proxyServer = createServer((req, res) => {
     const upstream = httpRequest(
@@ -452,7 +453,7 @@ try {
     client.on('message', (bytes, binary) => {
       const frame = JSON.parse(bytes.toString());
       if (frame.type === 'req') {
-        requests.set(frame.id, frame);
+        requests.set(frame.id, { ...frame, sentAt: Date.now() });
         events.push({
           method: frame.method,
           view: frame.params?.view,
@@ -486,6 +487,7 @@ try {
       if (req)
         events.push({
           responseTo: req.method,
+          rpcMs: Date.now() - req.sentAt,
           view: req.params?.view,
           receivedMs: Date.now() - started,
           bytes: bytes.length,
@@ -759,21 +761,10 @@ try {
         ),
       );
       await save('local-first-reply.json', firstReply);
-      const wallMs = localBatchEnd - localBatchStart;
-      await save('local-admission.json', {
-        launches: localLaunches,
-        peak: localPeak,
-        active: localActive,
-        wallMs,
-      });
-      assert(wallMs < 15000, 'The cold local batch must fit the normal client deadline');
+      const cold = events.find((event) => event.responseTo === 'fleet.status' && event.ok);
+      assert(cold?.rpcMs < 2000, 'Cold Fleet bootstrap must answer before workspace inspection');
+      assert(firstReply.ms < 2000, 'Concurrent fleet.status must not await background checks');
       assert.equal(firstReply.slots.length, 31);
-      assert(
-        firstReply.slots
-          .filter((slot) => slot.enabled)
-          .every((slot) => slot.workspace && !slot.workspace.error),
-        'One fleet.status must inspect every enabled local checkout',
-      );
       const needsRetry = JSON.parse(
         await cdp(
           'eval',
@@ -787,11 +778,19 @@ try {
       await cdp(
         'eval',
         route,
-        `const {getState,isHydrating}=await import('/src/state.ts');const end=Date.now()+60000;while(isHydrating(getState(),'fleet')){if(Date.now()>end)throw Error('Fleet bootstrap did not settle');await new Promise(r=>setTimeout(r,50))}const fleet=getState().fleet;return {slots:fleet?.slots.map(slot=>({slot:slot.slot,enabled:slot.enabled,workspace:slot.workspace??null,error:slot.workspaceError??null}))??[]};`,
+        `const {getState,isHydrating}=await import('/src/state.ts');const end=Date.now()+60000;while(isHydrating(getState(),'fleet')||!getState().fleet?.slots.filter(s=>s.enabled).every(s=>s.workspace&&!s.workspace.error)){if(Date.now()>end)throw Error('Background fleet observations did not arrive');await new Promise(r=>setTimeout(r,50))}const fleet=getState().fleet;return {slots:fleet?.slots.map(slot=>({slot:slot.slot,enabled:slot.enabled,workspace:slot.workspace??null,error:slot.workspaceError??null}))??[]};`,
       ),
     );
     await save('fleet-first.json', firstFleet);
     if (boundedLocal) {
+      const wallMs = localBatchEnd - localBatchStart;
+      await save('local-admission.json', {
+        launches: localLaunches,
+        peak: localPeak,
+        active: localActive,
+        wallMs,
+      });
+      assert(wallMs < 15000, 'The background local batch must finish within fifteen seconds');
       assert.equal(firstFleet.slots.length, 31);
       assert(
         firstFleet.slots
@@ -867,6 +866,50 @@ try {
             firstFleet.slots.find((first) => first.slot === slot.slot).workspace?.observedAt,
           );
       }
+      await cdp('click', route, 'fleet-canvas >>> .fleet-refresh-trigger');
+      await cdp('screenshot', route, path.join(output, 'fleet-observation-before.png'));
+      // Change real Git facts while the dialog stays mounted. Passive reads
+      // must publish the new observation without reopening or releasing a slot.
+      const changedRepo = path.join(root, 'local-proof-0');
+      await writeFile(path.join(changedRepo, 'fixture.txt'), 'Changed while Fleet is open\n');
+      await exec('git', ['add', 'fixture.txt'], { cwd: changedRepo });
+      // Exercise the monitor's caller with no request publisher. The server's
+      // once-only completion publisher must notify the mounted view immediately.
+      const { fleetStatus } = await sourceModule('services/gateway/src/methods/fleet.ts');
+      const monitorReads = [];
+      const observationDeadline = Date.now() + 45000;
+      for (;;) {
+        const start = performance.now();
+        const { fleet } = await fleetStatus();
+        monitorReads.push(performance.now() - start);
+        if (fleet.slots.find((slot) => slot.slot === 'local-proof-0')?.workspace?.dirtyCount === 1)
+          break;
+        assert(Date.now() < observationDeadline, 'Actual monitor observation must finish');
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      await save('monitor-observation.json', {
+        reads: monitorReads,
+        observedAt: new Date().toISOString(),
+      });
+      const updated = JSON.parse(
+        await cdp(
+          'eval',
+          route,
+          `const all=[];const walk=r=>{for(const e of r.querySelectorAll('*')){if(e.localName==='fleet-refresh-modal'&&e.open)all.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};walk(document);const current=all[0];if(!current)throw Error('Expected the same open dialog');const end=Date.now()+2000;for(;;){const text=current.shadowRoot?.textContent?.replace(/\\s+/g,' ')??'';if(text.includes('1 changed files')&&text.includes('Release idle slots (29)'))return {text,open:current.open};if(Date.now()>end)throw Error('Open dialog missed monitor-owned Git observation');await new Promise(r=>setTimeout(r,250))}`,
+        ),
+      );
+      assert(updated.open, 'The same dialog must remain open');
+      assert(
+        monitorReads.every((ms) => ms < 2000),
+        'Observation refresh must not delay reads',
+      );
+      await save('fleet-observation-after.json', updated);
+      await cdp('screenshot', route, path.join(output, 'fleet-observation-after.png'));
+      await cdp(
+        'click',
+        route,
+        'fleet-canvas >>> fleet-refresh-modal >>> button[aria-label=Close]',
+      );
     }
   } else {
     await cdp(
