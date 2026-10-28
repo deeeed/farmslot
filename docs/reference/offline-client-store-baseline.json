@@ -1842,6 +1842,183 @@
         "Fix-loop figures are the gate prefetch reads after a new package for the same gate: requests, their replies and HTTP artifact bytes; held bases answer \"held\" and the over-cap base \"too-large\", none with content.",
         "Step order: the offline check and the offlineHeld samples run right after the first prefetch, on the first package and before any connected gate open; the fix loop follows, then nothingHeld and afterPrefetch on the second package. This replaces the d10-gate-review-2 entry, which measured offline after the connected opens."
       ]
+    },
+    {
+      "head": "d5ead634c5a0a21b8b33e5a479f7f4fae1090e23",
+      "measuredAt": "2026-10-28T09:59:29.068Z",
+      "client": "command-center-browser",
+      "method": "apps/command-center/scripts/cdp.mjs baseline <tab> reconnect",
+      "runCount": 65,
+      "initialBaselineRunCount": 67,
+      "versionLists": true,
+      "reconnectRunListMs": 1124,
+      "reconnectRunListBytes": 235166,
+      "catchUpPages": 0,
+      "catchUpBytes": 0,
+      "gate": {
+        "metric": "reconnectRunListBytes",
+        "limit": 5000000,
+        "under": true
+      },
+      "control": {
+        "versionLists": false,
+        "how": "lane-side preload reports capabilities.resourceChanges.versionLists false; same build, data and page",
+        "reconnectRunListMs": 1077,
+        "reconnectRunListBytes": 7467566,
+        "samples": [
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1115,
+            "requestMs": 76,
+            "receivedBytes": 7628870,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1115,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          },
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1077,
+            "requestMs": 52,
+            "receivedBytes": 7467566,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1077,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          },
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1075,
+            "requestMs": 54,
+            "receivedBytes": 7628663,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1075,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          },
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1079,
+            "requestMs": 55,
+            "receivedBytes": 7467566,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1079,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          },
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1073,
+            "requestMs": 48,
+            "receivedBytes": 7467566,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1073,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          }
+        ]
+      },
+      "hostLoad": {
+        "cpus": 18,
+        "start": [9.71875, 11.05078125, 12.46435546875],
+        "startGate": {
+          "idlePercent": 82.3,
+          "load1": 9.71875
+        },
+        "end": [11.27197265625, 11.76806640625, 12.58349609375]
+      },
+      "samples": [
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1128,
+          "requestMs": 60,
+          "receivedBytes": 234828,
+          "responseBytes": 36386,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1086,
+          "firstRunListResponseBytes": 36386,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1116,
+          "requestMs": 68,
+          "receivedBytes": 235166,
+          "responseBytes": 36386,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1089,
+          "firstRunListResponseBytes": 36386,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1124,
+          "requestMs": 71,
+          "receivedBytes": 235166,
+          "responseBytes": 36386,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1092,
+          "firstRunListResponseBytes": 36386,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1123,
+          "requestMs": 63,
+          "receivedBytes": 235174,
+          "responseBytes": 36387,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1091,
+          "firstRunListResponseBytes": 36387,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1153,
+          "requestMs": 82,
+          "receivedBytes": 234841,
+          "responseBytes": 36387,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1121,
+          "firstRunListResponseBytes": 36387,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        }
+      ]
     }
   ]
 }
