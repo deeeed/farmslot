@@ -1,6 +1,6 @@
 // Manual process regression: node --import tsx <this-file>. No runner or tmux server is launched.
 import assert from 'node:assert/strict';
-import { type ChildProcess,execFileSync, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, open, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -221,7 +221,10 @@ async function main(): Promise<void> {
     const laneWriter = path.join(root, 'lane-writer.mjs');
     await writeFile(
       laneWriter,
-      `import { resolveStatusFilePath } from ${JSON.stringify(new URL('./repo-root.js', import.meta.url).href)};\nresolveStatusFilePath();\n`,
+      `import assert from 'node:assert/strict';\n` +
+        `import { readSlotRow, updateSlotStatus } from ${JSON.stringify(new URL('../core/state.js', import.meta.url).href)};\n` +
+        `assert.equal((await readSlotRow('owned-review')).slot_epoch,76);\n` +
+        `await updateSlotStatus('owned-review',{slot_epoch:0});\n`,
     );
     const laneProcess = spawn(process.execPath, ['--import', 'tsx', laneWriter], {
       cwd: source,
@@ -231,26 +234,23 @@ async function main(): Promise<void> {
     let refusal = '';
     assert.ok(laneProcess.stderr);
     laneProcess.stderr.setEncoding('utf8');
-    laneProcess.stderr.on('data', (chunk: string) => { refusal += chunk; });
+    laneProcess.stderr.on('data', (chunk: string) => {
+      refusal += chunk;
+    });
     const [laneCode] = await once(laneProcess, 'exit');
-    assert.notEqual(laneCode, 0, 'an ordinary lane script cannot resolve the shared store');
-    assert.match(refusal, /requires gateway bootstrap/);
+    assert.notEqual(laneCode, 0, 'an ordinary lane script cannot write the shared store');
+    assert.match(refusal, /Shared fleet status writes require gateway bootstrap/);
     assert.equal(await readFile(status, 'utf8'), before);
-    const reader = path.join(root, 'reader-proof.mjs');
-    await writeFile(
-      reader,
-      `import ${JSON.stringify(new URL('./read-only-status-process.js', import.meta.url).href)};\n` +
-      `import assert from 'node:assert/strict';\n` +
-      `import { readSlotRow, updateSlotStatus } from ${JSON.stringify(new URL('../core/state.js', import.meta.url).href)};\n` +
-      `assert.equal((await readSlotRow('owned-review')).slot_epoch,76);\n` +
-      `await assert.rejects(updateSlotStatus('owned-review',{slot_epoch:0}),/reader access is read-only/);\n`,
+    execFileSync(
+      process.execPath,
+      ['--import', 'tsx', path.join(source, 'services/gateway/scripts/run-retention-plan.ts')],
+      {
+        cwd: source,
+        env,
+        timeout: 90_000,
+        stdio: ['ignore', log.fd, log.fd],
+      },
     );
-    execFileSync(process.execPath, ['--import', 'tsx', reader], {
-      cwd: source, env, timeout: 90_000, stdio: ['ignore', log.fd, log.fd],
-    });
-    execFileSync(process.execPath, ['--import', 'tsx', path.join(source, 'services/gateway/scripts/run-retention-plan.ts')], {
-      cwd: source, env, timeout: 90_000, stdio: ['ignore', log.fd, log.fd],
-    });
     assert.equal(await readFile(status, 'utf8'), before, 'operator reader never changes the lease');
     gateway.send({ complete: true });
     await waitMessage('completed');

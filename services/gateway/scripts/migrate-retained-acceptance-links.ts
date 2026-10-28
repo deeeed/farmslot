@@ -1,7 +1,5 @@
 import { readFile } from 'node:fs/promises';
 
-import '../src/projects/read-only-status-process.js';
-
 import { importRetainedAcceptanceLinks } from '../src/tasks/retained-acceptance-links.js';
 
 const [inventoryFile, taskRoot, ...extra] = process.argv.slice(2);

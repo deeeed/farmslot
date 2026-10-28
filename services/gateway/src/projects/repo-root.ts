@@ -9,16 +9,11 @@ import { isGatewayTestProcess, isolatedTestPath } from '../core/isolated-test-pa
 // implementation, shared with the CLI); this module re-exports them.
 export { farmslotRoot, resolveFarmslotRoot, resolveWorkspaceRoot };
 
-type StatusAccess = 'none' | 'read-only' | 'gateway';
-let statusAccess: StatusAccess = 'none';
+let gatewayStatusProcess = false;
 
 /** Explicit gateway bootstrap, never an environment flag inherited by child scripts. */
 export function registerGatewayStatusProcess(): void {
-  statusAccess = 'gateway';
-}
-
-export function registerGatewayStatusReader(): void {
-  if (statusAccess === 'none') statusAccess = 'read-only';
+  gatewayStatusProcess = true;
 }
 
 function canonicalStatusPath(file: string): string {
@@ -32,7 +27,6 @@ export function resolveStatusFilePath(
   root = farmslotRoot,
   env: NodeJS.ProcessEnv = process.env,
   argv: readonly string[] = process.argv,
-  access: StatusAccess = statusAccess,
 ): string {
   const testPath = env.FARMSLOT_TEST_STATUS_FILE?.trim();
   if (testPath) {
@@ -55,23 +49,21 @@ export function resolveStatusFilePath(
     if (!existsSync(isolated)) writeFileSync(isolated, '{"slots":[]}\n');
     return isolated;
   }
-  if (access === 'none')
-    throw new Error(
-      'Shared fleet status access requires gateway bootstrap; use gateway RPC or an isolated test store',
-    );
   return path.join(root, '.farm-status.json');
 }
 
 export function assertStatusFileWritable(
   file: string,
   root = farmslotRoot,
-  access: StatusAccess = statusAccess,
+  gatewayProcess = gatewayStatusProcess,
 ): void {
   if (
     canonicalStatusPath(file) === canonicalStatusPath(path.join(root, '.farm-status.json')) &&
-    access !== 'gateway'
+    !gatewayProcess
   )
-    throw new Error('Shared fleet status writes require gateway bootstrap; reader access is read-only');
+    throw new Error(
+      'Shared fleet status writes require gateway bootstrap; use gateway RPC or an isolated test store',
+    );
 }
 
 export const farmslotRuntimeLogDir = path.join(farmslotRoot, '.omx', 'logs');
