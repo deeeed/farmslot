@@ -98,6 +98,9 @@ branch. Merge required installation fixes before installing the release.
    native root. Preserve those state directories and native-owner settings.
 
 3. Upgrade the private CLI and execution nodes before restarting the gateway.
+   Stage pool configuration from the canonical gateway configuration only. The
+   deploy copies those file contents to nodes; a node checkout is never a pool
+   authority or a fallback. Do not relink deployed pools to a node-local checkout.
    From the release worktree, deploy each remote machine and configured instance
    with its machine-scoped credential file:
 
