@@ -107,12 +107,6 @@ export default function SlotDiffViewerScreen() {
   const diffObservation = useResourceQuery(diffQuery);
   const diffText = diffObservation.data?.diff ?? '';
   const loading = diffObservation.status === 'loading';
-  const error = diffObservation.error?.message;
-  const readError =
-    diffObservation.error?.message ??
-    slotRunObservation.error?.message ??
-    runObservation.error?.message ??
-    recipeObservation.error?.message;
   const retryRead = async () => {
     const cache = getResourceCache();
     const queries: Array<ResourceQuery<unknown> | undefined> = [
@@ -253,19 +247,12 @@ export default function SlotDiffViewerScreen() {
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
         <ResourceReadStatus
           observations={[
+            { observation: slotRunObservation, label: 'slot context' },
             { observation: runObservation, label: 'slot diff run' },
             { observation: recipeObservation, label: 'slot diff recipe inventory' },
           ]}
+          onRetry={() => void retryRead()}
         />
-        {readError ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Retry slot diff reads"
-            onPress={() => void retryRead()}
-          >
-            <Text style={baseStyles.textSecondary}>Retry</Text>
-          </Pressable>
-        ) : null}
         <RunWorkspaceNav
           current="diff"
           dense
@@ -332,10 +319,12 @@ export default function SlotDiffViewerScreen() {
             />
           </View>
         ) : null}
-        <ResourceReadStatus observation={diffObservation} label="workspace diff" />
-        {pathParamError || error ? (
-          <Text style={styles.errorText}>{pathParamError ?? error}</Text>
-        ) : null}
+        <ResourceReadStatus
+          observation={diffObservation}
+          label="workspace diff"
+          onRetry={() => void retryRead()}
+        />
+        {pathParamError ? <Text style={styles.errorText}>{pathParamError}</Text> : null}
         {diffText ? (
           <MobileDiffViewer
             title={requestedPath ? `${requestedPath} · workspace` : 'Workspace diff'}

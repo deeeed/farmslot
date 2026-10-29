@@ -689,9 +689,11 @@ export class FamilyObservability extends FamilyObservabilityState {
       return html`
         <div class="empty">
           ${this.error ||
-          (gateway.connectionState === 'connected'
-            ? 'Loading retrospective…'
-            : 'Connect to load the family summary.')}
+          (this.familyQuery.state.error
+            ? 'Family is unavailable. See Notifications to retry.'
+            : gateway.connectionState === 'connected'
+              ? 'Loading retrospective…'
+              : 'Connect to load the family summary.')}
         </div>
         ${savedRun
           ? html`<div>${savedRun.ticketOrPr}</div>

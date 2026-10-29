@@ -19,6 +19,9 @@ export class NotificationTray extends LitElement {
   private stop?: () => void;
   private ageTimer?: ReturnType<typeof setInterval>;
   private readonly refresh = () => this.requestUpdate();
+  private readonly onEscape = (event: KeyboardEvent) => {
+    if (this.open && event.key === 'Escape') this.close();
+  };
   private readonly outside = (event: Event) => {
     if (!event.composedPath().includes(this)) this.close(false);
   };
@@ -32,6 +35,7 @@ export class NotificationTray extends LitElement {
     this.items = notificationTray.items;
     window.addEventListener(ATTENTION_PREFERENCES_CHANGED, this.refresh);
     window.addEventListener('storage', this.refresh);
+    window.addEventListener('keydown', this.onEscape);
     document.addEventListener('pointerdown', this.outside);
   }
   disconnectedCallback() {
@@ -40,6 +44,7 @@ export class NotificationTray extends LitElement {
     this.ageTimer = undefined;
     window.removeEventListener(ATTENTION_PREFERENCES_CHANGED, this.refresh);
     window.removeEventListener('storage', this.refresh);
+    window.removeEventListener('keydown', this.onEscape);
     document.removeEventListener('pointerdown', this.outside);
     super.disconnectedCallback();
   }
@@ -94,6 +99,13 @@ export class NotificationTray extends LitElement {
       white-space: nowrap;
       color: ${unsafeCSS(colors.statusWarn)};
     }
+    .attention a {
+      display: block;
+      min-height: 44px;
+      line-height: 44px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     button,
     a {
       font: inherit;
@@ -115,11 +127,12 @@ export class NotificationTray extends LitElement {
       color: ${unsafeCSS(colors.textPrimary)};
     }
     .panel {
-      position: absolute;
+      position: fixed;
       top: 44px;
       right: 8px;
       z-index: 300;
-      width: min(420px, calc(100vw - 80px));
+      box-sizing: border-box;
+      width: min(420px, calc(100vw - 16px));
       height: min(480px, 70vh);
       overflow: auto;
       background: ${unsafeCSS(colors.bgCard)};
@@ -180,8 +193,8 @@ export class NotificationTray extends LitElement {
     return html`
       <div class="strip" data-testid="notification-strip">
         ${top
-          ? html`<a class="attention" href=${top.route} title=${top.body} role="status"
-              >${top.title}</a
+          ? html`<span class="attention" role="status"
+              ><a href=${top.route} title=${top.body}>${top.title}</a></span
             >`
           : nothing}
         <button

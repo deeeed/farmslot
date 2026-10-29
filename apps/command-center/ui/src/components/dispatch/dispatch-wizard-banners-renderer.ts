@@ -143,9 +143,9 @@ export function renderCompareRunPickerModal(ctx: CompareRunPickerModalContext) {
           @input=${(event: InputEvent) =>
             ctx.setPickerSearch((event.target as HTMLInputElement).value)}
         />
-        <div style="height:44px; flex:none; display:flex; align-items:center; gap:8px; min-width:0">
+        <div class="compare-modal-status">
           <span
-            style="overflow:hidden; white-space:nowrap; text-overflow:ellipsis"
+            class="compare-modal-status-text"
             title=${ctx.error ?? ctx.savedAge ?? ''}
             data-comparison-read-error=${ctx.error ?? nothing}
             data-comparison-saved-age=${ctx.savedAge ?? nothing}
@@ -156,7 +156,7 @@ export function renderCompareRunPickerModal(ctx: CompareRunPickerModalContext) {
               : '')}
           </span>
           ${ctx.error
-            ? html`<button style="min-height:44px; flex:none" @click=${ctx.retry}>Retry</button>`
+            ? html`<button class="compare-modal-retry" @click=${ctx.retry}>Retry</button>`
             : nothing}
         </div>
         <div class="compare-modal-list">

@@ -23,6 +23,14 @@ import { withOwnedGatewayOffline } from './owned-gateway-outage.mjs';
 import { proveProgressHistory } from './prove-progress-history.mjs';
 
 const execute = promisify(execFile);
+
+// A read-age proof opens the actual disclosure with real CDP input before reading its caption.
+async function openReadNotices(cdp, route, observation) {
+  if (!observation?.readNoticesNeeded || !observation.noticesClosed) return false;
+  await cdp('click', route, 'farm-notification-tray >>> .bell');
+  return true;
+}
+
 const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
 const phase = process.argv[2];
 assert(
@@ -384,6 +392,7 @@ if (phase === 'list-web') {
     let value;
     do {
       value = await cdp('eval', route, '--file', probePath);
+      if (await openReadNotices(cdp, route, value)) continue;
       if (ready(value)) return value;
       await delay(100);
     } while (Date.now() < deadline);
@@ -729,6 +738,7 @@ async function detailBrowser(runId) {
     let value;
     do {
       value = await snapshot();
+      if (await openReadNotices(cdp, route, value)) continue;
       if (ready(value)) return value;
       await delay(100);
     } while (Date.now() < deadline);
@@ -866,6 +876,7 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
     let value;
     do {
       value = await cdp('eval', route, '--file', probe);
+      if (await openReadNotices(cdp, route, value)) continue;
       if (ready(value)) return value;
       await delay(100);
     } while (Date.now() < deadline);
@@ -4185,6 +4196,7 @@ if (phase === 'dispatch-runs-web') {
     let value;
     do {
       value = await snapshot();
+      if (await openReadNotices(cdp, route, value)) continue;
       if (ready(value)) return value;
       await delay(100);
     } while (Date.now() < deadline);

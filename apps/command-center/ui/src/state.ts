@@ -590,7 +590,7 @@ function bindFarmCollections(): void {
     );
     state.runsObservation = result;
     publishReadNotice('farm:runs', workspaceKey, activeRunsQuery, result, '#runs', () => {
-      if (current()) void cache.retry(activeRunsQuery);
+      if (current()) void Promise.all([cache.retry(activeRunsQuery), cache.retry(runHistoryQuery)]);
     });
     state.runs = result.data?.runs ?? [];
     state.runSummaryMeta = result.data?.summaryMeta ?? null;

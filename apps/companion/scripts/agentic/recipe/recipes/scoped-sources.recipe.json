@@ -196,14 +196,14 @@
       "run-timeline": {
         "action": "ui.press",
         "intent": "Open the run timeline that owns the retained source panel.",
-        "next": "run-source",
+        "next": "run-timeline-open-sources",
         "test_id": "companion-run-tab-timeline"
       },
       "run-ready": {
         "action": "ui.wait_for",
         "timeout_ms": 30000,
         "intent": "The retained run workspace exposes its Timeline tab.",
-        "next": "run-ready-open-sources",
+        "next": "run-timeline",
         "test_id": "companion-run-tab-timeline"
       },
       "stale-arm": {
@@ -390,11 +390,11 @@
         "intent": "Open Sources without changing the surrounding view height.",
         "next": "node-source"
       },
-      "run-ready-open-sources": {
+      "run-timeline-open-sources": {
         "action": "ui.press",
         "test_id": "sources-open",
         "intent": "Open Sources without changing the surrounding view height.",
-        "next": "run-timeline"
+        "next": "run-source"
       }
     }
   }

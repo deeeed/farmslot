@@ -39,11 +39,10 @@
 
 ## Design principles
 
-- Keep layout heights stable through loading, polling, errors, reconnects and changing notices; reserve final-size slots or use overlays.
-
 - Principle 1: show the dependency shape first, then expose raw refs/details on selection.
 - Principle 2: preserve human-editable markdown/spec workflows; UI should visualize and orchestrate, not own every field.
 - Principle 3: planning and execution inventories use compact, sortable rows with explicit Flow, Project, State, ID, and activity columns; selection reveals depth in a side panel instead of expanding every row.
+- Principle 4: keep layout heights stable through loading, polling, errors, reconnects and changing notices; reserve final-size slots or use overlays.
 - Tradeoffs: dense technical detail is acceptable; visual polish must not obscure IDs, gates, or dispatch state.
 
 ## Visual language

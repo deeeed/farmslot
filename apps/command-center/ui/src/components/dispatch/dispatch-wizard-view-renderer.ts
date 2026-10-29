@@ -90,9 +90,6 @@ interface DispatchWizardViewContext {
   comparisonPickerError: string;
   comparisonPickerSavedAge: string;
   retryComparisonPicker: () => void;
-  baselineReadError: string;
-  baselineSavedAge: string;
-  retryBaseline: () => void;
   comparePickerOpen: boolean;
   comparePickerSearch: string;
   variantCollision: boolean;

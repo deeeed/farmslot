@@ -22,8 +22,17 @@ const read = (controller) => {
 };
 const root = view.shadowRoot;
 const runs = Reflect.get(view, '_comparisonRows');
+const tray = document.querySelector('farm-notification-tray')?.shadowRoot;
+const noticesClosed = tray?.querySelector('.bell')?.getAttribute('aria-expanded') === 'false';
+const readNotice = (id) =>
+  [...(tray?.querySelectorAll('[data-notice-id]') ?? [])].find(
+    (item) => item.getAttribute('data-notice-id') === `read:${id}`,
+  );
+const noticeText = (item) => item?.querySelector('p')?.textContent.trim();
 return {
   mounted: true,
+  noticesClosed,
+  readNoticesNeeded: baseline.state.status === 'stale' || Boolean(baseline.state.error),
   open: Reflect.get(view, '_comparePickerOpen'),
   pickerReady: Reflect.get(view, '_comparisonReady'),
   contextBlocked:
@@ -37,9 +46,11 @@ return {
   baseline: read(baseline),
   canonicalRows: runs.every((run) => picker.state.data?.runs.includes(run)),
   pickerAge: root.querySelector('[data-comparison-saved-age]')?.textContent.trim(),
-  baselineAge: root.querySelector('[data-comparison-baseline-stale]')?.textContent.trim(),
+  baselineAge: noticeText(readNotice(Reflect.get(baseline, 'query')?.id)),
   readError: root.querySelector('[data-comparison-read-error]')?.textContent.trim(),
-  baselineError: root.querySelector('[data-comparison-baseline-error]')?.textContent.trim(),
+  baselineError: baseline.state.error
+    ? noticeText(readNotice(Reflect.get(baseline, 'query')?.id))
+    : undefined,
   activeCard: root.activeElement?.getAttribute('data-run-id'),
   cards: [...root.querySelectorAll('[data-testid="dispatch-compare-run-card"]')].map((card) => ({
     id: card.getAttribute('data-run-id'),

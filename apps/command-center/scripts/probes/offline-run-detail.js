@@ -13,8 +13,17 @@ const commands = [...root.querySelectorAll('button')].filter((button) =>
   /^(Delete run|Refresh output)$/.test(button.textContent.trim()),
 );
 const recipe = Reflect.get(detail, '_recipeObservation');
+const tray = document.querySelector('farm-notification-tray')?.shadowRoot;
+const noticesClosed = tray?.querySelector('.bell')?.getAttribute('aria-expanded') === 'false';
+const readNotice = (id) =>
+  [...(tray?.querySelectorAll('[data-notice-id]') ?? [])].find(
+    (item) => item.getAttribute('data-notice-id') === `read:${id}`,
+  );
+const noticeText = (item) => item?.querySelector('p')?.textContent.trim();
 return {
   mounted: true,
+  noticesClosed,
+  readNoticesNeeded: observation?.status === 'stale',
   runId: detail.runId,
   visibleRun: run?.id,
   storage,
@@ -32,7 +41,7 @@ return {
   recipeArtifactPaths: (Reflect.get(detail, '_recipeRuns') ?? []).flatMap((group) =>
     group.artifactManifest.map((artifact) => artifact.path),
   ),
-  stale: root.querySelector('[data-run-detail-freshness="stale"]')?.textContent.trim(),
+  stale: noticeText(readNotice(Reflect.get(query, 'query')?.id)),
   actionsBlocked: Reflect.get(detail, '_actionsBlocked').call(detail),
   commandsDisabled: Boolean(
     editor?.disabled && commands.length && commands.every((button) => button.disabled),

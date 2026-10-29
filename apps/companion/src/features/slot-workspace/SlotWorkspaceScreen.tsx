@@ -1,4 +1,4 @@
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
@@ -35,7 +35,6 @@ export default function SlotWorkspaceScreen() {
     slotHistory,
     historyRecipeEvidence,
     historyRunVisualEvidence,
-    detailError,
     navLayout,
     stickyNavVisible,
     scrollRef,
@@ -117,18 +116,8 @@ export default function SlotWorkspaceScreen() {
             { observation: recipeObservation, label: 'slot recipe inventory' },
             { observation: progressObservation, label: 'task progress' },
           ]}
+          onRetry={() => void retryRead()}
         />
-        {detailError ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Retry slot run reads"
-            onPress={() => void retryRead()}
-          >
-            <Text style={baseStyles.textSecondary}>Retry</Text>
-          </Pressable>
-        ) : null}
-        {detailError ? <Text style={styles.errorText}>{detailError}</Text> : null}
-
         <SlotWorkspaceSection
           slotId={slot?.slot ?? id}
           slotCurrentRunId={boundRunId}

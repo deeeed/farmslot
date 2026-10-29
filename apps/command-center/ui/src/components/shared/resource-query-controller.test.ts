@@ -40,6 +40,7 @@ test('panel observers share reads, refuse stale actions and drop old filters and
   const { gateway } = await import('../../gateway-client.js');
   const { initState } = await import('../../state.js');
   const { disposeResourceCache } = await import('../../resource-cache.js');
+  const { notificationTray } = await import('../../utils/notification-tray.js');
   const { ResourceQueryController } = await import('./resource-query-controller.js');
   fake.beforeRestore = async () => {
     gateway.disconnect();
@@ -116,6 +117,11 @@ test('panel observers share reads, refuse stale actions and drop old filters and
   });
   await flush();
   assert.equal(first.state.status, 'stale');
+  assert.equal(
+    notificationTray.items.filter((item) => item.id === `read:${query.id}`).length,
+    1,
+    'Mounted observers publish one actual query notice',
+  );
   assert.throws(() => first.requireReady(), /current read/);
   const heldReads = socket.sent.slice(readsBefore).filter(({ method }) => method === 'run.list');
   hold = false;
@@ -131,6 +137,11 @@ test('panel observers share reads, refuse stale actions and drop old filters and
     'A previous filter cannot replace the current panel',
   );
   second.setQuery(undefined);
+  assert.equal(
+    notificationTray.items.some((item) => item.id === `read:${query.id}`),
+    false,
+    'Retiring the last observer removes its notice',
+  );
   assert.equal(second.ready, false);
   assert.throws(() => second.requireReady(), /current read/);
   hold = true;

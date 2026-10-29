@@ -5,8 +5,17 @@ const tray = root?.querySelector('farm-notification-tray');
 const trayRoot = tray?.shadowRoot;
 const panel = trayRoot?.querySelector('.panel')?.getBoundingClientRect();
 const content = root?.querySelector('.fa-content');
+const list = root?.querySelector('run-list');
+const row = list?.shadowRoot?.querySelector('[data-row-id="layout-run"]');
+const banner = root?.querySelector('update-banner');
 return {
+  rowTop: row?.getBoundingClientRect().top,
+  sidebarExpanded: root?.querySelector('.fa-nav-toggle')?.title === 'Collapse sidebar',
+  updateVisible: Boolean(banner?.getClientRects().length),
+  updateText: (banner?.shadowRoot?.textContent ?? '').replace(/\s+/g, ' '),
+
   width: innerWidth,
+  visibility: document.visibilityState,
   app: Boolean(app),
   visible: document.body.innerText.slice(0, 1000),
   connected: root?.querySelector('fleet-summary-bar')?.connection === 'connected',

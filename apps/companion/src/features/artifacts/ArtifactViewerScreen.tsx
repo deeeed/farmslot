@@ -1,5 +1,5 @@
 import { FlashList } from '@shopify/flash-list';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { ArtifactCard } from '../../components/ArtifactCard';
 import { DocumentViewer } from '../../components/DocumentViewer';
@@ -103,17 +103,14 @@ export default function ArtifactViewerScreen() {
   if (!run) {
     return (
       <View style={[baseStyles.container, styles.center, { paddingBottom: insets.bottom }]}>
-        <ResourceReadStatus observation={runObservation} label="run artifacts" />
-        <Text style={baseStyles.textSecondary}>Loading...</Text>
-        {runObservation.error ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Retry artifacts"
-            onPress={actions.retry}
-          >
-            <Text style={baseStyles.textSecondary}>Retry</Text>
-          </Pressable>
-        ) : null}
+        <ResourceReadStatus
+          observation={runObservation}
+          label="run artifacts"
+          onRetry={actions.retry}
+        />
+        <Text style={baseStyles.textSecondary}>
+          {runObservation.error ? 'Run is unavailable.' : 'Loading...'}
+        </Text>
       </View>
     );
   }
@@ -152,16 +149,8 @@ export default function ArtifactViewerScreen() {
                 { observation: runObservation, label: 'run artifacts' },
                 { observation: recipeObservation, label: 'recipe evidence' },
               ]}
+              onRetry={actions.retry}
             />
-            {runObservation.error || recipeObservation.error ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Retry artifacts"
-                onPress={actions.retry}
-              >
-                <Text style={baseStyles.textSecondary}>Retry</Text>
-              </Pressable>
-            ) : null}
             <ArtifactHeader
               run={run}
               gatewayUrl={gatewayUrl}

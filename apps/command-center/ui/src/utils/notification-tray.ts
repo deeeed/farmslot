@@ -55,57 +55,83 @@ export function publishReadNotice(
     (state.status === 'stale' ||
       (state.sourceObservation && state.sourceObservation.status !== 'ready'));
   const target = readRoute(query, route);
-  const item: TrayItem | undefined = error
-    ? {
-        id: `read:${query.id}`,
-        title: `Could not refresh ${label.toLowerCase()}`,
-        body: error.message,
-        route: target,
-        needsYou: false,
-        current: false,
-        retry,
-        observedAt: state.sourceObservation?.observedAt ?? state.observedAt,
-      }
-    : state.status === 'unsupported'
+  const missing = error?.code === 'RUN_NOT_FOUND';
+  const unsupported = state.status === 'unsupported';
+  const item: TrayItem | undefined = missing
+    ? undefined
+    : unsupported
       ? {
-          id: `read:${query.id}`,
+          id: `unsupported:${query.method}`,
           title: `${label} updates unavailable`,
           body: 'Update the gateway to restore live reads.',
           route: target,
           needsYou: false,
           current: false,
         }
-      : stale
+      : error
         ? {
             id: `read:${query.id}`,
-            title: `Saved ${label.toLowerCase()}`,
-            body: 'Actions wait for a current read.',
+            title: `Could not refresh ${label.toLowerCase()}`,
+            body: error.message,
             route: target,
-            observedAt: state.sourceObservation?.observedAt ?? state.observedAt,
             needsYou: false,
             current: false,
+            retry,
+            observedAt: state.sourceObservation?.observedAt ?? state.observedAt,
           }
-        : undefined;
+        : stale
+          ? {
+              id: `read:${query.id}`,
+              title: `Saved ${label.toLowerCase()}`,
+              body: 'Actions wait for a current read.',
+              route: target,
+              observedAt: state.sourceObservation?.observedAt ?? state.observedAt,
+              needsYou: false,
+              current: false,
+            }
+          : undefined;
   notificationTray.set(source, owner, item ? [item] : []);
 }
+export function updateNoticeKey(status: GatewayUpdateStatus): string | null {
+  return status.operation
+    ? `${status.remoteSha}:${status.operation.id}:${status.operation.phase}`
+    : status.remoteSha;
+}
+
+export function isUpdateNoticeOpen(
+  status: GatewayUpdateStatus,
+  dismissedKey?: string | null,
+): boolean {
+  const key = updateNoticeKey(status);
+  return Boolean(
+    (status.updateAvailable || status.operation) &&
+    (status.operation?.phase === 'running' || !key || key !== dismissedKey),
+  );
+}
+
 export function publishUpdateNotice(
   owner: string | undefined,
   status?: GatewayUpdateStatus | null,
+  dismissedKey?: string | null,
 ): void {
+  const visible = status && isUpdateNoticeOpen(status, dismissedKey);
+  const phase = status?.operation?.phase;
   notificationTray.set(
     'update',
     owner,
-    status?.updateAvailable ||
-      status?.operation?.phase === 'running' ||
-      status?.operation?.phase === 'error'
+    visible
       ? [
           {
             id: 'gateway-update',
             title:
-              status.operation?.phase === 'running'
+              phase === 'running'
                 ? 'Updating Farmslot'
-                : 'Farmslot update available',
-            body: status.remoteSha?.slice(0, 8) ?? '',
+                : phase === 'error'
+                  ? 'Farmslot update failed'
+                  : phase === 'complete'
+                    ? 'Farmslot update complete'
+                    : 'Farmslot update available',
+            body: status.operation?.message ?? status.remoteSha?.slice(0, 8) ?? '',
             route: '#doctor',
             needsYou: false,
             current: true,

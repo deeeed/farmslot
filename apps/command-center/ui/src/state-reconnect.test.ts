@@ -33,6 +33,7 @@ test('the workspace survives a gateway restart and clears only for another accou
   let serverRuns = [makeRun()];
   let runRevision = 0;
   let answerRuns = true;
+  let historyFails = false;
   let fleetRevision = 0;
   let answerFleet = true;
   let serverFleet = {
@@ -40,7 +41,19 @@ test('the workspace survives a gateway restart and clears only for another accou
     slots: [{ slot: 'fleet-slot', lifecycle: 'ready' }],
     summary: {},
   } as FleetStatus;
-  fakeGateway.responseForRequest = ({ method }) => {
+  fakeGateway.responseForRequest = ({ method, params, id }) => {
+    if (
+      method === 'run.list' &&
+      historyFails &&
+      !(params && typeof params === 'object' && Reflect.get(params, 'active'))
+    ) {
+      queueMicrotask(() =>
+        fakeGateway.sockets
+          .at(-1)
+          ?.failure(id, { code: 'UNAVAILABLE', message: 'History unavailable' }),
+      );
+      return undefined;
+    }
     if (method === 'run.list')
       return answerRuns
         ? {
@@ -108,6 +121,31 @@ test('the workspace survives a gateway restart and clears only for another accou
   assert.equal(getState().fleetObservation.status, 'ready');
   assert.equal(isFleetCurrent(), true);
   let ownerChanges = 0;
+
+  await t.test('the Runs notice retries both history and active reads', async () => {
+    const { notificationTray } = await import('./utils/notification-tray.js');
+    historyFails = true;
+    await getResourceCache()!.retry(runHistoryQuery);
+    const notice = notificationTray.items.find((item) => item.title === 'Could not refresh runs');
+    assert(notice?.retry);
+    historyFails = false;
+    const before = fakeGateway.requests.length;
+    notice.retry();
+    await flush();
+    const reads = fakeGateway.requests.slice(before).filter(({ method }) => method === 'run.list');
+    assert(
+      reads.some(
+        ({ params }) =>
+          params && typeof params === 'object' && Reflect.get(params, 'active') === true,
+      ),
+    );
+    assert(
+      reads.some(
+        ({ params }) => !(params && typeof params === 'object' && Reflect.get(params, 'active')),
+      ),
+    );
+    assert.equal(getState().runsObservation.status, 'ready');
+  });
 
   await t.test(
     'fleet payload events cannot replace the shared query; revisions refetch it once and errors retain stale facts',

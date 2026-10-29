@@ -342,22 +342,14 @@ export default function DiffViewerScreen() {
             { observation: runObservation, label: 'run diff' },
             { observation: recipeObservation, label: 'recipe runs' },
           ]}
+          onRetry={() => {
+            const cache = getResourceCache();
+            if (workspaceDiffQuery && cache?.read(workspaceDiffQuery).error)
+              void cache.retry(workspaceDiffQuery);
+            if (runQuery && cache?.read(runQuery).error) void cache.retry(runQuery);
+            if (recipeQuery && cache?.read(recipeQuery).error) void cache.retry(recipeQuery);
+          }}
         />
-        {runObservation.error || recipeObservation.error || workspaceDiffObservation.error ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Retry diff"
-            onPress={() => {
-              const cache = getResourceCache();
-              if (workspaceDiffQuery && cache?.read(workspaceDiffQuery).error)
-                void cache.retry(workspaceDiffQuery);
-              if (runQuery && cache?.read(runQuery).error) void cache.retry(runQuery);
-              if (recipeQuery && cache?.read(recipeQuery).error) void cache.retry(recipeQuery);
-            }}
-          >
-            <Text style={styles.backButtonText}>Retry</Text>
-          </Pressable>
-        ) : null}
         {pathParamError ? <Text style={styles.errorText}>{pathParamError}</Text> : null}
         {gateDiffText ? (
           <MobileDiffViewer

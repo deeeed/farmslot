@@ -104,7 +104,11 @@ import {
   subscribe,
 } from '../state.js';
 import { ALPHA_FEATURES_CHANGED, getAlphaFeaturesEnabled } from '../utils/alpha-features.js';
-import { publishUpdateNotice } from '../utils/notification-tray.js';
+import {
+  isUpdateNoticeOpen,
+  publishUpdateNotice,
+  updateNoticeKey,
+} from '../utils/notification-tray.js';
 import {
   listPinnedWorkspaces as listPinnedSlotPreferences,
   PINNED_SLOTS_CHANGED,
@@ -240,7 +244,7 @@ export class FarmApp extends LitElement {
         ? (result.data ?? null)
         : null;
       this.updateStatus = this.versionDetailsStatus?.update ?? null;
-      publishUpdateNotice(getResourceWorkspaceKey(), this.updateStatus);
+      publishUpdateNotice(getResourceWorkspaceKey(), this.updateStatus, this.updateDismissedSha);
       if (result.status === 'stale' && result.data && !this.updateAgeTimer)
         this.updateAgeTimer = setInterval(() => this.requestUpdate(), 1000);
       else if (result.status !== 'stale' || !result.data) {
@@ -475,12 +479,7 @@ export class FarmApp extends LitElement {
 
   private renderUpdateBanner() {
     const s = this.updateStatus;
-    if (!s || (!s.updateAvailable && !s.operation && !this.updateQuery.state.error)) return nothing;
-    const dismissalKey = s.operation
-      ? `${s.remoteSha}:${s.operation.id}:${s.operation.phase}`
-      : s.remoteSha;
-    if (s.operation?.phase !== 'running' && dismissalKey === this.updateDismissedSha)
-      return nothing;
+    if (!s || !isUpdateNoticeOpen(s, this.updateDismissedSha)) return nothing;
     return html`<update-banner
       .status=${s}
       .current=${this.updateQuery.ready &&
@@ -523,12 +522,11 @@ export class FarmApp extends LitElement {
 
   private dismissUpdateBanner() {
     const status = this.updateStatus;
-    const sha = status?.operation
-      ? `${status.remoteSha}:${status.operation.id}:${status.operation.phase}`
-      : status?.remoteSha;
+    const sha = status ? updateNoticeKey(status) : null;
     if (sha) {
       this.updateDismissedSha = sha;
       localStorage.setItem(UPDATE_DISMISS_KEY, sha);
+      publishUpdateNotice(getResourceWorkspaceKey(), status, sha);
     } else {
       // No remote SHA to key dismissal on — hide for this session only.
       this.updateStatus = null;

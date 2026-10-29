@@ -8,7 +8,7 @@
       "prove": {
         "action": "command",
         "cmd": "node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
-        "timeout_ms": 180000,
+        "timeout_ms": 600000,
         "intent": "Consume fixture snapshots through the real socket/query adapter, require fixed content positions through repeated reads, reconnect and notice changes, and check the opened tray at 1280px and 414px.",
         "next": "result"
       },

@@ -1,6 +1,7 @@
 // Presentation proof over an isolated protocol fixture. It never starts a farm or a worker.
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
@@ -14,6 +15,7 @@ import {
   resourceCollectorReadMethods,
   resourceDependenciesForRead,
 } from '../../../packages/protocol/src/client-cache/registry.ts';
+import { mockRuns } from '../ui/src/dev/mock-data.ts';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const output = process.env.FARMSLOT_LAYOUT_EVIDENCE;
@@ -25,7 +27,7 @@ assert(process.env.FARMSLOT_CDP_PORT, 'Select Agent Chrome CDP');
 await mkdir(output, { recursive: true });
 const execute = promisify(execFile);
 const frames = [];
-const epoch = 'layout-fixture-epoch';
+const epoch = `layout-fixture-${randomUUID()}`;
 let revision = 0;
 let mode = 'empty';
 const now = Date.now();
@@ -45,8 +47,19 @@ const fleet = {
   summary: { total: 0, ready: 0, busy: 0, held: 0, manual: 0, disabled: 0, custom: 0 },
   checkedAt: new Date(now).toISOString(),
 };
+const fixtureRun = {
+  ...mockRuns()[0],
+  status: 'monitoring',
+  id: 'layout-run',
+  familyId: undefined,
+  slotId: null,
+  taskFile: null,
+  decisions: [],
+};
 const values = {
-  'run.list': () => ({ runs: [] }),
+  'run.list': () => ({ runs: [fixtureRun] }),
+  'run.get': () => ({ run: fixtureRun }),
+  'task.progress': () => ({ markdown: '', structured: null }),
   'decision.list': () => ({
     decisions: mode === 'decision' ? [decision, { ...decision, id: 'same-subject' }] : [],
   }),
@@ -66,17 +79,32 @@ const values = {
   'gateway.status': () => ({
     version: 'fixture',
     capabilities: {},
-    releaseNotes: [],
+    releaseNotes: { version: 'fixture', items: [] },
     observation: { status: 'ready', observedAt: now },
     update: {
       canUpdate: false,
       updateAvailable: mode === 'update',
+      ...(mode === 'update-complete'
+        ? {
+            operation: {
+              id: `layout-update-${now}-${revision}`,
+              phase: 'complete',
+              message: 'Checkout updated',
+              localSha: 'a'.repeat(40),
+              targetSha: 'b'.repeat(40),
+              updatedAt: new Date(now).toISOString(),
+              gatewayRestartRequired: true,
+              desktopRebuildRequired: true,
+            },
+          }
+        : {}),
       branch: 'fixture',
-      localSha: 'a'.repeat(40),
+      localSha: (mode === 'update-complete' ? 'b' : 'a').repeat(40),
       remoteSha: 'b'.repeat(40),
       commitsBehind: 1,
       commitsAhead: 0,
-      lastChecked: now,
+      lastChecked: new Date(now).toISOString(),
+      updateCommand: 'farmslot update',
       error: null,
     },
   }),
@@ -120,7 +148,7 @@ wss.on('connection', (socket) =>
     else if (request.method === 'resource.observers.replace')
       reply.payload = { version: 1, sequence: request.params.sequence, applied: true };
     else if (request.method === 'gateway.ping') reply.payload = { ok: true };
-    else if (mode === 'error' && request.method === 'run.list') {
+    else if (mode === 'error' && request.method === 'run.list' && !request.params?.active) {
       reply.ok = false;
       reply.error = { code: 'UNAVAILABLE', message: 'Fixture read is unavailable' };
     } else if (values[request.method]) {
@@ -184,17 +212,67 @@ async function viewport(width) {
       }
     });
   }
-  await new Promise((resolve, reject) => {
+  // Keep this owned headless target active without stealing the operator's window focus.
+  await browserCall('Emulation.setFocusEmulationEnabled', { enabled: true });
+  await browserCall('Emulation.setDeviceMetricsOverride', {
+    width,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+}
+function browserCall(method, params) {
+  return new Promise((resolve, reject) => {
     const id = ++emulationId;
     pendingEmulation.set(id, { resolve, reject });
-    emulation.send(
-      JSON.stringify({
-        id,
-        method: 'Emulation.setDeviceMetricsOverride',
-        params: { width, height: 900, deviceScaleFactor: 1, mobile: false },
-      }),
-    );
+    emulation.send(JSON.stringify({ id, method, params }));
   });
+}
+const presses = [];
+async function press(selector) {
+  const result = await browserCall('Runtime.evaluate', {
+    expression: `(() => {
+      let root = document;
+      const parts = ${JSON.stringify(selector)}.split(' >>> ');
+      let element;
+      for (const [index, part] of parts.entries()) {
+        element = root.querySelector(part);
+        if (index < parts.length - 1) root = element?.shadowRoot;
+      }
+      if (!element || element.disabled) throw Error('Proof control unavailable');
+      element.scrollIntoView({ block: 'center' });
+      const rect = element.getBoundingClientRect();
+      if (!rect.width || !rect.height) throw Error('Proof control is hidden');
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    })()`,
+    returnByValue: true,
+  });
+  assert(!result.exceptionDetails, JSON.stringify(result.exceptionDetails));
+  const point = result.result.value;
+  presses.push({ selector, ...point, at: Date.now() });
+  await browserCall('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
+  await browserCall('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    ...point,
+    button: 'left',
+    clickCount: 1,
+  });
+  await browserCall('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    ...point,
+    button: 'left',
+    clickCount: 1,
+  });
+}
+async function escape() {
+  for (const type of ['keyDown', 'keyUp'])
+    await browserCall('Input.dispatchKeyEvent', {
+      type,
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    });
 }
 const inspect = async () => cdp('eval', target, '--file', probe);
 async function until(accept, label) {
@@ -271,9 +349,18 @@ try {
   assert(ready, viteLog);
   const opened = await cdp('goto', `http://127.0.0.1:${uiPort}/#runs`, '--new');
   target = '@' + opened.id;
-  const baseline = await until((value) => value.connected && value.stripHeight === 44, 'initial');
-  for (const width of [1280, 414]) {
+  const baseline = await until(
+    (value) => value.connected && value.stripHeight === 44 && value.rowTop !== undefined,
+    'initial',
+  );
+  for (const { width, expanded } of [
+    { width: 1280, expanded: false },
+    { width: 414, expanded: false },
+    { width: 414, expanded: true },
+  ]) {
+    const name = `${width}${expanded ? '-expanded' : ''}`;
     await viewport(width);
+    if ((await inspect()).sidebarExpanded !== expanded) await press('.fa-nav-toggle');
     const before = await inspect();
     assert.equal(before.width, width, 'The browser must use the requested CSS viewport');
     const authBefore = frames.filter((frame) => frame.method === 'auth.connect').length;
@@ -306,29 +393,51 @@ try {
       );
       assert.equal(current.contentTop, before.contentTop, 'A notice cannot move the content');
       assert.equal(current.stripHeight, 44);
-      await save(`${width}-${phase}-${revision}`, current);
+      assert.equal(current.rowTop, before.rowTop, 'A read notice cannot move a retained run row');
+      await save(`${name}-${phase}-${revision}`, current);
     }
     transition('decision');
     await until((value) => value.top === decision.title, 'recurrence');
-    await cdp('click', target, 'farm-notification-tray >>> .bell');
-    const open = await inspect();
-    await save(`${width}-open`, open);
-    await cdp('screenshot', target, path.join(output, `${width}-tray.png`));
+    await press('farm-notification-tray >>> .bell');
+    const open = await until((value) => value.panel !== null, 'opened-tray');
+    await save(`${name}-open`, open);
+    await cdp('screenshot', target, path.join(output, `${name}-tray.png`));
     assert.equal(open.contentTop, before.contentTop);
     assert(open.panel && open.panel.left >= 0 && open.panel.right <= width, JSON.stringify(open));
     assert.equal(open.items.filter((title) => title === decision.title).length, 1);
-    await cdp('screenshot', target, path.join(output, `${width}-tray.png`));
-    await cdp('key', target, 'Escape');
+
+    await escape();
     assert.equal((await inspect()).panel, null);
     transition('empty');
     await until((value) => !value.top, 'cleared');
+    transition('update-complete');
+    await until((value) => value.items.includes('Farmslot update complete'), 'completion-guidance');
+    await press('farm-notification-tray >>> .bell');
+    await press('farm-notification-tray >>> [data-notice-id="gateway-update"] a');
+    const guidance = await until(
+      (value) =>
+        value.updateVisible &&
+        value.updateText.includes('packaged gateway needs a restart') &&
+        value.updateText.includes('Rebuild and replace'),
+      'visible-follow-up',
+    );
+    assert.equal(guidance.rowTop, before.rowTop);
+    await cdp('screenshot', target, path.join(output, `${name}-update-guidance.png`));
+    await press('update-banner >>> .dismiss');
+    await until((value) => !value.items.includes('Farmslot update complete'), 'acknowledged');
+    await escape();
+    await until((value) => value.panel === null, 'closed-after-dismissal');
+    transition('empty');
   }
   const reads = frames.filter((frame) => frame.method === 'run.list').length;
   assert(reads >= 8, 'Repeated observed reads reached the real client adapter');
   await save('result', {
     result: 'PASS',
     baseline,
+    browserEnvironment:
+      'Owned target with viewport and focus emulation; no application-state injection',
     requests: frames,
+    presses,
     limit:
       'Protocol fixture presentation only. No production gateway, native or worker acceptance.',
   });
