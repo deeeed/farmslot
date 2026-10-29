@@ -120,7 +120,8 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
       // the terminal state was already published through `onMutated`, so no
       // client waits on it.
       apply: async ({ run }) => {
-        if (!collaborators.cleanupSlot) {
+        const cleanupSlot = collaborators.cleanupSlot;
+        if (!cleanupSlot) {
           return { status: 'skipped' as const, detail: 'this transition owes no slot teardown' };
         }
         if (!run.slotId) return 'skipped';
@@ -133,7 +134,7 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
             detail: 'park already released slot ownership; the slot is free',
           };
         }
-        await withTerminalTeardown(run.slotId, () => collaborators.cleanupSlot!(run));
+        await withTerminalTeardown(run.slotId, () => cleanupSlot(run));
         return 'ok';
       },
     },

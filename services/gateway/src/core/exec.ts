@@ -12,8 +12,8 @@ import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slo
 import { getNode } from '../fleet/machine-registry.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 
-import type { SlotVars } from './config.js';
 import { assertCleanupCurrent, cleanupSignal } from './cleanup-scope.js';
+import type { SlotVars } from './config.js';
 
 export type { ExecResult };
 

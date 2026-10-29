@@ -5,7 +5,7 @@ const cleanup = new AsyncLocalStorage<AbortSignal>();
 /** Nested releases inherit the terminal cleanup's cancellation. */
 export function cleanupSignal(signal?: AbortSignal): AbortSignal | undefined {
   const parent = cleanup.getStore();
-  return parent && signal ? AbortSignal.any([parent, signal]) : parent ?? signal;
+  return parent && signal ? AbortSignal.any([parent, signal]) : (parent ?? signal);
 }
 
 export function assertCleanupCurrent(): void {

@@ -63,7 +63,6 @@ import { getRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withSlotSources } from '../../sources/runtime.js';
 
-import { verifyPrepareHealth } from './prepare-health.js';
 import { runFixtureSync } from './fixtures.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
@@ -89,6 +88,7 @@ import {
 } from './prepare-command.js';
 import { checkPrepareDevice } from './prepare-device.js';
 import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-devserver-log.js';
+import { verifyPrepareHealth } from './prepare-health.js';
 import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
@@ -130,9 +130,8 @@ import {
   assertPublishedPrepareBranchContained,
 } from './unmerged-work.js';
 
+export { type PrepareHealthCommands, verifyPrepareHealth } from './prepare-health.js';
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
-
-export { verifyPrepareHealth, type PrepareHealthCommands } from './prepare-health.js';
 
 /**
  * Refuse a detached HEAD the remote does not show: it may hold local-only
@@ -1666,6 +1665,7 @@ async function slotPrepareInner(
       },
       readyIndicator,
       step,
+      { signal },
     );
     step('health', `Health check — ${healthValue}`);
   }

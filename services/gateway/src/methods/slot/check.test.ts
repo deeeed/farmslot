@@ -85,6 +85,23 @@ test('runHealthCheck ignores stdout from failed health commands', async (t) => {
   assert.equal(result, '');
 });
 
+test('a failed health parser cannot supply a ready value', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-health-parser-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  assert.equal(await runHealthCheck(makeSlotVars(repo), 'printf raw', 'printf OK; exit 7'), '');
+});
+
+test('an aborted prepare health check preserves cancellation rather than reporting missing health', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-health-abort-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const controller = new AbortController();
+  controller.abort(new Error('prepare cancelled'));
+  await assert.rejects(
+    runHealthCheck(makeSlotVars(repo), 'printf OK', '', { signal: controller.signal }),
+    /prepare cancelled/,
+  );
+});
+
 test('runUnlockHook reports a failed unlock with its exit code and output tail', async (t) => {
   const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-unlock-'));
   t.after(async () => {

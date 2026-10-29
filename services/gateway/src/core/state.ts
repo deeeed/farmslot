@@ -7,8 +7,8 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
-import { farmslotRoot } from './config.js';
 import { assertCleanupCurrent } from './cleanup-scope.js';
+import { farmslotRoot } from './config.js';
 
 const statusFile = resolveStatusFilePath(farmslotRoot);
 
@@ -36,8 +36,16 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
     await writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
     assertCleanupCurrent();
     await rename(tmp, statusFile);
-  } finally {
-    await rm(tmp, { force: true });
+  } catch (error) {
+    try {
+      await rm(tmp, { force: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Status write and temporary-file cleanup failed',
+      );
+    }
+    throw error;
   }
   for (const listener of statusCommitListeners) listener(data);
 }

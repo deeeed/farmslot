@@ -790,14 +790,20 @@ export const UNLOCK_HOOK_TIMEOUT_MS = 120_000;
  * failure detail with the exit code and the tail of its output. Callers still
  * re-read health afterwards and report the failure only if health stays down.
  */
-export async function runUnlockHook(vars: SlotVars, unlockHook: string): Promise<string | null> {
+export async function runUnlockHook(
+  vars: SlotVars,
+  unlockHook: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<string | null> {
   const result = await execOnSlot(
     vars,
     withMachineEnv(`cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`, vars),
     {
-      timeout: UNLOCK_HOOK_TIMEOUT_MS,
+      timeout: Math.min(options.timeoutMs ?? UNLOCK_HOOK_TIMEOUT_MS, UNLOCK_HOOK_TIMEOUT_MS),
+      signal: options.signal,
     },
   );
+  options.signal?.throwIfAborted();
   if (result.exitCode === 0) return null;
   const tail = `${result.stdout}\n${result.stderr}`
     .split('\n')
@@ -891,10 +897,12 @@ export async function runHealthCheck(
   options: {
     timeoutMs?: number;
     logPrefix?: string;
+    signal?: AbortSignal;
     projectJson?: RawProjectJson;
     projectVars?: ProjectVars;
   } = {},
 ): Promise<string> {
+  const started = Date.now();
   try {
     const result = await execOnSlot(
       vars,
@@ -904,8 +912,9 @@ export async function runHealthCheck(
         options.projectJson ?? {},
         options.projectVars,
       ),
-      { timeout: options.timeoutMs },
+      { timeout: options.timeoutMs, signal: options.signal },
     );
+    options.signal?.throwIfAborted();
     const raw = result.stdout.trim();
     console.log(
       `[${options.logPrefix ?? 'prepare'}] health check: cmd="${healthHook}" raw="${raw}" exit=${result.exitCode} stderr="${result.stderr.slice(0, 100)}"`,
@@ -914,9 +923,17 @@ export async function runHealthCheck(
     if (!raw) return '';
     if (!parseHealthCmd) return raw;
     const { execLocal } = await import('../../core/exec.js');
-    const parsed = await execLocal(`echo '${raw.replaceAll("'", "'\\''")}' | ${parseHealthCmd}`);
-    return parsed.stdout.trim();
+    const parsed = await execLocal(`echo '${raw.replaceAll("'", "'\\''")}' | ${parseHealthCmd}`, {
+      signal: options.signal,
+      timeout:
+        options.timeoutMs == null
+          ? undefined
+          : Math.max(1, options.timeoutMs - (Date.now() - started)),
+    });
+    options.signal?.throwIfAborted();
+    return parsed.exitCode === 0 ? parsed.stdout.trim() : '';
   } catch {
+    options.signal?.throwIfAborted();
     return '';
   }
 }
