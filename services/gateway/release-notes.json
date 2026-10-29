@@ -1,11 +1,11 @@
 {
-  "version": "0.30.0",
-  "date": "2026-10-21",
+  "version": "0.30.1",
+  "date": "2026-10-29",
   "items": [
-    "Re-reviews continue the earlier session and use a delta review when that session cannot resume.",
-    "Settled native reviewers stop their processes and MCP servers while preserving resumable conversations.",
-    "Follow-up artifacts stay writable and completion retains generated publication selections in its manifest.",
-    "Publication gates check secret values before approval and can publish explicitly accepted review findings.",
-    "Settled runs are removed after 48 hours unless decisions, slots, open PRs or storage dependencies keep them."
+    "Serve bounded live observations and versioned run lists for offline clients.",
+    "Check file hashes and run ownership before applying workspace edits.",
+    "Move retained run storage to the archive and keep every run record.",
+    "Use sampled CPU idle for placement and warn when an explicit slot is busy.",
+    "Keep native reviews bound to the selected pool."
   ]
 }

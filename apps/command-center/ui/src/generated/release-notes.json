@@ -1,10 +1,10 @@
 {
-  "version": "0.30.0",
-  "date": "2026-10-27",
+  "version": "0.30.1",
+  "date": "2026-10-29",
   "items": [
-    "Confirm or skip criteria and undo choices until approval.",
-    "Read the full criterion text while reviewing evidence.",
-    "Keep saved gate details and fleet rows visible while readiness refreshes.",
-    "Open shared Companion links and release updated fleet workspaces."
+    "Read runs, fleet and workspaces offline with their saved age.",
+    "Open retained gate diffs and evidence offline; actions requiring current data stay disabled.",
+    "Save workspace edits with conflict checks and keep unsaved drafts on the device.",
+    "Share live observations and catch up after reconnecting."
   ]
 }
