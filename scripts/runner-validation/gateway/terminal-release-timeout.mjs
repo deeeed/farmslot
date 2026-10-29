@@ -17,6 +17,7 @@ const pause = () => new Promise((resolve) => realTimeout(resolve, 10));
 const stopping = new AbortController();
 const earlyInterruption = process.argv.includes('--interrupt-before-hook-identity');
 const expectedInterruption = earlyInterruption || process.argv.includes('--interrupt-at-hook');
+const refreshHold = process.argv.includes('--refresh-unconfirmed-hold');
 const terminate = () => stopping.abort(new Error('release proof interrupted by SIGTERM'));
 const interrupt = () => stopping.abort(new Error('release proof interrupted by SIGINT'));
 process.on('SIGTERM', terminate);
@@ -187,7 +188,8 @@ writeFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid}));
           lifecycle: 'held',
           phase: 'occupied',
           slot_epoch: 7,
-          current_run_id: owner.id,
+          current_run_id: refreshHold ? null : owner.id,
+          ...(refreshHold ? { cleanup_run_id: owner.id, cleanup_stop_unconfirmed: true } : {}),
         },
       ],
     }),
@@ -213,7 +215,7 @@ writeFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid}));
   );
   client = await new GatewayClient({ url, timeout: 600000, credential: { token } }).connect();
   stopping.signal.throwIfAborted();
-  for (const successor of [false, true]) {
+  for (const successor of refreshHold ? [] : [false, true]) {
     if (successor)
       await core.updateSlotStatus('release-proof', {
         lifecycle: 'held',
@@ -314,12 +316,35 @@ writeFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid}));
     hookIdentity = undefined;
     mock.timers.reset();
   }
+  if (refreshHold) {
+    // The unresolved stop is an input fixture, seeded before the server starts.
+    // Exercise the real row rebuild through RPC, then its owning retry path.
+    await client.call('fleet.refresh', {});
+    const refreshed = await core.readSlotRow('release-proof');
+    assert.equal(refreshed.cleanup_stop_unconfirmed, true);
+    assert.equal(refreshed.cleanup_run_id, owner.id);
+    assert.equal(refreshed.current_run_id, null);
+    assert.equal(refreshed.lifecycle, 'held');
+    assert.equal(refreshed.phase, 'occupied');
+    const { retryOccupiedRunSlot } = await load(
+      'services/gateway/src/run-lifecycle/slot-teardown.ts',
+    );
+    assert.equal(await retryOccupiedRunSlot('release-proof'), false);
+    assert.deepEqual(await core.readSlotRow('release-proof'), refreshed);
+    receipts.push({
+      method: 'fleet.refresh',
+      status: 'PASS',
+      observed: refreshed,
+      retryRefused: true,
+    });
+  }
   console.log(
     JSON.stringify({
       status: 'PASS',
       receipts,
-      scope:
-        'Authenticated RPC, real hanging project hook and durable writes; only the deadline clock is controlled. No model or native action.',
+      scope: refreshHold
+        ? 'Authenticated fleet.refresh and actual retry over a pre-start unconfirmed-stop fixture. No remote-stop or native claim.'
+        : 'Authenticated RPC, real hanging project hook and durable writes; only the deadline clock is controlled. No model or native action.',
     }),
   );
 } catch (error) {

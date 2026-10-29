@@ -351,6 +351,7 @@ mock.module('./safe-idle-slot.js', {
 const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } =
   await import('./slot-teardown.js');
 const { replaySlotReclaimCheck } = await import('../methods/run/replay-step.js');
+const { buildFleetRefreshSnapshot } = await import('../methods/fleet.js');
 const { defaultCancelCollaborators } = await import('./cancel-transition.js');
 const { reclaimCancelledSlot, cancelledSlotReplayRefusal } =
   await import('./cancelled-slot-reclaim.js');
@@ -644,6 +645,7 @@ for (const name of ['complete', 'finalize']) {
 test('an unconfirmed command stop is retained across reconciliation until explicit release', async () => {
   run.status = 'failed';
   slotRow = {
+    slot: SLOT_ID,
     current_run_id: null,
     cleanup_run_id: RUN_ID,
     cleanup_stop_unconfirmed: true,
@@ -651,8 +653,27 @@ test('an unconfirmed command stop is retained across reconciliation until explic
     lifecycle: 'held',
     phase: 'occupied',
   };
-  const before = structuredClone(slotRow);
+  const probe = {
+    slot: SLOT_ID,
+    machine: 'localhost',
+    platform: 'cli',
+    project: 'proof',
+    ssh: 'LOCAL',
+    dev: '-',
+    devserver: '-',
+    device: '-',
+    cdp: '-',
+    fixtures: '-',
+    branch: 'main',
+    agent: 'idle',
+    enabled: true,
+    mode: 'dispatch',
+    dispatchable: true,
+  };
   for (let pass = 0; pass < 2; pass++) {
+    slotRow = buildFleetRefreshSnapshot([slotRow], [probe], [], 'now').slots[0]!;
+    assert.equal(slotRow.cleanup_stop_unconfirmed, true);
+    const before: Record<string, unknown> = structuredClone(slotRow);
     assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
     assert.deepEqual(slotRow, before);
   }

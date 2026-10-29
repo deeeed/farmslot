@@ -31,6 +31,7 @@ import {
   type RawProjectJson,
   readSlotField,
   rewriteStatusFile,
+  SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASING_SINCE,
   type SlotVars,
@@ -220,6 +221,7 @@ interface PreviousSlotStatus {
   releasing_since?: unknown;
   cleanup_release_token?: unknown;
   cleanup_run_id?: unknown;
+  cleanup_stop_unconfirmed?: boolean | null;
   held_reason?: unknown;
 }
 
@@ -684,6 +686,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
         }
       : {}),
     ...(prev.cleanup_run_id ? { cleanup_run_id: prev.cleanup_run_id } : {}),
+    ...(prev.cleanup_stop_unconfirmed === true ? { [SLOT_CLEANUP_STOP_UNCONFIRMED]: true } : {}),
     ...(phase === 'occupied' && prev.held_reason ? { held_reason: prev.held_reason } : {}),
     ...(r.resources ? { resources: r.resources } : {}),
   };
