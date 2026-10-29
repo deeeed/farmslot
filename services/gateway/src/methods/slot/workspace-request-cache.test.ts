@@ -22,14 +22,14 @@ test('status publication reads use the request cache while prepare keeps fresh p
   assert.deepEqual(forceFlags, [false, true]);
 });
 
-test('deleted-head lookup requires a merged PR for the exact head branch and repository', async () => {
+test('deleted-head lookup requires the exact branch and matches repository case like GitHub', async () => {
   const headBranch = 'TAT-4300-feat-sec-electron-bot';
   const merged = {
     number: 277,
     state: 'closed',
     merged_at: '2026-10-28T12:00:00Z',
     base: { ref: 'main' },
-    head: { sha: 'a'.repeat(40), ref: headBranch, repo: { full_name: 'example/app' } },
+    head: { sha: 'a'.repeat(40), ref: headBranch, repo: { full_name: 'Example/App' } },
     merge_commit_sha: 'b'.repeat(40),
   };
   response = JSON.stringify([

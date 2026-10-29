@@ -1,4 +1,4 @@
-import { DEFAULT_BRANCH } from '@farmslot/protocol';
+import { DEFAULT_BRANCH, remoteBranchRefspec } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
 
 import { execOnSlot, type RawProjectJson, type SlotVars } from '../../core/index.js';
@@ -73,7 +73,8 @@ export const readMergedPreparePullRequests: ReadMergedPreparePullRequests = asyn
       (pr.state !== 'closed' ||
         pr.head.ref !== headBranch ||
         !isRecord(pr.head.repo) ||
-        pr.head.repo.full_name !== repo)
+        typeof pr.head.repo.full_name !== 'string' ||
+        pr.head.repo.full_name.toLowerCase() !== repo.toLowerCase())
     )
       continue;
     merged.push({
@@ -271,8 +272,9 @@ export async function assertPrepareCommitsPublished(
     const retainedRefspecs: string[] = [];
     if (configured.exitCode !== 0) throw refusal;
     for (const refspec of refspecs) {
-      const headBranch = /^\+?refs\/heads\/([^\s:]+):refs\/remotes\/origin\/\1$/.exec(refspec)?.[1];
-      if (!headBranch) throw refusal;
+      const headBranch = /^\+?refs\/heads\/([^\s:]+):/.exec(refspec)?.[1];
+      if (!headBranch || refspec.replace(/^\+?/, '+') !== remoteBranchRefspec(headBranch))
+        throw refusal;
       const advertised = await exec(
         vars,
         `${git} ls-remote --exit-code --heads origin ${shellQuote(`refs/heads/${headBranch}`)}`,
@@ -299,13 +301,14 @@ export async function assertPrepareCommitsPublished(
     }
     const refreshed = await exec(
       vars,
-      `${git} fetch --no-prune --no-tags origin ${[...retainedRefspecs, `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`].map(shellQuote).join(' ')}`,
+      `${git} fetch --no-prune --no-tags origin ${[...retainedRefspecs, remoteBranchRefspec(defaultBranch)].map(shellQuote).join(' ')}`,
       { timeout: 120_000 },
     );
     if (refreshed.exitCode !== 0) throw refusal;
     for (const headBranch of missingBranches) {
+      let merged: boolean;
       try {
-        const merged = await refIncludedInMergedPullRequest(
+        merged = await refIncludedInMergedPullRequest(
           vars,
           `refs/heads/${headBranch}`,
           defaultBranch,
@@ -313,13 +316,16 @@ export async function assertPrepareCommitsPublished(
           exec,
           (repo, sha) => readMerged(repo, sha, 15_000, true, headBranch),
         );
-        if (!merged) throw refusal;
       } catch (error) {
         throw new Error(
           `${refusal.message} Merged PR verification failed: ${error instanceof Error ? error.message : String(error)}`,
           { cause: error },
         );
       }
+      if (!merged)
+        throw new Error(
+          `${refusal.message} No merged PR into ${defaultBranch} contains refs/heads/${headBranch}.`,
+        );
     }
     acceptedMergedWork = true;
   }

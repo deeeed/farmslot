@@ -81,7 +81,14 @@ for (const reason of [
           ];
         },
       ),
-      /Cannot verify remote commits.*branches untouched/s,
+      (error: Error) => {
+        assert.match(error.message, /Cannot verify remote commits.*branches untouched/s);
+        if (reason === 'unmerged PR') {
+          assert.ok(error.message.includes(`No merged PR into main contains refs/heads/${BRANCH}`));
+          assert.equal(error.message.split('Cannot verify remote commits').length, 2);
+        }
+        return true;
+      },
     );
     assert.equal(git(repo, 'show-ref', '--heads'), before);
     assert.equal(git(repo, 'rev-parse', 'HEAD'), head);

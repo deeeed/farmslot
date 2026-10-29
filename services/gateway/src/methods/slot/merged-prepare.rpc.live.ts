@@ -145,7 +145,7 @@ const fs = require('node:fs');
 const endpoint = process.argv.find(arg => arg.startsWith('repos/'));
 fs.appendFileSync(${JSON.stringify(githubCalls)}, JSON.stringify(endpoint) + '\\n');
 let body;
-if (endpoint === ${JSON.stringify(branchEndpoint)}) body = [{number:277,state:'closed',merged_at:'2026-10-28T12:00:00Z',base:{ref:'main'},head:{sha:${JSON.stringify(publishedHead)},ref:${JSON.stringify(branch)},repo:{full_name:'fixture/prepare'}},merge_commit_sha:${JSON.stringify(mainHead)}}];
+if (endpoint === ${JSON.stringify(branchEndpoint)}) body = [{number:277,state:'closed',merged_at:'2026-10-28T12:00:00Z',base:{ref:'main'},head:{sha:${JSON.stringify(publishedHead)},ref:${JSON.stringify(branch)},repo:{full_name:'Fixture/Prepare'}},merge_commit_sha:${JSON.stringify(mainHead)}}];
 else if (/^repos\\/fixture\\/prepare\\/commits\\/[a-f0-9]+\\/pulls\\?per_page=100$/.test(endpoint || '')) body = [];
 else { console.error('Unexpected fixture GitHub endpoint'); process.exit(1); }
 console.log('HTTP/2.0 200 OK\\nContent-Type: application/json\\n\\n' + JSON.stringify(body));
