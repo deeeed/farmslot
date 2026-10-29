@@ -616,12 +616,15 @@ export class RunList extends RunListState {
   }
 
   private async confirmCleanup() {
-    if (this.actionInProgress) return;
+    const preview = this.cleanupPreview;
+    if (this.actionInProgress || !preview) return;
     this.actionInProgress = true;
     try {
       await this.assertCurrentRuns();
+      // Cancel stays live during the reread; a dismissed preview is never executed.
+      if (this.cleanupPreview !== preview) return;
       // Each cancelled run it archives releases the slot its cancel kept, one after another.
-      const archives = this.cleanupPreview?.runsArchived.length ?? 0;
+      const archives = preview.runsArchived.length;
       await gateway.request<RunCleanupResult>(
         Methods.RUN_CLEANUP,
         { dryRun: false },

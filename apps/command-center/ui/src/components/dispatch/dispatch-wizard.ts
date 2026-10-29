@@ -1611,13 +1611,14 @@ export class DispatchWizard extends DispatchWizardState {
     this._error = '';
 
     try {
+      // The form stays editable during the reread; dispatch what it held at the click.
+      const payloadDraft = this._dispatchPayloadDraft();
+      if (!payloadDraft) return;
       await this._requireCurrentRunInputs();
       if (!current() || this._runActionRequest !== request) return;
       // The reread can show a run that now holds this ticket; its notice replaces the dispatch.
       this._checkActiveRunConflict();
       if (this._activeRunConflict) return;
-      const payloadDraft = this._dispatchPayloadDraft();
-      if (!payloadDraft) return;
       const runId = await dispatchRunCreateFromDraft(payloadDraft);
       if (current()) location.hash = `run/${runId}`;
     } catch (err: unknown) {
@@ -1638,10 +1639,11 @@ export class DispatchWizard extends DispatchWizardState {
     const current = this._captureRunAction();
     this._dispatching = true;
     try {
-      await this._requireCurrentRunInputs();
-      if (!current() || this._runActionRequest !== request) return;
+      // The form stays editable during the reread; queue what it held at the click.
       const payloadDraft = this._dispatchPayloadDraft();
       if (!payloadDraft) return;
+      await this._requireCurrentRunInputs();
+      if (!current() || this._runActionRequest !== request) return;
       await addDispatchQueueItemFromDraft(payloadDraft);
       if (!current()) return;
       this._ticketId = '';
