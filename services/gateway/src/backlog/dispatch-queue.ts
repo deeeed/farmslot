@@ -34,6 +34,7 @@ import {
   resolveReviewMode,
 } from '@farmslot/review-dispatch';
 
+import { withoutCleanupSignal } from '../core/cleanup-scope.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
@@ -1441,9 +1442,11 @@ export function canDispatchQueuedItemToSlot(slot: SlotStatus): boolean {
 
 export async function tryDispatchNext(): Promise<void> {
   if (dispatchInFlight) return dispatchInFlight;
-  dispatchInFlight = runWithSystemOriginator(tryDispatchNextOnce).finally(() => {
-    dispatchInFlight = null;
-  });
+  dispatchInFlight = withoutCleanupSignal(() =>
+    runWithSystemOriginator(tryDispatchNextOnce).finally(() => {
+      dispatchInFlight = null;
+    }),
+  );
   return dispatchInFlight;
 }
 

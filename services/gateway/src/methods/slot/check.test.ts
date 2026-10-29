@@ -85,6 +85,23 @@ test('runHealthCheck ignores stdout from failed health commands', async (t) => {
   assert.equal(result, '');
 });
 
+test('a failed health parser cannot supply a ready value', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-health-parser-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  assert.equal(await runHealthCheck(makeSlotVars(repo), 'printf raw', 'printf OK; exit 7'), '');
+});
+
+test('an aborted prepare health check preserves cancellation rather than reporting missing health', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-health-abort-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const controller = new AbortController();
+  controller.abort(new Error('prepare cancelled'));
+  await assert.rejects(
+    runHealthCheck(makeSlotVars(repo), 'printf OK', '', { signal: controller.signal }),
+    /prepare cancelled/,
+  );
+});
+
 test('runUnlockHook reports a failed unlock with its exit code and output tail', async (t) => {
   const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-unlock-'));
   t.after(async () => {
@@ -243,11 +260,26 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
       assert.deepEqual(steps, ['Trying unlock...']);
     }
   });
+});
 
-  test('prepare health reports the unlock failure when health stays down', async (t) => {
+// This virtual clock must stay outside the concurrent unlock suite.
+test(
+  'prepare health reports the unlock failure when health stays down',
+  { timeout: 4000 },
+  async (t) => {
     const vars = await lockedSlot(t);
     const steps: string[] = [];
-    await assert.rejects(
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    let reachedSecondRead!: () => void;
+    const secondRead = new Promise<void>((resolve) => {
+      reachedSecondRead = resolve;
+    });
+    let reads = 0;
+    t.mock.method(console, 'log', (message: unknown) => {
+      if (String(message).startsWith('[prepare] health check:') && ++reads === 2)
+        reachedSecondRead();
+    });
+    const rejected = assert.rejects(
       verifyPrepareHealth(
         vars,
         {
@@ -258,6 +290,7 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
         },
         'OK',
         (_name, detail) => steps.push(detail),
+        { timeoutMs: 1000, pollMs: 1 },
       ),
       {
         message:
@@ -265,13 +298,16 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
         failedCommand: HEALTH_HOOK,
       },
     );
+    await secondRead;
+    t.mock.timers.tick(1000);
+    await rejected;
     assert.ok(
       steps.includes(
         'Unlock failed — unlock hook exited 1: unlock failed (exit 1, APP_LOGIC_FAILURE): Timed out',
       ),
     );
-  });
-});
+  },
+);
 
 test('isOptionalFixtureAbsence tolerates optional entries and unresolved placeholders', () => {
   assert.equal(

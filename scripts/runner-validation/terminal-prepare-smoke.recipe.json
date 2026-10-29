@@ -1,0 +1,61 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Terminal waits for cold health and releases bounded cleanup",
+  "description": "Use a prepared private farm, real Terminal hooks and one cheap-model validation run. Retain the consumed input and failed run for in-place diagnosis. Never target an operator pool or an original product run.",
+  "paramsSchema": {
+    "type": "object",
+    "properties": {
+      "input": { "type": "string", "pattern": "^[A-Za-z0-9_./-]+$" }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "workflow": {
+    "entry": "release-timeout",
+    "nodes": {
+      "release-timeout": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/terminal-release-timeout.mjs",
+        "timeout_ms": 180000,
+        "intent": "Recover the timed-out release claim and preserve a successor through real RPC.",
+        "next": "release-cancellation"
+      },
+      "release-cancellation": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/terminal-release-timeout.mjs --interrupt-at-hook",
+        "timeout_ms": 180000,
+        "intent": "Interrupt the owned hook and confirm its asynchronous shutdown completes.",
+        "next": "release-early-cancellation"
+      },
+      "release-early-cancellation": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/terminal-release-timeout.mjs --interrupt-before-hook-identity",
+        "timeout_ms": 180000,
+        "intent": "Interrupt before the hook identity is captured and confirm no owned hook survives.",
+        "next": "refresh-unconfirmed-hold"
+      },
+      "refresh-unconfirmed-hold": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/terminal-release-timeout.mjs --refresh-unconfirmed-hold",
+        "timeout_ms": 180000,
+        "intent": "Refresh an existing unconfirmed cleanup hold and verify reconciliation still refuses it.",
+        "next": "cold-health"
+      },
+      "cold-health": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-prepare-smoke.mjs '{{params.input}}' --cold-health-only",
+        "timeout_ms": 1500000,
+        "intent": "Keep Terminal stopped until health waiting, then restart its cold server.",
+        "next": "terminal-dispatch"
+      },
+      "terminal-dispatch": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-prepare-smoke.mjs '{{params.input}}'",
+        "timeout_ms": 1500000,
+        "intent": "Prepare Terminal, confirm dispatch, then release the owned worker.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

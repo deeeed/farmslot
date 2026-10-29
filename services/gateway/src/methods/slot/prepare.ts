@@ -63,7 +63,6 @@ import { getRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withSlotSources } from '../../sources/runtime.js';
 
-import { runHealthCheck, runUnlockHook } from './check.js';
 import { runFixtureSync } from './fixtures.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
@@ -89,6 +88,7 @@ import {
 } from './prepare-command.js';
 import { checkPrepareDevice } from './prepare-device.js';
 import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-devserver-log.js';
+import { verifyPrepareHealth } from './prepare-health.js';
 import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
@@ -130,49 +130,8 @@ import {
   assertPublishedPrepareBranchContained,
 } from './unmerged-work.js';
 
+export { type PrepareHealthCommands, verifyPrepareHealth } from './prepare-health.js';
 export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
-
-export interface PrepareHealthCommands {
-  /** Health hook as executed (env applied). */
-  health: string;
-  /** Unlock hook as executed (env applied); empty when the project has none. */
-  unlock: string;
-  parse: string;
-  /** Health hook as reported on failure. */
-  failedCommand: string;
-}
-
-/**
- * Prepare's health phase. When health is not ready, run the unlock hook and
- * re-read health whatever its exit (the app can reach ready on its own); a
- * failed unlock is added to the error only when health is still not ready.
- */
-export async function verifyPrepareHealth(
-  vars: SlotVars,
-  commands: PrepareHealthCommands,
-  readyIndicator: string,
-  step: (name: string, detail: string) => void,
-): Promise<string> {
-  let healthValue = await runHealthCheck(vars, commands.health, commands.parse);
-  if (!readyIndicator || healthValue === readyIndicator) return healthValue;
-
-  let unlockFailure: string | null = null;
-  if (commands.unlock) {
-    step('health', 'Trying unlock...');
-    unlockFailure = await runUnlockHook(vars, commands.unlock);
-    await new Promise((r) => setTimeout(r, 3000));
-    healthValue = await runHealthCheck(vars, commands.health, commands.parse);
-  }
-  if (healthValue !== readyIndicator) {
-    if (unlockFailure) step('health', `Unlock failed — ${unlockFailure}`);
-    const err: PrepareCommandError = new Error(
-      `Health not ready (value=${healthValue || 'none'}, expected ${readyIndicator})${unlockFailure ? `; ${unlockFailure}` : ''}`,
-    );
-    err.failedCommand = commands.failedCommand;
-    throw err;
-  }
-  return healthValue;
-}
 
 /**
  * Refuse a detached HEAD the remote does not show: it may hold local-only
@@ -1706,6 +1665,7 @@ async function slotPrepareInner(
       },
       readyIndicator,
       step,
+      { signal },
     );
     step('health', `Health check — ${healthValue}`);
   }

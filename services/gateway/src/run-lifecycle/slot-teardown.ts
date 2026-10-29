@@ -15,6 +15,7 @@ import {
   ownsRunSlotCleanup,
   readSlotRow,
   resetSlotIf,
+  SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASING_SINCE,
   slotReleasingFenceFields,
@@ -61,7 +62,12 @@ export class RunOwnedResourceCleanupError extends Error {}
 export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
   if (isTerminalTeardownInFlight(slotId)) return false;
   const before = await readSlotRow(slotId);
-  if (before?.lifecycle !== 'held' || before.phase !== 'occupied') return false;
+  if (
+    before?.lifecycle !== 'held' ||
+    before.phase !== 'occupied' ||
+    before[SLOT_CLEANUP_STOP_UNCONFIRMED] === true
+  )
+    return false;
   const runId = before.current_run_id || before.cleanup_run_id;
   if (typeof runId !== 'string') return false; // An unidentified foreign hold grants no cleanup authority.
   const run = await getRunWithArchived(runId);
@@ -83,6 +89,7 @@ export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
     if (
       current?.slot_epoch !== before.slot_epoch ||
       current?.phase !== 'occupied' ||
+      current[SLOT_CLEANUP_STOP_UNCONFIRMED] === true ||
       !ownsRunSlotCleanup(current, run.id)
     )
       return false;
