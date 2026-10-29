@@ -1,0 +1,44 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Remote terminal preserves fast typing order",
+  "description": "Use a private authenticated gateway, production remote node and owned private tmux socket. Compare actual remote stdin bytes for concurrent client requests and the Companion live input buffer. Never touch a product run or shared tmux server.",
+  "paramsSchema": {
+    "type": "object",
+    "properties": {
+      "remote_host": {
+        "type": "string",
+        "minLength": 1
+      },
+      "remote_source": {
+        "type": "string",
+        "minLength": 1
+      },
+      "gateway_host": {
+        "type": "string",
+        "minLength": 1
+      },
+      "proof_root": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": ["remote_host", "remote_source", "gateway_host", "proof_root"],
+    "additionalProperties": false
+  },
+  "workflow": {
+    "entry": "remote-fast-typing",
+    "nodes": {
+      "remote-fast-typing": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-input-order.mts --remote-host \"{{params.remote_host}}\" --remote-source \"{{params.remote_source}}\" --gateway-host \"{{params.gateway_host}}\" --output \"{{params.proof_root}}\"",
+        "timeout_ms": 120000,
+        "intent": "Burst fast keystrokes from two real clients and Companion batching into an owned remote terminal; compare exact stdin bytes and retain observed load and scoped teardown.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -375,7 +375,30 @@ async function resolveMachine(slotId: string): Promise<string | undefined> {
   return undefined;
 }
 
+const terminalInputChains = new Map<string, Promise<void>>();
+
 export async function terminalInput(params: TerminalInputParams): Promise<void> {
+  // Reserve order before resolving a selector. Different role/context selectors can
+  // resolve to the same pane, so all input for the owning slot session shares a key.
+  const key = isWorkspaceTerminal(params)
+    ? workspaceTerminalKey(params.runId!)
+    : `slot:${params.slotId}`;
+  const previous = terminalInputChains.get(key) ?? Promise.resolve();
+  const operation = previous.then(() => writeTerminalInput(params));
+  // The caller receives its own failure; later input must not inherit that rejection.
+  const settled = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  terminalInputChains.set(key, settled);
+  try {
+    await operation;
+  } finally {
+    if (terminalInputChains.get(key) === settled) terminalInputChains.delete(key);
+  }
+}
+
+async function writeTerminalInput(params: TerminalInputParams): Promise<void> {
   if (isWorkspaceTerminal(params)) {
     const { key } = await resolveWorkspaceTerminal(params);
     if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
