@@ -23,6 +23,7 @@ import {
 
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { scheduledGraphOf } from '../run-engine/stack-base.js';
+import { withTerminalTeardown } from '../run-engine/terminal-teardown-registry.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { schedulerTick } from '../work-graph/store.js';
 
@@ -132,7 +133,7 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
             detail: 'park already released slot ownership; the slot is free',
           };
         }
-        await collaborators.cleanupSlot(run);
+        await withTerminalTeardown(run.slotId, () => collaborators.cleanupSlot!(run));
         return 'ok';
       },
     },

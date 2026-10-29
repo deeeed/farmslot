@@ -59,10 +59,7 @@ import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
-import {
-  beginTerminalTeardown,
-  endTerminalTeardown,
-} from '../../run-engine/terminal-teardown-registry.js';
+import { withTerminalTeardown } from '../../run-engine/terminal-teardown-registry.js';
 import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
 import {
@@ -205,8 +202,7 @@ export async function slotRelease(
   // The reconciler's only view of a live teardown is the registry. Without
   // this, a release that outlived the stale-fence bound would be reclaimed
   // mid-teardown, now that refresh keeps the fence stamp it ages.
-  beginTerminalTeardown(params.slotId);
-  const teardown = slotReleaseImpl(params, emit, options)
+  const teardown = withTerminalTeardown(params.slotId, () => slotReleaseImpl(params, emit, options))
     .catch((error: unknown) => {
       // A bound teardown losing its claim is an expected no-op for archive and
       // replay rollback. The new owner's workspace has already been left alone.
@@ -215,7 +211,6 @@ export async function slotRelease(
       throw error;
     })
     .finally(() => {
-      endTerminalTeardown(params.slotId);
       if (inflightReleases.get(params.slotId)?.promise === teardown) {
         inflightReleases.delete(params.slotId);
       }

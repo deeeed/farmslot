@@ -258,6 +258,7 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
         },
         'OK',
         (_name, detail) => steps.push(detail),
+        { timeoutMs: 1000, pollMs: 25 },
       ),
       {
         message:

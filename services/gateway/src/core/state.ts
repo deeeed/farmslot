@@ -3,11 +3,12 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
 import { farmslotRoot } from './config.js';
+import { assertCleanupCurrent } from './cleanup-scope.js';
 
 const statusFile = resolveStatusFilePath(farmslotRoot);
 
@@ -28,10 +29,16 @@ export function onStatusCommit(listener: (snapshot: unknown) => void): void {
 }
 
 async function atomicWriteStatus(data: unknown): Promise<void> {
+  assertCleanupCurrent();
   assertStatusFileWritable(statusFile);
   const tmp = `${statusFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
-  await rename(tmp, statusFile);
+  try {
+    await writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
+    assertCleanupCurrent();
+    await rename(tmp, statusFile);
+  } finally {
+    await rm(tmp, { force: true });
+  }
   for (const listener of statusCommitListeners) listener(data);
 }
 

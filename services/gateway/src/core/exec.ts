@@ -13,6 +13,7 @@ import { getNode } from '../fleet/machine-registry.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 
 import type { SlotVars } from './config.js';
+import { assertCleanupCurrent, cleanupSignal } from './cleanup-scope.js';
 
 export type { ExecResult };
 
@@ -82,6 +83,8 @@ export function execFileArgv(argv: string[], opts?: ExecOptions): Promise<ExecRe
 }
 
 function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
+  assertCleanupCurrent();
+  opts = { ...opts, signal: cleanupSignal(opts?.signal) };
   if (opts?.signal?.aborted)
     return Promise.resolve({
       stdout: '',
@@ -233,9 +236,11 @@ export async function execOnSlot(
   cmd: string,
   optsOrCwd?: string | ExecOnSlotOptions,
 ): Promise<ExecResult> {
+  assertCleanupCurrent();
   const opts: ExecOnSlotOptions =
     typeof optsOrCwd === 'string' ? { cwd: optsOrCwd } : (optsOrCwd ?? {});
   const cwd = opts.cwd ?? slotVars.remoteRepo;
+  const signal = cleanupSignal(opts.signal);
   const sources = currentProjectSources();
   if (sources) {
     const execution = sources.execution ?? sources.materialization;
@@ -253,7 +258,7 @@ export async function execOnSlot(
       cwd,
       timeout: opts.timeout,
       onOutput: opts.onOutput,
-      signal: opts.signal,
+      signal,
       closeoutTimeoutMs: opts.closeoutTimeoutMs,
       maxBuffer: opts.maxBuffer,
     });
@@ -280,12 +285,13 @@ export async function execOnSlot(
   // The timeout belongs to the command after its support bundle is ready,
   // just as execLocal starts its timer at spawn. Resolution has its own
   // bounded delivery wait; a slow local hash must not turn a hook into a 1ms exec.
+  assertCleanupCurrent();
   return nodeExec(slotVars.machine, cmd, cwd, {
     timeout,
     onOutput: opts.onOutput,
     maxBuffer: opts.maxBuffer,
     noRetry: opts.noRetry,
-    signal: opts.signal,
+    signal,
     closeoutTimeoutMs: opts.closeoutTimeoutMs,
   });
 }
@@ -295,16 +301,18 @@ export async function execArgvOnSlot(
   argv: string[],
   opts: ExecOnSlotOptions = {},
 ): Promise<ExecResult> {
+  assertCleanupCurrent();
+  const signal = cleanupSignal(opts.signal);
   const cwd = opts.cwd ?? slotVars.remoteRepo;
   if (isLocal(slotVars.host, slotVars.machine)) {
-    return execFileArgv(argv, { ...opts, cwd });
+    return execFileArgv(argv, { ...opts, cwd, signal });
   }
   return nodeExecArgv(slotVars.machine, argv, cwd, {
     timeout: opts.timeout,
     onOutput: opts.onOutput,
     maxBuffer: opts.maxBuffer,
     noRetry: opts.noRetry,
-    signal: opts.signal,
+    signal,
     closeoutTimeoutMs: opts.closeoutTimeoutMs,
   });
 }
