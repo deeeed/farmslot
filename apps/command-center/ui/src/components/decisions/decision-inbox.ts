@@ -18,7 +18,6 @@ import {
   buildRunDecisionActionRequest,
   improvementApplyOutcome,
   Methods,
-  sourceObservationAge,
 } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { evidenceOnlyDecisionIds, isResultDecision } from '@farmslot/review-dispatch';
@@ -27,14 +26,7 @@ import '../diff-viewer/diff-review.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
-import { getResourceCache } from '../../resource-cache.js';
-import {
-  type AppState,
-  decisionsQuery,
-  getState,
-  isHydrating,
-  subscribe as subscribeState,
-} from '../../state.js';
+import { type AppState, getState, isHydrating, subscribe as subscribeState } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
 import {
@@ -171,8 +163,6 @@ export class DecisionInbox extends LitElement {
   @state() private _hydrating = false;
   @state() private _observation: ResourceQueryState<DecisionListResult> = { status: 'loading' };
   @state() private _resolveErrors = new Map<string, string>();
-  @state() private _now = Date.now();
-  private _ageTimer?: ReturnType<typeof setInterval>;
   private readonly _testFilter = new DiffTestFilterController(this);
   private _slotProjectMap = new Map<string, string>();
 
@@ -195,17 +185,6 @@ export class DecisionInbox extends LitElement {
     this._filterMachines = s.globalFilters.machines;
     this._hydrating = isHydrating(s, 'decisions');
     this._observation = s.decisionsObservation;
-    if (this._observation.status === 'stale' && this._observation.data) {
-      if (!this._ageTimer) {
-        this._now = Date.now();
-        this._ageTimer = setInterval(() => {
-          this._now = Date.now();
-        }, 1000);
-      }
-    } else if (this._ageTimer) {
-      clearInterval(this._ageTimer);
-      this._ageTimer = undefined;
-    }
     // Build slot→project map from fleet for accurate filtering
     if (s.fleet?.slots) {
       this._slotProjectMap = new Map(s.fleet.slots.map((sl) => [sl.slot, sl.project]));
@@ -232,8 +211,6 @@ export class DecisionInbox extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubState?.();
-    if (this._ageTimer) clearInterval(this._ageTimer);
-    this._ageTimer = undefined;
   }
 
   private get _canAct(): boolean {
@@ -777,25 +754,6 @@ export class DecisionInbox extends LitElement {
         <span class="inbox-title">Decisions</span>
         <span class="inbox-count">${this._filtered.length} pending</span>
       </div>
-      ${this._observation.status === 'stale' && this._observation.data
-        ? html`<div class="inbox-observation" data-freshness="stale">
-            Saved decisions, ${sourceObservationAge(this._observation.observedAt, this._now)}.
-            Actions wait for a current read.
-          </div>`
-        : nothing}
-      ${this._observation.status === 'unsupported'
-        ? html`<div class="inbox-observation">
-            Update the gateway to enable live decision actions.
-          </div>`
-        : nothing}
-      ${this._observation.error
-        ? html`<div class="inbox-error" role="alert">
-            ${this._observation.error.message}
-            <button @click=${() => getResourceCache()?.retry(decisionsQuery)}>
-              Retry reading decisions
-            </button>
-          </div>`
-        : nothing}
       <div class="inbox-body">
         ${this._filtered.length === 0
           ? this._hydrating

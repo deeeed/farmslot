@@ -1,0 +1,26 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Stable layout and current notification conditions",
+  "description": "Run from the repository root with private VITE_PORT/GATEWAY_PORT, an isolated Agent Chrome FARMSLOT_CDP_PORT and FARMSLOT_LAYOUT_EVIDENCE. The helper starts only a protocol fixture and its own Vite process, then closes both and its own tab. It proves presentation, not gateway derivation or native acceptance.",
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 180000,
+        "intent": "Consume fixture snapshots through the real socket/query adapter, require fixed content positions through repeated reads, reconnect and notice changes, and check the opened tray at 1280px and 414px.",
+        "next": "result"
+      },
+      "result": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require all layout assertions and owned teardown to pass.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

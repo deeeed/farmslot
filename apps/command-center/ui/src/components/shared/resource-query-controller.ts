@@ -13,6 +13,7 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from '../../resource-cache.js';
+import { notificationTray, publishReadNotice } from '../../utils/notification-tray.js';
 
 /** Binds a panel's query to the current farm owner; the shared cache owns all reads. */
 export class ResourceQueryController<T> implements ReactiveController {
@@ -21,6 +22,8 @@ export class ResourceQueryController<T> implements ReactiveController {
   private cache?: GatewayResourceCache;
   private workspaceKey?: string;
   private connected = false;
+  private readonly noticeSource = {};
+  private noticeRoute = '#fleet';
   private version = 0;
   private stopQuery?: () => void;
   private stopOwner?: () => void;
@@ -45,6 +48,7 @@ export class ResourceQueryController<T> implements ReactiveController {
 
   hostDisconnected(): void {
     this.connected = false;
+    notificationTray.clear(this.noticeSource);
     this.version++;
     this.stopQuery?.();
     this.stopOwner?.();
@@ -55,7 +59,9 @@ export class ResourceQueryController<T> implements ReactiveController {
 
   setQuery(query?: ResourceQuery<T>): void {
     if (query?.id === this.query?.id) return;
+    notificationTray.clear(this.noticeSource);
     this.query = query;
+    this.noticeRoute = typeof location === 'undefined' ? '#fleet' : location.hash;
     this.bind(true);
   }
 
@@ -96,6 +102,7 @@ export class ResourceQueryController<T> implements ReactiveController {
       (gateway.connectionState === 'connected' && gateway.workspaceAccess === 'farm');
     const cache = farm ? getResourceCache() : undefined;
     const key = getResourceWorkspaceKey();
+    notificationTray.setOwner(farm ? key : undefined);
     if (!force && cache === this.cache && key === this.workspaceKey) return;
     this.stopQuery?.();
     this.stopQuery = undefined;
@@ -116,6 +123,14 @@ export class ResourceQueryController<T> implements ReactiveController {
 
   private publish(state: ResourceQueryState<T>): void {
     this.state = state;
+    if (this.query) {
+      const owner = this.workspaceKey;
+      const query = this.query;
+      publishReadNotice(this.noticeSource, owner, this.query, state, this.noticeRoute, () => {
+        if (owner === this.workspaceKey && query === this.query && this.belongsToWorkspace)
+          void this.retry();
+      });
+    }
     this.onChange?.(state);
     this.host.requestUpdate();
   }

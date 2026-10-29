@@ -336,9 +336,13 @@ export default function DiffViewerScreen() {
           }
           workspaceRouteContext={workspaceRouteContext}
         />
-        <ResourceReadStatus observation={workspaceDiffObservation} label="workspace diff" />
-        <ResourceReadStatus observation={runObservation} label="run diff" />
-        <ResourceReadStatus observation={recipeObservation} label="recipe runs" />
+        <ResourceReadStatus
+          observations={[
+            { observation: workspaceDiffObservation, label: 'workspace diff' },
+            { observation: runObservation, label: 'run diff' },
+            { observation: recipeObservation, label: 'recipe runs' },
+          ]}
+        />
         {runObservation.error || recipeObservation.error || workspaceDiffObservation.error ? (
           <Pressable
             accessibilityRole="button"

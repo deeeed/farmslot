@@ -112,9 +112,7 @@ export abstract class RunListState extends LitElement {
   @state() familyFilter = '';
   @state() tagFilter = '';
   @state() tagRuns: Run[] | null = null;
-  @state() tagRunsError: string | null = null;
   @state() familyRuns: Run[] | null = null;
-  @state() familyRunsError: string | null = null;
   @state() sortBy: SortOption = 'newest';
   @state() searchQuery = '';
   @state() globalFilters: GlobalFilters = { projects: [], machines: [] };

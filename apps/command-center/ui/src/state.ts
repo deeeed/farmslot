@@ -38,7 +38,7 @@ import {
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
 
-import { notify as browserNotify } from './utils/notifications.js';
+import { notificationTray, publishReadNotice } from './utils/notification-tray.js';
 import { safeLsGet, safeLsRemove } from './utils/storage.js';
 import { contentPrefetchTargets } from './content-prefetch.js';
 import { type ConnectionState, gateway } from './gateway-client.js';
@@ -480,6 +480,7 @@ function bindFarmCollections(): void {
   collectionCache = cache;
   collectionWorkspaceKey = workspaceKey;
   collectionFarm = farm;
+  notificationTray.setOwner(farm ? workspaceKey : undefined);
   state.runsObservation = { status: 'loading' };
   state.decisionsObservation = { status: 'loading' };
   state.fleetObservation = { status: 'loading' };
@@ -521,23 +522,13 @@ function bindFarmCollections(): void {
   collectionObservers.push(
     cache.observe(fleetQuery, (result) => {
       if (!current()) return;
-      const previous = state.fleet;
       state.fleetObservation = result;
+      publishReadNotice('farm:fleet', workspaceKey, fleetQuery, result, '#fleet', () => {
+        if (current()) void cache.retry(fleetQuery);
+      });
       state.fleet = result.data?.fleet ?? null;
       state.hydrated = { ...state.hydrated, fleet: result.status !== 'loading' };
       state.bootstrapFailed = { ...state.bootstrapFailed, fleet: Boolean(result.error) };
-      if (previous && result.status === 'ready') {
-        for (const slot of state.fleet?.slots ?? [])
-          if (
-            slot.lifecycle === 'ready' &&
-            previous.slots.some((row) => row.slot === slot.slot && row.lifecycle === 'busy')
-          )
-            browserNotify('Dispatch complete', {
-              body: `${slot.slot} finished (${slot.taskId || 'task'})`,
-              tag: `complete-${slot.slot}`,
-              route: `#slot/${slot.slot}`,
-            });
-      }
       notify();
     }),
   );
@@ -598,6 +589,9 @@ function bindFarmCollections(): void {
       cache.read(runHistoryQuery),
     );
     state.runsObservation = result;
+    publishReadNotice('farm:runs', workspaceKey, activeRunsQuery, result, '#runs', () => {
+      if (current()) void cache.retry(activeRunsQuery);
+    });
     state.runs = result.data?.runs ?? [];
     state.runSummaryMeta = result.data?.summaryMeta ?? null;
     state.runFamilySummaries = result.data?.familySummaries ?? [];
@@ -612,22 +606,21 @@ function bindFarmCollections(): void {
   collectionObservers.push(
     cache.observe(decisionsQuery, (result) => {
       if (!current()) return;
-      const previous = state.decisionsObservation.data;
       state.decisionsObservation = result;
       state.decisions = result.data?.decisions ?? [];
       state.hydrated = { ...state.hydrated, decisions: result.status !== 'loading' };
       state.bootstrapFailed = { ...state.bootstrapFailed, decisions: Boolean(result.error) };
-      if (previous && result.status === 'ready') {
-        const ids = new Set(previous.decisions.map(({ id }) => id));
-        for (const decision of state.decisions)
-          if (!ids.has(decision.id))
-            browserNotify('Decision needed', {
-              body: decision.title,
-              tag: `decision-${decision.id}`,
-              route: '#decisions',
-              attention: true,
-            });
-      }
+      notificationTray.decisions(workspaceKey, state.decisions, result.status === 'ready');
+      publishReadNotice(
+        'farm:decisions',
+        workspaceKey,
+        decisionsQuery,
+        result,
+        '#decisions',
+        () => {
+          if (current()) void cache.retry(decisionsQuery);
+        },
+      );
       prefetchTargetsChanged();
       notify();
     }),
@@ -901,12 +894,6 @@ export function initState(): void {
   gateway.subscribe<MonitorViolationPayload>(Events.MONITOR_VIOLATION, (p) => {
     if (p.violation) {
       recordMonitorViolation(p.violation);
-      browserNotify(`Agent ${p.violation.type}`, {
-        body: `${p.violation.slotId}: ${p.violation.message}`,
-        tag: `violation-${p.violation.slotId}-${p.violation.type}`,
-        route: p.violation.slotId ? `#slot/${p.violation.slotId}` : '#fleet',
-        attention: true,
-      });
     }
   });
 }

@@ -147,8 +147,12 @@ export default function ArtifactViewerScreen() {
         ]}
         ListHeaderComponent={
           <>
-            <ResourceReadStatus observation={runObservation} label="run artifacts" />
-            <ResourceReadStatus observation={recipeObservation} label="recipe evidence" />
+            <ResourceReadStatus
+              observations={[
+                { observation: runObservation, label: 'run artifacts' },
+                { observation: recipeObservation, label: 'recipe evidence' },
+              ]}
+            />
             {runObservation.error || recipeObservation.error ? (
               <Pressable
                 accessibilityRole="button"

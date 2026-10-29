@@ -251,8 +251,12 @@ export default function SlotDiffViewerScreen() {
         </View>
       ) : null}
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-        <ResourceReadStatus observation={runObservation} label="slot diff run" />
-        <ResourceReadStatus observation={recipeObservation} label="slot diff recipe inventory" />
+        <ResourceReadStatus
+          observations={[
+            { observation: runObservation, label: 'slot diff run' },
+            { observation: recipeObservation, label: 'slot diff recipe inventory' },
+          ]}
+        />
         {readError ? (
           <Pressable
             accessibilityRole="button"

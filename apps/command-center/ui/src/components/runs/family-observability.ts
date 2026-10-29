@@ -1,5 +1,5 @@
 import { html } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement } from 'lit/decorators.js';
 
 import type {
   FamilyObservabilityArtifact,
@@ -18,7 +18,6 @@ import {
   Events,
   isRunEvidenceVideoArtifact,
   Methods,
-  sourceObservationAge,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
@@ -132,15 +131,12 @@ const COPY_COMPARE_PROMPT = 'compare-prompt';
 @customElement('family-observability')
 export class FamilyObservability extends FamilyObservabilityState {
   private boundFamilyId = '';
-  @state() private observationNow = Date.now();
-  private ageTimer?: ReturnType<typeof setInterval>;
   private readonly familyQuery = new ResourceQueryController<FamilyObservabilityGetResult>(
     this,
     (observation) => {
       if (this.snapshotOverride) return;
       this.snapshot = observation.data?.snapshot ?? null;
       this.loading = observation.status === 'loading' && !observation.data;
-      this.error = observation.error?.message ?? '';
       if (this.snapshot) {
         const ids = this.snapshot.runs.map(({ runId }) => runId);
         const { route, params } = parseHashRoute();
@@ -175,26 +171,9 @@ export class FamilyObservability extends FamilyObservabilityState {
         this._mdPreviewCache.clear();
       }
       this._ensureFullRun(this.selectedRunId || this.initialRunId);
-      this._syncAgeTimer();
     },
   );
-  private readonly fullRunQuery = new ResourceQueryController<RunGetResult>(this, () =>
-    this._syncAgeTimer(),
-  );
-
-  private _syncAgeTimer(): void {
-    const stale = [this.familyQuery.state, this.fullRunQuery.state].some(
-      (value) => value.data && value.status === 'stale',
-    );
-    if (stale && !this.ageTimer)
-      this.ageTimer = setInterval(() => {
-        this.observationNow = Date.now();
-      }, 1000);
-    if (!stale && this.ageTimer) {
-      clearInterval(this.ageTimer);
-      this.ageTimer = undefined;
-    }
-  }
+  private readonly fullRunQuery = new ResourceQueryController<RunGetResult>(this);
 
   private _fullRunFor(runId: string): Run | null {
     if (this.snapshotOverride) return this.fullRunOverrides.find(({ id }) => id === runId) ?? null;
@@ -341,8 +320,6 @@ export class FamilyObservability extends FamilyObservabilityState {
     this._mdPreviewCache.clear();
     this._pairsCache = null;
     this._evidenceMatrixCache = null;
-    clearInterval(this.ageTimer);
-    this.ageTimer = undefined;
     this._diffModal = null;
   }
 
@@ -706,27 +683,10 @@ export class FamilyObservability extends FamilyObservabilityState {
     }
   }
 
-  private _renderReadStatus() {
-    return [this.familyQuery.state, this.fullRunQuery.state].map((value, index) =>
-      value.data && value.status === 'stale' && value.observedAt !== undefined
-        ? html`<div role="status">
-            Saved ${index ? 'run' : 'family'},
-            ${sourceObservationAge(value.observedAt, this.observationNow)}. Actions wait for a
-            current read.
-          </div>`
-        : '',
-    );
-  }
-
-  private async _retryReads(): Promise<void> {
-    const failed = [this.familyQuery, this.fullRunQuery].filter((query) => query.state.error);
-    await Promise.all((failed.length ? failed : [this.familyQuery]).map((query) => query.retry()));
-  }
-
   override render() {
     if (!this.snapshot) {
       const savedRun = this.fullRunQuery.state.data?.run;
-      return html`${this._renderReadStatus()}
+      return html`
         <div class="empty">
           ${this.error ||
           (gateway.connectionState === 'connected'
@@ -737,20 +697,12 @@ export class FamilyObservability extends FamilyObservabilityState {
           ? html`<div>${savedRun.ticketOrPr}</div>
               <a href="#run/${savedRun.id}">Open saved run</a>`
           : ''}
-        ${this.error
-          ? html`<button @click=${() => void this._retryReads()}>Retry family</button>`
-          : ''}`;
+      `;
     }
     const snapshot = this.snapshot;
     const selectedRun = this._selectedRun;
-    return html`${this._renderReadStatus()}${this.error || this.fullRunQuery.state.error
-      ? html`<div role="alert">
-          ${this.error || this.fullRunQuery.state.error?.message}<button
-            @click=${() => void this._retryReads()}
-          >
-            Retry family
-          </button>
-        </div>`
+    return html`${this.error
+      ? html`<div role="alert">${this.error}</div>`
       : ''}${renderFamilyObservabilityPage({
       snapshot,
       selectedRun,

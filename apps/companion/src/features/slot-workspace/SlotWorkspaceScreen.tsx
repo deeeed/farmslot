@@ -110,10 +110,14 @@ export default function SlotWorkspaceScreen() {
           <RunWorkspaceNav {...workspaceNavProps} />
         </View>
 
-        <ResourceReadStatus observation={runObservation} label="slot run" />
-        <ResourceReadStatus observation={historyObservation} label="slot history" />
-        <ResourceReadStatus observation={recipeObservation} label="slot recipe inventory" />
-        <ResourceReadStatus observation={progressObservation} label="task progress" />
+        <ResourceReadStatus
+          observations={[
+            { observation: runObservation, label: 'slot run' },
+            { observation: historyObservation, label: 'slot history' },
+            { observation: recipeObservation, label: 'slot recipe inventory' },
+            { observation: progressObservation, label: 'task progress' },
+          ]}
+        />
         {detailError ? (
           <Pressable
             accessibilityRole="button"

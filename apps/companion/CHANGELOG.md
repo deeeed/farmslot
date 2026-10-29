@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Reserve one read-status row per view and open Sources in a disclosure, keeping polling, saved ages and read errors from moving the surrounding controls.
+
 - Quick actions no longer hide the rest of the app from VoiceOver on iOS.
 
 - Evidence images and gate diffs no longer restart their reads or rebuild a loaded image on every connection status change, which aborted large downloads and could drop a failed read; reads still retry on reconnect and when the signed-in profile's headers change.

@@ -23,8 +23,12 @@ export function VisualReviewScreen({ route }: { route: VisualReviewRouteParams }
   const { state, exportMessage, actions } = screen;
   const observations = (
     <>
-      <ResourceReadStatus observation={screen.runObservation} label="visual review run" />
-      <ResourceReadStatus observation={screen.recipeObservation} label="visual review inventory" />
+      <ResourceReadStatus
+        observations={[
+          { observation: screen.runObservation, label: 'visual review run' },
+          { observation: screen.recipeObservation, label: 'visual review inventory' },
+        ]}
+      />
       {state.status === 'ready' && state.targetRunId !== screen.runObservation.data?.run.id ? (
         <ResourceReadStatus observation={screen.targetObservation} label="feedback target" />
       ) : null}
