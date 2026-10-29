@@ -29,6 +29,7 @@ import {
   computeReadyGatePackageHash,
   computeReadyGateReviewSubjectHash,
 } from '../run-completion/ready-gate-package.js';
+import { buildResultDecision, ResultDecisionHoldError } from '../run-completion/result-decision.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import { RunGateNotReadyError } from './gate-prerequisites.js';
@@ -2514,3 +2515,49 @@ for (const mode of ['autonomous', 'interactive'] as const) {
     assert.equal(result.outputs?.reason, 'pr-complete-has-no-reviewer');
   });
 }
+
+test('an undelivered fix becomes a visible result decision with its findings preserved', async (t) => {
+  const runId = await publicationGateRun(t, {});
+  const issues = [{ file: 'a.ts', line: 1, description: 'Retained finding' }];
+  let held: ResultDecisionHoldError | undefined;
+  try {
+    await executeReviewStep(runId, {
+      ...restartReplayContext(),
+      executeReviewForRun: async () => ({
+        verdict: 'issues',
+        reviewSnapshot: {
+          source: 'local-git',
+          headSha: rowOneHead,
+          capturedAt: '2026-10-29T19:01:00Z',
+        },
+        issues,
+        retryCount: 1,
+        maxRetries: 3,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        fixDeliveryFailure: 'Fix prompt delivery remained unconfirmed',
+      }),
+    });
+    assert.fail('delivery failure must enter the operator decision boundary');
+  } catch (error) {
+    assert.ok(error instanceof ResultDecisionHoldError);
+    held = error;
+  }
+  assert.deepEqual(held.stepOutputs.issues, issues);
+  assert.equal(held.stepOutputs.feedbackSent, false);
+  assert.equal(held.stepOutputs.recoveryContinuationPending, true);
+  const run = getRun(runId)!;
+  const decision = await buildResultDecision(
+    {
+      ...run,
+      steps: run.steps.map((step) =>
+        step.name === 'review' ? { ...step, status: 'failed', outputs: held.stepOutputs } : step,
+      ),
+    },
+    'review',
+  );
+  assert.equal(decision.type, 'engine_result_decision');
+  assert.match(decision.description ?? '', /fix was not delivered.*unconfirmed/);
+  assert.ok(decision.payload?.kind === 'result-decision');
+  assert.deepEqual(decision.payload.findings, issues);
+});

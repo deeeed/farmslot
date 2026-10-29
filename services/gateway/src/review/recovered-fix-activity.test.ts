@@ -120,7 +120,7 @@ async function flush() {
   for (let i = 0; i < 8; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-test('recovered tokenless fix waits invoke activity observation without a new review', async (t) => {
+test('recovered fix adopts its accepted native command and observes activity without a new review', async (t) => {
   ended = false;
   activityReads = 0;
   const priorOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
@@ -199,7 +199,7 @@ test('recovered tokenless fix waits invoke activity observation without a new re
       'recovery must pass an activity callback even without delivery.turnToken',
     );
     assert.equal(getRun(run.id)?.agentContexts?.[0]?.status, 'working');
-    assert.equal(getRun(run.id)?.status, 'reconciling');
+    assert.equal(getRun(run.id)?.status, 'fixing');
   } finally {
     ended = true;
     t.mock.timers.tick(2000);

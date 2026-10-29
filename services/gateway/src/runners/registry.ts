@@ -2515,15 +2515,17 @@ type SubmitInstructionOutcome = 'ok' | 'not-buffered' | 'stuck';
  */
 const composerTouchStore = new AsyncLocalStorage<{ touched: boolean }>();
 const PROMPT_TYPE_FAILURE_EXIT_CODE = 85;
+export type RunnerPromptMutation = () => void | Promise<void>;
+
 const promptMutationStore = new AsyncLocalStorage<{
-  started: () => void;
-  confirmedUntouched?: () => void;
+  started: RunnerPromptMutation;
+  confirmedUntouched?: RunnerPromptMutation;
 }>();
 
 export function withRunnerPromptMutationBoundary<Result>(
-  onMutation: () => void,
+  onMutation: RunnerPromptMutation,
   send: () => Promise<Result>,
-  onConfirmedUntouched?: () => void,
+  onConfirmedUntouched?: RunnerPromptMutation,
 ): Promise<Result> {
   return promptMutationStore.run(
     { started: onMutation, confirmedUntouched: onConfirmedUntouched },
@@ -2536,7 +2538,7 @@ export async function execRunnerInput(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
-  command: (paneId: string) => string,
+  command: (paneId: string) => string | Promise<string>,
   exec: typeof execOnSlot = execOnSlot,
 ): Promise<ExecResult> {
   const pane = await exec(
@@ -2569,7 +2571,7 @@ export async function execRunnerInput(
     runner,
     PROMPT_TYPE_FAILURE_EXIT_CODE,
   );
-  return exec(vars, `${hostGuard}\n${command(paneId!)}`, { noRetry: true });
+  return exec(vars, `${hostGuard}\n${await command(paneId!)}`, { noRetry: true });
 }
 
 function runnerKeysCommand(paneId: string, keys: string): string {
@@ -2582,14 +2584,14 @@ export function execRunnerKeys(
   runner: string,
   keys: string,
   exec: typeof execOnSlot = execOnSlot,
-  beforeMutation?: () => void,
+  beforeMutation?: RunnerPromptMutation,
 ): Promise<ExecResult> {
   return execRunnerInput(
     vars,
     target,
     runner,
-    (paneId) => {
-      beforeMutation?.();
+    async (paneId) => {
+      await beforeMutation?.();
       return runnerKeysCommand(paneId, keys);
     },
     exec,
@@ -2612,8 +2614,8 @@ async function submitRunnerInstruction(
     } catch (error) {
       console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
     }
-    const write = await execRunnerInput(vars, target, runner, (paneId) => {
-      promptMutationStore.getStore()?.started();
+    const write = await execRunnerInput(vars, target, runner, async (paneId) => {
+      await promptMutationStore.getStore()?.started();
       return tmuxSendTextCommand(paneId, message, {
         enter: true,
         submitKey: getRunnerDefinition(runner).promptSubmitKey,
@@ -2631,7 +2633,7 @@ async function submitRunnerInstruction(
       if (touchRecord) touchRecord.touched = true;
     } else {
       if (write.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE) {
-        promptMutationStore.getStore()?.confirmedUntouched?.();
+        await promptMutationStore.getStore()?.confirmedUntouched?.();
       }
       console.warn(
         `[${logPrefix}] send-keys to ${target} exited ${write.exitCode}; nothing reached the composer`,
@@ -2655,7 +2657,7 @@ async function submitRunnerInstruction(
       promptMutationStore.getStore()?.started(),
     );
     if (submit.exitCode !== 0) {
-      promptMutationStore.getStore()?.confirmedUntouched?.();
+      await promptMutationStore.getStore()?.confirmedUntouched?.();
       return 'stuck';
     }
   }
@@ -3911,14 +3913,14 @@ export async function sendRunnerPostLaunchPrompt(
         await pasteTmuxText(vars, target, message, {
           submitKey: runnerPromptSubmitKey(runner),
           executeInput: async (paneId, command) => {
-            const result = await execRunnerInput(vars, paneId, runner, () => {
-              if (!inputStarted) promptMutationStore.getStore()?.started();
+            const result = await execRunnerInput(vars, paneId, runner, async () => {
+              if (!inputStarted) await promptMutationStore.getStore()?.started();
               inputStarted = true;
               return command;
             });
             if (result.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE && !pasteCompleted) {
               inputStarted = false;
-              promptMutationStore.getStore()?.confirmedUntouched?.();
+              await promptMutationStore.getStore()?.confirmedUntouched?.();
             }
             if (result.exitCode === 0) pasteCompleted = true;
             return result;
@@ -3935,14 +3937,14 @@ export async function sendRunnerPostLaunchPrompt(
         throw error;
       }
     } else {
-      promptResult = await execRunnerInput(vars, target, runner, (paneId) => {
-        promptMutationStore.getStore()?.started();
+      promptResult = await execRunnerInput(vars, target, runner, async (paneId) => {
+        await promptMutationStore.getStore()?.started();
         return sendCommand(paneId);
       });
     }
     if (promptResult.exitCode !== 0) {
       if (shouldSubmitOnly || promptResult.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE) {
-        promptMutationStore.getStore()?.confirmedUntouched?.();
+        await promptMutationStore.getStore()?.confirmedUntouched?.();
       }
       throw new Error(
         `Failed to send prompt to ${target}: ${promptResult.stderr || promptResult.stdout || `exit ${promptResult.exitCode}`}`,

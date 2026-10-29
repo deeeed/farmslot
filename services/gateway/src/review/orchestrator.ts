@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   type AgentContext,
   isPipelineRepairVisualReviewInput,
+  isRecord,
   isTerminalRunStatus,
   PipelineSteps,
   primaryRoleForFlow,
@@ -41,7 +42,6 @@ import {
   respawnTmuxWindowWithCommand,
   shellQuote,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
-  tmuxShellSnippet,
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
@@ -54,8 +54,6 @@ import {
   normalizeRunner,
   readRunnerLaunchBlocker,
   runnerDefaultModel,
-  runnerLineLooksWaiting,
-  runnerNeedsPostLaunchPrompt,
   runnerRetainedSessionHandoff,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
@@ -70,7 +68,13 @@ import {
 } from '../runners/session-record.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
-import { clearRunActiveTaskFile, getRun, updateRun, updateRunStep } from '../runs/store.js';
+import {
+  clearRunActiveTaskFile,
+  getRun,
+  persistRunNow,
+  updateRun,
+  updateRunStep,
+} from '../runs/store.js';
 import {
   checklistMarkerCommand,
   restoreWorkerChecklistTargetFromSlot,
@@ -126,6 +130,7 @@ import {
   debugReviewLog,
   durationBetween,
   readOptionalSlotFile,
+  readPersistedReviewSnapshot,
   removeSlotFiles,
   reviewAttemptFromResult,
 } from './snapshots.js';
@@ -230,6 +235,8 @@ export interface ReservedFixPass {
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
+const REVIEW_FIX_DELIVERY_UNCONFIRMED =
+  'Review-fix prompt delivery remained unconfirmed within the launch budget';
 const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min without a fix signal or runner activity
 const FEEDBACK_MAX_ACTIVE_MS = 2 * 60 * 60_000; // bound continuously progressing fix passes
 
@@ -643,7 +650,7 @@ interface FixDeliveryAcceptance {
 
 type FixPromptDeliveryResult =
   | { status: 'delivered'; turnToken?: string }
-  | { status: 'deferred' | 'relaunch-required' | 'unsupported' | 'blocked' };
+  | { status: 'deferred' | 'relaunch-required' | 'unsupported' | 'blocked'; reason?: string };
 
 // Dep surface for runReviewRetryLoop. Real production wiring lives in
 // defaultReviewRetryDeps below; tests pass a struct of mocks to exercise the
@@ -984,6 +991,54 @@ function blockedReviewAttempt(attempt: ReviewAttempt, reason: string): ReviewAtt
   return { ...attempt, verdict: 'failed', reason };
 }
 
+export async function undeliveredReviewFixResult({
+  result,
+  reason,
+  run,
+  attempts,
+  retryCount,
+  maxRetries,
+  start,
+  readSnapshot,
+}: {
+  result: Partial<ReviewResult>;
+  reason: string;
+  run?: Run;
+  attempts: ReviewAttempt[];
+  retryCount: number;
+  maxRetries: number;
+  start: number;
+  readSnapshot?: () => Promise<ReviewDiffSnapshot | undefined>;
+}): Promise<ReviewResult> {
+  const recorded = run?.steps.find((step) => step.name === PipelineSteps.REVIEW)?.outputs;
+  const snapshot = recorded?.reviewSnapshot;
+  let reviewSnapshot = result.reviewSnapshot;
+  if (
+    !reviewSnapshot &&
+    (!recorded?.reviewId || !result.reviewId || recorded.reviewId === result.reviewId) &&
+    isRecord(snapshot) &&
+    typeof snapshot.capturedAt === 'string' &&
+    (snapshot.source === 'local-git' ||
+      snapshot.source === 'github-pr' ||
+      snapshot.source === 'unavailable')
+  )
+    reviewSnapshot = { ...snapshot, capturedAt: snapshot.capturedAt, source: snapshot.source };
+  reviewSnapshot ??= await readSnapshot?.();
+  return {
+    ...result,
+    verdict: 'issues',
+    reason: `fix-delivery-unavailable: ${reason}`,
+    fixDeliveryFailure: reason,
+    reviewSnapshot,
+    attempts,
+    retryCount,
+    maxRetries,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    durationMs: Date.now() - start,
+  };
+}
+
 export async function runReviewRetryLoop({
   vars,
   taskDir,
@@ -1210,25 +1265,15 @@ export async function runReviewRetryLoop({
         console.warn(
           `[review] run ${runId.slice(0, 8)} — preserving ${result.issues.length} reviewer finding(s) after fix delivery failed: ${message}`,
         );
-        return {
-          verdict: 'issues',
-          reason: `fix-delivery-unavailable: ${message}`,
-          fixDeliveryFailure: message,
-          issues: result.issues,
-          validationDepth,
-          usage: result.usage,
-          mode: result.mode,
-          reviewId: result.reviewId,
-          session: result.session,
-          reviewerSessionId: result.reviewerSessionId,
-          reviewSnapshot: result.reviewSnapshot,
+        return undeliveredReviewFixResult({
+          result: { ...result, validationDepth },
+          reason: message,
+          run: deps.getRun(runId),
           attempts,
           retryCount,
           maxRetries,
-          feedbackSent: false,
-          recoveryContinuationPending: true,
-          durationMs: Date.now() - start,
-        };
+          start,
+        });
       }
     }
     const fixStartedAt = new Date().toISOString();
@@ -1280,9 +1325,11 @@ export async function runReviewRetryLoop({
       fixSignal = await deps.waitForWorkerSignal(
         vars,
         taskDir,
-        FEEDBACK_TIMEOUT_MS,
+        fixDeliveryDeferred ? RUNNER_LAUNCH_READY_TIMEOUT_MS : FEEDBACK_TIMEOUT_MS,
         fixSignalBaseline,
-        () => reviewFixHasActivity(vars, runId, workerRunner, fixTurnToken),
+        fixDeliveryDeferred
+          ? undefined
+          : () => reviewFixHasActivity(vars, runId, workerRunner, fixTurnToken),
       );
       fixCompletedAt = new Date().toISOString();
       assertNativeReviewOperationCurrent();
@@ -1291,6 +1338,17 @@ export async function runReviewRetryLoop({
         console.warn(`[review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`);
         await deps.markAgentContextStatus(runId, 'review-fix', 'failed');
         await deps.unwatchContext(slotId, 'review-fix');
+        if (fixDeliveryDeferred) {
+          return undeliveredReviewFixResult({
+            result,
+            reason: REVIEW_FIX_DELIVERY_UNCONFIRMED,
+            run: deps.getRun(runId),
+            attempts,
+            retryCount,
+            maxRetries,
+            start,
+          });
+        }
         if (retryCount >= maxRetries) {
           return {
             verdict: 'issues',
@@ -1651,10 +1709,41 @@ interface FixPromptRecoveryDeps {
   recordDeliveryBoundary?: (
     runId: string,
     context: FixPromptRecoveryContext,
-    startedAt: string,
+    startedAt: string | undefined,
     generation: number,
   ) => Promise<void>;
   rememberAcceptedTurn?: typeof rememberReviewFixTurn;
+}
+
+export async function recordReviewFixDeliveryBoundary(
+  runId: string,
+  expected: FixPromptRecoveryContext,
+  startedAt: string | undefined,
+  generation: number,
+): Promise<void> {
+  const context = await upsertAgentContext(
+    runId,
+    'review-fix',
+    { id: expected.id },
+    {
+      guard: async () => !runSupersededSince(getRun(runId), generation),
+      resolvePatch: (current) =>
+        current &&
+        current.attemptStartedAt === expected.attemptStartedAt &&
+        current.taskFile === expected.taskFile &&
+        current.signalFile === expected.signalFile
+          ? { promptDeliveryStartedAt: startedAt, promptAcceptance: undefined }
+          : null,
+      mirrorIf: (slot) => slot.current_run_id === runId,
+    },
+  );
+  if (!context) throw new Error('Review fix attempt changed before delivery');
+  const latest = getRun(runId);
+  if (!latest || runSupersededSince(latest, generation))
+    throw new Error('Review fix attempt changed before delivery');
+  await persistRunNow(latest, 'review-fix prompt delivery boundary');
+  if (runSupersededSince(getRun(runId), generation))
+    throw new Error('Review fix attempt changed before delivery');
 }
 
 const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
@@ -1674,25 +1763,7 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
     }
   },
   deliver: deliverPromptToLiveRunner,
-  recordDeliveryBoundary: async (runId, expected, startedAt, generation) => {
-    const context = await upsertAgentContext(
-      runId,
-      'review-fix',
-      { id: expected.id },
-      {
-        guard: async () => !runSupersededSince(getRun(runId), generation),
-        resolvePatch: (current) =>
-          current &&
-          current.attemptStartedAt === expected.attemptStartedAt &&
-          current.taskFile === expected.taskFile &&
-          current.signalFile === expected.signalFile
-            ? { promptDeliveryStartedAt: startedAt, promptAcceptance: undefined }
-            : null,
-        mirrorIf: (slot) => slot.current_run_id === runId,
-      },
-    );
-    if (!context) throw new Error('Review fix attempt changed before delivery');
-  },
+  recordDeliveryBoundary: recordReviewFixDeliveryBoundary,
   rememberAcceptedTurn: rememberReviewFixTurn,
 };
 
@@ -1726,6 +1797,7 @@ export async function resumeReviewFixPromptDelivery(
   deps: FixPromptRecoveryDeps = FIX_PROMPT_RECOVERY_DEPS,
   options: {
     priorPromptSendAttempted?: boolean;
+    timeoutMs?: number;
   } = {},
 ): Promise<FixPromptDeliveryResult> {
   assertNativeReviewOperationCurrent();
@@ -1797,12 +1869,10 @@ export async function resumeReviewFixPromptDelivery(
   const runtimeDir = await deps.resolveRuntimeDir(run.project);
   const priorPromptSendAttempted =
     options.priorPromptSendAttempted ?? Boolean(context.promptDeliveryStartedAt);
-  if (priorPromptSendAttempted && !targetHostsRunner) return { status: 'blocked' };
+  if (!targetHostsRunner) return { status: 'relaunch-required' };
   const deliveryStartedAt = priorPromptSendAttempted
     ? context.promptDeliveryStartedAt
     : new Date().toISOString();
-  if (!priorPromptSendAttempted && deliveryStartedAt)
-    await deps.recordDeliveryBoundary?.(runId, context, deliveryStartedAt, deliveryGeneration);
   // The worker acknowledged this exact delivery before the restart: adopt it. A busy worker
   // never answers a re-probe, and a recovery that waits without its turn token times out and
   // sends a new fix pass, which resets the worker's checklist and signal mid-task.
@@ -1841,7 +1911,15 @@ export async function resumeReviewFixPromptDelivery(
     launchAckBaseline,
     acceptExistingLaunchAck: false,
     priorPromptSendAttempted,
-    timeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
+    onPromptMutationStart: async () => {
+      if (!priorPromptSendAttempted && deliveryStartedAt)
+        await deps.recordDeliveryBoundary?.(runId, context, deliveryStartedAt, deliveryGeneration);
+    },
+    onPromptMutationConfirmedUntouched: async () => {
+      if (!priorPromptSendAttempted)
+        await deps.recordDeliveryBoundary?.(runId, context, undefined, deliveryGeneration);
+    },
+    timeoutMs: options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS,
     recovery: { runId },
     sendLogPrefix: 'review-fix-recovery',
     forceBusyPoll: true,
@@ -1883,10 +1961,12 @@ export async function reconcileRecoveredFixPromptDelivery(
     retryIntervalMs = 5_000,
     retryWindowMs = RUNNER_LAUNCH_READY_TIMEOUT_MS,
     readMatchingSignal,
+    isActive,
   }: {
     retryIntervalMs?: number;
     retryWindowMs?: number;
     readMatchingSignal?: () => Promise<boolean>;
+    isActive?: () => Promise<boolean>;
   } = {},
 ): Promise<FixPromptDeliveryResult | { status: 'signal-present' }> {
   const deadline = Date.now() + retryWindowMs;
@@ -1896,12 +1976,24 @@ export async function reconcileRecoveredFixPromptDelivery(
     );
     assertNativeReviewOperationCurrent();
     if (await readMatchingSignal?.()) return { status: 'signal-present' };
-    const delivery = await resumeReviewFixPromptDelivery(vars, runId, context, deps, {
-      priorPromptSendAttempted: true,
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const latestContext =
+      deps.getRun(runId)?.agentContexts?.find((candidate) => candidate.id === context.id) ??
+      context;
+    // Activity is not acceptance: preserve observation without sending another copy.
+    if (latestContext.promptDeliveryStartedAt && (await isActive?.()))
+      return { status: 'deferred' };
+    const delivery = await resumeReviewFixPromptDelivery(vars, runId, latestContext, deps, {
+      priorPromptSendAttempted: Boolean(latestContext.promptDeliveryStartedAt),
+      timeoutMs: remainingMs,
     });
     if (delivery.status !== 'deferred') return delivery;
   }
-  return { status: 'deferred' };
+  return {
+    status: 'blocked',
+    reason: REVIEW_FIX_DELIVERY_UNCONFIRMED,
+  };
 }
 
 /**
@@ -2160,29 +2252,17 @@ async function recoverReviewFixPass({
         );
       }
       debugReviewLog(`[review] run ${runId.slice(0, 8)} — recovered fix prompt ${delivery.status}`);
-      if (delivery.status === 'relaunch-required') {
-        const relaunched = await relaunchWorkerForFix(vars, workerRunner, model, runId);
-        if (relaunched) {
-          const relaunchedFixContext =
-            getRun(runId)?.agentContexts?.find(
-              (candidate) => candidate.role === 'review-fix' && candidate.taskFile,
-            ) ?? fixContext;
-          delivery = await resumeReviewFixPromptDelivery(
-            vars,
-            runId,
-            relaunchedFixContext,
-            FIX_PROMPT_RECOVERY_DEPS,
-            { priorPromptSendAttempted: false },
-          );
-        } else {
-          delivery = { status: 'deferred' };
-        }
-        debugReviewLog(
-          `[review] run ${runId.slice(0, 8)} — recovered fix prompt fresh-worker ${delivery.status}`,
-        );
-      }
-      if (delivery.status === 'deferred') {
-        if (fixContextMatchesWorker && fixContext.promptDeliveryStartedAt) {
+      const acceptedFixTurn = fixContext.promptAcceptance?.turnToken ?? fixContext.nativeCommandId;
+      if (
+        delivery.status === 'deferred' &&
+        acceptedFixTurn &&
+        (await reviewFixTurnIsActive(vars, runId, workerRunner, acceptedFixTurn))
+      )
+        delivery = { status: 'delivered', turnToken: acceptedFixTurn };
+      let deliveryContext = fixContext;
+      // Reconcile one delivery, with at most one replacement of a missing runner.
+      for (let replacement = 0; replacement < 2 && !fixSignal; replacement += 1) {
+        if (delivery.status === 'deferred') {
           setProgressDetail(
             runId,
             'Recovered reviewer findings; reconciling fix prompt acknowledgement...',
@@ -2190,9 +2270,10 @@ async function recoverReviewFixPass({
           const reconciled = await reconcileRecoveredFixPromptDelivery(
             vars,
             runId,
-            fixContext,
+            deliveryContext,
             FIX_PROMPT_RECOVERY_DEPS,
             {
+              isActive: () => reviewFixHasActivity(vars, runId, workerRunner),
               readMatchingSignal: async () => {
                 fixSignal = matchingFixSignal(
                   await readOptionalReviewFixSignal(vars, fixSignalPath),
@@ -2201,29 +2282,42 @@ async function recoverReviewFixPass({
               },
             },
           );
-          if (reconciled.status !== 'signal-present') delivery = reconciled;
-        } else {
-          setProgressDetail(
-            runId,
-            `Recovered reviewer findings; fix prompt delivery deferred while worker is busy...`,
-          );
+          if (reconciled.status === 'signal-present') break;
+          delivery = reconciled;
         }
+        if (delivery.status !== 'relaunch-required' || replacement > 0) break;
+        if (!(await relaunchWorkerForFix(vars, workerRunner, model, runId))) {
+          delivery = { status: 'blocked', reason: 'Review-fix worker relaunch failed' };
+          break;
+        }
+        deliveryContext =
+          getRun(runId)?.agentContexts?.find(
+            (candidate) => candidate.role === 'review-fix' && candidate.taskFile,
+          ) ?? fixContext;
+        delivery = await resumeReviewFixPromptDelivery(
+          vars,
+          runId,
+          deliveryContext,
+          FIX_PROMPT_RECOVERY_DEPS,
+          { priorPromptSendAttempted: false },
+        );
       }
-      if (delivery.status === 'blocked') {
+      if (delivery.status !== 'delivered' && delivery.status !== 'deferred') {
         fixSignal = matchingFixSignal(await readOptionalReviewFixSignal(vars, fixSignalPath));
         if (!fixSignal) {
           if (
             !(await settleRecoveredFixContext('blocked', fixContext.signalAttemptId ?? undefined))
           )
             return null;
-          return {
-            verdict: 'blocked',
-            reason: 'Recovered review fix worker exited without a terminal signal',
-            issues,
-            validationDepth,
+          const reason =
+            delivery.reason ?? 'Recovered review fix worker could not accept its prompt';
+          return undeliveredReviewFixResult({
+            result: priorResult,
+            reason,
+            run: getRun(runId),
             retryCount: recoveredRetryCount,
             maxRetries,
-            feedbackSent: true,
+            start,
             attempts: [
               {
                 mode,
@@ -2234,8 +2328,16 @@ async function recoverReviewFixPass({
                 validationDepth,
               },
             ],
-            durationMs: Date.now() - start,
-          };
+            readSnapshot: async () =>
+              (
+                await readPersistedReviewSnapshot(
+                  vars,
+                  taskDir,
+                  reviewedLoop,
+                  findingsArtifactScope,
+                )
+              )?.snapshot,
+          });
         }
       }
       if (!fixSignal) {
@@ -2770,7 +2872,8 @@ async function sendOwnedFeedbackToWorker(
       model: run?.metrics.model ?? null,
       target: { session, window: workerWindow, pane: null, target: workerTarget },
     });
-    if (fixContext) await watchContext(vars.slotId, fixContext);
+    if (!fixContext) throw new ReviewFixDeliveryError('Review fix context changed before delivery');
+    await watchContext(vars.slotId, fixContext);
 
     // Send single-line command to the worker's original pane
     const fixTaskFile = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);
@@ -2791,22 +2894,12 @@ async function sendOwnedFeedbackToWorker(
     const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
       if (terminalRetainedHoldReason || runnerOutOfQuota) return false;
-      // One boundary per attempt: the prompt text follows it, and a retry must never type a
-      // different text over an earlier one left in the composer.
-      if (!deliveryBoundaryRecorded) {
-        await upsertAgentContext(runId, 'review-fix', {
-          id: fixContext?.id,
-          promptDeliveryStartedAt: new Date().toISOString(),
-        });
-        deliveryBoundaryRecorded = true;
-      }
       const latestRun = getRun(runId);
       const latestPrimaryContext = latestRun
         ? selectAgentContext(latestRun, { role: 'primary' })
         : null;
-      const deliveryStartedAt = latestRun?.agentContexts?.find(
-        (entry) => entry.id === fixContext?.id,
-      )?.promptDeliveryStartedAt;
+      const deliveryStartedAt = fixAttemptStartedAt;
+      const deliveryGeneration = latestRun?.engineState?.generation ?? 0;
       const deliveryOptions = {
         vars,
         target,
@@ -2831,11 +2924,32 @@ async function sendOwnedFeedbackToWorker(
         launchAckSignalPath: fixSignalPath,
         launchAckBaseline: fixLaunchAckBaseline,
         priorPromptSendAttempted: promptSendAttempted,
+        onPromptMutationStart: async () => {
+          if (!deliveryBoundaryRecorded) {
+            await FIX_PROMPT_RECOVERY_DEPS.recordDeliveryBoundary?.(
+              runId,
+              fixContext,
+              deliveryStartedAt,
+              deliveryGeneration,
+            );
+            deliveryBoundaryRecorded = true;
+          }
+          promptSendAttempted = true;
+        },
+        onPromptMutationConfirmedUntouched: async () => {
+          await FIX_PROMPT_RECOVERY_DEPS.recordDeliveryBoundary?.(
+            runId,
+            fixContext,
+            undefined,
+            deliveryGeneration,
+          );
+          deliveryBoundaryRecorded = false;
+          promptSendAttempted = false;
+        },
         recovery: { runId },
         sendLogPrefix: 'review',
         forceBusyPoll,
       };
-      const deliveryGeneration = latestRun?.engineState?.generation ?? 0;
       const retained = await deliverPromptToLiveRunner({
         ...deliveryOptions,
         promptMarker: REVIEW_FIX_CHECKLIST_TARGET.checklist,
@@ -3213,59 +3327,20 @@ async function relaunchWorkerForFix(
     if (updatedFixContext) await watchContext(vars.slotId, updatedFixContext);
   }
 
-  if (!runnerNeedsPostLaunchPrompt(runner)) {
-    // Never trust the respawn blindly (ported from ci-monitor, PR #326): a
-    // failed launch command leaves a bare shell in the pane, and every later
-    // fix prompt lands in zsh instead of a runner.
-    const verifyDeadline = Date.now() + RUNNER_LAUNCH_READY_TIMEOUT_MS;
-    while (Date.now() < verifyDeadline) {
-      if (await isWorkerAlive(vars, runner, runId)) {
-        debugReviewLog(`[review] worker re-launched (${runner})`);
-        return true;
-      }
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    console.warn(
-      `[review] run ${runId.slice(0, 8)} — relaunch left no live ${runner} session in ${workerTarget}; treating relaunch as failed`,
-    );
-    // The context was optimistically marked working above — correct it so a
-    // failed launch doesn't leave a stale working status behind.
-    await markAgentContextStatus(runId, workerRole, 'failed');
-    return false;
-  }
-
-  const readyTimeout = RUNNER_LAUNCH_READY_TIMEOUT_MS;
-  const readyStart = Date.now();
-  while (Date.now() - readyStart < readyTimeout) {
-    await new Promise((r) => setTimeout(r, 2000));
+  // A shell prompt can resemble a runner UI. Only the runner process proves launch.
+  const verifyDeadline = Date.now() + RUNNER_LAUNCH_READY_TIMEOUT_MS;
+  while (Date.now() < verifyDeadline) {
     if (await isWorkerAlive(vars, runner, runId)) {
-      debugReviewLog(
-        `[review] worker re-launched (${runner}) in ${Math.round((Date.now() - readyStart) / 1000)}s`,
-      );
+      debugReviewLog(`[review] worker re-launched (${runner})`);
       return true;
     }
-    const pane = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(workerTarget)} 2>/dev/null | tail -8`),
-      )
-    ).stdout;
-    const tailLines = pane
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .slice(-5);
-    if (tailLines.some((line) => runnerLineLooksWaiting(line, runner))) {
-      debugReviewLog(
-        `[review] worker re-launched in ${Math.round((Date.now() - readyStart) / 1000)}s`,
-      );
-      return true;
-    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-  console.warn(`[review] worker re-launch timed out after ${readyTimeout}ms`);
-  // Same correction as the no-prompt branch: don't leave the optimistically
-  // "working" primary context behind on a failed relaunch.
+  console.warn(
+    `[review] run ${runId.slice(0, 8)} — relaunch left no live ${runner} session in ${workerTarget}`,
+  );
   await markAgentContextStatus(runId, workerRole, 'failed');
+  if (fixContext) await markAgentContextStatus(runId, 'review-fix', 'failed');
   return false;
 }
 

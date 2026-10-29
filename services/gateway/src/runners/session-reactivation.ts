@@ -35,6 +35,7 @@ import {
   runnerContextResetCommand,
   runnerHasDurablePromptHandoff,
   runnerNeedsPostLaunchPrompt,
+  type RunnerPromptMutation,
   runnerRetainedSessionHandoff,
   type RunnerSendRecoveryContext,
   sendRunnerInstructionSafely,
@@ -74,8 +75,8 @@ export interface RunnerSessionReactivationOptions {
   launchAckBaseline?: LaunchAckSignalSnapshot | null;
   acceptExistingLaunchAck?: boolean;
   priorPromptSendAttempted?: boolean;
-  onPromptMutationStart?: () => void;
-  onPromptMutationConfirmedUntouched?: () => void;
+  onPromptMutationStart?: RunnerPromptMutation;
+  onPromptMutationConfirmedUntouched?: RunnerPromptMutation;
   timeoutMs?: number;
   recovery?: RunnerSendRecoveryContext;
   sendLogPrefix?: string;
@@ -256,7 +257,7 @@ async function relaunchRunnerWithArgvPrompt(
     },
   );
   try {
-    options.onPromptMutationStart?.();
+    await options.onPromptMutationStart?.();
     await respawnTmuxWindowWithCommand(
       options.vars,
       owningWindowId,
@@ -447,7 +448,7 @@ async function reactivateRunnerSessionWithPrompt(
       },
     )}`;
     paneMutationStarted = true;
-    options.onPromptMutationStart?.();
+    await options.onPromptMutationStart?.();
     await respawnTmuxWindowWithCommand(options.vars, options.target, command, {
       preserveWindowAfterExit: true,
     });
