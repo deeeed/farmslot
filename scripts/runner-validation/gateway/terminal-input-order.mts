@@ -66,14 +66,15 @@ function remote(program: string, input: unknown): Promise<Record<string, unknown
     child.stdin.end(JSON.stringify(input));
   });
 }
+const PY_PATH_IDENTITY = String.raw`def identity(path):
+ try:
+  v=os.lstat(path);return {'exists':True,'device':v.st_dev,'inode':v.st_ino}
+ except FileNotFoundError:return {'exists':False}`;
 const REMOTE_CLEANUP = String.raw`
 import json,sys,pathlib,subprocess,os,signal,time,fcntl
 p=json.load(sys.stdin);r=pathlib.Path(p['root']);lock=(r/'owner').open()
 fcntl.flock(lock,fcntl.LOCK_EX);assert lock.read()==p['id'];s=json.loads((r/'state.json').read_text());assert s['id']==p['id']
-def identity(path):
- try:
-  v=os.lstat(path);return {'exists':True,'device':v.st_dev,'inode':v.st_ino}
- except FileNotFoundError:return {'exists':False}
+${PY_PATH_IDENTITY}
 def live(pid,birth):
  if not pid:return False
  q=subprocess.run(['ps','-p',str(pid),'-o','lstart='],capture_output=True,text=True)
@@ -250,10 +251,7 @@ with (r/'owner').open('x') as f:f.write(p['id'])
 os.chmod(r/'owner',0o600)
 for n in ['home','pool','native','analytics','tmux']:(r/n).mkdir(mode=0o700)
 socket=str(r/'tmux'/('tmux-'+str(os.getuid()))/'default');pathlib.Path(socket).parent.mkdir(mode=0o700)
-def identity(path):
- try:
-  v=os.lstat(path);return {'exists':True,'device':v.st_dev,'inode':v.st_ino}
- except FileNotFoundError:return {'exists':False}
+${PY_PATH_IDENTITY}
 default='/tmp/farmslot-screen-control-'+str(os.getuid())+'.sock'
 state={'socket':socket,'screenControl':str(r/'sc.sock'),'defaultControl':default,'defaultControlBefore':identity(default),'slot':p['slot'],'id':p['id']}
 with (r/'state.json').open('x') as f:json.dump(state,f)

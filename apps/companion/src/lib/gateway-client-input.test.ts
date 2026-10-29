@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { createServer } from 'node:http';
-import test, { mock } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 
 import { type WebSocket, WebSocketServer } from 'ws';
 
@@ -60,9 +61,22 @@ function grant(): PersonSessionGrant {
     accessExpiresAt: new Date(at + 3600_000).toISOString(),
   };
 }
-async function serverFixture(person: boolean) {
+async function serverFixture(t: TestContext, person: boolean) {
   const server = createServer();
   const wss = new WebSocketServer({ server });
+  let closeTask: Promise<void> | undefined;
+  const close = () =>
+    (closeTask ??= (async () => {
+      for (const socket of wss.clients) socket.terminate();
+      await new Promise<void>((resolve, reject) =>
+        wss.close((error) => (error ? reject(error) : resolve())),
+      );
+      if (server.listening)
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+    })());
+  t.after(close);
   const refreshStarted = deferred();
   let pendingRefresh: { socket: WebSocket; id: string } | null = null;
   let refreshes = 0;
@@ -87,7 +101,9 @@ async function serverFixture(person: boolean) {
       } else throw new Error('Unexpected test method ' + frame.method);
     }),
   );
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const listening = once(server, 'listening');
+  server.listen(0, '127.0.0.1');
+  await listening;
   const address = server.address();
   assert(address && typeof address !== 'string');
   return {
@@ -98,21 +114,15 @@ async function serverFixture(person: boolean) {
       assert(pendingRefresh);
       reply(pendingRefresh.socket, pendingRefresh.id, grant());
     },
-    async close() {
-      for (const socket of wss.clients) socket.terminate();
-      await new Promise<void>((resolve) => wss.close(() => resolve()));
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    },
+    close,
   };
 }
 
-test('disposing input during a real deferred person refresh prevents its eventual transport write', async () => {
+test('disposing input during a real deferred person refresh prevents its eventual transport write', async (t) => {
   const { GatewayClient } = await import('./gateway-client');
   let now = Date.now();
-  const clock = mock.method(Date, 'now', () => now);
-  const server = await serverFixture(true);
+  const clock = t.mock.method(Date, 'now', () => now);
+  const server = await serverFixture(t, true);
   const initial = grant();
   let saved: PersonSessionAuth | null = {
     session: initial.session,
@@ -155,9 +165,9 @@ test('disposing input during a real deferred person refresh prevents its eventua
   }
 });
 
-test('a caller cancelled during connection wait is checked again immediately before sending', async () => {
+test('a caller cancelled during connection wait is checked again immediately before sending', async (t) => {
   const { GatewayClient } = await import('./gateway-client');
-  const server = await serverFixture(false);
+  const server = await serverFixture(t, false);
   const client = new GatewayClient(server.url, { token: 'fixture' });
   let active = true;
   const rejected = assert.rejects(

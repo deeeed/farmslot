@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import test, { mock } from 'node:test';
 
+import type { WebSocketServer } from 'ws';
+
 import type { PoolConfig, TerminalInputParams } from '@farmslot/protocol';
+
+import type { GatewayConnection } from '../../../../packages/cli/src/gateway-client.js';
 
 let workspaceBeforeResolve = async (_runId: string) => {};
 const sent: string[] = [];
@@ -64,8 +69,20 @@ let beforeSend = async (_text: string) => {};
 mock.module('../runtime/tmux-stream.js', {
   namedExports: {
     ...stream,
-    sendKeys: async (_slotId: string, _session: string, text: string, enter: boolean) => {
+    sendKeys: async (
+      _slotId: string,
+      _session: string,
+      text: string,
+      enter: boolean,
+      _runner: string | undefined,
+      options: { noRetry?: boolean } | undefined,
+    ) => {
       assert.equal(enter, false, 'Raw input must not append an Enter key');
+      assert.deepEqual(
+        options,
+        { noRetry: true },
+        'Raw input must never replay after a lost reply',
+      );
       await beforeSend(text);
       sent.push(text);
     },
@@ -176,7 +193,7 @@ test('workspace input reserves each run before delayed resolution and leaves oth
   assert.deepEqual(sent, ['unrelated', 'a', 'b']);
 });
 
-test('authenticated RPC arrival order is reserved before a delayed native access check', async () => {
+test('authenticated RPC arrival order is reserved before a delayed native access check', async (t) => {
   const { createServer } = await import('node:http');
   const { mkdtemp, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
@@ -203,18 +220,37 @@ test('authenticated RPC arrival order is reserved before a delayed native access
   const { createWebSocketServer } = await import('../server.js');
   const { GatewayClient } = await import('../../../../packages/cli/src/gateway-client.js');
   const home = await mkdtemp(path.join(tmpdir(), 'terminal-route-auth-'));
+  const server = createServer();
+  let wss: WebSocketServer | undefined;
+  let connection: GatewayConnection | undefined;
+  t.after(async () => {
+    first.resolve();
+    connection?.close();
+    if (wss) {
+      for (const socket of wss.clients) socket.terminate();
+      await new Promise<void>((resolve, reject) =>
+        wss!.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+    if (server.listening)
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    await rm(home, { recursive: true, force: true });
+  });
   const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
   const owner = auth.writer.createPrincipal(
     { type: 'service', displayName: 'Input routing test' },
     [{ role: 'admin', scope: { kind: 'global' } }],
   );
   const credential = auth.writer.issueCredential(owner.id, 'Input routing test');
-  const server = createServer();
-  const wss = createWebSocketServer(server, auth);
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  wss = createWebSocketServer(server, auth);
+  const listening = once(server, 'listening');
+  server.listen(0, '127.0.0.1');
+  await listening;
   const address = server.address();
   assert(address && typeof address !== 'string');
-  const connection = await new GatewayClient({
+  connection = await new GatewayClient({
     url: `ws://127.0.0.1:${address.port}/ws`,
     timeout: 5000,
     credential: { token: credential.secret },
@@ -233,12 +269,5 @@ test('authenticated RPC arrival order is reserved before a delayed native access
     assert.deepEqual(sent, ['unrelated', 'a', 'b']);
   } finally {
     first.resolve();
-    connection.close();
-    for (const socket of wss.clients) socket.terminate();
-    await new Promise<void>((resolve) => wss.close(() => resolve()));
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-    await rm(home, { recursive: true, force: true });
   }
 });

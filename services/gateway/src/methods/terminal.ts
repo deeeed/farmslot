@@ -431,7 +431,9 @@ async function writeTerminalInput(params: TerminalInputParams): Promise<void> {
   if (machine && getNode(machine)) {
     // Raw input can contain a whole buffered word such as "Up" or "Enter".
     // Reuse the literal text path so tmux never interprets it as a named key.
-    await sendKeys(params.slotId, resolved.target, params.data, false);
+    await sendKeys(params.slotId, resolved.target, params.data, false, undefined, {
+      noRetry: true,
+    });
     return;
   }
   throw new Error(`No PTY or agent available for slot ${params.slotId}`);
