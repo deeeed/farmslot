@@ -74,3 +74,10 @@ test('cancelled pre-capture reservations archive instead of exhausting new admis
   assert.equal(manifest.entries[0].store, 'bundle-reservations');
   assert.equal(JSON.parse(await readFile(manifest.entries[0].destination, 'utf8')).runId, first.id);
 });
+
+test('admission with no housekeeping to move needs no archive write', async () => {
+  const missing = path.join(root, 'not-provisioned');
+  process.env.FARMSLOT_RUN_ARCHIVE_ROOT = missing;
+  await archiveRunArtifactHousekeeping();
+  await assert.rejects(readFile(missing), /ENOENT/);
+});

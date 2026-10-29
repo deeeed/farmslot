@@ -334,18 +334,28 @@ export async function archiveRunArtifactHousekeeping(): Promise<void> {
     storageArchiveManifest,
   } = await import('../runs/storage-archive.js');
   const root = runArchiveRoot();
-  await assertArchiveRoot(root);
   const store = await runBundleStore(true);
   const staged = new Set<string>();
   await withRunBundleStoreLock(store, async () => {
-    for (const entry of await runBundleHousekeepingPaths(store)) {
+    const entries = await runBundleHousekeepingPaths(store);
+    if (!entries.length) return;
+    await assertArchiveRoot(root);
+    for (const entry of entries) {
       if (await getRunWithArchived(entry.runId))
         await recordRunStorageArchive(entry.runId, storageArchiveManifest(root, entry.runId));
       await stageStoragePaths(root, entry.runId, [{ source: entry.path, store: entry.store }]);
       staged.add(entry.runId);
     }
   });
-  for (const id of staged) await finishStorageArchive(root, id);
+  for (const id of staged) {
+    try {
+      await finishStorageArchive(root, id);
+    } catch (error) {
+      console.error(
+        `[run-retention] housekeeping archive ${id} failed; source/journal retained: ${(error as Error).message}`,
+      );
+    }
+  }
 }
 
 export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
