@@ -6,6 +6,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.74.2 - 2026-10-29
+
+- Retain counted message identities when restoring incremental worker usage.
+
 ## 0.74.1 - 2026-10-29
 
 - Add run list version lists (Version lists rules 1-6). `run.list` takes `versions` and `ids` and returns `versions`, with `RunListVersion`. On gateways with `capabilities.resourceChanges.versionLists`, the cache answers every run.list view from one shared collection: a runs change is one versions read, and only changed and missing ids are read, in pages. Rows are stored with `ResourceStore.getRows` and `mergeRows`, full bodies active runs first, then newest, up to the run list's bound. `runListPage`, `matchesRunList`, `sortRunList`, `runListLimit` and `RunListProjection` share the gateway's filters, a `limit` of `RUN_LIST_UNLIMITED` lists every matching run, `selectRunList` accepts projections, and `GatewayResourceCache.runListProjections` lists every live run's projection.

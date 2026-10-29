@@ -1,6 +1,4 @@
-import path from 'node:path';
-
-import { primaryRoleForFlow, type Run } from '@farmslot/protocol';
+import { type Run } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -11,7 +9,11 @@ import type { RunnerObservability } from './observability-types.js';
 import { runnerSessionIdForPath } from './session-path-resolution.js';
 import { resolveRunRetainedSessionBinding } from './session-process.js';
 import { contextPaneId } from './session-record.js';
-import type { RecoveredUsageSession } from './session-usage-provider.js';
+import {
+  PYTHON_USAGE_TASK_PROMPT,
+  type RecoveredUsageSession,
+  workerUsageScope,
+} from './session-usage-provider.js';
 
 interface PiSessionScope {
   homeRoot?: string;
@@ -30,6 +32,7 @@ export function buildPiSessionDiscoveryCommand(repo: string, scope: PiSessionSco
 import datetime, json, os, re
 from pathlib import Path
 from urllib.parse import quote
+${PYTHON_USAGE_TASK_PROMPT}
 repo = ${JSON.stringify(repo)}
 scope = json.loads(${JSON.stringify(JSON.stringify(scope))})
 home = Path(scope.get('homeRoot') or str(Path.home()))
@@ -64,10 +67,9 @@ for file in (home / '.pi' / 'agent' / 'sessions').glob('*/*.jsonl'):
                         message = json.loads(line).get('message')
                         if isinstance(message, dict) and message.get('role') == 'user':
                             content = message.get('content')
-                            text = content if isinstance(content, str) else '\\n'.join(block['text'] for block in content if isinstance(block, dict) and isinstance(block.get('text'), str)) if isinstance(content, list) else ''
+                            text = prompt_text(content)
                             break
-                mark = scope['taskDir'].rstrip('/') + '/mark'
-                if not re.search(r'(?<![A-Za-z0-9_.-])' + re.escape(mark) + r'(?![A-Za-z0-9_./-])', text):
+                if not task_prompt_matches(text, scope['taskDir']):
                     continue
         paths.append(os.path.realpath(file))
     except (OSError, ValueError, TypeError, KeyError):
@@ -94,21 +96,10 @@ export function createPiHookObservability(): RunnerObservability {
 /** A reused fix context can own several Pi sessions. Reviewers never enter its rollup. */
 export async function recoverPiUsageSessions(run: Run): Promise<RecoveredUsageSession[]> {
   if (!run.slotId) return [];
-  const primaryRole = primaryRoleForFlow(run.flowType);
-  const contexts = run.agentContexts ?? [];
-  const runEnd = Math.min(Date.now(), Date.parse(run.completedAt ?? '') || Infinity);
-  const reviewerIntervals = contexts
-    .filter((context) => context.role === 'review' && primaryRole !== 'review')
-    .map((context) => ({
-      startedAt: Date.parse(context.startedAt ?? ''),
-      endedAt: Date.parse(context.completedAt ?? '') || runEnd,
-    }))
-    .filter((interval) => Number.isFinite(interval.startedAt));
+  const scope = workerUsageScope(run, 'pi');
   const sessions = new Map<string, RecoveredUsageSession>();
   const vars = await loadSlotVars(run.slotId);
-  for (const context of contexts) {
-    if (context.runner !== 'pi' || ![primaryRole, 'review-fix', 'ci-fix'].includes(context.role))
-      continue;
+  for (const { context, startedAt, endedAt, taskDir } of scope.contexts) {
     const retained = resolveRunRetainedSessionBinding(run, context);
     if (retained.binding) {
       sessions.set(retained.binding.runnerSessionPath, {
@@ -117,9 +108,7 @@ export async function recoverPiUsageSessions(run: Run): Promise<RecoveredUsageSe
       });
     }
     const paneId = context.target && contextPaneId(context.target);
-    const startedAt = Date.parse(context.startedAt ?? '');
     if (retained.incompleteBinding || !paneId || !Number.isFinite(startedAt)) continue;
-    const endedAt = Math.min(runEnd, Date.parse(context.completedAt ?? '') || Infinity);
     const result = await execOnSlot(
       vars,
       buildPiSessionDiscoveryCommand(vars.remoteRepo, {
@@ -128,8 +117,8 @@ export async function recoverPiUsageSessions(run: Run): Promise<RecoveredUsageSe
         slotId: run.slotId,
         startedAt,
         endedAt,
-        reviewerIntervals,
-        taskDir: context.taskFile ? path.posix.dirname(context.taskFile) : undefined,
+        reviewerIntervals: scope.reviewerIntervals,
+        taskDir,
       }),
       { timeout: 10_000, selectNodeSupport: false },
     );

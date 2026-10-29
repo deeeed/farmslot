@@ -31,6 +31,7 @@ import type {
   RunnerSessionDeliveryState,
   SlotVars,
 } from './observability-types.js';
+import { PYTHON_USAGE_TASK_PROMPT } from './session-usage-provider.js';
 
 type ClaudeInterruptionProbe =
   | { status: 'interrupted'; sessionId: string; observedAt: number }
@@ -193,16 +194,54 @@ export async function sessionPaneMoveIsSafe(
   return (await resolvePane(vars, recordedPane)) !== recordedPane;
 }
 
-export function buildClaudeSessionDiscoveryCommand(repo: string, homeRoot?: string): string {
+interface ClaudeUsageScope {
+  taskDir: string;
+  startedAt: number;
+  endedAt: number;
+  reviewerIntervals: Array<{ startedAt: number; endedAt: number }>;
+}
+
+export function buildClaudeSessionDiscoveryCommand(
+  repo: string,
+  homeRoot?: string,
+  usageScope?: ClaudeUsageScope,
+): string {
   return `python3 - <<'PY'
-import json, os, re
+import datetime, json, os, re
 from pathlib import Path
+${PYTHON_USAGE_TASK_PROMPT}
 home = Path(${homeRoot === undefined ? 'str(Path.home())' : JSON.stringify(homeRoot)})
 root = Path(os.environ.get('CLAUDE_CONFIG_DIR') or str(home / '.claude'))
 repo = ${JSON.stringify(repo)}
 keys = {key for name in {repo, os.path.realpath(repo)} for key in {name.replace('/', '-'), re.sub(r'[^a-zA-Z0-9]', '-', name)}}
 directories = [root / 'projects' / key for key in keys]
 paths = {os.path.realpath(p) for directory in directories if directory.is_dir() for p in directory.glob('*.jsonl')}
+scope = json.loads(${JSON.stringify(JSON.stringify(usageScope ?? null))})
+if scope:
+    selected = set()
+    for file in paths:
+        try:
+            with open(file) as stream:
+                for line in stream:
+                    record = json.loads(line)
+                    if record.get('type') != 'user' or record.get('isSidechain') or record.get('isMeta'):
+                        continue
+                    content = record.get('message', {}).get('content')
+                    if isinstance(content, list) and not any(block.get('type') == 'text' for block in content if isinstance(block, dict)):
+                        continue
+                    text = prompt_text(content)
+                    started = datetime.datetime.fromisoformat(record['timestamp'].replace('Z', '+00:00')).timestamp() * 1000
+                    task = scope['taskDir'].rstrip('/')
+                    if (task not in ('.', '/') and scope['startedAt'] <= started < scope['endedAt']
+                        and not any(interval['startedAt'] <= started < interval['endedAt'] for interval in scope['reviewerIntervals'])
+                        and os.path.realpath(record.get('cwd', '')) == os.path.realpath(repo)
+                        and task_prompt_matches(text, task, ('mark', 'TASK.md', 'REVIEW-FIX.md', 'CI-FIX.md'))):
+                        selected.add(file)
+                    break
+        except (OSError, ValueError, TypeError, KeyError):
+            # A partial transcript cannot establish a worker task binding.
+            continue
+    paths = selected
 print(json.dumps(sorted(paths, key=lambda p: (os.path.getmtime(p), p), reverse=True)))
 PY`;
 }

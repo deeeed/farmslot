@@ -2054,6 +2054,8 @@ export interface RunMonitorBudgetUsageState {
   outputTokens: number;
   cacheCreation: number;
   cacheRead: number;
+  /** Distinct assistant messages already counted across restored sampler windows. */
+  claudeMessageIds?: string[];
   sampledAt?: string;
   unavailableReason?: string;
   /** Persistent fail-closed reason when bounded parsing loses accounting integrity. */

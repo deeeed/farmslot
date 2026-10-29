@@ -1026,6 +1026,7 @@ export function restoreBudgetUsageState(
         outputTokens: legacy.outputTokens,
         cacheCreation: legacy.cacheCreation,
         cacheRead: legacy.cacheRead,
+        claudeMessageIds: persisted.claudeMessageIds,
         sampledAt: persisted.sampledAt,
         unavailableReason: persisted.unavailableReason,
         integrityFailureReason: persisted.integrityFailureReason,

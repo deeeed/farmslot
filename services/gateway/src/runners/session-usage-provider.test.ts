@@ -65,3 +65,22 @@ test('Pi provider counts per-message usage from a sanitized real session without
   assert.equal(state.cacheCreation, 38822);
   assert.equal(state.totalTokens, 98185);
 });
+
+test('Claude provider ignores repeated blocks of a real message across samples', () => {
+  const provider = getRunnerSessionUsageProvider('claude');
+  assert.ok(provider);
+  const records = readFileSync(
+    new URL(
+      '../../../../packages/slot-config/test/fixtures/claude-multi-block.jsonl',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+    .trim()
+    .split('\n');
+  let state = emptyIncrementalSessionUsageState();
+  for (const line of records) state = provider.applyRecord(state, JSON.parse(line));
+  assert.equal(state.turns, 2);
+  assert.equal(state.totalTokens, 112772);
+  assert.equal(provider.applyRecord(state, JSON.parse(records[0])).turns, 2);
+});
