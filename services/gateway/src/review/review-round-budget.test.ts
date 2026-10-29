@@ -74,6 +74,48 @@ test('normalized issue references do not pool pre-PR rounds or contaminate a lat
   assert.equal((await runReviewRoundBudget(getRun(first.id)!)).used, 3);
 });
 
+test('review-pr requests have own rounds after six archived requests spent the same PR budget', async (t) => {
+  const ref = `example/review-request-${randomUUID()}#10693`;
+  for (let i = 0; i < 6; i++) {
+    const prior = fixture(t, ref, 'review-pr');
+    updateRun(prior.id, {
+      reviewRoundAdmissions: [`old-request-${i}`],
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+    });
+    assert.equal(await archiveRun(prior.id), true);
+    t.after(() => rm(path.join(runsDirectory(), 'archive', `${prior.id}.json`), { force: true }));
+  }
+  const request = fixture(t, ref, 'review-pr');
+  const sibling = fixture(t, ref, 'review-pr');
+  const feature = fixture(t, ref);
+  // Legacy receipts already copied into a feature snapshot keep their charge.
+  updateRun(feature.id, { reviewRoundAdmissions: ['old-request-0'] });
+  assert.equal((await runReviewRoundBudget(getRun(request.id)!)).used, 0);
+  const check = await prepareReviewRoundAvailabilityCheck(request.id);
+  check();
+  await assertReviewRoundAvailable(getRun(request.id)!);
+  await admitReviewRound(request.id, 'own-first');
+  updateRun(request.id, { engineState: { generation: 2 } });
+  await admitReviewRound(request.id, 'own-first');
+  assert.equal((await runReviewRoundBudget(getRun(request.id)!)).used, 1);
+  assert.equal((await runReviewRoundBudget(getRun(sibling.id)!)).used, 0);
+  assert.equal((await runReviewRoundBudget(getRun(feature.id)!)).used, 1);
+  for (let i = 1; i < 5; i++) await admitReviewRound(request.id, `own-${i}`);
+  assert.throws(check, /All 5 review rounds/);
+  await assert.rejects(admitReviewRound(request.id, 'own-sixth'), /All 5 review rounds/);
+  await admitReviewRound(sibling.id, 'sibling-first');
+  assert.equal((await runReviewRoundBudget(getRun(sibling.id)!)).used, 1);
+  assert.deepEqual(getRun(request.id)!.reviewRoundAdmissions, [
+    'own-first',
+    'own-1',
+    'own-2',
+    'own-3',
+    'own-4',
+  ]);
+  assert.deepEqual(getRun(feature.id)!.reviewRoundAdmissions, ['old-request-0']);
+});
+
 test('update-branch has two own rounds after the parent PR spent five, preserving raw receipts', async (t) => {
   const parent = fixture(t);
   const update = fixture(t, parent.ticketOrPr, 'update-branch');
