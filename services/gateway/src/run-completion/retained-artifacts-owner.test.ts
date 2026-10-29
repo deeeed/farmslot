@@ -19,7 +19,8 @@ mock.module('@farmslot/protocol/node/farmslot-home', {
   namedExports: { farmslotHome: () => operatorHome },
 });
 
-const { archiveRunArtifactHousekeeping, runBundleStore } = await import('./retained-artifacts.js');
+const { archiveRunArtifactHousekeeping, reserveRunArtifactMetadata, runBundleStore } =
+  await import('./retained-artifacts.js');
 
 test('runs-only gateway boot owns an isolated bundle root and sandboxes cannot rebind it', async () => {
   await runBundleStore(true);
@@ -80,4 +81,34 @@ test('admission with no housekeeping to move needs no archive write', async () =
   process.env.FARMSLOT_RUN_ARCHIVE_ROOT = missing;
   await archiveRunArtifactHousekeeping();
   await assert.rejects(readFile(missing), /ENOENT/);
+});
+
+test('an offline archive leaves pending reservations intact while normal admission still works', async () => {
+  const { createRun, updateRun, persistRunNow } = await import('../runs/store.js');
+  const owner = await runBundleStore();
+  const old = createRun({
+    flowType: 'fix-bug',
+    project: 'fixture',
+    mode: 'autonomous',
+    ticketOrPr: 'META-OFFLINE',
+  });
+  await reserveRunArtifactMetadata(old);
+  updateRun(old.id, { status: 'cancelled' });
+  await persistRunNow(old);
+  const reservation = path.join(owner.root, 'reservations', `${old.id}.json`);
+  const before = await readFile(reservation, 'utf8');
+  process.env.FARMSLOT_RUN_ARCHIVE_ROOT = path.join(root, 'offline-drive');
+  const next = createRun({
+    flowType: 'fix-bug',
+    project: 'fixture',
+    mode: 'autonomous',
+    ticketOrPr: 'META-ONLINE',
+  });
+  await reserveRunArtifactMetadata(next);
+  assert.equal(await readFile(reservation, 'utf8'), before);
+  assert.equal(
+    JSON.parse(await readFile(path.join(owner.root, 'reservations', `${next.id}.json`), 'utf8'))
+      .runId,
+    next.id,
+  );
 });

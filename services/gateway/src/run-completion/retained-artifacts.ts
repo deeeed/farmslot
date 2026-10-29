@@ -358,11 +358,22 @@ export async function archiveRunArtifactHousekeeping(): Promise<void> {
   }
 }
 
+/** Cleanup failure cannot discard a new run's report or bypass its normal capacity checks. */
+async function tryArchiveRunArtifactHousekeeping(): Promise<void> {
+  try {
+    await archiveRunArtifactHousekeeping();
+  } catch (error) {
+    console.error(
+      `[run-retention] housekeeping unavailable; bytes retained and normal capacity checks continue: ${(error as Error).message}`,
+    );
+  }
+}
+
 export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const store = await runBundleStore(true);
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
-  await archiveRunArtifactHousekeeping();
+  await tryArchiveRunArtifactHousekeeping();
   await reserveRunBundleMetadata(store, run.id, policy, farmslotRoot);
 }
 
@@ -379,7 +390,7 @@ export async function retainCapturedRunArtifacts(input: {
 }): Promise<MaterializedRunBundle> {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
-  await archiveRunArtifactHousekeeping();
+  await tryArchiveRunArtifactHousekeeping();
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.
   // The materializer checks containment and hashes each file while copying it.
