@@ -206,7 +206,7 @@ export async function slotRelease(
   // The reconciler's only view of a live teardown is the registry. Without
   // this, a release that outlived the stale-fence bound would be reclaimed
   // mid-teardown, now that refresh keeps the fence stamp it ages.
-  let recoverTimeout: (() => Promise<void>) | undefined;
+  let recoverTimeout: ((confirmed: boolean) => Promise<void>) | undefined;
   const teardown = withTerminalTeardown(
     params.slotId,
     () =>
@@ -217,8 +217,9 @@ export async function slotRelease(
   )
     .catch(async (error: unknown) => {
       if (error instanceof TerminalTeardownTimeoutError && recoverTimeout) {
+        const recover = recoverTimeout;
         try {
-          await withoutCleanupSignal(recoverTimeout);
+          await withoutCleanupSignal(() => recover(error.closeoutConfirmed));
         } catch (recoveryError) {
           throw new AggregateError(
             [error, recoveryError],
@@ -436,7 +437,7 @@ async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
   options?: SlotReleaseOptions,
-  registerTimeoutRecovery?: (recover: () => Promise<void>) => void,
+  registerTimeoutRecovery?: (recover: (confirmed: boolean) => Promise<void>) => void,
 ): Promise<SlotReleaseResult> {
   const preflight = await releasePreflight(params, options);
   if ('skipped' in preflight) return { released: false, reason: preflight.skipped };
@@ -532,7 +533,7 @@ async function slotReleaseImpl(
           const epoch = Number(slot.slot_epoch) || 0;
           const priorCleanupOwner = slot.cleanup_run_id ?? null;
           // Register before the marker commit: its await can finish after the deadline.
-          registerTimeoutRecovery?.(async () => {
+          registerTimeoutRecovery?.(async (confirmed) => {
             await updateSlotStatusIf(
               params.slotId,
               (current) =>
@@ -547,8 +548,11 @@ async function slotReleaseImpl(
               {
                 lifecycle: 'held',
                 phase: 'occupied',
-                current_run_id: params.expectedRunId ?? owner,
-                held_reason: 'Cleanup timed out; retry release or replay the run.',
+                current_run_id: confirmed ? (params.expectedRunId ?? owner) : null,
+                ...(!confirmed ? { cleanup_run_id: params.expectedRunId ?? owner } : {}),
+                held_reason: confirmed
+                  ? 'Cleanup timed out; retry release or replay the run.'
+                  : 'Cleanup stop is unconfirmed; inspect the slot and retry release.',
                 [SLOT_RELEASING_SINCE]: null,
               },
             );

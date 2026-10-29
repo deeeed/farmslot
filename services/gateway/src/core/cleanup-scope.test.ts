@@ -22,9 +22,70 @@ after(async () => {
 });
 await import('../runtime/mock-pty.test-support.js');
 const { execFileArgv } = await import('./exec.js');
+const { withTerminalTeardown, TerminalTeardownTimeoutError } =
+  await import('../run-engine/terminal-teardown-registry.js');
 const { statusFile, updateSlotStatus, onStatusCommit, setSlotUpdateHook } =
   await import('./state.js');
 assert.equal(statusFile, selected);
+
+test('a cleanup deadline waits for asynchronous command closeout', { timeout: 4000 }, async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let ready!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  let pid: number | undefined;
+  let output = '';
+  let command: Promise<import('@farmslot/protocol').ExecResult> | undefined;
+  t.after(async () => {
+    if (pid) {
+      try {
+        process.kill(-pid, 'SIGTERM');
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+      }
+    }
+    if (command) await command;
+  });
+  const operation = withTerminalTeardown('delayed-closeout', () => {
+    command = execFileArgv(
+      [
+        process.execPath,
+        '-e',
+        "process.on('SIGTERM',()=>setTimeout(()=>{process.stdout.write('closed');process.exit(0)},100));process.stdout.write(process.pid+'\\n');setInterval(()=>{},20)",
+      ],
+      {
+        onOutput(stream, text) {
+          if (stream !== 'stdout') return;
+          output += text;
+          if (!pid && output.includes('\n')) {
+            pid = Number(output.split('\n')[0]);
+            ready();
+          }
+        },
+      },
+    );
+    return command;
+  });
+  await entered;
+  let failure: unknown;
+  const rejected = assert.rejects(operation, (error: unknown) => {
+    failure = error;
+    return error instanceof TerminalTeardownTimeoutError;
+  });
+  t.mock.timers.tick(300_000);
+  await rejected;
+  assert.match(
+    output,
+    /closed$/,
+    'deadline must not return before the hook finishes SIGTERM cleanup',
+  );
+  assert.ok(failure instanceof TerminalTeardownTimeoutError);
+  assert.equal(failure.closeoutConfirmed, true);
+  assert.ok(pid);
+  const stoppedPid = pid;
+  assert.throws(() => process.kill(stoppedPid, 0), { code: 'ESRCH' });
+});
 
 for (const notification of ['commit', 'debounce'] as const) {
   test(

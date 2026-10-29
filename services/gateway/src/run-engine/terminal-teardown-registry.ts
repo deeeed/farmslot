@@ -1,4 +1,9 @@
-import { cleanupSignal, withCleanupSignal } from '../core/cleanup-scope.js';
+import {
+  type CleanupCommands,
+  cleanupSignal,
+  drainCleanupCommands,
+  withCleanupSignal,
+} from '../core/cleanup-scope.js';
 
 /**
  * Slots whose terminal teardown is in flight in THIS process (ADR-053).
@@ -50,6 +55,7 @@ export function terminalTeardownSlots(): string[] {
 export const TERMINAL_TEARDOWN_TIMEOUT_MS = 5 * 60_000;
 
 export class TerminalTeardownTimeoutError extends Error {
+  closeoutConfirmed = true;
   constructor(slotId: string, timeoutMs: number) {
     super(`Terminal teardown for ${slotId} timed out after ${timeoutMs}ms`);
     this.name = 'TerminalTeardownTimeoutError';
@@ -63,7 +69,7 @@ export async function withTerminalTeardown<T>(
   timeoutMs: number | null = TERMINAL_TEARDOWN_TIMEOUT_MS,
 ): Promise<T> {
   // A warm recycle re-prepares under its existing phase budgets.
-  if (timeoutMs === null) {
+  if (timeoutMs === null && !cleanupSignal()) {
     beginTerminalTeardown(slotId);
     try {
       return await operation();
@@ -71,6 +77,7 @@ export async function withTerminalTeardown<T>(
       endTerminalTeardown(slotId);
     }
   }
+  const commands: CleanupCommands = { pending: new Set(), unconfirmed: false };
   const controller = new AbortController();
   const signal = cleanupSignal(controller.signal)!;
   let rejectAborted: () => void = () => {};
@@ -78,18 +85,27 @@ export async function withTerminalTeardown<T>(
     rejectAborted = () => reject(signal.reason);
   });
   signal.addEventListener('abort', rejectAborted, { once: true });
-  const timer = setTimeout(() => {
-    const error = new TerminalTeardownTimeoutError(slotId, timeoutMs);
-    console.warn(`[teardown] ${error.message}`);
-    controller.abort(error);
-  }, timeoutMs);
+  const timer =
+    timeoutMs === null
+      ? undefined
+      : setTimeout(() => {
+          const error = new TerminalTeardownTimeoutError(slotId, timeoutMs);
+          console.warn(`[teardown] ${error.message}`);
+          controller.abort(error);
+        }, timeoutMs);
   beginTerminalTeardown(slotId);
   try {
     signal.throwIfAborted();
-    return await Promise.race([withCleanupSignal(signal, operation), aborted]);
+    return await Promise.race([withCleanupSignal(signal, operation, commands), aborted]);
   } finally {
     clearTimeout(timer);
     signal.removeEventListener('abort', rejectAborted);
+    if (
+      signal.aborted &&
+      !(await drainCleanupCommands(commands)) &&
+      signal.reason instanceof TerminalTeardownTimeoutError
+    )
+      signal.reason.closeoutConfirmed = false;
     endTerminalTeardown(slotId);
   }
 }

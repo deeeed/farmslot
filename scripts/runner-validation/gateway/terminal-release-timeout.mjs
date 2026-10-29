@@ -14,10 +14,22 @@ const load = (file) => import(pathToFileURL(path.join(source, file)).href);
 const realTimeout = setTimeout;
 const realClearTimeout = clearTimeout;
 const pause = () => new Promise((resolve) => realTimeout(resolve, 10));
-const bounded = async (promise, timeoutMs = 3000) => {
-  let timer;
+const stopping = new AbortController();
+const expectedInterruption = process.argv.includes('--interrupt-at-hook');
+const terminate = () => stopping.abort(new Error('release proof interrupted by SIGTERM'));
+const interrupt = () => stopping.abort(new Error('release proof interrupted by SIGINT'));
+process.on('SIGTERM', terminate);
+process.on('SIGINT', interrupt);
+const bounded = async (promise, timeoutMs = 3000, duringCleanup = false) => {
+  let timer, abort;
   try {
+    if (!duringCleanup) stopping.signal.throwIfAborted();
+    const cancelled = new Promise((_, reject) => {
+      abort = () => reject(stopping.signal.reason);
+      if (!duringCleanup) stopping.signal.addEventListener('abort', abort, { once: true });
+    });
     return await Promise.race([
+      cancelled,
       promise,
       new Promise((_, reject) => {
         timer = realTimeout(
@@ -28,9 +40,11 @@ const bounded = async (promise, timeoutMs = 3000) => {
     ]);
   } finally {
     realClearTimeout(timer);
+    if (abort) stopping.signal.removeEventListener('abort', abort);
   }
 };
 const marker = path.join(root, 'hook-started.json');
+const cleaned = path.join(root, 'hook-cleaned');
 let server, wss, client, requestOutcome, hookIdentity, primaryError;
 const cleanupErrors = [];
 const cleanup = async (operation) => {
@@ -98,7 +112,7 @@ try {
   const hook = path.join(root, 'hang.mjs');
   await writeFile(
     hook,
-    `import {writeFileSync} from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid}));\nprocess.on('SIGTERM',()=>process.exit(0));\nsetInterval(()=>{},20);\n`,
+    `import {writeFileSync} from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid}));\nlet closing=false;process.on('SIGTERM',()=>{if(closing)return;closing=true;setTimeout(()=>{writeFileSync(${JSON.stringify(cleaned)},'done');process.exit(0)},100);});\nsetInterval(()=>{},20);\n`,
   );
   await writeFile(
     path.join(root, 'projects/proof/project.json'),
@@ -186,6 +200,7 @@ try {
     createGatewayAuthRuntime({ FARMSLOT_HOME: process.env.FARMSLOT_HOME }),
   );
   client = await new GatewayClient({ url, timeout: 600000, credential: { token } }).connect();
+  stopping.signal.throwIfAborted();
   for (const successor of [false, true]) {
     if (successor)
       await core.updateSlotStatus('release-proof', {
@@ -196,6 +211,7 @@ try {
         cleanup_run_id: null,
       });
     await rm(marker, { force: true });
+    await rm(cleaned, { force: true });
     mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
     const request = client.call('slot.release', {
       slotId: 'release-proof',
@@ -230,6 +246,12 @@ try {
       encoding: 'utf8',
     }).trim();
     hookIdentity = { pid: processRow.pid, birth };
+    if (expectedInterruption) {
+      console.log(JSON.stringify({ phase: 'interrupt-ready', root, hookIdentity }));
+      process.kill(process.pid, 'SIGTERM');
+      await pause();
+      stopping.signal.throwIfAborted();
+    }
     if (successor)
       await core.claimSlotStatusIf('release-proof', () => true, {
         current_run_id: 'successor',
@@ -240,6 +262,12 @@ try {
     const outcome = await bounded(requestOutcome);
     assert(outcome.error);
     assert.match(outcome.error.message, /timed out after 300000ms/);
+    assert.equal(
+      await readFile(cleaned, 'utf8'),
+      'done',
+      'hook asynchronous closeout must finish before replay becomes possible',
+    );
+    assert.equal(alive(hookIdentity.pid), false);
     const observed = await core.readSlotRow('release-proof');
     if (successor) assert.deepEqual(observed, before);
     else {
@@ -288,7 +316,15 @@ try {
       );
       process.kill(hookIdentity.pid, 'SIGTERM');
     }
-    if (requestOutcome) await bounded(requestOutcome);
+    if (requestOutcome) await bounded(requestOutcome, 3000, true);
+    if (hookIdentity)
+      await bounded(
+        (async () => {
+          while (alive(hookIdentity.pid)) await pause();
+        })(),
+        3000,
+        true,
+      );
   });
   await cleanup(async () => client?.close());
   if (wss)
@@ -304,6 +340,8 @@ try {
         ),
     );
   if (!cleanupErrors.length) await rm(root, { recursive: true, force: true });
+  process.off('SIGTERM', terminate);
+  process.off('SIGINT', interrupt);
 }
 
 if (cleanupErrors.length)
@@ -311,4 +349,13 @@ if (cleanupErrors.length)
     [primaryError, ...cleanupErrors].filter(Boolean),
     `Release proof cleanup failed; retained ${root}`,
   );
-if (primaryError) throw primaryError;
+if (expectedInterruption && primaryError === stopping.signal.reason && !cleanupErrors.length) {
+  console.log(
+    JSON.stringify({
+      status: 'PASS',
+      signal: primaryError.message,
+      hookStopped: true,
+      serverClosed: true,
+    }),
+  );
+} else if (primaryError) throw primaryError;

@@ -18,6 +18,13 @@
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/terminal-release-timeout.mjs",
         "timeout_ms": 180000,
         "intent": "Recover the timed-out release claim and preserve a successor through real RPC.",
+        "next": "release-cancellation"
+      },
+      "release-cancellation": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/terminal-release-timeout.mjs --interrupt-at-hook",
+        "timeout_ms": 180000,
+        "intent": "Interrupt the owned hook and confirm its asynchronous shutdown completes.",
         "next": "cold-health"
       },
       "cold-health": {
