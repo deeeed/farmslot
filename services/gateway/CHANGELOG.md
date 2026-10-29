@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Limit the pending-decision scan to task folders and share one scan between concurrent decision lists, so historical artifact trees no longer stall gateway file I/O.
+
 - Resume monitoring dispatched workers without repeating retained-artifact admission, so waiting completion signals can advance after restart.
 - Cap inherited worker prompt hooks without changing user settings, and escalate active inline CI fixes without tool progress, including tools with no completion for ten minutes.
 
