@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Show a finished worker waiting for its monitor when current checklist timing confirms completion, and stop claiming a stale run has nothing pending.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.15.1 - 2026-10-29
