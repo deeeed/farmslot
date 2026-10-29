@@ -1805,6 +1805,7 @@ test('worker prompt hooks cap inherited commands without changing global setting
   const { repo, claudeSettingsPath } = installToTempDir('claude', undefined, env);
   const read = () => JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8'));
   const first = read();
+  assert.equal(fs.readFileSync(globalSettings, 'utf8'), original);
   const inherited = first.hooks.UserPromptSubmit.flatMap((entry) => entry.hooks).filter(
     (hook) => hook.statusMessage,
   );
@@ -1815,11 +1816,11 @@ test('worker prompt hooks cap inherited commands without changing global setting
   assert.equal(fs.statSync(claudeSettingsPath).mode & 0o777, 0o600);
   installToTempDir('claude', repo, env);
   assert.deepEqual(read(), first);
+  assert.equal(fs.readFileSync(globalSettings, 'utf8'), original);
   fs.writeFileSync(globalSettings, '{}');
   installToTempDir('claude', repo, env);
   assert.equal(read().hooks.UserPromptSubmit.flatMap((entry) => entry.hooks).length, 1);
-  fs.writeFileSync(globalSettings, original);
-  assert.equal(fs.readFileSync(globalSettings, 'utf8'), original);
+  assert.equal(fs.readFileSync(globalSettings, 'utf8'), '{}');
 });
 
 test('generated farm hooks keep five-second deadlines and log I/O failures without blocking', () => {
