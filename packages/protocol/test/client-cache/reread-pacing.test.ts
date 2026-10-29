@@ -38,6 +38,7 @@ function pacedGateway(t: TestContext, query: ResourceQuery) {
           versionLists: false,
           observedReads: 1,
           workspaceReads: 1,
+          upstreamObservers: { version: 1, methods: ['pr.list'] },
         },
       },
     }),
@@ -55,7 +56,7 @@ function pacedGateway(t: TestContext, query: ResourceQuery) {
         pending.push({
           answer: () =>
             resolve({
-              data: {} as T,
+              data: { observation: { status: 'ready', observedAt: Date.now() } } as T,
               resourceState: {
                 epoch: 'pacing-epoch',
                 dependencies: query.dependencies.map((key) => ({ key, revision: sampled })),
@@ -65,6 +66,7 @@ function pacedGateway(t: TestContext, query: ResourceQuery) {
         }),
       );
     },
+    replaceObservers: async (params) => ({ version: 1, sequence: params.sequence, applied: true }),
     resynchronize: () => assert.fail('The source epoch did not change'),
   };
   const cache = createGatewayResourceCache({ transport });
@@ -267,6 +269,41 @@ test('a slot change cannot postpone a reread already due for another reason', as
     t.mock.timers.tick(1);
     await gateway.flush();
     assert.equal(gateway.reads(), 2, 'The returning observer reads when the failure wait ends');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+  } finally {
+    stop();
+  }
+});
+
+test('the PR list waits longer for the slot, worker and run changes it only cross-references', async (t) => {
+  const query = resourceQuery('pr.list', {});
+  const gateway = pacedGateway(t, query);
+  const stop = gateway.cache.observe(query, () => {});
+  const only = (family: string) => query.dependencies.filter((key) => key.family === family);
+  const interval = 30_000;
+  try {
+    await gateway.flush();
+    assert.equal(gateway.reads(), 1);
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    for (let second = 1; second < interval / 1000; second++) {
+      t.mock.timers.tick(1000);
+      gateway.change([...only('workers'), ...only('runs'), ...only('slots')]);
+      await gateway.flush();
+    }
+    assert.equal(gateway.reads(), 1, 'Worker, run and slot changes wait for the PR list interval');
+    t.mock.timers.tick(1000);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 2, 'and then read once');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    t.mock.timers.tick(1000);
+    gateway.change(only('workers'));
+    await gateway.flush();
+    gateway.change(only('upstream'));
+    await gateway.flush();
+    assert.equal(gateway.reads(), 3, 'A GitHub change is read at once');
     gateway.pending.shift()!.answer();
     await gateway.flush();
   } finally {

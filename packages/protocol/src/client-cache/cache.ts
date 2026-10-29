@@ -526,9 +526,12 @@ export function createGatewayResourceCache(
       const targets = affected.length ? affected : [...entries.values()];
       for (const entry of targets) {
         if (!affected.length) entry.unknownGeneration++;
+        const floor =
+          entry.query.rereadIntervalMs?.[change.key.family] ??
+          RESOURCE_REREAD_INTERVAL_MS[change.key.family];
         entry.rereadFloor = Math.min(
           entry.rereadFloor ?? Infinity,
-          (affected.length && RESOURCE_REREAD_INTERVAL_MS[change.key.family]) || 0,
+          (affected.length && floor) || 0,
         );
         entry.dirty = true;
         entry.state = { ...entry.state, status: 'stale' };
