@@ -17,10 +17,15 @@ import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
+import type {
+  ObservabilityReading,
+  RunnerSessionDeliveryState,
+} from '../runners/observability-types.js';
 import { makeVars } from '../runners/test-fixtures.js';
 import { renderRoleTemplate } from '../tasks/agent-runtime-script.js';
 
 import {
+  advanceInlineFixProgress,
   ciFixAttemptPrompt,
   ciFixHasUnconfirmedPromptSend,
   ciFixPromptForRecovery,
@@ -436,4 +441,63 @@ test('inline fix stays with a busy worker with or without a turn token', () => {
   assert.equal(inlineFixRunnerStillBusy(false, null, reading('unknown', 'high')), false);
   assert.equal(inlineFixRunnerStillBusy(false, null, reading('tool-running', 'low')), false);
   assert.equal(inlineFixRunnerStillBusy(false, null, null), false);
+});
+
+test('active flags and heartbeat timestamps cannot extend a CI fix without tool progress', () => {
+  const reading: ObservabilityReading<RunnerSessionDeliveryState> = {
+    value: 'active',
+    confidence: 'high',
+    source: 'hook',
+    observedAt: 1,
+    lastToolProgressAt: null,
+  };
+  let state = advanceInlineFixProgress({ lastProgressAt: 0, stalled: false }, reading, 0);
+  state = advanceInlineFixProgress(state, { ...reading, observedAt: 600_000 }, 600_000);
+  assert.equal(state.stalled, true);
+  // Only a new structured tool event resets the gateway-clock inactivity window.
+  state = advanceInlineFixProgress(state, { ...reading, lastToolProgressAt: 9_000_000 }, 600_001);
+  assert.equal(state.stalled, false);
+  assert.equal(state.lastProgressAt, 600_001);
+  state = advanceInlineFixProgress(state, { ...reading, lastToolProgressAt: 9_000_000 }, 1_200_001);
+  assert.equal(state.stalled, true);
+  assert.equal(advanceInlineFixProgress(state, null, 1_200_002).stalled, false);
+});
+
+test('an idle CI worker keeps the existing timeout outcome without tool progress', () => {
+  const idle: ObservabilityReading<RunnerSessionDeliveryState> = {
+    value: 'idle',
+    confidence: 'high',
+    source: 'hook',
+    observedAt: 0,
+    lastToolProgressAt: null,
+  };
+  assert.equal(
+    advanceInlineFixProgress({ lastProgressAt: 0, stalled: false }, idle, 600_000).stalled,
+    false,
+  );
+});
+
+test('an open tool without completion also blocks after ten minutes for inspection', () => {
+  const active: ObservabilityReading<RunnerSessionDeliveryState> = {
+    value: 'active',
+    confidence: 'high',
+    source: 'hook',
+    observedAt: 0,
+    lastToolProgressAt: 100,
+  };
+  const state = advanceInlineFixProgress({ lastProgressAt: 0, stalled: false }, active, 0);
+  assert.equal(advanceInlineFixProgress(state, active, 600_000).stalled, true);
+});
+
+test('CI fix readers without structured tool progress retain the existing hard deadline', () => {
+  const reading: ObservabilityReading<RunnerSessionDeliveryState> = {
+    value: 'active',
+    confidence: 'high',
+    source: 'signal',
+    observedAt: 1,
+  };
+  assert.equal(
+    advanceInlineFixProgress({ lastProgressAt: 0, stalled: false }, reading, 600_000).stalled,
+    false,
+  );
 });

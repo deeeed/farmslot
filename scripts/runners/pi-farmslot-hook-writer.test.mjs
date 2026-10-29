@@ -102,3 +102,14 @@ test('native failed outcomes retain the auth error and a later healthy turn clea
   assert.equal(piTurnFailure([failed, { role: 'assistant', stopReason: 'stop' }]), null);
   assert.equal(piTurnFailure([{ role: 'user', content: 'error: not a runner outcome' }]), null);
 });
+
+test('Pi tool progress survives non-tool hooks without becoming a heartbeat', (t) => {
+  const obsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-tool-progress-'));
+  t.after(() => fs.rmSync(obsDir, { recursive: true, force: true }));
+  const base = { obsDir, sessionId: 'progress' };
+  assert.equal(writePiHook({ ...base, event: 'UserPromptSubmit' }).lastToolProgressAt, null);
+  const tool = writePiHook({ ...base, event: 'PreToolUse', toolName: 'bash' });
+  assert.equal(tool.lastToolProgressAt, tool.observedAt);
+  assert.equal(writePiHook({ ...base, event: 'Notification' }).lastToolProgressAt, tool.observedAt);
+  assert.equal(writePiHook({ ...base, event: 'UserPromptSubmit' }).lastToolProgressAt, null);
+});
