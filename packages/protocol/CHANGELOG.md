@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- A run list view served from the shared run collection reports the collection's observation time, so a live view and a cold start's view of the same collection carry the same `observedAt`.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.2 - 2026-10-29
