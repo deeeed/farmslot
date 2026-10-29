@@ -18,6 +18,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Cached fleet reads return completed workspace observations at once, publish each background change, and show a failed inspection's last workspace as unverified.
 
+- Notice the first checkout-update record and missing Git refs on Linux gateways: the update watcher watches existing directories instead of missing files.
+
 - Allow prepare to reuse a deleted configured PR head only after verifying its merge and preserving unpublished or dirty work.
 
 - Keep run history forever and move settled storage into a verified, configurable archive instead of deleting it.

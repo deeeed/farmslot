@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -122,6 +122,11 @@ test('a finished record is kept when HEAD cannot be read', async (t) => {
 
 test('owning atomic operation and Git ref writes notify without viewer polling', async (t) => {
   const c = checkout(t);
+  // Two missing files share the git directory, and the record is written as soon as the watch
+  // resolves: chokidar's own watch for a missing path attached after `ready` (Linux never saw this
+  // write) and its directory reads for both missing files shared one throttle.
+  for (const name of ['farmslot-checkout-update.json', 'packed-refs'])
+    assert.equal(existsSync(path.join(c.root, '.git', name)), false, `${name} starts missing`);
   const changes: string[] = [];
   const errors: unknown[] = [];
   const stop = await watchCheckoutUpdateChanges(

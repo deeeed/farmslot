@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -27,6 +28,23 @@ async function writeOperation(path: string, operation: CheckoutUpdateOperation):
 
 export type CheckoutObservationChange = 'operation' | 'checkout';
 
+/** `file` is `directory` or below it. */
+function within(file: string, directory: string): boolean {
+  const path = relative(directory, file);
+  return !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`);
+}
+
+/** The nearest directory above `file` that exists now. */
+function existingDirectoryAbove(file: string): string {
+  let directory = dirname(file);
+  while (!statSync(directory, { throwIfNoEntry: false })?.isDirectory()) {
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return directory;
+}
+
 /** Atomic worker records and Git refs own progress; viewers never sample them on a timer. */
 export async function watchCheckoutUpdateChanges(
   changed: (kind: CheckoutObservationChange) => void,
@@ -39,6 +57,7 @@ export async function watchCheckoutUpdateChanges(
   ];
   let operationFile: string | undefined;
   const paths = [...versionFiles];
+  const refDirectories: string[] = [];
   try {
     operationFile = await recordPath(root);
   } catch (error) {
@@ -52,7 +71,9 @@ export async function watchCheckoutUpdateChanges(
         cwd: root,
         timeout: 8000,
       });
-      paths.push(resolve(root, stdout.trim()));
+      const path = resolve(root, stdout.trim());
+      paths.push(path);
+      if (name.startsWith('refs/')) refDirectories.push(path);
     }
   }
   let stopped = false;
@@ -83,7 +104,20 @@ export async function watchCheckoutUpdateChanges(
     );
     watchdog.unref();
   };
-  const watcher = watch(paths, { ignoreInitial: true });
+  // A missing path gets chokidar's fallback directory watch only after `ready`, so on Linux a record
+  // written right after start went unseen; missing files in one directory also share one throttled
+  // read, so one of them could go unseen at all. Watch the nearest existing directories instead
+  // and admit only the observed paths and the directories leading to them.
+  const selected = (file: string) =>
+    paths.some((path) => within(path, file)) ||
+    refDirectories.some((directory) => within(file, directory));
+  const roots = [...new Set(paths.map(existingDirectoryAbove))];
+  const watcher = watch(
+    roots.filter(
+      (directory) => !roots.some((other) => other !== directory && within(directory, other)),
+    ),
+    { ignoreInitial: true, ignored: (file) => !selected(file) },
+  );
   watcher.on('all', (event, file) => {
     if (stopped || !['add', 'change', 'unlink'].includes(event)) return;
     if (operationFile && resolve(file) === operationFile) {
