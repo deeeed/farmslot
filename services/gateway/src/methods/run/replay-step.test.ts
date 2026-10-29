@@ -1214,7 +1214,9 @@ test('replaying a cancelled graph run reclaims the node instead of double-dispat
   });
 
   await assert.doesNotReject(() =>
-    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
   );
   assert.equal(getRun(run.id)?.status, 'ci-watching');
   assert.ok(
@@ -1315,7 +1317,9 @@ test('replay revokes a claimed dispatching row and revives the cancelled run', a
   });
 
   await assert.doesNotReject(() =>
-    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
   );
   assert.equal(getRun(run.id)?.status, 'ci-watching');
   assert.ok(
@@ -1490,7 +1494,9 @@ test('replay does not reclaim a sibling launch-plan candidate sharing the node',
   });
 
   await assert.doesNotReject(() =>
-    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
   );
   assert.equal(getRun(run.id)?.status, 'ci-watching');
   assert.ok(
@@ -1789,7 +1795,9 @@ test('runReplayStep allows chained PR-bound replays when prNumber is already lin
   });
 
   await assert.doesNotReject(() =>
-    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
   );
   assert.equal(getRun(run.id)?.status, 'ci-watching');
 });
