@@ -81,38 +81,48 @@ export function runListProjection(run: Run): RunListProjection {
   };
 }
 
+/** A `run.list` filter with its search and tags normalized once per list. */
+function runListTerms(filter: RunListFilter) {
+  return { filter, search: filter.search?.toLowerCase(), tags: normalizeRunTags(filter.tags) };
+}
+
+/** A declared predicate, not a returned closure, so the authorization guard can follow `run.list` into it. */
+function runMatchesList(
+  run: RunListFields,
+  { filter, search, tags }: ReturnType<typeof runListTerms>,
+): boolean {
+  if (filter.status) {
+    if (run.status !== filter.status) return false;
+  } else if (filter.active && !isActiveListRun(run)) return false;
+  if (filter.flowType && run.flowType !== filter.flowType) return false;
+  if (filter.project && run.project !== filter.project) return false;
+  if (filter.prNumber != null && run.prNumber !== filter.prNumber) return false;
+  if (filter.familyId && run.familyId !== filter.familyId) return false;
+  if (filter.lane && run.lane !== filter.lane) return false;
+  if (filter.variant !== undefined && (run.variant ?? null) !== (filter.variant ?? null))
+    return false;
+  if (filter.outcome && run.metrics.outcome !== filter.outcome) return false;
+  if (filter.dateFrom && !(run.createdAt >= filter.dateFrom)) return false;
+  if (filter.dateTo && !(run.createdAt <= filter.dateTo)) return false;
+  // Tags are matched as stored, not lowercased, as the gateway always has.
+  if (
+    search &&
+    !run.ticketOrPr.toLowerCase().includes(search) &&
+    !run.summary?.toLowerCase().includes(search) &&
+    !run.tags?.some((tag) => tag.includes(search))
+  )
+    return false;
+  if (tags.length > 0) {
+    const own = new Set(normalizeRunTags(run.tags));
+    if (!tags.every((tag) => own.has(tag))) return false;
+  }
+  return true;
+}
+
 /** The gateway's `run.list` filters, search included. Its `listRuns` and the client cache share it. */
 export function matchesRunList(filter: RunListFilter): (run: RunListFields) => boolean {
-  const search = filter.search?.toLowerCase();
-  const tags = normalizeRunTags(filter.tags);
-  return (run) => {
-    if (filter.status) {
-      if (run.status !== filter.status) return false;
-    } else if (filter.active && !isActiveListRun(run)) return false;
-    if (filter.flowType && run.flowType !== filter.flowType) return false;
-    if (filter.project && run.project !== filter.project) return false;
-    if (filter.prNumber != null && run.prNumber !== filter.prNumber) return false;
-    if (filter.familyId && run.familyId !== filter.familyId) return false;
-    if (filter.lane && run.lane !== filter.lane) return false;
-    if (filter.variant !== undefined && (run.variant ?? null) !== (filter.variant ?? null))
-      return false;
-    if (filter.outcome && run.metrics.outcome !== filter.outcome) return false;
-    if (filter.dateFrom && !(run.createdAt >= filter.dateFrom)) return false;
-    if (filter.dateTo && !(run.createdAt <= filter.dateTo)) return false;
-    // Tags are matched as stored, not lowercased, as the gateway always has.
-    if (
-      search &&
-      !run.ticketOrPr.toLowerCase().includes(search) &&
-      !run.summary?.toLowerCase().includes(search) &&
-      !run.tags?.some((tag) => tag.includes(search))
-    )
-      return false;
-    if (tags.length > 0) {
-      const own = new Set(normalizeRunTags(run.tags));
-      if (!tags.every((tag) => own.has(tag))) return false;
-    }
-    return true;
-  };
+  const terms = runListTerms(filter);
+  return (run) => runMatchesList(run, terms);
 }
 
 const GRADE_ORDER: Record<string, number> = { good: 3, ok: 2, bad: 1 };
@@ -160,7 +170,8 @@ export function runListPage<R extends RunListFields>(
   runs: readonly R[],
   filter: RunListFilter,
 ): { runs: R[]; totalCount: number } {
-  const matched = runs.filter(matchesRunList(filter));
+  const terms = runListTerms(filter);
+  const matched = runs.filter((run) => runMatchesList(run, terms));
   return {
     runs: sortRunList(matched, filter.sort).slice(0, runListLimit(filter, matched.length)),
     totalCount: matched.length,
