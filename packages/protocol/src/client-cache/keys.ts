@@ -40,6 +40,43 @@ export type ResourceKey =
   | { family: 'gateway-update'; scope: 'gateway' }
   | { family: 'upstream'; integration: 'github' | 'packages' | 'providers'; queryId: string };
 
+const RESOURCE_KEY_FAMILIES: Record<ResourceKey['family'], true> = {
+  sources: true,
+  runs: true,
+  run: true,
+  family: true,
+  decisions: true,
+  decision: true,
+  gate: true,
+  package: true,
+  slots: true,
+  slot: true,
+  node: true,
+  workers: true,
+  pressure: true,
+  review: true,
+  artifacts: true,
+  progress: true,
+  capabilities: true,
+  capability: true,
+  workspace: true,
+  'native-session': true,
+  profiles: true,
+  configuration: true,
+  'pr-automation': true,
+  analytics: true,
+  planning: true,
+  assessment: true,
+  copilot: true,
+  'gateway-update': true,
+  upstream: true,
+};
+
+/** A family outside this list may come from a newer gateway, so no query can rule it out. */
+export function isKnownResourceFamily(family: unknown): boolean {
+  return typeof family === 'string' && Object.hasOwn(RESOURCE_KEY_FAMILIES, family);
+}
+
 export type ResourceRevision = number;
 
 export interface ResourceDependency {
@@ -76,3 +113,15 @@ export const RESOURCE_PUBLISH_INTERVAL_MS: Partial<Record<ResourceKey['family'],
   progress: 200,
   'native-session': 200,
 };
+
+/**
+ * An automatic reread that only changes to these keys call for waits at least this long after the
+ * last read. Every slot's task phase, progress and workspace change the farm slot keys, several
+ * times a second on a busy farm, and a farm-wide read returns every slot.
+ */
+export const RESOURCE_REREAD_INTERVAL_MS: Partial<Record<ResourceKey['family'], number>> = {
+  slots: 10_000,
+};
+
+/** The longest an automatic reread waits after failed reads of the same query. */
+export const RESOURCE_RETRY_MAX_WAIT_MS = 300_000;
