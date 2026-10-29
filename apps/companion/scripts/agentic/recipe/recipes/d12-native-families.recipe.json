@@ -87,14 +87,15 @@
       },
       "catalog-trigger-visible": {
         "action": "ui.wait_for",
-        "test_id": "companion-publish-gate-review-open",
+        "test_id": "companion-blocker-review-picker-open",
         "expected": "visible",
-        "intent": "The gate's request-review trigger is shown.",
-        "next": "catalog-trigger"
+        "intent": "The gate's request-review trigger under What's blocking publish is shown.",
+        "next": "catalog-trigger",
+        "timeout_ms": 120000
       },
       "catalog-trigger": {
         "action": "ui.press",
-        "test_id": "companion-publish-gate-review-open",
+        "test_id": "companion-blocker-review-picker-open",
         "intent": "Open the review picker, which reads the runner model catalogs.",
         "next": "catalog-online"
       },
@@ -128,13 +129,41 @@
         "match": "\"upstreamRows\"\\s*:\\s*[1-9]",
         "intent": "Require upstream rows read online.",
         "proves": ["d12CompanionUpstream"],
+        "next": "reconnect-open"
+      },
+      "reconnect-open": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs reconnect-open --budget-ms=200000",
+        "timeout_ms": 220000,
+        "intent": "Fail the next read of the large gate image, then open the gate review online.",
+        "next": "reconnect-artifacts-scroll"
+      },
+      "reconnect-artifacts-scroll": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 600,
+        "intent": "Bring the raw artifacts toggle above the bottom action bar.",
+        "next": "reconnect-artifacts-visible"
+      },
+      "reconnect-artifacts-visible": {
+        "action": "ui.wait_for",
+        "test_id": "companion-raw-artifacts",
+        "expected": "visible",
+        "timeout_ms": 60000,
+        "intent": "The gate's raw artifacts toggle is shown.",
+        "next": "reconnect-artifacts"
+      },
+      "reconnect-artifacts": {
+        "action": "ui.press",
+        "test_id": "companion-raw-artifacts",
+        "intent": "Open the gate's raw artifacts, which mount every evidence image.",
         "next": "reconnect"
       },
       "reconnect": {
         "action": "command",
         "cmd": "node scripts/agentic/prove-d12-native.mjs reconnect {{params.gate_run_id}} --budget-ms=660000",
         "timeout_ms": 680000,
-        "intent": "Change K runs, fail one image read, then drop the socket once.",
+        "intent": "The mounted large image fails its first read; drop the socket once, change K runs, release.",
         "next": "assert-reconnect"
       },
       "assert-reconnect": {
@@ -185,6 +214,34 @@
         "match": "\"runListOfflineTotals\"\\s*:\\s*true",
         "intent": "Offline totals equal the live count, from the store alone.",
         "proves": ["d12RunListVersionFill"],
+        "next": "gate-offline-open"
+      },
+      "gate-offline-open": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-d12-native.mjs gate-offline-open --budget-ms=100000",
+        "timeout_ms": 120000,
+        "intent": "Open the gate review offline after the cold restart.",
+        "next": "gate-artifacts-scroll"
+      },
+      "gate-artifacts-scroll": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 600,
+        "intent": "Bring the raw artifacts toggle above the bottom action bar.",
+        "next": "gate-artifacts-visible"
+      },
+      "gate-artifacts-visible": {
+        "action": "ui.wait_for",
+        "test_id": "companion-raw-artifacts",
+        "expected": "visible",
+        "timeout_ms": 60000,
+        "intent": "The gate's raw artifacts toggle is shown.",
+        "next": "gate-artifacts"
+      },
+      "gate-artifacts": {
+        "action": "ui.press",
+        "test_id": "companion-raw-artifacts",
+        "intent": "Open the gate's raw artifacts, which mount every evidence image.",
         "next": "gate-offline"
       },
       "gate-offline": {
@@ -199,7 +256,8 @@
         "test_id": "companion-screen-gate-review",
         "expected": "visible",
         "intent": "The gate review screen renders offline.",
-        "next": "capture-gate"
+        "next": "capture-gate",
+        "timeout_ms": 60000
       },
       "capture-gate": {
         "action": "ui.screenshot",
@@ -229,7 +287,8 @@
         "test_id": "companion-screen-run-diff",
         "expected": "visible",
         "intent": "The run Diff screen renders offline.",
-        "next": "capture-diff"
+        "next": "capture-diff",
+        "timeout_ms": 60000
       },
       "capture-diff": {
         "action": "ui.screenshot",
@@ -275,7 +334,8 @@
         "test_id": "companion-screen-prs",
         "expected": "visible",
         "intent": "The PR screen renders offline.",
-        "next": "capture-prs"
+        "next": "capture-prs",
+        "timeout_ms": 60000
       },
       "capture-prs": {
         "action": "ui.screenshot",

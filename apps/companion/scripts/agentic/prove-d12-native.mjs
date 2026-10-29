@@ -39,8 +39,10 @@ const PHASES = [
   'catalog-open',
   'catalog-online',
   'upstream-online',
+  'reconnect-open',
   'reconnect',
   'offline',
+  'gate-offline-open',
   'gate-offline',
   'gate-diff-offline',
   'catalog-offline',
@@ -148,10 +150,22 @@ if (phase === 'online') {
     'Connected with the gate package held',
     150000,
   );
+  // The reconnect image is over the prefetch size limit: prefetch never reads it, so its first live
+  // read can fail. A held copy would be served first and the failure would never happen.
+  const reconnectImage = state.gate.held?.images?.find(
+    (image) => image.sha256 === fixture.reconnect.imageId,
+  );
+  assert(reconnectImage, 'The gate package lists the reconnect image');
+  assert.equal(reconnectImage.verified, false, 'Prefetch holds the reconnect image');
   await writeState({
     online: { launchId: state.launchId, epoch: state.epoch, connectionId: state.connectionId },
   });
-  receipt({ gatePackageHeld: true, epoch: state.epoch, connectionId: state.connectionId });
+  receipt({
+    gatePackageHeld: true,
+    reconnectImageHeld: false,
+    epoch: state.epoch,
+    connectionId: state.connectionId,
+  });
 } else if (phase === 'run-list-fill') {
   runList('cold-fill', [
     '--min-runs',
@@ -184,13 +198,19 @@ if (phase === 'online') {
   );
   await writeState({ upstream: prRows(state) });
   receipt({ upstreamRows: state.upstream.prs.length });
-} else if (phase === 'reconnect') {
-  // One socket drop serves both claims. The mounted image's first read fails while connected; then
-  // the proxy drops and holds the socket, K runs change, and only then may the app reconnect, so
-  // the change can reach it only through its version read and ids pages.
+} else if (phase === 'reconnect-open') {
+  // One socket drop serves both claims. The large gate image's first read fails while connected. It
+  // mounts with the gate's raw artifacts, which the recipe opens once this screen is up.
   const before = await until((value) => value.status === 'connected', 'Connected before reconnect');
   await checkpoint('fail-artifact-once', { id: fixture.reconnect.imageId });
   await checkpoint('open-url', { url: fixture.reconnect.url });
+  await until((value) => value.gate?.opened === true, 'The gate review screen is up');
+  await writeState({ reconnect: { connectionId: before.connectionId } });
+  receipt({ reconnectOpen: true, connectionId: before.connectionId });
+} else if (phase === 'reconnect') {
+  // Then the proxy drops and holds the socket, K runs change, and only then may the app reconnect,
+  // so the change can reach it only through its version read and ids pages.
+  const before = (await readState()).reconnect;
   const failed = await until(
     (value) => value.image?.id === fixture.reconnect.imageId && value.image.state === 'failed',
     'The mounted image fails its first read',
@@ -234,6 +254,12 @@ if (phase === 'online') {
   const settled = await observe();
   receipt({ coldOfflineFrames: settled.framesSent, status: state.status });
   runList('offline-totals', ['--trigger=false', '--expect-total', total]);
+} else if (phase === 'gate-offline-open') {
+  // The gate review screen offline; its evidence images mount with the raw artifacts, which the
+  // recipe opens once this screen is up (the open state does not survive the cold restart).
+  await checkpoint('open-url', { url: gateUrl });
+  await until((value) => value.gate?.opened === true, 'The gate review screen is up offline');
+  receipt({ gateReviewOpenOffline: true });
 } else if (phase === 'gate-offline') {
   // The gate review screen: its details, and its evidence images, each loaded by a mounted image and
   // verified in the store. Both sides of the diff are store-level; no Companion screen renders them.
@@ -241,7 +267,6 @@ if (phase === 'online') {
   assert.equal(decisionId, fixture.gate.decisionId);
   assert.equal(runId, fixture.gate.runId);
   assert.equal(slotId, fixture.gate.slotId);
-  await checkpoint('open-url', { url: gateUrl });
   const expected = fixture.gate.images.map((image) => image.sha256);
   const covers = (rows, key) =>
     expected.every((sha) => rows?.some((row) => row.sha256 === sha && row[key]));
