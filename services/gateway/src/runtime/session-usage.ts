@@ -153,14 +153,32 @@ export async function extractRunWorkerSessionUsage(
   ];
   const slotVars = vars ?? (await loadSlotVars(slotId));
   const usages = await Promise.all(
-    unique.map((session) =>
-      extractRunnerSessionUsage({
+    unique.map(async (session) => {
+      const usage = await extractRunnerSessionUsage({
         slotId,
         vars: slotVars,
         runner: run.metrics.runner,
         ...session,
-      }),
-    ),
+      });
+      if (!usage.error) return usage;
+      const context = run.agentContexts?.find(
+        (context) =>
+          context.id === session.contextId &&
+          context.runnerSessionArchive?.originalPath === session.runnerSessionPath,
+      );
+      const archived = context && (await verifiedRunnerSessionArchivePath(run, context.id));
+      if (!archived) return usage;
+      return parseSessionUsageOutput(
+        await runSessionUsage({
+          repo: '',
+          slotId,
+          action: 'total',
+          forcedPath: archived,
+          forcedRunner: run.metrics.runner,
+        }),
+        { runner: run.metrics.runner, ...session },
+      );
+    }),
   );
   const failed = usages.find((usage) => usage.error || usage.totalTokens == null);
   if (failed)

@@ -19,6 +19,7 @@ import {
   archiveRunnerSessionsForSlotRelease,
   runnerSessionArchiveContextDir,
 } from './session-archive.js';
+import { makeVars } from './test-fixtures.js';
 
 const localVars = { host: 'localhost', machine: 'test', sshTarget: 'localhost' };
 
@@ -324,4 +325,63 @@ test('historical usage projects verified native counters without mutating the ru
   const changed = await projectArchivedRunnerUsage(current);
   assert.equal(changed.metrics.sessionTurns, undefined);
   assert.match(changed.metrics.sessionUsageError ?? '', /SHA256/);
+});
+
+test('Claude worker rollup recomputes a removed session from its verified archive', async (t) => {
+  const { claudeSessionUsageProvider } = await import('./session-usage-provider.js');
+  const { extractRunWorkerSessionUsage } = await import('../runtime/session-usage.js');
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'example-browser-farm',
+    ticketOrPr: 'claude-archive-proof',
+  });
+  t.after(() => cleanupRun(run.id));
+  const dir = runnerSessionArchiveContextDir(run.id, 'dev');
+  await mkdir(dir, { recursive: true });
+  const record = JSON.stringify({
+    type: 'assistant',
+    message: {
+      id: 'one-message',
+      model: 'claude-opus-5-5',
+      usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 100 },
+    },
+  });
+  const raw = record + '\n' + record + '\n';
+  const transcript = path.join(dir, 'transcript.jsonl');
+  await writeFile(transcript, raw);
+  const runnerSessionPath = path.join(dir, 'removed.jsonl');
+  const ref = {
+    status: 'captured' as const,
+    kind: 'jsonl' as const,
+    runner: 'claude',
+    originalPath: runnerSessionPath,
+    sha256: createHash('sha256').update(raw).digest('hex'),
+  };
+  const current = {
+    ...run,
+    slotId: 'test-slot',
+    metrics: { ...run.metrics, runner: 'claude', sessionTurns: 2 },
+    agentContexts: [
+      {
+        id: 'dev',
+        label: 'Dev',
+        slotId: 'test-slot',
+        runId: run.id,
+        role: 'dev' as const,
+        status: 'complete' as const,
+        runner: 'claude',
+        runnerSessionArchive: ref,
+      },
+    ],
+  };
+  t.mock.method(claudeSessionUsageProvider, 'recoverSessions', async () => [
+    { contextId: 'dev', runnerSessionId: 'removed', runnerSessionPath },
+  ]);
+  const usage = await extractRunWorkerSessionUsage(current, makeVars());
+  assert.equal(usage?.turns, 1);
+  assert.equal(usage.totalTokens, 106);
+  assert.equal(current.metrics.sessionTurns, 2);
+  await writeFile(transcript, raw + '{}\n');
+  await assert.rejects(extractRunWorkerSessionUsage(current, makeVars()), /SHA256/);
 });

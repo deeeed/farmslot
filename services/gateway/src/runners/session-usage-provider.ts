@@ -1,5 +1,9 @@
 import type { Run } from '@farmslot/protocol';
-import { type IncrementalSessionUsageState, readPiAssistantUsage } from '@farmslot/slot-config';
+import {
+  applyClaudeAssistantUsage,
+  type IncrementalSessionUsageState,
+  readPiAssistantUsage,
+} from '@farmslot/slot-config';
 
 export interface RecoveredUsageSession {
   contextId: string;
@@ -37,24 +41,6 @@ export interface RunnerSessionUsageProvider {
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function claudeApplyRecord(
-  state: IncrementalSessionUsageState,
-  record: Record<string, unknown>,
-): IncrementalSessionUsageState {
-  if (record.type !== 'assistant') return state;
-  const message = record.message as Record<string, unknown> | undefined;
-  const usage = message?.usage as Record<string, unknown> | undefined;
-  if (!usage) return state;
-
-  const next = { ...state, turns: state.turns + 1 };
-  next.inputTokens += finiteNumber(usage.input_tokens) ?? 0;
-  next.outputTokens += finiteNumber(usage.output_tokens) ?? 0;
-  next.cacheCreation += finiteNumber(usage.cache_creation_input_tokens) ?? 0;
-  next.cacheRead += finiteNumber(usage.cache_read_input_tokens) ?? 0;
-  next.totalTokens = next.inputTokens + next.outputTokens + next.cacheCreation + next.cacheRead;
-  return next;
 }
 
 function codexUsageTotal(usage: Record<string, unknown>): number {
@@ -137,11 +123,14 @@ function codexApplyRecord(
   return state;
 }
 
-export const claudeSessionUsageProvider: RunnerSessionUsageProvider = {
+export const claudeSessionUsageProvider = {
   id: 'claude-jsonl',
   restatesSessionTotals: false,
-  applyRecord: claudeApplyRecord,
-};
+  async recoverSessions(run) {
+    return (await import('./claude-usage-sessions.js')).recoverClaudeUsageSessions(run);
+  },
+  applyRecord: applyClaudeAssistantUsage,
+} satisfies RunnerSessionUsageProvider;
 
 export const codexSessionUsageProvider: RunnerSessionUsageProvider = {
   id: 'codex-jsonl',

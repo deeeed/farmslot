@@ -16,6 +16,7 @@ export type {
 } from './session-usage.js';
 export {
   advanceIncrementalFromBytes,
+  applyClaudeAssistantUsage,
   bufferHasNoRecordBoundary,
   emptyIncrementalSessionUsageState,
   INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
