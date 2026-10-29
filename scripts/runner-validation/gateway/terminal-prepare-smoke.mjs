@@ -115,6 +115,7 @@ const { loadSlotVars, loadProjectVars } = await load('services/gateway/src/core/
 const vars = await loadSlotVars(input.slotId);
 assert.equal(vars.host, 'localhost');
 assert.equal(typeof vars.sshUser, 'string');
+assert(vars.dispatchCmd.trim(), 'the private pool must configure dispatch_cmd');
 assert.equal(await realpath(vars.remoteRepo), await realpath(input.repo));
 assert.equal(vars.session, input.session);
 assert.equal(vars.projectName, input.project);
