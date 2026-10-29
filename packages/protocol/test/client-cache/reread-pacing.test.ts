@@ -152,13 +152,13 @@ test('a change to a key that is not paced is read at its own cadence', async (t)
 });
 
 test('a timed-out read is not sent again while the gateway may still be working on it', async (t) => {
-  const query = resourceQuery('decision.list', {});
+  const query = resourceQuery('backlog.list', {});
   const gateway = pacedGateway(t, query);
   const stop = gateway.cache.observe(query, () => {});
   const timeOut = async (ms: number) => {
     gateway.change();
     t.mock.timers.tick(ms);
-    gateway.pending.shift()!.fail(new Error('Request decision.list timed out'));
+    gateway.pending.shift()!.fail(new Error('Request backlog.list timed out'));
     await gateway.flush();
   };
   try {
@@ -199,21 +199,21 @@ test('a timed-out read is not sent again while the gateway may still be working 
 });
 
 test('a retry reads at once during the wait, and a returning observer reads when it ends', async (t) => {
-  const query = resourceQuery('decision.list', {});
+  const query = resourceQuery('backlog.list', {});
   const gateway = pacedGateway(t, query);
   let stop = gateway.cache.observe(query, () => {});
   try {
     await gateway.flush();
     gateway.change();
     t.mock.timers.tick(15_000);
-    gateway.pending.shift()!.fail(new Error('Request decision.list timed out'));
+    gateway.pending.shift()!.fail(new Error('Request backlog.list timed out'));
     await gateway.flush();
     assert.equal(gateway.reads(), 1);
     void gateway.cache.retry(query);
     await gateway.flush();
     assert.equal(gateway.reads(), 2, 'A retry is not delayed');
     t.mock.timers.tick(1_000);
-    gateway.pending.shift()!.fail(new Error('Request decision.list failed'));
+    gateway.pending.shift()!.fail(new Error('Request backlog.list failed'));
     await gateway.flush();
     stop();
     stop = gateway.cache.observe(query, () => {});
@@ -232,7 +232,7 @@ test('a retry reads at once during the wait, and a returning observer reads when
     assert.equal(gateway.reads(), 4);
     gateway.change();
     t.mock.timers.tick(3_000);
-    gateway.pending.shift()!.fail(new Error('Request decision.list timed out'));
+    gateway.pending.shift()!.fail(new Error('Request backlog.list timed out'));
     await gateway.flush();
     t.mock.timers.tick(2_999);
     await gateway.flush();
@@ -310,3 +310,44 @@ test('the PR list waits longer for the slot, worker and run changes it only cros
     stop();
   }
 });
+
+async function listWaitsForRunWrites(t: TestContext, method: 'run.list' | 'decision.list') {
+  const query = resourceQuery(method, {});
+  const gateway = pacedGateway(t, query);
+  const stop = gateway.cache.observe(query, () => {});
+  try {
+    await gateway.flush();
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    t.mock.timers.tick(60_000);
+    gateway.change();
+    await gateway.flush();
+    assert.equal(gateway.reads(), 2, 'A change after a quiet minute is read at once');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    for (let second = 1; second < 30; second++) {
+      t.mock.timers.tick(1000);
+      gateway.change();
+      await gateway.flush();
+    }
+    assert.equal(gateway.reads(), 2, 'Changes within 30 s of the last read wait');
+    t.mock.timers.tick(1000);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 3, 'and then read once');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    void gateway.cache.retry(query);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 4, 'A retry is not delayed');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+  } finally {
+    stop();
+  }
+}
+
+test('the run list waits 30 s for the run writes that change it', (t) =>
+  listWaitsForRunWrites(t, 'run.list'));
+
+test('the decision list waits 30 s for the run writes that change it', (t) =>
+  listWaitsForRunWrites(t, 'decision.list'));

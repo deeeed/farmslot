@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import { createGatewayResourceCache } from '../../src/client-cache/cache.js';
 import type { ResourceReadStamp } from '../../src/client-cache/keys.js';
@@ -27,6 +27,11 @@ import {
   runListProjection,
 } from '../../src/runs/run-list-filter.js';
 import type { ResourceChangedPayload } from '../../src/transport/events.js';
+
+// Each runs change here comes after the run list's 30 s reread floor; reread-pacing tests the floor.
+let clockOffset = 0;
+const now = performance.now.bind(performance);
+mock.method(performance, 'now', () => now() + clockOffset);
 
 function run(id: string, day: number, fields: Record<string, unknown> = {}): Run {
   return {
@@ -182,6 +187,7 @@ function gateway(runs: Run[], versionLists = true) {
       this.changed();
     },
     changed() {
+      clockOffset += 30_000;
       revision++;
       for (const listener of changeListeners)
         listener({

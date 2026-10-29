@@ -8,7 +8,7 @@ import type {
 import type { RunListProjection } from '../runs/run-list-filter.js';
 import type { ResourceChangedPayload } from '../transport/events.js';
 
-import type { ResourceReadStamp } from './keys.js';
+import type { ResourceKey, ResourceReadStamp } from './keys.js';
 import type { ResourceQuery, ResourceReadMethod } from './registry.js';
 import type {
   ContentKey,
@@ -135,6 +135,11 @@ export interface GatewayResourceCache {
    * Optional for test doubles; the shared cache always provides it.
    */
   runListProjections?(): readonly RunListProjection[] | undefined;
+  /**
+   * Whether a query someone observes declares a key `match` accepts, such as an open view of a
+   * slot's workspace. Optional for test doubles; the shared cache always provides it.
+   */
+  observedKey?(match: (key: ResourceKey) => boolean): boolean;
   retry<T>(
     query: ResourceQuery<T>,
     placement?: ResourceContentPlacement,

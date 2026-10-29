@@ -56,6 +56,10 @@ test('a connected stale inbox cannot send commands, refresh cannot replay them, 
   assert.equal(cache.read(decisionsQuery).status, 'ready');
   const socket = fake.sockets.at(-1)!;
   const sends = () => socket.sent.filter(({ method }) => method === 'decision.resolve');
+  const reads = () => socket.sent.filter(({ method }) => method === 'decision.list').length;
+  // The change arrives after the list's 30 s reread floor, so it is read at once.
+  const now = performance.now.bind(performance);
+  t.mock.method(performance, 'now', () => now() + 30_000);
   hold = true;
   revision++;
   socket.event('resource.changed', {
@@ -89,4 +93,11 @@ test('a connected stale inbox cannot send commands, refresh cannot replay them, 
   socket.failure(sends()[0].id, { code: 'METHOD_ERROR', message: 'Backend refused the write' });
   await assert.rejects(refused, /Backend refused the write/);
   assert.equal(cache.read(decisionsQuery).data?.decisions[0]?.id, 'decision');
+  const before = reads();
+  const resolved = resolveInboxDecision('decision', 'acknowledge');
+  await flush();
+  socket.response(sends()[1].id, {});
+  await resolved;
+  await flush();
+  assert.equal(reads(), before + 1, 'An answered decision rereads the inbox at once');
 });

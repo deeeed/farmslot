@@ -120,6 +120,8 @@ function createWorld() {
     refuseStore: (_input: ResourceContentInput) => false,
     fail: (_call: Call): string | undefined => undefined,
     block: (_call: Call): Promise<void> | undefined => undefined,
+    /** Slots whose workspace an open view reads. */
+    viewed: new Set<string>(),
   };
 }
 type World = ReturnType<typeof createWorld>;
@@ -264,6 +266,8 @@ function harness(
       return world.content.get(contentId(key));
     },
     contentWriteToken: () => ({ connectionId: connection.id, ownerVersion: 0, storeVersion: 0 }),
+    observedKey: (match: (key: ResourceKey) => boolean) =>
+      [...world.viewed].some((slotId) => match({ family: 'workspace', slotId })),
     async storeContent(input: ResourceContentInput) {
       world.stores.push(input);
       if (
@@ -628,6 +632,7 @@ test('content held by identity is never transferred again', async () => {
 test('an active run rereads its diff only when a coalesced git.log reports a new head', async (t) => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
   const { world, prefetcher, change, calls } = harness();
+  world.viewed.add('slot-s');
   world.runs.set('s1', { id: 's1', slotId: 'slot-s', decisions: [] } as unknown as Run);
   world.worktree.set('slot-s', { diff: '', mergeBaseSha: BASE, headSha: HEAD });
   world.heads.set('slot-s', HEAD);
@@ -661,6 +666,7 @@ test('an active run rereads its diff only when a coalesced git.log reports a new
 test('a slot diff that failed is read again at the next check until it succeeds', async (t) => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
   const { world, prefetcher, change, calls } = harness();
+  world.viewed.add('slot-s');
   world.runs.set('s1', { id: 's1', slotId: 'slot-s', decisions: [] } as unknown as Run);
   world.worktree.set('slot-s', { diff: '', mergeBaseSha: BASE, headSha: HEAD });
   world.heads.set('slot-s', HEAD);
@@ -694,6 +700,40 @@ test('a slot diff that failed is read again at the next check until it succeeds'
   await flush();
   assert.equal(calls('git.log').length, 4);
   assert.equal(calls('git.diff').length, 4, 'a head read successfully is not read again');
+});
+
+test('a slot head is checked only while a view reads that slot', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const { world, prefetcher, change, calls } = harness();
+  world.runs.set('s1', { id: 's1', slotId: 'slot-s', decisions: [] } as unknown as Run);
+  world.worktree.set('slot-s', { diff: '', mergeBaseSha: BASE, headSha: HEAD });
+  world.heads.set('slot-s', 'd'.repeat(40));
+  prefetcher.setTargets([target('s1', false)]);
+  await flush();
+  assert.equal(calls('git.diff').length, 1, 'A new active run is prefetched once');
+  for (let minute = 0; minute < 3; minute++) {
+    t.mock.timers.tick(60_000);
+    // Every run write changes the run's package key too.
+    change(
+      { family: 'workspace', slotId: 'slot-s', runId: 's1' },
+      { family: 'package', runId: 's1' },
+    );
+    await flush();
+  }
+  assert.equal(
+    calls('git.log').length,
+    0,
+    'Run writes and unviewed workspace changes read no head',
+  );
+  world.viewed.add('other');
+  change({ family: 'workspace', slotId: 'slot-s' });
+  await flush();
+  assert.equal(calls('git.log').length, 0, 'A view of another slot does not count');
+  world.viewed.add('slot-s');
+  change({ family: 'workspace', slotId: 'slot-s' });
+  await flush();
+  assert.equal(calls('git.log').length, 1, 'An open view of the slot checks its head');
+  assert.equal(calls('git.diff').length, 2, 'and rereads the diff for the new head');
 });
 
 test('a failed patch or check reads the file by path once and keeps only a matching blob', async () => {

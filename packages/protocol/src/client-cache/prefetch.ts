@@ -43,7 +43,7 @@ export interface ContentPrefetchOptions {
   >;
   cache: Pick<
     GatewayResourceCache,
-    'retry' | 'readContent' | 'storeContent' | 'retainContent' | 'contentWriteToken'
+    'retry' | 'readContent' | 'storeContent' | 'retainContent' | 'contentWriteToken' | 'observedKey'
   >;
   /** Plain RPC for reads that are not stored queries: `git.show`, `git.log` and frozen `git.diff`. */
   request<T>(method: string, params: unknown, signal: AbortSignal): Promise<T>;
@@ -62,8 +62,9 @@ export interface ContentPrefetcher {
 /** Prefetch rule 1 (initial). */
 const MAX_PREFETCH_RUNS = 2;
 /**
- * A busy worktree changes every few seconds, but only a new head rereads its diff. Checking the
- * head once a minute keeps a busy farm from asking every working slot for its log continuously.
+ * A busy worktree changes every few seconds, but only a new head rereads its diff. Its head is
+ * checked only while a view reads that slot, and then once a minute, so a busy farm's working
+ * slots are not asked for their log in the background.
  */
 const SLOT_HEAD_CHECK_INTERVAL_MS = 60_000;
 const GITLINK_MODE = '160000';
@@ -600,14 +601,23 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     pump();
   }
 
+  function viewed(slotId: string): boolean {
+    return (
+      cache.observedKey?.(
+        (key) => key.family === 'workspace' && 'slotId' in key && key.slotId === slotId,
+      ) === true
+    );
+  }
+
   function resourceChanged(payload: ResourceChangedPayload): void {
     if (!enabled || refused || disposed) return;
     const changed = new Set<PrefetchRunState>();
     for (const { key } of payload.changes) {
       if (key.family === 'package') {
+        // Every run write changes its package key; only a gate plan reads the package.
         const state = runs.get(key.runId);
-        if (state) changed.add(state);
-      } else if (key.family === 'workspace' && 'slotId' in key)
+        if (state?.plan === 'gate') changed.add(state);
+      } else if (key.family === 'workspace' && 'slotId' in key && viewed(key.slotId))
         for (const state of runs.values())
           if (
             state.plan === 'slot' &&
