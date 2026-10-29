@@ -14,6 +14,24 @@ import {
   subscribeResourceCache,
 } from '../../resource-cache.js';
 
+/**
+ * Held data stays saved while disconnected, after a failed read, or while the gateway's own source
+ * check is not current. A reread in flight also marks it stale, but only for that read, so a notice
+ * shown then would come and go with every change.
+ */
+export function heldDataIsSaved(
+  state: ResourceQueryState<unknown>,
+  connected = gateway.connectionState === 'connected',
+): boolean {
+  return (
+    state.status === 'stale' &&
+    state.data !== undefined &&
+    (!connected ||
+      state.error !== undefined ||
+      (state.sourceObservation !== undefined && state.sourceObservation.status !== 'ready'))
+  );
+}
+
 /** Binds a panel's query to the current farm owner; the shared cache owns all reads. */
 export class ResourceQueryController<T> implements ReactiveController {
   state: ResourceQueryState<T> = { status: 'loading' };

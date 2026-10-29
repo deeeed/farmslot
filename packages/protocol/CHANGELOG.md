@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- The resource cache ignores a change to a known resource key that no held query declares, such as another slot or workspace. Only a family this client does not know still rereads everything held. Before this, a busy farm reread every query several times a second.
+
 - Retain counted message identities when restoring incremental worker usage.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

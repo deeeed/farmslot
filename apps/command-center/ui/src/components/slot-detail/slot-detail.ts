@@ -30,7 +30,7 @@ import {
 import { colors, lifecycleColor } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { slotDetailStyles } from './slot-detail-styles.js';
 
@@ -370,7 +370,8 @@ export class SlotDetail extends LitElement {
   private _renderProgressStatus() {
     const observation = this.progressObservation;
     if (!(this.progressQuery.belongsToWorkspace && Boolean(this._slot?.taskFile))) return nothing;
-    if (observation.status === 'ready' || observation.status === 'loading') return nothing;
+    if (observation.status !== 'unsupported' && !observation.error && !heldDataIsSaved(observation))
+      return nothing;
     return html`<div class="progress-strip" data-slot-detail-progress=${observation.status}>
       ${observation.data
         ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`

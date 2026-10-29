@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Saved-age notices (gateway update, runs, checklists, fleet, nodes, slot progress) no longer flash while a reread is in flight; they show while disconnected, after a failed read, or while the gateway's source check is out of date. The update banner shows its saved line only beside the Update button. On the fleet page, slow or failed progress reads share one line with one Retry; slots with three failed reads in a row are named there as an alert.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.1 - 2026-10-29

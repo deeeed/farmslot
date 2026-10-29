@@ -48,7 +48,7 @@ import {
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import {
   focusWorkInventoryRow,
@@ -379,7 +379,7 @@ export class RunList extends RunListState {
     );
     const error = states.find((state) => state.error)?.error;
     return html`
-      ${states.some((state) => state.status === 'stale') && times.length
+      ${states.some((state) => heldDataIsSaved(state)) && times.length
         ? html`<div class="rehydrating-banner" data-run-freshness="stale">
             Saved runs, ${sourceObservationAge(Math.min(...times))}. Actions wait for a current
             read.
@@ -992,8 +992,11 @@ export class RunList extends RunListState {
             runChecklistProgressTarget(run)?.key ?? '',
           )}
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
-          .taskProgressStale=${this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')
-            ?.state.status !== 'ready'}
+          .taskProgressStale=${heldDataIsSaved(
+            this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state ?? {
+              status: 'loading',
+            },
+          )}
           .taskProgressAge=${sourceObservationAge(
             this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state.observedAt,
           )}

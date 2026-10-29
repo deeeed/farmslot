@@ -9,7 +9,12 @@ import {
   resourceContentWithinLimits,
   verifyResourceContent,
 } from './content.js';
-import { RESOURCE_PUBLISH_INTERVAL_MS, resourceKeyId, type ResourceReadStamp } from './keys.js';
+import {
+  isKnownResourceFamily,
+  RESOURCE_PUBLISH_INTERVAL_MS,
+  resourceKeyId,
+  type ResourceReadStamp,
+} from './keys.js';
 import {
   nativeHistoryStorageId,
   readNativeHistory,
@@ -503,6 +508,9 @@ export function createGatewayResourceCache(
       const affected = [...entries.values()].filter((entry) =>
         entry.query.dependencies.some((key) => resourceKeyId(key) === id),
       );
+      // Coverage counts declared dependencies only, so a known key that no entry declares (another
+      // slot, an unopened workspace) changes nothing held. Only a family this client cannot name might.
+      if (!affected.length && isKnownResourceFamily(change.key?.family)) continue;
       const targets = affected.length ? affected : [...entries.values()];
       for (const entry of targets) {
         if (!affected.length) entry.unknownGeneration++;

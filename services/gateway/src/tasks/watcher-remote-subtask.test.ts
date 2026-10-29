@@ -35,6 +35,10 @@ interface WatchCall {
 let watchCalls: WatchCall[] = [];
 let stopCalls: string[] = [];
 let requestCounter = 0;
+/** While set, parent checklist reads wait on it, standing in for a loaded node. */
+let checklistReadGate: Promise<void> | undefined;
+let checklistReadsInFlight = 0;
+let maxChecklistReadsInFlight = 0;
 
 function taskDirAbs(): string {
   return path.join(repoRoot, '.task', TASK_REL);
@@ -105,7 +109,18 @@ mock.module('../core/slot-io.js', {
   namedExports: {
     ...realSlotIo,
     slotFileExists: async (_ctx: unknown, filePath: string) => existsSync(filePath),
-    slotReadFile: async (_ctx: unknown, filePath: string) => readFileSync(filePath, 'utf-8'),
+    slotReadFile: async (_ctx: unknown, filePath: string) => {
+      if (checklistReadGate && filePath.endsWith('CHECKLIST.md')) {
+        checklistReadsInFlight += 1;
+        maxChecklistReadsInFlight = Math.max(maxChecklistReadsInFlight, checklistReadsInFlight);
+        try {
+          await checklistReadGate;
+        } finally {
+          checklistReadsInFlight -= 1;
+        }
+      }
+      return readFileSync(filePath, 'utf-8');
+    },
     slotMkdir: async (_ctx: unknown, dirPath: string) => {
       mkdirSync(dirPath, { recursive: true });
     },
@@ -449,6 +464,57 @@ test('a remote engine ledger event updates acceptance once, and nothing routes a
     assert.equal(progressUpdates.length, 1);
   } finally {
     console.warn = warn;
+    try {
+      await unwatchSlot(SLOT_ID);
+    } catch (err) {
+      console.error(`[test] teardown unwatch failed for ${SLOT_ID}: ${(err as Error).message}`);
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('operation heartbeats during a slow progress read fold into one rerun', async () => {
+  const root = writeTaskDir();
+  watchCalls = [];
+  stopCalls = [];
+  let release = () => {};
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    const operationCall = watchCalls.find((call) => call.path.endsWith('operations-updated.json'));
+    assert.ok(operationCall);
+    const heartbeat = () =>
+      handleAgentFsChanged({
+        requestId: operationCall.requestId,
+        machine: MACHINE,
+        path: operationCall.path,
+        content: '{}',
+      });
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    progressUpdates.length = 0;
+    checklistReadGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    checklistReadsInFlight = 0;
+    maxChecklistReadsInFlight = 0;
+
+    // The runner rewrites operations-updated.json every 5 s; a busy node takes longer to answer.
+    heartbeat();
+    await waitFor(() => checklistReadsInFlight === 1);
+    for (let beat = 0; beat < 2; beat++) {
+      heartbeat();
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+    assert.equal(maxChecklistReadsInFlight, 1, 'one progress read per watch at a time');
+    assert.equal(progressUpdates.length, 0);
+
+    checklistReadGate = undefined;
+    release();
+    await waitFor(() => progressUpdates.length === 2);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(progressUpdates.length, 2, 'the held read, then one folded rerun');
+  } finally {
+    checklistReadGate = undefined;
+    release();
     try {
       await unwatchSlot(SLOT_ID);
     } catch (err) {

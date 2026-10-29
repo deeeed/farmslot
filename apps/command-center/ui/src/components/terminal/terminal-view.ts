@@ -24,7 +24,7 @@ import '../chat/native-session-view.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, subscribe } from '../../state.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   dropCarriesFiles,
@@ -139,7 +139,8 @@ export class TerminalView extends TerminalViewState {
       )
     )
       return nothing;
-    if (observation.status === 'ready' || observation.status === 'loading') return nothing;
+    if (observation.status !== 'unsupported' && !observation.error && !heldDataIsSaved(observation))
+      return nothing;
     return html`<div class="progress-strip" data-terminal-progress=${observation.status}>
       ${observation.data
         ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`

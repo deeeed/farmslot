@@ -123,6 +123,8 @@ interface SlotWatch {
   acceptanceSyncError?: string;
   acceptanceSyncPending?: boolean;
   acceptanceSyncQueued?: boolean;
+  progressRead?: Promise<void>;
+  progressRerun?: ComputeAndEmitOptions;
   /** `artifacts/acceptance-status.json` beside this context's checklist — the AC ledger. */
   acceptanceStatusFilePath: string;
   acceptanceStatusWatcher?: FSWatcher; // chokidar watcher for local (acceptance-status.json)
@@ -1225,6 +1227,38 @@ async function computeAndEmit(
   // read even when parsing cannot produce a legacy progress payload.
   publishProgressResources(sw.slotId, sw.runId, sw.contextId);
 
+  // One progress read per watch at a time. On a loaded node a read outlasts the 5 s operation
+  // heartbeat, and overlapping reads only queue behind each other; later calls fold into one rerun.
+  if (sw.progressRead) {
+    const queued = sw.progressRerun;
+    sw.progressRerun = {
+      fromSubtask: queued?.fromSubtask || options.fromSubtask,
+      fromAcceptance: queued?.fromAcceptance || options.fromAcceptance,
+      skipAcceptanceSync: (queued?.skipAcceptanceSync ?? true) && options.skipAcceptanceSync,
+    };
+    return sw.progressRead;
+  }
+  sw.progressRead = (async () => {
+    let next: ComputeAndEmitOptions | undefined = options;
+    let markdown = content;
+    while (next && activeWatches.get(key) === sw) {
+      await readAndEmitProgress(key, sw, markdown, next);
+      next = sw.progressRerun;
+      sw.progressRerun = undefined;
+      markdown = undefined;
+    }
+  })().finally(() => {
+    sw.progressRead = undefined;
+  });
+  return sw.progressRead;
+}
+
+async function readAndEmitProgress(
+  key: string,
+  sw: SlotWatch,
+  content: string | undefined,
+  options: ComputeAndEmitOptions,
+): Promise<void> {
   try {
     if (!options.skipAcceptanceSync) scheduleAcceptanceSync(key, sw);
     if (!options.fromSubtask && !options.fromAcceptance) {
