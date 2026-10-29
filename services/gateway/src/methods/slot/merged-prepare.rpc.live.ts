@@ -14,7 +14,7 @@ import {
 } from '../../runtime/native-proof-fixture.live-support.js';
 
 test(
-  'prepare accepts a pruned squash merge and preserves genuinely unpublished work over RPC',
+  'prepare verifies a deleted single-branch PR and preserves unpublished or dirty work over RPC',
   {
     timeout: 120_000,
   },
@@ -56,6 +56,7 @@ test(
     await writeFile(path.join(root, 'scripts/dev.sh'), '#!/bin/sh\nexit 1\n');
     await writeFile(path.join(root, 'services/gateway/package.json'), '{}');
     process.env.FARMSLOT_PREPARE_PROOF_TMUX_LOG = path.join(root, 'tmux-calls');
+    process.env.FARMSLOT_TEST_STATUS_FILE = path.join(root, 'fixture-status.json');
     await writeFile(
       path.join(root, 'bin/tmux'),
       '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FARMSLOT_PREPARE_PROOF_TMUX_LOG"\nexit 1\n',
@@ -69,6 +70,7 @@ test(
         default_branch: 'main',
         repo_url: origin,
         hooks: {},
+        ci: { repo: 'fixture/prepare' },
         prepare: { profiles: { core: { phases: ['git'] } } },
       }),
     );
@@ -124,6 +126,32 @@ test(
     await writeFile(path.join(untracked, 'personal-notes.txt'), 'operator notes\n');
     git(published, 'checkout', '-q', 'main');
     await writeFile(path.join(published, 'base.txt'), 'leftover setup output\n');
+    // Reproduce Terminal #277: the configured PR head was deleted after squash merge.
+    git(safe, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+    git(
+      safe,
+      'config',
+      '--add',
+      'remote.origin.fetch',
+      `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
+    );
+    git(safe, 'update-ref', 'refs/remotes/origin/main', `${mainHead}^`);
+    const branchEndpoint = `repos/fixture/prepare/pulls?state=closed&head=${encodeURIComponent(`fixture:${branch}`)}&per_page=100`;
+    const githubCalls = path.join(root, 'github-calls.jsonl');
+    await writeFile(
+      path.join(root, 'bin/gh'),
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+const endpoint = process.argv.find(arg => arg.startsWith('repos/'));
+fs.appendFileSync(${JSON.stringify(githubCalls)}, JSON.stringify(endpoint) + '\\n');
+let body;
+if (endpoint === ${JSON.stringify(branchEndpoint)}) body = [{number:277,state:'closed',merged_at:'2026-10-28T12:00:00Z',base:{ref:'main'},head:{sha:${JSON.stringify(publishedHead)},ref:${JSON.stringify(branch)},repo:{full_name:'fixture/prepare'}},merge_commit_sha:${JSON.stringify(mainHead)}}];
+else if (/^repos\\/fixture\\/prepare\\/commits\\/[a-f0-9]+\\/pulls\\?per_page=100$/.test(endpoint || '')) body = [];
+else { console.error('Unexpected fixture GitHub endpoint'); process.exit(1); }
+console.log('HTTP/2.0 200 OK\\nContent-Type: application/json\\n\\n' + JSON.stringify(body));
+`,
+      { mode: 0o755 },
+    );
     const slots = [
       { id: 'merged-prepare-safe', repo: safe },
       { id: 'merged-prepare-unsafe', repo: unsafe },
@@ -149,7 +177,7 @@ test(
       }),
     );
     await writeFile(
-      path.join(root, '.farm-status.json'),
+      path.join(root, 'fixture-status.json'),
       JSON.stringify({
         checked_at: new Date().toISOString(),
         slots: slots.map((slot) => ({
@@ -224,6 +252,14 @@ test(
     assert.equal(git(safe, 'rev-parse', 'HEAD'), mainHead);
     assert.equal(git(safe, 'branch', '--show-current'), 'next-run');
     assert.equal(git(safe, 'rev-parse', branch), publishedHead);
+    const observedGithubCalls = (await readFile(githubCalls, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.ok(
+      observedGithubCalls.includes(branchEndpoint),
+      'prepare must read merged state for this exact head branch',
+    );
     const publishedRun = makeRun(slots[4].id);
     const publishedResult = await fixture.client.call<SlotPrepareResult>(Methods.SLOT_PREPARE, {
       slotId: slots[4].id,
@@ -247,6 +283,10 @@ test(
         {
           method: Methods.SLOT_PREPARE,
           mergedPatchAccepted: true,
+          deletedSingleBranchFetchRecovered: true,
+          mergedPrHeadBranchRead: branchEndpoint,
+          githubMetadata:
+            'setup-time provider fixture; real local Git and authenticated production RPC',
           preparedHead: mainHead,
           previousBranchPreserved: publishedHead,
           unpublishedRefusedAndPreserved: unpublishedHead,

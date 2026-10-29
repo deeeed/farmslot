@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Allow prepare to reuse a deleted configured PR head only after verifying its merge and preserving unpublished or dirty work.
+
 - Include every Pi worker session and fix round once in run token and cost totals, excluding reviewers.
 
 - Capture Pi worker session paths and recover their exact tokens and reported cost in family views.
