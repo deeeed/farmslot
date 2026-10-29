@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Retain counted message identities when restoring incremental worker usage.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.1 - 2026-10-29

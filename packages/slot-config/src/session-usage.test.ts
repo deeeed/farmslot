@@ -3,7 +3,9 @@ import {
   appendFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   renameSync,
+  rmSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -13,6 +15,7 @@ import test from 'node:test';
 
 import {
   advanceIncrementalFromBytes,
+  applyClaudeAssistantUsage,
   emptyIncrementalSessionUsageState,
   type IncrementalSessionUsageState,
   runSessionUsage,
@@ -118,6 +121,40 @@ test('runSessionUsage total output contains key=value lines parseable by gateway
   // key=value lines
   assert.match(out, /model=claude-sonnet-4-6/);
   assert.match(out, /cost_usd=/);
+});
+
+test('Claude multi-block messages count once across serialized incremental windows and totals', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const raw = readFileSync(
+    new URL('../test/fixtures/claude-multi-block.jsonl', import.meta.url),
+    'utf8',
+  );
+  const records = raw
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  let state = applyClaudeAssistantUsage(emptyIncrementalSessionUsageState(), records[0]);
+  state = JSON.parse(JSON.stringify(state));
+  for (const record of records.slice(1)) state = applyClaudeAssistantUsage(state, record);
+  assert.equal(state.turns, 2);
+  assert.equal(state.inputTokens, 4);
+  assert.equal(state.outputTokens, 391);
+  assert.equal(state.cacheCreation, 33163);
+  assert.equal(state.cacheRead, 79214);
+  const file = path.join(home, 'session.jsonl');
+  writeFileSync(file, raw);
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: file,
+    forcedRunner: 'claude',
+  });
+  assert.match(out, /turns=2/);
+  assert.match(out, /total_tokens=112772/);
+  // Company LiteLLM Opus: 4/20/5/0.4 USD per million input/output/write/read tokens.
+  assert.match(out, /cost_usd=0\.2053/);
 });
 
 // ─── Codex ────────────────────────────────────────────────────────────────────

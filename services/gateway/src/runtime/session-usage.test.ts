@@ -5,7 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { makeRun } from '../run-completion/test-fixtures.js';
-import { piSessionUsageProvider } from '../runners/session-usage-provider.js';
+import {
+  claudeSessionUsageProvider,
+  piSessionUsageProvider,
+} from '../runners/session-usage-provider.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 import { extractRunWorkerSessionUsage, parseSessionUsageOutput } from './session-usage.js';
@@ -132,4 +135,47 @@ test('Pi worker rollup counts the initial session and both fix rounds once', asy
     }) + '\n',
   );
   assert.equal((await extractRunWorkerSessionUsage(run, makeVars()))?.costUsd, null);
+});
+
+test('Claude historical rollup deduplicates message blocks and session references without changing stored totals', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'claude-worker-rollup-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const initial = path.join(root, 'initial.jsonl');
+  const fixed = path.join(root, 'fix.jsonl');
+  const assistant = (id: string, cache: number) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        id,
+        model: 'claude-opus-5-5',
+        usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: cache },
+      },
+    });
+  await writeFile(
+    initial,
+    assistant('message-initial', 100) + '\n' + assistant('message-initial', 100) + '\n',
+  );
+  await writeFile(fixed, assistant('message-fix', 200) + '\n');
+  const sessions = [initial, fixed, initial].map((runnerSessionPath, index) => ({
+    contextId: index === 1 ? 'review-fix' : 'fix-bug',
+    runnerSessionId: path.basename(runnerSessionPath),
+    runnerSessionPath,
+  }));
+  t.mock.method(claudeSessionUsageProvider, 'recoverSessions', async () => sessions);
+  const run = makeRun({
+    flowType: 'fix-bug',
+    slotId: 'test-slot',
+    metrics: {
+      nudgeCount: 0,
+      runner: 'claude',
+      model: 'opus',
+      sessionTurns: 3,
+      sessionTotalTokens: 418,
+    },
+  });
+  const usage = await extractRunWorkerSessionUsage(run, makeVars());
+  assert.equal(usage?.turns, 2);
+  assert.equal(usage.totalTokens, 312);
+  assert.equal(usage.costUsd, 0.0003);
+  assert.equal(run.metrics.sessionTurns, 3, 'historical reads preserve stored data');
 });

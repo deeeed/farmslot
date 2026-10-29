@@ -28,6 +28,9 @@ interface OpenaiPricing {
 // Conservative/optional estimates. If the model doesn't match any entry we omit
 // cost_usd rather than inventing a value.
 const CLAUDE_PRICING: Record<string, ClaudePricing> = {
+  // Company LiteLLM catalog, USD per million tokens.
+  'claude-opus-5-5': { input: 4, output: 20, cache_write: 5, cache_read: 0.4 },
+  'claude-sonnet-5-5': { input: 2, output: 10, cache_write: 2.5, cache_read: 0.2 },
   'claude-opus-4-6': { input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.5 },
   'claude-sonnet-4-6': { input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3 },
   'claude-haiku-4-5': { input: 0.8, output: 4.0, cache_write: 1.0, cache_read: 0.08 },
@@ -374,22 +377,26 @@ async function chooseSession(
 
 async function summarizeClaude(filePath: string): Promise<SessionTotals> {
   const totals = emptyTotals();
+  let state = emptyIncrementalSessionUsageState();
   for await (const obj of safeJsonLines(filePath)) {
-    if (obj.type !== 'assistant') continue;
-    const msg = (obj.message as Record<string, unknown>) ?? {};
-    if (totals.model === 'unknown' && msg.model) {
-      totals.model = msg.model as string;
-    }
-    const usage = (msg.usage as Record<string, unknown>) ?? {};
-    if (!Object.keys(usage).length) continue;
-    totals.turns += 1;
-    totals.input_tokens += (usage.input_tokens as number) ?? 0;
-    totals.output_tokens += (usage.output_tokens as number) ?? 0;
-    totals.cache_creation += (usage.cache_creation_input_tokens as number) ?? 0;
-    totals.cache_read += (usage.cache_read_input_tokens as number) ?? 0;
+    const message = obj.message;
+    if (
+      obj.type === 'assistant' &&
+      message &&
+      typeof message === 'object' &&
+      'model' in message &&
+      typeof message.model === 'string' &&
+      totals.model === 'unknown'
+    )
+      totals.model = message.model;
+    state = applyClaudeAssistantUsage(state, obj);
   }
-  const totalInput = totals.input_tokens + totals.cache_creation + totals.cache_read;
-  totals.total_tokens = totalInput + totals.output_tokens;
+  totals.turns = state.turns;
+  totals.input_tokens = state.inputTokens;
+  totals.output_tokens = state.outputTokens;
+  totals.cache_creation = state.cacheCreation;
+  totals.cache_read = state.cacheRead;
+  totals.total_tokens = state.totalTokens;
   const prices = Object.entries(CLAUDE_PRICING).find(
     ([k]) => totals.model !== 'unknown' && totals.model.includes(k),
   )?.[1];
@@ -729,6 +736,8 @@ export type IncrementalSessionUsageState = {
   outputTokens: number;
   cacheCreation: number;
   cacheRead: number;
+  /** Claude repeats one message's usage on each content block, including across reads. */
+  claudeMessageIds?: string[];
   sampledAt?: string;
   unavailableReason?: string;
   /** Persistent fail-closed reason when transcript accounting lost integrity. */
@@ -761,6 +770,34 @@ export type IncrementalSessionUsageState = {
    */
   fileId?: string;
 };
+
+/** Count Claude's per-message usage once, even when its blocks arrive in separate windows. */
+export function applyClaudeAssistantUsage(
+  state: IncrementalSessionUsageState,
+  record: Record<string, unknown>,
+): IncrementalSessionUsageState {
+  const message = record.message;
+  if (record.type !== 'assistant' || !message || typeof message !== 'object') return state;
+  const usage = 'usage' in message ? message.usage : null;
+  if (!usage || typeof usage !== 'object' || !Object.keys(usage).length) return state;
+  const id = 'id' in message && typeof message.id === 'string' ? message.id : undefined;
+  if (id && state.claudeMessageIds?.includes(id)) return state;
+  const number = (key: string) => {
+    const value = key in usage ? Reflect.get(usage, key) : null;
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  };
+  const next = {
+    ...state,
+    turns: state.turns + 1,
+    inputTokens: state.inputTokens + number('input_tokens'),
+    outputTokens: state.outputTokens + number('output_tokens'),
+    cacheCreation: state.cacheCreation + number('cache_creation_input_tokens'),
+    cacheRead: state.cacheRead + number('cache_read_input_tokens'),
+    ...(id ? { claudeMessageIds: [...(state.claudeMessageIds ?? []), id] } : {}),
+  };
+  next.totalTokens = next.inputTokens + next.outputTokens + next.cacheCreation + next.cacheRead;
+  return next;
+}
 
 export type IncrementalSessionUsageResult = {
   turns: number | null;
@@ -880,6 +917,7 @@ export function advanceIncrementalFromBytes(
         state = {
           ...before,
           lastCumulative: applied.lastCumulative,
+          claudeMessageIds: applied.claudeMessageIds,
           discardNextRecord: false,
         };
         continue;
