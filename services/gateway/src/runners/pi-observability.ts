@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { primaryRoleForFlow, type Run } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
@@ -19,12 +21,13 @@ interface PiSessionScope {
   startedAt?: number;
   endedAt?: number;
   reviewerIntervals?: Array<{ startedAt: number; endedAt: number }>;
+  taskDir?: string;
 }
 
 /** Read only Pi-owned session headers and, for recovery, the exact pane/session snapshot. */
 export function buildPiSessionDiscoveryCommand(repo: string, scope: PiSessionScope = {}): string {
   return `python3 - <<'PY'
-import datetime, json, os
+import datetime, json, os, re
 from pathlib import Path
 from urllib.parse import quote
 repo = ${JSON.stringify(repo)}
@@ -44,11 +47,28 @@ for file in (home / '.pi' / 'agent' / 'sessions').glob('*/*.jsonl'):
             if any(interval['startedAt'] <= started < interval['endedAt'] for interval in scope.get('reviewerIntervals', [])):
                 continue
             session = file.stem
-            snapshot = json.loads((Path(scope['observabilityDir']) / 'sessions' / (quote(session, safe='') + '.json')).read_text())
-            if snapshot.get('session_id') != session or snapshot.get('runner') != 'pi' or snapshot.get('tmuxPane') != scope['paneId'] or snapshot.get('slotId') != scope['slotId']:
-                continue
-            if os.path.realpath(snapshot.get('cwd', '')) != os.path.realpath(repo):
-                continue
+            snapshot_file = Path(scope['observabilityDir']) / 'sessions' / (quote(session, safe='') + '.json')
+            if snapshot_file.exists():
+                snapshot = json.loads(snapshot_file.read_text())
+                if snapshot.get('session_id') != session or snapshot.get('runner') != 'pi' or snapshot.get('tmuxPane') != scope['paneId'] or snapshot.get('slotId') != scope['slotId']:
+                    continue
+                if os.path.realpath(snapshot.get('cwd', '')) != os.path.realpath(repo):
+                    continue
+            else:
+                # Recycle removes pane snapshots. The first native user prompt retains its task binding.
+                if not scope.get('taskDir') or scope['taskDir'] in ('.', '/'):
+                    continue
+                text = ''
+                with file.open() as stream:
+                    for line in stream:
+                        message = json.loads(line).get('message')
+                        if isinstance(message, dict) and message.get('role') == 'user':
+                            content = message.get('content')
+                            text = content if isinstance(content, str) else '\\n'.join(block['text'] for block in content if isinstance(block, dict) and isinstance(block.get('text'), str)) if isinstance(content, list) else ''
+                            break
+                mark = scope['taskDir'].rstrip('/') + '/mark'
+                if not re.search(r'(?<![A-Za-z0-9_.-])' + re.escape(mark) + r'(?![A-Za-z0-9_./-])', text):
+                    continue
         paths.append(os.path.realpath(file))
     except (OSError, ValueError, TypeError, KeyError):
         # Partial or unavailable runner-owned metadata cannot establish a binding.
@@ -109,6 +129,7 @@ export async function recoverPiUsageSessions(run: Run): Promise<RecoveredUsageSe
         startedAt,
         endedAt,
         reviewerIntervals,
+        taskDir: context.taskFile ? path.posix.dirname(context.taskFile) : undefined,
       }),
       { timeout: 10_000, selectNodeSupport: false },
     );
