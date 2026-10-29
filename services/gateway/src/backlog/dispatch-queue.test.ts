@@ -1874,6 +1874,8 @@ test('loadQueue keeps legacy undefined-attempt launch row against live attempt-b
   const reloaded = getQueueSnapshot().find((q) => q.id === item.id);
   assert.ok(reloaded, 'undefined !== 1 must re-queue (restart attempt matrix)');
   assert.equal(reloaded.status, 'queued');
+  // A retry timer from an earlier test would otherwise dispatch this row into a later test.
+  removeQueueItemInternal(item.id, 'test-cleanup');
   await cleanupRun(run.id);
 });
 
@@ -1972,7 +1974,8 @@ test('partial create after durable stamp drops the row instead of requeueing', a
   t.after(async () => {
     if (partialRunId && getRun(partialRunId)) await cleanupRun(partialRunId);
   });
-  await tryDispatchNext();
+  // A call that joins a retry already in flight returns before that retry sees this row.
+  for (let attempt = 0; attempt < 3 && !partialRunId; attempt++) await tryDispatchNext();
   assert.ok(partialRunId, 'callback must create a Run before failing');
   assert.ok(getRun(partialRunId));
   assert.ok(
