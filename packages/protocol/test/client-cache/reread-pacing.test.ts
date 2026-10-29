@@ -3,9 +3,11 @@ import test, { type TestContext } from 'node:test';
 
 import {
   createGatewayResourceCache,
+  RESOURCE_PUBLISH_INTERVAL_MS,
   RESOURCE_REREAD_INTERVAL_MS,
   RESOURCE_RETRY_MAX_WAIT_MS,
   type ResourceCacheTransport,
+  type ResourceKey,
   type ResourceQuery,
   resourceQuery,
   type ResourceReadResult,
@@ -70,12 +72,12 @@ function pacedGateway(t: TestContext, query: ResourceQuery) {
     cache,
     reads: () => reads,
     pending,
-    change() {
+    change(keys: readonly ResourceKey[] = query.dependencies) {
       revision++;
       changed!({
         version: 1,
         epoch: 'pacing-epoch',
-        changes: query.dependencies.map((key) => ({ key, revision, kind: 'updated' })),
+        changes: keys.map((key) => ({ key, revision, kind: 'updated' })),
       });
     },
     async flush() {
@@ -106,6 +108,42 @@ test('a farm-wide slot read changing all the time is reread once per interval', 
     gateway.pending.shift()!.answer();
     await gateway.flush();
     assert.equal(gateway.cache.read(query).status, 'ready');
+  } finally {
+    stop();
+  }
+});
+
+test('a change to a key that is not paced is read at its own cadence', async (t) => {
+  const query = resourceQuery('copilot.status', {});
+  const gateway = pacedGateway(t, query);
+  const stop = gateway.cache.observe(query, () => {});
+  const only = (family: string) => query.dependencies.filter((key) => key.family === family);
+  try {
+    await gateway.flush();
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    t.mock.timers.tick(1000);
+    gateway.change(only('slots'));
+    await gateway.flush();
+    assert.equal(gateway.reads(), 1, 'A slot change waits for the slot interval');
+    gateway.change(only('copilot'));
+    await gateway.flush();
+    assert.equal(gateway.reads(), 2, 'A copilot change is not held back by the slot change');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    gateway.change(only('slots'));
+    t.mock.timers.tick(100);
+    gateway.change(only('copilot'));
+    await gateway.flush();
+    assert.equal(gateway.reads(), 2, 'The copilot change waits only for its own interval');
+    t.mock.timers.tick(RESOURCE_PUBLISH_INTERVAL_MS.copilot! - 101);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 2);
+    t.mock.timers.tick(1);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 3, 'An armed slot wait gives way to the copilot cadence');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
   } finally {
     stop();
   }
@@ -153,6 +191,40 @@ test('a timed-out read is not sent again while the gateway may still be working 
     assert.equal(gateway.reads(), 9, 'An answer ends the wait');
     gateway.pending.shift()!.answer();
     await gateway.flush();
+  } finally {
+    stop();
+  }
+});
+
+test('a retry reads at once during the wait, and a returning observer reads when it ends', async (t) => {
+  const query = resourceQuery('decision.list', {});
+  const gateway = pacedGateway(t, query);
+  let stop = gateway.cache.observe(query, () => {});
+  try {
+    await gateway.flush();
+    gateway.change();
+    t.mock.timers.tick(15_000);
+    gateway.pending.shift()!.fail(new Error('Request decision.list timed out'));
+    await gateway.flush();
+    assert.equal(gateway.reads(), 1);
+    void gateway.cache.retry(query);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 2, 'A retry is not delayed');
+    t.mock.timers.tick(1_000);
+    gateway.pending.shift()!.fail(new Error('Request decision.list failed'));
+    await gateway.flush();
+    stop();
+    stop = gateway.cache.observe(query, () => {});
+    await gateway.flush();
+    t.mock.timers.tick(2_000);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 3, 'A returning observer of a failed read still reads');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    assert.equal(gateway.cache.read(query).status, 'ready');
+    t.mock.timers.tick(RESOURCE_RETRY_MAX_WAIT_MS);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 3, 'An answered read leaves no retry behind');
   } finally {
     stop();
   }

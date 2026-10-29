@@ -658,7 +658,7 @@ test('an active run rereads its diff only when a coalesced git.log reports a new
   assert.equal(calls('git.diff').length, 2);
 });
 
-test('a slot diff that failed is read again for a new head, not at every check', async (t) => {
+test('a slot diff that failed is read again at the next check until it succeeds', async (t) => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
   const { world, prefetcher, change, calls } = harness();
   world.runs.set('s1', { id: 's1', slotId: 'slot-s', decisions: [] } as unknown as Run);
@@ -673,21 +673,27 @@ test('a slot diff that failed is read again for a new head, not at every check',
   change({ family: 'workspace', slotId: 'slot-s' });
   await flush();
   assert.equal(calls('git.log').length, 1);
-  assert.equal(calls('git.diff').length, 2, 'the first check tries the head it found once');
+  assert.equal(calls('git.diff').length, 2, 'the first check tries the unread head');
+  change({ family: 'workspace', slotId: 'slot-s' });
+  await flush();
+  assert.equal(calls('git.diff').length, 2, 'changes within the minute wait for the next check');
+  t.mock.timers.tick(60_000);
+  await flush();
+  assert.equal(calls('git.log').length, 2);
+  assert.equal(calls('git.diff').length, 3, 'an unread head is tried again at the next check');
 
-  for (let minute = 1; minute <= 3; minute++) {
-    t.mock.timers.tick(60_000);
-    change({ family: 'workspace', slotId: 'slot-s' });
-    await flush();
-  }
-  assert.equal(calls('git.log').length, 4, 'one head check a minute');
-  assert.equal(calls('git.diff').length, 2, 'the same head is not read again');
-
-  world.heads.set('slot-s', 'd'.repeat(40));
+  // The source recovers without a new commit.
+  world.fail = () => undefined;
   t.mock.timers.tick(60_000);
   change({ family: 'workspace', slotId: 'slot-s' });
   await flush();
-  assert.equal(calls('git.diff').length, 3, 'a new commit reads the diff again');
+  assert.equal(calls('git.log').length, 3);
+  assert.equal(calls('git.diff').length, 4);
+  t.mock.timers.tick(60_000);
+  change({ family: 'workspace', slotId: 'slot-s' });
+  await flush();
+  assert.equal(calls('git.log').length, 4);
+  assert.equal(calls('git.diff').length, 4, 'a head read successfully is not read again');
 });
 
 test('a failed patch or check reads the file by path once and keeps only a matching blob', async () => {

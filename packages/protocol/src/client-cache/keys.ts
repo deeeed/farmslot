@@ -115,9 +115,9 @@ export const RESOURCE_PUBLISH_INTERVAL_MS: Partial<Record<ResourceKey['family'],
 };
 
 /**
- * Automatic rereads of a farm-wide slot read wait at least this long. Every slot's task phase,
- * progress and workspace change it, several times a second on a busy farm, and each reread
- * returns every slot.
+ * An automatic reread that only changes to these keys call for waits at least this long after the
+ * last read. Every slot's task phase, progress and workspace change the farm slot keys, several
+ * times a second on a busy farm, and a farm-wide read returns every slot.
  */
 export const RESOURCE_REREAD_INTERVAL_MS: Partial<Record<ResourceKey['family'], number>> = {
   slots: 10_000,

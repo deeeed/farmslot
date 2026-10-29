@@ -314,10 +314,8 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       signal,
     );
     const head = log.entries[0]?.hash;
+    // Only a diff read successfully sets the head, so one that failed is tried at the next check.
     if (signal.aborted || head === state.head) return;
-    // A diff read that fails for this head (a working tree changing under a long read) is tried
-    // again at the next commit, not at every check.
-    state.head = head;
     refetch(state);
   }
 

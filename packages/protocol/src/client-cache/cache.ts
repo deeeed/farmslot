@@ -86,6 +86,8 @@ interface QueryEntry {
   /** Failed reads since the last answer, and the earliest an automatic reread may follow them. */
   failures: number;
   retryAt?: number;
+  /** How long after the last read the changes since it may wait; any unpaced key lifts it. */
+  rereadFloor?: number;
   readTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -231,6 +233,7 @@ export function createGatewayResourceCache(
 
   function invalidate(entry: QueryEntry, clear = false): void {
     cancelScheduledRead(entry);
+    entry.rereadFloor = undefined;
     if (clear) {
       entry.lastRequestedAt = undefined;
       entry.retryAt = undefined;
@@ -523,6 +526,10 @@ export function createGatewayResourceCache(
       const targets = affected.length ? affected : [...entries.values()];
       for (const entry of targets) {
         if (!affected.length) entry.unknownGeneration++;
+        entry.rereadFloor = Math.min(
+          entry.rereadFloor ?? Infinity,
+          (affected.length && RESOURCE_REREAD_INTERVAL_MS[change.key.family]) || 0,
+        );
         entry.dirty = true;
         entry.state = { ...entry.state, status: 'stale' };
         notify(entry);
@@ -755,13 +762,8 @@ export function createGatewayResourceCache(
       return entry.pending.promise;
     }
     const interval = entry.query.dependencies.reduce(
-      (maximum, key) =>
-        Math.max(
-          maximum,
-          RESOURCE_PUBLISH_INTERVAL_MS[key.family] ?? 0,
-          RESOURCE_REREAD_INTERVAL_MS[key.family] ?? 0,
-        ),
-      0,
+      (maximum, key) => Math.max(maximum, RESOURCE_PUBLISH_INTERVAL_MS[key.family] ?? 0),
+      entry.rereadFloor ?? 0,
     );
     const wait = Math.max(
       interval - (performance.now() - (entry.lastRequestedAt ?? -Infinity)),
@@ -770,7 +772,9 @@ export function createGatewayResourceCache(
     if (observedOnly && wait > 0) {
       // A slow read's follow-up can finish just before the next producer notice.
       // Coalesce that automatic read too, rather than exceeding the family's bound.
-      entry.readTimer ??= setTimeout(() => {
+      // The wait only shortens until the next read, so the timer follows the latest one.
+      cancelScheduledRead(entry);
+      entry.readTimer = setTimeout(() => {
         entry.readTimer = undefined;
         if (entry.dirty || entry.state.status !== 'ready') schedule(entry);
       }, wait);
@@ -786,6 +790,7 @@ export function createGatewayResourceCache(
     };
     entry.pending = pending;
     entry.dirty = false;
+    entry.rereadFloor = undefined;
     const unknownGeneration = entry.unknownGeneration;
     entry.state = {
       ...entry.state,
