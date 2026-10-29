@@ -25,7 +25,7 @@ import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { getNode } from '../fleet/machine-registry.js';
-import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
+import { getSlotLocality } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { getRun } from '../runs/store.js';
 import {
@@ -375,7 +375,36 @@ async function resolveMachine(slotId: string): Promise<string | undefined> {
   return undefined;
 }
 
-export async function terminalInput(params: TerminalInputParams): Promise<void> {
+const terminalInputChains = new Map<string, Promise<void>>();
+
+export async function terminalInput(
+  params: TerminalInputParams,
+  assertAccess?: () => Promise<void>,
+): Promise<void> {
+  // Reserve order before resolving a selector. Different role/context selectors can
+  // resolve to the same pane, so all input for the owning slot session shares a key.
+  const key = isWorkspaceTerminal(params)
+    ? workspaceTerminalKey(params.runId!)
+    : `slot:${params.slotId}`;
+  const previous = terminalInputChains.get(key) ?? Promise.resolve();
+  const operation = previous.then(async () => {
+    await assertAccess?.();
+    await writeTerminalInput(params);
+  });
+  // The caller receives its own failure; later input must not inherit that rejection.
+  const settled = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  terminalInputChains.set(key, settled);
+  try {
+    await operation;
+  } finally {
+    if (terminalInputChains.get(key) === settled) terminalInputChains.delete(key);
+  }
+}
+
+async function writeTerminalInput(params: TerminalInputParams): Promise<void> {
   if (isWorkspaceTerminal(params)) {
     const { key } = await resolveWorkspaceTerminal(params);
     if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
@@ -400,10 +429,10 @@ export async function terminalInput(params: TerminalInputParams): Promise<void> 
   );
   const machine = await resolveMachine(params.slotId);
   if (machine && getNode(machine)) {
-    await sendNodeRequest(getNode(machine)!, 'tmux.send', {
-      session: resolved.target,
-      text: params.data,
-      enter: false,
+    // Raw input can contain a whole buffered word such as "Up" or "Enter".
+    // Reuse the literal text path so tmux never interprets it as a named key.
+    await sendKeys(params.slotId, resolved.target, params.data, false, undefined, {
+      noRetry: true,
     });
     return;
   }

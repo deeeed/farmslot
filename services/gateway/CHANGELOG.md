@@ -20,6 +20,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Notice the first checkout-update record and missing Git refs on Linux gateways: the update watcher watches existing directories instead of missing files.
 
+- Preserve literal terminal keystrokes in arrival order across clients while ownership, target checks or remote delivery are slow.
+
 - Allow prepare to reuse a deleted configured PR head only after verifying its merge and preserving unpublished or dirty work.
 
 - Keep run history forever and move settled storage into a verified, configurable archive instead of deleting it.

@@ -58,6 +58,11 @@ interface PendingRequest {
   cleanup?: () => void;
 }
 
+export interface GatewayRequestOptions extends ResourceReadOptions {
+  /** Recheck caller lifetime after authentication/reconnection waits, before writing the frame. */
+  assertCurrent?: () => void;
+}
+
 const DEFAULT_TIMEOUT = 15_000;
 const MAX_BACKOFF = 30_000;
 export class GatewayClient {
@@ -397,13 +402,15 @@ export class GatewayClient {
     method: string,
     params?: unknown,
     timeout: number | null = DEFAULT_TIMEOUT,
-    options?: ResourceReadOptions,
+    options?: GatewayRequestOptions,
   ): Promise<T> {
     if (options?.signal?.aborted) throw new Error('Resource read aborted');
+    options?.assertCurrent?.();
     if (this.personSession?.session && !isAuthenticationEntry(method)) {
       const person = this.personSession;
       try {
         return await person.withAccess(async (token) => {
+          options?.assertCurrent?.();
           if (this.auth.token !== token) await this.acceptAccess(token);
           return this.requestRaw<T>(method, params, timeout, options);
         });
@@ -443,7 +450,7 @@ export class GatewayClient {
     method: string,
     params?: unknown,
     timeout: number | null = DEFAULT_TIMEOUT,
-    options?: ResourceReadOptions,
+    options?: GatewayRequestOptions,
   ): Promise<T> {
     if (options?.signal?.aborted) throw new Error('Resource read aborted');
     const generation = this.generation;
@@ -459,6 +466,8 @@ export class GatewayClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('Not connected');
     }
+
+    options?.assertCurrent?.();
 
     const id = String(++this.reqId);
     const frame: RequestFrame = {

@@ -79,6 +79,7 @@ import {
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { slotTerminalRunnerPane, type TerminalControlKey } from '../../lib/terminal-controls';
+import { TerminalInputCancelledError } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import { appendTerminalTailText, terminalTailLinesFromText } from '../../lib/terminal-tail';
 import {
@@ -147,6 +148,7 @@ import {
 } from './components/terminal-history-viewer';
 import { slotTerminalStyles as styles } from './styles/slot-terminal.styles';
 import { useTerminalProof, useTerminalRunContext } from './use-terminal-run-context';
+import { useTerminalInput } from './use-terminal-input';
 
 const LINE_COUNT_OPTIONS = [25, 50, 100, 200] as const;
 const TERMINAL_DATA_EVENT = 'terminal.data';
@@ -489,6 +491,11 @@ export default function TerminalScreen() {
     terminalInputCommands: inputCommands.current,
     terminalSubscriptionStarts: subscriptionStarts.current,
   });
+  const sendTerminalInput = useTerminalInput(
+    terminalTargetParams,
+    terminalTargetParamsRef,
+    terminalInputDisabledReason,
+  );
 
   const loadInitialSnapshot = useCallback(async () => {
     const target = terminalTargetParamsRef.current;
@@ -522,16 +529,16 @@ export default function TerminalScreen() {
       if (terminalInputDisabledReason || !client) return;
       try {
         const captured = requireTerminalTarget();
-        client
-          .request('terminal.input', { ...captured.target, data }, 10_000)
-          .catch((error: Error) => {
-            if (captured.current()) setSnapshotError(`Terminal input failed: ${error.message}`);
-          });
+        sendTerminalInput(data).catch((error: unknown) => {
+          // Navigation/disconnect deliberately discards unsent input.
+          if (!(error instanceof TerminalInputCancelledError) && captured.current())
+            setSnapshotError(`Terminal input failed: ${getErrorMessage(error)}`);
+        });
       } catch (error) {
         setSnapshotError(getErrorMessage(error));
       }
     },
-    [client, requireTerminalTarget, terminalInputDisabledReason],
+    [client, requireTerminalTarget, sendTerminalInput, terminalInputDisabledReason],
   );
 
   const handleTerminalResize = useCallback(
@@ -700,13 +707,13 @@ export default function TerminalScreen() {
         setActiveControlKey(control.label);
         setControlError(null);
         inputCommands.current++;
-        await client.request('terminal.input', { ...command.target, data: control.data });
+        await sendTerminalInput(control.data);
         if (!command.current()) return;
         await Haptics.impactAsync(
           control.danger ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light,
         );
       } catch (error) {
-        if (!command || command.current())
+        if (!(error instanceof TerminalInputCancelledError) && (!command || command.current()))
           setControlError(`Control failed: ${getErrorMessage(error)}`);
       } finally {
         command?.finish(() => {
@@ -715,7 +722,13 @@ export default function TerminalScreen() {
         });
       }
     },
-    [beginTerminalCommand, client, isSendingControl, terminalInputDisabledReason],
+    [
+      beginTerminalCommand,
+      client,
+      isSendingControl,
+      sendTerminalInput,
+      terminalInputDisabledReason,
+    ],
   );
 
   const refreshTmuxWindows = useCallback(async () => {

@@ -28,6 +28,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Bind run report visual judgments to the pending output-review snapshot and block submissions when evidence, progress or review context changes.
 
+- Send terminal typing and control keys in order, batch pending keys, and cancel unsent input when leaving a terminal.
+
 - Stop fleet recovery observations when its dialog closes; retain explicit release guards while background checks finish.
 
 - Add reversible criterion drafts and approval counts using the same gate model as Command Center.

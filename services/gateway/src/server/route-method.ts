@@ -694,6 +694,19 @@ export async function routeMethod(
     }
   }
   return runWithSessionOriginator(actingPrincipal, async () => {
+    if (method === Methods.TERMINAL_INPUT) {
+      // Reserve arrival order before the asynchronous native ownership checks.
+      await terminalInput((params ?? {}) as TerminalInputParams, async () => {
+        const current = authorizeGatewayMethod(authRuntime, state, method);
+        if (
+          current.id !== actingPrincipal.id ||
+          (current.generation ?? 0) !== (actingPrincipal.generation ?? 0)
+        )
+          throw new GatewayMethodError('AUTH_FORBIDDEN', 'Terminal input authority changed');
+        await assertNativeWorkerRpcAccess(method, params);
+      });
+      return { sent: true };
+    }
     await assertNativeWorkerRpcAccess(method, params);
     return routeAuthorizedMethod(method, params, context);
   });
@@ -1095,9 +1108,6 @@ async function routeAuthorizedMethod(
       const delivery = await terminalSend(p as TerminalSendParams, emit);
       return { sent: true, ...delivery };
     }
-    case Methods.TERMINAL_INPUT:
-      await terminalInput(p as TerminalInputParams);
-      return { sent: true };
     case Methods.TERMINAL_RESIZE:
       await terminalResize(p as TerminalResizeParams);
       return { resized: true };

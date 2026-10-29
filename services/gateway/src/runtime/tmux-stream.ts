@@ -3,7 +3,7 @@
 import type { TerminalData } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, type ExecOptions } from '../core/exec.js';
 import { pasteTmuxText, shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
 import { runnerPromptSubmitKey } from '../runners/registry.js';
 
@@ -137,6 +137,7 @@ export async function sendKeys(
   text: string,
   enter = true,
   runner?: string,
+  options?: Pick<ExecOptions, 'noRetry'>,
 ): Promise<void> {
   const vars = await loadSlotVars(slotId);
   if (runner) {
@@ -147,6 +148,7 @@ export async function sendKeys(
   }
   const result = await execOnSlot(vars, buildSendKeysCommand(session, text, enter), {
     timeout: 5000,
+    ...options,
   });
   // A discarded exit code is how a send into a window that no longer exists
   // reported success: tmux answers `can't find window: dev` on stderr and exits
