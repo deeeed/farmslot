@@ -18,7 +18,9 @@ import type {
 import type { ResourceChangedPayload } from '../../src/transport/events.js';
 
 // Admission plumbing is tested before the owning server read is enabled for client cutover.
-const query = { ...resourceQuery<{ value: string }>('pr.list'), live: true };
+// Only the upstream key: farm-wide slot keys pace automatic rereads, which is tested elsewhere.
+const prList = resourceQuery<{ value: string }>('pr.list');
+const query = { ...prList, dependencies: prList.dependencies.slice(0, 1), live: true };
 interface Admission {
   params: ResourceObserversReplaceParams;
   signal: AbortSignal;

@@ -12,6 +12,8 @@ import {
 import {
   isKnownResourceFamily,
   RESOURCE_PUBLISH_INTERVAL_MS,
+  RESOURCE_REREAD_INTERVAL_MS,
+  RESOURCE_RETRY_MAX_WAIT_MS,
   resourceKeyId,
   type ResourceReadStamp,
 } from './keys.js';
@@ -81,6 +83,9 @@ interface QueryEntry {
   pending?: PendingRead;
   dirty: boolean;
   lastRequestedAt?: number;
+  /** Failed reads since the last answer, and the earliest an automatic reread may follow them. */
+  failures: number;
+  retryAt?: number;
   readTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -226,7 +231,10 @@ export function createGatewayResourceCache(
 
   function invalidate(entry: QueryEntry, clear = false): void {
     cancelScheduledRead(entry);
-    if (clear) entry.lastRequestedAt = undefined;
+    if (clear) {
+      entry.lastRequestedAt = undefined;
+      entry.retryAt = undefined;
+    }
     entry.serial++;
     entry.pending?.controller.abort();
     entry.pending = undefined;
@@ -381,6 +389,7 @@ export function createGatewayResourceCache(
     revisions.clear();
     for (const entry of entries.values()) {
       entry.lastRequestedAt = undefined;
+      entry.retryAt = undefined;
       invalidate(entry, revoke || scopeChanged || authorityChanged);
     }
     barrier = barrier
@@ -545,6 +554,7 @@ export function createGatewayResourceCache(
       unknownGeneration: 0,
       lastUsed: ++lastUsed,
       dirty: true,
+      failures: 0,
     };
     entries.set(query.id, entry);
     hydrateEntry(entry);
@@ -745,10 +755,18 @@ export function createGatewayResourceCache(
       return entry.pending.promise;
     }
     const interval = entry.query.dependencies.reduce(
-      (maximum, key) => Math.max(maximum, RESOURCE_PUBLISH_INTERVAL_MS[key.family] ?? 0),
+      (maximum, key) =>
+        Math.max(
+          maximum,
+          RESOURCE_PUBLISH_INTERVAL_MS[key.family] ?? 0,
+          RESOURCE_REREAD_INTERVAL_MS[key.family] ?? 0,
+        ),
       0,
     );
-    const wait = interval - (performance.now() - (entry.lastRequestedAt ?? -Infinity));
+    const wait = Math.max(
+      interval - (performance.now() - (entry.lastRequestedAt ?? -Infinity)),
+      (entry.retryAt ?? -Infinity) - performance.now(),
+    );
     if (observedOnly && wait > 0) {
       // A slow read's follow-up can finish just before the next producer notice.
       // Coalesce that automatic read too, rather than exceeding the family's bound.
@@ -869,6 +887,8 @@ export function createGatewayResourceCache(
         };
         // Only a real intervening invalidation needs a follow-up; missing metadata is not a retry loop.
         entry.dirty = supported && !covered && entry.dirty;
+        entry.failures = 0;
+        entry.retryAt = undefined;
         entry.lastUsed = ++lastUsed;
         // Version-list views are derived from the run collection, which is stored on its own.
         const persistResult =
@@ -986,6 +1006,15 @@ export function createGatewayResourceCache(
         )
           return;
         const failure = queryError(error);
+        // A gateway too slow to answer may still be working on the read, so asking again at once
+        // piles the same work up there. The wait starts at the failed read's length and doubles.
+        const failedAt = performance.now();
+        entry.retryAt =
+          failedAt +
+          Math.min(
+            (failedAt - (entry.lastRequestedAt ?? failedAt)) * 2 ** entry.failures++,
+            RESOURCE_RETRY_MAX_WAIT_MS,
+          );
         // An intervening write still needs one read after failed I/O. Terminal
         // refusals retire that work; an unchanged failed source never retries.
         entry.dirty &&=

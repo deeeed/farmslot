@@ -113,3 +113,15 @@ export const RESOURCE_PUBLISH_INTERVAL_MS: Partial<Record<ResourceKey['family'],
   progress: 200,
   'native-session': 200,
 };
+
+/**
+ * Automatic rereads of a farm-wide slot read wait at least this long. Every slot's task phase,
+ * progress and workspace change it, several times a second on a busy farm, and each reread
+ * returns every slot.
+ */
+export const RESOURCE_REREAD_INTERVAL_MS: Partial<Record<ResourceKey['family'], number>> = {
+  slots: 10_000,
+};
+
+/** The longest an automatic reread waits after failed reads of the same query. */
+export const RESOURCE_RETRY_MAX_WAIT_MS = 300_000;

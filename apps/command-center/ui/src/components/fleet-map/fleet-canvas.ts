@@ -71,6 +71,7 @@ import {
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
+import { fleetSeatsQuery } from './fleet-seats-query.js';
 import { renderFleetSkeleton } from './fleet-skeleton.js';
 import type { MachinePauseBusyAction } from './machine-pause-dialog.js';
 import {
@@ -168,7 +169,7 @@ export class FleetCanvas extends LitElement {
   private _unsubThumbnails?: () => void;
   private _unsubMachinePauseUpdated?: () => void;
   private _onHashChange = () => this._readUrlParams();
-  /** Every fleet machine's runner seats; the config page shares the same cached owners. */
+  /** Runner seats of the fleet's machines, named so that slot changes do not reread them. */
   private readonly providerAccountsQuery =
     new ResourceQueryController<ProviderAccountsSnapshotResult>(this);
   private readonly nodeQuery = new ResourceQueryController<NodesListResult>(this, (result) => {
@@ -342,9 +343,6 @@ export class FleetCanvas extends LitElement {
     this.unsub = subscribe((s) => this.syncState(s));
 
     this.nodeQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
-    this.providerAccountsQuery.setQuery(
-      resourceQuery<ProviderAccountsSnapshotResult>(Methods.PROVIDER_ACCOUNTS_SNAPSHOT),
-    );
     this._unsubConnState = gateway.onConnectionChange((s) => {
       if (s === 'connected') {
         this.scheduleResourcePressureRecoveryRefresh();
@@ -511,6 +509,7 @@ export class FleetCanvas extends LitElement {
     const prev = this.slots;
     const previousPressureFilter = JSON.stringify([this.filterProjects, this.filterMachines]);
     this.slots = s.fleet?.slots ?? [];
+    this.providerAccountsQuery.setQuery(fleetSeatsQuery(this.slots));
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;
     this.fleetObservation = s.fleetObservation;
