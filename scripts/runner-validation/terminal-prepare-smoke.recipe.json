@@ -1,0 +1,26 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Terminal prepares a cold server and releases its worker",
+  "description": "Use a prepared private farm, real Terminal hooks and one cheap-model validation run. Retain the consumed input and failed run for in-place diagnosis. Never target an operator pool or an original product run.",
+  "paramsSchema": {
+    "type": "object",
+    "properties": {
+      "input": { "type": "string", "pattern": "^[A-Za-z0-9_./-]+$" }
+    },
+    "required": ["input"],
+    "additionalProperties": false
+  },
+  "workflow": {
+    "entry": "terminal-dispatch",
+    "nodes": {
+      "terminal-dispatch": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-prepare-smoke.mjs '{{params.input}}'",
+        "timeout_ms": 1200000,
+        "intent": "Prepare Terminal, confirm dispatch, then release the owned worker.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
