@@ -336,7 +336,8 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     const actualModel = usage.actualModel ?? null;
     const chainSessionTotal = usesReviewChainSessionTotal(run);
     const metricsPatch: Partial<typeof run.metrics> = { sessionUsageError: usage.error };
-    if (workerUsage) metricsPatch.costEstimate = workerUsage.costUsd ?? undefined;
+    if (workerUsage && !workerUsage.error)
+      metricsPatch.costEstimate = workerUsage.costUsd ?? undefined;
     let accounted = {
       costUsd,
       turns,

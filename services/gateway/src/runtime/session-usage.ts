@@ -190,8 +190,17 @@ export async function extractRunWorkerSessionUsage(
 /** Recover only verified retained native usage, without rewriting stored runs. */
 export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
   try {
-    const workerUsage = await extractRunWorkerSessionUsage(run);
-    if (workerUsage)
+    let workerUsage: RunnerSessionUsage | null;
+    try {
+      workerUsage = await extractRunWorkerSessionUsage(run);
+    } catch (error) {
+      // A recycled/offline slot cannot replace known totals or a verified archive.
+      workerUsage = unavailableRunnerSessionUsage({
+        runner: run.metrics.runner,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (workerUsage && !workerUsage.error)
       return {
         ...run,
         metrics: {
@@ -201,10 +210,14 @@ export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
           sessionUsageError: workerUsage.error,
         },
       };
-    if (run.metrics.sessionTotalTokens != null && run.metrics.sessionTurns != null) return run;
+    if (run.metrics.sessionTotalTokens != null && run.metrics.sessionTurns != null)
+      return workerUsage?.error
+        ? { ...run, metrics: { ...run.metrics, sessionUsageError: workerUsage.error } }
+        : run;
     const archived = await verifiedRunnerSessionArchivePath(run);
     if (!archived) {
       const reason =
+        workerUsage?.error ??
         run.metrics.sessionUsageError ??
         run.metrics.runnerSessionArchive?.reason ??
         'runner did not report usage and no verified transcript was retained';
@@ -222,7 +235,11 @@ export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
     if (usesReviewChainSessionTotal(run)) return run;
     return {
       ...run,
-      metrics: { ...runnerUsageMetrics(usage), ...run.metrics, sessionUsageError: usage.error },
+      metrics: {
+        ...runnerUsageMetrics(usage),
+        ...run.metrics,
+        sessionUsageError: workerUsage?.error ?? usage.error,
+      },
     };
   } catch (error) {
     return { ...run, metrics: { ...run.metrics, sessionUsageError: (error as Error).message } };
