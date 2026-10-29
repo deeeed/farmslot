@@ -848,6 +848,11 @@ export async function executeReviewStep(
     };
 
   if (current.mode !== 'interactive') {
+    if (result.fixDeliveryFailure)
+      throw new ResultDecisionHoldError(result.fixDeliveryFailure, inputs, {
+        ...result,
+        cliCommand,
+      });
     const benignSkipReasons = new Set([
       'disabled',
       'disabled-for-project',
