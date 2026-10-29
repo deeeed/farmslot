@@ -101,7 +101,7 @@ import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
 import { initReview } from './review/orchestrator.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
-import { collectRunArtifactGarbage } from './run-completion/retained-artifacts.js';
+import { runBundleStore } from './run-completion/retained-artifacts.js';
 import {
   initRunEngine,
   rearmPublicationReviewRecoveryForRun,
@@ -375,7 +375,7 @@ async function main(): Promise<void> {
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();
   await backfillMissingRunLinks(getAllRuns());
-  await collectRunArtifactGarbage();
+  if (!process.env.FARMSLOT_SANDBOX_HOME) await runBundleStore(true);
   startRunRetention(observedBroadcast);
   const prMonitoring = await initPRMonitoring(
     gatewayAuthRuntime,

@@ -22,7 +22,6 @@ import {
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
 import {
-  collectRunBundleGarbage,
   DEFAULT_RUN_BUNDLE_RETENTION,
   isRunBundleMedia,
   type MaterializedRunBundle,
@@ -34,7 +33,9 @@ import {
   readRunBundleAvailability,
   reserveRunBundleMetadata,
   resolveRetainedRunBundleRef as localBundleRef,
+  runBundleHousekeepingPaths,
   runBundleRefs,
+  withRunBundleStoreLock,
 } from '@farmslot/run-bundle';
 
 import { sha256File } from '../core/file-hash.js';
@@ -52,7 +53,9 @@ import { loadContextFromArtifactRoot } from '../live-recipe/context.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import {
   getRun,
+  getRunWithArchived,
   persistRunNow,
+  recordRunStorageArchive,
   runsDirectory,
   shouldUseIsolatedRunsDir,
   updateRun,
@@ -320,16 +323,57 @@ export async function qualifyRetainedRunMetadata(run: Run): Promise<void> {
     await readOptionalRetainedRunText(run, file);
 }
 
-export async function collectRunArtifactGarbage(): Promise<void> {
+/** Release admission reservations by archiving them, with the package owner selecting safe paths. */
+export async function archiveRunArtifactHousekeeping(): Promise<void> {
   if (process.env.FARMSLOT_SANDBOX_HOME) return;
-  await collectRunBundleGarbage(await runBundleStore(true), await retentionPolicy());
+  const {
+    runArchiveRoot,
+    assertArchiveRoot,
+    stageStoragePaths,
+    finishStorageArchive,
+    storageArchiveManifest,
+  } = await import('../runs/storage-archive.js');
+  const root = runArchiveRoot();
+  const store = await runBundleStore(true);
+  const staged = new Set<string>();
+  await withRunBundleStoreLock(store, async () => {
+    const entries = await runBundleHousekeepingPaths(store);
+    if (!entries.length) return;
+    await assertArchiveRoot(root);
+    for (const entry of entries) {
+      if (await getRunWithArchived(entry.runId))
+        await recordRunStorageArchive(entry.runId, storageArchiveManifest(root, entry.runId));
+      await stageStoragePaths(root, entry.runId, [{ source: entry.path, store: entry.store }]);
+      staged.add(entry.runId);
+    }
+  });
+  for (const id of staged) {
+    try {
+      await finishStorageArchive(root, id);
+    } catch (error) {
+      console.error(
+        `[run-retention] housekeeping archive ${id} failed; source/journal retained: ${(error as Error).message}`,
+      );
+    }
+  }
+}
+
+/** Cleanup failure cannot discard a new run's report or bypass its normal capacity checks. */
+async function tryArchiveRunArtifactHousekeeping(): Promise<void> {
+  try {
+    await archiveRunArtifactHousekeeping();
+  } catch (error) {
+    console.error(
+      `[run-retention] housekeeping unavailable; bytes retained and normal capacity checks continue: ${(error as Error).message}`,
+    );
+  }
 }
 
 export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const store = await runBundleStore(true);
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
-  await collectRunBundleGarbage(store, policy);
+  await tryArchiveRunArtifactHousekeeping();
   await reserveRunBundleMetadata(store, run.id, policy, farmslotRoot);
 }
 
@@ -346,7 +390,7 @@ export async function retainCapturedRunArtifacts(input: {
 }): Promise<MaterializedRunBundle> {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
-  await collectRunBundleGarbage(store, await retentionPolicy());
+  await tryArchiveRunArtifactHousekeeping();
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.
   // The materializer checks containment and hashes each file while copying it.

@@ -792,6 +792,104 @@ export async function readRetainedRunBundle(
 }
 
 /** Preserve history metadata and pinned dependency media; availability is separate from the manifest. */
+export interface RunBundleHousekeepingPath {
+  path: string;
+  runId: string;
+  store: 'bundle-reservations' | 'bundle-intents' | 'bundle-staging';
+}
+
+/** Metadata/staging selection shared by the standalone collector and archive-only gateway. Caller holds the bundle lock. */
+async function runBundleHousekeepingInventory(store: RunBundleStore, now: number) {
+  const cleanup: RunBundleHousekeepingPath[] = [];
+  const referenced = new Set<string>();
+  const activeRuns = new Set<string>();
+  const pinned = new Set<string>();
+  const retainReference = (ref: RunArtifactBundleRef | undefined, pin: boolean) => {
+    if (!ref || ref.storeId !== store.id) return;
+    referenced.add(ref.bundleDigest);
+    if (pin) pinned.add(ref.bundleDigest);
+  };
+  for (const run of [
+    ...loadAllRunRecords(store.runsDir),
+    ...loadAllRunRecords(path.join(store.runsDir, 'archive')),
+  ]) {
+    const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) =>
+      retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
+    const active = isActiveListRun(run);
+    if (active) activeRuns.add(run.id);
+    for (const { ref, decision } of runBundleRefs(run))
+      retain(
+        ref,
+        decision
+          ? !decision.resolvedAt ||
+              (decision.payload?.kind === 'ready' &&
+                ['published_draft', 'published_ready'].includes(
+                  decision.payload.prPackage?.publicationStatus ?? '',
+                ))
+          : active,
+      );
+  }
+  const intentsDir = path.join(store.runsDir, 'bundle-intents');
+  await mkdir(intentsDir, { recursive: true });
+  const activeStages = new Set<string>();
+  const captureRuns = new Set<string>();
+  const committedIntents = new Map<string, string[]>();
+  for (const file of await readdir(intentsDir)) {
+    if (!file.endsWith('.json')) continue;
+    const intentPath = path.join(intentsDir, file);
+    const intent: CaptureIntent = JSON.parse(await readFile(intentPath, 'utf8'));
+    // A prepared package can outlive the current output pointer before its gate is recorded.
+    if (intent.bundleDigest && activeRuns.has(intent.runId)) pinned.add(intent.bundleDigest);
+    if (intent.committed && intent.bundleDigest) {
+      const files = committedIntents.get(intent.bundleDigest) ?? [];
+      files.push(path.join(intentsDir, file));
+      committedIntents.set(intent.bundleDigest, files);
+    }
+    if (!intent.committed) {
+      const inactive = now - (await stat(intentPath)).mtimeMs > 86_400_000;
+      const repair = intent.bundleDigest
+        ? bundleLockOptions(store, repairLockName(intent.bundleDigest))
+        : null;
+      const repairing = repair ? await lockfile.check(repair.lockfilePath, repair) : false;
+      if (!activeRuns.has(intent.runId) && inactive && !repairing) {
+        cleanup.push({ path: intentPath, runId: intent.runId, store: 'bundle-intents' });
+        continue;
+      }
+      activeStages.add(intent.bundleId);
+      if (intent.bundleDigest) activeStages.add(intent.bundleDigest);
+      captureRuns.add(intent.runId);
+      if (intent.bundleDigest) pinned.add(intent.bundleDigest);
+    }
+  }
+  const reservations = path.join(store.root, 'reservations');
+  await mkdir(reservations, { recursive: true });
+  for (const name of await readdir(reservations)) {
+    if (!name.endsWith('.json')) continue;
+    const runId = name.slice(0, -5);
+    if (!activeRuns.has(runId) && !captureRuns.has(runId))
+      cleanup.push({ path: path.join(reservations, name), runId, store: 'bundle-reservations' });
+  }
+  const stagingRoot = path.join(store.root, 'staging');
+  await mkdir(stagingRoot, { recursive: true });
+  for (const name of await readdir(stagingRoot)) {
+    if (name.startsWith('.retention-')) continue;
+    assertSafeBundleSegment(name, 'staging id');
+    const directory = path.join(stagingRoot, name);
+    if (activeStages.has(name) || now - (await stat(directory)).mtimeMs < 86_400_000) continue;
+    cleanup.push({ path: directory, runId: 'bundle-housekeeping', store: 'bundle-staging' });
+  }
+  return { cleanup, referenced, pinned, committedIntents };
+}
+
+/** Select inactive reservations and abandoned capture scaffolding without removing bytes. */
+export async function runBundleHousekeepingPaths(
+  store: RunBundleStore,
+  now = Date.now(),
+): Promise<RunBundleHousekeepingPath[]> {
+  await assertStorePairing(store);
+  return (await runBundleHousekeepingInventory(store, now)).cleanup;
+}
+
 export async function collectRunBundleGarbage(
   store: RunBundleStore,
   policy = DEFAULT_RUN_BUNDLE_RETENTION,
@@ -800,75 +898,16 @@ export async function collectRunBundleGarbage(
   await assertStorePairing(store);
   assertPolicy(policy);
   return withRunBundleStoreLock(store, async () => {
-    const referenced = new Set<string>();
-    const activeRuns = new Set<string>();
-    const pinned = new Set<string>();
-    const retainReference = (ref: RunArtifactBundleRef | undefined, pin: boolean) => {
-      if (!ref || ref.storeId !== store.id) return;
-      referenced.add(ref.bundleDigest);
-      if (pin) pinned.add(ref.bundleDigest);
-    };
-    for (const run of [
-      ...loadAllRunRecords(store.runsDir),
-      ...loadAllRunRecords(path.join(store.runsDir, 'archive')),
-    ]) {
-      const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) =>
-        retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
-      const active = isActiveListRun(run);
-      if (active) activeRuns.add(run.id);
-      for (const { ref, decision } of runBundleRefs(run))
-        retain(
-          ref,
-          decision
-            ? !decision.resolvedAt ||
-                (decision.payload?.kind === 'ready' &&
-                  ['published_draft', 'published_ready'].includes(
-                    decision.payload.prPackage?.publicationStatus ?? '',
-                  ))
-            : active,
-        );
+    const { cleanup, referenced, pinned, committedIntents } = await runBundleHousekeepingInventory(
+      store,
+      now,
+    );
+    let housekeepingBytes = 0;
+    for (const entry of cleanup) {
+      if (entry.store === 'bundle-staging') housekeepingBytes += await physicalBytes(entry.path);
+      await rm(entry.path, { recursive: true, force: true });
     }
-    const intentsDir = path.join(store.runsDir, 'bundle-intents');
-    await mkdir(intentsDir, { recursive: true });
-    const activeStages = new Set<string>();
-    const captureRuns = new Set<string>();
-    const committedIntents = new Map<string, string[]>();
-    for (const file of await readdir(intentsDir)) {
-      if (!file.endsWith('.json')) continue;
-      const intentPath = path.join(intentsDir, file);
-      const intent: CaptureIntent = JSON.parse(await readFile(intentPath, 'utf8'));
-      // A prepared package can outlive the current output pointer before its gate is recorded.
-      if (intent.bundleDigest && activeRuns.has(intent.runId)) pinned.add(intent.bundleDigest);
-      if (intent.committed && intent.bundleDigest) {
-        const files = committedIntents.get(intent.bundleDigest) ?? [];
-        files.push(path.join(intentsDir, file));
-        committedIntents.set(intent.bundleDigest, files);
-      }
-      if (!intent.committed) {
-        const inactive = now - (await stat(intentPath)).mtimeMs > 86_400_000;
-        const repair = intent.bundleDigest
-          ? bundleLockOptions(store, repairLockName(intent.bundleDigest))
-          : null;
-        const repairing = repair ? await lockfile.check(repair.lockfilePath, repair) : false;
-        if (!activeRuns.has(intent.runId) && inactive && !repairing) {
-          await rm(intentPath);
-          continue;
-        }
-        activeStages.add(intent.bundleId);
-        if (intent.bundleDigest) activeStages.add(intent.bundleDigest);
-        captureRuns.add(intent.runId);
-        if (intent.bundleDigest) pinned.add(intent.bundleDigest);
-      }
-    }
-    const reservations = path.join(store.root, 'reservations');
-    await mkdir(reservations, { recursive: true });
-    for (const name of await readdir(reservations)) {
-      if (!name.endsWith('.json')) continue;
-      const runId = name.slice(0, -5);
-      if (!activeRuns.has(runId) && !captureRuns.has(runId))
-        await rm(path.join(reservations, name));
-    }
-    let reclaimedBytes = 0;
+    let reclaimedBytes = housekeepingBytes;
     const prunedPaths: string[] = [];
     const digestRoot = path.join(store.root, 'sha256');
     await mkdir(digestRoot, { recursive: true });
@@ -910,15 +949,6 @@ export async function collectRunBundleGarbage(
         });
         prunedPaths.push(...removed);
       }
-    }
-    const stagingRoot = path.join(store.root, 'staging');
-    await mkdir(stagingRoot, { recursive: true });
-    for (const name of await readdir(stagingRoot)) {
-      assertSafeBundleSegment(name, 'staging id');
-      const directory = path.join(stagingRoot, name);
-      if (activeStages.has(name) || now - (await stat(directory)).mtimeMs < 86_400_000) continue;
-      reclaimedBytes += await physicalBytes(directory);
-      await rm(directory, { recursive: true });
     }
     return { reclaimedBytes, prunedPaths };
   });
