@@ -121,6 +121,10 @@ const flush = async () => {
   for (let i = 0; i < 20; i++) await new Promise<void>((resolve) => setImmediate(resolve));
 };
 
+// The effects import the app state on their first refresh. On Node 22 a module import takes tens
+// of event-loop turns, more than `flush` waits, so it happens here, before any test counts turns.
+await effects.refreshSlotViewDrafts(makeView(createDraftStore(createMemoryDraftStorage())));
+
 /** Memory storage whose writes wait while held, as a slow IndexedDB transaction would. */
 function slowStorage() {
   const memory = createMemoryDraftStorage();
@@ -1003,4 +1007,19 @@ test('a reconnect while sign-out runs never reopens the scope before sign-out ha
     (await store.list('scope-a')).map(({ editedContent }) => editedContent),
     ['export const value = 212;\n'],
   );
+});
+
+test('after the first, a draft refresh settles within a few event-loop turns', async (t) => {
+  const store = reset(t);
+  await store.put(draftFor());
+  const view = makeView(store);
+  let settled = false;
+  void effects.refreshSlotViewDrafts(view).then(() => {
+    settled = true;
+  });
+  // Every `flush` in these tests counts on it: the app state is imported once, not per refresh.
+  for (let turn = 0; turn < 3 && !settled; turn++)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, true);
+  assert.equal(view._slotDrafts.length, 1);
 });

@@ -1,15 +1,9 @@
 import assert from 'node:assert/strict';
-import { registerHooks } from 'node:module';
-import { after, test } from 'node:test';
+import { mock, test } from 'node:test';
 
-// Node cannot load Vite's CSS import; styles do not affect which diff the modal holds.
-const css = registerHooks({
-  load(url, context, next) {
-    if (url.endsWith('.css')) return { format: 'module', source: '', shortCircuit: true };
-    return next(url, context);
-  },
-});
-after(() => css.deregister());
+// The diff widget imports Vite CSS and diff2html's ESM build, which Node 22 cannot load; drawing
+// the diff does not decide which diff the modal holds.
+mock.module('../diff-viewer/diff-review.js', { namedExports: {} });
 
 Object.defineProperty(globalThis, 'location', {
   configurable: true,

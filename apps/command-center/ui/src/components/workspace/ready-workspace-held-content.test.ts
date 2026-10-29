@@ -612,7 +612,15 @@ test('an image mismatch is settled: a re-render fetches the same source no more'
       headers: { 'content-type': 'image/png' },
     });
   });
-  t.mock.method(console, 'error', () => undefined);
+  const errors = t.mock.method(console, 'error', () => undefined);
+  // Each failed load ends by logging; wait for that, however many turns its reads take.
+  const failed = async (count: number) => {
+    const deadline = performance.now() + 5000;
+    while (errors.mock.callCount() < count) {
+      assert.ok(performance.now() < deadline, `load ${count} never finished`);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  };
   t.mock.method(URL, 'createObjectURL', () => assert.fail('A mismatched body is never shown'));
   class MediaHarness extends GatewayMedia {
     override setValue(): void {}
@@ -621,16 +629,16 @@ test('an image mismatch is settled: a re-render fetches the same source no more'
   const url = makePresenter()._artifactUrl(settled.path, settled);
   const view = new MediaHarness({ type: PartType.CHILD });
   view.render(url);
-  await flush();
+  await failed(1);
   // The failed load clears the source; the host renders again, as that clearing may cause.
   view.render(url);
-  await flush();
+  await failed(2);
   assert.deepEqual(fetched, ['evidence/settled.png']);
 
   // A new manifest identity for the same URL is a new source, read once more.
   gatewayContentMediaUrl(url, { path: settled.path, sha256: 'e'.repeat(64) });
   view.render(url);
-  await flush();
+  await failed(3);
   assert.deepEqual(fetched, ['evidence/settled.png', 'evidence/settled.png']);
 
   // A network failure is not settled: the next render tries again.
@@ -639,9 +647,9 @@ test('an image mismatch is settled: a re-render fetches the same source no more'
   const flakyUrl = makePresenter()._artifactUrl(flaky.path, flaky);
   const other = new MediaHarness({ type: PartType.CHILD });
   other.render(flakyUrl);
-  await flush();
+  await failed(4);
   other.render(flakyUrl);
-  await flush();
+  await failed(5);
   assert.equal(fetched.filter((path) => path === 'evidence/flaky.png').length, 2);
 });
 

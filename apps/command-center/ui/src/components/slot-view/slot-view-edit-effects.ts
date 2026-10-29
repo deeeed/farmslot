@@ -24,6 +24,20 @@ import {
 /** The pause in typing before an autosave. */
 export const SLOT_VIEW_AUTOSAVE_PAUSE_MS = 1500;
 
+let appState: Promise<typeof import('../../state.js')> | undefined;
+
+/**
+ * The app state, imported once on first use so the workspace effects keep a light import graph.
+ * Later uses resolve at once instead of each paying for a module resolution.
+ */
+function loadAppState() {
+  appState ??= import('../../state.js').catch((error: unknown) => {
+    appState = undefined;
+    throw error;
+  });
+  return appState;
+}
+
 /** Slots whose `fs.read` this scope's user was refused; their drafts stay hidden (decision 6). */
 const refusedSlots = new Map<string, Set<string>>();
 
@@ -198,8 +212,7 @@ export async function refreshSlotViewDrafts(view: SlotView): Promise<void> {
     return;
   }
   const writer = draftScopeWriter(scopeId);
-  // Loaded when drafts are, so the workspace effects keep a light import graph.
-  const { getState } = await import('../../state.js');
+  const { getState } = await loadAppState();
   const state = getState();
   const fleet = {
     ready: state.fleetObservation.status === 'ready',
@@ -279,7 +292,7 @@ export function scheduleSlotViewAutosave(view: SlotView, path: string): void {
   clearTimeout(view._autosaveTimer);
   const scheduled = armingKey(view, path);
   view._autosaveTimer = setTimeout(async () => {
-    const { getState, isFleetCurrent } = await import('../../state.js');
+    const { getState, isFleetCurrent } = await loadAppState();
     const slot = getState().fleet?.slots.find((candidate) => candidate.slot === view.slotId);
     // The draft that paused must still be the one shown: same scope, slot, run and path.
     const key = armingKey(view, path);
