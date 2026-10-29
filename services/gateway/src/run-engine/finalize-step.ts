@@ -175,7 +175,7 @@ export async function executeFinalizeStep(
     await assertAdoptedPublicationContinuation(current);
   }
   if (!publicationApprovalGate)
-    await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null);
+    await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'finalize');
   if (runSupersededSince(getRun(runId), generation))
     throw new Error('Finalization was superseded during gate validation');
   const inputs: Record<string, unknown> = {

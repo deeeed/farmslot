@@ -80,6 +80,7 @@ test('eval completion retains unapproved claims without requiring publication ap
     [{ code: 'evidence-policy-unsatisfied', evidencePolicy: 'claim-verdict' }],
   );
   await assert.doesNotReject(assertRunGateReady(current, null, 'complete'));
+  await assert.doesNotReject(assertRunGateReady(current, null, 'finalize'));
   await assert.rejects(assertRunGateReady(current, null, 'approve-publish'), /claim verdicts/);
   // An ordinary artifact-only output is outside the eval exception.
   updateRun(run.id, { engineState: undefined });
