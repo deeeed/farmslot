@@ -46,6 +46,7 @@ import {
   prepareIdentityPath,
   reapSlotPrepareScope,
 } from '../methods/slot.js';
+import { isReviewerCapacityError } from '../review/terminal-result.js';
 import {
   executeReviewWorkspaceStep,
   reconcileReviewWorkspaceCleanup,
@@ -962,7 +963,9 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         return;
       }
 
-      if (isTerminalReviewArtifactError(err)) {
+      const capacityHold =
+        (stepName === S.REVIEW || stepName === S.HUMAN_GATE) && isReviewerCapacityError(err);
+      if (isTerminalReviewArtifactError(err) || capacityHold) {
         console.warn(
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} requires operator review: ${msg}`,
         );
@@ -976,7 +979,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         );
         if (runSupersededSince(getRun(runId), myGen)) return;
         updateRunStep(runId, stepName, {
-          status: 'done',
+          status: capacityHold ? 'failed' : 'done',
           detail: msg,
           completedAt: new Date().toISOString(),
         });
@@ -984,7 +987,9 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           updateRunStep(runId, steps[j], { status: 'skipped' });
         }
         updateRun(runId, {
-          status: runDecisionWaitingStatus(getRun(runId)!, progress, 'review_artifact'),
+          status: capacityHold
+            ? 'review-failed'
+            : runDecisionWaitingStatus(getRun(runId)!, progress, 'review_artifact'),
           error: msg,
         });
         broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
