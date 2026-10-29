@@ -856,7 +856,8 @@ test('restart recovery preserves a persisted fix prompt delivery boundary when t
   assert.deepEqual(result, { status: 'relaunch-required' });
 });
 
-test('recovered fix stops polling when the worker has exited', async () => {
+test('recovered fix stops polling when the worker has exited', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
   const run = {
     id: 'run-1',
     project: 'farmslot-farm',
@@ -865,7 +866,7 @@ test('recovered fix stops polling when the worker has exited', async () => {
     agentContexts: [],
   };
   let probes = 0;
-  const result = await reconcileRecoveredFixPromptDelivery(
+  const pending = reconcileRecoveredFixPromptDelivery(
     { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
     'run-1',
     {
@@ -894,6 +895,8 @@ test('recovered fix stops polling when the worker has exited', async () => {
     },
     { retryIntervalMs: 1, retryWindowMs: 100 },
   );
+  t.mock.timers.tick(1);
+  const result = await pending;
   assert.deepEqual(result, { status: 'relaunch-required' });
   assert.equal(probes, 1);
 });
@@ -1294,24 +1297,29 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: ReviewRetryDeps; calls: C
         ],
       };
     },
-    getRun: () =>
-      ({
-        metrics: { model: 'sonnet' },
-        agentContexts: [
-          {
-            id: 'fix-context',
-            role: 'review-fix',
-            status: 'working',
-            taskFile: 'tasks/foo/REVIEW-FIX.md',
-            signalFile: 'tasks/foo/REVIEW-FIX-SIGNAL.json',
-            runner: 'claude',
-            model: 'sonnet',
-            attemptStartedAt: '2026-08-05T00:00:00.000Z',
-            startedAt: '2026-08-05T00:00:00.000Z',
-            target: { session: 'worker', target: 'worker:dev' },
-          },
-        ],
-      }) as any,
+    getRun: () => ({
+      ...makeRun({
+        id: 'run-12345678',
+        metrics: { model: 'sonnet', runner: 'claude', nudgeCount: 0 },
+      }),
+      agentContexts: [
+        {
+          id: 'fix-context',
+          label: 'Review fix',
+          runId: 'run-12345678',
+          slotId: 'slot-1',
+          role: 'review-fix',
+          status: 'working',
+          taskFile: 'tasks/foo/REVIEW-FIX.md',
+          signalFile: 'tasks/foo/REVIEW-FIX-SIGNAL.json',
+          runner: 'claude',
+          model: 'sonnet',
+          attemptStartedAt: '2026-08-05T00:00:00.000Z',
+          startedAt: '2026-08-05T00:00:00.000Z',
+          target: { session: 'worker', target: 'worker:dev' },
+        },
+      ],
+    }),
   };
   return { deps, calls };
 }

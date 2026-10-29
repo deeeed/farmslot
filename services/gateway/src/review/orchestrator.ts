@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   type AgentContext,
   isPipelineRepairVisualReviewInput,
+  isRecord,
   isTerminalRunStatus,
   PipelineSteps,
   primaryRoleForFlow,
@@ -67,7 +68,13 @@ import {
 } from '../runners/session-record.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
-import { clearRunActiveTaskFile, getRun, updateRun, updateRunStep } from '../runs/store.js';
+import {
+  clearRunActiveTaskFile,
+  getRun,
+  persistRunNow,
+  updateRun,
+  updateRunStep,
+} from '../runs/store.js';
 import {
   checklistMarkerCommand,
   restoreWorkerChecklistTargetFromSlot,
@@ -123,6 +130,7 @@ import {
   debugReviewLog,
   durationBetween,
   readOptionalSlotFile,
+  readPersistedReviewSnapshot,
   removeSlotFiles,
   reviewAttemptFromResult,
 } from './snapshots.js';
@@ -227,6 +235,8 @@ export interface ReservedFixPass {
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
+const REVIEW_FIX_DELIVERY_UNCONFIRMED =
+  'Review-fix prompt delivery remained unconfirmed within the launch budget';
 const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min without a fix signal or runner activity
 const FEEDBACK_MAX_ACTIVE_MS = 2 * 60 * 60_000; // bound continuously progressing fix passes
 
@@ -981,6 +991,54 @@ function blockedReviewAttempt(attempt: ReviewAttempt, reason: string): ReviewAtt
   return { ...attempt, verdict: 'failed', reason };
 }
 
+export async function undeliveredReviewFixResult({
+  result,
+  reason,
+  run,
+  attempts,
+  retryCount,
+  maxRetries,
+  start,
+  readSnapshot,
+}: {
+  result: Partial<ReviewResult>;
+  reason: string;
+  run?: Run;
+  attempts: ReviewAttempt[];
+  retryCount: number;
+  maxRetries: number;
+  start: number;
+  readSnapshot?: () => Promise<ReviewDiffSnapshot | undefined>;
+}): Promise<ReviewResult> {
+  const recorded = run?.steps.find((step) => step.name === PipelineSteps.REVIEW)?.outputs;
+  const snapshot = recorded?.reviewSnapshot;
+  let reviewSnapshot = result.reviewSnapshot;
+  if (
+    !reviewSnapshot &&
+    (!recorded?.reviewId || !result.reviewId || recorded.reviewId === result.reviewId) &&
+    isRecord(snapshot) &&
+    typeof snapshot.capturedAt === 'string' &&
+    (snapshot.source === 'local-git' ||
+      snapshot.source === 'github-pr' ||
+      snapshot.source === 'unavailable')
+  )
+    reviewSnapshot = { ...snapshot, capturedAt: snapshot.capturedAt, source: snapshot.source };
+  reviewSnapshot ??= await readSnapshot?.();
+  return {
+    ...result,
+    verdict: 'issues',
+    reason: `fix-delivery-unavailable: ${reason}`,
+    fixDeliveryFailure: reason,
+    reviewSnapshot,
+    attempts,
+    retryCount,
+    maxRetries,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    durationMs: Date.now() - start,
+  };
+}
+
 export async function runReviewRetryLoop({
   vars,
   taskDir,
@@ -1207,25 +1265,15 @@ export async function runReviewRetryLoop({
         console.warn(
           `[review] run ${runId.slice(0, 8)} — preserving ${result.issues.length} reviewer finding(s) after fix delivery failed: ${message}`,
         );
-        return {
-          verdict: 'issues',
-          reason: `fix-delivery-unavailable: ${message}`,
-          fixDeliveryFailure: message,
-          issues: result.issues,
-          validationDepth,
-          usage: result.usage,
-          mode: result.mode,
-          reviewId: result.reviewId,
-          session: result.session,
-          reviewerSessionId: result.reviewerSessionId,
-          reviewSnapshot: result.reviewSnapshot,
+        return undeliveredReviewFixResult({
+          result: { ...result, validationDepth },
+          reason: message,
+          run: deps.getRun(runId),
           attempts,
           retryCount,
           maxRetries,
-          feedbackSent: false,
-          recoveryContinuationPending: true,
-          durationMs: Date.now() - start,
-        };
+          start,
+        });
       }
     }
     const fixStartedAt = new Date().toISOString();
@@ -1291,18 +1339,15 @@ export async function runReviewRetryLoop({
         await deps.markAgentContextStatus(runId, 'review-fix', 'failed');
         await deps.unwatchContext(slotId, 'review-fix');
         if (fixDeliveryDeferred) {
-          const reason = 'Review-fix prompt delivery remained unconfirmed within the launch budget';
-          return {
-            ...result,
-            reason: `fix-delivery-unavailable: ${reason}`,
-            fixDeliveryFailure: reason,
+          return undeliveredReviewFixResult({
+            result,
+            reason: REVIEW_FIX_DELIVERY_UNCONFIRMED,
+            run: deps.getRun(runId),
             attempts,
             retryCount,
             maxRetries,
-            feedbackSent: false,
-            recoveryContinuationPending: true,
-            durationMs: Date.now() - start,
-          };
+            start,
+          });
         }
         if (retryCount >= maxRetries) {
           return {
@@ -1670,6 +1715,37 @@ interface FixPromptRecoveryDeps {
   rememberAcceptedTurn?: typeof rememberReviewFixTurn;
 }
 
+export async function recordReviewFixDeliveryBoundary(
+  runId: string,
+  expected: FixPromptRecoveryContext,
+  startedAt: string | undefined,
+  generation: number,
+): Promise<void> {
+  const context = await upsertAgentContext(
+    runId,
+    'review-fix',
+    { id: expected.id },
+    {
+      guard: async () => !runSupersededSince(getRun(runId), generation),
+      resolvePatch: (current) =>
+        current &&
+        current.attemptStartedAt === expected.attemptStartedAt &&
+        current.taskFile === expected.taskFile &&
+        current.signalFile === expected.signalFile
+          ? { promptDeliveryStartedAt: startedAt, promptAcceptance: undefined }
+          : null,
+      mirrorIf: (slot) => slot.current_run_id === runId,
+    },
+  );
+  if (!context) throw new Error('Review fix attempt changed before delivery');
+  const latest = getRun(runId);
+  if (!latest || runSupersededSince(latest, generation))
+    throw new Error('Review fix attempt changed before delivery');
+  await persistRunNow(latest, 'review-fix prompt delivery boundary');
+  if (runSupersededSince(getRun(runId), generation))
+    throw new Error('Review fix attempt changed before delivery');
+}
+
 const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   getRun,
   prepareCapabilities: prepareRetainedRunCapabilities,
@@ -1687,25 +1763,7 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
     }
   },
   deliver: deliverPromptToLiveRunner,
-  recordDeliveryBoundary: async (runId, expected, startedAt, generation) => {
-    const context = await upsertAgentContext(
-      runId,
-      'review-fix',
-      { id: expected.id },
-      {
-        guard: async () => !runSupersededSince(getRun(runId), generation),
-        resolvePatch: (current) =>
-          current &&
-          current.attemptStartedAt === expected.attemptStartedAt &&
-          current.taskFile === expected.taskFile &&
-          current.signalFile === expected.signalFile
-            ? { promptDeliveryStartedAt: startedAt, promptAcceptance: undefined }
-            : null,
-        mirrorIf: (slot) => slot.current_run_id === runId,
-      },
-    );
-    if (!context) throw new Error('Review fix attempt changed before delivery');
-  },
+  recordDeliveryBoundary: recordReviewFixDeliveryBoundary,
   rememberAcceptedTurn: rememberReviewFixTurn,
 };
 
@@ -1903,10 +1961,12 @@ export async function reconcileRecoveredFixPromptDelivery(
     retryIntervalMs = 5_000,
     retryWindowMs = RUNNER_LAUNCH_READY_TIMEOUT_MS,
     readMatchingSignal,
+    isActive,
   }: {
     retryIntervalMs?: number;
     retryWindowMs?: number;
     readMatchingSignal?: () => Promise<boolean>;
+    isActive?: () => Promise<boolean>;
   } = {},
 ): Promise<FixPromptDeliveryResult | { status: 'signal-present' }> {
   const deadline = Date.now() + retryWindowMs;
@@ -1921,6 +1981,9 @@ export async function reconcileRecoveredFixPromptDelivery(
     const latestContext =
       deps.getRun(runId)?.agentContexts?.find((candidate) => candidate.id === context.id) ??
       context;
+    // Activity is not acceptance: preserve observation without sending another copy.
+    if (latestContext.promptDeliveryStartedAt && (await isActive?.()))
+      return { status: 'deferred' };
     const delivery = await resumeReviewFixPromptDelivery(vars, runId, latestContext, deps, {
       priorPromptSendAttempted: Boolean(latestContext.promptDeliveryStartedAt),
       timeoutMs: remainingMs,
@@ -1929,7 +1992,7 @@ export async function reconcileRecoveredFixPromptDelivery(
   }
   return {
     status: 'blocked',
-    reason: 'Review-fix prompt delivery remained unconfirmed within the launch budget',
+    reason: REVIEW_FIX_DELIVERY_UNCONFIRMED,
   };
 }
 
@@ -2210,6 +2273,7 @@ async function recoverReviewFixPass({
             deliveryContext,
             FIX_PROMPT_RECOVERY_DEPS,
             {
+              isActive: () => reviewFixHasActivity(vars, runId, workerRunner),
               readMatchingSignal: async () => {
                 fixSignal = matchingFixSignal(
                   await readOptionalReviewFixSignal(vars, fixSignalPath),
@@ -2247,16 +2311,13 @@ async function recoverReviewFixPass({
             return null;
           const reason =
             delivery.reason ?? 'Recovered review fix worker could not accept its prompt';
-          return {
-            verdict: 'blocked',
+          return undeliveredReviewFixResult({
+            result: priorResult,
             reason,
-            fixDeliveryFailure: reason,
-            issues,
-            validationDepth,
+            run: getRun(runId),
             retryCount: recoveredRetryCount,
             maxRetries,
-            feedbackSent: false,
-            recoveryContinuationPending: true,
+            start,
             attempts: [
               {
                 mode,
@@ -2267,8 +2328,16 @@ async function recoverReviewFixPass({
                 validationDepth,
               },
             ],
-            durationMs: Date.now() - start,
-          };
+            readSnapshot: async () =>
+              (
+                await readPersistedReviewSnapshot(
+                  vars,
+                  taskDir,
+                  reviewedLoop,
+                  findingsArtifactScope,
+                )
+              )?.snapshot,
+          });
         }
       }
       if (!fixSignal) {

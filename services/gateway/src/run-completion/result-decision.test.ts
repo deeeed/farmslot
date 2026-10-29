@@ -791,3 +791,38 @@ test('a review whose fix never reached the worker says why in its decision', asy
     `Review found 1 issue after 1/2 fix attempts. The fix was not delivered: ${quota}`,
   );
 });
+
+test('Send back resumes a recovered undelivered fix from the original reviewed head without output capture', async () => {
+  await heldOpus(1);
+  const originalSnapshot = {
+    source: 'local-git' as const,
+    headSha: '3522954d1f0b7c1f2a6c0f9d6b1e0c5a7e2d9f10',
+    capturedAt: '2026-10-29T19:01:00Z',
+  };
+  run.steps.find((step) => step.name === S.REVIEW)!.outputs!.reviewSnapshot = originalSnapshot;
+  run.output = undefined;
+  const { undeliveredReviewFixResult } = await import('../review/orchestrator.js');
+  const recovered = await undeliveredReviewFixResult({
+    result: { verdict: 'blocked', issues: findings, reviewId: 'pipeline-review-1' },
+    reason: 'Recovered fix prompt remained unconfirmed',
+    run,
+    attempts: [],
+    retryCount: 1,
+    maxRetries: 2,
+    start: Date.now(),
+  });
+  run.steps.find((step) => step.name === S.REVIEW)!.outputs = { ...recovered };
+  run.decisions = [await buildResultDecision(run, 'review')];
+  const delivered = pending().payload.delivered;
+  assert.ok('headSha' in delivered);
+  assert.equal(delivered.headSha, originalSnapshot.headSha);
+  assert.ok(pending().payload.actions.find((action) => action.id === 'send-back')?.available);
+  await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
+  const resumed = takeSendBackReview(run.id);
+  assert.equal(resumed?.verdict, 'issues');
+  assert.deepEqual(resumed?.issues, findings);
+  assert.deepEqual(resumed?.reviewSnapshot, originalSnapshot);
+  assert.equal(resumed?.feedbackSent, false);
+  assert.deepEqual(starts, [run.id]);
+  assert.deepEqual(releases, []);
+});

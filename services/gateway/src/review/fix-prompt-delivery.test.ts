@@ -27,9 +27,11 @@ function fixture() {
     target: { session: 'fixture', window: 'dev', pane: null, target: 'fixture:dev' },
   };
   const run = makeRun({
-    agentContexts: [context],
+    id: context.runId,
+    slotId: context.slotId,
     metrics: { runner: 'claude', model: 'sonnet', nudgeCount: 0 },
   });
+  run.agentContexts = [context];
   const boundaries: Array<string | undefined> = [];
   const deps: NonNullable<Parameters<typeof resumeReviewFixPromptDelivery>[3]> = {
     getRun: () => run,
@@ -114,4 +116,53 @@ test('a shell without the runner requests one relaunch instead of waiting for it
     status: 'relaunch-required',
   });
   assert.deepEqual(f.boundaries, []);
+});
+
+test('a recorded active fix without a turn token keeps observation without another send', async (t) => {
+  const f = fixture();
+  f.context.promptDeliveryStartedAt = '2026-10-29T19:01:25Z';
+  let probes = 0;
+  f.deps.deliver = async () => {
+    probes += 1;
+    return {
+      delivered: false,
+      disposition: 'hold',
+      retryable: true,
+      reason: 'prior send unacknowledged',
+    };
+  };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const pending = reconcileRecoveredFixPromptDelivery(f.vars, f.run.id, f.context, f.deps, {
+    retryIntervalMs: 1,
+    retryWindowMs: 100,
+    isActive: async () => true,
+  });
+  t.mock.timers.tick(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(100);
+  assert.deepEqual(await pending, { status: 'deferred' });
+  assert.equal(probes, 0);
+  assert.deepEqual(f.boundaries, []);
+});
+
+test('activity without a recorded send cannot suppress delivery of an unsent fix', async (t) => {
+  const f = fixture();
+  let activityReads = 0;
+  f.deps.deliver = async (options) => {
+    assert.equal(options.priorPromptSendAttempted, false);
+    await options.onPromptMutationStart?.();
+    return { delivered: true, acknowledgement: 'structured', turnToken: 'new-fix' };
+  };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const pending = reconcileRecoveredFixPromptDelivery(f.vars, f.run.id, f.context, f.deps, {
+    retryIntervalMs: 1,
+    retryWindowMs: 100,
+    isActive: async () => {
+      activityReads += 1;
+      return true;
+    },
+  });
+  t.mock.timers.tick(1);
+  assert.deepEqual(await pending, { status: 'delivered', turnToken: 'new-fix' });
+  assert.equal(activityReads, 0);
 });
