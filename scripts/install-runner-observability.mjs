@@ -16,10 +16,13 @@ import { trustGrokFolders } from '../packages/agent-runtime/scripts/workspace-tr
 
 import { expandTilde, resolveProviderAccountForSlot } from './lib/provider-accounts.mjs';
 import { runnerRuntimeDir } from './lib/runner-runtime.cjs';
+import { deriveLastToolProgressAt } from './runners/hook-progress.mjs';
 
 const HOOK_SCRIPT = `import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+
+${deriveLastToolProgressAt.toString()}
 
 function readStdin() {
   return fs.readFileSync(0, 'utf8');
@@ -160,12 +163,9 @@ try {
         : typeof previousSession?.turnActive === 'boolean'
           ? previousSession.turnActive
           : undefined;
-  const lastToolProgressAt =
-    event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure'
-      ? observedAt
-      : startsTurn || resetsTurn
-        ? null
-        : previousSession?.lastToolProgressAt ?? null;
+  const lastToolProgressAt = deriveLastToolProgressAt(
+    event, observedAt, previousSession?.lastToolProgressAt, startsTurn || resetsTurn,
+  );
   const rootSessionId =
     event === 'SessionStart'
       ? payload.session_id
@@ -1185,6 +1185,7 @@ function removeCompatObservabilityLink(repoPath, runtimeDir = '.agent') {
 }
 
 const PI_OBSERVABILITY_FILES = [
+  'hook-progress.mjs',
   'pi-farmslot-observability.ts',
   'pi-farmslot-hook-writer.mjs',
   'pi-farmslot-providers.mjs',

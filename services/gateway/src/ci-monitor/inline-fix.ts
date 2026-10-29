@@ -166,7 +166,10 @@ export function advanceInlineFixProgress(
   return {
     toolProgressAt,
     lastProgressAt,
-    stalled: toolProgressAt !== undefined && now - lastProgressAt >= INLINE_FIX_TIMEOUT_MS,
+    stalled:
+      inlineFixRunnerStillBusy(true, turnState, null) &&
+      toolProgressAt !== undefined &&
+      now - lastProgressAt >= INLINE_FIX_TIMEOUT_MS,
   };
 }
 
@@ -1141,7 +1144,7 @@ async function attemptInlineCIFix(
       const turnState = await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken);
       progress = advanceInlineFixProgress(progress, turnState, Date.now());
       if (progress.stalled) {
-        const blockedReason = `Inline CI fix made no tool progress for ${Math.round((Date.now() - progress.lastProgressAt) / 60_000)} minutes; inspect the worker hooks before retrying`;
+        const blockedReason = `Inline CI fix made no tool progress for ${Math.round((Date.now() - progress.lastProgressAt) / 60_000)} minutes; check worker hooks or a long-running tool before retrying`;
         console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${blockedReason}`);
         return blockInlineFix(
           blockedReason,

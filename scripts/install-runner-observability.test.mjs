@@ -1782,7 +1782,7 @@ test('private native runtime install leaves the primary checkout observations al
   assert.ok(fs.existsSync(path.join(native, '.observability/claude-settings.json')));
 });
 
-test('worker prompt hooks cap inherited commands without changing global settings and reinstall cleanly', () => {
+test('worker prompt hooks cap inherited commands without changing global settings', () => {
   const userRoot = temporaryDirectory(path.join(os.tmpdir(), 'obs-user-prompt-'));
   const globalSettings = path.join(userRoot, 'settings.json');
   const original = JSON.stringify({
@@ -1802,7 +1802,7 @@ test('worker prompt hooks cap inherited commands without changing global setting
   });
   fs.writeFileSync(globalSettings, original);
   const env = { CLAUDE_CONFIG_DIR: userRoot };
-  const { repo, claudeSettingsPath } = installToTempDir('claude', undefined, env);
+  const { claudeSettingsPath } = installToTempDir('claude', undefined, env);
   const read = () => JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8'));
   const first = read();
   assert.equal(fs.readFileSync(globalSettings, 'utf8'), original);
@@ -1814,13 +1814,44 @@ test('worker prompt hooks cap inherited commands without changing global setting
   assert.equal(inherited.find((hook) => hook.command === 'short-hook').timeout, 1);
   assert.equal(first.env, undefined);
   assert.equal(fs.statSync(claudeSettingsPath).mode & 0o777, 0o600);
+});
+
+test('worker prompt hooks replace owned copies on reinstall', () => {
+  const userRoot = temporaryDirectory(path.join(os.tmpdir(), 'obs-user-prompt-reinstall-'));
+  const globalSettings = path.join(userRoot, 'settings.json');
+  const original = JSON.stringify({
+    hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'status-hook' }] }] },
+  });
+  fs.writeFileSync(globalSettings, original);
+  const env = { CLAUDE_CONFIG_DIR: userRoot };
+  const { repo, claudeSettingsPath } = installToTempDir('claude', undefined, env);
+  const first = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8'));
   installToTempDir('claude', repo, env);
-  assert.deepEqual(read(), first);
+  assert.deepEqual(JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8')), first);
   assert.equal(fs.readFileSync(globalSettings, 'utf8'), original);
-  fs.writeFileSync(globalSettings, '{}');
-  installToTempDir('claude', repo, env);
-  assert.equal(read().hooks.UserPromptSubmit.flatMap((entry) => entry.hooks).length, 1);
-  assert.equal(fs.readFileSync(globalSettings, 'utf8'), '{}');
+});
+
+test('worker prompt hooks remove copies deleted from global settings', () => {
+  const { repo, claudeSettingsPath } = installToTempDir('claude');
+  const settings = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8'));
+  settings.hooks.UserPromptSubmit.push({
+    hooks: [
+      {
+        type: 'command',
+        command: 'removed-hook',
+        timeout: 5,
+        statusMessage: 'Farmslot prompt hook (5s timeout)',
+      },
+    ],
+  });
+  fs.writeFileSync(claudeSettingsPath, JSON.stringify(settings));
+  installToTempDir('claude', repo);
+  assert.equal(
+    JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8')).hooks.UserPromptSubmit.flatMap(
+      (entry) => entry.hooks,
+    ).length,
+    1,
+  );
 });
 
 test('generated farm hooks keep five-second deadlines and log I/O failures without blocking', () => {
@@ -1841,12 +1872,10 @@ test('generated farm hooks keep five-second deadlines and log I/O failures witho
   assert.match(result.stderr, /\[farmslot-observability\] hook failed open:/);
 });
 
-test('hook snapshots retain tool progress through notifications and clear it for a new turn', () => {
+test('hook snapshots retain tool progress through notifications', () => {
   const { hookPath, obsDir } = installToTempDir('claude');
   const snapshot = () =>
     JSON.parse(fs.readFileSync(path.join(obsDir, 'sessions', 'progress.json'), 'utf8'));
-  runHook(hookPath, obsDir, { hook_event_name: 'UserPromptSubmit', session_id: 'progress' });
-  assert.equal(snapshot().lastToolProgressAt, null);
   runHook(hookPath, obsDir, {
     hook_event_name: 'PreToolUse',
     session_id: 'progress',
@@ -1860,6 +1889,18 @@ test('hook snapshots retain tool progress through notifications and clear it for
     notification_type: 'busy',
   });
   assert.equal(snapshot().lastToolProgressAt, started);
+});
+
+test('a new prompt clears the previous tool progress snapshot', () => {
+  const { hookPath, obsDir } = installToTempDir('claude');
+  const snapshot = () =>
+    JSON.parse(fs.readFileSync(path.join(obsDir, 'sessions', 'progress.json'), 'utf8'));
+  runHook(hookPath, obsDir, {
+    hook_event_name: 'PreToolUse',
+    session_id: 'progress',
+    tool_name: 'Bash',
+  });
+  assert.equal(typeof snapshot().lastToolProgressAt, 'number');
   runHook(hookPath, obsDir, { hook_event_name: 'UserPromptSubmit', session_id: 'progress' });
   assert.equal(snapshot().lastToolProgressAt, null);
 });

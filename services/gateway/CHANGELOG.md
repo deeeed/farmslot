@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Cap inherited worker prompt hooks without changing user settings, and escalate inline CI fixes that stop making tool progress.
+- Cap inherited worker prompt hooks without changing user settings, and escalate active inline CI fixes without tool progress, including tools with no completion for ten minutes.
 
 - Deduplicate Claude message usage and count initial and fix sessions once, excluding reviewers from historical and completion totals.
 - Active-development baseline; add user-facing changes here before release or package publication.

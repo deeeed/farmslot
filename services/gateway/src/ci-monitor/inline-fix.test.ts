@@ -460,7 +460,33 @@ test('active flags and heartbeat timestamps cannot extend a CI fix without tool 
   assert.equal(state.lastProgressAt, 600_001);
   state = advanceInlineFixProgress(state, { ...reading, lastToolProgressAt: 9_000_000 }, 1_200_001);
   assert.equal(state.stalled, true);
-  assert.equal(advanceInlineFixProgress(state, null, 1_200_002).stalled, true);
+  assert.equal(advanceInlineFixProgress(state, null, 1_200_002).stalled, false);
+});
+
+test('an idle CI worker keeps the existing timeout outcome without tool progress', () => {
+  const idle: ObservabilityReading<RunnerSessionDeliveryState> = {
+    value: 'idle',
+    confidence: 'high',
+    source: 'hook',
+    observedAt: 0,
+    lastToolProgressAt: null,
+  };
+  assert.equal(
+    advanceInlineFixProgress({ lastProgressAt: 0, stalled: false }, idle, 600_000).stalled,
+    false,
+  );
+});
+
+test('an open tool without completion also blocks after ten minutes for inspection', () => {
+  const active: ObservabilityReading<RunnerSessionDeliveryState> = {
+    value: 'active',
+    confidence: 'high',
+    source: 'hook',
+    observedAt: 0,
+    lastToolProgressAt: 100,
+  };
+  const state = advanceInlineFixProgress({ lastProgressAt: 0, stalled: false }, active, 0);
+  assert.equal(advanceInlineFixProgress(state, active, 600_000).stalled, true);
 });
 
 test('CI fix readers without structured tool progress retain the existing hard deadline', () => {

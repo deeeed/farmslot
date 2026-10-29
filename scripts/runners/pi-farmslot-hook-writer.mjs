@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { deriveLastToolProgressAt } from './hook-progress.mjs';
+
 export function normalizeInstructionText(value) {
   return String(value)
     .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
@@ -143,12 +145,12 @@ export function writePiHook(params) {
         : typeof previousSession?.turnActive === 'boolean'
           ? previousSession.turnActive
           : undefined;
-  const lastToolProgressAt =
-    event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure'
-      ? observedAt
-      : startsTurn || resetsTurn
-        ? null
-        : (previousSession?.lastToolProgressAt ?? null);
+  const lastToolProgressAt = deriveLastToolProgressAt(
+    event,
+    observedAt,
+    previousSession?.lastToolProgressAt,
+    startsTurn || resetsTurn,
+  );
   const rootSessionId =
     event === 'SessionStart'
       ? sessionId
