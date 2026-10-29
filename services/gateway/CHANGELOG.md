@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve acceptance-contract task writes across a CI-watch handoff when the parent releases its slot.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.1 - 2026-10-29
