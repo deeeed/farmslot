@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -39,7 +39,10 @@ function installToTempDir(runner = 'claude', existingRepo, env) {
       '--slot-id',
       'install-test',
     ],
-    { stdio: 'pipe', ...(env ? { env: { ...process.env, ...env } } : {}) },
+    {
+      stdio: 'pipe',
+      env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(repo, '.unused-claude-user'), ...env },
+    },
   );
   runtimeRoots.add(path.dirname(runnerRuntimeDir(repo)));
   const obsDir = path.join(runnerRuntimeDir(repo), '.observability');
@@ -1777,4 +1780,85 @@ test('private native runtime install leaves the primary checkout observations al
   assert.equal(fs.lstatSync(compat, { throwIfNoEntry: false }), undefined);
   assert.equal(fs.readFileSync(path.join(primaryExternal, 'hooks.jsonl'), 'utf8'), 'primary');
   assert.ok(fs.existsSync(path.join(native, '.observability/claude-settings.json')));
+});
+
+test('worker prompt hooks cap inherited commands without changing global settings and reinstall cleanly', () => {
+  const userRoot = temporaryDirectory(path.join(os.tmpdir(), 'obs-user-prompt-'));
+  const globalSettings = path.join(userRoot, 'settings.json');
+  const original = JSON.stringify({
+    env: { PRIVATE_FIXTURE: 'not-for-worker-copy' },
+    hooks: {
+      UserPromptSubmit: [
+        {
+          matcher: '',
+          hooks: [
+            { type: 'command', command: 'status-hook prompt' },
+            { type: 'command', command: 'short-hook', timeout: 1 },
+            { type: 'prompt', prompt: 'leave inherited prompt settings alone' },
+          ],
+        },
+      ],
+    },
+  });
+  fs.writeFileSync(globalSettings, original);
+  const env = { CLAUDE_CONFIG_DIR: userRoot };
+  const { repo, claudeSettingsPath } = installToTempDir('claude', undefined, env);
+  const read = () => JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8'));
+  const first = read();
+  const inherited = first.hooks.UserPromptSubmit.flatMap((entry) => entry.hooks).filter(
+    (hook) => hook.statusMessage,
+  );
+  assert.equal(inherited.length, 2);
+  assert.equal(inherited.find((hook) => hook.command === 'status-hook prompt').timeout, 5);
+  assert.equal(inherited.find((hook) => hook.command === 'short-hook').timeout, 1);
+  assert.equal(first.env, undefined);
+  assert.equal(fs.statSync(claudeSettingsPath).mode & 0o777, 0o600);
+  installToTempDir('claude', repo, env);
+  assert.deepEqual(read(), first);
+  fs.writeFileSync(globalSettings, '{}');
+  installToTempDir('claude', repo, env);
+  assert.equal(read().hooks.UserPromptSubmit.flatMap((entry) => entry.hooks).length, 1);
+  fs.writeFileSync(globalSettings, original);
+  assert.equal(fs.readFileSync(globalSettings, 'utf8'), original);
+});
+
+test('generated farm hooks keep five-second deadlines and log I/O failures without blocking', () => {
+  const { obsDir, hookPath, claudeSettingsPath } = installToTempDir('claude');
+  const settings = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8'));
+  for (const entries of Object.values(settings.hooks)) {
+    for (const entry of entries) for (const hook of entry.hooks) assert.equal(hook.timeout, 5);
+  }
+  const invalid = path.join(obsDir, 'not-a-directory');
+  fs.writeFileSync(invalid, 'fixture');
+  const result = spawnSync(process.execPath, [hookPath], {
+    input: JSON.stringify({ hook_event_name: 'UserPromptSubmit' }),
+    env: { ...process.env, FARMSLOT_OBS_DIR: invalid },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /\[farmslot-observability\] hook failed open:/);
+});
+
+test('hook snapshots retain tool progress through notifications and clear it for a new turn', () => {
+  const { hookPath, obsDir } = installToTempDir('claude');
+  const snapshot = () =>
+    JSON.parse(fs.readFileSync(path.join(obsDir, 'sessions', 'progress.json'), 'utf8'));
+  runHook(hookPath, obsDir, { hook_event_name: 'UserPromptSubmit', session_id: 'progress' });
+  assert.equal(snapshot().lastToolProgressAt, null);
+  runHook(hookPath, obsDir, {
+    hook_event_name: 'PreToolUse',
+    session_id: 'progress',
+    tool_name: 'Bash',
+  });
+  const started = snapshot().lastToolProgressAt;
+  assert.equal(started, snapshot().observedAt);
+  runHook(hookPath, obsDir, {
+    hook_event_name: 'Notification',
+    session_id: 'progress',
+    notification_type: 'busy',
+  });
+  assert.equal(snapshot().lastToolProgressAt, started);
+  runHook(hookPath, obsDir, { hook_event_name: 'UserPromptSubmit', session_id: 'progress' });
+  assert.equal(snapshot().lastToolProgressAt, null);
 });

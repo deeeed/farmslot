@@ -143,6 +143,12 @@ export function writePiHook(params) {
         : typeof previousSession?.turnActive === 'boolean'
           ? previousSession.turnActive
           : undefined;
+  const lastToolProgressAt =
+    event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure'
+      ? observedAt
+      : startsTurn || resetsTurn
+        ? null
+        : (previousSession?.lastToolProgressAt ?? null);
   const rootSessionId =
     event === 'SessionStart'
       ? sessionId
@@ -165,6 +171,7 @@ export function writePiHook(params) {
       : {}),
     ...(typeof turnStartedAt === 'number' ? { turnStartedAt } : {}),
     ...(typeof turnActive === 'boolean' ? { turnActive } : {}),
+    lastToolProgressAt,
     ...(typeof rootSessionId === 'string' && rootSessionId ? { rootSessionId } : {}),
     ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),

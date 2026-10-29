@@ -160,6 +160,12 @@ try {
         : typeof previousSession?.turnActive === 'boolean'
           ? previousSession.turnActive
           : undefined;
+  const lastToolProgressAt =
+    event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure'
+      ? observedAt
+      : startsTurn || resetsTurn
+        ? null
+        : previousSession?.lastToolProgressAt ?? null;
   const rootSessionId =
     event === 'SessionStart'
       ? payload.session_id
@@ -183,6 +189,7 @@ try {
     runner: process.env.FARMSLOT_RUNNER || 'claude',
     ...(typeof turnStartedAt === 'number' ? { turnStartedAt } : {}),
     ...(typeof turnActive === 'boolean' ? { turnActive } : {}),
+    lastToolProgressAt,
     ...(typeof rootSessionId === 'string' && rootSessionId ? { rootSessionId } : {}),
     ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),
@@ -195,7 +202,7 @@ try {
     writeSnapshot(path.join(obsDir, 'panes'), record.tmuxPane, record);
   }
 } catch (error) {
-  console.error('[farmslot-observability] ' + (error?.message || String(error)));
+  console.error('[farmslot-observability] hook failed open: ' + (error?.message || String(error)));
 }
 `;
 
@@ -878,6 +885,8 @@ function backupOnce(settingsPath, markerPath) {
   if (!fs.existsSync(backupPath)) fs.copyFileSync(settingsPath, backupPath);
 }
 
+const INHERITED_PROMPT_HOOK_STATUS = 'Farmslot prompt hook (5s timeout)';
+
 function removeFarmslotHooks(settings) {
   const hooks = settings.hooks;
   if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return false;
@@ -895,8 +904,8 @@ function removeFarmslotHooks(settings) {
           !(
             hook &&
             typeof hook === 'object' &&
-            typeof hook.command === 'string' &&
-            hook.command.includes(FARMSLOT_HOOK_MARKER)
+            (hook.statusMessage === INHERITED_PROMPT_HOOK_STATUS ||
+              (typeof hook.command === 'string' && hook.command.includes(FARMSLOT_HOOK_MARKER)))
           ),
       );
       if (keptHooks.length !== entry.hooks.length) removed = true;
@@ -975,6 +984,34 @@ function mergeClaudeSettings(settingsPath, markerPath, hookCommand, statusComman
     settings.hooks[eventName] = [...entries, { matcher: '', hooks: [hook] }];
   }
 
+  // Claude deduplicates identical commands across settings sources. The worker's
+  // higher-priority copy caps inherited hooks without modifying the user's file.
+  const userSettings = readJsonObject(
+    path.join(
+      expandTilde(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')),
+      'settings.json',
+    ),
+  );
+  const inheritedEntries = userSettings.hooks?.UserPromptSubmit;
+  const inheritedHooks = (Array.isArray(inheritedEntries) ? inheritedEntries : []).flatMap(
+    (entry) => {
+      const hooks = (Array.isArray(entry.hooks) ? entry.hooks : [])
+        .filter((hook) => hook.type === 'command' && typeof hook.command === 'string')
+        .map((hook) => ({
+          ...hook,
+          timeout: Math.min(hook.timeout ?? 5, 5),
+          statusMessage: INHERITED_PROMPT_HOOK_STATUS,
+        }));
+      return hooks.length ? [{ ...entry, hooks }] : [];
+    },
+  );
+  if (inheritedHooks.length) {
+    settings.hooks.UserPromptSubmit.push(...inheritedHooks);
+    console.warn(
+      '[farmslot-observability] inherited prompt hooks capped at 5s for this worker; timeouts fail open',
+    );
+  }
+
   const existingStatus = settings.statusLine;
   const existingCommand =
     existingStatus && typeof existingStatus === 'object'
@@ -987,7 +1024,8 @@ function mergeClaudeSettings(settingsPath, markerPath, hookCommand, statusComman
     statusLineInstalled = true;
   }
 
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
+  fs.chmodSync(settingsPath, 0o600);
   return { statusLineInstalled };
 }
 
