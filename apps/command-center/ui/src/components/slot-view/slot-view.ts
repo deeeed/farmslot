@@ -50,7 +50,11 @@ import {
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
-import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
+import {
+  heldDataIsSaved,
+  isSupersededRead,
+  ResourceQueryController,
+} from '../shared/resource-query-controller.js';
 import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 
@@ -941,7 +945,9 @@ export class SlotView extends SlotViewRecipePresenter {
     if (
       !this._progressQuery.belongsToWorkspace ||
       !this._slot?.taskFile ||
-      (observation.status !== 'unsupported' && !observation.error && !heldDataIsSaved(observation))
+      (observation.status !== 'unsupported' &&
+        (!observation.error || isSupersededRead(observation.error)) &&
+        !heldDataIsSaved(observation))
     )
       return nothing;
     return html`<div role="status" data-slot-view-progress=${observation.status}>
@@ -951,7 +957,7 @@ export class SlotView extends SlotViewRecipePresenter {
       ${observation.status === 'unsupported'
         ? 'Progress updates are unavailable on this gateway.'
         : nothing}
-      ${observation.error
+      ${observation.error && !isSupersededRead(observation.error)
         ? html`<span role="alert">Progress read failed: ${observation.error.message}</span>
             <button
               ?disabled=${gateway.connectionState !== 'connected'}

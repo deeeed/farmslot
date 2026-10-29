@@ -24,7 +24,11 @@ import '../chat/native-session-view.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, subscribe } from '../../state.js';
-import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
+import {
+  heldDataIsSaved,
+  isSupersededRead,
+  ResourceQueryController,
+} from '../shared/resource-query-controller.js';
 
 import {
   dropCarriesFiles,
@@ -139,7 +143,11 @@ export class TerminalView extends TerminalViewState {
       )
     )
       return nothing;
-    if (observation.status !== 'unsupported' && !observation.error && !heldDataIsSaved(observation))
+    if (
+      observation.status !== 'unsupported' &&
+      (!observation.error || isSupersededRead(observation.error)) &&
+      !heldDataIsSaved(observation)
+    )
       return nothing;
     return html`<div class="progress-strip" data-terminal-progress=${observation.status}>
       ${observation.data
@@ -148,7 +156,7 @@ export class TerminalView extends TerminalViewState {
       ${observation.status === 'unsupported'
         ? 'Progress updates are unavailable on this gateway.'
         : nothing}
-      ${observation.error
+      ${observation.error && !isSupersededRead(observation.error)
         ? html`<span role="alert">Progress read failed: ${observation.error.message}</span>
             <button
               ?disabled=${gateway.connectionState !== 'connected'}

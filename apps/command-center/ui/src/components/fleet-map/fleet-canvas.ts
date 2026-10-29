@@ -54,7 +54,11 @@ import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.
 import { type AppState, fleetQuery, getState, isHydrating, subscribe } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
-import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
+import {
+  heldDataIsSaved,
+  isSupersededRead,
+  ResourceQueryController,
+} from '../shared/resource-query-controller.js';
 import {
   buildSlotPendingWork,
   type SlotPendingWork,
@@ -591,12 +595,8 @@ export class FleetCanvas extends LitElement {
           this.slotProgress = progress;
           const failure = this.progressFailures.get(slotId);
           if (state.status === 'ready') this.progressFailures.delete(slotId);
-          // A read that a newer write superseded is not a failure; that write scheduled the next read.
-          else if (
-            state.error &&
-            state.error !== failure?.error &&
-            state.error.code !== 'RESOURCE_OBSERVATION_CHANGED'
-          )
+          // A superseded read is not a failure: the write that superseded it scheduled the next read.
+          else if (state.error && state.error !== failure?.error && !isSupersededRead(state.error))
             this.progressFailures.set(slotId, {
               error: state.error,
               count: (failure?.count ?? 0) + 1,
@@ -647,13 +647,14 @@ export class FleetCanvas extends LitElement {
           ${state.data ? html`Saved progress, ${sourceObservationAge(state.observedAt)}.` : nothing}
           Progress updates are unavailable on this gateway.
         </span>`;
+      const failed = state.error !== undefined && !isSupersededRead(state.error);
       if (
-        state.error &&
-        state.error.code !== 'RESOURCE_OBSERVATION_CHANGED' &&
+        failed &&
         (this.progressFailures.get(slotId)?.count ?? 0) >= PROGRESS_FAILURES_BEFORE_ALERT
       )
-        failing.push([slotId, state.error]);
-      else if (state.error || heldDataIsSaved(state)) quiet.push([slotId, state]);
+        failing.push([slotId, state.error!]);
+      else if (heldDataIsSaved(state) || (failed && state.data === undefined))
+        quiet.push([slotId, state]);
       return nothing;
     });
     if (!quiet.length && !failing.length) return lines;

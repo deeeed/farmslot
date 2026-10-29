@@ -55,6 +55,7 @@ mock.module('../../state.js', {
 mock.module('../shared/resource-query-controller.js', {
   namedExports: {
     heldDataIsSaved: () => false,
+    isSupersededRead: () => false,
     ResourceQueryController: class {
       belongsToWorkspace = false;
       state = { status: 'loading' };

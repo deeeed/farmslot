@@ -97,3 +97,22 @@ test('a busy farm neither rereads a panel nor flashes its saved notice', async (
   assert.equal(notices.at(-1), true, 'a failed read keeps the saved notice');
   panel.hostDisconnected();
 });
+
+test('a superseded read shows no saved notice until reads keep being superseded', async () => {
+  const { heldDataIsSaved } = await import('./resource-query-controller.js');
+  const superseded = {
+    status: 'stale' as const,
+    data: { runs: [] },
+    observedAt: 1_000,
+    error: {
+      code: 'RESOURCE_OBSERVATION_CHANGED',
+      message: 'The file observation changed during this read.',
+    },
+  };
+  // The gateway already published the change that superseded the read, so the next read is queued.
+  assert.equal(heldDataIsSaved(superseded, true, 1_000 + 59_999), false);
+  assert.equal(heldDataIsSaved(superseded, true, 1_000 + 60_000), true);
+  const timedOut = { ...superseded, error: { code: 'TIMEOUT', message: 'timed out' } };
+  assert.equal(heldDataIsSaved(timedOut, true, 1_000), true);
+  assert.equal(heldDataIsSaved({ ...superseded, error: undefined }, false, 1_000), true);
+});
