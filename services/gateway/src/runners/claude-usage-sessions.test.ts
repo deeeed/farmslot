@@ -35,10 +35,13 @@ test('Claude usage discovery separates initial/fix sessions from reviewers and l
       '-c',
       buildClaudeSessionDiscoveryCommand(repo, home, {
         taskDir: task,
-        start: Date.parse('2026-10-29T01:00:00Z'),
-        end: Date.parse('2026-10-29T01:30:00Z'),
+        startedAt: Date.parse('2026-10-29T01:00:00Z'),
+        endedAt: Date.parse('2026-10-29T01:30:00Z'),
         reviewerIntervals: [
-          { start: Date.parse('2026-10-29T01:10:00Z'), end: Date.parse('2026-10-29T01:20:00Z') },
+          {
+            startedAt: Date.parse('2026-10-29T01:10:00Z'),
+            endedAt: Date.parse('2026-10-29T01:20:00Z'),
+          },
         ],
       }),
     ],

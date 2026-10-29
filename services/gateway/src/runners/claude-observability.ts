@@ -31,6 +31,7 @@ import type {
   RunnerSessionDeliveryState,
   SlotVars,
 } from './observability-types.js';
+import { PYTHON_USAGE_TASK_PROMPT } from './session-usage-provider.js';
 
 type ClaudeInterruptionProbe =
   | { status: 'interrupted'; sessionId: string; observedAt: number }
@@ -195,9 +196,9 @@ export async function sessionPaneMoveIsSafe(
 
 interface ClaudeUsageScope {
   taskDir: string;
-  start: number;
-  end: number;
-  reviewerIntervals: Array<{ start: number; end: number }>;
+  startedAt: number;
+  endedAt: number;
+  reviewerIntervals: Array<{ startedAt: number; endedAt: number }>;
 }
 
 export function buildClaudeSessionDiscoveryCommand(
@@ -208,6 +209,7 @@ export function buildClaudeSessionDiscoveryCommand(
   return `python3 - <<'PY'
 import datetime, json, os, re
 from pathlib import Path
+${PYTHON_USAGE_TASK_PROMPT}
 home = Path(${homeRoot === undefined ? 'str(Path.home())' : JSON.stringify(homeRoot)})
 root = Path(os.environ.get('CLAUDE_CONFIG_DIR') or str(home / '.claude'))
 repo = ${JSON.stringify(repo)}
@@ -227,14 +229,13 @@ if scope:
                     content = record.get('message', {}).get('content')
                     if isinstance(content, list) and not any(block.get('type') == 'text' for block in content if isinstance(block, dict)):
                         continue
-                    text = content if isinstance(content, str) else '\\n'.join(block['text'] for block in content if isinstance(block, dict) and isinstance(block.get('text'), str)) if isinstance(content, list) else ''
+                    text = prompt_text(content)
                     started = datetime.datetime.fromisoformat(record['timestamp'].replace('Z', '+00:00')).timestamp() * 1000
                     task = scope['taskDir'].rstrip('/')
-                    marker = re.escape(task) + r'/(?:mark|TASK\\.md|REVIEW-FIX\\.md|CI-FIX\\.md)'
-                    if (task not in ('.', '/') and scope['start'] <= started < scope['end']
-                        and not any(interval['start'] <= started < interval['end'] for interval in scope['reviewerIntervals'])
+                    if (task not in ('.', '/') and scope['startedAt'] <= started < scope['endedAt']
+                        and not any(interval['startedAt'] <= started < interval['endedAt'] for interval in scope['reviewerIntervals'])
                         and os.path.realpath(record.get('cwd', '')) == os.path.realpath(repo)
-                        and re.search(r'(?<![A-Za-z0-9_./-])' + marker + r'(?![A-Za-z0-9_./-])', text)):
+                        and task_prompt_matches(text, task, ('mark', 'TASK.md', 'REVIEW-FIX.md', 'CI-FIX.md'))):
                         selected.add(file)
                     break
         except (OSError, ValueError, TypeError, KeyError):

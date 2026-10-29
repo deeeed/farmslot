@@ -139,6 +139,23 @@ export function runnerUsageMetrics(usage: RunnerSessionUsage): Partial<Run['metr
   };
 }
 
+async function archivedSessionUsage(
+  run: Run,
+  archived: string,
+  session: Pick<RunnerSessionUsage, 'runnerSessionId' | 'runnerSessionPath'> = {},
+): Promise<RunnerSessionUsage> {
+  return parseSessionUsageOutput(
+    await runSessionUsage({
+      repo: '',
+      slotId: run.slotId ?? run.id,
+      action: 'total',
+      forcedPath: archived,
+      forcedRunner: run.metrics.runner,
+    }),
+    { runner: run.metrics.runner, ...session },
+  );
+}
+
 /** Completion and family reads share the same worker-only multi-session accounting. */
 export async function extractRunWorkerSessionUsage(
   run: Run,
@@ -146,7 +163,8 @@ export async function extractRunWorkerSessionUsage(
 ): Promise<RunnerSessionUsage | null> {
   const slotId = run.slotId;
   if (!slotId || usesReviewChainSessionTotal(run)) return null;
-  const sessions = await getRunnerSessionUsageProvider(run.metrics.runner)?.recoverSessions?.(run);
+  const provider = getRunnerSessionUsageProvider(run.metrics.runner);
+  const sessions = await provider?.recoverSessions?.(run);
   if (!sessions?.length) return null;
   const unique = [
     ...new Map(sessions.map((session) => [session.runnerSessionPath, session])).values(),
@@ -161,23 +179,9 @@ export async function extractRunWorkerSessionUsage(
         ...session,
       });
       if (!usage.error) return usage;
-      const context = run.agentContexts?.find(
-        (context) =>
-          context.id === session.contextId &&
-          context.runnerSessionArchive?.originalPath === session.runnerSessionPath,
-      );
-      const archived = context && (await verifiedRunnerSessionArchivePath(run, context.id));
+      const archived = await provider?.recoverArchive?.(run, session);
       if (!archived) return usage;
-      return parseSessionUsageOutput(
-        await runSessionUsage({
-          repo: '',
-          slotId,
-          action: 'total',
-          forcedPath: archived,
-          forcedRunner: run.metrics.runner,
-        }),
-        { runner: run.metrics.runner, ...session },
-      );
+      return archivedSessionUsage(run, archived, session);
     }),
   );
   const failed = usages.find((usage) => usage.error || usage.totalTokens == null);
@@ -241,14 +245,7 @@ export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
         'runner did not report usage and no verified transcript was retained';
       return { ...run, metrics: { ...run.metrics, sessionUsageError: reason } };
     }
-    const output = await runSessionUsage({
-      repo: '',
-      slotId: run.slotId ?? run.id,
-      action: 'total',
-      forcedPath: archived,
-      forcedRunner: run.metrics.runner,
-    });
-    const usage = parseSessionUsageOutput(output);
+    const usage = await archivedSessionUsage(run, archived);
     // A resumed review transcript is a chain total, not this generation's usage.
     if (usesReviewChainSessionTotal(run)) return run;
     return {

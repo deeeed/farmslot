@@ -1,4 +1,11 @@
-import type { Run } from '@farmslot/protocol';
+import path from 'node:path';
+
+import {
+  type AgentContext,
+  type AgentRole,
+  primaryRoleForFlow,
+  type Run,
+} from '@farmslot/protocol';
 import {
   applyClaudeAssistantUsage,
   type IncrementalSessionUsageState,
@@ -10,6 +17,55 @@ export interface RecoveredUsageSession {
   runnerSessionId: string;
   runnerSessionPath: string;
 }
+
+interface UsageInterval {
+  startedAt: number;
+  endedAt: number;
+}
+
+export interface WorkerUsageScope {
+  primaryRole: AgentRole;
+  reviewerIntervals: UsageInterval[];
+  contexts: Array<UsageInterval & { context: AgentContext; taskDir?: string }>;
+}
+
+/** Role windows are shared; transcript identity remains runner-owned. */
+export function workerUsageScope(run: Run, runner: string): WorkerUsageScope {
+  const primaryRole = primaryRoleForFlow(run.flowType);
+  const contexts = run.agentContexts ?? [];
+  const runEnd = Math.min(Date.now(), Date.parse(run.completedAt ?? '') || Infinity);
+  return {
+    primaryRole,
+    reviewerIntervals: contexts
+      .filter((context) => context.role === 'review' && primaryRole !== 'review')
+      .map((context) => ({
+        startedAt: Date.parse(context.startedAt ?? ''),
+        endedAt: Date.parse(context.completedAt ?? '') || runEnd,
+      }))
+      .filter((interval) => Number.isFinite(interval.startedAt)),
+    contexts: contexts
+      .filter(
+        (context) =>
+          context.runner === runner && [primaryRole, 'review-fix', 'ci-fix'].includes(context.role),
+      )
+      .map((context) => ({
+        context,
+        startedAt: Date.parse(context.startedAt ?? ''),
+        endedAt: Math.min(runEnd, Date.parse(context.completedAt ?? '') || Infinity),
+        taskDir: context.taskFile ? path.posix.dirname(context.taskFile) : undefined,
+      })),
+  };
+}
+
+export const PYTHON_USAGE_TASK_PROMPT = `
+def prompt_text(content):
+    return content if isinstance(content, str) else '\\n'.join(block['text'] for block in content if isinstance(block, dict) and isinstance(block.get('text'), str)) if isinstance(content, list) else ''
+def task_prompt_matches(text, task_dir, names=('mark',)):
+    if not task_dir or task_dir in ('.', '/'):
+        return False
+    marker = re.escape(task_dir.rstrip('/')) + '/(?:' + '|'.join(re.escape(name) for name in names) + ')'
+    return re.search(r'(?<![A-Za-z0-9_.-])' + marker + r'(?![A-Za-z0-9_./-])', text) is not None
+`;
 
 /**
  * Runner-specific transcript accounting.
@@ -33,6 +89,8 @@ export interface RunnerSessionUsageProvider {
   readonly restatesSessionTotals: boolean;
   /** Unique worker sessions, including fix rounds, from exact role/session metadata. */
   recoverSessions?(run: Run): Promise<RecoveredUsageSession[]>;
+  /** Some providers can recompute a missing session from its verified retained archive. */
+  recoverArchive?(run: Run, session: RecoveredUsageSession): Promise<string | null>;
   applyRecord(
     state: IncrementalSessionUsageState,
     record: Record<string, unknown>,
@@ -128,6 +186,9 @@ export const claudeSessionUsageProvider = {
   restatesSessionTotals: false,
   async recoverSessions(run) {
     return (await import('./claude-usage-sessions.js')).recoverClaudeUsageSessions(run);
+  },
+  async recoverArchive(run, session) {
+    return (await import('./claude-usage-sessions.js')).recoverClaudeUsageArchive(run, session);
   },
   applyRecord: applyClaudeAssistantUsage,
 } satisfies RunnerSessionUsageProvider;
