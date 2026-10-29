@@ -47,9 +47,37 @@ export function heldDataIsSaved(
   );
 }
 
+/**
+ * Nothing held, and reads have kept failing (superseded or not) for the grace period. The cache
+ * clears a cold entry's error while it rereads, so this counts from the query's first failure.
+ */
+export function readKeepsFailing<T>(query: ResourceQueryController<T>, now = Date.now()): boolean {
+  return (
+    query.state.data === undefined &&
+    query.failingSince !== undefined &&
+    now - query.failingSince >= SUPERSEDED_READ_GRACE_MS
+  );
+}
+
+/**
+ * The read failure a panel names. A superseded read already has its reread scheduled, so it is not
+ * named; held data shows as saved once the grace period passes, and with nothing held the panel
+ * says it was never read.
+ */
+export function readFailureText<T>(
+  query: ResourceQueryController<T>,
+  now = Date.now(),
+): string | undefined {
+  const error = query.state.error;
+  if (error && !isSupersededRead(error)) return error.message;
+  return readKeepsFailing(query, now) ? 'not read yet' : undefined;
+}
+
 /** Binds a panel's query to the current farm owner; the shared cache owns all reads. */
 export class ResourceQueryController<T> implements ReactiveController {
   state: ResourceQueryState<T> = { status: 'loading' };
+  /** When the reads of this query started failing with nothing held; cleared by an answer. */
+  failingSince?: number;
   private query?: ResourceQuery<T>;
   private cache?: GatewayResourceCache;
   private workspaceKey?: string;
@@ -135,6 +163,7 @@ export class ResourceQueryController<T> implements ReactiveController {
     const version = ++this.version;
     this.cache = cache;
     this.workspaceKey = key;
+    this.failingSince = undefined;
     this.publish({ status: 'loading' });
     if (cache && this.query && version === this.version && key === getResourceWorkspaceKey()) {
       const stop = cache.observe(this.query, (state) => {
@@ -148,6 +177,9 @@ export class ResourceQueryController<T> implements ReactiveController {
   }
 
   private publish(state: ResourceQueryState<T>): void {
+    if (state.data !== undefined || state.status === 'ready' || state.status === 'unsupported')
+      this.failingSince = undefined;
+    else if (state.error) this.failingSince ??= Date.now();
     this.state = state;
     this.onChange?.(state);
     this.host.requestUpdate();

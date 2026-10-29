@@ -27,6 +27,7 @@ import { getState, subscribe } from '../../state.js';
 import {
   heldDataIsSaved,
   isSupersededRead,
+  readKeepsFailing,
   ResourceQueryController,
 } from '../shared/resource-query-controller.js';
 
@@ -143,27 +144,35 @@ export class TerminalView extends TerminalViewState {
       )
     )
       return nothing;
+    const failure =
+      observation.error && !isSupersededRead(observation.error) ? observation.error : undefined;
+    const notRead = readKeepsFailing(this.progressQuery);
     if (
       observation.status !== 'unsupported' &&
-      (!observation.error || isSupersededRead(observation.error)) &&
+      !failure &&
+      !notRead &&
       !heldDataIsSaved(observation)
     )
       return nothing;
     return html`<div class="progress-strip" data-terminal-progress=${observation.status}>
       ${observation.data
         ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`
-        : nothing}
+        : notRead
+          ? 'Progress not read yet.'
+          : nothing}
       ${observation.status === 'unsupported'
         ? 'Progress updates are unavailable on this gateway.'
         : nothing}
-      ${observation.error && !isSupersededRead(observation.error)
-        ? html`<span role="alert">Progress read failed: ${observation.error.message}</span>
-            <button
-              ?disabled=${gateway.connectionState !== 'connected'}
-              @click=${() => this.progressQuery.retry()}
-            >
-              Retry reading progress
-            </button>`
+      ${failure
+        ? html`<span role="alert">Progress read failed: ${failure.message}</span>`
+        : nothing}
+      ${observation.error || notRead
+        ? html`<button
+            ?disabled=${gateway.connectionState !== 'connected'}
+            @click=${() => this.progressQuery.retry()}
+          >
+            Retry reading progress
+          </button>`
         : nothing}
     </div>`;
   }

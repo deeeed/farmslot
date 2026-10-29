@@ -124,7 +124,7 @@ interface SlotWatch {
   acceptanceSyncPending?: boolean;
   acceptanceSyncQueued?: boolean;
   progressRead?: Promise<void>;
-  progressRerun?: ComputeAndEmitOptions;
+  progressRerun?: { options: ComputeAndEmitOptions; done: Promise<void>; resolve(): void };
   /** `artifacts/acceptance-status.json` beside this context's checklist — the AC ledger. */
   acceptanceStatusFilePath: string;
   acceptanceStatusWatcher?: FSWatcher; // chokidar watcher for local (acceptance-status.json)
@@ -1229,28 +1229,34 @@ async function computeAndEmit(
 
   // One progress read per watch at a time. On a loaded node a read outlasts the 5 s operation
   // heartbeat, and overlapping reads only queue behind each other; later calls fold into one rerun.
+  // A caller waits for the read that covers its call, never for the reruns queued after it.
   if (sw.progressRead) {
-    const queued = sw.progressRerun;
-    sw.progressRerun = {
-      fromSubtask: queued?.fromSubtask || options.fromSubtask,
-      fromAcceptance: queued?.fromAcceptance || options.fromAcceptance,
-      skipAcceptanceSync: (queued?.skipAcceptanceSync ?? true) && options.skipAcceptanceSync,
+    if (!sw.progressRerun) {
+      let resolve!: () => void;
+      const done = new Promise<void>((settle) => (resolve = settle));
+      sw.progressRerun = { options: { skipAcceptanceSync: true }, done, resolve };
+    }
+    const queued = sw.progressRerun.options;
+    sw.progressRerun.options = {
+      fromSubtask: queued.fromSubtask || options.fromSubtask,
+      fromAcceptance: queued.fromAcceptance || options.fromAcceptance,
+      skipAcceptanceSync: queued.skipAcceptanceSync && options.skipAcceptanceSync,
     };
-    return sw.progressRead;
+    return sw.progressRerun.done;
   }
+  const first = readAndEmitProgress(key, sw, content, options);
   sw.progressRead = (async () => {
-    let next: ComputeAndEmitOptions | undefined = options;
-    let markdown = content;
-    while (next && activeWatches.get(key) === sw) {
-      await readAndEmitProgress(key, sw, markdown, next);
-      next = sw.progressRerun;
+    await first;
+    for (let rerun = sw.progressRerun; rerun; rerun = sw.progressRerun) {
       sw.progressRerun = undefined;
-      markdown = undefined;
+      if (activeWatches.get(key) === sw)
+        await readAndEmitProgress(key, sw, undefined, rerun.options);
+      rerun.resolve();
     }
   })().finally(() => {
     sw.progressRead = undefined;
   });
-  return sw.progressRead;
+  return first;
 }
 
 async function readAndEmitProgress(

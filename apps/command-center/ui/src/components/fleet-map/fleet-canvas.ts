@@ -57,6 +57,7 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import {
   heldDataIsSaved,
   isSupersededRead,
+  readKeepsFailing,
   ResourceQueryController,
 } from '../shared/resource-query-controller.js';
 import {
@@ -276,7 +277,9 @@ export class FleetCanvas extends LitElement {
       font-family: ${unsafeCSS(fonts.mono)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
     }
-    .progress-read-status {
+    /* Toolbar notices share the leftover width on one line, so one coming or going never changes
+       the toolbar's height. */
+    .toolbar > .rehydrating-banner {
       flex: 1 1 0;
       min-width: 0;
       overflow: hidden;
@@ -636,7 +639,8 @@ export class FleetCanvas extends LitElement {
     const quiet: Array<[string, ResourceQueryState<TaskProgressResult>]> = [];
     const failing: Array<[string, ResourceQueryError]> = [];
     const lines = [...this.progressObservations].map(([slotId, state]) => {
-      if (!this.progressQueries.get(slotId)?.belongsToWorkspace) return nothing;
+      const query = this.progressQueries.get(slotId);
+      if (!query?.belongsToWorkspace) return nothing;
       if (state.status === 'unsupported')
         return html`<span
           class="rehydrating-banner"
@@ -653,7 +657,10 @@ export class FleetCanvas extends LitElement {
         (this.progressFailures.get(slotId)?.count ?? 0) >= PROGRESS_FAILURES_BEFORE_ALERT
       )
         failing.push([slotId, state.error!]);
-      else if (heldDataIsSaved(state) || (failed && state.data === undefined))
+      else if (
+        heldDataIsSaved(state) ||
+        (state.data === undefined && (failed || readKeepsFailing(query)))
+      )
         quiet.push([slotId, state]);
       return nothing;
     });
@@ -668,13 +675,13 @@ export class FleetCanvas extends LitElement {
       ? `Progress reads keep failing for ${failing.map(([slotId]) => slotId).join(', ')}: ${failing[0][1].message}`
       : '';
     const retryIds = [
-      ...quiet.filter(([, state]) => state.error).map(([slotId]) => slotId),
+      ...quiet.filter(([, state]) => state.error || !state.data).map(([slotId]) => slotId),
       ...failing.map(([slotId]) => slotId),
     ];
     // One line that never wraps, so slots joining or leaving cannot move the cards.
     return [
       html`<span
-        class="rehydrating-banner progress-read-status"
+        class="rehydrating-banner"
         data-fleet-progress-quiet=${quiet.length}
         data-fleet-progress-failing=${failing.length}
         title=${[quietText, failingText].filter(Boolean).join(' ')}
@@ -1371,13 +1378,21 @@ export class FleetCanvas extends LitElement {
           />
           ${this.renderFleetRefreshTrigger()} ${this.renderProgressReadStatus()}
           ${heldDataIsSaved(this.fleetObservation)
-            ? html`<span class="rehydrating-banner" data-fleet-freshness="stale">
+            ? html`<span
+                class="rehydrating-banner"
+                data-fleet-freshness="stale"
+                title=${`Saved fleet, ${sourceObservationAge(this.fleetObservation.observedAt, this.now)}. Actions wait for a current read.`}
+              >
                 Saved fleet, ${sourceObservationAge(this.fleetObservation.observedAt, this.now)}.
                 Actions wait for a current read.
               </span>`
             : ''}
           ${heldDataIsSaved(this.nodeQuery.state)
-            ? html`<span class="rehydrating-banner" data-node-freshness="stale">
+            ? html`<span
+                class="rehydrating-banner"
+                data-node-freshness="stale"
+                title=${`Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt, this.now)}.`}
+              >
                 Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt, this.now)}.
               </span>`
             : ''}
