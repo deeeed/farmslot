@@ -1,6 +1,6 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Automatic slot selection follows current node load",
+  "title": "Automatic slot selection follows sampled CPU idle",
   "description": "Authenticated preview and FIND_SLOT over disposable pools, including allowlists and persisted overload reasons. Includes the human stale-slot picker with a manual slot excluded, legacy released rows retained, and actionable empty-resource messages. No worker or device starts.",
   "workflow": {
     "entry": "select",
@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/load-aware-slot-selection.mts",
         "timeout_ms": 120000,
-        "intent": "Prefer lightly loaded allowed nodes and retain overload reasons in the run record",
+        "intent": "Prefer idle CPU, wait when recovery finds busy nodes, and preserve explicit pins with a warning",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

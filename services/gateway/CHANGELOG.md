@@ -20,6 +20,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Notice the first checkout-update record and missing Git refs on Linux gateways: the update watcher watches existing directories instead of missing files.
 
+- Use sampled CPU idle for automatic placement, with per-machine minima and warnings instead of load holds for explicitly pinned slots.
+
 - Give each requested PR review its own round budget, preserving same-run replay counts and existing feature budgets.
 - Preserve literal terminal keystrokes in arrival order across clients while ownership, target checks or remote delivery are slow.
 
