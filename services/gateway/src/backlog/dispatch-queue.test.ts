@@ -2026,8 +2026,8 @@ test('memory-only create failure requeues and purges the orphan Run', async (t) 
   assert.ok(requeued, 'row must be requeued for retry');
   assert.equal(requeued.status, 'queued');
   assert.equal(requeued.runId, undefined);
-  // The requeued row would otherwise be dispatched into a later test.
-  removeQueueItemInternal(item.id, 'test-cleanup');
+  // The requeued row stays: the last test's own rows auto-dispatch through this test's callback
+  // unless an older queued row takes that dispatch first.
 });
 
 test('PR queue prepares cold allowed slots while respecting busy slots and model constraints', async () => {
