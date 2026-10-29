@@ -641,6 +641,27 @@ for (const name of ['complete', 'finalize']) {
   });
 }
 
+test('an unconfirmed command stop is retained across reconciliation until explicit release', async () => {
+  run.status = 'failed';
+  slotRow = {
+    current_run_id: null,
+    cleanup_run_id: RUN_ID,
+    cleanup_stop_unconfirmed: true,
+    slot_epoch: 4,
+    lifecycle: 'held',
+    phase: 'occupied',
+  };
+  const before = structuredClone(slotRow);
+  for (let pass = 0; pass < 2; pass++) {
+    assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
+    assert.deepEqual(slotRow, before);
+  }
+  assert.equal(providerCleanups, 0);
+  assert.equal(archived, 0);
+  assert.deepEqual(commands, []);
+  assert.deepEqual(slotWrites, []);
+});
+
 test('an archived terminal owner can finish an identified hold without changing its record', async () => {
   run.status = 'failed';
   slotRow = {

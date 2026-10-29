@@ -25,6 +25,13 @@
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/terminal-release-timeout.mjs --interrupt-at-hook",
         "timeout_ms": 180000,
         "intent": "Interrupt the owned hook and confirm its asynchronous shutdown completes.",
+        "next": "release-early-cancellation"
+      },
+      "release-early-cancellation": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/terminal-release-timeout.mjs --interrupt-before-hook-identity",
+        "timeout_ms": 180000,
+        "intent": "Interrupt before the hook identity is captured and confirm no owned hook survives.",
         "next": "cold-health"
       },
       "cold-health": {

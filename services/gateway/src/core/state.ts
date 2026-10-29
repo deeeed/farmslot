@@ -289,6 +289,9 @@ type HeldPhase = 'ci-watch' | 'pr-watch' | 'occupied';
  */
 export const SLOT_RELEASING_SINCE = 'releasing_since';
 
+/** Automatic retries cannot confirm a command whose stop was not observed. */
+export const SLOT_CLEANUP_STOP_UNCONFIRMED = 'cleanup_stop_unconfirmed';
+
 /** The releasing fence, stamped so a stalled one can be told from a live one. */
 export function slotReleasingFenceFields(now = new Date()): Record<string, unknown> {
   return {
@@ -305,6 +308,7 @@ function slotResetFields(warm: boolean): Record<string, unknown> {
     held_reason: null,
     cleanup_release_token: null,
     cleanup_run_id: null,
+    [SLOT_CLEANUP_STOP_UNCONFIRMED]: null,
     [SLOT_RELEASING_SINCE]: null,
     agent: 'idle',
     warm,

@@ -15,7 +15,8 @@ const realTimeout = setTimeout;
 const realClearTimeout = clearTimeout;
 const pause = () => new Promise((resolve) => realTimeout(resolve, 10));
 const stopping = new AbortController();
-const expectedInterruption = process.argv.includes('--interrupt-at-hook');
+const earlyInterruption = process.argv.includes('--interrupt-before-hook-identity');
+const expectedInterruption = earlyInterruption || process.argv.includes('--interrupt-at-hook');
 const terminate = () => stopping.abort(new Error('release proof interrupted by SIGTERM'));
 const interrupt = () => stopping.abort(new Error('release proof interrupted by SIGINT'));
 process.on('SIGTERM', terminate);
@@ -45,6 +46,7 @@ const bounded = async (promise, timeoutMs = 3000, duringCleanup = false) => {
 };
 const marker = path.join(root, 'hook-started.json');
 const cleaned = path.join(root, 'hook-cleaned');
+const stopHook = path.join(root, 'stop-hook');
 let server, wss, client, requestOutcome, hookIdentity, primaryError;
 const cleanupErrors = [];
 const cleanup = async (operation) => {
@@ -112,7 +114,17 @@ try {
   const hook = path.join(root, 'hang.mjs');
   await writeFile(
     hook,
-    `import {writeFileSync} from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid}));\nlet closing=false;process.on('SIGTERM',()=>{if(closing)return;closing=true;setTimeout(()=>{writeFileSync(${JSON.stringify(cleaned)},'done');process.exit(0)},100);});\nsetInterval(()=>{},20);\n`,
+    `import {existsSync,writeFileSync} from 'node:fs';
+let closing=false;
+const close=()=>{if(closing)return;closing=true;setTimeout(()=>{writeFileSync(${JSON.stringify(cleaned)},'done');process.exit(0)},100)};
+process.on('SIGTERM',close);
+// The proof owns shutdown even before it has read the hook's PID.
+setInterval(()=>{
+  if(existsSync(${JSON.stringify(stopHook)}))close();
+  try{process.kill(${process.pid},0)}catch(error){if(error.code!=='ESRCH')throw error;close()}
+},20);
+writeFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid}));
+`,
   );
   await writeFile(
     path.join(root, 'projects/proof/project.json'),
@@ -230,7 +242,15 @@ try {
       (async () => {
         for (;;) {
           try {
-            processRow = JSON.parse(await readFile(marker, 'utf8'));
+            const bytes = await readFile(marker, 'utf8');
+            if (earlyInterruption) {
+              assert.equal(hookIdentity, undefined);
+              console.log(JSON.stringify({ phase: 'interrupt-before-identity', root }));
+              process.kill(process.pid, 'SIGTERM');
+              await pause();
+              stopping.signal.throwIfAborted();
+            }
+            processRow = JSON.parse(bytes);
             break;
           } catch (error) {
             if (error.code !== 'ENOENT') throw error;
@@ -307,6 +327,8 @@ try {
 } finally {
   mock.timers.reset();
   await cleanup(async () => {
+    // An issued request may start its hook after the marker wait was cancelled.
+    await writeFile(stopHook, '', { flag: 'wx', mode: 0o600 });
     if (hookIdentity && alive(hookIdentity.pid)) {
       assert.equal(
         execFileSync('ps', ['-p', String(hookIdentity.pid), '-o', 'lstart='], {
@@ -325,6 +347,12 @@ try {
         3000,
         true,
       );
+    if (earlyInterruption && primaryError === stopping.signal.reason) {
+      assert.equal(hookIdentity, undefined, 'the interruption precedes PID capture');
+      const observed = JSON.parse(await readFile(marker, 'utf8'));
+      assert.equal(await readFile(cleaned, 'utf8'), 'done');
+      assert.equal(alive(observed.pid), false, 'the uncaptured hook must have stopped');
+    }
   });
   await cleanup(async () => client?.close());
   if (wss)

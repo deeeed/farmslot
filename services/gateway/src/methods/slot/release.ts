@@ -40,6 +40,7 @@ import {
   readSlotRow,
   resetSlotIf,
   resolveProjectTaskDirName,
+  SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASING_SINCE,
   slotReleasingFenceFields,
@@ -549,7 +550,12 @@ async function slotReleaseImpl(
                 lifecycle: 'held',
                 phase: 'occupied',
                 current_run_id: confirmed ? (params.expectedRunId ?? owner) : null,
-                ...(!confirmed ? { cleanup_run_id: params.expectedRunId ?? owner } : {}),
+                ...(!confirmed
+                  ? {
+                      cleanup_run_id: params.expectedRunId ?? owner,
+                      [SLOT_CLEANUP_STOP_UNCONFIRMED]: true,
+                    }
+                  : {}),
                 held_reason: confirmed
                   ? 'Cleanup timed out; retry release or replay the run.'
                   : 'Cleanup stop is unconfirmed; inspect the slot and retry release.',

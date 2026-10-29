@@ -199,6 +199,7 @@ test(
     const held = await readRow();
     assert.equal(held.current_run_id, null);
     assert.equal(held.cleanup_run_id, owner.id);
+    assert.equal(held.cleanup_stop_unconfirmed, true);
     assert.equal(held.lifecycle, 'held');
     assert.equal(replaySlotReclaimCheck(held, owner.id).ok, false);
     assert.match(String(held.held_reason), /unconfirmed/);
@@ -215,6 +216,7 @@ test(
   async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
     await seedDeadline();
+    await core.updateSlotStatus('owned-recovery', { cleanup_stop_unconfirmed: true });
     const entered = deferred(),
       resume = deferred();
     t.after(resume.resolve);
@@ -251,6 +253,7 @@ test(
     resume.resolve();
     assert.equal((await observed).released, true);
     assert.equal((await readRow()).lifecycle, 'ready');
+    assert.equal((await readRow()).cleanup_stop_unconfirmed, null);
     assert.equal(isTerminalTeardownInFlight('owned-recovery'), false);
   },
 );
