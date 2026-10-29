@@ -4,6 +4,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- Share inactive reservation and abandoned capture selection with archive-only gateway retention, preserving admission capacity without deleting evidence.
+
 - Queue retention work within a process so long captures do not exhaust other runs' file-lock retries. External contention errors include the lock path.
 
 - Reading a retained artifact the capture declared it could not keep names the reason, e.g. `Artifact not retained (media-capacity): <path>`, instead of a bare `ENOENT` from `realpath`. The error keeps `code: 'ENOENT'`.
