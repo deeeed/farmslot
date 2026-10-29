@@ -3,8 +3,8 @@
   "date": "2026-10-30",
   "items": [
     "Open runs, the inbox, fleet, slots and saved reviews offline from the device store, each with its saved age; commands wait for a live read.",
-    "Open pending gate diffs and evidence images offline once they are prefetched.",
-    "See every live run in run history, not only the latest 80.",
+    "Open pending gate diffs and evidence images up to 2 MB offline once they are prefetched.",
+    "See every live run in run history, not only the latest 80, on gateways with version lists.",
     "Decide at a gate from one list of what blocks publishing, with the same actions as Command Center.",
     "Copy or share the current view's Command Center link from the quick-action menu."
   ]
