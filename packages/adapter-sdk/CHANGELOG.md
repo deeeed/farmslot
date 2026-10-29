@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.2 - 2026-10-29
+
+- Align protocol 0.74.0 and recorder runtime 0.46.2 for registry-installed providers.
+
 ## 0.25.1 - 2026-10-21
 
 - Align with `@farmslot/protocol` 0.61.0, `@farmslot/recipe-runner` 0.46.1.

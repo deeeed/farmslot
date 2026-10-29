@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.32.1 - 2026-10-29
+
+- Align protocol 0.74.0, task runtime 0.39.8, adapter-sdk 0.25.2 and recorder runtime 0.46.2.
+
 ## 0.32.0 - 2026-10-28
 
 - Use the pool-selected runtime provider for new and retained tasks, warn when the recorded harness version differs, and record the provider actually executed.
