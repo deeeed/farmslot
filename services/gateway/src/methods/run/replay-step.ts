@@ -2231,7 +2231,7 @@ async function replayRunStep(
         ? (activeReviewFixTaskFile(currentBeforeReplayUpdate) ??
           (targetIdx === reviewIdx ? blockedFixTaskFile : undefined))
         : undefined;
-    const engineStateForReplay = freshDispatchEngineStateForReplay(
+    let engineStateForReplay = freshDispatchEngineStateForReplay(
       replaysCompletionOrGate
         ? resetPublishGateApprovalForReplay(
             currentBeforeReplayUpdate.engineState,
@@ -2240,6 +2240,13 @@ async function replayRunStep(
         : currentBeforeReplayUpdate.engineState,
       params.freshDispatch || nativeFreshRestart,
     );
+    // Explicit review retry consumes the operator hold; restart must observe its new reviewer.
+    if (replayStepName === PS.REVIEW && engineStateForReplay?.publishGate?.reviewRecovery) {
+      engineStateForReplay = {
+        ...engineStateForReplay,
+        publishGate: { ...engineStateForReplay.publishGate, reviewRecovery: undefined },
+      };
+    }
     // Soft-lock was taken before long awaits. Re-validate holder+epoch and live
     // ownership before revive: expiry reclaim or concurrent replay may have stolen it.
     if (
