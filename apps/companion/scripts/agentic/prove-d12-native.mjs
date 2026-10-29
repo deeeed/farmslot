@@ -242,7 +242,11 @@ if (phase === 'online') {
   ]);
 } else if (phase === 'offline') {
   const saved = await readState();
+  // Offline is the whole path down: the gateway stops and the store proxy in front of it refuses
+  // every new socket, as a stopped gateway's port would; the proxy would otherwise accept the
+  // app's socket before finding the gateway gone, and the app's sign-in frames would count.
   await checkpoint('gateway-stop');
+  await checkpoint('proxy-hold');
   await checkpoint('cold-restart');
   // The new process has the store only: a few seconds of attempts must send no gateway frame.
   const state = await until(
@@ -335,6 +339,7 @@ if (phase === 'online') {
   assert.deepEqual([...changedIds].sort(), [...fixture.recoverChangedRuns].sort());
   const since = Date.now();
   await checkpoint('gateway-start');
+  await checkpoint('proxy-release');
   const state = await until(
     (value) =>
       value.status === 'connected' &&

@@ -22,6 +22,7 @@ import {
   verifyResourceContent,
 } from '@farmslot/protocol/client-cache';
 
+import type { ArtifactImageRead, ArtifactReadStage } from '../hooks/useHeldContent';
 import { decisionRunId } from '../lib/decision-run-context';
 import { nativeDecisionsQuery } from '../lib/gateway-run-sync';
 import { artifactImageKey, gateDiffSource } from '../lib/held-content';
@@ -39,6 +40,20 @@ export interface ArtifactImageFrame {
   id: string;
   state: ArtifactImageState;
   mountId: number;
+  path?: string;
+  /** Where its verified read stands (useArtifactImageSource), when it has a sha256. */
+  read?: ArtifactImageRead;
+}
+/** A live read's outcome: the bytes received, or the error (`HTTP <status>` when it answered). */
+export type ArtifactFetchOutcome = { bytes: number } | { error: string };
+/** Dev-only: the mount's reads. `effectRuns` counts the reads it started; the rest is the latest. */
+export interface ArtifactReadTrace {
+  effectRuns: number;
+  stage: ArtifactReadStage;
+  stageAt: number;
+  lastResultAt?: number;
+  /** The latest fetch, from read `run`. */
+  fetch?: ArtifactFetchOutcome & { run: number; at: number };
 }
 /** What the gate review route renders for its decision. */
 export interface GateReviewFrame {
@@ -53,18 +68,47 @@ export interface RunDiffFrame {
 }
 
 const images = new Map<number, ArtifactImageFrame>();
+const traces = new Map<number, ArtifactReadTrace>();
+/** The order mounts first reported in; `lastMounted` is the latest of them. */
+const firstReports = new Map<number, number>();
 let lastFailed: number | undefined;
 let lastMounted: number | undefined;
 const gateScreens = new Set<() => GateReviewFrame>();
 const diffScreens = new Set<() => RunDiffFrame>();
 
 export function reportArtifactImage(frame: ArtifactImageFrame): void {
-  if (!images.has(frame.mountId)) lastMounted = frame.mountId;
+  if (!images.has(frame.mountId)) {
+    lastMounted = frame.mountId;
+    firstReports.set(frame.mountId, firstReports.size + 1);
+  }
   if (frame.state === 'failed') lastFailed = frame.mountId;
   images.set(frame.mountId, frame);
 }
 export function forgetArtifactImage(mountId: number): void {
   images.delete(mountId);
+  traces.delete(mountId);
+}
+/**
+ * One read event of a mount: a stage, or its fetch outcome. An event from a read that a newer read
+ * replaced is ignored, so the trace always describes the latest read.
+ */
+export function traceArtifactImage(
+  mountId: number,
+  run: number,
+  stage: ArtifactReadStage,
+  fetch?: ArtifactFetchOutcome,
+): void {
+  const previous = traces.get(mountId);
+  if (previous && run < previous.effectRuns) return;
+  const at = Date.now();
+  traces.set(mountId, {
+    stage,
+    stageAt: at,
+    ...previous,
+    effectRuns: run,
+    ...(fetch ? { fetch: { ...fetch, run, at } } : { stage, stageAt: at }),
+    ...(stage === 'committed' && !fetch ? { lastResultAt: at } : {}),
+  });
 }
 export function observeD12GateReview(read: () => GateReviewFrame): () => void {
   gateScreens.add(read);
@@ -91,10 +135,12 @@ export interface D12NativeInputs {
   owner?: string;
   gateScreens: readonly GateReviewFrame[];
   diffScreens: readonly RunDiffFrame[];
-  /** Every mounted ArtifactImage. */
-  images: readonly ArtifactImageFrame[];
+  /** Every mounted ArtifactImage, with its current read where it has one. */
+  images: readonly (ArtifactImageFrame & Partial<ArtifactReadTrace> & { firstReport?: number })[];
   /** The mount that most recently failed while still mounted, else the latest mount. */
   image?: ArtifactImageFrame;
+  lastMounted?: number;
+  lastFailed?: number;
 }
 
 /** Both sides of every text file the diff and its untracked manifest touch are held. */
@@ -226,6 +272,10 @@ export async function d12NativeObservation(inputs: D12NativeInputs) {
     catalog: cache ? catalogObservation(cache, inputs.owner) : { models: [] },
     upstream: cache ? upstreamObservation(cache) : { prs: [] },
     image: inputs.image,
+    imageMounts: inputs.images,
+    // `lastMounted` is the latest mount to report first; `image` is `lastFailed`, else it.
+    lastMounted: inputs.lastMounted,
+    lastFailed: inputs.lastFailed,
   };
 }
 
@@ -247,8 +297,15 @@ export async function observeD12Native(ref: string) {
         owner: getResourceNativeOwnerId(),
         gateScreens: [...gateScreens].map((read) => read()),
         diffScreens: [...diffScreens].map((read) => read()),
-        images: [...images.values()],
+        // A mount that traced a read but never reported still shows, as an unreported frame.
+        images: [...new Set([...images.keys(), ...traces.keys()])].map((mountId) => ({
+          ...(images.get(mountId) ?? { id: '', state: 'loading' as const, mountId }),
+          ...traces.get(mountId),
+          firstReport: firstReports.get(mountId),
+        })),
         image: failed ?? (lastMounted === undefined ? undefined : images.get(lastMounted)),
+        lastMounted,
+        lastFailed,
       }),
     },
   };

@@ -168,6 +168,9 @@ test('the d12-native observation reports the gate, catalog, upstream and image t
       ],
     },
     image: { id: PNG_SHA, state: 'loaded', mountId: 3 },
+    imageMounts: [{ id: PNG_SHA, state: 'loaded', mountId: 3 }],
+    lastMounted: undefined,
+    lastFailed: undefined,
   });
 });
 
@@ -241,4 +244,51 @@ test('the observer reports the image that failed until that same mount loads, an
   assert.equal((await read()).launchId, failed.launchId, 'one launch id per process');
   proof.forgetArtifactImage(2);
   assert.equal((await read()).image?.mountId, 3);
+});
+
+test('each mount reports its reads: stage, effect runs, fetch outcome, result time and report order', async () => {
+  const proof = await load();
+  const meter = createOfflineClientStoreBaseline(() => {});
+  connection = { status: 'connected', client: { offlineBaseline: meter } };
+  proof.reportArtifactImage({
+    id: 'big',
+    path: 'a.png',
+    state: 'loading',
+    mountId: 40,
+    read: 'reading',
+  });
+  proof.traceArtifactImage(40, 1, 'open-held');
+  proof.traceArtifactImage(40, 1, 'fetch');
+  proof.traceArtifactImage(40, 1, 'fetch', { error: 'HTTP 503' });
+  proof.traceArtifactImage(40, 1, 'committed');
+  proof.traceArtifactImage(40, 2, 'open-held');
+  proof.traceArtifactImage(40, 2, 'fetch');
+  proof.traceArtifactImage(40, 2, 'fetch', { bytes: 2_621_440 });
+  // The first read's late events arrive after the second read began; they are ignored.
+  proof.traceArtifactImage(40, 1, 'aborted');
+  proof.traceArtifactImage(40, 1, 'fetch', { error: 'late' });
+  // A mount that traced a read but never reported still shows.
+  proof.traceArtifactImage(41, 1, 'store');
+  const observed = (await proof.observeD12Native('d12-native')).observations.d12Native;
+  const big = observed.imageMounts.find((frame) => frame.mountId === 40)!;
+  assert.equal(big.path, 'a.png');
+  assert.equal(big.read, 'reading');
+  assert.equal(big.stage, 'fetch');
+  assert.equal(big.effectRuns, 2);
+  assert.deepEqual({ ...big.fetch, at: 0 }, { bytes: 2_621_440, run: 2, at: 0 });
+  assert.equal(typeof big.lastResultAt, 'number', 'the first read committed a result');
+  assert(big.firstReport! >= 1);
+  assert.equal(observed.lastMounted, 40);
+  const unreported = observed.imageMounts.find((frame) => frame.mountId === 41)!;
+  assert.equal(unreported.id, '', 'never reported');
+  assert.equal(unreported.firstReport, undefined);
+  assert.equal(unreported.stage, 'store');
+  assert.equal(unreported.effectRuns, 1);
+  proof.forgetArtifactImage(40);
+  proof.forgetArtifactImage(41);
+  const after = (await proof.observeD12Native('d12-native')).observations.d12Native.imageMounts;
+  assert.equal(
+    after.some((frame) => frame.mountId === 40 || frame.mountId === 41),
+    false,
+  );
 });

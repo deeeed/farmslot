@@ -5,6 +5,7 @@ import {
   type ArtifactImageState,
   forgetArtifactImage,
   reportArtifactImage,
+  traceArtifactImage,
 } from '../farmslot/d12-native-proof';
 import { useArtifactImageSource } from '../hooks/useHeldContent';
 import type { ArtifactHttpHeaders } from '../lib/artifact-url';
@@ -24,8 +25,13 @@ export function ArtifactImage({
   uri: string;
   authHeaders?: ArtifactHttpHeaders;
 }) {
-  const { source, read } = useArtifactImageSource(uri, authHeaders, artifact);
   const [mountId] = useState(() => ++mounts);
+  const { source, read } = useArtifactImageSource(
+    uri,
+    authHeaders,
+    artifact,
+    __DEV__ ? (run, stage, fetch) => traceArtifactImage(mountId, run, stage, fetch) : undefined,
+  );
   // The native outcome for the source it belongs to; a new source starts loading again.
   const [shown, setShown] = useState<{ source: typeof source; loaded: boolean }>();
   const state: ArtifactImageState =
@@ -39,9 +45,10 @@ export function ArtifactImage({
             : 'failed'
           : 'loading';
   const id = artifact.sha256 ?? artifact.path;
+  const { path } = artifact;
   useEffect(() => {
-    if (__DEV__) reportArtifactImage({ id, state, mountId });
-  }, [id, mountId, state]);
+    if (__DEV__) reportArtifactImage({ id, path, state, mountId, read });
+  }, [id, mountId, path, read, state]);
   useEffect(() => () => forgetArtifactImage(mountId), [mountId]);
   return (
     <Image
