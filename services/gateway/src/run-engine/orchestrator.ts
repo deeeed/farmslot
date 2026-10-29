@@ -963,8 +963,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         return;
       }
 
-      const capacityHold =
-        (stepName === S.REVIEW || stepName === S.HUMAN_GATE) && isReviewerCapacityError(err);
+      const capacityHold = stepName === S.REVIEW && isReviewerCapacityError(err);
       if (isTerminalReviewArtifactError(err) || capacityHold) {
         console.warn(
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} requires operator review: ${msg}`,

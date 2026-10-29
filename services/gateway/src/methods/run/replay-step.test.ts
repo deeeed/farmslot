@@ -3865,3 +3865,58 @@ test('a review replay keeps the fix pass its worker blocked', () => {
     undefined,
   );
 });
+
+test('review replay clears the capacity hold so restart can observe the retry', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'PROJ-215' });
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  const reviewIndex = run.steps.findIndex((step) => step.name === 'review');
+  const taskFile = path.join(runsDirectory(), 'capacity-task', 'TASK.md');
+  updateRun(run.id, {
+    status: 'review-failed',
+    taskFile,
+    engineState: {
+      publishGate: {
+        reviewRecovery: {
+          status: 'operator-required',
+          attempts: 1,
+          startedAt: '2026-10-29T17:16:58.248Z',
+          updatedAt: '2026-10-29T17:16:58.248Z',
+          lastError: 'Selected model is at capacity. Please try a different model.',
+        },
+      },
+    },
+    steps: run.steps.map((step, index) => ({
+      ...step,
+      status: index < reviewIndex ? 'done' : index === reviewIndex ? 'failed' : 'skipped',
+    })),
+  });
+  const original = getRun(run.id)!;
+  const prepare = structuredClone(original.steps.find((step) => step.name === 'prepare'));
+  const dispatch = structuredClone(original.steps.find((step) => step.name === 'dispatch'));
+  let started = false;
+  await runReplayStep({ runId: run.id, stepName: 'review' }, () => {}, {
+    startEngine: async (id) => {
+      started = true;
+      assert.equal(getRun(id)?.engineState?.publishGate?.reviewRecovery, undefined);
+    },
+  });
+  const retry = getRun(run.id)!;
+  assert.equal(started, true);
+  assert.equal(retry.engineState?.publishGate?.reviewRecovery, undefined);
+  assert.equal(
+    isPublicationReviewRecoveryHeld(retry),
+    false,
+    'restart must not skip the new review',
+  );
+  assert.equal(retry.taskFile, taskFile);
+  assert.deepEqual(
+    retry.steps.find((step) => step.name === 'prepare'),
+    prepare,
+  );
+  assert.deepEqual(
+    retry.steps.find((step) => step.name === 'dispatch'),
+    dispatch,
+  );
+});

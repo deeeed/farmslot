@@ -29,7 +29,7 @@ const stopForCapacity = async () => {
 mock.module('./post-dispatch-steps.js', {
   namedExports: {
     executeReviewStep: stopForCapacity,
-    executeHumanGateStep: stopForCapacity,
+    executeHumanGateStep: async () => assert.fail('publication review handles its own failures'),
     executeMonitorStep: async () => assert.fail('worker monitor must not rerun'),
     executeCompleteStep: async () => assert.fail('review has no verdict'),
     holdInteractiveCompletionForOperator: () => assert.fail('unexpected completion'),
@@ -56,7 +56,8 @@ mock.module('../runs/store.js', {
 const { startRun } = await import('./orchestrator.js');
 const message = 'Selected model is at capacity. Please try a different model.';
 
-function setup(at: typeof S.REVIEW | typeof S.HUMAN_GATE = S.REVIEW) {
+function setup() {
+  const at = S.REVIEW;
   reviewCalls = 0;
   duringReview = () => {};
   failure = new Error(message);
@@ -92,31 +93,29 @@ function setup(at: typeof S.REVIEW | typeof S.HUMAN_GATE = S.REVIEW) {
   ];
 }
 
-for (const at of [S.REVIEW, S.HUMAN_GATE]) {
-  test(`${at} capacity refusal holds for the operator`, async () => {
-    setup(at);
-    const contexts = structuredClone(run.agentContexts);
-    const receipts = structuredClone(run.reviewRoundSettlements);
-    const dispatch = structuredClone(run.steps.find((step) => step.name === S.DISPATCH));
-    failure = new ReviewerExitedError(message);
-    await startRun(run.id);
-    assert.equal(run.status, 'review-failed');
-    assert.equal(run.engineState?.publishGate?.reviewRecovery?.status, 'operator-required');
-    assert.equal(run.engineState?.publishGate?.reviewRecovery?.lastError, message);
-    assert.equal(run.steps.find((step) => step.name === at)?.status, 'failed');
-    assert.equal(run.error, message);
-    assert.equal(run.slotId, 'owned-slot');
-    assert.equal(run.completedAt, undefined);
-    assert.notEqual(run.metrics.outcome, 'failure');
-    assert.deepEqual(run.agentContexts, contexts);
-    assert.deepEqual(run.reviewRoundSettlements, receipts, 'no-verdict refund is retained');
-    assert.deepEqual(
-      run.steps.find((step) => step.name === S.DISPATCH),
-      dispatch,
-    );
-    assert.equal(reviewCalls, 1, 'no unbounded retry or replacement');
-  });
-}
+test('review capacity refusal holds for the operator', async () => {
+  setup();
+  const contexts = structuredClone(run.agentContexts);
+  const receipts = structuredClone(run.reviewRoundSettlements);
+  const dispatch = structuredClone(run.steps.find((step) => step.name === S.DISPATCH));
+  failure = new ReviewerExitedError(message);
+  await startRun(run.id);
+  assert.equal(run.status, 'review-failed');
+  assert.equal(run.engineState?.publishGate?.reviewRecovery?.status, 'operator-required');
+  assert.equal(run.engineState?.publishGate?.reviewRecovery?.lastError, message);
+  assert.equal(run.steps.find((step) => step.name === S.REVIEW)?.status, 'failed');
+  assert.equal(run.error, message);
+  assert.equal(run.slotId, 'owned-slot');
+  assert.equal(run.completedAt, undefined);
+  assert.notEqual(run.metrics.outcome, 'failure');
+  assert.deepEqual(run.agentContexts, contexts);
+  assert.deepEqual(run.reviewRoundSettlements, receipts, 'no-verdict refund is retained');
+  assert.deepEqual(
+    run.steps.find((step) => step.name === S.DISPATCH),
+    dispatch,
+  );
+  assert.equal(reviewCalls, 1, 'no unbounded retry or replacement');
+});
 
 for (const interrupt of ['cancel', 'replay'] as const) {
   test(`${interrupt} before capacity returns cannot restore an obsolete hold`, async () => {
