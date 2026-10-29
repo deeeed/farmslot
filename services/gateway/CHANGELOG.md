@@ -5,7 +5,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Run one task progress read per watched slot at a time; updates that arrive during a read fold into one rerun. A due gateway-update check publishes its result once instead of reporting a stale state for the length of the check.
+- Limit the pending-decision scan to task folders and share one scan between concurrent decision lists, so historical artifact trees no longer stall gateway file I/O.
+
 - Resume monitoring dispatched workers without repeating retained-artifact admission, so waiting completion signals can advance after restart.
+- Cap inherited worker prompt hooks without changing user settings, and escalate active inline CI fixes without tool progress, including tools with no completion for ten minutes.
 
 - Deduplicate Claude message usage and count initial and fix sessions once, excluding reviewers from historical and completion totals.
 - Active-development baseline; add user-facing changes here before release or package publication.

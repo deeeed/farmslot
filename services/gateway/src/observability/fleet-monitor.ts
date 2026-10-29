@@ -194,8 +194,18 @@ export async function scanDecisions(): Promise<void> {
   }
 }
 
+// Decision files sit one or two directories below a task root (<root>/<task>/ or
+// <root>/<kind>/<task>/). Walking every artifact tree of every historical task made
+// each decisions.list read ~50k entries and starved the gateway's file I/O.
+const DECISION_SCAN_MAX_DEPTH = 3;
+let listingFileDecisions: Promise<FileDecision[]> | null = null;
+
 export async function loadPendingDecisions(): Promise<PendingDecision[]> {
-  return (await loadFileDecisions()).map((file) => file.decision);
+  // Concurrent list calls share one scan instead of stacking walks.
+  listingFileDecisions ??= loadFileDecisions().finally(() => {
+    listingFileDecisions = null;
+  });
+  return (await listingFileDecisions).map((file) => file.decision);
 }
 
 async function loadFileDecisions(): Promise<FileDecision[]> {
@@ -203,7 +213,7 @@ async function loadFileDecisions(): Promise<FileDecision[]> {
 
   // Scan all project task directories for .pending_decision.json files
   for (const { root } of await projectTaskRoots()) {
-    await scanDirForDecisions(root, decisions);
+    await scanDirForDecisions(root, decisions, 0);
   }
 
   return decisions;
@@ -225,7 +235,11 @@ export async function resolveFileDecision(decisionId: string, actionId: string):
   resourceRevisions.advance(decisionsKey);
 }
 
-async function scanDirForDecisions(dir: string, results: FileDecision[]): Promise<void> {
+async function scanDirForDecisions(
+  dir: string,
+  results: FileDecision[],
+  depth: number,
+): Promise<void> {
   let entries: Dirent[];
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -237,7 +251,7 @@ async function scanDirForDecisions(dir: string, results: FileDecision[]): Promis
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      await scanDirForDecisions(fullPath, results);
+      if (depth < DECISION_SCAN_MAX_DEPTH) await scanDirForDecisions(fullPath, results, depth + 1);
     } else if (entry.name === '.pending_decision.json') {
       let content: string;
       try {

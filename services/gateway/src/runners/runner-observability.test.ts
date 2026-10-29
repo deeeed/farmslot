@@ -100,7 +100,12 @@ function relativeImportClosure(entryPath: string): string[] {
 test('immutable observability support covers the installer relative-import closure', () => {
   assert.deepEqual(
     [...RUNNER_OBSERVABILITY_SUPPORT_PATHS].sort(),
-    [...relativeImportClosure(INSTALLER_RELATIVE_PATH), ...RUNNER_OBSERVABILITY_COPY_PATHS].sort(),
+    [
+      ...new Set([
+        ...relativeImportClosure(INSTALLER_RELATIVE_PATH),
+        ...RUNNER_OBSERVABILITY_COPY_PATHS,
+      ]),
+    ].sort(),
   );
 });
 
@@ -186,6 +191,7 @@ test('remote observability install falls back when an immutable bundle is incomp
       'providers\n',
     );
     writeFileSync(path.join(supportRoot, 'scripts/runners/pi-farmslot-task.mjs'), 'task\n');
+    writeFileSync(path.join(supportRoot, 'scripts/runners/hook-progress.mjs'), 'progress\n');
     run();
     assert.equal(readFileSync(selectedPath, 'utf8').trim(), immutableInstaller);
   } finally {

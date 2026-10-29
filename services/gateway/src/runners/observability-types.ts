@@ -13,6 +13,8 @@ export interface ObservabilityReading<T> {
   confidence: ObservabilityConfidence;
   /** ms since epoch of the underlying event/file mtime. */
   observedAt: number;
+  /** Last structured tool event in this turn; null means none, absent means unsupported. */
+  lastToolProgressAt?: number | null;
   /** True only when prompt-acceptance evidence matched the requested prompt itself. */
   exactPromptMatch?: boolean;
   /** Error from the exact runner-native terminal turn event, never rendered output. */
@@ -61,6 +63,7 @@ export interface HookRecord {
   runnerPromptDigest?: string;
   turnStartedAt?: number;
   turnActive?: boolean;
+  lastToolProgressAt?: number | null;
   /** Root runner session currently owning the tmux pane. */
   rootSessionId?: string;
   sentAt?: number;
