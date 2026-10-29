@@ -485,7 +485,8 @@ short-lived and background work that does not establish CPU saturation. Skip a
 machine below 15% idle by default; gateway configuration may override the minimum
 per machine. Prefer more idle CPU among eligible machines.
 
-An explicit slot or a one-slot allowlist bypasses this placement gate. Record a
+An explicit slot or a one-slot operator allowlist bypasses this placement gate.
+Internal recovery or queue-spread narrowing is not an explicit pin. Record a
 warning in the step detail when its machine is below the minimum. Ownership,
 prepare, availability and the separate opt-in pressure policy still apply.
 

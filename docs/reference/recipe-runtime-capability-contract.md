@@ -433,7 +433,8 @@ Eligible machines retain red-headroom priority, then rank by higher idle before
 branch or CDP preference. Unknown or stale CPU samples fall back to existing slot
 ranking after machines with current samples. FIND_SLOT records samples and reasons
 in `hostLoadSelection` before binding. An explicit `slotId`/`--slot` or a one-slot
-`allowedSlots` bypasses this automatic gate and records a warning in
+`allowedSlots` supplied by the operator bypasses this automatic gate. Internal
+recovery or spread narrowing must preserve the original pin intent. The run records a warning in
 `selectionReason` when below the minimum. Other dispatch admission checks apply.
 
 ### Affected resources

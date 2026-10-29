@@ -51,7 +51,10 @@ import {
   inspectReleasableBranchHolders,
   releaseBranchHolderForSelection,
 } from '../methods/dispatch/branch-checkout.js';
-import { automaticSlotLoads } from '../methods/dispatch/pressure-admission.js';
+import {
+  automaticSlotLoads,
+  isPinnedSlotSelection,
+} from '../methods/dispatch/pressure-admission.js';
 import {
   activeRunIds,
   activeRunSlotIds,
@@ -704,9 +707,10 @@ export async function executeFindSlotStep(
   generation: number,
   context: FindSlotStepContext,
 ): Promise<StepIO> {
+  const automaticLoadPinned = isPinnedSlotSelection(run);
   let hostLoadWaitReason: string | undefined;
   for (;;) {
-    const result = await findSlotAttempt(runId, run, generation, context);
+    const result = await findSlotAttempt(runId, run, generation, context, automaticLoadPinned);
     if (!result.hostLoadWait)
       return hostLoadWaitReason
         ? { ...result, inputs: { ...result.inputs, hostLoadWaitReason } }
@@ -732,6 +736,7 @@ async function findSlotAttempt(
   run: Run,
   generation: number,
   context: FindSlotStepContext,
+  automaticLoadPinned: boolean,
 ): Promise<FindSlotAttempt> {
   if (run.sourcePlan && run.slotId) {
     const pool = (await loadPoolConfigs()).find((pool) =>
@@ -818,6 +823,19 @@ async function findSlotAttempt(
   // branch-affinity shortcut so wizard nudge/fresh-reuse paths honor simulator resources
   // the same way the normal slot picker does.
   const branchFleet = await loadFleetStatus(true);
+  const pressureDecisions = capturePressureAdmissionDecisionsLightweight([
+    ...new Set(
+      branchFleet.slots.filter((slot) => slot.project === run.project).map((slot) => slot.machine),
+    ),
+  ]);
+  const automaticLoads = automaticSlotLoads(pressureDecisions, undefined, automaticLoadPinned);
+  if (automaticLoads?.size) {
+    inputs.hostLoadSelection = Object.fromEntries(automaticLoads);
+    // Persist exclusions before waiting when every allowed node is overloaded.
+    updateRunStep(runId, 'find-slot', { inputs });
+    await persistRunNow(getRun(runId)!, 'find-slot host load selection');
+  }
+  const selectionReason = (machine: string) => automaticLoads?.get(machine)?.reason;
   const targetBranch = await resolveDispatchTargetBranch(
     {
       project: run.project,
@@ -884,6 +902,7 @@ async function findSlotAttempt(
       outputs: {
         selectedSlot: run.slotId,
         selectionMethod: 'warm-session-reuse',
+        selectionReason: selectionReason(warmSlot.machine),
         branch: warmSlot.branch ?? null,
         via: 'ci-watch-chain',
       },
@@ -939,6 +958,7 @@ async function findSlotAttempt(
       outputs: {
         selectedSlot: run.slotId,
         selectionMethod: 'nudge',
+        selectionReason: wizardSlot ? selectionReason(wizardSlot.machine) : undefined,
         branch: wizardSlot?.branch ?? null,
         via: 'wizard',
       },
@@ -1026,6 +1046,7 @@ async function findSlotAttempt(
         selectionMethod: 'human-override',
         branch: wizardSlot?.branch ?? null,
         via: 'wizard-fresh-reuse',
+        selectionReason: wizardSlot ? selectionReason(wizardSlot.machine) : undefined,
       },
     };
   }
@@ -1044,19 +1065,6 @@ async function findSlotAttempt(
     requiredCapabilities,
     sourcePlans,
   );
-  const pressureDecisions = capturePressureAdmissionDecisionsLightweight([
-    ...new Set(
-      fleet.slots.filter((slot) => slot.project === run.project).map((slot) => slot.machine),
-    ),
-  ]);
-  const automaticLoads = automaticSlotLoads(pressureDecisions, undefined, run);
-  if (automaticLoads?.size) {
-    inputs.hostLoadSelection = Object.fromEntries(automaticLoads);
-    // Persist exclusions before waiting when every allowed node is overloaded.
-    updateRunStep(runId, 'find-slot', { inputs });
-    await persistRunNow(getRun(runId)!, 'find-slot host load selection');
-  }
-  const selectionReason = (machine: string) => automaticLoads?.get(machine)?.reason;
   const selectionOptions: SlotSelectionOptions = {
     ...capabilitySelection,
     automaticLoads,
@@ -1681,6 +1689,7 @@ async function findSlotAttempt(
             ? { overridePrincipalId: run.pressureOverride.principalId }
             : {}),
           includeProfileFit: false,
+          automaticLoadPinned,
           sourcePlans,
           ...capabilitySelection,
         },
@@ -1804,7 +1813,7 @@ async function findSlotAttempt(
         ? automaticSlotLoads(
             new Map([[result.pressureAdmission.machine, result.pressureAdmission]]),
             undefined,
-            run,
+            automaticLoadPinned,
           ).get(result.pressureAdmission.machine)?.reason
         : selectionReason(fleet.slots.find((slot) => slot.slot === slotId)!.machine),
       candidateCount: freeSlots.length,

@@ -20,6 +20,7 @@ import {
   assertPressureAdmissionConfigValid,
   automaticSlotLoads,
   evaluatePressureAdmission,
+  isPinnedSlotSelection,
   type PressureAdmissionConfig,
   resolveAutomaticSlotIdleMinimums,
 } from './pressure-admission.js';
@@ -420,7 +421,7 @@ test('CPU idle minimum is per machine, defaults to 15, and excludes stale eviden
 test('single-slot and explicit-slot pins warn without skipping a busy host', () => {
   const decisions = new Map([['hot', loadDecision('hot', 5)]]);
   for (const pin of [{ allowedSlots: ['hot'] }, { slotId: 'hot' }]) {
-    const load = automaticSlotLoads(decisions, undefined, pin).get('hot')!;
+    const load = automaticSlotLoads(decisions, undefined, isPinnedSlotSelection(pin)).get('hot')!;
     assert.equal(load.skipped, false);
     assert.match(
       load.reason,
@@ -428,8 +429,11 @@ test('single-slot and explicit-slot pins warn without skipping a busy host', () 
     );
   }
   assert.equal(
-    automaticSlotLoads(decisions, undefined, { allowedSlots: ['hot', 'other'] }).get('hot')
-      ?.skipped,
+    automaticSlotLoads(
+      decisions,
+      undefined,
+      isPinnedSlotSelection({ allowedSlots: ['hot', 'other'] }),
+    ).get('hot')?.skipped,
     true,
   );
   const busySlots = [
@@ -756,6 +760,25 @@ test('queue load hold includes held PR affinity, including a spread subset', asy
       ),
       'held',
     );
+    store.updateRun(sibling.id, { slotId: 'held' });
+    assert.equal(
+      await selectQueueDispatchSlot(
+        slots,
+        { ...item, launchSlotPolicy: 'spread', launchGroupId: 'load-group' },
+        { capturePressure },
+      ),
+      null,
+      'spread narrowing a two-slot operator scope to one busy slot is not a pin',
+    );
+    assert.equal(
+      await selectQueueDispatchSlot(
+        slots,
+        { ...item, allowedSlots: ['hot'], launchSlotPolicy: 'spread', launchGroupId: 'load-group' },
+        { capturePressure },
+      ),
+      'hot',
+      'an actual one-slot operator pin still bypasses the automatic CPU gate',
+    );
   } finally {
     store.updateRun(sibling.id, { status: 'done' });
     await store.deleteRun(sibling.id);
@@ -768,7 +791,7 @@ test('queue load hold includes held PR affinity, including a spread subset', asy
       ['hot'],
       buildQueuePreviewParams(item),
     ),
-    false,
+    true,
   );
   pressureDecisions.set('light', loadDecision('light', 4));
   assert.equal(await selectQueueDispatchSlot(slots, item, { capturePressure }), null);

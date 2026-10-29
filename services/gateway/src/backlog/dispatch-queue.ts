@@ -50,7 +50,10 @@ import {
   parkPreservedSlotIds,
   resolveDispatchPreviewFromFleet,
 } from '../methods/dispatch.js';
-import { automaticSlotLoads } from '../methods/dispatch/pressure-admission.js';
+import {
+  automaticSlotLoads,
+  isPinnedSlotSelection,
+} from '../methods/dispatch/pressure-admission.js';
 import { validateSlotForDispatch } from '../methods/dispatch/slot-scoring.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
@@ -1155,10 +1158,13 @@ export function queueItemHeldByPressure(
       !validateSlotForDispatch(slot, slots, affinityOptions),
   );
   if (freeProjectSlots.length === 0) return false;
-  const loads = automaticSlotLoads(pressureDecisions, undefined, {
-    ...previewParams,
-    allowedSlots: allowedSlots ? [...allowedSlots] : null,
-  });
+  const loads = automaticSlotLoads(
+    pressureDecisions,
+    undefined,
+    isPinnedSlotSelection(
+      previewParams ?? { allowedSlots: allowedSlots ? [...allowedSlots] : null },
+    ),
+  );
   return freeProjectSlots.every(
     (slot) =>
       pressureDecisions.get(slot.machine)?.outcome === 'rejected' ||
@@ -1252,6 +1258,7 @@ export async function selectQueueDispatchSlot(
           {
             requiredPrepareProfile,
             pressureDecisions,
+            automaticLoadPinned: isPinnedSlotSelection(item),
             parkPreservedSlotIds: parkPreserved,
             plans: sourcePlans,
           },

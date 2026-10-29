@@ -71,6 +71,7 @@ import {
   automaticSlotLoads,
   capturePressureAdmissionDecisions,
   formatPressureRejection,
+  isPinnedSlotSelection,
 } from './pressure-admission.js';
 import {
   activeRunIds,
@@ -986,6 +987,8 @@ export async function dispatchPreview(
     overridePrincipalId?: string;
     /** FIND_SLOT does not present profile-fit advice; skip its config lookup. */
     includeProfileFit?: boolean;
+    /** Original caller intent, before gateway candidate narrowing. */
+    automaticLoadPinned?: boolean;
     /** Trusted gateway plans; never accepted from RPC parameters. */
     sourcePlans?: SourceSlotPlans;
     sourcePlanning?: import('../run.js').RunCreateInternalOptions;
@@ -994,6 +997,7 @@ export async function dispatchPreview(
     capabilityCatalogs?: SlotCapabilityCatalogs;
   } = {},
 ): Promise<DispatchPreviewResult> {
+  const automaticLoadPinned = internalOptions.automaticLoadPinned ?? isPinnedSlotSelection(params);
   if ('sourcePlans' in params) throw new Error('Source plans are gateway-owned');
   if (
     (sourceAuthority() || params.sourceSelections !== undefined) &&
@@ -1006,6 +1010,7 @@ export async function dispatchPreview(
       (_plan, planning) =>
         dispatchPreview(params, {
           ...internalOptions,
+          automaticLoadPinned,
           sourcePlanning: planning,
           sourcePlanningReady: true,
         }),
@@ -1017,9 +1022,13 @@ export async function dispatchPreview(
     currentProjectSources()?.materialization.lock.context.nodeId !==
       params.reviewWorkspaceTarget.machine
   )
-    return withSourcePlanning(params.project, () => dispatchPreview(params, internalOptions), {
-      nodeId: params.reviewWorkspaceTarget.machine,
-    });
+    return withSourcePlanning(
+      params.project,
+      () => dispatchPreview(params, { ...internalOptions, automaticLoadPinned }),
+      {
+        nodeId: params.reviewWorkspaceTarget.machine,
+      },
+    );
   const sourcePlans =
     internalOptions.sourcePlans ??
     (params.reviewWorkspaceTarget ||
@@ -1191,6 +1200,7 @@ export async function dispatchPreview(
       requiredPrepareProfile,
       releasableBranchHolderIds,
       pressureDecisions,
+      automaticLoadPinned,
       replaceableWarmSlotIds,
       // ADR-054: the same exception `dispatchCandidates` applies. Every
       // ranking path that has run context passes it, so a park-preserved slot
@@ -1308,6 +1318,8 @@ export function resolveDispatchPreviewFromFleet(
      * slot on the machine). Automatic selection excludes rejected machines;
      * an explicit slot returns the same rejection on the result. */
     pressureDecisions?: ReadonlyMap<string, PressureAdmissionDecision>;
+    /** Original caller intent; a reduced candidate scope is not an operator pin. */
+    automaticLoadPinned?: boolean;
     replaceableWarmSlotIds?: ReadonlySet<string>;
     /** Machine the caller's override names, if any. A rejected SELECTED
      * machine that differs from it reports PRESSURE_OVERRIDE_MISMATCH; other
@@ -1338,7 +1350,13 @@ export function resolveDispatchPreviewFromFleet(
     projectConfigs,
     pressureRejectedMachines,
     ...(pressureDecisions
-      ? { automaticLoads: automaticSlotLoads(pressureDecisions, undefined, params) }
+      ? {
+          automaticLoads: automaticSlotLoads(
+            pressureDecisions,
+            undefined,
+            options?.automaticLoadPinned ?? isPinnedSlotSelection(params),
+          ),
+        }
       : {}),
     parkPreservedSlotIds: options?.parkPreservedSlotIds,
     plans: options?.plans,

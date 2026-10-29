@@ -716,12 +716,18 @@ export interface AutomaticSlotLoad {
   reason: string;
 }
 
+/** Evaluate caller intent before internal recovery or spread narrows the scope. */
+export function isPinnedSlotSelection(
+  selection: Partial<Pick<Run, 'slotId' | 'allowedSlots'>>,
+): boolean {
+  return Boolean(selection.slotId) || selection.allowedSlots?.length === 1;
+}
+
 export function automaticSlotLoads(
   decisions: ReadonlyMap<string, PressureAdmissionDecision>,
   minimums: Readonly<Record<string, number>> = resolveAutomaticSlotIdleMinimums(),
-  selection: Partial<Pick<Run, 'slotId' | 'allowedSlots'>> = {},
+  pinned = false,
 ): ReadonlyMap<string, AutomaticSlotLoad> {
-  const pinned = Boolean(selection.slotId) || selection.allowedSlots?.length === 1;
   return new Map(
     [...decisions].map(([machine, decision]) => {
       const sample = decision.evidence.samples.at(-1);

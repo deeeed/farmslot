@@ -150,6 +150,18 @@ function sample(
   });
 }
 for (const node of nodes) sample(node.machine, node.load, node.cores, 40, node.cpu);
+const safeIdle = await import('../../../services/gateway/src/run-lifecycle/safe-idle-slot.js');
+let afterRecovery: (() => void) | undefined;
+mock.module('../../../services/gateway/src/run-lifecycle/safe-idle-slot.js', {
+  namedExports: {
+    ...safeIdle,
+    reuseSafeIdleSlot: async (...args: Parameters<typeof safeIdle.reuseSafeIdleSlot>) => {
+      const outcome = await safeIdle.reuseSafeIdleSlot(...args);
+      afterRecovery?.();
+      return outcome;
+    },
+  },
+});
 const { executeFindSlotStep } =
   await import('../../../services/gateway/src/run-engine/find-slot-step.js');
 const policy = await import('../../../services/gateway/src/run-engine/dispatch-policy.js');
@@ -263,6 +275,55 @@ try {
   assert.match(JSON.stringify(pinSelection.inputs?.hostLoadSelection), /"skipped":false/);
   store.updateRun(pinned.run.id, { status: 'done' });
   await store.deleteRun(pinned.run.id);
+  await resetFixtureSlots();
+  // A normal node heartbeat can change CPU during actual repository recovery.
+  sample('load-hot', 83, 16, 40, 10);
+  sample('load-medium', 6, 16, 40, 60);
+  const recovering = await client.call<RunCreateResult>('run.create', {
+    ...params,
+    ticketOrPr: 'example/proof#145',
+    allowedSlots: ['hot-slot', 'medium-slot'],
+  });
+  afterRecovery = () => {
+    afterRecovery = undefined;
+    sample('load-hot', 83, 16, 40, 95);
+    sample('load-medium', 6, 16, 40, 95);
+  };
+  let recoverySettled = false;
+  const recovery = executeFindSlotStep(
+    recovering.run.id,
+    store.getRun(recovering.run.id)!,
+    0,
+    context,
+  )
+    .then(
+      (result) => ({ result }),
+      (error: unknown) => ({ error }),
+    )
+    .then((outcome) => {
+      recoverySettled = true;
+      return outcome;
+    });
+  const recoveryDeadline = Date.now() + 30000;
+  while (
+    !store.getRun(recovering.run.id)!.steps.find((step) => step.name === 'find-slot')?.inputs
+      ?.hostLoadWaitReason
+  ) {
+    assert(!recoverySettled, 'Internal one-candidate recovery became an implicit operator pin');
+    assert(Date.now() < recoveryDeadline, 'Recovery load wait was not recorded');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const recoveryWaiting = await client.call<RunGetResult>('run.get', { runId: recovering.run.id });
+  assert.equal(recoveryWaiting.run.slotId, null);
+  sample('load-hot', 83, 16, 40, 10);
+  sample('load-medium', 6, 16, 40, 60);
+  const recoveryOutcome = await recovery;
+  if ('error' in recoveryOutcome) throw recoveryOutcome.error;
+  assert.equal(recoveryOutcome.result.outputs?.selectedSlot, 'hot-slot');
+  const recoveryWaitObserved = recoveryWaiting.run.steps.find((step) => step.name === 'find-slot')!
+    .inputs!.hostLoadWaitReason;
+  store.updateRun(recovering.run.id, { status: 'done' });
+  await store.deleteRun(recovering.run.id);
   await resetFixtureSlots();
   sample('load-hot', 83, 16, 40, 95);
   sample('load-medium', 6, 16, 40, 95);
@@ -471,6 +532,7 @@ try {
     lighterThanHeldAffinity: affinity.preview.slotId,
     overloadRefusal,
     automaticExclusionPersisted: true,
+    recoveryWaitObserved,
     explicitPickPreserved: true,
     singleSlotPinWarning: pinSelection.outputs?.selectionReason,
     recoveredSelection: recovered.preview.slotId,
