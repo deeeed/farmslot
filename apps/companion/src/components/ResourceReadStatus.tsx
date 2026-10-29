@@ -9,6 +9,7 @@ import { baseStyles, colors, spacing } from '../lib/theme';
 type ResourceReadStatusProps = {
   onRetry?: () => void;
   retryDisabled?: boolean;
+  retryLabel?: string;
 } & (
   | { observation: ResourceQueryState; label: string; observations?: never }
   | { observations: readonly LabelledReadObservation[]; observation?: never; label?: never }
@@ -21,6 +22,7 @@ export function ResourceReadStatus({
   observations,
   onRetry,
   retryDisabled = false,
+  retryLabel,
 }: ResourceReadStatusProps) {
   const [now, setNow] = useState(Date.now());
   const [details, setDetails] = useState(false);
@@ -54,7 +56,7 @@ export function ResourceReadStatus({
           {onRetry && reads.some((read) => read.observation.error) ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Retry reading ${label ?? 'this view'}`}
+              accessibilityLabel={retryLabel ?? `Retry reading ${label ?? 'this view'}`}
               disabled={retryDisabled}
               onPress={onRetry}
               style={styles.retry}

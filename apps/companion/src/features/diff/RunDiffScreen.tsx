@@ -342,6 +342,7 @@ export default function DiffViewerScreen() {
             { observation: runObservation, label: 'run diff' },
             { observation: recipeObservation, label: 'recipe runs' },
           ]}
+          retryLabel="Retry diff"
           onRetry={() => {
             const cache = getResourceCache();
             if (workspaceDiffQuery && cache?.read(workspaceDiffQuery).error)

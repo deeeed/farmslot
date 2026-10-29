@@ -252,6 +252,7 @@ export default function SlotDiffViewerScreen() {
             { observation: recipeObservation, label: 'slot diff recipe inventory' },
           ]}
           onRetry={() => void retryRead()}
+          retryLabel="Retry slot diff reads"
         />
         <RunWorkspaceNav
           current="diff"
@@ -323,6 +324,7 @@ export default function SlotDiffViewerScreen() {
           observation={diffObservation}
           label="workspace diff"
           onRetry={() => void retryRead()}
+          retryLabel="Retry slot diff reads"
         />
         {pathParamError ? <Text style={styles.errorText}>{pathParamError}</Text> : null}
         {diffText ? (

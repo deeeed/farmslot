@@ -31,6 +31,11 @@ async function openReadNotices(cdp, route, observation) {
   return true;
 }
 
+async function closeReadNotices(cdp, route, observation) {
+  if (observation?.readNoticesNeeded && observation.noticesClosed === false)
+    await cdp('key', route, 'Escape');
+}
+
 const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
 const phase = process.argv[2];
 assert(
@@ -232,7 +237,11 @@ if (phase === 'inbox-web') {
     let value;
     do {
       value = await snapshot();
-      if (ready(value)) return value;
+      if (await openReadNotices(cdp, route, value)) continue;
+      if (ready(value)) {
+        await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -393,7 +402,10 @@ if (phase === 'list-web') {
     do {
       value = await cdp('eval', route, '--file', probePath);
       if (await openReadNotices(cdp, route, value)) continue;
-      if (ready(value)) return value;
+      if (ready(value)) {
+        await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -739,7 +751,10 @@ async function detailBrowser(runId) {
     do {
       value = await snapshot();
       if (await openReadNotices(cdp, route, value)) continue;
-      if (ready(value)) return value;
+      if (ready(value)) {
+        await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -877,7 +892,10 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
     do {
       value = await cdp('eval', route, '--file', probe);
       if (await openReadNotices(cdp, route, value)) continue;
-      if (ready(value)) return value;
+      if (ready(value)) {
+        await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -3293,7 +3311,11 @@ if (phase === 'family-web') {
     let value;
     do {
       value = await cdp('eval', 'family/', '--file', probePath);
-      if (ready(value)) return value;
+      if (await openReadNotices(cdp, 'family/', value)) continue;
+      if (ready(value)) {
+        await closeReadNotices(cdp, 'family/', value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -4197,7 +4219,10 @@ if (phase === 'dispatch-runs-web') {
     do {
       value = await snapshot();
       if (await openReadNotices(cdp, route, value)) continue;
-      if (ready(value)) return value;
+      if (ready(value)) {
+        await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);

@@ -230,50 +230,10 @@ function browserCall(method, params) {
 }
 const presses = [];
 async function press(selector) {
-  const result = await browserCall('Runtime.evaluate', {
-    expression: `(() => {
-      let root = document;
-      const parts = ${JSON.stringify(selector)}.split(' >>> ');
-      let element;
-      for (const [index, part] of parts.entries()) {
-        element = root.querySelector(part);
-        if (index < parts.length - 1) root = element?.shadowRoot;
-      }
-      if (!element || element.disabled) throw Error('Proof control unavailable');
-      element.scrollIntoView({ block: 'center' });
-      const rect = element.getBoundingClientRect();
-      if (!rect.width || !rect.height) throw Error('Proof control is hidden');
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-    })()`,
-    returnByValue: true,
-  });
-  assert(!result.exceptionDetails, JSON.stringify(result.exceptionDetails));
-  const point = result.result.value;
-  presses.push({ selector, ...point, at: Date.now() });
-  await browserCall('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
-  await browserCall('Input.dispatchMouseEvent', {
-    type: 'mousePressed',
-    ...point,
-    button: 'left',
-    clickCount: 1,
-  });
-  await browserCall('Input.dispatchMouseEvent', {
-    type: 'mouseReleased',
-    ...point,
-    button: 'left',
-    clickCount: 1,
-  });
+  const result = await cdp('click', target, selector, '--observe-file', probe);
+  presses.push({ selector, clickedAt: result.clickedAt, observation: result.observation });
 }
-async function escape() {
-  for (const type of ['keyDown', 'keyUp'])
-    await browserCall('Input.dispatchKeyEvent', {
-      type,
-      key: 'Escape',
-      code: 'Escape',
-      windowsVirtualKeyCode: 27,
-      nativeVirtualKeyCode: 27,
-    });
-}
+const escape = () => cdp('key', target, 'Escape');
 const inspect = async () => cdp('eval', target, '--file', probe);
 async function until(accept, label) {
   const deadline = Date.now() + 30000;

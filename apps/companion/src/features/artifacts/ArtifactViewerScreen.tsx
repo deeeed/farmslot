@@ -107,6 +107,7 @@ export default function ArtifactViewerScreen() {
           observation={runObservation}
           label="run artifacts"
           onRetry={actions.retry}
+          retryLabel="Retry artifacts"
         />
         <Text style={baseStyles.textSecondary}>
           {runObservation.error ? 'Run is unavailable.' : 'Loading...'}
@@ -150,6 +151,7 @@ export default function ArtifactViewerScreen() {
                 { observation: recipeObservation, label: 'recipe evidence' },
               ]}
               onRetry={actions.retry}
+              retryLabel="Retry artifacts"
             />
             <ArtifactHeader
               run={run}

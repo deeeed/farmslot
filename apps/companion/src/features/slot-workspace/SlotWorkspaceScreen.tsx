@@ -23,10 +23,8 @@ export default function SlotWorkspaceScreen() {
     taskProgressError,
     currentRun,
     runObservation,
-    progressObservation,
-    historyObservation,
-    recipeObservation,
     retryRead,
+    readObservations,
     currentRecipeRuns,
     currentRecipeRunsLoaded,
     currentEvidenceModel,
@@ -110,13 +108,9 @@ export default function SlotWorkspaceScreen() {
         </View>
 
         <ResourceReadStatus
-          observations={[
-            { observation: runObservation, label: 'slot run' },
-            { observation: historyObservation, label: 'slot history' },
-            { observation: recipeObservation, label: 'slot recipe inventory' },
-            { observation: progressObservation, label: 'task progress' },
-          ]}
+          observations={readObservations}
           onRetry={() => void retryRead()}
+          retryLabel="Retry slot run reads"
         />
         <SlotWorkspaceSection
           slotId={slot?.slot ?? id}

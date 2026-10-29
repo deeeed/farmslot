@@ -31,6 +31,7 @@ export function VisualReviewScreen({ route }: { route: VisualReviewRouteParams }
           : []),
       ]}
       onRetry={actions.retry}
+      retryLabel="Retry visual review"
     />
   );
 
