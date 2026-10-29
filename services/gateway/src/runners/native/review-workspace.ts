@@ -251,7 +251,7 @@ export async function launchReviewWorkspaceWorker(input: {
       run.id,
       {
         status: 'launching',
-        reviewId: randomUUID(),
+        reviewId: run.repeatReviewContext?.session?.reviewId ?? randomUUID(),
         runner,
         model,
         taskFile: path.posix.join(workspace.taskPath, 'TASK.md'),

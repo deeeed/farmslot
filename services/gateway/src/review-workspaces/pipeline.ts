@@ -259,7 +259,11 @@ async function freezeSubject(
     }
     const savedPrior = getRun(prior.id);
     if (!savedPrior) throw new Error('The prior review was removed during session recovery');
-    configureWorkspaceContinuity(run, savedPrior, context);
+    configureWorkspaceContinuity(run, savedPrior, context, getAllRuns());
+    if (context.session?.fallback)
+      console.warn(
+        `[review-workspace] ${runId.slice(0, 8)}: fresh delta review: ${context.session.fallback.detail}`,
+      );
   }
   await persistRunNow(
     updateRun(runId, {

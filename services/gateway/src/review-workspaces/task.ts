@@ -19,6 +19,7 @@ import {
   enumerateChecklistCheckboxes,
   isRecord,
   isTerminalRunStatus,
+  parseGitHubRef,
   type ReviewLineComment,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
@@ -58,6 +59,7 @@ import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { collectSupportFiles } from '../node-support/files.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
+import { deltaFallbackReviewScope } from '../review/review-agent.js';
 import { nextReviewBudgetScopeBrief } from '../review/review-round-budget.js';
 import {
   appendReviewFindingBodies,
@@ -371,6 +373,15 @@ export async function materializeReviewWorkspaceTask(
       ...(run.repeatReviewContext
         ? [
             'Read inputs/prior-review.json and recheck every unresolved finding. It records the prior head and the requested review scope.',
+            ...(run.repeatReviewContext.session?.fallback
+              ? [
+                  deltaFallbackReviewScope({
+                    reason: run.repeatReviewContext.session.fallback.detail,
+                    comparedRanges: run.repeatReviewContext.session.fallback.comparedRanges,
+                    priorIssues: run.repeatReviewContext.unresolvedFindings,
+                  }),
+                ]
+              : []),
             ...(resolveReviewMode({ run }) === 'warm' &&
             run.repeatReviewContext.priorReviewedHeadSha
               ? [
@@ -754,10 +765,27 @@ export async function readReviewWorkspaceCompletion(
     await rm(mirror, { recursive: true, force: true });
   }
   assertCompletionIdentity(runId, snapshot, deps);
+  const reviewer = run.agentContexts?.find((candidate) => candidate.id === 'review');
+  const sessionId = reviewer?.runnerSessionId ?? reviewer?.nativeSession?.sessionId;
+  const priorSession = run.repeatReviewContext?.session;
   return {
     signal: { ...signal, role: 'review', contextId: 'review' },
     result: {
       recommendation: recommendation as RunReviewResult['recommendation'],
+      ...(reviewer?.reviewId && sessionId
+        ? {
+            session: {
+              ...priorSession,
+              mode: priorSession?.mode ?? resolveReviewMode({ run }),
+              continuity: priorSession?.continuity ?? 'fresh',
+              reviewId: reviewer.reviewId,
+              repository: snapshot.subject.repository,
+              prNumber: parseGitHubRef(run.ticketOrPr)?.number,
+              lastReviewedHeadSha: snapshot.subject.headSha,
+              sessionId,
+            },
+          }
+        : {}),
       reviewMd: appendReviewFindingBodies(issues, lineComments, reviewMd),
       lineComments,
       artifactManifest: await scanArtifacts(viewer),

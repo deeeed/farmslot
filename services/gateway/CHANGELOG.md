@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Discover the latest owned PR-review lineage and use a recorded fresh delta review when its retained session cannot continue on the selected workspace.
+
 - Recover unsent review-fix prompts after restart, verify relaunched worker processes, and surface unconfirmed delivery within the launch budget while preserving findings.
 
 - Log the acquisition scan's file count and duration for each output completion capture.

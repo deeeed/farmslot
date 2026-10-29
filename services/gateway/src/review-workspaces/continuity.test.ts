@@ -43,6 +43,7 @@ const context = () =>
     repository: 'example/app',
     prNumber: 42,
     priorReviewedHeadSha: 'a'.repeat(40),
+    currentHeadSha: 'b'.repeat(40),
     session: { reviewId: 'lineage' },
   }) as RepeatReviewContext;
 
@@ -71,7 +72,6 @@ test('unavailable WARM refuses instead of changing mode', () => {
     { ...prior, ticketOrPr: 'example/foreign#42' },
     { ...prior, agentContexts: [] },
     { ...prior, agentContexts: [{ ...prior.agentContexts![0], reviewId: 'foreign' }] },
-    { ...prior, agentContexts: [{ ...prior.agentContexts![0], model: 'other' }] },
   ]) {
     const result = context();
     assert.throws(
@@ -114,7 +114,7 @@ test('planner and workspace continuity both honor the explicit run mode over PR 
   }
 });
 
-test('nested WARM selection without a retained session cannot fall back to COLD', () => {
+test('nested WARM selection without an owned review lineage is refused', () => {
   const run = {
     ...current,
     reviewMode: undefined,
@@ -145,6 +145,75 @@ test('workspace continuity binds the creator generation in both directions', () 
   configureWorkspaceContinuity(
     { ...current, createdByPrincipalGeneration: 1 },
     { ...prior, createdByPrincipalGeneration: 1 },
+    result,
+  );
+  assert.equal(result.session?.continuity, 'resumed');
+  assert.equal(result.session?.sessionId, 'chat');
+});
+
+test('an unavailable workspace session keeps its lineage and findings in a fresh delta fallback', () => {
+  for (const variant of [
+    { ...current, reviewWorkspaceTarget: { machine: 'elsewhere' } },
+    { ...current, transport: 'native' as const },
+    { ...current, metrics: { ...current.metrics, model: 'other' } },
+  ]) {
+    const result = {
+      ...context(),
+      currentHeadSha: 'b'.repeat(40),
+      unresolvedFindings: [{ file: 'source.ts', description: 'Earlier issue' }],
+    };
+    configureWorkspaceContinuity(variant, prior, result);
+    assert.equal(result.mode, 'cold');
+    assert.equal(result.session?.continuity, 'fresh');
+    assert.equal(result.session?.reviewId, 'lineage');
+    assert.equal(result.session?.priorRunId, prior.id);
+    assert.deepEqual(result.session?.fallback?.comparedRanges, [
+      `${'a'.repeat(40)}..${'b'.repeat(40)}`,
+    ]);
+    assert.deepEqual(result.unresolvedFindings, [
+      { file: 'source.ts', description: 'Earlier issue' },
+    ]);
+  }
+});
+
+test('a missing runnerSessionId names the missing field and starts a fresh delta', () => {
+  const result = context();
+  configureWorkspaceContinuity(
+    current,
+    { ...prior, agentContexts: [{ ...prior.agentContexts![0], runnerSessionId: undefined }] },
+    result,
+  );
+  assert.equal(result.session?.fallback?.reason, 'missing-session');
+  assert.match(result.session?.fallback?.detail ?? '', /runnerSessionId/);
+  assert.equal(result.session?.reviewId, 'lineage');
+});
+
+test('another active reviewer holding the session receives no resumed prompt', () => {
+  const result = context();
+  configureWorkspaceContinuity(current, prior, result, [
+    { ...prior, id: 'holder', agentContexts: [{ ...prior.agentContexts![0], status: 'working' }] },
+  ]);
+  assert.equal(result.session?.fallback?.reason, 'session-busy');
+  assert.equal(result.session?.continuity, 'fresh');
+  assert.equal(result.session?.sessionId, undefined);
+});
+
+test('a removed prior workspace falls back without changing its lineage', () => {
+  const result = context();
+  configureWorkspaceContinuity(
+    current,
+    { ...prior, reviewWorkspace: { ...prior.reviewWorkspace!, cleanedAt: '2026-10-29T21:00:00Z' } },
+    result,
+  );
+  assert.equal(result.session?.fallback?.reason, 'session-unavailable');
+  assert.equal(result.session?.reviewId, 'lineage');
+});
+
+test('a Codex session reload capability can continue the same owned workspace lineage', () => {
+  const result = context();
+  configureWorkspaceContinuity(
+    { ...current, metrics: { runner: 'codex', model: 'model' } },
+    { ...prior, agentContexts: [{ ...prior.agentContexts![0], runner: 'codex' }] },
     result,
   );
   assert.equal(result.session?.continuity, 'resumed');

@@ -296,10 +296,7 @@ export async function launchReviewTmux(
   await assertCurrent();
   const patch = {
     id: 'review',
-    reviewId:
-      resolveReviewMode({ run }) === 'warm'
-        ? run.repeatReviewContext?.session?.reviewId
-        : (previous?.reviewId ?? randomUUID()),
+    reviewId: run.repeatReviewContext?.session?.reviewId ?? previous?.reviewId ?? randomUUID(),
     label: 'Review',
     runner: run.metrics.runner,
     model: run.metrics.model,

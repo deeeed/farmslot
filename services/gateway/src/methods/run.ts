@@ -104,6 +104,7 @@ import {
   inspectReviewWorkspaceTarget,
   type ReviewWorkspaceAdmission,
 } from '../review-workspaces/admission.js';
+import { resolveWorkspaceReviewContext } from '../review-workspaces/continuity.js';
 import { resolveDirectWorkflowDefaults } from '../review-workspaces/direct-defaults.js';
 import {
   assertReadyGatePackageInputsCurrent,
@@ -191,7 +192,11 @@ import {
   type StaticReviewDelegation,
   type StaticReviewOwner,
 } from '../security/native-worker-owner.js';
-import { currentSessionOriginator, currentSessionPrincipal } from '../security/work-originator.js';
+import {
+  currentSessionOriginator,
+  currentSessionPrincipal,
+  principalOwnerStamp,
+} from '../security/work-originator.js';
 import { captureRunCreationRequest } from '../sources/creation-request.js';
 import {
   SourceAdmissionRefusal,
@@ -478,7 +483,6 @@ export async function planRunCreation(
   if ('qaAfterReview' in params)
     throw new Error('Automatic QA snapshots cannot be supplied in run parameters');
   if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
-  assertPrimaryReviewContext(params);
   if (params.reviewPolicy) assertReviewPolicy(params.reviewPolicy);
   if (params.reviewSequenceContext)
     parseReviewRequestContext(params.reviewSequenceContext, params.reviewSequence?.length ?? 0);
@@ -521,6 +525,13 @@ export async function planRunCreation(
     ...(staticReviewOwner ? { ownerId: staticReviewOwner.ownerId } : {}),
   });
   params = workflowDefaults.params;
+  if (staticReviewOwner)
+    params.reviewContext = resolveWorkspaceReviewContext(
+      params,
+      { ownerId: staticReviewOwner.ownerId, ...principalOwnerStamp(staticReviewOwner.ownerId) },
+      getAllRuns(),
+    );
+  assertPrimaryReviewContext(params);
   if (
     (params.publishReview === true || params.reviewTeamId) &&
     (params.flowType !== 'review-pr' || params.reviewValidationDepth === 'full-live')
