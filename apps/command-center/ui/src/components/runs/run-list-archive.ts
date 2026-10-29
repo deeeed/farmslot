@@ -25,7 +25,7 @@ export async function archiveRunSelection(
 ): Promise<Map<string, string>> {
   const { cache, queries } = context;
   const failed = new Map<string, string>();
-  for (const id of ids) {
+  for (const [index, id] of ids.entries()) {
     try {
       if (!context.isCurrent()) throw new Error('Wait for current runs before acting.');
       // Each archive is a run write, and run writes reread the lists at a paced rate, so the
@@ -35,8 +35,12 @@ export async function archiveRunSelection(
       if (!context.isCurrent())
         throw new Error('The connection changed. Review the remaining selection.');
       const states = queries.map((query) => cache.read(query));
-      if (states.some((state) => state.status !== 'ready'))
-        throw new Error('Wait for current runs before acting.');
+      if (states.some((state) => state.status !== 'ready')) {
+        // The lists are shared, so the rest of the selection would only repeat the same reads.
+        for (const rest of ids.slice(index))
+          failed.set(rest, 'Wait for current runs before acting.');
+        return failed;
+      }
       let run: Run | undefined;
       for (const state of states) {
         const candidate = state.data?.runs.find((row) => row.id === id);

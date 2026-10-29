@@ -534,8 +534,10 @@ export class RunList extends RunListState {
     if (this.selectedIds.size === 0 || this.actionInProgress) return;
     this.actionInProgress = true;
     try {
-      await this.assertCurrentRuns([...this.selectedIds]);
-      const ids = [...this.selectedIds].filter((id) => {
+      // The selection can change while the lists are reread; delete what was selected at the click.
+      const selected = [...this.selectedIds];
+      await this.assertCurrentRuns(selected);
+      const ids = selected.filter((id) => {
         const run = this.runById(id);
         return run ? TERMINAL_STATUSES.has(run.status) : false;
       });

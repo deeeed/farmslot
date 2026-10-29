@@ -118,8 +118,9 @@ export class SlotLoadRunModal extends LitElement {
     }
   }
 
-  private async _currentRun(expected: Run): Promise<Run> {
-    const changed = () => !this.isConnected || !this.open || this.disabled;
+  /** The run as the current list has it, while the dialog still shows the `scope` it was opened in. */
+  private async _currentRun(expected: Run, scope: string): Promise<Run> {
+    const changed = () => !this.isConnected || !this.open || this.disabled || this._scope !== scope;
     if (changed()) throw new Error('The load dialog changed. Open it again before acting.');
     // Run writes reread the list at most every 30 s; a load reads it first.
     const { runs } = await this.runsQuery.requireCurrent();
@@ -426,7 +427,8 @@ export class SlotLoadRunModal extends LitElement {
     this._actionError = '';
     this._actionBusy = true;
     try {
-      const run = await this._currentRun(expected);
+      const run = await this._currentRun(expected, scope);
+      if (!current()) return;
       await runSlotPrepareForRun({
         slotId,
         runId: run.id,
@@ -501,9 +503,10 @@ export class SlotLoadRunModal extends LitElement {
 
   private async _onLoadClick(run: Run) {
     if (this._loadReason(run) || this._actionBusy || this._actionRequest) return;
+    const scope = this._scope;
     try {
-      await this._currentRun(run);
-      if (this._pendingConfirm === run.id && this._confirmScope === this._scope) {
+      await this._currentRun(run, scope);
+      if (this._pendingConfirm === run.id && this._confirmScope === scope) {
         if (this._confirmTimer) clearTimeout(this._confirmTimer);
         await this._executeLoad(run);
         return;
@@ -511,7 +514,7 @@ export class SlotLoadRunModal extends LitElement {
       this._clearConfirmation();
       this._pendingConfirm = run.id;
       this._confirmRunBranch = run.branch ?? '';
-      this._confirmScope = this._scope;
+      this._confirmScope = scope;
       this._confirmTimer = setTimeout(() => this._clearConfirmation(), 3000);
     } catch (error) {
       this._actionError = error instanceof Error ? error.message : String(error);

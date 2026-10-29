@@ -1224,6 +1224,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._runActionRequest = request;
     try {
       await this._requireCurrentRunInputs();
+      if (!current() || this._runActionRequest !== request) return;
       this._checkActiveRunConflict();
       if (this._activeRunConflict?.id !== expected)
         throw new Error(
@@ -1611,7 +1612,7 @@ export class DispatchWizard extends DispatchWizardState {
 
     try {
       await this._requireCurrentRunInputs();
-      if (!current()) return;
+      if (!current() || this._runActionRequest !== request) return;
       // The reread can show a run that now holds this ticket; its notice replaces the dispatch.
       this._checkActiveRunConflict();
       if (this._activeRunConflict) return;
@@ -1638,7 +1639,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._dispatching = true;
     try {
       await this._requireCurrentRunInputs();
-      if (!current()) return;
+      if (!current() || this._runActionRequest !== request) return;
       const payloadDraft = this._dispatchPayloadDraft();
       if (!payloadDraft) return;
       await addDispatchQueueItemFromDraft(payloadDraft);
