@@ -370,6 +370,9 @@ async function tryArchiveRunArtifactHousekeeping(): Promise<void> {
 }
 
 export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
+  // Completed dispatch is durable admission evidence, including pre-reservation runs.
+  // Monitoring/review must consume existing work without another cold admission scan.
+  if (run.steps.some((step) => step.name === 'dispatch' && step.status === 'done')) return;
   const store = await runBundleStore(true);
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
