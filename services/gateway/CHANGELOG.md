@@ -15,7 +15,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Warn about selected CLI and protocol package version differences during worker launch, while continuing retained-source and wire checks.
 - Complete PR follow-ups without visual or reviewer holds, retaining linked criteria and evidence.
-- Initialize and verify hosted tasks with the slot's selected provider environment, so a stale gateway provider cannot override the pool selection.
+- Initialize, verify and mark hosted tasks with the slot's selected home and pool, so stale gateway or native-host routing cannot override the provider selection.
 - Keep run ticket lists tied to explicit references instead of inferring Jira keys from PR body text.
 - Preserve long Codex task paths with a task-local dispatch prompt and guarded bracketed paste for post-launch delivery and recovery, retaining exact acknowledgement checks.
 - Keep automatic placement queued when node load rises during safe slot reuse, and reconsider the originally allowed slots.

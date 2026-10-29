@@ -8,6 +8,11 @@ import {
   nativeWorkerEnvironment,
   nativeWorkerLaunchDigest,
 } from '@farmslot/agent-runtime/native/worker-launch';
+import {
+  findSlotByRepo,
+  resolveSlotPoolDir,
+  type SlotPoolFile,
+} from '@farmslot/protocol/node/slot-by-repo';
 
 import {
   retainTaskExecution,
@@ -27,16 +32,23 @@ mock.module('../../core/exec.js', {
 const { makeVars } = await import('../test-fixtures.js');
 const { prepareNativeWorkerLaunch } = await import('./worker-launch.js');
 
+interface ProviderPool extends SlotPoolFile {
+  env: { PROVIDER_ROOT: string };
+}
+
 for (const [runner, model] of [
   ['claude', 'opus'],
   ['codex', 'gpt-6.1-sol'],
 ] as const) {
-  test(`a static native ${runner} reviewer can verify its retained task in the selected machine home`, async (t) => {
+  test(`a static native ${runner} reviewer verifies its task and resolves the selected pool provider`, async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-review-task-home-'));
     const previous = process.env.FARMSLOT_HOME;
+    const previousPool = process.env.FARMSLOT_POOL_DIR;
     t.after(() => {
       if (previous === undefined) delete process.env.FARMSLOT_HOME;
       else process.env.FARMSLOT_HOME = previous;
+      if (previousPool === undefined) delete process.env.FARMSLOT_POOL_DIR;
+      else process.env.FARMSLOT_POOL_DIR = previousPool;
       fs.rmSync(root, { recursive: true, force: true });
     });
     const selectedHome = path.join(root, 'selected-home');
@@ -44,6 +56,21 @@ for (const [runner, model] of [
     const distribution = path.join(root, 'cli');
     const executable = path.join(distribution, 'bin/farmslot.mjs');
     const taskDir = path.join(root, 'task');
+    const selectedPool = path.join(root, 'selected-pool');
+    const retiredPool = path.join(root, 'retired-pool');
+    const providerRoot = path.join(root, 'providers/current');
+    fs.mkdirSync(providerRoot, { recursive: true });
+    for (const [poolDir, provider] of [
+      [selectedPool, providerRoot],
+      [retiredPool, path.join(root, 'providers/removed')],
+    ] as const) {
+      fs.mkdirSync(poolDir, { recursive: true });
+      const pool: ProviderPool = {
+        slots: [{ id: 'review-slot', repo: taskDir }],
+        env: { PROVIDER_ROOT: provider },
+      };
+      fs.writeFileSync(path.join(poolDir, 'fixture.json'), JSON.stringify(pool));
+    }
     fs.mkdirSync(path.dirname(executable), { recursive: true });
     fs.mkdirSync(path.join(nativeHome, 'task-pins'), { recursive: true });
     fs.writeFileSync(executable, '#!/usr/bin/env node\nconsole.log("fixture");\n');
@@ -60,9 +87,14 @@ for (const [runner, model] of [
       inputs: [],
     });
     process.env.FARMSLOT_HOME = nativeHome;
+    process.env.FARMSLOT_POOL_DIR = retiredPool;
     const { launch } = await prepareNativeWorkerLaunch({
       vars: makeVars({
-        machineEnv: { FARMSLOT_HOME: selectedHome, PROVIDER_ROOT: '/unrelated/provider' },
+        machineEnv: {
+          FARMSLOT_HOME: selectedHome,
+          FARMSLOT_POOL_DIR: selectedPool,
+          PROVIDER_ROOT: '/unrelated/provider',
+        },
       }),
       project: {},
       runner,
@@ -75,12 +107,18 @@ for (const [runner, model] of [
       sessionId: 'proof-session',
       prepareAccount: false,
     });
-    const reviewerHome = nativeWorkerEnvironment(launch).FARMSLOT_HOME;
+    const environment = nativeWorkerEnvironment(launch);
+    const reviewerHome = environment.FARMSLOT_HOME;
     assert.ok(reviewerHome);
     process.env.FARMSLOT_HOME = reviewerHome;
     assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
     assert.equal(reviewerHome, selectedHome);
     assert.equal(launch.environment.set.PROVIDER_ROOT, undefined);
+    const pool = resolveSlotPoolDir(environment);
+    assert.ok(pool);
+    const slot = await findSlotByRepo<ProviderPool>(pool.dir, fs.realpathSync(taskDir));
+    assert.ok(slot);
+    assert.equal(fs.realpathSync(slot.pool.env.PROVIDER_ROOT), fs.realpathSync(providerRoot));
   });
 }
 
