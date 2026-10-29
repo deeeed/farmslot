@@ -544,7 +544,7 @@ verdict or round admission. There is no new public API or package field.
 
 ## Amendment 9: independent review-pr request budgets, 2026-10-29
 
-**Status:** Proposed for the requested review-pr budget repair.
+**Status:** Accepted under the lead-approved, independently reviewed review-pr budget repair (#1555).
 **Specification:** [Review-pr budget](../reference/review-modes-warm-cold.md#review-pr-budget).
 
 Each `review-pr` run has its own five-round budget, independent of other runs
@@ -552,6 +552,9 @@ for the same repository/PR, including archived requests and feature work.
 Admissions, settlements, no-verdict accounting and the admission lock are scoped
 to that run. Replay, restart and reattachment retain its spent rounds; a new
 review request receives a new budget. Review-pr remains ineligible for extensions.
+Legacy receipts, settlements and grants already copied into a snapshot keep
+their accounting there; no history is reassigned. Feature and update-branch
+scopes stop reading review-pr snapshots.
 
 A requested review of core#10693 could not dispatch because earlier archived
 review-pr requests had spent the PR-wide budget. That cap governs convergence

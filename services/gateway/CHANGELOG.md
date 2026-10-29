@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Give each requested PR review its own round budget, preserving same-run replay counts and existing feature budgets.
 - Allow prepare to reuse a deleted configured PR head only after verifying its merge and preserving unpublished or dirty work.
 
 - Keep run history forever and move settled storage into a verified, configurable archive instead of deleting it.

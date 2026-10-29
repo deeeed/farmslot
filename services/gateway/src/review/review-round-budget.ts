@@ -137,17 +137,19 @@ function scopedRuns(run: Run, stored: readonly Run[]): Run[] {
   for (const current of getAllRuns()) byId.set(current.id, current);
   byId.set(run.id, getRun(run.id) ?? run);
   const current = byId.get(run.id)!;
+  if (current.flowType === 'review-pr') return [current];
   const identity = reviewPRIdentity(current, { requirePRContext: true });
   return identity
     ? [...byId.values()].filter((candidate) => {
         const other = reviewPRIdentity(candidate, { requirePRContext: true });
         return (
-          candidate.id === current.id ||
-          Boolean(
-            other &&
-            other.repository.toLowerCase() === identity.repository.toLowerCase() &&
-            other.prNumber === identity.prNumber,
-          )
+          candidate.flowType !== 'review-pr' &&
+          (candidate.id === current.id ||
+            Boolean(
+              other &&
+              other.repository.toLowerCase() === identity.repository.toLowerCase() &&
+              other.prNumber === identity.prNumber,
+            ))
         );
       })
     : [current];
@@ -203,7 +205,8 @@ function budgetFor(run: Run, runs: readonly Run[]): ReviewRoundBudget {
 }
 
 function budgetScopeKey(run: Run): string {
-  const identity = reviewPRIdentity(run, { requirePRContext: true });
+  const identity =
+    run.flowType === 'review-pr' ? null : reviewPRIdentity(run, { requirePRContext: true });
   return identity ? JSON.stringify([identity.repository.toLowerCase(), identity.prNumber]) : run.id;
 }
 

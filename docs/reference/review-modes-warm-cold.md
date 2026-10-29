@@ -95,13 +95,20 @@ are satisfied.
 
 ### Review-pr budget
 
-**Status:** Proposed under ADR-063 Amendment 9.
+**Status:** Accepted under ADR-063 Amendment 9.
 
 Each `review-pr` run MUST have its own five-round budget. Its admission lock,
 admissions, settlements and no-verdict cap MUST exclude every other run,
 including archived review requests and feature runs for the same repository/PR.
-Other runs MUST NOT inherit its admissions, settlements or extensions.
-Review-pr remains ineligible for budget extensions.
+New review-pr requests MUST NOT inherit feature extensions. Other runs MUST NOT
+inherit new review-pr admissions or settlements. Review-pr remains ineligible
+for budget extensions.
+
+Receipts, settlements and grants already copied into a run's snapshot before
+this amendment MUST keep counting in that snapshot; no history is rewritten.
+Feature and update-branch scopes MUST stop reading review-pr snapshots. A
+review-pr receipt not already in one of their snapshots no longer counts
+toward those scopes.
 
 Replay, restart and reattachment MUST retain that run's admissions and reuse
 an existing receipt. A sixth counted attempt in the same run MUST still refuse;
@@ -164,7 +171,7 @@ For extension-eligible feature runs, the effective limit and used count MUST com
 Before a PR exists, the receipt applies only to its canonical run. Once the run
 has a verified repository/PR identity, the existing shared scope MUST preserve
 that receipt and its admissions across active and archived history. A different
-run MUST NOT obtain a fresh default budget for the same PR. The original run
+feature run MUST NOT obtain a fresh default budget for the same PR. The original run
 remains the execution and publication owner.
 
 The gate shows `N/L` and the grant's scope/provenance. The current approved
