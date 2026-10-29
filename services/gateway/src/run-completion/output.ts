@@ -261,7 +261,7 @@ export async function captureRunOutput(
     manifestDigest: outputManifestDigest(artifacts),
     ...(report ? { reportPath: report.path } : {}),
   };
-  await retainCapturedRunArtifacts({
+  const retained = await retainCapturedRunArtifacts({
     run: { ...current, output },
     artifacts,
     acquireMedia: acquisition.acquireMedia,
@@ -287,6 +287,9 @@ export async function captureRunOutput(
       await persistRunNow(updated, 'retained run output');
     },
   });
+  console.info(
+    `[output] ${runId} acquisition scan: files=${retained.acquisitionScan.fileCount} durationMs=${retained.acquisitionScan.durationMs.toFixed(1)}`,
+  );
   return copied;
 }
 

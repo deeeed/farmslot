@@ -47,7 +47,16 @@ test('completion diagnostics and a pending retrospective preserve the captured Q
     metrics: { ...run.metrics, outcome: 'success' },
     steps: [{ name: 'complete', status: 'done' }],
   });
+  const logs = t.mock.method(console, 'info', () => {});
   await captureRunOutput(run.id, false);
+  const scanLogs = logs.mock.calls.filter((call) =>
+    String(call.arguments[0]).includes(' acquisition scan: '),
+  );
+  assert.equal(scanLogs.length, 1, 'one acquisition timing line per output capture');
+  assert.match(
+    String(scanLogs[0]!.arguments[0]),
+    new RegExp(`^\\[output\\] ${run.id} acquisition scan: files=\\d+ durationMs=\\d+\\.\\d$`),
+  );
   const captured = getRun(run.id)!;
   const review = captured.decisions.find((decision) => decision.payload?.kind === 'output-review')!;
   const digest = captured.output!.manifestDigest;

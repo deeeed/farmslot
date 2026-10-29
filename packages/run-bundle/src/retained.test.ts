@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -303,6 +312,10 @@ test('changed historical bytes stay readable but keep the original expected inve
 
 test('concurrent identical captures serialize the reference commit and reuse one capture', async (t) => {
   const f = await fixture(t);
+  const historical = path.join(f.root, '.sandbox/old/tasks/nested');
+  await mkdir(historical, { recursive: true });
+  await writeFile(path.join(historical, 'old-media.mp4'), 'old media');
+  await symlink(f.taskDir, path.join(historical, 'linked-task'));
   const results = await Promise.all([
     materializeRunBundle(f.request),
     materializeRunBundle(f.request),
@@ -310,6 +323,11 @@ test('concurrent identical captures serialize the reference commit and reuse one
   assert.deepEqual(results[0]!.ref, results[1]!.ref);
   assert.ok(f.refs.length >= 2);
   assert.ok(f.refs.every((ref) => ref.bundleDigest === results[0]!.ref.bundleDigest));
+  const scan = results[0]!.acquisitionScan;
+  assert.equal(scan, results[1]!.acquisitionScan, 'concurrent captures share the measured scan');
+  assert.equal(scan.fileCount, 3, 'count regular files across both roots, without following links');
+  assert.equal(scan.bytes, f.artifacts.reduce((sum, artifact) => sum + artifact.sizeBytes!, 0) + 9);
+  assert.ok(Number.isFinite(scan.durationMs) && scan.durationMs >= 0);
 });
 
 test('GC preserves pending media, prunes expired completed media, and leaves report/manifest bytes unchanged', async (t) => {
