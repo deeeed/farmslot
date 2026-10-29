@@ -22,6 +22,28 @@ mock.module('@farmslot/protocol/node/farmslot-home', {
 const { archiveRunArtifactHousekeeping, reserveRunArtifactMetadata, runBundleStore } =
   await import('./retained-artifacts.js');
 
+test('monitor replay of dispatched work needs no new admission, including legacy runs without reservations', async () => {
+  const { createRun } = await import('../runs/store.js');
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'fixture',
+    mode: 'autonomous',
+    ticketOrPr: 'META-COMPLETE',
+  });
+  run.steps = [
+    { name: 'dispatch', status: 'done' },
+    { name: 'monitor', status: 'running' },
+  ];
+  // Any attempted writer admission here would refuse the sandbox owner.
+  process.env.FARMSLOT_SANDBOX_HOME = path.join(root, 'monitor-sandbox');
+  try {
+    await reserveRunArtifactMetadata(run);
+    await assert.rejects(readFile(path.join(runsDir, 'bundle-store.json')), /ENOENT/);
+  } finally {
+    delete process.env.FARMSLOT_SANDBOX_HOME;
+  }
+});
+
 test('runs-only gateway boot owns an isolated bundle root and sandboxes cannot rebind it', async () => {
   await runBundleStore(true);
   const owner = await runBundleStore();
