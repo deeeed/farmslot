@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
+import {
+  applyClaudeAssistantUsage,
+  emptyIncrementalSessionUsageState,
+} from '@farmslot/slot-config';
 
 import '../runtime/mock-pty.test-support.js';
 
@@ -1154,4 +1159,22 @@ test('structured runner progress is announced once per later minute', () => {
     false,
     'an unchanged clock is not announced',
   );
+});
+
+test('restoring a monitor retains message identity across real multi-block usage windows', () => {
+  const records = readFileSync(
+    new URL(
+      '../../../../packages/slot-config/test/fixtures/claude-multi-block.jsonl',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  const initial = applyClaudeAssistantUsage(emptyIncrementalSessionUsageState(), records[0]);
+  let restored = restoreBudgetUsageState(JSON.parse(JSON.stringify(initial)));
+  for (const record of records.slice(1)) restored = applyClaudeAssistantUsage(restored, record);
+  assert.equal(restored.turns, 2);
+  assert.equal(restored.totalTokens, 112772);
 });
