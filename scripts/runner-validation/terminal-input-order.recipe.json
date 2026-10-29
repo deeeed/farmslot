@@ -38,7 +38,19 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "cleanup": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-input-order.mts --remote-host \"{{params.remote_host}}\" --remote-source \"{{params.remote_source}}\" --gateway-host \"{{params.gateway_host}}\" --output \"{{params.proof_root}}\" --cleanup",
+        "timeout_ms": 30000,
+        "intent": "Stop only this proof\u2019s owned remote node and terminal, preserving the host\u2019s screen-control socket.",
+        "next": "cleaned"
+      },
+      "cleaned": {
+        "action": "end",
+        "status": "pass"
       }
-    }
+    },
+    "teardown": "cleanup"
   }
 }

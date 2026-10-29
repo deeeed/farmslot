@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 
-import type { PoolConfig } from '@farmslot/protocol';
+import type { PoolConfig, TerminalInputParams } from '@farmslot/protocol';
 
+let workspaceBeforeResolve = async (_runId: string) => {};
+const sent: string[] = [];
 const unexpectedPty = () => {
   throw new Error('Unexpected PTY operation in remote input test');
 };
@@ -13,10 +15,12 @@ mock.module('../runtime/pty-stream.js', {
     subscribePty: unexpectedPty,
     unsubscribePty: unexpectedPty,
     unsubscribeAllPty: unexpectedPty,
-    writePty: unexpectedPty,
+    writePty: (_key: string, data: string) => {
+      sent.push(data);
+    },
     resizePty: unexpectedPty,
     reinitTmuxSession: unexpectedPty,
-    hasPty: () => false,
+    hasPty: (key: string) => key.startsWith('workspace:'),
   },
 });
 const contexts = await import('../agents/contexts.js');
@@ -38,7 +42,7 @@ const pool: PoolConfig = {
   project: 'fixture',
   platform: 'cli',
   os: 'linux',
-  slots: ['ordered', 'other', 'failure', 'alias'].map((id) => ({
+  slots: ['ordered', 'other', 'failure', 'alias', 'routing'].map((id) => ({
     id,
     enabled: true,
     mode: 'dispatch',
@@ -55,18 +59,26 @@ const registry = await import('../fleet/machine-registry.js');
 // Opaque mock identity, never presented as a real ConnectedNode or WebSocket.
 const node = Symbol('connected remote input fixture');
 mock.module('../fleet/machine-registry.js', { namedExports: { ...registry, getNode: () => node } });
-const rpc = await import('../fleet/node-rpc.js');
-const sent: string[] = [];
+const stream = await import('../runtime/tmux-stream.js');
 let beforeSend = async (_text: string) => {};
-mock.module('../fleet/node-rpc.js', {
+mock.module('../runtime/tmux-stream.js', {
   namedExports: {
-    ...rpc,
-    sendNodeRequest: async (selectedNode: unknown, method: string, params: { text: string }) => {
-      assert.equal(selectedNode, node);
-      assert.equal(method, 'tmux.send');
-      await beforeSend(params.text);
-      sent.push(params.text);
-      return { sent: true };
+    ...stream,
+    sendKeys: async (_slotId: string, _session: string, text: string, enter: boolean) => {
+      assert.equal(enter, false, 'Raw input must not append an Enter key');
+      await beforeSend(text);
+      sent.push(text);
+    },
+  },
+});
+const workspace = await import('../runtime/workspace-terminal.js');
+mock.module('../runtime/workspace-terminal.js', {
+  namedExports: {
+    ...workspace,
+    resolveWorkspaceTerminal: async (params: TerminalInputParams) => {
+      assert(params.runId);
+      await workspaceBeforeResolve(params.runId);
+      return { key: workspace.workspaceTerminalKey(params.runId) };
     },
   },
 });
@@ -138,4 +150,95 @@ test('a refused input rejects its caller without poisoning the next input', asyn
   await good;
   await terminalInput({ slotId: 'failure', data: 'later' });
   assert.deepEqual(sent, ['good', 'later']);
+});
+
+test('workspace input reserves each run before delayed resolution and leaves other runs independent', async () => {
+  sent.length = 0;
+  const first = deferred();
+  const entered = deferred();
+  let calls = 0;
+  workspaceBeforeResolve = async (runId) => {
+    if (runId === 'ordered-workspace' && ++calls === 1) {
+      entered.resolve();
+      await first.promise;
+    }
+  };
+  const a = terminalInput({ slotId: '', runId: 'ordered-workspace', data: 'a' });
+  await entered.promise;
+  const b = terminalInput({ slotId: '', runId: 'ordered-workspace', data: 'b' });
+  try {
+    await terminalInput({ slotId: '', runId: 'other-workspace', data: 'unrelated' });
+    assert.deepEqual(sent, ['unrelated']);
+  } finally {
+    first.resolve();
+  }
+  await Promise.all([a, b]);
+  assert.deepEqual(sent, ['unrelated', 'a', 'b']);
+});
+
+test('authenticated RPC arrival order is reserved before a delayed native access check', async () => {
+  const { createServer } = await import('node:http');
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const access = await import('../security/native-worker-access.js');
+  const first = deferred();
+  const entered = deferred();
+  let calls = 0;
+  mock.module('../security/native-worker-access.js', {
+    namedExports: {
+      ...access,
+      assertNativeWorkerRpcAccess: async (method: string) => {
+        if (method === 'terminal.input' && ++calls === 1) {
+          entered.resolve();
+          await first.promise;
+        }
+      },
+    },
+  });
+  beforeResolve = async () => {};
+  beforeSend = async () => {};
+  sent.length = 0;
+  const { createGatewayAuthRuntime } = await import('../security/auth.js');
+  const { createWebSocketServer } = await import('../server.js');
+  const { GatewayClient } = await import('../../../../packages/cli/src/gateway-client.js');
+  const home = await mkdtemp(path.join(tmpdir(), 'terminal-route-auth-'));
+  const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
+  const owner = auth.writer.createPrincipal(
+    { type: 'service', displayName: 'Input routing test' },
+    [{ role: 'admin', scope: { kind: 'global' } }],
+  );
+  const credential = auth.writer.issueCredential(owner.id, 'Input routing test');
+  const server = createServer();
+  const wss = createWebSocketServer(server, auth);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const connection = await new GatewayClient({
+    url: `ws://127.0.0.1:${address.port}/ws`,
+    timeout: 5000,
+    credential: { token: credential.secret },
+  }).connect();
+  try {
+    const a = connection.call('terminal.input', { slotId: 'routing', data: 'a' });
+    await entered.promise;
+    const b = connection.call('terminal.input', { slotId: 'routing', data: 'b' });
+    try {
+      await connection.call('terminal.input', { slotId: 'other', data: 'unrelated' });
+      assert.deepEqual(sent, ['unrelated']);
+    } finally {
+      first.resolve();
+      await Promise.all([a, b]);
+    }
+    assert.deepEqual(sent, ['unrelated', 'a', 'b']);
+  } finally {
+    first.resolve();
+    connection.close();
+    for (const socket of wss.clients) socket.terminate();
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(home, { recursive: true, force: true });
+  }
 });

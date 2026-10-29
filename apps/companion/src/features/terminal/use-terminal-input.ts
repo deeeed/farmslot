@@ -76,12 +76,17 @@ export function useTerminalInput(
             targetKey(targetRef.current) === targetKey(selectedTarget)
           );
         };
-        const queue = createTerminalInputQueue(async (batch) => {
-          if (!isCurrent()) throw new TerminalInputCancelledError();
+        const queue = createTerminalInputQueue(async (batch, assertActive) => {
+          const assertCurrent = () => {
+            assertActive();
+            if (!isCurrent()) throw new TerminalInputCancelledError();
+          };
+          assertCurrent();
           await selectedClient.request(
             'terminal.input',
             { ...selectedTarget, data: batch },
             10_000,
+            { assertCurrent },
           );
         });
         queueRef.current = { key: selectedKey, client: selectedClient, queue };

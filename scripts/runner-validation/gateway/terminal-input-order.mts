@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,7 @@ const { values } = parseArgs({
     'gateway-host': { type: 'string' },
     output: { type: 'string' },
     'preflight-only': { type: 'boolean' },
+    cleanup: { type: 'boolean' },
   },
 });
 const remoteHost = values['remote-host'];
@@ -27,7 +28,7 @@ assert(
 assert(!remoteHost.startsWith('-') && /^[a-zA-Z0-9_.@-]+$/.test(remoteHost));
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const output = path.resolve(values.output);
-await mkdir(output, { mode: 0o700 });
+await mkdir(output, { mode: 0o700, recursive: values.cleanup === true });
 const save = (name: string, value: unknown) =>
   writeFile(path.join(output, name), JSON.stringify(value, null, 2) + '\n', {
     flag: 'wx',
@@ -64,6 +65,77 @@ function remote(program: string, input: unknown): Promise<Record<string, unknown
     );
     child.stdin.end(JSON.stringify(input));
   });
+}
+const REMOTE_CLEANUP = String.raw`
+import json,sys,pathlib,subprocess,os,signal,time,fcntl
+p=json.load(sys.stdin);r=pathlib.Path(p['root']);lock=(r/'owner').open()
+fcntl.flock(lock,fcntl.LOCK_EX);assert lock.read()==p['id'];s=json.loads((r/'state.json').read_text());assert s['id']==p['id']
+def identity(path):
+ try:
+  v=os.lstat(path);return {'exists':True,'device':v.st_dev,'inode':v.st_ino}
+ except FileNotFoundError:return {'exists':False}
+def live(pid,birth):
+ if not pid:return False
+ q=subprocess.run(['ps','-p',str(pid),'-o','lstart='],capture_output=True,text=True)
+ if q.returncode==1:return False
+ assert q.returncode==0 and q.stdout.strip()==birth,'Owned process birth changed'
+ return True
+sup=s.get('supervisorPid')
+if live(sup,s.get('supervisorBirth')):
+ assert str(r/'supervisor.py') in subprocess.check_output(['ps','-p',str(sup),'-o','command='],text=True),'Supervisor UUID changed'
+ os.kill(sup,signal.SIGTERM)
+end=time.monotonic()+8
+while live(sup,s.get('supervisorBirth')):
+ assert time.monotonic()<end,'Owned supervisor did not stop'
+ time.sleep(.05)
+pid=s.get('nodePid')
+if live(pid,s.get('nodeBirth')):
+ assert os.getpgid(pid)==pid,'Owned node group changed'
+ assert p['id'] in subprocess.check_output(['ps','-p',str(pid),'-o','command='],text=True),'Node UUID changed'
+ os.killpg(pid,signal.SIGTERM)
+ end=time.monotonic()+5
+ while live(pid,s.get('nodeBirth')):
+  assert time.monotonic()<end,'Owned node did not stop'
+  time.sleep(.05)
+probe=subprocess.run(['tmux','-S',s['socket'],'list-sessions'],capture_output=True)
+if probe.returncode==0:subprocess.run(['tmux','-S',s['socket'],'kill-server'],check=True)
+else:assert probe.returncode==1,'Cannot inspect owned tmux server'
+assert subprocess.run(['tmux','-S',s['socket'],'list-sessions'],capture_output=True).returncode==1
+assert subprocess.run(['lsof','-t',s['socket']],capture_output=True).returncode==1
+assert not pathlib.Path(s['screenControl']).exists(),'Private screen socket remains'
+if pid:
+ rows=subprocess.check_output(['ps','-axo','pid=,pgid=,stat='],text=True).splitlines()
+ assert not [row for row in rows if len(row.split())==3 and row.split()[1]==str(pid) and not row.split()[2].startswith('Z')],'Owned node group still has live children'
+assert identity(s['defaultControl'])==s['defaultControlBefore'],'Default screen-control socket changed'
+print(json.dumps({'status':'PASS','supervisorStopped':True,'nodeStopped':True,'privateSocketListening':False,'privateScreenControlAbsent':True,'defaultControlUnchanged':True,'defaultControlBefore':s['defaultControlBefore'],'rootRetained':str(r)}))
+`;
+if (values.cleanup) {
+  let ownership: { root: string; id: string; remoteHost: string } | null = null;
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path.join(output, 'ownership.json'), 'utf8'));
+    assert(
+      parsed &&
+        typeof parsed === 'object' &&
+        'root' in parsed &&
+        'id' in parsed &&
+        'remoteHost' in parsed,
+    );
+    assert(
+      typeof parsed.root === 'string' &&
+        typeof parsed.id === 'string' &&
+        parsed.remoteHost === remoteHost,
+    );
+    assert(/^[a-f0-9-]{36}$/.test(parsed.id) && parsed.root === '/tmp/terminal-input-' + parsed.id);
+    ownership = { root: parsed.root, id: parsed.id, remoteHost };
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  const receipt = ownership
+    ? await remote(REMOTE_CLEANUP, ownership)
+    : { status: 'PASS', neverAcquired: true };
+  await save('recipe-teardown.json', receipt);
+  console.log(JSON.stringify(receipt));
+  process.exit(0);
 }
 const preflight = await remote(
   String.raw`
@@ -166,31 +238,79 @@ try {
   const address = server.address();
   assert(address && typeof address !== 'string');
   const gateway = `ws://${gatewayHost}:${address.port}/ws`;
+  await save('ownership.json', { root: remoteRoot, id, remoteHost });
   remoteAttempted = true;
+  await save(
+    'remote-acquisition.json',
+    await remote(
+      String.raw`
+import json,sys,os,pathlib
+p=json.load(sys.stdin);r=pathlib.Path(p['root']);r.mkdir(mode=0o700)
+with (r/'owner').open('x') as f:f.write(p['id'])
+os.chmod(r/'owner',0o600)
+for n in ['home','pool','native','analytics','tmux']:(r/n).mkdir(mode=0o700)
+socket=str(r/'tmux'/('tmux-'+str(os.getuid()))/'default');pathlib.Path(socket).parent.mkdir(mode=0o700)
+def identity(path):
+ try:
+  v=os.lstat(path);return {'exists':True,'device':v.st_dev,'inode':v.st_ino}
+ except FileNotFoundError:return {'exists':False}
+default='/tmp/farmslot-screen-control-'+str(os.getuid())+'.sock'
+state={'socket':socket,'screenControl':str(r/'sc.sock'),'defaultControl':default,'defaultControlBefore':identity(default),'slot':p['slot'],'id':p['id']}
+with (r/'state.json').open('x') as f:json.dump(state,f)
+os.chmod(r/'state.json',0o600)
+print(json.dumps(state))
+`,
+      { root: remoteRoot, id, slot: slotId },
+    ),
+  );
   await save(
     'remote-setup.json',
     await remote(
       String.raw`
-import json,sys,os,pathlib,subprocess,time,shlex
-p=json.load(sys.stdin);r=pathlib.Path(p['root']);r.mkdir(mode=0o700)
-(r/'owner').write_text(p['id']);os.chmod(r/'owner',0o600)
-for n in ['home','pool','native','analytics','tmux']:(r/n).mkdir(mode=0o700)
+import json,sys,os,pathlib,subprocess,time,shlex,fcntl
+p=json.load(sys.stdin);r=pathlib.Path(p['root']);lock=(r/'owner').open();fcntl.flock(lock,fcntl.LOCK_EX);assert lock.read()==p['id']
+state=json.loads((r/'state.json').read_text());assert state['id']==p['id']
 for n in ['scripts','packages','services']:(r/n).symlink_to(pathlib.Path(p['source'])/n)
 sink="import os,sys,tty\ntty.setraw(0)\nf=open(sys.argv[1],'xb',buffering=0)\nopen(sys.argv[2],'x').close()\nwhile True:\n b=os.read(0,4096)\n if not b: break\n f.write(b)\n os.write(1,b)\n"
 (r/'sink.py').write_text(sink)
-socket=str(r/'tmux'/('tmux-'+str(os.getuid()))/'default');pathlib.Path(socket).parent.mkdir(mode=0o700)
 env={k:v for k,v in os.environ.items() if not k.startswith('FARMSLOT_') and k not in ['TMUX','TMUX_PANE','GATEWAY_URL','NODE_OPTIONS','NODE_TEST_CONTEXT']}
-env.update({'FARMSLOT_ROOT':str(r),'FARMSLOT_HOME':str(r/'home'),'FARMSLOT_POOL_DIR':str(r/'pool'),'FARMSLOT_NATIVE_STATE_DIR':str(r/'native'),'FARMSLOT_ANALYTICS_DIR':str(r/'analytics'),'TMUX_TMPDIR':str(r/'tmux'),'GATEWAY_URL':p['gateway'],'MACHINE_NAME':p['machine'],'FARMSLOT_NODE_TOKEN':p['token'],'TSX_TSCONFIG_PATH':str(pathlib.Path(p['source'])/'services/gateway/tsconfig.json')})
-state={'socket':socket,'slot':p['slot'],'id':p['id'],'tmuxStarted':False};(r/'state.json').write_text(json.dumps(state));os.chmod(r/'state.json',0o600)
-subprocess.run(['tmux','-S',socket,'-f','/dev/null','new-session','-d','-s',p['slot'],'-c',str(r),'python3 '+shlex.quote(str(r/'sink.py'))+' '+shlex.quote(str(r/'received.bin'))+' '+shlex.quote(str(r/'ready'))],env=env,check=True)
-state['tmuxStarted']=True;(r/'state.json').write_text(json.dumps(state))
+env.update({'FARMSLOT_ROOT':str(r),'FARMSLOT_HOME':str(r/'home'),'FARMSLOT_POOL_DIR':str(r/'pool'),'FARMSLOT_NATIVE_STATE_DIR':str(r/'native'),'FARMSLOT_ANALYTICS_DIR':str(r/'analytics'),'TMUX_TMPDIR':str(r/'tmux'),'SCREEN_CONTROL_SOCKET':state['screenControl'],'GATEWAY_URL':p['gateway'],'MACHINE_NAME':p['machine'],'FARMSLOT_NODE_TOKEN':p['token'],'TSX_TSCONFIG_PATH':str(pathlib.Path(p['source'])/'services/gateway/tsconfig.json')})
+subprocess.run(['tmux','-S',state['socket'],'-f','/dev/null','new-session','-d','-s',p['slot'],'-c',str(r),'python3 '+shlex.quote(str(r/'sink.py'))+' '+shlex.quote(str(r/'received.bin'))+' '+shlex.quote(str(r/'ready'))],env=env,check=True)
+supervisor=r/'supervisor.py'
+supervisor.write_text("""import os,sys,pathlib,subprocess,time,signal,json
+r=pathlib.Path(sys.argv[1]);state=json.loads((r/'state.json').read_text());stop=False
+# The proof owns one detached node group. A fixed lifetime also covers local SIGKILL or lost SSH.
+def signal_stop(*_):
+ global stop
+ stop=True
+for sig in [signal.SIGTERM,signal.SIGINT,signal.SIGHUP]:signal.signal(sig,signal_stop)
+state['supervisorPid']=os.getpid();state['supervisorBirth']=subprocess.check_output(['ps','-p',str(os.getpid()),'-o','lstart='],text=True).strip()
 log=(r/'node.log').open('xb')
-node=subprocess.Popen(['node','--import',str(pathlib.Path(p['source'])/'node_modules/tsx/dist/loader.mjs'),str(pathlib.Path(p['source'])/'services/node/src/index.ts')],cwd=r,env=env,stdout=log,stderr=log,start_new_session=True)
-birth=subprocess.check_output(['ps','-p',str(node.pid),'-o','lstart='],text=True).strip()
-state.update({'nodePid':node.pid,'nodeBirth':birth});(r/'state.json').write_text(json.dumps(state))
+node=subprocess.Popen(sys.argv[2:],cwd=r,env=os.environ,stdout=log,stderr=log,start_new_session=True)
+state['nodePid']=node.pid;state['nodeBirth']=subprocess.check_output(['ps','-p',str(node.pid),'-o','lstart='],text=True).strip()
+part=r/'state.tmp';part.write_text(json.dumps(state));os.chmod(part,0o600);os.replace(part,r/'state.json')
+started=time.monotonic()
+try:
+ end=started+135
+ while not stop and node.poll() is None and time.monotonic()<end:time.sleep(.05)
+finally:
+ reason='signal' if stop else 'node-exit' if node.poll() is not None else 'lifetime-expired'
+ if node.poll() is None:
+  os.killpg(node.pid,signal.SIGTERM)
+  try:node.wait(timeout=3)
+  except subprocess.TimeoutExpired:os.killpg(node.pid,signal.SIGKILL);node.wait()
+ probe=subprocess.run(['tmux','-S',state['socket'],'list-sessions'],capture_output=True)
+ if probe.returncode==0:subprocess.run(['tmux','-S',state['socket'],'kill-server'],check=True)
+ (r/'supervisor-exit.json').write_text(json.dumps({'reason':reason,'seconds':time.monotonic()-started,'nodeExitCode':node.returncode}))
+""")
+log=(r/'supervisor.log').open('xb')
+child=subprocess.Popen(['python3',str(supervisor),str(r),'node','--title=terminal-input-proof-'+p['id'],'--import',str(pathlib.Path(p['source'])/'node_modules/tsx/dist/loader.mjs'),str(pathlib.Path(p['source'])/'services/node/src/index.ts')],cwd=r,env=env,stdout=log,stderr=log,start_new_session=True)
 end=time.monotonic()+8
-while not (r/'ready').exists():
- assert time.monotonic()<end,'Remote byte sink did not become ready'
+while True:
+ state=json.loads((r/'state.json').read_text())
+ if (r/'ready').exists() and state.get('nodePid'):break
+ assert child.poll() is None,'Owned supervisor exited during startup'
+ assert time.monotonic()<end,'Owned sink/node did not become ready'
  time.sleep(.02)
 print(json.dumps({**state,'root':str(r),'load':os.getloadavg()}))
 `,
@@ -258,12 +378,28 @@ print(json.dumps({'bytesBase64':base64.b64encode((r/'received.bin').read_bytes()
   );
   await verify('Companion batching and Enter');
   queue.dispose();
+  const namedKeyBatches = [];
+  for (const word of ['Up', 'Enter', 'F1', 'Tab', '\u001b[D\u0003\r']) {
+    const text = 'x' + word;
+    const batchTexts: string[] = [];
+    const namedQueue = createTerminalInputQueue(async (data) => {
+      batchTexts.push(data);
+      await connections[0]!.call('terminal.input', { slotId, data });
+    });
+    await Promise.all([...text].map((data) => namedQueue.write(data)));
+    assert.deepEqual(batchTexts, ['x', word], 'Exercise the exact named-key batch on the wire');
+    expected += text;
+    await verify('literal batch ' + JSON.stringify(word));
+    namedKeyBatches.push({ word, batchTexts });
+    namedQueue.dispose();
+  }
   await save('result.json', {
     status: 'PASS',
     slotId,
     machine,
     remoteHost,
     batches,
+    namedKeyBatches,
     observations,
     source,
     limitation:
@@ -276,31 +412,7 @@ print(json.dumps({'bytesBase64':base64.b64encode((r/'received.bin').read_bytes()
   const errors: string[] = [];
   if (remoteAttempted) {
     try {
-      await save(
-        'remote-cleanup.json',
-        await remote(
-          String.raw`
-import json,sys,pathlib,subprocess,os,signal,time
-p=json.load(sys.stdin);r=pathlib.Path(p['root']);assert (r/'owner').read_text()==p['id'];s=json.loads((r/'state.json').read_text());assert s['id']==p['id']
-check=subprocess.run(['ps','-p',str(s.get('nodePid',0)),'-o','lstart='],text=True,capture_output=True)
-if check.returncode==0:
- assert check.stdout.strip()==s['nodeBirth'],'Owned node birth changed'
- os.kill(s['nodePid'],signal.SIGTERM)
-if s['tmuxStarted']:subprocess.run(['tmux','-S',s['socket'],'kill-server'],check=True)
-end=time.monotonic()+5
-while s.get('nodePid') and subprocess.run(['ps','-p',str(s['nodePid'])],capture_output=True).returncode==0:
- assert time.monotonic()<end,'Owned node did not stop'
- time.sleep(.05)
-# tmux can leave an inert socket inode after kill-server. Prove no server or owner.
-probe=subprocess.run(['tmux','-S',s['socket'],'list-sessions'],capture_output=True)
-assert probe.returncode==1,'Owned tmux server still answers'
-owners=subprocess.run(['lsof','-t',s['socket']],capture_output=True)
-assert owners.returncode==1 and not owners.stdout,'Owned socket still has an open owner'
-print(json.dumps({'status':'PASS','nodeStopped':True,'privateSocketListening':False,'staleSocketFileRetained':pathlib.Path(s['socket']).exists(),'rootRetained':str(r)}))
-`,
-          { root: remoteRoot, id },
-        ),
-      );
+      await save('remote-cleanup.json', await remote(REMOTE_CLEANUP, { root: remoteRoot, id }));
     } catch (error) {
       errors.push(String(error));
     }

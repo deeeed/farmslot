@@ -22,11 +22,15 @@ export interface TerminalInputQueue {
 
 /** Live input only. Pending keys share one next request and are never retried. */
 export function createTerminalInputQueue(
-  send: (data: string) => Promise<void>,
+  send: (data: string, assertActive: () => void) => Promise<void>,
 ): TerminalInputQueue {
   let disposed = false;
   let inFlight = false;
   let pending: InputBatch | null = null;
+
+  const assertActive = () => {
+    if (disposed) throw new TerminalInputCancelledError();
+  };
 
   function rejectPending(error: unknown) {
     const batch = pending;
@@ -40,7 +44,7 @@ export function createTerminalInputQueue(
     pending = null;
     inFlight = true;
     try {
-      await send(batch.data);
+      await send(batch.data, assertActive);
       batch.waiters.forEach((waiter) => waiter.resolve());
     } catch (error) {
       batch.waiters.forEach((waiter) => waiter.reject(error));

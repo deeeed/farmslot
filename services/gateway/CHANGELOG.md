@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Preserve terminal keystroke order across clients while target checks or remote delivery are slow.
+- Preserve literal terminal keystrokes in arrival order across clients while ownership, target checks or remote delivery are slow.
 
 - Allow prepare to reuse a deleted configured PR head only after verifying its merge and preserving unpublished or dirty work.
 
