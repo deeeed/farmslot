@@ -274,16 +274,24 @@ test('a spent PR budget points at an extension only for the run that can receive
   });
   const only =
     'only the unpublished dev or fix-bug run that owns the branch can be granted more review rounds';
+  const reviewBudget = await runReviewRoundBudget(getRun(review.id)!);
+  assert.deepEqual(
+    [reviewBudget.used, reviewBudget.limit, reviewBudget.extensions],
+    [0, 5, undefined],
+  );
+  await assertReviewRoundAvailable(getRun(review.id)!);
+  for (let i = 0; i < 5; i++) await admitReviewRound(review.id, `review-own-${i}`);
+  assert.equal((await runReviewRoundBudget(getRun(owner.run.id)!)).used, 7);
   await assert.rejects(assertReviewRoundAvailable(getRun(review.id)!), (error: Error) => {
     assert.equal(
       error.message,
-      `All 7 review rounds for this work are spent, and this run is a review-pr run; ${only}. Stop and narrow the change or redesign it.`,
+      `All 5 review rounds for this work are spent, and this run is a review-pr run; ${only}. Stop and narrow the change or redesign it.`,
     );
     return true;
   });
   await assert.rejects(
     runExtendReviewBudget(
-      { ...owner.params, runId: review.id, requestId: randomUUID(), expectedLimit: 7, limit: 8 },
+      { ...owner.params, runId: review.id, requestId: randomUUID(), expectedLimit: 5, limit: 6 },
       emit,
       owner.deps,
     ),
