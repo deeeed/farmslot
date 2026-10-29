@@ -232,7 +232,15 @@ test('Cursor retained handoff relaunches with argv and waits for the scoped task
     taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
   });
 
-  const result = await deliverPromptToLiveRunner({
+  let entered!: () => void;
+  let release!: () => void;
+  const boundaryEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const boundaryPersisted = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const delivery = deliverPromptToLiveRunner({
     vars,
     target: '%1',
     runnerId: 'cursor',
@@ -242,8 +250,10 @@ test('Cursor retained handoff relaunches with argv and waits for the scoped task
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
     launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     timeoutMs: 1_000,
-    onPromptMutationStart: () => {
+    onPromptMutationStart: async () => {
       mutationStarts += 1;
+      entered();
+      await boundaryPersisted;
       assert.equal(
         commands.some((command) => command.includes('respawn-window')),
         false,
@@ -251,6 +261,19 @@ test('Cursor retained handoff relaunches with argv and waits for the scoped task
     },
   });
 
+  await boundaryEntered;
+  let result: Awaited<typeof delivery>;
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(
+      commands.some((command) => command.includes('respawn-window')),
+      false,
+      'no respawn before the durable boundary completes',
+    );
+  } finally {
+    release();
+    result = await delivery;
+  }
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   assert.equal(mutationStarts, 1);
   const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';

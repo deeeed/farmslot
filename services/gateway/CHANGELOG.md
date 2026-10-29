@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recover unsent review-fix prompts after restart, verify relaunched worker processes, and surface unconfirmed delivery within the launch budget while preserving findings.
+
 - Log the acquisition scan's file count and duration for each output completion capture.
 
 - Hold reviewer model-capacity refusals for an operator retry, preserving the run and slot instead of failing the run.
