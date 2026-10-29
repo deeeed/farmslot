@@ -284,11 +284,13 @@ try {
     assert.deepEqual(projectJson.prepare.profiles[input.coldHealthProfile]?.phases, ['health']);
     const full = await connection.call(
       'slot.prepare',
-      { slotId: input.slotId },
+      { slotId: input.slotId, branch: input.branch },
       { timeoutMs: 330_000 },
     );
     assert.equal(full.prepared, true);
+    await save('cold-full-prepared.json', full);
     await projectHook('teardown', stopping.signal);
+    await save('cold-server-stopped.json', { status: 'PASS', slotId: input.slotId });
     const requestId = `${input.id}-cold-health`;
     const events = [];
     let waiting;
