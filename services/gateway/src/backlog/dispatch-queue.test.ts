@@ -2018,13 +2018,16 @@ test('memory-only create failure requeues and purges the orphan Run', async (t) 
   t.after(async () => {
     if (orphanId && getRun(orphanId)) await cleanupRun(orphanId);
   });
-  await tryDispatchNext();
+  // A call that joins a retry already in flight returns before that retry sees this row.
+  for (let attempt = 0; attempt < 3 && !orphanId; attempt++) await tryDispatchNext();
   assert.ok(orphanId);
   assert.equal(getRun(orphanId), undefined, 'memory-only orphan must be purged');
   const requeued = getQueueSnapshot().find((q) => q.id === item.id);
   assert.ok(requeued, 'row must be requeued for retry');
   assert.equal(requeued.status, 'queued');
   assert.equal(requeued.runId, undefined);
+  // The requeued row would otherwise be dispatched into a later test.
+  removeQueueItemInternal(item.id, 'test-cleanup');
 });
 
 test('PR queue prepares cold allowed slots while respecting busy slots and model constraints', async () => {
