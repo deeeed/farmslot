@@ -7,6 +7,11 @@ import {
   type NativeProfileStatusResult,
   type NativeSessionInfo,
 } from '@farmslot/protocol';
+import {
+  nativeObservationQuery,
+  type ResourceQuery,
+  type ResourceQueryState,
+} from '@farmslot/protocol/client-cache';
 
 import {
   nativeProfileLoginReason,
@@ -41,12 +46,32 @@ const status = (): NativeProfileStatusResult => ({
 });
 
 function api(replies: unknown[]) {
-  const calls: Array<{ method: string; params: unknown }> = [];
+  const calls: Array<Pick<ResourceQuery, 'method' | 'params' | 'dependencies'>> = [];
+  const states = new Map<string, ResourceQueryState>();
+  const nativeOwnerId = 'fixture-owner';
   return {
     calls,
-    request: async <T>(method: string, params: unknown) => {
-      calls.push({ method, params });
-      return (await replies.shift()) as T;
+    nativeOwnerId,
+    seed(method: string, params: unknown, data: unknown, status: 'ready' | 'stale' = 'ready') {
+      states.set(nativeObservationQuery(method, params, nativeOwnerId).id, { status, data });
+    },
+    cache: {
+      read<T>(query: ResourceQuery<T>): ResourceQueryState<T> {
+        return (states.get(query.id) ?? { status: 'loading' }) as ResourceQueryState<T>;
+      },
+      async retry<T>(query: ResourceQuery<T>): Promise<ResourceQueryState<T>> {
+        calls.push({
+          method: query.method,
+          params: query.params,
+          dependencies: query.dependencies,
+        });
+        const state: ResourceQueryState<T> = {
+          status: 'ready',
+          data: (await replies.shift()) as T,
+        };
+        states.set(query.id, state);
+        return state;
+      },
     },
   };
 }
@@ -72,6 +97,88 @@ test('login rotation inside the same directory keeps the exact registered profil
     executionNodeId: 'private-node',
     profileId: 'personal',
   });
+  for (const query of gateway.calls)
+    assert.deepEqual(query.dependencies, [
+      { family: 'profiles', nodeId: 'private-node', ownerId: 'fixture-owner' },
+    ]);
+});
+
+test('launch validation retries current cached profile observations before admitting the selected login', async () => {
+  const gateway = api([{ profiles: [profile] }, status()]);
+  const oldStatus = status();
+  oldStatus.account.login = 'signed-out';
+  gateway.seed(
+    Methods.NATIVE_PROFILE_LIST,
+    { executionNodeId: 'private-node' },
+    { profiles: [profile] },
+  );
+  gateway.seed(
+    Methods.NATIVE_PROFILE_STATUS,
+    { executionNodeId: 'private-node', profileId: 'personal' },
+    oldStatus,
+  );
+  const result = await readNativeProfileSelection(
+    gateway,
+    'private-node',
+    'claude',
+    reference,
+    () => true,
+  );
+  assert.equal(result?.status?.account.login, 'authenticated');
+  assert.deepEqual(
+    gateway.calls.map(({ method }) => method),
+    [Methods.NATIVE_PROFILE_LIST, Methods.NATIVE_PROFILE_STATUS],
+    'A ready cache snapshot does not replace the explicit pre-launch revalidation',
+  );
+});
+
+test('a profile list replaced while its status is read cannot authorize the earlier registration', async () => {
+  let release!: (value: unknown) => void;
+  const delayed = new Promise((resolve) => {
+    release = resolve;
+  });
+  const gateway = api([{ profiles: [profile] }, delayed]);
+  const reading = readNativeProfileSelection(
+    gateway,
+    'private-node',
+    'claude',
+    reference,
+    () => true,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  gateway.seed(
+    Methods.NATIVE_PROFILE_LIST,
+    { executionNodeId: 'private-node' },
+    { profiles: [{ ...profile, accountContextId: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb' }] },
+  );
+  release(status());
+  const result = await reading;
+  assert.match(result?.error ?? '', /registration changed/);
+  assert.equal(result?.status, undefined);
+});
+
+test('a stale profile list cannot authorize launch after a successful status response', async () => {
+  let release!: (value: unknown) => void;
+  const delayed = new Promise((resolve) => {
+    release = resolve;
+  });
+  const gateway = api([{ profiles: [profile] }, delayed]);
+  const reading = readNativeProfileSelection(
+    gateway,
+    'private-node',
+    'claude',
+    reference,
+    () => true,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  gateway.seed(
+    Methods.NATIVE_PROFILE_LIST,
+    { executionNodeId: 'private-node' },
+    { profiles: [profile] },
+    'stale',
+  );
+  release(status());
+  await assert.rejects(reading, /current runner profiles before launch/);
 });
 
 test('missing, replaced, retiring and foreign node/runner selections never adopt a default or another registration', async () => {

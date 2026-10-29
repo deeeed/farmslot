@@ -51,6 +51,7 @@ export function handleNodeResponse(
   errorMsg?: string,
   errorCode?: string,
   source?: WebSocket,
+  errorDetails?: unknown,
 ): void {
   const entry = pending.get(id);
   if (!entry) return;
@@ -60,8 +61,11 @@ export function handleNodeResponse(
   if (ok) {
     entry.resolve(payload);
   } else {
-    const error = new Error(errorMsg || 'Node error') as NodeJS.ErrnoException;
+    const error = new Error(errorMsg || 'Node error') as NodeJS.ErrnoException & {
+      details?: unknown;
+    };
     if (errorCode) error.code = errorCode;
+    if (errorDetails !== undefined) error.details = errorDetails;
     entry.reject(error);
   }
 }

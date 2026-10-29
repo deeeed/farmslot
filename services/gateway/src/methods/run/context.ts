@@ -21,6 +21,7 @@ import {
   selectSingleActiveRunForSlot,
   SKIP_ACTIVE_RUN_SELECTION,
 } from '../../core/active-run-selection.js';
+import { GatewayMethodError } from '../../core/method-error.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { attachLiveRecipeContext } from '../../live-recipe/context.js';
 import { attachReviewRoundBudget } from '../../review/review-round-budget.js';
@@ -35,7 +36,14 @@ import { refreshRunGateReadiness } from '../../run-engine/gate-prerequisites.js'
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
 import { reconcilePublicationPackageForInspection } from '../../run-engine/publish-package-refresh.js';
 import { trimRunForList } from '../../runs/list-trim.js';
-import { getRun, listRuns, listRunsForSlotHistory } from '../../runs/store.js';
+import { runListIdsPage, runListVersions } from '../../runs/list-version.js';
+import {
+  getAllRuns,
+  getLiveRunsByIds,
+  getRun,
+  listRuns,
+  listRunsForSlotHistory,
+} from '../../runs/store.js';
 
 import { readRunRecordedEvidence } from './evidence-review.js';
 
@@ -71,7 +79,7 @@ export function resolveBoundTerminalRunForSlot(
 
 export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   const run = getRun(params.runId);
-  if (!run) throw new Error(`Run not found: ${params.runId}`);
+  if (!run) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
   // The first paint must not wait for worker/source/evidence I/O. The ordinary
   // read still reconciles current readiness; command handlers retain their guards.
   if (params.view === 'snapshot') return { run };
@@ -79,6 +87,20 @@ export async function runGet(params: RunGetParams): Promise<RunGetResult> {
 }
 
 export async function runList(params: RunListParams): Promise<RunListResult> {
+  if (params.versions === true) {
+    // Every live run in the store's order, ignoring filters, limit, sort and ids.
+    // Summary flags still apply, over all of them.
+    const live = getAllRuns();
+    const summaries = attachRunListSummaries({ runs: live, totalCount: live.length }, params);
+    return { ...summaries, runs: [], versions: runListVersions(live) };
+  }
+  if (params.ids !== undefined) {
+    if (!Array.isArray(params.ids) || params.ids.some((id) => typeof id !== 'string'))
+      throw new GatewayMethodError('INVALID_PARAMS', 'ids must be an array of run ids');
+    // A catch-up page: filters, limit, sort and summary flags do not apply.
+    const page = runListIdsPage(getLiveRunsByIds(params.ids));
+    return { runs: page.runs, totalCount: page.runs.length, versions: page.versions };
+  }
   // No gate-summary enrichment here on purpose: the list surface renders run
   // summaries, not decision payloads. The lazy backfill happens where decisions
   // are consumed individually (runGet/runForSlot via presentRun, and
@@ -114,7 +136,7 @@ export function selectActiveRunForSlot(
 
 export async function runForSlot(params: RunForSlotParams): Promise<RunForSlotResult> {
   const { runs: active } = listRuns({ active: true });
-  const slot = (await loadFleetStatus()).slots.find((s) => s.slot === params.slotId);
+  const slot = (await loadFleetStatus(true, true)).slots.find((s) => s.slot === params.slotId);
   const boundTerminal = resolveBoundTerminalRunForSlot(slot?.currentRunId);
   if (boundTerminal) {
     return { run: await presentRun(boundTerminal) };
@@ -141,7 +163,7 @@ export async function runRecipeRunsForSlot(
   params: RunRecipeRunsForSlotParams,
 ): Promise<RunRecipeRunsForSlotResult> {
   const { runs: active } = listRuns({ active: true });
-  const slot = (await loadFleetStatus()).slots.find((s) => s.slot === params.slotId);
+  const slot = (await loadFleetStatus(true, true)).slots.find((s) => s.slot === params.slotId);
   const run =
     resolveBoundTerminalRunForSlot(slot?.currentRunId) ??
     selectActiveRunForSlot(params.slotId, active, slot?.currentRunId);
@@ -175,7 +197,7 @@ export async function runRecipeRunsForRun(
   const run = getRun(params.runId);
   // Run-scoped mobile artifact review is anchored to an explicit run id; unlike
   // the slot-scoped helper, a missing run is caller state drift and should surface.
-  if (!run) throw new Error(`Run not found: ${params.runId}`);
+  if (!run) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
   if (!run.taskFile) return { recipeRuns: [], selectedRecipeRunId: null };
   const noEvidence = {
     artifactPrefix: 'artifacts/',

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Planning rejects an obsolete observed reply",
+  "description": "On an isolated gateway and loopback proxy, hold actual read A while owning writes B and C publish newer revisions. Duplicate an unchanged real notification, release the unchanged old reply and inspect every canonical cache transition plus the mounted panel. No UI or cache value injection.",
+  "proofTargets": [
+    {
+      "id": "oldReplyNeverReady",
+      "claim": "The actual obsolete planning reply reaches the production cache as stale and never becomes ready."
+    },
+    {
+      "id": "duplicateNoticesCoalesce",
+      "claim": "Two newer writes and a byte-identical duplicate notification share one pending read and exactly one follow-up read on the same connection."
+    },
+    {
+      "id": "ownedFixtureRemoved",
+      "claim": "Normal sign-out closes the owned browser session, the temporary backlog item is removed and original planning facts remain unchanged."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-planning-race.mjs",
+        "timeout_ms": 120000,
+        "intent": "Race a held planning reply with two owning writes and duplicate notices.",
+        "next": "old-reply"
+      },
+      "old-reply": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"oldReplyNeverReady\":true",
+        "intent": "The unchanged old reply must remain stale in every actual cache transition.",
+        "proves": ["oldReplyNeverReady"],
+        "next": "coalesce"
+      },
+      "coalesce": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"duplicateNoticesCoalesce\":true",
+        "intent": "Share one pending read and one follow-up across actual duplicate notices.",
+        "proves": ["duplicateNoticesCoalesce"],
+        "next": "cleanup"
+      },
+      "cleanup": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"ownedFixtureRemoved\":true",
+        "intent": "Remove the owned row and browser session; preserve original planning facts.",
+        "proves": ["ownedFixtureRemoved"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

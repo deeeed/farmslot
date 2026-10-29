@@ -1,0 +1,114 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Opened workspace snapshots survive an offline document restart",
+  "description": "Living ADR-071 workspace example for approved roadmap item ri_b1bb5ad00e17, owned by Command Center. Run on a private one-slot CLI fixture selected by FARMSLOT_SLOT_RESOURCE_PROOF, FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, GATEWAY_PORT, FARMSLOT_UI_URL and FARMSLOT_CDP_PORT. Its worktree is inside the private home and has no runs or devices. The helper creates one unique owned file, drives the real SlotView route and browser SQLite, performs an external byte write and Git index update, counts actual idle WebSocket reads, restarts only the owned watched gateway and restores its scratch file/index entry. It reads actual component observations and never injects UI or cache values. Keep generated evidence outside source through FARMSLOT_RUN_WEB_EVIDENCE_DIR. Video is off. This proves browser workspace behavior; native history, authority and platform acceptance remain separate.",
+  "proofTargets": [
+    {
+      "id": "externalWrite",
+      "claim": "Another writer updates the opened workspace file without Refresh."
+    },
+    {
+      "id": "indexWrite",
+      "claim": "An index-only Git write updates the observed workspace."
+    },
+    {
+      "id": "idleReads",
+      "claim": "An idle workspace performs zero periodic file or Git reads."
+    },
+    {
+      "id": "coldWorkspace",
+      "claim": "A new offline document restores the opened file from SQLite."
+    },
+    {
+      "id": "savedAge",
+      "claim": "Cold restoration retains the original observation time and saved age."
+    },
+    {
+      "id": "staleActionsDisabled",
+      "claim": "Workspace mutations stay disabled while saved data is stale."
+    },
+    {
+      "id": "recovery",
+      "claim": "The workspace recovers through current reads after gateway restart."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-workspace-store.mjs",
+        "timeout_ms": 240000,
+        "intent": "Prove shared workspace writes, offline restore and recovery on the owned stack.",
+        "next": "externalWrite"
+      },
+      "externalWrite": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"externalWrite\":true",
+        "intent": "Another writer updates the opened workspace file without Refresh.",
+        "proves": ["externalWrite"],
+        "next": "indexWrite"
+      },
+      "indexWrite": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"indexWrite\":true",
+        "intent": "An index-only Git write updates the observed workspace.",
+        "proves": ["indexWrite"],
+        "next": "idleReads"
+      },
+      "idleReads": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"idleReads\":0",
+        "intent": "An idle workspace performs zero periodic file or Git reads.",
+        "proves": ["idleReads"],
+        "next": "coldWorkspace"
+      },
+      "coldWorkspace": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"coldWorkspace\":true",
+        "intent": "A new offline document restores the opened file from SQLite.",
+        "proves": ["coldWorkspace"],
+        "next": "savedAge"
+      },
+      "savedAge": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"savedAge\":true",
+        "intent": "Cold restoration retains the original observation time and saved age.",
+        "proves": ["savedAge"],
+        "next": "staleActionsDisabled"
+      },
+      "staleActionsDisabled": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"staleActionsDisabled\":true",
+        "intent": "Workspace mutations stay disabled while saved data is stale.",
+        "proves": ["staleActionsDisabled"],
+        "next": "recovery"
+      },
+      "recovery": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"recovery\":true",
+        "intent": "The workspace recovers through current reads after gateway restart.",
+        "proves": ["recovery"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

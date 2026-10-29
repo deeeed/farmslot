@@ -5,7 +5,6 @@ import { Linking } from 'react-native';
 import {
   type ConfigProjectsResult,
   type DispatchQueueListResult,
-  Events,
   Methods,
   monitoredPRUrl,
   parseGitHubPullUrl,
@@ -23,8 +22,16 @@ import {
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
+import {
+  type CommandMethod,
+  type ResourceQuery,
+  resourceQuery,
+} from '@farmslot/protocol/client-cache';
 import { type ReviewDispatchViewModel, reviewLineagesForPR } from '@farmslot/review-dispatch';
 
+import { useConfigurationProjects } from '../../hooks/useConfigurationProjects';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
+import { readConfiguration } from '../../lib/configuration-resources';
 import type { GatewayClient, GatewayHttpAuthHeaders } from '../../lib/gateway-client';
 import {
   buildPRMonitorConfig,
@@ -43,6 +50,7 @@ import {
   registerPRPushDevice,
   usePRPushDeviceState,
 } from '../../lib/pr-push-device';
+import { getResourceCache } from '../../lib/resource-cache';
 import { useAttentionPrefsStore } from '../../store/attention-prefs';
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
@@ -86,6 +94,28 @@ export function usePRAutomationController(
   const slots = useFleetStore((state) => state.fleet?.slots ?? EMPTY_SLOTS);
   const runs = useRunStore((state) => state.runs);
   const [snapshot, setSnapshot] = useState<Snapshot>();
+  const configuration = useConfigurationProjects();
+  const configurationRef = useRef(configuration);
+  configurationRef.current = configuration;
+  useEffect(() => {
+    setSnapshot((current) =>
+      current ? { ...current, farms: configuration.data ?? { projects: [] } } : current,
+    );
+  }, [configuration.data]);
+  const watchesQuery = useMemo(() => resourceQuery<PRWatchListResult>(Methods.PR_WATCH_LIST), []);
+  const rulesQuery = useMemo(() => resourceQuery<PRRulesListResult>(Methods.PR_RULES_LIST), []);
+  const queueQuery = useMemo(
+    () => resourceQuery<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST),
+    [],
+  );
+  const pushQuery = useMemo(() => resourceQuery<PRPushListResult>(Methods.PR_PUSH_LIST), []);
+  const watchesState = useResourceQuery(watchesQuery);
+  const rulesState = useResourceQuery(rulesQuery);
+  const queueState = useResourceQuery(queueQuery);
+  const pushState = useResourceQuery(pushQuery);
+  const resourcesReady = [watchesState, rulesState, queueState, pushState].every(
+    (state) => state.status === 'ready',
+  );
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -164,82 +194,52 @@ export function usePRAutomationController(
   }, [client, profileId, authHeaders]);
 
   useEffect(() => {
-    setError('');
     setPreview(undefined);
     mutation.current = undefined;
     setBusy(false);
-    if (!client || connection !== 'connected') {
-      setLoading(false);
+  }, [client, connection, profileId, authHeaders]);
+
+  useEffect(() => {
+    const states = [watchesState, rulesState, queueState, pushState];
+    setLoading(states.some((state) => state.status === 'loading'));
+    setError(states.flatMap((state) => (state.error ? [state.error.message] : [])).join('; '));
+    if (!client || !watchesState.data || !rulesState.data || !queueState.data || !pushState.data) {
+      setSnapshot(undefined);
       return;
     }
-    let active = true,
-      dirty = false;
-    let pending: Promise<void> | undefined;
-    const generation = client.connectionGeneration;
-    const refresh = (): Promise<void> => {
-      dirty = true;
-      if (pending) return pending;
-      pending = (async () => {
-        while (active && dirty) {
-          dirty = false;
-          setLoading(true);
-          const results = await Promise.allSettled([
-            client.request<PRWatchListResult>(Methods.PR_WATCH_LIST, {}),
-            client.request<PRRulesListResult>(Methods.PR_RULES_LIST, {}),
-            client.request<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST, {}),
-            client.request<PRPushListResult>(Methods.PR_PUSH_LIST, {}),
-            client.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}),
-          ]);
-          if (!active || client.connectionGeneration !== generation) return;
-          const [watches, reviews, queue, push, farms] = results;
-          const failures = results
-            .filter((result) => result.status === 'rejected')
-            .map((result) => String(result.reason));
-          if (
-            watches.status === 'fulfilled' &&
-            reviews.status === 'fulfilled' &&
-            queue.status === 'fulfilled' &&
-            push.status === 'fulfilled' &&
-            farms.status === 'fulfilled'
-          ) {
-            setSnapshot({
-              client,
-              profileId,
-              authHeaders,
-              generation,
-              watches: watches.value,
-              reviews: reviews.value,
-              queue: queue.value,
-              push: push.value,
-              farms: farms.value,
-            });
-            setError('');
-          } else setError(failures.join('; '));
-          setLoading(false);
-        }
-      })().finally(() => {
-        pending = undefined;
-      });
-      return pending;
+    setSnapshot({
+      client,
+      profileId,
+      authHeaders,
+      generation: client.connectionGeneration,
+      watches: watchesState.data,
+      reviews: rulesState.data,
+      queue: queueState.data,
+      push: pushState.data,
+      farms: configurationRef.current.data ?? { projects: [] },
+    });
+  }, [client, profileId, authHeaders, watchesState, rulesState, queueState, pushState]);
+
+  useEffect(() => {
+    const cache = getResourceCache();
+    refreshRef.current = async () => {
+      if (!cache || connection !== 'connected') return;
+      const retryFailed = <T>(query: ResourceQuery<T>) =>
+        cache.read(query).error ? cache.retry(query) : undefined;
+      await Promise.all([
+        retryFailed(watchesQuery),
+        retryFailed(rulesQuery),
+        retryFailed(queueQuery),
+        retryFailed(pushQuery),
+        configurationRef.current.error
+          ? readConfiguration<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
+          : undefined,
+      ]);
     };
-    refreshRef.current = refresh;
-    const unsubscribe = [
-      Events.PR_WATCH_UPDATED,
-      Events.PR_WATCH_POLICY_UPDATED,
-      Events.PR_RULES_UPDATED,
-      Events.PR_PUSH_UPDATED,
-    ].map((event) =>
-      client.subscribe(event, () => {
-        void refresh();
-      }),
-    );
-    void refresh();
     return () => {
-      active = false;
-      unsubscribe.forEach((stop) => stop());
       refreshRef.current = async () => {};
     };
-  }, [client, connection, profileId, authHeaders]);
+  }, [client, connection, profileId, watchesQuery, rulesQuery, queueQuery, pushQuery]);
   const data =
     snapshot?.client === client &&
     snapshot.profileId === profileId &&
@@ -247,7 +247,9 @@ export function usePRAutomationController(
       ? snapshot
       : undefined;
   const current =
-    data?.generation === client?.connectionGeneration && connection === 'connected'
+    data?.generation === client?.connectionGeneration &&
+    connection === 'connected' &&
+    resourcesReady
       ? data
       : undefined;
   const disabled = busy || !current || !!error;
@@ -262,8 +264,20 @@ export function usePRAutomationController(
       : [];
   }, [runs, requestDraft.url]);
   const mutate = useCallback(
-    async <T>(method: string, params: unknown): Promise<T | undefined> => {
-      if (!client || mutation.current || client.connectionState !== 'connected') return;
+    async <T>(method: CommandMethod, params: unknown): Promise<T | undefined> => {
+      if (!client || mutation.current || client.connectionState !== 'connected' || !resourcesReady)
+        return;
+      const cache = getResourceCache();
+      if (
+        !cache ||
+        [
+          cache.read(watchesQuery),
+          cache.read(rulesQuery),
+          cache.read(queueQuery),
+          cache.read(pushQuery),
+        ].some((state) => state.status !== 'ready')
+      )
+        return;
       const captured = scope.current;
       const token = Symbol();
       mutation.current = token;
@@ -277,7 +291,6 @@ export function usePRAutomationController(
       try {
         const result = await client.request<T>(method, params, 120_000);
         if (!stillCurrent()) return;
-        await refreshRef.current();
         return stillCurrent() ? result : undefined;
       } catch (error) {
         if (stillCurrent()) setActionError(error instanceof Error ? error.message : String(error));
@@ -289,7 +302,7 @@ export function usePRAutomationController(
         }
       }
     },
-    [client],
+    [client, resourcesReady, watchesQuery, rulesQuery, queueQuery, pushQuery],
   );
   const fail = (error: unknown) =>
     setActionError(error instanceof Error ? error.message : String(error));

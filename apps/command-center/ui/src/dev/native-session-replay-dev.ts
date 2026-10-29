@@ -1,13 +1,15 @@
-import { Methods, type NativeSessionInfo, type NativeSessionReadResult } from '@farmslot/protocol';
+import type { NativeSessionInfo, NativeSessionReadResult } from '@farmslot/protocol';
 
+import type { NativeSessionFixture } from '../components/chat/native-session-view.js';
 import type { NativeSessionApi } from '../components/chat/native-workspace.js';
 
 /** Seeds only the dev fixture namespace before the client mounts. No live gateway calls. */
 export function createNativeReplayFixture(
   base: NativeSessionInfo,
   variant: string,
-): NativeSessionApi {
+): NativeSessionApi & NativeSessionFixture {
   const session = { ...base, id: `fixture-replay-${variant}`, state: 'idle' as const };
+  const model = session.model ?? '';
   const command = {
     sessionId: session.id,
     commandId: 'old-command',
@@ -42,27 +44,27 @@ export function createNativeReplayFixture(
     ],
   };
   return {
-    async request<T>(method: string, params?: unknown): Promise<T> {
-      let result: unknown;
-      if (method === Methods.NATIVE_SESSION_CATALOG)
-        result = {
-          runners: [
-            {
-              runner: session.runner,
-              models: [session.model],
-              defaultModel: session.model,
-              modes: ['default'],
-            },
-          ],
-          contexts: [{ cwd: session.cwd, label: 'Replay fixture' }],
-        };
-      else if (method === Methods.NATIVE_SESSION_LIST) result = { sessions: [session] };
-      else if (method === Methods.NATIVE_SESSION_READ) {
-        const { after = 0 } = params as { after?: number };
-        result = { ...page, events: page.events.filter((event) => event.sequence > after) };
-      } else
-        throw new Error('Replay preview accepts reads only; use a live session for execution.');
-      return result as T;
+    async catalog() {
+      return {
+        runners: [
+          {
+            runner: session.runner,
+            models: [model],
+            defaultModel: model,
+            modes: ['default'],
+          },
+        ],
+        contexts: [{ cwd: session.cwd, label: 'Replay fixture' }],
+      };
+    },
+    async list() {
+      return { sessions: [session] };
+    },
+    async read({ after = 0 }) {
+      return { ...page, events: page.events.filter((event) => event.sequence > after) };
+    },
+    async request() {
+      throw new Error('Replay preview accepts reads only; use a live session for execution.');
     },
   };
 }

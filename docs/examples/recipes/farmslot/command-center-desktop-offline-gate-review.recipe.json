@@ -1,0 +1,62 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Gate review prefetch holds a pending gate for offline review in the Desktop runtime",
+  "description": "Use the same private farm as the browser gate review proof (one pending ready gate on a real package and three active runs on slot repositories) in a private Farmslot Desktop: its own user data, CDP port and connection settings, with its development UI on a private Vite server. A new Desktop profile signs in as an admin principal on its connection page; the first connection prefetches the gate, then the gateway stops and a new document in the same Desktop window opens the gate offline. No GitHub, provider, native or worker CLI execution.",
+  "proofTargets": [
+    {
+      "id": "gateReviewPrefetchOrder",
+      "claim": "In the Desktop runtime, on the first connection with a pending gate and three active runs, the gate's run.get is the first prefetch read and no more than two runs are prefetched at once."
+    },
+    {
+      "id": "gateReviewOffline",
+      "claim": "Right after prefetch and before any connected gate open, a new Desktop document with the gateway stopped renders the gate's details, package diff and evidence images from rows prefetch wrote, and sends no gateway frame."
+    },
+    {
+      "id": "gateReviewBothSides",
+      "claim": "In the Desktop runtime, judged from the fixture's own blob sizes and bytes, every touched side of at most 1 MiB without NUL bytes is held under its git blob id, and both ids of the over-cap and the binary file are absent."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-gate-review.mjs",
+        "timeout_ms": 1200000,
+        "intent": "Observe gate review prefetch and offline review in the real Desktop.",
+        "next": "gateReviewPrefetchOrder"
+      },
+      "gateReviewPrefetchOrder": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewPrefetchOrder\":true",
+        "intent": "The pending gate is read first and at most two runs are in flight.",
+        "proves": ["gateReviewPrefetchOrder"],
+        "next": "gateReviewOffline"
+      },
+      "gateReviewOffline": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewOffline\":true",
+        "intent": "The gate's details, diff and evidence images render offline.",
+        "proves": ["gateReviewOffline"],
+        "next": "gateReviewBothSides"
+      },
+      "gateReviewBothSides": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewBothSides\":true",
+        "intent": "Eligible bases are held by id and new sides match their blob ids.",
+        "proves": ["gateReviewBothSides"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

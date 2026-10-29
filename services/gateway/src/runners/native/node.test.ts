@@ -22,11 +22,14 @@ test('native requests recheck issued authority after a reply and refuse revoked 
   let active = true;
   let requestId = '';
   let requests = 0;
+  let markSent!: () => void;
+  const sent = new Promise<void>((resolve) => (markSent = resolve));
   const ws = {
     readyState: WebSocket.OPEN,
     send(raw: string) {
       requests++;
       requestId = JSON.parse(raw).id;
+      markSent();
     },
   } as WebSocket;
   registerNode(
@@ -42,6 +45,7 @@ test('native requests recheck issued authority after a reply and refuse revoked 
     const pending = routeNativeExecution(owner, Methods.NATIVE_SESSION_LIST, {
       executionNodeId: machine,
     });
+    await sent;
     active = false;
     handleNodeResponse(requestId, true, { sessions: [] }, undefined, undefined, ws);
     await assert.rejects(pending, /authority changed/);

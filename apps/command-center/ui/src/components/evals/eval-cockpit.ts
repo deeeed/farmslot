@@ -11,15 +11,19 @@ import type {
   Run,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { defaultModelForRunner } from '@farmslot/review-dispatch';
 
 import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
-import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
-import { rememberedDefaultModel } from '../../utils/runner-visible-cache.js';
+import {
+  visibleDefaultModel,
+  visibleReviewDispatchCatalog,
+} from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { renderEvalCockpitCandidateMatrix } from './eval-cockpit-candidate-renderer.js';
 import { renderEvalCockpitCaseBrowser } from './eval-cockpit-case-renderer.js';
@@ -93,12 +97,12 @@ export class EvalCockpit extends EvalCockpitState {
   private _applyInitialModelDefaults(): void {
     if (
       !this._initialModelsPending ||
-      this._candidateRows.some((row) => rememberedDefaultModel(row.runner) === undefined)
+      this._candidateRows.some((row) => visibleDefaultModel(row.runner) === undefined)
     )
       return;
     this._candidateRows = this._candidateRows.map((row) => ({
       ...row,
-      model: defaultModelForRunner(row.runner, rememberedReviewDispatchCatalog()) ?? '',
+      model: defaultModelForRunner(row.runner, visibleReviewDispatchCatalog()) ?? '',
     }));
     this._initialModelsPending = false;
   }
@@ -526,26 +530,14 @@ export class EvalCockpit extends EvalCockpitState {
     return candidateTemplateChoices(taskProfile, this._candidateTemplateOptions);
   }
 
-  private async _loadCandidateTemplateOptions(): Promise<void> {
-    const primaryCase = this._selectedCases[0];
-    const project = primaryCase?.project || this._project.trim();
-    const taskProfile = primaryCase?.taskProfile ?? 'fix-bug';
-    if (this.mock || !project) {
-      this._candidateTemplateOptions = [];
-      this._candidateTemplateOptionsError = '';
-      return;
-    }
-    const key = `${project}:${taskProfile}`;
-    this._candidateTemplateOptionsKey = key;
-    this._candidateTemplateOptionsLoading = true;
-    this._candidateTemplateOptionsError = '';
-    try {
-      const res = await gateway.request<ConfigTemplateOptionsResult>(
-        Methods.CONFIG_TEMPLATE_OPTIONS,
-        { project, flowType: taskProfile },
-      );
-      if (this._candidateTemplateOptionsKey !== key) return;
-      this._candidateTemplateOptions = res.options;
+  private readonly _candidateConfiguration =
+    new ResourceQueryController<ConfigTemplateOptionsResult>(this, (state) => {
+      this._candidateTemplateOptions = state.data?.options ?? [];
+      this._candidateTemplateOptionsLoading = state.status === 'loading';
+      this._candidateTemplateOptionsError = state.error?.message ?? '';
+      const res = state.data;
+      if (!res) return;
+      const taskProfile = this._selectedCases[0]?.taskProfile ?? 'fix-bug';
       const validPaths = new Set(
         res.options.map((option) => `templates/worker/${option.fileName}`),
       );
@@ -563,14 +555,20 @@ export class EvalCockpit extends EvalCockpitState {
           return { ...row, templatePath: defaultPath, promptName: taskProfile };
         });
       }
-    } catch (err: unknown) {
-      if (this._candidateTemplateOptionsKey !== key) return;
-      this._candidateTemplateOptions = [];
-      this._candidateTemplateOptionsError =
-        err instanceof Error ? err.message : 'Template options failed to load';
-    } finally {
-      if (this._candidateTemplateOptionsKey === key) this._candidateTemplateOptionsLoading = false;
-    }
+    });
+
+  private async _loadCandidateTemplateOptions(): Promise<void> {
+    const primaryCase = this._selectedCases[0];
+    const project = primaryCase?.project || this._project.trim();
+    const taskProfile = primaryCase?.taskProfile ?? 'fix-bug';
+    this._candidateConfiguration.setQuery(
+      !this.mock && project
+        ? resourceQuery<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
+            project,
+            flowType: taskProfile,
+          })
+        : undefined,
+    );
   }
 
   private _alignDefaultCandidatesToTaskProfile(taskProfile: EvalTaskProfile): void {

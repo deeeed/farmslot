@@ -3,17 +3,28 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
   BacklogItem,
+  BacklogListResult,
+  DispatchQueueListResult,
   DispatchQueueReorderResult,
   DispatchQueueUpdateResult,
   QueueItem,
   SlotStatus,
+  WorkGraphListResult,
   WorkGraphProjection,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, sourceObservationAge } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import { type AppState, getState, subscribe } from '../../state.js';
+import {
+  type AppState,
+  backlogQuery,
+  getState,
+  queueQuery,
+  subscribe,
+  workGraphsQuery,
+} from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   isOrphanedBacklogQueueItemForUi,
@@ -87,6 +98,25 @@ export class DispatchQueuePanel extends LitElement {
   @state() private _slots: SlotStatus[] = [];
   @state() private _backlogItems: BacklogItem[] = [];
   @state() private _workGraphs: WorkGraphProjection[] = [];
+  private readonly _queueQuery = new ResourceQueryController<DispatchQueueListResult>(this, () =>
+    this._syncState(getState()),
+  );
+  private readonly _backlogQuery = new ResourceQueryController<BacklogListResult>(this, () =>
+    this._syncState(getState()),
+  );
+  private readonly _graphsQuery = new ResourceQueryController<WorkGraphListResult>(this, () =>
+    this._syncState(getState()),
+  );
+  private get _commandsReady(): boolean {
+    return this._queueQuery.ready && this._backlogQuery.ready;
+  }
+  private get _rows(): QueueItem[] {
+    return this.items;
+  }
+  private _requireCurrentQueue(): void {
+    this._queueQuery.requireReady();
+    this._backlogQuery.requireReady();
+  }
   private _unsub?: () => void;
 
   static styles = css`
@@ -302,6 +332,9 @@ export class DispatchQueuePanel extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this._queueQuery.setQuery(queueQuery);
+    this._backlogQuery.setQuery(backlogQuery);
+    this._graphsQuery.setQuery(workGraphsQuery);
     this._syncState(getState());
     this._unsub = subscribe((state) => this._syncState(state));
   }
@@ -314,18 +347,19 @@ export class DispatchQueuePanel extends LitElement {
 
   private _syncState(state: AppState): void {
     this._slots = state.fleet?.slots ?? [];
-    this._backlogItems = state.backlogItems;
-    this._workGraphs = state.workGraphs;
+    this._backlogItems = this._backlogQuery.state.data?.items ?? [];
+    this._workGraphs = this._graphsQuery.state.data?.graphs ?? [];
   }
 
   private _isOrphan(item: QueueItem): boolean {
-    return isOrphanedBacklogQueueItemForUi(item, this._backlogItems);
+    return this._backlogQuery.ready && isOrphanedBacklogQueueItemForUi(item, this._backlogItems);
   }
 
   private async _remove(item: QueueItem): Promise<void> {
     this._busyItem = item.id;
     this._error = '';
     try {
+      this._requireCurrentQueue();
       const request = queueRemoveRequestForUi(item, this._backlogItems);
       await gateway.request(request.method, request.params);
     } catch (error) {
@@ -342,6 +376,7 @@ export class DispatchQueuePanel extends LitElement {
     this._busyItem = item.id;
     this._error = '';
     try {
+      this._requireCurrentQueue();
       await gateway.request<DispatchQueueUpdateResult>(Methods.DISPATCH_QUEUE_UPDATE, {
         itemId: item.id,
         ...patch,
@@ -411,7 +446,7 @@ export class DispatchQueuePanel extends LitElement {
         <span class="slot-summary" title=${slotsText(item)}>${slotsText(item)}</span>
         <button
           title="Choose allowed slots"
-          ?disabled=${this.readonly || this._busyItem === item.id}
+          ?disabled=${this.readonly || !this._commandsReady || this._busyItem === item.id}
           @click=${() => {
             this._pickerItemId = open ? '' : item.id;
           }}
@@ -429,7 +464,7 @@ export class DispatchQueuePanel extends LitElement {
       <div class="picker">
         <div class="picker-actions">
           <button
-            ?disabled=${this.readonly || this._busyItem === item.id}
+            ?disabled=${this.readonly || !this._commandsReady || this._busyItem === item.id}
             @click=${() => this._update(item, { allowedSlots: null })}
           >
             Any eligible slot
@@ -437,7 +472,7 @@ export class DispatchQueuePanel extends LitElement {
           ${item.slotId
             ? html`
                 <button
-                  ?disabled=${this.readonly || this._busyItem === item.id}
+                  ?disabled=${this.readonly || !this._commandsReady || this._busyItem === item.id}
                   @click=${() => this._update(item, { allowedSlots: [item.slotId!] })}
                 >
                   Only ${item.slotId}
@@ -455,7 +490,10 @@ export class DispatchQueuePanel extends LitElement {
                     <input
                       type="checkbox"
                       .checked=${this._slotChecked(item, slot.slot)}
-                      ?disabled=${this.readonly || this._busyItem === item.id || disabled}
+                      ?disabled=${this.readonly ||
+                      !this._commandsReady ||
+                      this._busyItem === item.id ||
+                      disabled}
                       @change=${(event: Event) =>
                         this._toggleSlot(
                           item,
@@ -489,7 +527,7 @@ export class DispatchQueuePanel extends LitElement {
 
   private async _reorder(targetId: string): Promise<void> {
     if (!this._dragId || this._dragId === targetId) return;
-    const next = [...this.items];
+    const next = [...this._rows];
     const from = next.findIndex((item) => item.id === this._dragId);
     const to = next.findIndex((item) => item.id === targetId);
     if (from < 0 || to < 0) return;
@@ -497,6 +535,7 @@ export class DispatchQueuePanel extends LitElement {
     next.splice(to, 0, moved);
     this._error = '';
     try {
+      this._requireCurrentQueue();
       await gateway.request<DispatchQueueReorderResult>(Methods.DISPATCH_QUEUE_REORDER, {
         itemIds: next.map((item) => item.id),
       });
@@ -508,7 +547,7 @@ export class DispatchQueuePanel extends LitElement {
   }
 
   render() {
-    const rows = [...this.items].sort(
+    const rows = [...this._rows].sort(
       (a, b) => a.priority - b.priority || a.createdAt.localeCompare(b.createdAt),
     );
     return html`
@@ -517,6 +556,21 @@ export class DispatchQueuePanel extends LitElement {
           <span class="title">${this.panelTitle}</span>
           <span class="count">${rows.length} upcoming</span>
         </div>
+        ${!this.readonly && this._queueQuery.state.status === 'stale'
+          ? html`<p data-testid="queue-stale">
+              Saved queue, ${sourceObservationAge(this._queueQuery.state.observedAt)}. Actions wait
+              for a current read.
+            </p>`
+          : nothing}
+        ${!this.readonly && this._queueQuery.state.error
+          ? html`<div class="error" data-testid="queue-read-error">
+              ${this._queueQuery.state.error.message}<button
+                @click=${() => this._queueQuery.retry()}
+              >
+                Retry
+              </button>
+            </div>`
+          : nothing}
         ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
         ${rows.length === 0
           ? html`<div class="empty">No queued work</div>`
@@ -526,7 +580,7 @@ export class DispatchQueuePanel extends LitElement {
                   (item) => html`
                     <div
                       class="row ${this._dragId === item.id ? 'dragging' : ''}"
-                      .draggable=${!this.readonly}
+                      .draggable=${!this.readonly && this._commandsReady}
                       @dragstart=${() => {
                         this._dragId = item.id;
                       }}
@@ -571,7 +625,9 @@ export class DispatchQueuePanel extends LitElement {
                         type="number"
                         min="1"
                         .value=${String(item.priority)}
-                        ?disabled=${this.readonly || this._busyItem === item.id}
+                        ?disabled=${this.readonly ||
+                        !this._commandsReady ||
+                        this._busyItem === item.id}
                         @change=${(event: Event) =>
                           this._update(item, {
                             priority: Number((event.target as HTMLInputElement).value),
@@ -579,7 +635,9 @@ export class DispatchQueuePanel extends LitElement {
                       />
                       <button
                         title="Remove from queue"
-                        ?disabled=${this.readonly || this._busyItem === item.id}
+                        ?disabled=${this.readonly ||
+                        !this._commandsReady ||
+                        this._busyItem === item.id}
                         @click=${() => this._remove(item)}
                       >
                         x

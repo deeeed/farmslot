@@ -1,0 +1,134 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Shared resource cache foundation on Companion",
+  "description": "Use an isolated stack with source offline-proof backed by octocat/Spoon-Knife. A second real client pins test-branch and the open panel and shared controller must update through resource.changed.",
+  "proofTargets": [
+    {
+      "id": "foundation",
+      "claim": "The native request adapter and shared cache consume stamped real reads and recover on same-epoch reconnect."
+    },
+    {
+      "id": "source-notification",
+      "claim": "A source pin from a second client updates the open Sources panel without user action."
+    }
+  ],
+  "workflow": {
+    "entry": "start",
+    "nodes": {
+      "start": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-client-cache.mjs start",
+        "intent": "Observe Sources through the shared cache over the app's existing authenticated socket.",
+        "next": "main"
+      },
+      "main": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-client-cache.mjs unpin offline-proof",
+        "intent": "Set the isolated proof source to main through a real second client.",
+        "next": "main-visible"
+      },
+      "main-visible": {
+        "action": "ui.wait_for",
+        "test_id": "sources-line",
+        "text_contains": ["offline-proof main"],
+        "timeout_ms": 30000,
+        "intent": "The actual settings panel renders the source's main selection.",
+        "next": "details"
+      },
+      "details": {
+        "action": "ui.press",
+        "test_id": "sources-details-toggle",
+        "intent": "Open the actual source details before the external pin changes them.",
+        "next": "pin"
+      },
+      "pin": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-client-cache.mjs pin offline-proof test-branch",
+        "timeout_ms": 60000,
+        "intent": "Commit a pin from another authenticated client and await its stamped cache result.",
+        "next": "pin-proof"
+      },
+      "pin-proof": {
+        "action": "assert_output",
+        "source": "pin",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require the real shared cache to cover the committed pin.",
+        "proves": ["foundation"],
+        "next": "pin-visible"
+      },
+      "pin-visible": {
+        "action": "ui.wait_for",
+        "test_id": "sources-line",
+        "text_contains": ["offline-proof test-branch (farm pin)"],
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "The open Sources panel rereads after resource.changed without Refresh.",
+        "proves": ["source-notification"],
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/source-notification.png",
+        "intent": "Record the visible result of the external mutation.",
+        "covers": ["source-notification"],
+        "next": "reconnect"
+      },
+      "reconnect": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-client-cache.mjs reconnect offline-proof test-branch",
+        "intent": "Reconnect the actual socket under the same gateway epoch and require another cache read.",
+        "next": "reconnect-proof"
+      },
+      "reconnect-proof": {
+        "action": "assert_output",
+        "source": "reconnect",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require a new covered read after same-epoch reconnect.",
+        "proves": ["foundation"],
+        "next": "credential-refusal"
+      },
+      "stop": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-client-cache.mjs stop",
+        "intent": "Dispose the proof controller and its subscriptions.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "credential-refusal": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-client-cache.mjs credential-refusal",
+        "intent": "Revoke a disposable real native credential and require its shared cache to delete data after token refusal.",
+        "next": "credential-refusal-proof"
+      },
+      "credential-refusal-proof": {
+        "action": "assert_output",
+        "source": "credential-refusal",
+        "stream": "stdout",
+        "match": "\"storeDeleted\":true",
+        "intent": "Require an actual store deletion receipt from the native request adapter.",
+        "proves": ["foundation"],
+        "next": "offline-sign-out"
+      },
+      "offline-sign-out": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-client-cache.mjs offline-sign-out",
+        "intent": "Disconnect a disposable authenticated native client, then sign out while it is already offline.",
+        "next": "offline-sign-out-proof"
+      },
+      "offline-sign-out-proof": {
+        "action": "assert_output",
+        "source": "offline-sign-out",
+        "stream": "stdout",
+        "match": "\"storeDeleted\":true,\"reason\":\"sign-out\"",
+        "intent": "Require a deletion notification even when sign-out does not change the disconnected transport state.",
+        "proves": ["foundation"],
+        "next": "stop"
+      }
+    }
+  }
+}

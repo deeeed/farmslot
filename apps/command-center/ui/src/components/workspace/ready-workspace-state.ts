@@ -104,6 +104,8 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _diffModalTitle = 'Diff';
   @state() _diffModalText = '';
   @state() _diffModalUrl = '';
+  /** Shown in place of a diff that could not be shown, such as one that failed verification. */
+  @state() _diffModalNotice = '';
   @state() _diffModalArtifactPath = '';
   readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,

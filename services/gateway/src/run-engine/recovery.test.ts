@@ -353,6 +353,79 @@ test('recoverActiveRuns re-presents a blocked gate after its completed review wa
   assert.equal(broadcasted, true);
 });
 
+test('a recovered review gate names the capture its refreshed manifest came from', async () => {
+  const stale = { bundleDigest: 'stale-digest', taskKey: 'task' };
+  const fresh = { bundleDigest: 'fresh-digest', taskKey: 'task' };
+  const freshManifest = [{ path: 'artifacts/result.png', purpose: 'screenshot' as const }];
+  const run = minimalActiveRun({
+    flowType: 'review-pr',
+    status: 'human-gating',
+    ticketOrPr: 'RECOVERY-REVIEW-BUNDLE',
+    familyRootTicketOrPr: 'RECOVERY-REVIEW-BUNDLE',
+    taskFile: '/tmp/recovery-review-bundle/TASK.md',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    artifactBundle: stale as Run['artifactBundle'],
+    decisions: [
+      {
+        id: 'posting',
+        type: 'engine_review_posting',
+        title: 'Post',
+        description: '',
+        actions: [],
+        createdAt: '2026-10-27T00:00:00Z',
+        payload: {
+          kind: 'review',
+          prNumber: null,
+          repo: null,
+          recommendation: 'COMMENT',
+          reviewMd: 'Before restart',
+          lineComments: [],
+          artifactManifest: [{ path: 'artifacts/old.png', purpose: 'screenshot' }],
+          artifactBundle: stale as Run['artifactBundle'],
+        },
+      },
+    ],
+  });
+  let current = run;
+  const updates: Array<Partial<Run>> = [];
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'idle' }],
+    }),
+    getRun: () => current,
+    // A fresh capture after the restart retains a new bundle.
+    copyWorkerArtifacts: async () => {
+      current = { ...current, artifactBundle: fresh as Run['artifactBundle'] };
+    },
+    readReviewArtifacts: async () => ({
+      hasReview: true,
+      recommendation: 'COMMENT',
+      reviewMd: 'After restart',
+      lineComments: [],
+    }),
+    loadProjectVarsOrNull: async () => null,
+    retainedRunArtifactManifest: async (retained: Run) => {
+      assert.deepEqual(retained.artifactBundle, fresh);
+      return freshManifest;
+    },
+    readTaskArtifactText: async () => undefined,
+    reconcileRunAgentRuntime: async () => {},
+    updateRun: (_runId: string, fields: Partial<Run>) => updates.push(fields),
+    updateRunStep: () => {},
+    broadcast: () => {},
+    quarantineLeakedRun: async () => {},
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  const recovered = updates.flatMap((fields) => fields.decisions ?? []).at(-1);
+  const payload = recovered?.payload as import('@farmslot/protocol').ReviewGatePayload;
+  assert.equal(payload.reviewMd, 'After restart');
+  assert.deepEqual(payload.artifactManifest, freshManifest);
+  assert.deepEqual(payload.artifactBundle, fresh);
+});
+
 function minimalActiveRun(overrides: Partial<Run> = {}): Run {
   return {
     id: '5dd53883-bb8f-4f24-a20e-a20ab2856974',

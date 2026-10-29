@@ -42,7 +42,7 @@ export function NativeSessionSetup({
       </Pressable>
       {vm.contextUnavailable ? (
         <Text style={styles.error}>
-          The selected workspace is unavailable. Refresh or choose another workspace.
+          The selected workspace is unavailable. Choose another workspace.
         </Text>
       ) : null}
       {choosingWorkspace
@@ -121,15 +121,19 @@ export function NativeSessionSetup({
         >
           <Text style={styles.buttonText}>{vm.creating ? 'Starting…' : 'Start conversation'}</Text>
         </Pressable>
-        <Pressable
-          testID="companion-native-catalog-refresh"
-          accessibilityRole="button"
-          style={styles.button}
-          disabled={vm.creating}
-          onPress={actions.refresh}
-        >
-          <Text style={styles.buttonText}>{vm.loading ? 'Loading…' : 'Refresh workspaces'}</Text>
-        </Pressable>
+        {vm.catalogError ? (
+          <Pressable
+            testID="companion-native-catalog-refresh"
+            accessibilityRole="button"
+            style={styles.button}
+            disabled={vm.creating}
+            onPress={actions.refresh}
+          >
+            <Text style={styles.buttonText}>
+              {vm.loading ? 'Loading…' : 'Retry reading workspaces'}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );

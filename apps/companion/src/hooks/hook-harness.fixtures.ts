@@ -42,11 +42,24 @@ export function mountHook<Args extends unknown[]>(
       if (!(index in cells)) cells[index] = { current: initial };
       return cells[index];
     },
-    useMemo(calculate: () => unknown) {
-      return calculate();
+    useMemo(calculate: () => unknown, deps: readonly unknown[]) {
+      const index = cell++;
+      const previous = cells[index] as { deps: readonly unknown[]; value: unknown } | undefined;
+      if (
+        previous &&
+        deps.length === previous.deps.length &&
+        deps.every((value, at) => Object.is(value, previous.deps[at]))
+      )
+        return previous.value;
+      const value = calculate();
+      cells[index] = { deps, value };
+      return value;
     },
     useCallback(callback: unknown) {
       return callback;
+    },
+    useSyncExternalStore(_subscribe: unknown, getSnapshot: () => unknown) {
+      return getSnapshot();
     },
     useEffect(callback: () => unknown, deps: readonly unknown[]) {
       const index = effect++;

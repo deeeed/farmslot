@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { CheckoutUpdateOperation } from '@farmslot/protocol';
 
-import { readCheckoutUpdate } from './gateway-update.js';
+import { readCheckoutUpdate, watchCheckoutUpdateChanges } from './gateway-update.js';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync(
@@ -118,4 +118,50 @@ test('a finished record is kept when HEAD cannot be read', async (t) => {
   );
 
   assert.equal((await readCheckoutUpdate(root))?.phase, 'error');
+});
+
+test('owning atomic operation and Git ref writes notify without viewer polling', async (t) => {
+  const c = checkout(t);
+  // Two missing files share the git directory, and the record is written as soon as the watch
+  // resolves: chokidar's own watch for a missing path attached after `ready` (Linux never saw this
+  // write) and its directory reads for both missing files shared one throttle.
+  for (const name of ['farmslot-checkout-update.json', 'packed-refs'])
+    assert.equal(existsSync(path.join(c.root, '.git', name)), false, `${name} starts missing`);
+  const changes: string[] = [];
+  const errors: unknown[] = [];
+  const stop = await watchCheckoutUpdateChanges(
+    (kind) => changes.push(kind),
+    (error) => errors.push(error),
+    c.root,
+  );
+  const until = async (kind: string) => {
+    const deadline = Date.now() + 2000;
+    while (!changes.includes(kind) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert(changes.includes(kind), `The owning ${kind} write must notify`);
+  };
+  try {
+    const file = path.join(c.root, '.git/farmslot-checkout-update.json');
+    writeFileSync(
+      `${file}.tmp`,
+      JSON.stringify({
+        id: 'op-watch',
+        phase: 'running',
+        localSha: c.headSha,
+        targetSha: c.oldSha,
+        pid: process.pid,
+        message: 'Owned operation write',
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    renameSync(`${file}.tmp`, file);
+    await until('operation');
+    assert.equal((await readCheckoutUpdate(c.root))?.phase, 'running');
+    changes.length = 0;
+    git(c.root, 'update-ref', 'refs/heads/main', c.oldSha);
+    await until('checkout');
+    assert.deepEqual(errors, []);
+  } finally {
+    await stop();
+  }
 });

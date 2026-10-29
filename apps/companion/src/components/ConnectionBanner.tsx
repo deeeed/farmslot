@@ -3,6 +3,7 @@ import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { connectionHealthCanRetry } from '../lib/connection-liveness';
+import { retryNativeDecisions } from '../lib/run-collections';
 import { colors, fonts, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
 import { useRunStore } from '../store/runs';
@@ -91,7 +92,7 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   const lastProbeError = useConnectionStore((s) => s.lastProbeError);
   const probeInProgress = useConnectionStore((s) => s.probeInProgress);
   const retryConnection = useConnectionStore((s) => s.retryConnection);
-  const retryDecisionSync = useConnectionStore((s) => s.retryDecisionSync);
+  const retryDecisionSync = retryNativeDecisions;
   const lastSyncError = useConnectionStore((s) => s.lastSyncError);
   const gatewayCompatibilityHint = useConnectionStore((s) => s.gatewayCompatibilityHint);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);

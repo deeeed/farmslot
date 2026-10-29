@@ -14,6 +14,7 @@ import {
 } from '@farmslot/protocol';
 
 import { initPRQueueAdmission } from '../backlog/pr-admission.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { verifyPRSourceAccountChange } from '../pr-monitoring/github-account.js';
 import type { PRMonitoringService } from '../pr-monitoring/service.js';
@@ -109,6 +110,12 @@ export async function initPRRules(
   });
   if (poll) service.start();
   return service;
+}
+
+/** Existing file watcher integration. Never reinitializes schedulers or publication owners. */
+export async function reloadPRRulesFromFile(): Promise<void> {
+  if (!service) throw new Error('PR rules are not initialized');
+  if (await service.store.reloadFromFile()) service.notifyChanges();
 }
 
 /**
@@ -232,12 +239,18 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
     };
   }
   if (method === Methods.PR_REVIEW_REQUEST_GET) {
-    const submission = service.store.submission(id, ownerId);
-    return {
-      submission,
-      intent: service.store.list(ownerId).intents.find((item) => item.id === submission.intentId),
-      schedulerError: service.schedulerError,
-    };
+    try {
+      const submission = service.store.submission(id, ownerId);
+      return {
+        submission,
+        intent: service.store.list(ownerId).intents.find((item) => item.id === submission.intentId),
+        schedulerError: service.schedulerError,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Review request not found')
+        throw new GatewayMethodError('NOT_FOUND', error.message);
+      throw error;
+    }
   }
   if (method === Methods.PR_REVIEW_ACCEPT || method === Methods.PR_REVIEW_DEFER) {
     const intent = service.store.list(ownerId).intents.find((item) => item.id === id);

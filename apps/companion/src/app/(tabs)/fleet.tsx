@@ -7,11 +7,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { cancelledRunSlotHold, type Run, type SlotStatus } from '@farmslot/protocol';
 
 import { FilterEmptyState } from '../../components/FilterEmptyState';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunTitle } from '../../components/RunTitle';
 import { FleetRecoveryControl } from '../../features/fleet/FleetRecoveryControl';
 import { NodeSourceStatusDisclosure } from '../../features/sources/SourceStatusSection';
 import { CancelledRunSlotRelease } from '../../features/workspace-shared/CancelledRunSlotRelease';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../../lib/artifact-url';
+import { nativeFleetQuery } from '../../lib/gateway-run-sync';
+import { getResourceCache } from '../../lib/resource-cache';
 import { runDisplayTitle } from '../../lib/run-display';
 import { baseStyles, colors, fonts, lifecycleColor, spacing } from '../../lib/theme';
 import { useConnectionStore } from '../../store/connection';
@@ -141,6 +144,7 @@ function runTimestamp(run: Run): number {
 export default function FleetScreen() {
   const insets = useSafeAreaInsets();
   const fleet = useFleetStore((s) => s.fleet);
+  const observation = useFleetStore((s) => s.observation);
   const runs = useRunStore((s) => s.runs);
   const status = useConnectionStore((s) => s.status);
   const filters = useFilterStore((s) => s.filters);
@@ -218,6 +222,22 @@ export default function FleetScreen() {
         <Text style={styles.summaryText}>{summaryText}</Text>
         <FleetRecoveryControl slots={filteredSlots} />
       </View>
+      <ResourceReadStatus observation={observation} label="fleet" />
+      {fleet?.stale ? (
+        <Text style={baseStyles.textSecondary}>
+          Fleet source is stale. Actions wait for a fresh observation.
+        </Text>
+      ) : null}
+      {observation.error ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            void getResourceCache()?.retry(nativeFleetQuery);
+          }}
+        >
+          <Text style={baseStyles.textSecondary}>Retry reading fleet</Text>
+        </Pressable>
+      ) : null}
       {!fleet ? (
         <View style={[styles.content, { paddingBottom: spacing.lg + insets.bottom }]}>
           <Text style={baseStyles.textSecondary}>

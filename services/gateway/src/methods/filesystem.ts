@@ -1,7 +1,8 @@
 // methods/filesystem.ts — fs.list, fs.read, fs.write, fs.rename, fs.delete, fs.reveal, fs.mkdir, serveFile, serveRunArtifact
 import { execFile as execFileCb, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -12,13 +13,16 @@ const execFile = promisify(execFileCb);
 import {
   type ArtifactRef,
   type FileEntry,
+  type FsConflictDetails,
   type FsDeleteParams,
+  FsErrorCodes,
   type FsListParams,
   type FsListResult,
   type FsMkdirParams,
   type FsReadParams,
   type FsReadResult,
   type FsRenameParams,
+  type FsRenameResult,
   type FsRevealParams,
   type FsWriteParams,
   type FsWriteResult,
@@ -28,7 +32,8 @@ import {
 } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../core/index.js';
-import { getNode } from '../fleet/machine-registry.js';
+import { GatewayMethodError } from '../core/method-error.js';
+import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { invalidateArtifactTextCache } from '../live-recipe/context.js';
@@ -286,6 +291,124 @@ async function assertLocalSlot(slotId: string): Promise<void> {
   }
 }
 
+// ─── Conditional edits (ADR-009 Amendment 1) ───
+
+function sha256(bytes: Buffer | string): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+const CONFLICT_MESSAGES: Record<FsConflictDetails['reason'], string> = {
+  hash: 'The file changed since it was read',
+  run: 'The slot no longer serves the run this change was made for',
+  'destination-exists': 'The rename destination already exists',
+};
+
+/** `hash: null` means nothing exists at the path, so the details carry no hash. */
+function fsConflict(
+  reason: FsConflictDetails['reason'],
+  current: { hash?: string | null; runId?: string | null },
+): GatewayMethodError {
+  const details: FsConflictDetails = {
+    reason,
+    ...(current.hash ? { currentHash: current.hash } : {}),
+    ...(current.runId !== undefined ? { currentRunId: current.runId } : {}),
+  };
+  return new GatewayMethodError(FsErrorCodes.conflict, CONFLICT_MESSAGES[reason], { details });
+}
+
+function assertConditionalParams(
+  params: { expectedHash?: unknown; runId?: unknown },
+  absentAllowed: boolean,
+): void {
+  const { expectedHash, runId } = params;
+  if (
+    expectedHash !== undefined &&
+    typeof expectedHash !== 'string' &&
+    !(absentAllowed && expectedHash === null)
+  )
+    throw new GatewayMethodError(
+      'INVALID_PARAMS',
+      absentAllowed ? 'expectedHash must be a string or null' : 'expectedHash must be a string',
+    );
+  if (runId !== undefined && runId !== null && typeof runId !== 'string')
+    throw new GatewayMethodError('INVALID_PARAMS', 'runId must be a string or null');
+}
+
+/** The status row is the slot claim itself; read it fresh, not from the fleet snapshot. */
+async function assertSlotRun(slotId: string, runId: string | null | undefined): Promise<void> {
+  if (runId === undefined) return;
+  const { readSlotRow } = await import('../core/state.js');
+  const claimed = (await readSlotRow(slotId))?.current_run_id;
+  const currentRunId = typeof claimed === 'string' && claimed ? claimed : null;
+  if (currentRunId !== runId) throw fsConflict('run', { runId: currentRunId });
+}
+
+/** SHA-256 of a file's raw bytes, or null when nothing exists at the path. */
+async function localFileHash(targetPath: string, relPath: string): Promise<string | null> {
+  let handle;
+  try {
+    handle = await open(targetPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    if (!(await handle.stat()).isFile())
+      throw new Error(`File versions apply to files only: ${relPath}`);
+    return sha256(await handle.readFile());
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    return translateNoFollowError(error, relPath);
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function assertLocalHash(
+  targetPath: string,
+  relPath: string,
+  expectedHash: string,
+): Promise<void> {
+  const currentHash = await localFileHash(targetPath, relPath);
+  if (currentHash !== expectedHash) throw fsConflict('hash', { hash: currentHash });
+}
+
+async function assertLocalDestinationAbsent(targetPath: string, relPath: string): Promise<void> {
+  let entry;
+  try {
+    entry = await lstat(targetPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  // A directory or other non-file has no hash. A symlink keeps its refusal in the hash read.
+  if (!entry.isFile() && !entry.isSymbolicLink()) throw fsConflict('destination-exists', {});
+  throw fsConflict('destination-exists', { hash: await localFileHash(targetPath, relPath) });
+}
+
+/** Only a node that advertised conditional writes may receive a hashed write. */
+function fileNode(machine: string, expectedHash: string | null | undefined): ConnectedNode {
+  const node = getNode(machine);
+  if (!node) throw new Error(`No node connected for machine ${machine}`);
+  if (expectedHash !== undefined && !node.conditionalWrites)
+    throw new GatewayMethodError(
+      FsErrorCodes.preconditionUnsupported,
+      `Node ${machine} cannot check file versions until it is updated`,
+    );
+  return node;
+}
+
+/** A node refusal keeps its details, so a remote conflict names the current state. */
+async function nodeFileRequest(
+  node: ConnectedNode,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  try {
+    return await sendNodeRequest(node, method, params);
+  } catch (error) {
+    const refused = error as NodeJS.ErrnoException & { details?: unknown };
+    if (refused.code === FsErrorCodes.conflict)
+      throw new GatewayMethodError(refused.code, refused.message, { details: refused.details });
+    throw error;
+  }
+}
+
 function filterGitIgnored(repoPath: string, entries: string[]): Promise<Set<string>> {
   if (entries.length === 0) return Promise.resolve(new Set());
   return new Promise((resolve) => {
@@ -454,24 +577,29 @@ export async function fsRead(params: FsReadParams): Promise<FsReadResult> {
   const { isLocal, machine } = await getSlotLocality(params.slotId);
 
   let content: string;
+  let hash: string | undefined;
   if (isLocal) {
     const targetPath = resolveLocalRepoTargetPath(repoPath, params.path);
     await assertLocalRepoTargetResolvesWithinRepo(targetPath, repoPath);
     const handle = await openLocalReadHandle(targetPath, params.path);
     try {
-      content = await handle.readFile('utf-8');
+      // Hash the raw bytes before decoding, as the node's fs.hash does.
+      const bytes = await handle.readFile();
+      content = bytes.toString('utf-8');
+      hash = sha256(bytes);
     } finally {
       await handle.close();
     }
   } else {
-    // Use node's fs.read
+    // Use node's fs.read. Nodes with conditional writes also return the hash.
     const node = getNode(machine);
     if (!node) throw new Error(`No node connected for machine ${machine}`);
     const result = (await sendNodeRequest(node, 'fs.read', {
       root: repoPath,
       relPath: params.path,
-    })) as { content: string };
+    })) as { content: string; hash?: unknown };
     content = result.content;
+    if (typeof result.hash === 'string') hash = result.hash;
   }
 
   const ext = path.extname(params.path).toLowerCase();
@@ -482,37 +610,50 @@ export async function fsRead(params: FsReadParams): Promise<FsReadResult> {
   else if (base === 'makefile') language = 'makefile';
   else if (base === '.gitignore' || base === '.gitattributes') language = 'gitignore';
 
-  return { content, language };
+  return { content, language, ...(hash ? { hash } : {}) };
 }
 
 export async function fsWrite(params: FsWriteParams): Promise<FsWriteResult> {
   assertRepoRelative(params.path);
+  assertConditionalParams(params, true);
   const repoPath = await resolveRepoPath(params.slotId);
   const { isLocal, machine } = await getSlotLocality(params.slotId);
+  await assertSlotRun(params.slotId, params.runId);
+  let hash: string | undefined;
   if (isLocal) {
     const targetPath = resolveLocalRepoTargetPath(repoPath, params.path);
     await assertLocalMutationTargetResolvesWithinRepo(targetPath, repoPath);
+    // Best effort: a hashed write checks, then writes. Creating uses O_EXCL.
+    if (typeof params.expectedHash === 'string')
+      await assertLocalHash(targetPath, params.path, params.expectedHash);
     let handle;
     try {
       handle = await open(
         targetPath,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+        constants.O_WRONLY |
+          constants.O_CREAT |
+          constants.O_NOFOLLOW |
+          (params.expectedHash === null ? constants.O_EXCL : constants.O_TRUNC),
         0o666,
       );
       await handle.writeFile(params.content, 'utf-8');
     } catch (error) {
+      if (params.expectedHash === null && (error as NodeJS.ErrnoException).code === 'EEXIST')
+        throw fsConflict('hash', { hash: await localFileHash(targetPath, params.path) });
       translateNoFollowError(error, params.path);
     } finally {
       await handle?.close();
     }
+    // A write without a precondition replies as before; a conditional one returns the new hash.
+    if (params.expectedHash !== undefined) hash = sha256(params.content);
   } else {
-    const node = getNode(machine);
-    if (!node) throw new Error(`No node connected for machine ${machine}`);
-    await sendNodeRequest(node, 'fs.write', {
+    const result = (await nodeFileRequest(fileNode(machine, params.expectedHash), 'fs.write', {
       root: repoPath,
       relPath: params.path,
       content: params.content,
-    });
+      ...(params.expectedHash !== undefined ? { expectedHash: params.expectedHash } : {}),
+    })) as { hash?: unknown } | undefined;
+    if (typeof result?.hash === 'string') hash = result.hash;
   }
   // Drop the cached entry for the written file's directory so the next read
   // round-trip returns the freshly-written content instead of the previous
@@ -523,47 +664,61 @@ export async function fsWrite(params: FsWriteParams): Promise<FsWriteResult> {
     ? resolveLocalRepoTargetPath(repoPath, params.path)
     : `${repoPath}/${params.path}`;
   invalidateArtifactTextCache(path.dirname(writtenAbs), params.slotId);
-  return { ok: true };
+  return { ok: true, ...(hash ? { hash } : {}) };
 }
 
-export async function fsRename(params: FsRenameParams): Promise<OkResult> {
+export async function fsRename(params: FsRenameParams): Promise<FsRenameResult> {
   assertRepoRelative(params.oldPath);
   assertRepoRelative(params.newPath);
+  assertConditionalParams(params, false);
   const repoPath = await resolveRepoPath(params.slotId);
   const { isLocal, machine } = await getSlotLocality(params.slotId);
+  await assertSlotRun(params.slotId, params.runId);
   if (isLocal) {
     const oldTargetPath = resolveLocalRepoTargetPath(repoPath, params.oldPath);
     const newTargetPath = resolveLocalRepoTargetPath(repoPath, params.newPath);
     await assertLocalRepoTargetResolvesWithinRepo(oldTargetPath, repoPath);
     await assertLocalMutationTargetResolvesWithinRepo(newTargetPath, repoPath);
+    if (typeof params.expectedHash === 'string') {
+      await assertLocalHash(oldTargetPath, params.oldPath, params.expectedHash);
+      await assertLocalDestinationAbsent(newTargetPath, params.newPath);
+    }
     await rename(oldTargetPath, newTargetPath);
-    return { ok: true };
+    // A rename keeps the bytes, so the checked hash is the new one.
+    return { ok: true, ...(params.expectedHash ? { hash: params.expectedHash } : {}) };
   }
 
-  const node = getNode(machine);
-  if (!node) throw new Error(`No node connected for machine ${machine}`);
-  await sendNodeRequest(node, 'fs.rename', {
+  const result = (await nodeFileRequest(fileNode(machine, params.expectedHash), 'fs.rename', {
     root: repoPath,
     oldRelPath: params.oldPath,
     newRelPath: params.newPath,
-  });
-  return { ok: true };
+    ...(params.expectedHash !== undefined ? { expectedHash: params.expectedHash } : {}),
+  })) as { hash?: unknown } | undefined;
+  return { ok: true, ...(typeof result?.hash === 'string' ? { hash: result.hash } : {}) };
 }
 
 export async function fsDelete(params: FsDeleteParams): Promise<OkResult> {
   assertRepoRelative(params.path);
+  assertConditionalParams(params, false);
   const repoPath = await resolveRepoPath(params.slotId);
   const { isLocal, machine } = await getSlotLocality(params.slotId);
+  await assertSlotRun(params.slotId, params.runId);
   if (isLocal) {
     const targetPath = resolveLocalRepoTargetPath(repoPath, params.path);
     await assertLocalMutationTargetResolvesWithinRepo(targetPath, repoPath);
-    await rm(targetPath, { recursive: true });
+    if (typeof params.expectedHash === 'string') {
+      // The hash check refuses directories: a hashed delete applies to files only.
+      await assertLocalHash(targetPath, params.path, params.expectedHash);
+      await rm(targetPath);
+    } else await rm(targetPath, { recursive: true });
     return { ok: true };
   }
 
-  const node = getNode(machine);
-  if (!node) throw new Error(`No node connected for machine ${machine}`);
-  await sendNodeRequest(node, 'fs.delete', { root: repoPath, relPath: params.path });
+  await nodeFileRequest(fileNode(machine, params.expectedHash), 'fs.delete', {
+    root: repoPath,
+    relPath: params.path,
+    ...(params.expectedHash !== undefined ? { expectedHash: params.expectedHash } : {}),
+  });
   return { ok: true };
 }
 
@@ -581,8 +736,10 @@ export async function fsReveal(params: FsRevealParams): Promise<OkResult> {
 
 export async function fsMkdir(params: FsMkdirParams): Promise<OkResult> {
   assertRepoRelative(params.path);
+  assertConditionalParams({ runId: params.runId }, false);
   const repoPath = await resolveRepoPath(params.slotId);
   const { isLocal, machine } = await getSlotLocality(params.slotId);
+  await assertSlotRun(params.slotId, params.runId);
   if (isLocal) {
     const targetPath = resolveLocalRepoTargetPath(repoPath, params.path);
     await assertLocalMutationTargetResolvesWithinRepo(targetPath, repoPath);

@@ -220,8 +220,12 @@ export class CodeViewer extends LitElement {
   /** Full repo-relative path for this file (used for model URI + cross-file nav) */
   @property() filePath = '';
   @property({ attribute: false }) diagnostics: Diagnostic[] = [];
+  /** Bump to replace the editor's text with `content`, discarding unsaved typing. */
+  @property({ type: Number }) contentRevision = 0;
 
   private _editor?: monaco.editor.IStandaloneCodeEditor;
+  /** The `content` the editor last adopted; typing that differs from it is unsaved. */
+  private _hostContent = '';
   private _resizeObserver?: ResizeObserver;
   private _decorations: monaco.editor.IEditorDecorationsCollection | undefined;
   private _commentDecorations: monaco.editor.IEditorDecorationsCollection | undefined;
@@ -255,6 +259,7 @@ export class CodeViewer extends LitElement {
 
     const modelUri = m.Uri.parse(`file:///${this.filePath || this.filename || 'untitled'}`);
     const model = m.editor.createModel(this.content, this.language, modelUri);
+    this._hostContent = this.content;
 
     this._editor = m.editor.create(container, {
       model,
@@ -303,6 +308,17 @@ export class CodeViewer extends LitElement {
       }
     });
 
+    // Typing is reported, so the host can keep it; replacing the model is not an edit.
+    this._editor.onDidChangeModelContent(() => {
+      this.dispatchEvent(
+        new CustomEvent('content-change', {
+          detail: { content: this._editor?.getValue() ?? '' },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    });
+
     // Update widget widths when editor layout changes
     this._layoutDisposable = this._editor.onDidLayoutChange(() => this._updateWidgetWidths());
 
@@ -313,12 +329,28 @@ export class CodeViewer extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>) {
-    if (changed.has('content') || changed.has('language') || changed.has('filePath')) {
-      if (this._editor && monacoApi) {
+    if (
+      changed.has('content') ||
+      changed.has('language') ||
+      changed.has('filePath') ||
+      changed.has('contentRevision')
+    ) {
+      const value = this._editor?.getModel()?.getValue();
+      // A new `content` alone keeps typing the host has not adopted, and needs no new model
+      // when it already matches. Another file, language or revision always replaces the text.
+      const keep =
+        value !== undefined &&
+        !changed.has('language') &&
+        !changed.has('filePath') &&
+        !changed.has('contentRevision') &&
+        (value !== this._hostContent || value === this.content);
+      if (keep && value === this.content) this._hostContent = this.content;
+      if (this._editor && monacoApi && !keep) {
         const m = monacoApi;
         this._editor.getModel()?.dispose();
         const uri = m.Uri.parse(`file:///${this.filePath || this.filename || 'untitled'}`);
         this._editor.setModel(m.editor.createModel(this.content, this.language, uri));
+        this._hostContent = this.content;
         this._applyDecorations();
         this._applyCommentDecorations();
         this._applyCommentZones();

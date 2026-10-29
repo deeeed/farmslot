@@ -1,8 +1,6 @@
 // methods/decisions.ts — decision.list, decision.resolve
 // Unified: merges file-based decisions + run decisions into one list.
 
-import { unlink } from 'node:fs/promises';
-
 import type {
   DecisionListResult,
   DecisionResolveParams,
@@ -11,13 +9,14 @@ import type {
 } from '@farmslot/protocol';
 
 import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
-import { loadPendingDecisions } from '../observability/fleet-monitor.js';
+import { loadPendingDecisions, resolveFileDecision } from '../observability/fleet-monitor.js';
 import { attachReviewRoundBudget } from '../review/review-round-budget.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { refreshRunGateReadiness } from '../run-engine/gate-prerequisites.js';
 import { enrichDecisionsWithGateSummary } from '../run-engine/gate-summary.js';
 import { reconcilePublicationPackageForInspection } from '../run-engine/publish-package-refresh.js';
+import { completedDecisionExpiresAt } from '../runs/decision-inbox.js';
 import { listRuns } from '../runs/store.js';
 
 import { runResolveDecision } from './run.js';
@@ -25,13 +24,10 @@ import { runResolveDecision } from './run.js';
 /** Active runs + recently completed runs that still have unresolved decisions (48h window). */
 function getRunsWithDecisions(): Run[] {
   const { runs: activeRuns } = listRuns({ active: true });
-  const recentDoneRuns = listRuns({}).runs.filter(
-    (r) =>
-      r.status === 'done' &&
-      r.decisions?.some((d) => !d.resolvedAt) &&
-      r.completedAt &&
-      Date.now() - new Date(r.completedAt).getTime() < 48 * 60 * 60 * 1000,
-  );
+  const recentDoneRuns = listRuns({}).runs.filter((run) => {
+    const expiresAt = completedDecisionExpiresAt(run);
+    return expiresAt !== undefined && Date.now() < expiresAt;
+  });
   return [...activeRuns, ...recentDoneRuns];
 }
 
@@ -95,24 +91,6 @@ export async function decisionResolve(
   }
 
   // Fall back to file-based decisions (legacy)
-  const decisions = await loadPendingDecisions();
-  const decision = decisions.find((d) => d.id === params.decisionId);
-  if (!decision) {
-    throw new Error(`Decision not found: ${params.decisionId}`);
-  }
-
-  const action = decision.actions.find((a) => a.id === params.actionId);
-  if (!action) {
-    throw new Error(`Action not found: ${params.actionId}`);
-  }
-
-  try {
-    if (params.decisionId.endsWith('.json')) {
-      await unlink(params.decisionId);
-    }
-  } catch {
-    // File may already be gone
-  }
-
+  await resolveFileDecision(params.decisionId, params.actionId);
   return { resolved: true };
 }

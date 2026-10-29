@@ -372,7 +372,7 @@ export const runDetailStyles = css`
     overflow: hidden;
   }
   .gate-section.review-gate {
-    flex: 1;
+    flex: 0 0 auto;
   }
   .gate-section.ready-gate {
     flex: 0 0 auto;
@@ -418,6 +418,10 @@ export const runDetailStyles = css`
     flex: 1;
     min-height: 400px;
     overflow: hidden;
+  }
+  .gate-workspace > review-workspace {
+    height: 70vh;
+    min-height: 400px;
   }
   .gate-body {
     padding: ${unsafeCSS(spacing.lg)};

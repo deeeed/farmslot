@@ -1,14 +1,11 @@
+import type { GatewayResourceCache, ResourceQueryStatus } from '../client-cache/index.js';
 import type { SourcesStatusResult } from '../rpc/sources.js';
 
-import {
-  isNewerSourceRevision,
-  type SourceChangeFeed,
-  type SourceRevisionMark,
-} from './changes.js';
 import {
   type PreparedSourceCommand,
   type SourceCommandClient,
   sourceStatusParamsForTarget,
+  sourceStatusQuery,
 } from './client.js';
 import type { SourceSelection } from './pins.js';
 import {
@@ -19,6 +16,8 @@ import {
 } from './status-view.js';
 
 export interface SourceStatusSnapshot {
+  freshness: ResourceQueryStatus;
+  observedAt?: number;
   loading: boolean;
   busy: boolean;
   view?: SourceStatusViewModel;
@@ -54,19 +53,18 @@ export class SourceStatusController {
   private listeners = new Set<() => void>();
   private snapshot: SourceStatusSnapshot;
   private pendingConnectionKey?: string;
-  private feed?: SourceChangeFeed;
-  private covered?: SourceRevisionMark;
-  /** The version of the read in flight; a context change abandons it. */
-  private readingVersion?: number;
-  private rereadAfterRead = false;
+  private stopQuery?: () => void;
   private deniedRead = false;
+  private ageTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     private readonly client: SourceCommandClient,
     context: SourceStatusViewContext,
+    private cache?: GatewayResourceCache,
   ) {
     this.context = structuredClone(context);
     this.snapshot = {
+      freshness: 'loading',
       loading: false,
       busy: false,
       selections: structuredClone([...(context.selections ?? [])]),
@@ -77,26 +75,59 @@ export class SourceStatusController {
       unsupported: false,
     };
     this.update({});
+    this.observeQuery();
   }
 
   getSnapshot = (): SourceStatusSnapshot => this.snapshot;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    this.updateAgeTimer();
+    return () => {
+      this.listeners.delete(listener);
+      this.updateAgeTimer();
+    };
   };
+
+  /** Repaint relative age only; this clock never refreshes facts or changes selections. */
+  private updateAgeTimer(): void {
+    if (this.ageTimer !== undefined) clearTimeout(this.ageTimer);
+    this.ageTimer = undefined;
+    if (
+      !this.listeners.size ||
+      this.snapshot.freshness === 'ready' ||
+      !this.snapshot.view ||
+      this.snapshot.observedAt === undefined
+    )
+      return;
+    const elapsed = Math.max(0, Date.now() - this.snapshot.observedAt);
+    const interval = elapsed < 60_000 ? 1000 : 60_000;
+    this.ageTimer = setTimeout(
+      () => {
+        this.ageTimer = undefined;
+        this.snapshot = { ...this.snapshot };
+        for (const listener of this.listeners) listener();
+        this.updateAgeTimer();
+      },
+      interval - (elapsed % interval),
+    );
+  }
 
   private update(change: Partial<SourceStatusSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...change };
-    if (this.status)
-      this.snapshot.view = deriveSourceStatusView(this.status, {
-        ...this.context,
-        ...(this.context.selections !== undefined || this.snapshot.selections.length
-          ? { selections: this.snapshot.selections }
-          : {}),
-      });
+    this.snapshot.view = this.status
+      ? deriveSourceStatusView(this.status, {
+          ...this.context,
+          ...(this.context.selections !== undefined || this.snapshot.selections.length
+            ? { selections: this.snapshot.selections }
+            : {}),
+        })
+      : undefined;
     this.snapshot.interactive =
-      !this.snapshot.busy && !this.snapshot.loading && !this.snapshot.pending;
+      this.snapshot.freshness === 'ready' &&
+      !this.snapshot.busy &&
+      !this.snapshot.loading &&
+      !this.snapshot.pending;
     this.snapshot.canEdit = this.snapshot.interactive && this.snapshot.view?.editable === true;
     const view = this.snapshot.view;
     // A failed read stays visible, even over a context that was empty when last read.
@@ -107,8 +138,13 @@ export class SourceStatusController {
     this.snapshot.controls = Boolean(
       view && (view.editable || view.draft || view.actions.length > 0),
     );
-    this.snapshot.unsupported =
-      this.status?.configured === true && this.feed?.getState().announced === false;
+    this.snapshot.unsupported = this.snapshot.freshness === 'unsupported';
+    this.snapshot.canRetry = Boolean(
+      !this.snapshot.busy &&
+      this.snapshot.pending &&
+      this.snapshot.freshness === 'ready' &&
+      this.pendingConnectionKey === this.context.connectionKey,
+    );
     this.snapshot.selectionRefusal =
       this.snapshot.view?.selectionErrors[0] ??
       (!this.context.target &&
@@ -122,45 +158,50 @@ export class SourceStatusController {
               : undefined))
         : undefined);
     for (const listener of this.listeners) listener();
+    this.updateAgeTimer();
   }
 
-  /**
-   * Live source status (ADR-069 Amendment 1): reread when the gateway's source
-   * revision passes what the last read covered. Reconnects stay with the host,
-   * which already rereads on every new connection.
-   */
-  attachFeed(feed: SourceChangeFeed): () => void {
-    this.feed = feed;
-    const unsubscribe = feed.subscribe(() => this.observeFeed());
-    this.observeFeed();
-    return () => {
-      unsubscribe();
-      if (this.feed === feed) this.feed = undefined;
-    };
+  private observeQuery(): void {
+    this.stopQuery?.();
+    this.stopQuery = undefined;
+    if (!this.cache) return;
+    const params =
+      this.context.params ?? sourceStatusParamsForTarget(undefined, this.context.target);
+    this.stopQuery = this.cache.observe(sourceStatusQuery(params), (state) => {
+      this.status = state.data;
+      this.deniedRead = state.error?.code === 'AUTH_FORBIDDEN';
+      this.update({
+        freshness: state.status,
+        observedAt: state.observedAt,
+        loading: state.status === 'loading',
+        error: state.error?.message,
+      });
+    });
   }
 
-  private observeFeed(): void {
-    const latest = this.feed?.getState().latest;
-    if (latest && isNewerSourceRevision(latest, this.covered)) {
-      // A change during any read, the first included, is not covered by it.
-      if (this.readingVersion === this.version) {
-        this.rereadAfterRead = true;
-        return;
-      }
-      // Before the first read the host's initial load covers the current state.
-      if (this.status || this.snapshot.error) {
-        void this.refresh();
-        return;
-      }
-    }
-    this.update({});
+  dispose(): void {
+    this.version++;
+    this.stopQuery?.();
+    this.stopQuery = undefined;
+    this.cache = undefined;
+    this.listeners.clear();
+    this.updateAgeTimer();
   }
 
   setContext(context: SourceStatusViewContext): boolean {
-    if (JSON.stringify(context) === JSON.stringify(this.context)) return false;
+    return this.bind(context, this.cache);
+  }
+
+  /** A retired cache must never observe a context from the replacement connection. */
+  bind(context: SourceStatusViewContext, cache: GatewayResourceCache | undefined): boolean {
+    const cacheChanged = cache !== this.cache;
+    const contextChanged = JSON.stringify(context) !== JSON.stringify(this.context);
+    this.cache = cache;
+    if (!cacheChanged && !contextChanged) return false;
     if (
+      !cacheChanged &&
       JSON.stringify({ ...context, selections: undefined }) ===
-      JSON.stringify({ ...this.context, selections: undefined })
+        JSON.stringify({ ...this.context, selections: undefined })
     ) {
       this.context = structuredClone(context);
       if (this.snapshot.busy && !this.snapshot.pending) this.version++;
@@ -173,12 +214,16 @@ export class SourceStatusController {
     // An uncertain mutation retains its exact old target/request even if the view changes.
     const canRetry = this.pendingConnectionKey === context.connectionKey;
     this.update({
+      freshness: 'loading',
+      observedAt: undefined,
       loading: false,
       view: undefined,
       error: undefined,
       operationError: undefined,
       notice: undefined,
-      selections: structuredClone([...(context.selections ?? [])]),
+      selections: structuredClone(
+        contextChanged ? [...(context.selections ?? [])] : this.snapshot.selections,
+      ),
       ...(this.snapshot.pending
         ? {
             canRetry,
@@ -188,44 +233,18 @@ export class SourceStatusController {
           }
         : {}),
     });
+    this.observeQuery();
     return true;
   }
 
   async refresh(): Promise<void> {
-    const version = ++this.version;
     const params =
       this.context.params ?? sourceStatusParamsForTarget(undefined, this.context.target);
-    // Gateways publish only after a change is readable, so this read covers the mark.
-    this.covered = this.feed?.getState().latest;
-    this.readingVersion = version;
-    this.rereadAfterRead = false;
-    this.update({ loading: true, error: undefined });
-    try {
-      const status = await this.client.status(params);
-      if (version !== this.version) return;
-      this.status = status;
-      this.deniedRead = false;
-      this.update({ loading: false });
-    } catch (error) {
-      // Read failures remain visible; stale responses cannot replace another context's facts.
-      if (version === this.version) {
-        this.deniedRead = (error as { code?: string }).code === 'AUTH_FORBIDDEN';
-        this.update({ loading: false, error: (error as Error).message });
-      }
-    } finally {
-      if (version === this.version) {
-        this.readingVersion = undefined;
-        // A change seen during the read is not covered by it: read once more.
-        if (this.rereadAfterRead) {
-          this.rereadAfterRead = false;
-          void this.refresh();
-        }
-      }
-    }
+    await this.cache?.retry(sourceStatusQuery(params));
   }
 
   select(selection: SourceSelection): void {
-    if (!this.snapshot.view?.editable || this.snapshot.busy || this.snapshot.pending) return;
+    if (!this.snapshot.canEdit) return;
     const selections = this.snapshot.selections.filter(
       (value) => value.sourceId !== selection.sourceId,
     );
@@ -234,19 +253,14 @@ export class SourceStatusController {
   }
 
   clearSelection(sourceId: string): void {
-    if (!this.snapshot.view?.editable || this.snapshot.busy || this.snapshot.pending) return;
+    if (!this.snapshot.canEdit) return;
     this.update({
       selections: this.snapshot.selections.filter((selection) => selection.sourceId !== sourceId),
     });
   }
 
   async apply(action: SourceViewAction, sourceId?: string): Promise<void> {
-    if (
-      this.snapshot.busy ||
-      this.snapshot.pending ||
-      !this.snapshot.view?.actions.includes(action)
-    )
-      return;
+    if (!this.snapshot.interactive || !this.snapshot.view?.actions.includes(action)) return;
     const version = this.version;
     this.update({ busy: true, error: undefined, operationError: undefined, notice: undefined });
     try {
@@ -283,7 +297,7 @@ export class SourceStatusController {
   }
 
   async retry(): Promise<void> {
-    if (this.snapshot.busy || !this.snapshot.pending) return;
+    if (this.snapshot.busy || !this.snapshot.pending || this.snapshot.freshness !== 'ready') return;
     if (this.pendingConnectionKey !== this.context.connectionKey) {
       this.update({ error: 'Select the original farm connection to retry this source action.' });
       return;
@@ -315,7 +329,6 @@ export class SourceStatusController {
           : undefined,
         selections: [],
       });
-      await this.refresh();
     } catch (error) {
       // A missing acknowledgement keeps the same operation ID, revisions and explicit target.
       const stale = (error as { code?: string }).code === 'SOURCE_STATE_STALE';

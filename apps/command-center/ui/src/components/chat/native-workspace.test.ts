@@ -47,6 +47,17 @@ function makeWorkspace(request: Workspace['api']['request']): Workspace {
     loading: false,
     revision: 0,
     api: { request },
+    reads: {
+      clear() {},
+      releaseMethods() {},
+      status: '',
+      error: '',
+      read: async (method: string, params: unknown, apply: (value: unknown) => void) => {
+        const value = await request(method, params);
+        apply(value);
+        return value;
+      },
+    },
   });
   view.testFilter = new DiffTestFilterController(new FakeControllerHost(), {
     onChange: () => view.leaveHiddenFile(),

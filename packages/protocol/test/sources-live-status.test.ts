@@ -1,231 +1,241 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
+import { createMemoryResourceStore } from '../src/client-cache/index.js';
+import { Methods } from '../src/rpc/registry.js';
 import type { SourcesStatusResult } from '../src/rpc/sources.js';
-import {
-  connectSourceChangeFeed,
-  createSourceChangeFeed,
-  sourceResourceChanges,
-} from '../src/sources/changes.js';
-import { createSourceCommandClient } from '../src/sources/client.js';
+import { sourceStatusQuery } from '../src/sources/client.js';
 import { SourceStatusController } from '../src/sources/controller.js';
-import { Events } from '../src/transport/events.js';
 
+import { sourceCacheFixture } from './fixtures/source-cache.js';
 import { sourceStatusFixture } from './fixtures/source-status.js';
 
-const settle = () => new Promise((resolve) => setImmediate(resolve));
-const changes = (revision: number, epoch = 'epoch-1') => ({
-  resourceChanges: {
-    version: 1,
-    epoch,
-    changes: [{ key: { family: 'sources', scope: 'farm' }, revision, kind: 'updated' }],
-  },
-});
-
-/** A farm panel whose reads return whatever `next` holds when each read starts. */
-function harness() {
-  let next: () => Promise<SourcesStatusResult> = async () => sourceStatusFixture();
-  let reads = 0;
-  const client = createSourceCommandClient(async <T>(): Promise<T> => {
-    reads++;
-    return (await next()) as T;
+async function settle() {
+  await setImmediate();
+  await setImmediate();
+}
+function panel(t: TestContext) {
+  let respond: () => Promise<SourcesStatusResult> = async () => sourceStatusFixture();
+  const transport = sourceCacheFixture(async <T>(method: string): Promise<T> => {
+    assert.equal(method, Methods.SOURCES_STATUS, 'Passive observations never execute a command');
+    return (await respond()) as T;
   });
-  const controller = new SourceStatusController(client, {
-    target: { scope: 'farm', targetId: 'farm' },
-    actions: ['pin', 'unpin'],
+  const controller = new SourceStatusController(
+    transport.client,
+    {
+      connectionKey: 'farm',
+      target: { scope: 'farm', targetId: 'farm' },
+      actions: ['pin', 'unpin'],
+    },
+    transport.cache,
+  );
+  t.after(async () => {
+    controller.dispose();
+    await transport.cache.dispose();
   });
-  const feed = createSourceChangeFeed();
-  controller.attachFeed(feed);
   return {
     controller,
-    feed,
-    reads: () => reads,
-    respond(responder: () => Promise<SourcesStatusResult>) {
-      next = responder;
+    transport,
+    respond(next: () => Promise<SourcesStatusResult>) {
+      respond = next;
     },
   };
 }
 
-test('a pin changed by another client reaches an open panel without user action', async () => {
-  const panel = harness();
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(4) });
-  await panel.controller.refresh();
-  assert.equal(panel.reads(), 1);
-  assert.equal(panel.controller.getSnapshot().view?.line, 'pack experiment');
-
-  panel.respond(async () => {
-    const status = sourceStatusFixture();
-    status.pinRevision = 3;
-    status.effectiveSelections![0].effectiveRef = 'main';
-    return status;
+test('an external pin updates an open cache-backed panel; duplicates do not read again', async (t) => {
+  const p = panel(t);
+  await p.controller.refresh();
+  assert.equal(p.transport.reads, 1);
+  assert.equal(p.controller.getSnapshot().view?.line, 'pack experiment');
+  p.respond(async () => {
+    const value = sourceStatusFixture();
+    value.pinRevision = 3;
+    value.effectiveSelections![0].effectiveRef = 'main';
+    return value;
   });
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(5) });
+  p.transport.publish(1);
   await settle();
-  assert.equal(panel.reads(), 2);
-  assert.equal(panel.controller.getSnapshot().view?.line, 'pack main');
-
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(5) });
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(4) });
+  assert.equal(p.controller.getSnapshot().view?.line, 'pack main');
+  assert.equal(p.transport.reads, 2);
+  p.transport.publish(1);
+  p.transport.publish(0);
   await settle();
-  assert.equal(panel.reads(), 2, 'duplicate and older revisions are ignored');
-
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(1, 'epoch-2') });
-  await settle();
-  assert.equal(panel.reads(), 3, 'a new gateway epoch rereads even with a lower revision');
+  assert.equal(p.transport.reads, 2);
 });
 
-test('a change during an in-flight read schedules exactly one more read', async () => {
-  const panel = harness();
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(1) });
-  await panel.controller.refresh();
-  let release!: () => void;
-  panel.respond(
+test('two writes during a slow read never restore stale ready source facts', async (t) => {
+  const p = panel(t);
+  await p.controller.refresh();
+  let release!: (data: SourcesStatusResult) => void;
+  p.respond(
     () =>
       new Promise((resolve) => {
-        release = () => resolve(sourceStatusFixture());
+        release = resolve;
       }),
   );
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(2) });
+  p.transport.publish(1);
   await settle();
-  assert.equal(panel.reads(), 2);
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(3) });
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(4) });
+  assert.equal(p.transport.reads, 2);
+  p.transport.publish(2);
+  p.transport.publish(3);
+  p.transport.publish(3);
   await settle();
-  assert.equal(panel.reads(), 2, 'the in-flight read is not abandoned');
-  panel.respond(async () => sourceStatusFixture());
-  release();
+  assert.equal(p.transport.reads, 2);
+  const latest = sourceStatusFixture();
+  latest.pinRevision = 5;
+  latest.effectiveSelections![0].effectiveRef = 'main';
+  p.respond(async () => latest);
+  release(sourceStatusFixture());
   await settle();
-  await settle();
-  assert.equal(panel.reads(), 3);
+  assert.equal(p.transport.reads, 3);
+  assert.equal(p.controller.getSnapshot().freshness, 'ready');
+  assert.equal(p.controller.getSnapshot().view?.pinRevision, 5);
+  assert.equal(p.controller.getSnapshot().view?.line, 'pack main');
 });
 
-test('a change during the first read, or the first read after a context change, rereads once', async () => {
-  const panel = harness();
-  let release!: () => void;
-  const held = () =>
-    new Promise<SourcesStatusResult>((resolve) => {
-      release = () => resolve(sourceStatusFixture());
-    });
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(1) });
-  panel.respond(held);
-  const first = panel.controller.refresh();
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(2) });
-  panel.respond(async () => sourceStatusFixture());
-  release();
-  await first;
+test('disconnect retains stale facts, disables direct actions, and reconnect refetches without command replay', async (t) => {
+  const p = panel(t);
+  await p.controller.refresh();
+  p.transport.disconnect();
+  assert.equal(p.controller.getSnapshot().freshness, 'stale');
+  assert.equal(p.controller.getSnapshot().view?.line, 'pack experiment');
+  assert.equal(p.controller.getSnapshot().interactive, false);
+  const selections = p.controller.getSnapshot().selections;
+  p.controller.select({ sourceId: 'pack', selection: 'branch', ref: 'offline' });
+  p.controller.clearSelection('pack');
+  await p.controller.apply('pin', 'pack');
+  assert.equal(p.transport.commands, 0);
+  assert.deepEqual(p.controller.getSnapshot().selections, selections);
+  assert.equal(p.transport.reads, 1);
+  p.transport.reconnect();
   await settle();
-  assert.equal(panel.reads(), 2, 'the first read did not cover revision 2');
-
-  panel.respond(held);
-  void panel.controller.refresh();
-  panel.controller.setContext({ target: { scope: 'node', targetId: 'node-1' }, actions: [] });
-  const abandoned = release;
-  panel.respond(held);
-  const next = panel.controller.refresh();
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(3) });
-  panel.respond(async () => sourceStatusFixture());
-  abandoned();
-  release();
-  await next;
+  assert.equal(p.transport.reads, 2);
+  assert.equal(p.controller.getSnapshot().freshness, 'ready');
+  p.transport.disconnect();
+  p.transport.reconnect('source-test-restarted');
   await settle();
-  assert.equal(panel.reads(), 5, 'the new context read is followed by exactly one reread');
+  assert.equal(p.transport.reads, 3);
+  assert.equal(p.controller.getSnapshot().freshness, 'ready');
 });
 
-test('a change while a failed read is shown rereads, and denied reads hide the panel', async () => {
-  const panel = harness();
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(1) });
-  panel.respond(async () => {
-    throw new Error('Execution node is disconnected');
+test('stale age repaints without reads or selection changes and stops when ready or disposed', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_800_000_000_000 });
+  const p = panel(t);
+  await p.controller.refresh();
+  let paints = 0;
+  const stop = p.controller.subscribe(() => paints++);
+  t.after(stop);
+  p.transport.disconnect();
+  const stale = p.controller.getSnapshot();
+  const beforePaint = paints;
+  t.mock.timers.tick(1000);
+  assert.equal(paints, beforePaint + 1, 'A visible stale age must repaint as time passes');
+  const aged = p.controller.getSnapshot();
+  assert.notEqual(aged, stale, 'External-store renderers need a new snapshot reference');
+  assert.equal(aged.observedAt, stale.observedAt);
+  assert.equal(aged.view, stale.view);
+  assert.equal(aged.selections, stale.selections);
+  assert.equal(p.transport.reads, 1);
+  assert.equal(p.transport.commands, 0);
+  p.transport.reconnect();
+  await settle();
+  assert.equal(p.controller.getSnapshot().freshness, 'ready');
+  const readyPaints = paints;
+  t.mock.timers.tick(60_000);
+  assert.equal(paints, readyPaints, 'Ready data needs no age repaint timer');
+  assert.equal(p.transport.reads, 2);
+  p.transport.disconnect();
+  p.controller.dispose();
+  const disposedPaints = paints;
+  t.mock.timers.tick(60_000);
+  assert.equal(paints, disposedPaints);
+  assert.equal(p.transport.reads, 2);
+});
+
+test('cold offline hydration keeps observation age and never enables source mutations', async (t) => {
+  const store = createMemoryResourceStore();
+  const transport = sourceCacheFixture(async <T>(): Promise<T> => {
+    throw new Error('Offline reads are forbidden');
+  }, store);
+  transport.disconnect();
+  const query = sourceStatusQuery();
+  await store.setMetadata({
+    scope: transport.connection().scope,
+    authority: transport.connection().authority!,
   });
-  await panel.controller.refresh();
-  assert.equal(panel.controller.getSnapshot().error, 'Execution node is disconnected');
-  assert.equal(panel.controller.getSnapshot().hidden, false);
-  panel.respond(async () => sourceStatusFixture());
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(2) });
-  await settle();
-  assert.equal(panel.controller.getSnapshot().error, undefined);
-  assert(panel.controller.getSnapshot().view);
-
-  panel.respond(async () => {
-    throw Object.assign(new Error('Denied: sources.status requires admin'), {
-      code: 'AUTH_FORBIDDEN',
-    });
+  await store.putQuery({
+    id: query.id,
+    data: sourceStatusFixture(),
+    observedAt: 123456,
+    bytes: 2000,
   });
-  await panel.controller.refresh();
-  assert.equal(panel.controller.getSnapshot().hidden, true);
+  const controller = new SourceStatusController(
+    transport.client,
+    { actions: ['sync'] },
+    transport.cache,
+  );
+  t.after(async () => {
+    controller.dispose();
+    await transport.cache.dispose();
+  });
+  await controller.refresh();
+  assert.equal(controller.getSnapshot().freshness, 'stale');
+  assert.equal(controller.getSnapshot().observedAt, 123456);
+  assert.equal(controller.getSnapshot().view?.line, 'pack experiment');
+  assert.equal(controller.getSnapshot().interactive, false);
+  await controller.apply('sync', 'pack');
+  assert.equal(transport.reads, 0);
+  assert.equal(transport.commands, 0);
 });
 
-test('an empty context is hidden and a gateway that does not announce is unsupported', async () => {
-  const panel = harness();
-  panel.respond(async () => ({
+test('a refused source read hides and evicts its saved facts', async (t) => {
+  const p = panel(t);
+  await p.controller.refresh();
+  await settle();
+  const query = sourceStatusQuery();
+  assert(await p.transport.store.getQuery(query.id));
+  p.respond(async () => {
+    throw Object.assign(new Error('Denied'), { code: 'AUTH_FORBIDDEN' });
+  });
+  p.transport.publish(1);
+  await settle();
+  assert.equal(p.controller.getSnapshot().view, undefined);
+  assert.equal(p.controller.getSnapshot().hidden, true);
+  assert.equal(await p.transport.store.getQuery(query.id), undefined);
+});
+
+test('missing notification support never marks a bounded read current or enables actions', async (t) => {
+  const p = panel(t);
+  await p.controller.refresh();
+  p.transport.unsupported();
+  await settle();
+  const beforeRetry = p.transport.reads;
+  await p.controller.refresh();
+  assert.equal(p.controller.getSnapshot().unsupported, true);
+  assert.equal(p.controller.getSnapshot().interactive, false);
+  assert.equal(
+    p.transport.reads,
+    beforeRetry + 1,
+    'Explicit Retry repeats one read without inventing freshness',
+  );
+});
+
+test('an empty source context stays hidden while an ordinary read error remains visible', async (t) => {
+  const p = panel(t);
+  p.respond(async () => ({
     ...sourceStatusFixture(),
     configured: false,
     declarations: [],
     locks: [],
     effectiveSelections: [],
   }));
-  panel.feed.receive(Events.HELLO, { fleet: null });
-  assert.equal(panel.controller.getSnapshot().hidden, true, 'nothing to show before facts');
-  await panel.controller.refresh();
-  assert.equal(panel.controller.getSnapshot().hidden, true);
-  assert.equal(
-    panel.controller.getSnapshot().unsupported,
-    false,
-    'unconfigured is not unsupported',
-  );
-  panel.respond(async () => {
+  await p.controller.refresh();
+  assert.equal(p.controller.getSnapshot().hidden, true);
+  p.respond(async () => {
     throw new Error('Execution node is disconnected');
   });
-  await panel.controller.refresh();
-  assert.equal(panel.controller.getSnapshot().hidden, false, 'a failed read stays visible');
-
-  panel.respond(async () => sourceStatusFixture());
-  await panel.controller.refresh();
-  assert.equal(panel.controller.getSnapshot().hidden, false);
-  assert.equal(panel.controller.getSnapshot().controls, true, 'farm pin actions show controls');
-  assert.equal(panel.controller.getSnapshot().unsupported, true);
-});
-
-test('reconnect starts a new announcement; the host reread then sees live status again', async () => {
-  const panel = harness();
-  panel.feed.receive(Events.HELLO, { fleet: null });
-  await panel.controller.refresh();
-  assert.equal(panel.controller.getSnapshot().unsupported, true);
-  panel.feed.disconnected();
-  assert.equal(panel.feed.getState().announced, undefined);
-  panel.feed.receive(Events.HELLO, { fleet: null, ...changes(7) });
-  // Hosts reread on every new connection; that read covers revision 7.
-  await panel.controller.refresh();
-  assert.equal(panel.controller.getSnapshot().unsupported, false);
-  const before = panel.reads();
-  panel.feed.receive(Events.FLEET_UPDATED, { fleet: {}, ...changes(7) });
-  await settle();
-  assert.equal(panel.reads(), before);
-});
-
-test('the carrier decoder reads only hello and fleet.updated with a valid payload', () => {
-  assert.equal(sourceResourceChanges(Events.RUN_UPDATED, changes(1)), undefined);
-  assert.equal(sourceResourceChanges(Events.FLEET_UPDATED, { fleet: {} }), undefined);
-  assert.equal(
-    sourceResourceChanges(Events.FLEET_UPDATED, {
-      resourceChanges: { version: 2, epoch: 'e', changes: [] },
-    }),
-    undefined,
-  );
-  assert.deepEqual(sourceResourceChanges(Events.HELLO, changes(3))?.changes[0].revision, 3);
-});
-
-test('one helper wires a host connection: carrier events feed it, a lost connection resets it', () => {
-  const handlers = new Map<string, (payload: unknown) => void>();
-  let connection!: (state: string) => void;
-  const feed = createSourceChangeFeed();
-  connectSourceChangeFeed(feed, {
-    subscribe: (event, handler) => handlers.set(event, handler),
-    onConnectionChange: (listener) => (connection = listener),
-  });
-  assert.deepEqual([...handlers.keys()].sort(), [Events.FLEET_UPDATED, Events.HELLO].sort());
-  handlers.get(Events.HELLO)!({ fleet: null, ...changes(2) });
-  assert.deepEqual(feed.getState(), { announced: true, latest: { epoch: 'epoch-1', revision: 2 } });
-  connection('disconnected');
-  assert.deepEqual(feed.getState(), {});
+  await p.controller.refresh();
+  assert.equal(p.controller.getSnapshot().hidden, false);
+  assert.equal(p.controller.getSnapshot().error, 'Execution node is disconnected');
 });

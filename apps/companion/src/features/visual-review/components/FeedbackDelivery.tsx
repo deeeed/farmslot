@@ -24,6 +24,7 @@ export function FeedbackDelivery({
   exportMessage,
   onExport,
   onSend,
+  commandsReady,
 }: {
   delivery: VisualReviewDelivery;
   targetRunId: string;
@@ -32,10 +33,11 @@ export function FeedbackDelivery({
   exportMessage: string | null;
   onExport: () => void;
   onSend: () => void;
+  commandsReady: boolean;
 }) {
   const pending = delivery.status === 'pending';
   // An accepted send stays accepted until the draft changes, so a second tap cannot duplicate it.
-  const sendDisabled = pending || delivery.status === 'accepted';
+  const sendDisabled = !commandsReady || pending || delivery.status === 'accepted';
   const statusStyle =
     delivery.status === 'accepted'
       ? styles.statusAccepted

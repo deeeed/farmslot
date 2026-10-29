@@ -11,7 +11,10 @@ import {
   NATIVE_WORKER_STATE,
   NATIVE_WORKER_TRANSFER,
 } from '@farmslot/agent-runtime/native';
-import { NATIVE_PROFILE_METHODS } from '@farmslot/agent-runtime/native/profile-service';
+import {
+  NATIVE_PROFILE_METHODS,
+  validateNativeProfileParams,
+} from '@farmslot/agent-runtime/native/profile-service';
 import { routeNativeSession } from '@farmslot/agent-runtime/native/service';
 import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-service';
 import {
@@ -179,9 +182,14 @@ export async function routeNativeExecution(
   method: string,
   params: Record<string, unknown>,
 ): Promise<unknown> {
+  // Resolve the observation owner after the native route module initializes.
+  // Its authorization helper also uses this route; eager imports form a cycle.
+  const { admitNativeCollectionNode, isNativeObservedRead, nativeObservations } =
+    await import('../../resources/native-observations.js');
   const executionNodeId = params.executionNodeId ?? 'local';
   if (typeof executionNodeId !== 'string' || !executionNodeId.trim())
     throw new GatewayMethodError('INVALID_PARAMS', 'executionNodeId must be a nonempty string');
+  if (method === Methods.NATIVE_SESSION_LIST) admitNativeCollectionNode(executionNodeId);
   const worker = NATIVE_WORKER_METHODS.includes(method);
   const needsProfiles = params.profileId !== undefined || NATIVE_PROFILE_METHODS.includes(method);
   if (
@@ -203,6 +211,12 @@ export async function routeNativeExecution(
         'AUTH_FORBIDDEN',
         'Native local execution is unavailable for this owner',
       );
+    if (isNativeObservedRead() && method === Methods.NATIVE_PROFILE_STATUS) {
+      validateNativeProfileParams(params);
+      if (typeof params.profileId !== 'string' || !params.profileId.trim())
+        throw new GatewayMethodError('INVALID_PARAMS', 'Native profile ID required');
+      return nativeObservations.localProfileStatus(owner, params.profileId);
+    }
     return worker
       ? routeNativeWorkerSession(nativeSessionManager, owner, method, params)
       : routeNativeSession(nativeSessionManager, owner, method, params);
@@ -240,7 +254,7 @@ export async function routeNativeExecution(
     result = await sendNodeRequest(
       node,
       'native.session',
-      { owner, method, params },
+      { owner, method, params, ...(isNativeObservedRead() ? { observe: true } : {}) },
       { timeout: 60_000, requireSameConnection: true },
     );
   } catch (error) {
@@ -251,6 +265,8 @@ export async function routeNativeExecution(
     throw error;
   }
   assertNativeConnection(owner, executionNodeId, node);
+  if (isNativeObservedRead())
+    result = nativeObservations.unwrapRemote(node.ws, executionNodeId, result);
   if (method === NATIVE_WORKER_STATE) {
     if (
       !result ||
@@ -389,6 +405,7 @@ export async function listNativeExecutions(owner: string): Promise<NativeSession
   const nodes = [
     ...new Set([
       ...(ownsLocalNativeProfile(owner) ? ['local'] : []),
+      ...assigned,
       ...knownNativeExecutionNodes(owner).filter((machine) => assigned.has(machine)),
       ...getAllNodes()
         .filter((node) => {
@@ -413,6 +430,8 @@ export async function listNativeExecutions(owner: string): Promise<NativeSession
     if (result.status === 'fulfilled')
       sessions.push(...(result.value as NativeSessionListResult).sessions);
     else {
+      if (result.reason instanceof GatewayMethodError && result.reason.code.startsWith('AUTH_'))
+        throw result.reason;
       // Partial inventory is explicit: an offline host must not hide sessions on healthy hosts.
       unavailableExecutionNodes.push({
         executionNodeId: nodes[index],

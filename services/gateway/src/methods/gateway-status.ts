@@ -3,8 +3,7 @@
 // Farmslot has no semver release stream; it is a git clone advanced by
 // `farmslot update` (fetch + reset to origin's default branch). "Update
 // available" therefore means the local HEAD is behind origin/<default-branch>.
-// We run a real `git fetch` so the answer is current, but cache it: the UI polls
-// this on every (re)connect and a fetch is a network round-trip.
+// One source owner captures remote refs. Client reads share its retained observation.
 import { execFile as execFileCb } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -15,31 +14,69 @@ import type {
   GatewayStatusParams,
   GatewayStatusResult,
   GatewayUpdateStatus,
+  UpstreamObservation,
 } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../core/index.js';
 import { getGatewayListenSnapshot } from '../core/listen-address.js';
 import { githubQueryBudget } from '../integrations/github-query-budget.js';
+import {
+  GATEWAY_UPDATE_ERROR_TTL_MS,
+  type GatewayUpdateClientInterest,
+  GatewayUpdateObservation,
+} from '../resources/gateway-update-observation.js';
+import { resourceRevisions } from '../resources/revisions.js';
 
-import { readCheckoutUpdate } from './gateway-update.js';
+import {
+  type CheckoutObservationChange,
+  readCheckoutUpdate,
+  watchCheckoutUpdateChanges,
+} from './gateway-update.js';
 import { workerSessionHistoryEnabled } from './worker-session-history.js';
 
 const execFile = promisify(execFileCb);
 
 const UPDATE_COMMAND = 'farmslot update';
-/** Fresh fetch result is trusted for 15 minutes. */
-const TTL_OK_MS = 15 * 60_000;
-/** A failed check retries sooner so a transient offline window self-heals. */
-const TTL_ERR_MS = 60_000;
 const GIT_TIMEOUT_MS = 8_000;
 const FETCH_TIMEOUT_MS = 20_000;
 
-const GATEWAY_VERSION = readGatewayVersion();
-const GATEWAY_RELEASE_NOTES = readGatewayReleaseNotes();
+let gatewayVersion = readGatewayVersion();
+let gatewayReleaseNotes = readGatewayReleaseNotes();
+let hasVisibleInterest = () => false;
+let sourceStopping = false;
+let sourceGeneration = 0;
+const publish = () => {
+  if (!sourceStopping) resourceRevisions.advance({ family: 'gateway-update', scope: 'gateway' });
+};
+const updateObservation = new GatewayUpdateObservation({
+  sample: runGitFreshness,
+  hasInterest: () => hasVisibleInterest(),
+  changed: () => {
+    publish();
+    void refreshInstalled('checkout');
+  },
+  empty: emptyUpdateStatus,
+});
+let operation: GatewayUpdateStatus['operation'];
+let installedLoaded = false;
+let installedError: string | undefined;
+let installedRead: Promise<void> | undefined;
+let installedDirty: CheckoutObservationChange | undefined;
+let sourceStarted = false;
 
-let cached: GatewayUpdateStatus | null = null;
-let cachedAtMs = 0;
-let inFlight: Promise<GatewayUpdateStatus> | null = null;
+function emptyUpdateStatus(): GatewayUpdateStatus {
+  return {
+    updateAvailable: false,
+    commitsBehind: 0,
+    commitsAhead: 0,
+    branch: 'main',
+    localSha: '',
+    remoteSha: null,
+    lastChecked: null,
+    updateCommand: UPDATE_COMMAND,
+    error: null,
+  };
+}
 
 function readGatewayReleaseNotes(): GatewayReleaseNotes | undefined {
   try {
@@ -121,17 +158,7 @@ async function resolveDefaultBranch(): Promise<string> {
 }
 
 async function runGitFreshness(): Promise<GatewayUpdateStatus> {
-  const base: GatewayUpdateStatus = {
-    updateAvailable: false,
-    commitsBehind: 0,
-    commitsAhead: 0,
-    branch: 'main',
-    localSha: '',
-    remoteSha: null,
-    lastChecked: null,
-    updateCommand: UPDATE_COMMAND,
-    error: null,
-  };
+  const base = emptyUpdateStatus();
 
   const inside = await git(['rev-parse', '--is-inside-work-tree']);
   if (inside.exitCode !== 0 || inside.stdout.trim() !== 'true') {
@@ -174,58 +201,188 @@ async function runGitFreshness(): Promise<GatewayUpdateStatus> {
   };
 }
 
-async function computeUpdateStatus(force: boolean): Promise<GatewayUpdateStatus> {
-  const now = Date.now();
-  if (!force && cached && now - cachedAtMs < (cached.error ? TTL_ERR_MS : TTL_OK_MS)) {
-    const head = await git(['rev-parse', '--short', 'HEAD']);
-    if (head.exitCode === 0 && head.stdout.trim() === cached.localSha) return cached;
-  }
-  // Collapse concurrent callers (the UI fans out bootstrap RPCs) onto one fetch.
-  if (!inFlight) {
-    inFlight = runGitFreshness()
-      .then((status) => {
-        cached = status;
-        cachedAtMs = Date.now();
-        return status;
-      })
-      // runGitFreshness should not reject (the git() helper resolves on any exit),
-      // but a future edit that adds a throwing call must not permanently poison the
-      // cache: clear inFlight unconditionally and degrade to an error status.
-      .catch((err: unknown): GatewayUpdateStatus => {
-        const fallback: GatewayUpdateStatus = {
-          updateAvailable: false,
-          commitsBehind: 0,
-          commitsAhead: 0,
-          branch: 'main',
-          localSha: '',
-          remoteSha: null,
-          lastChecked: null,
-          updateCommand: UPDATE_COMMAND,
-          error: err instanceof Error ? err.message : String(err),
-        };
-        cached = fallback;
-        cachedAtMs = Date.now();
-        return fallback;
-      })
-      .finally(() => {
-        inFlight = null;
-      });
-  }
-  return inFlight;
+async function readInstalledCheckout(): Promise<Partial<GatewayUpdateStatus>> {
+  const current = updateObservation.snapshot();
+  const tracked = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  const branch =
+    tracked.exitCode === 0 && tracked.stdout.trim()
+      ? tracked.stdout.trim().replace(/^origin\//, '')
+      : current.branch;
+  const head = await git(['rev-parse', '--short', 'HEAD']);
+  if (head.exitCode !== 0) throw new Error('Could not read the installed gateway commit.');
+  const remote = await git(['rev-parse', '--short', `origin/${branch}`]);
+  if (remote.exitCode !== 0)
+    return {
+      branch,
+      localSha: head.stdout.trim(),
+      remoteSha: null,
+      updateAvailable: false,
+      commitsBehind: 0,
+      commitsAhead: 0,
+    };
+  const [behind, ahead] = await Promise.all([
+    git(['rev-list', '--count', `HEAD..origin/${branch}`]),
+    git(['rev-list', '--count', `origin/${branch}..HEAD`]),
+  ]);
+  if (behind.exitCode !== 0 || ahead.exitCode !== 0)
+    throw new Error('Could not compare the installed gateway commit.');
+  const commitsBehind = Number.parseInt(behind.stdout.trim(), 10) || 0;
+  return {
+    branch,
+    localSha: head.stdout.trim(),
+    remoteSha: remote.stdout.trim(),
+    commitsBehind,
+    commitsAhead: Number.parseInt(ahead.stdout.trim(), 10) || 0,
+    updateAvailable: commitsBehind > 0,
+  };
 }
 
-export async function gatewayStatus(params?: GatewayStatusParams): Promise<GatewayStatusResult> {
+function installedFailure(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (installedError !== message) {
+    installedError = message;
+    publish();
+  }
+}
+
+function refreshInstalled(kind: CheckoutObservationChange): Promise<void> {
+  if (sourceStopping) return Promise.resolve();
+  if (kind === 'checkout' || !installedDirty) installedDirty = kind;
+  if (installedRead) return installedRead;
+  installedRead = (async () => {
+    while (installedDirty) {
+      const next = installedDirty;
+      installedDirty = undefined;
+      if (next === 'checkout') {
+        updateObservation.installedChanged(await readInstalledCheckout());
+        const version = readGatewayVersion();
+        const notes = readGatewayReleaseNotes();
+        if (
+          version !== gatewayVersion ||
+          JSON.stringify(notes) !== JSON.stringify(gatewayReleaseNotes)
+        ) {
+          gatewayVersion = version;
+          gatewayReleaseNotes = notes;
+          publish();
+        }
+      }
+      const currentOperation = await readCheckoutUpdate();
+      if (JSON.stringify(operation) !== JSON.stringify(currentOperation)) {
+        operation = currentOperation;
+        publish();
+      }
+      installedLoaded = true;
+      if (installedError) {
+        installedError = undefined;
+        publish();
+      }
+    }
+  })()
+    .catch(installedFailure)
+    .finally(() => {
+      installedRead = undefined;
+    });
+  return installedRead;
+}
+
+/** Gateway startup owns this service and supplies authorized, visible observer interest. */
+export async function startGatewayUpdateObservation(options: {
+  hasInterest(): boolean;
+}): Promise<() => Promise<void>> {
+  if (sourceStarted) throw new Error('Gateway update observation already started');
+  sourceStarted = true;
+  sourceStopping = false;
+  updateObservation.start();
+  const generation = ++sourceGeneration;
+  const current = () => generation === sourceGeneration && !sourceStopping;
+  hasVisibleInterest = options.hasInterest;
+  let stopFiles: (() => Promise<void>) | undefined;
+  try {
+    stopFiles = await watchCheckoutUpdateChanges(
+      (kind) => {
+        if (current()) void refreshInstalled(kind);
+      },
+      (error) => {
+        if (current()) installedFailure(error);
+      },
+    );
+    await refreshInstalled('checkout');
+  } catch (error) {
+    sourceStopping = true;
+    sourceGeneration++;
+    hasVisibleInterest = () => false;
+    const remote = updateObservation.stop();
+    try {
+      if (stopFiles) await stopFiles();
+    } finally {
+      await remote;
+      await installedRead;
+      sourceStarted = false;
+    }
+    throw error;
+  }
+  const timer = setInterval(() => {
+    void updateObservation.tick().catch(installedFailure);
+  }, GATEWAY_UPDATE_ERROR_TTL_MS);
+  timer.unref();
+  return async () => {
+    clearInterval(timer);
+    sourceStopping = true;
+    sourceGeneration++;
+    hasVisibleInterest = () => false;
+    // Mark the sampler stopped before closing files; drain both sources before teardown returns.
+    const remote = updateObservation.stop();
+    try {
+      await stopFiles!();
+    } finally {
+      await remote;
+      await installedRead;
+      sourceStarted = false;
+    }
+  };
+}
+
+/** Admission can wake a due source immediately without waiting for the next slow service tick. */
+export function wakeGatewayUpdateObservation(): Promise<void> {
+  return updateObservation.tick();
+}
+
+/** Observer adoption and socket close withdraw the caller's legacy interest. */
+export function forgetGatewayUpdateClientInterest(clientId: string): void {
+  updateObservation.forgetLegacyClientInterest(clientId);
+}
+
+function sourceObservation(): UpstreamObservation {
+  const source = updateObservation.observation;
+  return installedError
+    ? {
+        ...source,
+        status: source.observedAt === undefined ? 'error' : 'stale',
+        error: { code: 'GATEWAY_INSTALLED_SOURCE_UNAVAILABLE', message: installedError },
+      }
+    : source;
+}
+
+export async function gatewayStatus(
+  params?: GatewayStatusParams,
+  interest: GatewayUpdateClientInterest = {},
+): Promise<GatewayStatusResult> {
+  await updateObservation.read(params?.refresh === true, interest);
+  if (!sourceStopping && (!sourceStarted || !installedLoaded)) await refreshInstalled('checkout');
+  await installedRead;
   const update = {
-    ...(await computeUpdateStatus(params?.refresh === true)),
+    ...updateObservation.snapshot(),
+    ...(installedError ? { error: installedError } : {}),
     checkoutPath: farmslotRoot,
     canUpdate: true,
-    operation: await readCheckoutUpdate(),
+    operation,
   };
   const listen = getGatewayListenSnapshot();
   return {
-    version: GATEWAY_VERSION,
+    version: gatewayVersion,
+    observation: sourceObservation(),
     update,
-    releaseNotes: GATEWAY_RELEASE_NOTES,
+    releaseNotes: gatewayReleaseNotes,
     ...(listen
       ? {
           listen: {

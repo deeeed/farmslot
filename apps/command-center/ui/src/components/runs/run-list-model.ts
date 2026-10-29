@@ -3,11 +3,15 @@ import {
   type FlowType,
   type Run,
   type RunLane,
+  type RunListProjection,
+  type RunListQuery,
+  type RunListResult,
   type RunStatus,
   slotMachineMap,
   type SlotStatus,
 } from '@farmslot/protocol';
 import { isSettledBlockedRun, selectRunList, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
@@ -171,6 +175,51 @@ export interface FilterRunListInput {
   sortBy: SortOption;
 }
 
+/** The filters a run list applies, apart from the rows it filters and their order. */
+export type RunListFilters = Omit<FilterRunListInput, 'runs' | 'familyRuns' | 'tagRuns' | 'sortBy'>;
+
+function runListQuery(input: RunListFilters): RunListQuery {
+  return {
+    scope: input.tab,
+    projects: input.globalFilters.projects,
+    machines: input.globalFilters.machines,
+    slotMachines: input.slotMachines,
+    status: input.tab === 'active' || input.statusFilter === 'all' ? undefined : input.statusFilter,
+    flow: input.flowFilter || undefined,
+    lane: input.laneFilter || undefined,
+    tag: input.tagFilter,
+    search: input.searchQuery,
+  };
+}
+
+/**
+ * Version lists: the collection's size and the filters' matches, counted from every live run's
+ * projection, so the counts stay whole while a view holds fewer rows than it lists.
+ */
+export function countRunListProjections(
+  projections: readonly RunListProjection[],
+  input: RunListFilters,
+): { total: number; filtered: number } {
+  const matching = selectRunList(projections, runListQuery(input));
+  return {
+    total: projections.length,
+    filtered: input.familyFilter
+      ? matching.filter((run) => run.familyId === input.familyFilter).length
+      : matching.length,
+  };
+}
+
+/** The run list's observation, on its host for proofs and the reconnect baseline to read. */
+export function runListObservationAttributes(observation: ResourceQueryState<RunListResult>): {
+  'data-runs-status': string;
+  'data-runs-observed-at': string;
+} {
+  return {
+    'data-runs-status': observation.status,
+    'data-runs-observed-at': String(observation.observedAt ?? ''),
+  };
+}
+
 export function filterRunList(input: FilterRunListInput): readonly Run[] {
   // Family and tag views are fetched once; live run updates land in `runs`.
   const live = new Map(input.runs.map((run) => [run.id, run]));
@@ -182,17 +231,7 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
         ? withLive(input.tagRuns)
         : input.runs
       : input.runs;
-  result = selectRunList(result, {
-    scope: input.tab,
-    projects: input.globalFilters.projects,
-    machines: input.globalFilters.machines,
-    slotMachines: input.slotMachines,
-    status: input.tab === 'active' || input.statusFilter === 'all' ? undefined : input.statusFilter,
-    flow: input.flowFilter || undefined,
-    lane: input.laneFilter || undefined,
-    tag: input.tagFilter,
-    search: input.searchQuery,
-  });
+  result = selectRunList(result, runListQuery(input));
   if (input.familyFilter) {
     result = result.filter((run) => run.familyId === input.familyFilter);
   }

@@ -6,8 +6,8 @@ import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
 import { GIT_DIFF_COMMAND, gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+import { reviewDiffHash } from '@farmslot/protocol';
 
-import { reviewDiffHash } from '../core/review-diff-identity.js';
 import { captureCurrentReviewSnapshot } from '../review/snapshots.js';
 import { makeVars } from '../runners/test-fixtures.js';
 

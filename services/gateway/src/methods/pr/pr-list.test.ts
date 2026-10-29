@@ -16,11 +16,17 @@ import {
 
 import { resetPRListCacheForTests, servePRList } from './list-cache.js';
 
+const retainRows = async (rows: readonly PRStatus[]): Promise<PRListFetchResult> => ({
+  prs: [...rows],
+  truncated: false,
+  failed: [],
+});
+
 function pr(n: number, project: string): PRStatus {
   return { pr: n, repo: 'org/app', title: `PR ${n}`, project, prState: 'OPEN' } as PRStatus;
 }
 
-test('project-scoped pr.list filters the warm copy, or rediscovers per project once that copy is capped', async () => {
+test('project-scoped pr.list seeds a complete warm copy or collects one shared project scope when capped', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'pr-list-'));
   const previous = process.env.FARMSLOT_DIR;
   process.env.FARMSLOT_DIR = dir;
@@ -41,7 +47,7 @@ test('project-scoped pr.list filters the warm copy, or rediscovers per project o
       truncated: false,
       failed: [],
     }));
-    const filtered = await prList({ project: 'b' }, fetchList);
+    const filtered = await prList({ project: 'b' }, fetchList, {}, retainRows);
     assert.deepEqual(calls, [], 'a complete warm copy is filtered, not refetched');
     assert.deepEqual(
       filtered.prs.map((p) => p.pr),
@@ -50,8 +56,8 @@ test('project-scoped pr.list filters the warm copy, or rediscovers per project o
 
     resetPRListCacheForTests();
     await servePRList(async () => ({ prs: [pr(1, 'a'), pr(2, 'b')], truncated: true, failed: [] }));
-    const rediscovered = await prList({ project: 'b' }, fetchList);
-    assert.deepEqual(calls, [{ project: 'b', force: undefined }]);
+    const rediscovered = await prList({ project: 'b' }, fetchList, {}, retainRows);
+    assert.deepEqual(calls, [{ project: 'b', force: false }]);
     assert.deepEqual(
       rediscovered.prs.map((p) => p.pr),
       [3],

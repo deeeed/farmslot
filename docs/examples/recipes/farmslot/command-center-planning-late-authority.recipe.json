@@ -1,0 +1,101 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "A held planning reply cannot cross a real role revocation",
+  "description": "ADR-071 authority proof on an isolated gateway. Warm five real collections, capture a real admin roadmap reply, downgrade the same actor to operator and deliver the unchanged frame on its actual new connection. A later current permitted read establishes stream ordering; forbidden UI/cache/SQLite facts must stay absent. Complete full revocation, recovery and owned-identity cleanup.",
+  "proofTargets": [
+    {
+      "id": "principalSwitchClearsFive",
+      "claim": "Switching accounts through the real UI deletes all five old saved planning collections."
+    },
+    {
+      "id": "partialRoleRefetchesAllowed",
+      "claim": "An operator downgrade retains farm access, freshly reads three allowed lists and clears saved roadmap/project facts."
+    },
+    {
+      "id": "heldReplyCannotCrossAuthority",
+      "claim": "The old admin roadmap request is retired, and its unchanged actual reply delivered on the verified operator connection cannot restore forbidden UI/cache/SQLite facts after a later permitted response is processed."
+    },
+    {
+      "id": "revokedRoleClearsFive",
+      "claim": "Revoking the disposable account's admin role clears all five saved and cached planning collections."
+    },
+    {
+      "id": "authorityRecoveryRefetchesFive",
+      "claim": "Restored authority refetches all five lists through their actual mounted views."
+    },
+    {
+      "id": "originalAccountRestored",
+      "claim": "The original identity/profile stay unchanged, the disposable actor is retired, and the owned browser session closes after restoration."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-planning-authority.mjs held-reply",
+        "timeout_ms": 180000,
+        "intent": "Prove actual role changes and an old planning reply on a new connection.",
+        "next": "switch"
+      },
+      "switch": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"principalSwitchClearsFive\":true",
+        "intent": "Normal account switching deletes the previous principal's saved planning rows.",
+        "proves": ["principalSwitchClearsFive"],
+        "next": "partial-role"
+      },
+      "partial-role": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"partialRoleRefetchesAllowed\":true",
+        "intent": "Refetch permitted lists and remove forbidden facts after the downgrade.",
+        "proves": ["partialRoleRefetchesAllowed"],
+        "next": "held-reply"
+      },
+      "revoke": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"revokedRoleClearsFive\":true",
+        "intent": "A real admin-role revocation clears every saved planning collection.",
+        "proves": ["revokedRoleClearsFive"],
+        "next": "recover"
+      },
+      "recover": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"authorityRecoveryRefetchesFive\":true",
+        "intent": "Restored authority requires new current reads on all five actual views.",
+        "proves": ["authorityRecoveryRefetchesFive"],
+        "next": "cleanup"
+      },
+      "cleanup": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"originalAccountRestored\":true",
+        "intent": "Restore the original account and retire the disposable identity.",
+        "proves": ["originalAccountRestored"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "held-reply": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"heldReplyCannotCrossAuthority\":true",
+        "intent": "Deliver an actual old reply after the real role change without restoring facts.",
+        "proves": ["heldReplyCannotCrossAuthority"],
+        "next": "revoke"
+      }
+    }
+  }
+}

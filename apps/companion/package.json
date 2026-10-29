@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/mobile",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "author": "Arthur Breton",
   "homepage": "https://siteed.net/projects/farmslot-farm",
   "private": true,
@@ -63,6 +63,7 @@
     "@expo/vector-icons": "^15.0.3",
     "@farmslot/adapter-rn": "workspace:*",
     "@farmslot/adapter-sdk": "workspace:*",
+    "@farmslot/local-store": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/theme": "workspace:*",
@@ -89,6 +90,7 @@
     "expo-screen-orientation": "~57.0.1",
     "expo-secure-store": "~57.0.1",
     "expo-splash-screen": "~57.0.5",
+    "expo-sqlite": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.2",
     "expo-updates": "~57.0.12",

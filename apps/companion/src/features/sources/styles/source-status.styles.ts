@@ -26,6 +26,7 @@ export const sourceStyles = StyleSheet.create({
   },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   button: { padding: spacing.sm, backgroundColor: colors.bgCardHover, borderRadius: radii.sm },
+  disabled: { opacity: 0.45 },
   error: { color: colors.statusFail, marginVertical: spacing.sm },
   placeholder: { color: colors.textMuted },
 });

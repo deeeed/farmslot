@@ -1,9 +1,28 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { assertTrustedSender, isAppPage, linkAction } from '../src/security.mjs';
+import {
+  assertTrustedSender,
+  CONTENT_SECURITY_POLICY,
+  isAppPage,
+  linkAction,
+} from '../src/security.mjs';
 
 const origin = 'http://127.0.0.1:49152';
+
+test('SQLite WebAssembly is allowed without granting JavaScript eval or widening worker sources', () => {
+  const directives = new Map(
+    CONTENT_SECURITY_POLICY.split(';').map((value) => {
+      const [name, ...sources] = value.trim().split(/\s+/);
+      return [name, sources];
+    }),
+  );
+  assert.deepEqual(directives.get('script-src'), ["'self'", "'wasm-unsafe-eval'"]);
+  assert.deepEqual(directives.get('worker-src'), ["'self'", 'blob:']);
+  assert.deepEqual(directives.get('default-src'), ["'self'"]);
+  for (const name of ['object-src', 'base-uri', 'form-action', 'frame-ancestors'])
+    assert.deepEqual(directives.get(name), ["'none'"]);
+});
 
 test('IPC requires the app window main frame and exact app origin', () => {
   const mainFrame = { url: `${origin}/cc/#fleet` };

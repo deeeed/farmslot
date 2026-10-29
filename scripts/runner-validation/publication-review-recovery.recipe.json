@@ -14,7 +14,7 @@
       },
       "identity-and-override": {
         "action": "command",
-        "cmd": "node --import tsx --test services/gateway/src/core/review-diff-identity.test.ts services/gateway/src/run-engine/review-diff-refresh.test.ts services/gateway/src/run-engine/gate-policy.test.ts services/gateway/src/run-engine/publication-review-policy.test.ts",
+        "cmd": "node --import tsx --test packages/protocol/test/runs/review-diff-identity.test.ts services/gateway/src/run-engine/review-diff-refresh.test.ts services/gateway/src/run-engine/gate-policy.test.ts services/gateway/src/run-engine/publication-review-policy.test.ts",
         "timeout_ms": 60000,
         "intent": "Review identity ignores presentation changes and rejects altered source evidence.",
         "next": "override-freshness"

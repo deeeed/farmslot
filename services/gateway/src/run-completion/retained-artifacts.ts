@@ -384,6 +384,8 @@ export async function retainCapturedRunArtifacts(input: {
   allowChanged?: boolean;
   existingRef?: RunArtifactBundleRef;
   sourceRef?: RunArtifactBundleRef;
+  /** Task-relative files the gateway wrote after `sourceRef`, read from the live task directory. */
+  gatewayFiles?: readonly string[];
   acquireMedia?: MaterializeRunBundleRequest['acquireMedia'];
   releaseStagingMedia?: boolean;
   commit(ref: RunArtifactBundleRef, missingData: string[]): Promise<void>;
@@ -442,6 +444,10 @@ export async function retainCapturedRunArtifacts(input: {
     run: input.run,
     artifacts,
     taskDir,
+    gatewayFiles: input.gatewayFiles && {
+      taskDir: path.dirname(input.run.taskFile),
+      paths: input.gatewayFiles,
+    },
     manifestDigest: input.manifestDigest,
     captureKey: JSON.stringify([
       input.run.taskFile,

@@ -22,13 +22,12 @@ import {
   visiblePressureGroups,
 } from './machine-pressure-model.js';
 
-test('gateway and node reconnects retry one debounced explicit pressure snapshot', () => {
+test('gateway reconnects retry one debounced explicit pressure snapshot', () => {
   const source = readFileSync(new URL('./fleet-canvas.ts', import.meta.url), 'utf8');
   assert.match(
     source,
     /onConnectionChange[\s\S]*s === 'connected'[\s\S]*scheduleResourcePressureRecoveryRefresh\(\)/u,
   );
-  assert.match(source, /Events\.NODE_CONNECTED[\s\S]*scheduleResourcePressureRecoveryRefresh\(\)/u);
   assert.match(
     source,
     /scheduleResourcePressureRecoveryRefresh[\s\S]*void this\.fetchResourcePressure\(\)/u,

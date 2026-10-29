@@ -13,11 +13,16 @@ export class SlotToggle extends LitElement {
   @property({ type: Boolean }) enabled = true;
   @property() mode: PoolSlotMode = 'dispatch';
   @property() lifecycle = '';
+  @property({ type: Boolean }) configurationReady = true;
 
   @state() private _busy = false;
 
   private get _locked(): boolean {
-    return this.lifecycle === 'busy';
+    return (
+      !this.configurationReady ||
+      gateway.connectionState !== 'connected' ||
+      this.lifecycle === 'busy'
+    );
   }
 
   static styles = css`
@@ -115,6 +120,7 @@ export class SlotToggle extends LitElement {
     return html`
       <button
         class=${cls}
+        ?disabled=${this._locked || this._busy}
         title=${this._locked
           ? `Cannot toggle: slot is ${this.lifecycle}`
           : on

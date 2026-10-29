@@ -55,3 +55,24 @@ export function decisionResolveRequest(
     ...(resourcePosture ? { resourcePosture } : {}),
   });
 }
+
+/**
+ * Sends a confirmed resolve through the literal transport `decisionResolveRequest` produced.
+ * A claim override is never a resolve; it keeps its own guarded path.
+ */
+export function sendDecisionResolveRequest<T = unknown>(
+  client: { request<R>(method: string, params?: unknown, timeout?: number | null): Promise<R> },
+  request: DecisionResolveRequest,
+  timeout?: number | null,
+): Promise<T> {
+  switch (request.method) {
+    case Methods.RUN_RESOLVE_DECISION:
+      return client.request<T>(Methods.RUN_RESOLVE_DECISION, request.params, timeout);
+    case Methods.IMPROVEMENT_APPLY:
+      return client.request<T>(Methods.IMPROVEMENT_APPLY, request.params, timeout);
+    case Methods.DECISION_RESOLVE:
+      return client.request<T>(Methods.DECISION_RESOLVE, request.params, timeout);
+    default:
+      return Promise.reject(new Error(`A decision resolve does not send ${request.method}`));
+  }
+}

@@ -12,9 +12,11 @@ import type {
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 import { Events as ProtocolEvents } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 interface ProviderCard {
   name: string;
@@ -60,6 +62,20 @@ export class LLMConfig extends LitElement {
   // error message before the user could read it.
   @state() private _loginCompleted: boolean = false;
   private _loginUnsubscribe: (() => void) | null = null;
+
+  private readonly _configQuery = new ResourceQueryController<LLMConfigGetResult>(this, () =>
+    this.applyConfiguration(),
+  );
+  private readonly _authQuery = new ResourceQueryController<LLMAuthListResult>(this, () =>
+    this.applyConfiguration(),
+  );
+  private readonly _tiersQuery = new ResourceQueryController<LLMTiersResult>(this, () =>
+    this.applyConfiguration(),
+  );
+  @state() private _configurationError = '';
+  private get configurationReady(): boolean {
+    return this._configQuery.ready && this._authQuery.ready;
+  }
 
   static override styles = css`
     :host {
@@ -204,81 +220,94 @@ export class LLMConfig extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this._loadData();
+    this._configQuery.setQuery(resourceQuery<LLMConfigGetResult>(Methods.LLM_CONFIG_GET));
+    this._authQuery.setQuery(resourceQuery<LLMAuthListResult>(Methods.LLM_AUTH_LIST));
+    this._tiersQuery.setQuery(resourceQuery<LLMTiersResult>(Methods.LLM_TIERS));
   }
 
-  private async _loadData() {
-    this._loading = true;
-    try {
-      const [configRes, authRes, tiersRes] = await Promise.all([
-        gateway.request(Methods.LLM_CONFIG_GET, {}) as Promise<LLMConfigGetResult>,
-        gateway.request(Methods.LLM_AUTH_LIST, {}) as Promise<LLMAuthListResult>,
-        gateway.request(Methods.LLM_TIERS, {}) as Promise<LLMTiersResult>,
-      ]);
-      this._config = configRes;
-      this._tiers = tiersRes.tiers;
+  private async _retryReadErrors() {
+    await Promise.all(
+      [this._configQuery, this._authQuery, this._tiersQuery]
+        .filter((query) => query.state.error)
+        .map((query) => query.retry()),
+    );
+  }
 
-      const knownProviders = ['codex-lb', 'openai-codex', 'openai', 'anthropic', 'google'];
-      this._providers = knownProviders.map((name) => {
-        const storedProfiles =
-          name === 'codex-lb'
-            ? []
-            : authRes.profiles.filter((p) => p.provider === name && p.hasKey);
-        const hasProfile = storedProfiles.length > 0;
-        const hasEnv = authRes.envProviders.includes(name);
-        const hasClaw = name !== 'codex-lb' && authRes.openclawProviders.includes(name);
-        // Resolution priority mirrors gateway resolveAuth: store > env > openclaw.
-        // Within store, prefer OAuth (richer metadata, supports refresh) and the
-        // latest expiry; fall back to the first non-oauth profile if no oauth exists.
-        const oauthProfile = storedProfiles
-          .filter((p) => p.type === 'oauth')
-          .sort((a, b) => (b.expires ?? 0) - (a.expires ?? 0))[0];
-        const activeProfile = oauthProfile ?? storedProfiles[0];
-        // TODO: render one card per profile rather than picking the freshest
-        // and hinting at the rest. For now we pick latest-expiry and surface
-        // a "+N other profiles" badge so users know stale ones are still
-        // around — the gateway-side Refresh fans out by provider prefix and
-        // hits all of them, but the operator can only manage them via CLI.
-        const otherProfileCount = activeProfile ? Math.max(0, storedProfiles.length - 1) : 0;
-        return {
-          name,
-          label:
-            name === 'codex-lb'
-              ? 'Codex load balancer'
-              : name === 'openai-codex'
-                ? 'OpenAI Codex'
-                : name.charAt(0).toUpperCase() + name.slice(1),
-          hasKey: hasProfile || hasEnv || hasClaw,
-          // Match gateway resolveAuth() precedence (auth-resolve.ts):
-          // farmslot store → openclaw → env → none. The previous UI ordering
-          // (env before openclaw) misled operators when both existed: card
-          // showed "env" while the gateway was actually using openclaw.
-          source: hasProfile ? 'store' : hasClaw ? 'openclaw' : hasEnv ? 'env' : 'none',
-          storedProfileId: activeProfile?.profileId,
-          storedType: activeProfile?.type,
-          otherProfileCount,
-          oauthExpires: oauthProfile?.expires,
-          oauthEmail: oauthProfile?.email,
-          oauthHasRefresh: oauthProfile?.hasRefresh,
-        };
-      });
-    } catch (err) {
-      console.error('[llm-config] load failed:', err);
+  private applyConfiguration(): void {
+    this._config = this._configQuery.state.data ?? null;
+    this._tiers = this._tiersQuery.state.data?.tiers ?? {};
+    const authRes = this._authQuery.state.data;
+    this._loading = [this._configQuery.state, this._authQuery.state, this._tiersQuery.state].some(
+      (value) => value.status === 'loading',
+    );
+    this._configurationError = [
+      this._configQuery.state.error?.message,
+      this._authQuery.state.error?.message,
+      this._tiersQuery.state.error?.message,
+    ]
+      .filter(Boolean)
+      .join('; ');
+    if (!authRes) {
+      this._providers = [];
+      return;
     }
-    this._loading = false;
+    const knownProviders = ['codex-lb', 'openai-codex', 'openai', 'anthropic', 'google'];
+    this._providers = knownProviders.map((name) => {
+      const storedProfiles =
+        name === 'codex-lb' ? [] : authRes.profiles.filter((p) => p.provider === name && p.hasKey);
+      const hasProfile = storedProfiles.length > 0;
+      const hasEnv = authRes.envProviders.includes(name);
+      const hasClaw = name !== 'codex-lb' && authRes.openclawProviders.includes(name);
+      // Resolution priority mirrors gateway resolveAuth: store > env > openclaw.
+      // Within store, prefer OAuth (richer metadata, supports refresh) and the
+      // latest expiry; fall back to the first non-oauth profile if no oauth exists.
+      const oauthProfile = storedProfiles
+        .filter((p) => p.type === 'oauth')
+        .sort((a, b) => (b.expires ?? 0) - (a.expires ?? 0))[0];
+      const activeProfile = oauthProfile ?? storedProfiles[0];
+      // TODO: render one card per profile rather than picking the freshest
+      // and hinting at the rest. For now we pick latest-expiry and surface
+      // a "+N other profiles" badge so users know stale ones are still
+      // around — the gateway-side Refresh fans out by provider prefix and
+      // hits all of them, but the operator can only manage them via CLI.
+      const otherProfileCount = activeProfile ? Math.max(0, storedProfiles.length - 1) : 0;
+      return {
+        name,
+        label:
+          name === 'codex-lb'
+            ? 'Codex load balancer'
+            : name === 'openai-codex'
+              ? 'OpenAI Codex'
+              : name.charAt(0).toUpperCase() + name.slice(1),
+        hasKey: hasProfile || hasEnv || hasClaw,
+        // Match gateway resolveAuth() precedence (auth-resolve.ts):
+        // farmslot store → openclaw → env → none. The previous UI ordering
+        // (env before openclaw) misled operators when both existed: card
+        // showed "env" while the gateway was actually using openclaw.
+        source: hasProfile ? 'store' : hasClaw ? 'openclaw' : hasEnv ? 'env' : 'none',
+        storedProfileId: activeProfile?.profileId,
+        storedType: activeProfile?.type,
+        otherProfileCount,
+        oauthExpires: oauthProfile?.expires,
+        oauthEmail: oauthProfile?.email,
+        oauthHasRefresh: oauthProfile?.hasRefresh,
+      };
+    });
   }
 
   private async _setProvider(provider: string) {
+    this._configQuery.requireReady();
+    this._authQuery.requireReady();
     await gateway.request(Methods.LLM_CONFIG_SET, { defaultProvider: provider });
-    this._config = { ...this._config!, defaultProvider: provider };
   }
 
   private async _addKey(provider: string) {
+    this._configQuery.requireReady();
+    this._authQuery.requireReady();
     const key = this._keyInput[provider];
     if (!key) return;
     await gateway.request(Methods.LLM_AUTH_ADD, { provider, type: 'api_key', credential: key });
     this._keyInput = { ...this._keyInput, [provider]: '' };
-    await this._loadData();
   }
 
   private async _testProvider(provider: string) {
@@ -299,6 +328,8 @@ export class LLMConfig extends LitElement {
   }
 
   private async _importLocal() {
+    this._configQuery.requireReady();
+    this._authQuery.requireReady();
     this._importStatus = 'Importing from local OpenClaw...';
     try {
       const res = await gateway.request(Methods.LLM_AUTH_IMPORT, {
@@ -312,13 +343,14 @@ export class LLMConfig extends LitElement {
           overwritten?: string[];
         },
       );
-      await this._loadData();
     } catch (err) {
       this._importStatus = `Error: ${(err as Error).message}`;
     }
   }
 
   private async _importRemote() {
+    this._configQuery.requireReady();
+    this._authQuery.requireReady();
     if (!this._importHost) return;
     this._importStatus = `Importing from ${this._importHost}...`;
     try {
@@ -336,7 +368,6 @@ export class LLMConfig extends LitElement {
           overwritten?: string[];
         },
       );
-      await this._loadData();
     } catch (err) {
       this._importStatus = `Error: ${(err as Error).message}`;
     }
@@ -358,6 +389,8 @@ export class LLMConfig extends LitElement {
   }
 
   private async _refreshProvider(provider: string, profileId: string | undefined) {
+    this._configQuery.requireReady();
+    this._authQuery.requireReady();
     this._refreshing = provider;
     try {
       if (!profileId) {
@@ -389,7 +422,6 @@ export class LLMConfig extends LitElement {
         if (fail.length) parts.push(`failed: ${fail.map((f) => f.error).join('; ')}`);
         this._refreshStatus = { ...this._refreshStatus, [provider]: parts.join(' — ') };
       }
-      await this._loadData();
     } catch (err) {
       this._refreshStatus = {
         ...this._refreshStatus,
@@ -400,6 +432,8 @@ export class LLMConfig extends LitElement {
   }
 
   private async _loginProviderStart(provider: string, profileId?: string) {
+    this._configQuery.requireReady();
+    this._authQuery.requireReady();
     if (this._loginUnsubscribe) {
       this._loginUnsubscribe();
       this._loginUnsubscribe = null;
@@ -432,7 +466,6 @@ export class LLMConfig extends LitElement {
       )) as LLMAuthLoginResult;
       if (res.ok) {
         this._loginStatus = `Signed in as ${res.email ?? res.profileId ?? 'OAuth profile'}`;
-        await this._loadData();
       } else {
         this._loginStatus = `Failed: ${res.error}`;
       }
@@ -461,9 +494,22 @@ export class LLMConfig extends LitElement {
   }
 
   override render() {
-    if (this._loading) return html`<div>Loading LLM config...</div>`;
+    if (this._loading && !this._config && !this._providers.length)
+      return html`<div>Loading LLM config...</div>`;
 
     return html`
+      ${this._configurationError
+        ? html`<p role="alert">
+            ${this._configurationError}
+            <button
+              ?disabled=${gateway.connectionState !== 'connected' ||
+              !this._authQuery.belongsToWorkspace}
+              @click=${() => this._retryReadErrors()}
+            >
+              Retry configuration read
+            </button>
+          </p>`
+        : nothing}
       <h2>LLM Provider Settings</h2>
 
       <div class="provider-grid">${this._providers.map((p) => this._renderProviderCard(p))}</div>
@@ -486,7 +532,9 @@ export class LLMConfig extends LitElement {
           Overwrite existing profiles (replaces local copies that share an id)
         </label>
         <div class="btn-row">
-          <button @click=${this._importLocal}>Import Local</button>
+          <button ?disabled=${!this.configurationReady} @click=${this._importLocal}>
+            Import Local
+          </button>
         </div>
         <div class="import-row">
           <input
@@ -506,7 +554,12 @@ export class LLMConfig extends LitElement {
               this._importUser = (e.target as HTMLInputElement).value;
             }}
           />
-          <button @click=${this._importRemote} ?disabled=${!this._importHost}>Import Remote</button>
+          <button
+            @click=${this._importRemote}
+            ?disabled=${!this.configurationReady || !this._importHost}
+          >
+            Import Remote
+          </button>
         </div>
         ${this._importStatus
           ? html`<div class="import-status">${this._importStatus}</div>`
@@ -570,7 +623,7 @@ export class LLMConfig extends LitElement {
     const expiryInfo = p.oauthExpires !== undefined ? this._formatExpiry(p.oauthExpires) : null;
     const supportsOAuthLogin = p.name === 'openai-codex';
     return html`
-      <div class="provider-card ${isActive ? 'active' : ''}">
+      <div class="provider-card ${isActive ? 'active' : ''}" data-provider=${p.name}>
         <div class="provider-name">
           ${p.label}
           ${isActive ? html`<span style="color:${colors.accent}">(active)</span>` : nothing}
@@ -620,6 +673,7 @@ export class LLMConfig extends LitElement {
             </p>`
           : html`<div class="key-row">
               <input
+                data-testid=${`llm-key-${p.name}`}
                 class="key-input"
                 type="password"
                 placeholder="sk-... or API key"
@@ -631,24 +685,36 @@ export class LLMConfig extends LitElement {
                   };
                 }}
               />
-              <button @click=${() => this._addKey(p.name)} ?disabled=${!this._keyInput[p.name]}>
+              <button
+                data-testid=${`llm-key-save-${p.name}`}
+                @click=${() => this._addKey(p.name)}
+                ?disabled=${!this.configurationReady || !this._keyInput[p.name]}
+              >
                 Save
               </button>
             </div>`}
         <div class="btn-row">
           ${!isActive
-            ? html`<button class="primary" @click=${() => this._setProvider(p.name)}>
+            ? html`<button
+                data-testid=${`llm-provider-active-${p.name}`}
+                class="primary"
+                ?disabled=${!this.configurationReady}
+                @click=${() => this._setProvider(p.name)}
+              >
                 Set Active
               </button>`
             : nothing}
-          <button @click=${() => this._testProvider(p.name)} ?disabled=${this._testing === p.name}>
+          <button
+            @click=${() => this._testProvider(p.name)}
+            ?disabled=${!this.configurationReady || this._testing === p.name}
+          >
             ${this._testing === p.name ? 'Testing...' : 'Test'}
           </button>
           ${p.oauthHasRefresh
             ? html`
                 <button
                   @click=${() => this._refreshProvider(p.name, p.storedProfileId)}
-                  ?disabled=${this._refreshing === p.name}
+                  ?disabled=${!this.configurationReady || this._refreshing === p.name}
                 >
                   ${this._refreshing === p.name ? 'Refreshing...' : 'Refresh OAuth'}
                 </button>
@@ -658,7 +724,8 @@ export class LLMConfig extends LitElement {
             ? html`
                 <button
                   @click=${() => this._loginProviderStart(p.name, p.storedProfileId)}
-                  ?disabled=${this._loginProvider === p.name && !this._loginCompleted}
+                  ?disabled=${!this.configurationReady ||
+                  (this._loginProvider === p.name && !this._loginCompleted)}
                 >
                   ${this._loginProvider === p.name && !this._loginCompleted
                     ? 'Signing in...'

@@ -15,8 +15,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
-  type DecisionListResult,
-  Events,
   evidenceAttestationAvailable,
   improvementApplyOutcome,
   type ImprovementApplyResult,
@@ -27,7 +25,6 @@ import {
   type ResourcePostureGateChoice,
   resourcePostureTransitionBaseline,
   reviewRoundBudgetLabel,
-  type Run,
   type RunDecision,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -35,9 +32,8 @@ import {
   type RuntimePostureStatusResult,
   slotPickerViewModel,
   type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   gateReviewLineageOptions,
   resultDecisionView,
@@ -49,6 +45,7 @@ import {
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer, type MediaViewerItem } from '../../components/MediaViewer';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { ResultDecisionPanel } from '../../components/ResultDecisionPanel';
 import { RunOutputReportViewer } from '../../components/RunOutputReportViewer';
 import {
@@ -56,11 +53,9 @@ import {
   TaskAcceptancePanel,
 } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
-import { useConnectedRefresh } from '../../hooks/useConnectedRefresh';
-import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useGateCriterionDrafts } from '../../hooks/useGateCriterionDrafts';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
-import { useReread } from '../../hooks/useReread';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { useRunAcceptance } from '../../hooks/useRunAcceptance';
 import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
@@ -82,7 +77,11 @@ import {
   decisionEvidenceMediaItems,
 } from '../../lib/decision-evidence-media';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
-import { decisionResolveRequest, gateActionReasons } from '../../lib/decision-resolve';
+import {
+  decisionResolveRequest,
+  gateActionReasons,
+  sendDecisionResolveRequest,
+} from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
 import {
@@ -92,8 +91,11 @@ import {
 } from '../../lib/evidence-media-items';
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
+import { nativeDecisionsQuery } from '../../lib/gateway-run-sync';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
+import { getResourceCache } from '../../lib/resource-cache';
 import { requestAnotherReviewRound } from '../../lib/review-budget';
+import { assertNativeDecisionReady, assertNativeRunReady } from '../../lib/run-collections';
 import {
   canResolveWithPostureChoice,
   initialRunPostureGateState,
@@ -109,7 +111,6 @@ import {
   runPostureGateSelect,
   type RunPostureGateState,
 } from '../../lib/run-posture-gate';
-import { runRefreshEventMatches } from '../../lib/run-refresh';
 import {
   hasRunWorkspaceDiff,
   selectSlotRecipeArtifactsForPreviewScope,
@@ -118,7 +119,6 @@ import {
   effectiveTaskProgressForRun,
   fallbackTaskProgressSummary,
   isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { baseStyles, colors, spacing } from '../../lib/theme';
@@ -223,19 +223,73 @@ export default function DecisionDetailScreen({
   const router = useRouter();
   const isFocused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
+  const profileId = useConnectionStore((s) => s.activeProfileId);
+  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
+  const scopeKey = JSON.stringify([resolvedDecisionId, profileId, authorityEpoch]);
+  const scope = useRef({ key: scopeKey, client });
+  if (scope.current.key !== scopeKey || scope.current.client !== client)
+    scope.current = { key: scopeKey, client };
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const captureCurrent = useCallback(() => {
+    const owner = scope.current;
+    const connected = client ? currentFarmConnection(client) : () => false;
+    return () => mounted.current && scope.current === owner && connected();
+  }, [client]);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
-  const connection = useConnectedTransport();
   const storeDecision = useDecisionStore((s) =>
     s.decisions.find((d) => d.id === resolvedDecisionId),
   );
-  const setDecisions = useDecisionStore((s) => s.setDecisions);
-  const removeDecision = useDecisionStore((s) => s.removeDecision);
-  const [decision, setDecision] = useState<DecisionDetail | null>(storeDecision ?? null);
-  const [error, setError] = useState<string | null>(null);
+  const decisionsObservation = useDecisionStore((s) => s.observation);
+  const sourceRunId =
+    decisionRunId(storeDecision ?? null) ?? (routeParamString(routeRunId).trim() || null);
+  const sourceQuery = useMemo(
+    () =>
+      sourceRunId ? resourceQuery<RunGetResult>('run.get', { runId: sourceRunId }) : undefined,
+    [sourceRunId],
+  );
+  const sourceObservation = useResourceQuery(sourceQuery);
+  const sourceRun = sourceObservation.data?.run ?? null;
+  const progressQuery = useMemo(() => {
+    const target = taskProgressRequestForRun(sourceRun);
+    return target ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target) : undefined;
+  }, [sourceRun?.id, sourceRun?.slotId, sourceRun?.reviewWorkspace?.workspaceId]);
+  const progressObservation = useResourceQuery(progressQuery);
+  const taskProgress = progressObservation.data?.structured ?? null;
+  const taskProgressError = progressObservation.error
+    ? `Task progress unavailable: ${progressObservation.error.message}`
+    : null;
+  const sourceDecision = sourceRun?.decisions.find(({ id }) => id === resolvedDecisionId);
+  const decision = useMemo<DecisionDetail | null>(
+    () =>
+      sourceRun && sourceDecision
+        ? decisionDetailFromRun(sourceRun, sourceDecision)
+        : (storeDecision ?? null),
+    [sourceRun, sourceDecision, storeDecision],
+  );
+  const actionsCurrent =
+    client?.connectionState === 'connected' &&
+    decisionsObservation.status === 'ready' &&
+    (!sourceRunId || sourceObservation.status === 'ready');
+  const [actionError, setError] = useState<string | null>(null);
+  const error =
+    actionError ??
+    sourceObservation.error?.message ??
+    progressObservation.error?.message ??
+    decisionsObservation.error?.message ??
+    (decisionsObservation.status === 'ready' &&
+    (!sourceRunId || sourceObservation.status === 'ready') &&
+    !decision
+      ? 'Decision is no longer pending.'
+      : null);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [documentViewer, setDocumentViewer] = useState<DecisionDocumentContent | null>(null);
-  const [sourceRun, setSourceRun] = useState<Run | null>(null);
   useEffect(() => {
     // ADR-063 Amendment 5: a gate lists its lineages; rows preselect their runner's latest
     // available one in WARM.
@@ -247,8 +301,6 @@ export default function DecisionDetailScreen({
       lineageOptions,
     });
   }, [resolvedDecisionId, reviewPicker, sourceRun]);
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
-  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const [loadingDocument, setLoadingDocument] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<{ decisionId: string; slotId: string } | null>(
     null,
@@ -256,51 +308,28 @@ export default function DecisionDetailScreen({
   const scrollRef = useRef<ScrollView>(null);
   const sectionOffsetsRef = useRef<Partial<Record<DecisionSectionKey, number>>>({});
   const documentAbortRef = useRef<AbortController | null>(null);
-  const sourceRunRequestRef = useRef(0);
   const requestedArtifactPath = routeParamString(routeArtifactPath).trim();
-
-  const decisionIdRef = useRef(resolvedDecisionId);
-  decisionIdRef.current = resolvedDecisionId;
-  const refreshDecision = useCallback(() => {
-    if (!client || !resolvedDecisionId) return;
-    const isCurrentFarm = currentFarmConnection(client);
-    // A re-presented result decision moves the screen to its new id; a read of the old one must not land.
-    const isCurrent = () => isCurrentFarm() && decisionIdRef.current === resolvedDecisionId;
-    if (!isCurrent()) return;
-    const fallbackRunId = routeParamString(routeRunId).trim();
+  useEffect(() => {
+    documentAbortRef.current?.abort();
     setError(null);
-    client
-      .request<DecisionListResult>('decision.list')
-      .then((result) => {
-        if (!isCurrent()) return;
-        setDecisions(result.decisions);
-        const next = result.decisions.find((d) => d.id === resolvedDecisionId) ?? null;
-        if (next) {
-          setDecision(next);
-          return null;
-        }
-        if (!fallbackRunId) {
-          setDecision(null);
-          setError('Decision is no longer pending.');
-          return null;
-        }
-        return client.request<RunGetResult>('run.get', { runId: fallbackRunId });
-      })
-      .then((result) => {
-        if (!isCurrent() || !result) return;
-        const runDecision = result.run.decisions?.find((d) => d.id === resolvedDecisionId) ?? null;
-        if (!runDecision) {
-          setDecision(null);
-          setError('Decision is no longer pending.');
-          return;
-        }
-        setDecision(decisionDetailFromRun(result.run, runDecision));
-      })
-      .catch((err: Error) => {
-        if (!isCurrent()) return;
-        setError(`Failed to refresh decision: ${err.message}`);
-      });
-  }, [client, resolvedDecisionId, routeRunId, setDecisions]);
+    setViewerUri(null);
+    setDocumentViewer(null);
+    setLoadingDocument(null);
+  }, [scopeKey]);
+
+  const refreshDecision = useCallback(() => {
+    const cache = getResourceCache();
+    if (!cache) return;
+    setError(null);
+    const current = captureCurrent();
+    void Promise.all([
+      cache.retry(nativeDecisionsQuery),
+      ...(sourceQuery ? [cache.retry(sourceQuery)] : []),
+      ...(progressQuery ? [cache.retry(progressQuery)] : []),
+    ]).catch((failure: unknown) => {
+      if (current()) setError(failure instanceof Error ? failure.message : String(failure));
+    });
+  }, [sourceQuery, progressQuery, captureCurrent]);
 
   useEffect(() => {
     return () => {
@@ -308,18 +337,6 @@ export default function DecisionDetailScreen({
     };
   }, []);
 
-  useEffect(() => {
-    if (storeDecision) {
-      setDecision(storeDecision);
-      return;
-    }
-    refreshDecision();
-  }, [refreshDecision, storeDecision]);
-
-  const sourceRunId = useMemo(() => {
-    const routeFallbackRunId = routeParamString(routeRunId).trim();
-    return decisionRunId(decision) ?? (routeFallbackRunId ? routeFallbackRunId : null);
-  }, [decision, routeRunId]);
   const focusGateClaim = (claimId: string) => {
     if (!sourceRunId || !decision) return;
     const href = gateReviewHref(sourceRunId, decision.id);
@@ -329,11 +346,7 @@ export default function DecisionDetailScreen({
     () => enrichDecisionWithRunContext(decision, sourceRun),
     [decision, sourceRun],
   );
-  const reviewPublication = useReviewPublication(sourceRun, decision, (run) => {
-    setSourceRun(run);
-    const refreshed = run.decisions.find((item) => item.id === decision?.id);
-    if (refreshed) setDecision(decisionDetailFromRun(run, refreshed));
-  });
+  const reviewPublication = useReviewPublication(sourceRun, decision);
   const presentation = useMemo(
     () => (decisionWithRunContext ? presentDecision(decisionWithRunContext) : null),
     [decisionWithRunContext],
@@ -529,139 +542,23 @@ export default function DecisionDetailScreen({
     () => (presentation ? diffArtifactCandidate(presentation.artifactManifest) : undefined),
     [presentation],
   );
-  const refreshSourceRun = useCallback(
-    async (reason: string) => {
-      if (!client || !sourceRunId) return;
-      const requestId = sourceRunRequestRef.current + 1;
-      sourceRunRequestRef.current = requestId;
-      try {
-        const result = await client.request<RunGetResult>('run.get', { runId: sourceRunId });
-        if (sourceRunRequestRef.current !== requestId) return;
-        setSourceRun(result.run);
-      } catch (err) {
-        if (sourceRunRequestRef.current !== requestId) return;
-        setSourceRun(null);
-        setError(
-          `Failed to refresh run workspace context after ${reason}: ${(err as Error).message}`,
-        );
-      }
-    },
-    [client, sourceRunId],
-  );
-
-  const readRecipeRuns = useMemo(
+  const recipeQuery = useMemo(
     () =>
-      client && sourceRunId
-        ? async () =>
-            (
-              await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-                runId: sourceRunId,
-              })
-            ).recipeRuns
-        : null,
-    [client, sourceRunId],
+      sourceRunId
+        ? resourceQuery<RunRecipeRunsForRunResult>('run.recipeRunsForRun', { runId: sourceRunId })
+        : undefined,
+    [sourceRunId],
   );
-  // A failed re-read keeps the recipe pairs, and an open fallback viewer, on screen.
-  const recipeRead = useReread(
-    readRecipeRuns,
-    (reason, message) =>
-      `Failed to refresh recipe evidence availability after ${reason}: ${message}`,
-  );
-  const refreshRecipeRuns = recipeRead.refresh;
-  const recipeRuns = useMemo(() => recipeRead.value ?? [], [recipeRead.value]);
-  const recipeArtifactCount = useMemo(
-    () =>
-      recipeRead.value?.reduce((count, group) => count + artifactsForRecipeRun(group).length, 0) ??
-      null,
-    [recipeRead.value],
-  );
-  const recipeAvailabilityError = recipeRead.error;
+  const recipeObservation = useResourceQuery(recipeQuery);
+  const recipeRuns = recipeObservation.data?.recipeRuns ?? [];
+  const recipeArtifactCount = recipeObservation.data
+    ? recipeObservation.data.recipeRuns.reduce(
+        (count, group) => count + artifactsForRecipeRun(group).length,
+        0,
+      )
+    : null;
+  const recipeAvailabilityError = recipeObservation.error?.message ?? null;
 
-  useEffect(() => {
-    if (!sourceRunId) {
-      setSourceRun(null);
-      return;
-    }
-    // Each reconnect re-reads: the publish guard judges this run's reviews.
-    if (connection === null) return;
-    void refreshSourceRun('connect');
-  }, [connection, refreshSourceRun, sourceRunId]);
-
-  // Each reconnect re-reads, as the source run above does, keeping the recipe pairs on screen.
-  useConnectedRefresh(refreshRecipeRuns, Boolean(sourceRunId));
-
-  useEffect(() => {
-    if (!client || !sourceRunId) return;
-    const handleRunEvent = (payload: unknown, reason: string) => {
-      const event = payload as { run?: Run; runId?: string };
-      if (!runRefreshEventMatches(sourceRunId, event)) return;
-      if (event.run?.id === sourceRunId) {
-        sourceRunRequestRef.current += 1;
-        setSourceRun(event.run);
-      } else {
-        void refreshSourceRun(reason);
-      }
-      void refreshRecipeRuns(reason, false);
-      refreshDecision();
-    };
-    const unsubscribers = [
-      client.subscribe(Events.RUN_UPDATED, (payload) => handleRunEvent(payload, 'run.updated')),
-      client.subscribe(Events.RUN_COMPLETED, (payload) => handleRunEvent(payload, 'run.completed')),
-      client.subscribe(Events.RUN_STEP_COMPLETED, (payload) =>
-        handleRunEvent(payload, 'run.step.completed'),
-      ),
-      client.subscribe(Events.RUN_DECISION_NEW, (payload) =>
-        handleRunEvent(payload, 'run.decision.new'),
-      ),
-      client.subscribe(Events.RUN_DECISION_RESOLVED, (payload) =>
-        handleRunEvent(payload, 'run.decision.resolved'),
-      ),
-      client.subscribe(Events.RUN_DECISION_UPDATED, (payload) =>
-        handleRunEvent(payload, 'run.decision.updated'),
-      ),
-    ];
-    return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
-    };
-  }, [client, refreshDecision, refreshRecipeRuns, refreshSourceRun, sourceRunId]);
-
-  const fetchTaskProgress = useCallback(() => {
-    const params = taskProgressRequestForRun(sourceRun);
-    if (!client || !params) return Promise.resolve();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
-      .then((result) => {
-        setTaskProgress(result.structured ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((err: Error) => {
-        setTaskProgressError(`Task progress unavailable: ${err.message}`);
-      });
-  }, [client, sourceRun?.id, sourceRun?.slotId, sourceRun?.reviewWorkspace?.workspaceId]);
-
-  useEffect(() => {
-    if (!client || !sourceRun) return;
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!shouldAcceptTaskProgressUpdate(sourceRun, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, sourceRun]);
-
-  useEffect(() => {
-    if (!isWorkerProgressActive(sourceRun)) {
-      setTaskProgress(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, sourceRun]);
   const markOutputClaimUntestable = async (claimId: string, reason: string) => {
     const gate = sourceRun?.decisions.find(
       ({ id }) => id === (outputReviewDecision?.id ?? resolvedDecisionId),
@@ -669,16 +566,8 @@ export default function DecisionDetailScreen({
     const model = outputAcceptance.evidenceModel;
     if (!client || !sourceRun || !gate || !model) return;
     try {
-      const result = await requestClaimUntestableOverride(
-        client,
-        sourceRun.id,
-        gate,
-        model,
-        claimId,
-        reason,
-      );
-      setSourceRun(result.run);
-      refreshDecision();
+      assertNativeRunReady(sourceRun.id, sourceRun);
+      await requestClaimUntestableOverride(client, sourceRun.id, gate, model, claimId, reason);
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     }
@@ -689,9 +578,9 @@ export default function DecisionDetailScreen({
   ) => {
     if (!client || !sourceRun || !decision) return;
     try {
+      assertNativeRunReady(sourceRun.id, sourceRun);
+      assertNativeDecisionReady(decision.id);
       await send(decision, sourceRun.id);
-      refreshDecision();
-      await refreshSourceRun('gate blocker action');
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     }
@@ -699,6 +588,16 @@ export default function DecisionDetailScreen({
   const resolveAction = useCallback(
     (actionId: string, selectionData?: Record<string, unknown>, reason?: string) => {
       if (!client || !decision) return;
+      try {
+        assertNativeDecisionReady(decision.id);
+        if (sourceRun) assertNativeRunReady(sourceRun.id, sourceRun);
+      } catch (error) {
+        Alert.alert(
+          'Decision is not current',
+          error instanceof Error ? error.message : String(error),
+        );
+        return;
+      }
       const gateReasons = gateActionReasons(
         actionId,
         draftState.attestationReason,
@@ -747,7 +646,7 @@ export default function DecisionDetailScreen({
         return;
       }
       const reviewStillCurrent = curatedPost ? reviewPublication.captureCurrent() : null;
-      const { method, params } = decisionResolveRequest(
+      const resolveRequest = decisionResolveRequest(
         curatedPost ? decisionWithRunContext! : decision,
         actionId,
         resourcePosture,
@@ -759,6 +658,7 @@ export default function DecisionDetailScreen({
         gateReasons.evidenceAttestationReason,
         reason ?? gateReasons.reason,
       );
+      const { method } = resolveRequest;
 
       // Transition ids already on screen. `run.resolveDecision` returns before
       // reconciliation finishes, so the run it returns still carries the previous
@@ -776,6 +676,16 @@ export default function DecisionDetailScreen({
         {
           text: 'Send',
           onPress: () => {
+            try {
+              assertNativeDecisionReady(decision.id);
+              if (sourceRun) assertNativeRunReady(sourceRun.id, sourceRun);
+            } catch (error) {
+              Alert.alert(
+                'Decision is not current',
+                error instanceof Error ? error.message : String(error),
+              );
+              return;
+            }
             if (reviewStillCurrent && !reviewStillCurrent()) {
               Alert.alert('Review changed', 'Inspect the current review before posting.');
               return;
@@ -786,7 +696,9 @@ export default function DecisionDetailScreen({
               Alert.alert('Publish approval is disabled', withheldNow);
               return;
             }
+            const current = captureCurrent();
             const scope = draftState.model.scopeVersion;
+            // Writes stay direct; the cached run and decisions observe their notifications.
             void draftState
               .submit({
                 run: sourceRun,
@@ -795,11 +707,11 @@ export default function DecisionDetailScreen({
                 reason: draftState.reasonInput,
                 selectionData,
                 resourcePosture,
-                applied: setSourceRun,
-                fallback: () => client.request(method, params),
+                applied: () => {},
+                fallback: () => sendDecisionResolveRequest(client, resolveRequest),
               })
               .then((result) => {
-                if (scope !== draftState.model.scopeVersion) return;
+                if (!current() || scope !== draftState.model.scopeVersion) return;
                 if (method === Methods.IMPROVEMENT_APPLY) {
                   const outcome = improvementApplyOutcome(result as ImprovementApplyResult);
                   if (!outcome.passed) {
@@ -808,7 +720,6 @@ export default function DecisionDetailScreen({
                   }
                 }
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                removeDecision(decision.id);
                 if (embedded && sourceRunId) {
                   router.replace({
                     pathname: '/workspace/run/[runId]/evidence',
@@ -848,7 +759,9 @@ export default function DecisionDetailScreen({
                   if (alert) Alert.alert(alert.title, alert.message);
                 });
               })
-              .catch(draftState.reportError(scope, 'Failed to resolve'));
+              .catch((err: Error) => {
+                if (current()) draftState.reportError(scope, 'Failed to resolve')(err);
+              });
           },
         },
       ]);
@@ -863,7 +776,6 @@ export default function DecisionDetailScreen({
       gateKey,
       postureAvailability,
       postureGate,
-      removeDecision,
       reviewPublication,
       router,
       runPostureStatus.state,
@@ -891,28 +803,33 @@ export default function DecisionDetailScreen({
       const controller = new AbortController();
       documentAbortRef.current = controller;
       setLoadingDocument(artifact.path);
+      const current = captureCurrent();
       gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();
         })
-        .then((body) =>
-          setDocumentViewer({
-            title: documentTitle(artifact.path),
-            body,
-            sharedArtifact,
-          }),
-        )
+        .then((body) => {
+          if (current())
+            setDocumentViewer({ title: documentTitle(artifact.path), body, sharedArtifact });
+        })
         .catch((err: Error) => {
           // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
-          if (err.name === 'AbortError') return;
+          if (err.name === 'AbortError' || !current()) return;
           Alert.alert('Failed to load document', err.message);
         })
         .finally(() => {
-          if (!controller.signal.aborted) setLoadingDocument(null);
+          if (!controller.signal.aborted && current()) setLoadingDocument(null);
         });
     },
-    [artifactAuthHeaders, checkedEvidenceModel, gatewayUrl, presentation?.runId, sourceRun?.slotId],
+    [
+      artifactAuthHeaders,
+      checkedEvidenceModel,
+      gatewayUrl,
+      presentation?.runId,
+      captureCurrent,
+      sourceRun?.slotId,
+    ],
   );
 
   const outputReport = useRunOutputReport({
@@ -920,6 +837,7 @@ export default function DecisionDetailScreen({
     runId: presentation?.runId,
     gatewayUrl,
     authHeaders: artifactAuthHeaders,
+    contextKey: scopeKey,
   });
 
   const openDiffArtifact = useCallback(
@@ -1114,6 +1032,11 @@ export default function DecisionDetailScreen({
 
   return (
     <View style={baseStyles.container}>
+      <ResourceReadStatus observation={decisionsObservation} label="decisions" />
+      {sourceRunId ? <ResourceReadStatus observation={sourceObservation} label="run" /> : null}
+      {progressQuery ? (
+        <ResourceReadStatus observation={progressObservation} label="task progress" />
+      ) : null}
       {!embedded ? (
         <Stack.Screen
           options={{
@@ -1640,7 +1563,10 @@ export default function DecisionDetailScreen({
               evidenceModel={humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel}
               reviewer={humanGate?.acceptance.reviewer ?? outputAcceptance.reviewer}
               onRecordVisualReview={
-                humanGate?.acceptance.recordVisualReview ?? outputAcceptance.recordVisualReview
+                actionsCurrent && (humanGate?.acceptance ?? outputAcceptance).commandsReady
+                  ? (humanGate?.acceptance.recordVisualReview ??
+                    outputAcceptance.recordVisualReview)
+                  : undefined
               }
               onFocusClaim={(offset) => {
                 const section = sectionOffsetsRef.current.evidence;
@@ -1756,8 +1682,16 @@ export default function DecisionDetailScreen({
                 judgmentRows={outputAcceptance.evidenceModel?.judgmentRows(
                   outputAcceptance.reviewer,
                 )}
-                onRecordVisualReview={outputAcceptance.recordVisualReview}
-                onMarkUntestable={markOutputClaimUntestable}
+                onRecordVisualReview={
+                  actionsCurrent && outputAcceptance.commandsReady
+                    ? outputAcceptance.recordVisualReview
+                    : undefined
+                }
+                onMarkUntestable={
+                  actionsCurrent && outputAcceptance.commandsReady
+                    ? markOutputClaimUntestable
+                    : undefined
+                }
                 acceptanceStatus={outputAcceptance.acceptanceStatus}
                 acceptanceCriteria={outputAcceptance.acceptanceCriteria}
                 error={outputAcceptance.error}
@@ -1854,7 +1788,7 @@ export default function DecisionDetailScreen({
             <ResourcePostureGatePanel
               gate={postureGate}
               availability={postureAvailability}
-              disabled={!client || !sourceRunId}
+              disabled={!actionsCurrent || !sourceRunId}
               onSelect={selectPostureChoice}
             />
           )}
@@ -1874,7 +1808,7 @@ export default function DecisionDetailScreen({
                   label: `${candidate.slotId}\n${candidate.branch || 'default branch'} · ${candidate.machine} · ${candidate.lifecycle} · score ${candidate.score}`,
                 }))}
                 value={slotPicker.selectedSlotId ?? ''}
-                disabled={!client}
+                disabled={!actionsCurrent}
                 onChange={(slotId) => setSelectedSlot({ decisionId: decision.id, slotId })}
               />
               {slotPicker.candidates.length === 0 ? (
@@ -1907,7 +1841,7 @@ export default function DecisionDetailScreen({
                     actions={humanGate.actions}
                     evidenceModel={humanGate.acceptance.evidenceModel}
                     reviewer={humanGate.acceptance.reviewer}
-                    busy={!client}
+                    busy={!actionsCurrent}
                     reviewPicker={reviewPicker}
                     onRequestReview={(reviewRequest) =>
                       resolveAction('request-review', { reviewRequest })
@@ -1935,7 +1869,7 @@ export default function DecisionDetailScreen({
                         ? { ...action, disabledReason: 'Run context is unavailable.' }
                         : action,
                     )}
-                    disabled={!client}
+                    disabled={!actionsCurrent}
                     reviewDisabled={reviewBudget?.remaining === 0}
                     sendingActionId={draftState.model.submissionActionId}
                     reviewPicker={reviewPicker}
@@ -1943,21 +1877,25 @@ export default function DecisionDetailScreen({
                     judgmentRows={humanGate.acceptance.evidenceModel?.judgmentRows(
                       humanGate.acceptance.reviewer,
                     )}
-                    onRecordVisualReview={humanGate.acceptance.recordVisualReview}
-                    onRefreshPackage={() => {
-                      if (!client || !sourceRunId) return;
-                      void client
-                        .request('run.refreshPublishPackage', {
-                          runId: sourceRunId,
+                    onRecordVisualReview={
+                      actionsCurrent && humanGate.acceptance.commandsReady
+                        ? humanGate.acceptance.recordVisualReview
+                        : undefined
+                    }
+                    onRefreshPackage={async () => {
+                      if (!client || !sourceRun || !decision) return;
+                      const current = captureCurrent();
+                      try {
+                        assertNativeRunReady(sourceRun.id, sourceRun);
+                        assertNativeDecisionReady(decision.id);
+                        await client.request(Methods.RUN_REFRESH_PUBLISH_PACKAGE, {
+                          runId: sourceRun.id,
                           decisionId: decision.id,
-                        })
-                        .then(() => {
-                          refreshDecision();
-                          return refreshSourceRun('package refresh');
-                        })
-                        .catch((failure) =>
-                          setError(failure instanceof Error ? failure.message : String(failure)),
-                        );
+                        });
+                      } catch (failure) {
+                        if (current())
+                          setError(failure instanceof Error ? failure.message : String(failure));
+                      }
                     }}
                     pendingVisualClaimIds={
                       humanGate.acceptance.evidenceModel?.pendingVisualClaimIds
@@ -1980,12 +1918,13 @@ export default function DecisionDetailScreen({
               ) : decision.payload?.kind === 'result-decision' ? (
                 <ResultDecisionPanel
                   view={resultDecisionView({ id: decision.id, payload: decision.payload })}
-                  disabled={!client}
+                  disabled={!actionsCurrent}
                   onAction={(actionId, reason) => resolveAction(actionId, undefined, reason)}
                 />
               ) : (
                 presentation.actions.map((action) => {
                   const disabled =
+                    !actionsCurrent ||
                     withheldActions.has(action.id) ||
                     (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
                       (!isValidEvidenceAttestationReason(draftState.attestationReason) ||
@@ -2004,7 +1943,7 @@ export default function DecisionDetailScreen({
                         key={action.id}
                         model={reviewPicker}
                         testID="companion-gate-review"
-                        disabled={!client || disabled || reviewBudget?.remaining === 0}
+                        disabled={!actionsCurrent || disabled || reviewBudget?.remaining === 0}
                         action="request-review"
                         actionLabel={action.label}
                         onInvoke={(actionId, payload) =>
@@ -2072,7 +2011,11 @@ export default function DecisionDetailScreen({
           judgmentRows={
             outputAcceptance.evidenceModel?.judgmentRows(outputAcceptance.reviewer) ?? []
           }
-          onRecordVisualReview={outputAcceptance.recordVisualReview}
+          onRecordVisualReview={
+            actionsCurrent && outputAcceptance.commandsReady
+              ? outputAcceptance.recordVisualReview
+              : undefined
+          }
           onOpenEvidence={(criterionId, path) => {
             if (!sourceRunId) return;
             router.push(

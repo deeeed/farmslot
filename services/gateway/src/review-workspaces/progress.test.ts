@@ -8,6 +8,8 @@ import { test } from 'node:test';
 
 import { Events, type TaskProgressResult } from '@farmslot/protocol';
 
+import { resourceRevisions } from '../resources/revisions.js';
+
 import {
   createReviewWorkspaceProgressPublisher,
   WORKSPACE_PROGRESS_INTERVAL_MS,
@@ -134,6 +136,31 @@ function harness(options: { isCurrent?: () => boolean } = {}) {
 let nextProgress: () => TaskProgressResult = () => {
   throw new Error('no progress fixture installed');
 };
+
+test('workspace progress invalidates a failed read once and announces recovery', async () => {
+  const h = harness();
+  const key = { family: 'progress', runId: 'run-workspace' } as const;
+  const before = resourceRevisions.revision(key);
+  nextProgress = () => {
+    throw new Error('unreadable checklist');
+  };
+  await h.publisher.publish();
+  assert.equal(resourceRevisions.revision(key), before + 1);
+  h.advance();
+  await h.publisher.publish();
+  assert.equal(
+    resourceRevisions.revision(key),
+    before + 1,
+    'The same failure cannot drive a read retry loop',
+  );
+  nextProgress = () => projection({});
+  h.advance();
+  await h.publisher.publish();
+  assert.equal(resourceRevisions.revision(key), before + 2);
+  h.advance();
+  await h.publisher.publish();
+  assert.equal(resourceRevisions.revision(key), before + 2);
+});
 
 test('a signal mark arriving after the checkbox still publishes its timing', async () => {
   const h = harness();

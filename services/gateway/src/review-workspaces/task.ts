@@ -42,6 +42,7 @@ import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
 import { farmslotRoot, loadProjectVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import {
   ORCHESTRATOR_LOCALITY,
   slotCopyDir,
@@ -841,26 +842,60 @@ async function progressLocation(
   };
 }
 
+/** Resolve ownership/locality without reading checklist bytes or creating another producer. */
+export async function reviewWorkspaceProgressLocation(
+  runId: string,
+): Promise<ReviewWorkspaceProgressSource> {
+  return progressLocation(ownedRun(runId, defaults), defaults);
+}
+
 /**
  * Read progress from the same confined, owned task as completion validation.
  *
  * Returns the location as well as the markdown so the caller can project the
  * child checklist units and the acceptance ledger beside it through the shared
- * read layers, instead of the checklist text alone.
+ * read layers. A selected step reads only its declared artifact; the location
+ * still identifies the parent task for its acceptance ledger.
  */
 export async function readReviewWorkspaceProgress(
   runId: string,
   deps: Dependencies = defaults,
+  taskFile?: string,
 ): Promise<ReviewWorkspaceProgressSource & { markdown: string }> {
   const run = ownedRun(runId, deps);
+  const relative = taskFile ? selectedProgressArtifact(run, deps, taskFile) : 'CHECKLIST.md';
   const location = await progressLocation(run, deps);
-  if (run.reviewWorkspace!.cleanedAt) {
-    return { ...location, markdown: await readFile(location.checklistPath, 'utf8') };
-  }
   return {
     ...location,
-    markdown: await confinedRead(location.io, location.taskDir, 'CHECKLIST.md'),
+    markdown: await confinedRead(location.io, location.taskDir, relative),
   };
+}
+
+/** A selected step can name its retained artifact, never another task file. */
+function selectedProgressArtifact(run: Run, deps: Dependencies, taskFile: string): string {
+  const roots = [run.reviewWorkspace!.taskPath, viewDirFor(run.id, deps)];
+  const relative = (file: string): string | null => {
+    if (!file || file.split('/').includes('..')) return null;
+    const root = path.posix.isAbsolute(file)
+      ? roots.find((candidate) => within(candidate, file))
+      : undefined;
+    if (path.posix.isAbsolute(file) && !root) return null;
+    const selected = root ? path.posix.relative(root, file) : path.posix.normalize(file);
+    return selected && selected !== '.' ? selected : null;
+  };
+  const selected = relative(taskFile);
+  if (
+    !selected ||
+    !run.steps.some((step) => {
+      const declared = step.outputs?.taskProgressArtifactPath;
+      return typeof declared === 'string' && relative(declared) === selected;
+    })
+  )
+    throw new GatewayMethodError(
+      'NOT_FOUND',
+      'The requested progress artifact is not recorded within this review task.',
+    );
+  return selected;
 }
 
 /**

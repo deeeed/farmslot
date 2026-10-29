@@ -14,21 +14,20 @@ import type {
   RunListResult,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { readConfiguration } from '../../configuration-resources.js';
 import { gateway } from '../../gateway-client.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 
-import {
-  filterRunsByExactTicket,
-  filterRunsForComparisonPicker,
-} from './dispatch-wizard-helpers.js';
+import { filterRunsByExactTicket } from './dispatch-wizard-helpers.js';
 import {
   buildDispatchCandidatesParams,
   type DispatchCandidatesDraft,
 } from './dispatch-wizard-payload.js';
 
 export async function requestProjectConfigs(): Promise<ProjectConfig[]> {
-  const res = await gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
-  return res.projects;
+  return (await readConfiguration<ConfigProjectsResult>(Methods.CONFIG_PROJECTS)).projects;
 }
 
 export async function requestTemplateOptions(
@@ -41,19 +40,10 @@ export async function requestTemplateOptions(
     executionTemplateId?: string;
   } = {},
 ): Promise<ConfigTemplateOptionsResult> {
-  return gateway.request<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
+  return readConfiguration<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
     project,
     flowType,
     ...filters,
-  });
-}
-
-export async function requestUnfilteredTemplateOptions(
-  project: string,
-): Promise<ConfigTemplateOptionsResult> {
-  return gateway.request<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
-    project,
-    unfiltered: true,
   });
 }
 
@@ -62,7 +52,7 @@ export async function requestExecutionTemplatePreview(
   flowType: FlowType,
   option: ExecutionTemplateCatalogOption,
 ): Promise<ConfigTemplatePreviewResult> {
-  return gateway.request<ConfigTemplatePreviewResult>(Methods.CONFIG_TEMPLATE_PREVIEW, {
+  return readConfiguration<ConfigTemplatePreviewResult>(Methods.CONFIG_TEMPLATE_PREVIEW, {
     project,
     flowType,
     executionTemplateId: option.id,
@@ -143,36 +133,29 @@ export async function lookupPriorRunsForDispatchWizard(
   if (input.mockMode) {
     return filterRunsByExactTicket(input.stateRuns, input.search, input.normalizedTicket);
   }
-  const res = await gateway.request<RunListResult>(Methods.RUN_LIST, {
+  const cache = getResourceCache();
+  const owner = getResourceWorkspaceKey();
+  const connection = gateway.resourceConnectionId;
+  if (!cache || gateway.connectionState !== 'connected' || gateway.workspaceAccess !== 'farm')
+    throw new Error('Wait for current runs before looking up prior work');
+  const query = resourceQuery<RunListResult>(Methods.RUN_LIST, {
     search: input.search,
     limit: 50,
   } satisfies RunListParams);
+  let state = cache.read(query);
+  if (state.status !== 'ready') state = await cache.retry(query);
+  if (
+    cache !== getResourceCache() ||
+    owner !== getResourceWorkspaceKey() ||
+    connection !== gateway.resourceConnectionId ||
+    gateway.connectionState !== 'connected' ||
+    gateway.workspaceAccess !== 'farm'
+  )
+    throw new Error('Run lookup owner changed during read');
+  if (state.status !== 'ready' || !state.data)
+    throw new Error(state.error?.message ?? 'Wait for current runs before looking up prior work');
+  const res = state.data;
   // run.list `search` is substring match against ticketOrPr OR summary — narrow
   // to exact ticketOrPr matches so the banner doesn't surface unrelated families.
   return filterRunsByExactTicket(res.runs, input.search, input.normalizedTicket);
-}
-
-export interface ComparisonPickerRunsRequest {
-  mockMode: boolean;
-  stateRuns: readonly Run[];
-  projectFilters: readonly string[];
-  machineFilters: readonly string[];
-}
-
-export async function lookupRecentRunsForComparisonPicker(
-  input: ComparisonPickerRunsRequest,
-): Promise<Run[]> {
-  const filters = {
-    projectFilters: input.projectFilters,
-    machineFilters: input.machineFilters,
-  };
-  if (input.mockMode) {
-    return filterRunsForComparisonPicker(input.stateRuns, filters);
-  }
-  const params: RunListParams = { limit: 50 };
-  if (input.projectFilters.length === 1) {
-    params.project = input.projectFilters[0];
-  }
-  const res = await gateway.request<RunListResult>(Methods.RUN_LIST, params);
-  return filterRunsForComparisonPicker(res.runs, filters);
 }

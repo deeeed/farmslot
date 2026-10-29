@@ -1,23 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  type NativeProfileInfo,
+  Methods,
+  type NativeProfileListResult,
   type NativeProfileReference,
   type NativeProfileStatusResult,
+  sameNativeProfileReference,
 } from '@farmslot/protocol';
+import { nativeObservationQuery } from '@farmslot/protocol/client-cache';
 
-import { nativeProfileLoginReason, nativeProfileReference } from '../../lib/native-profile';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
+import {
+  nativeProfileLoginReason,
+  nativeProfileReference,
+  validateNativeProfileStatus,
+} from '../../lib/native-profile';
+import {
+  getResourceCache,
+  getResourceNativeOwnerId,
+  getResourceWorkspaceKey,
+} from '../../lib/resource-cache';
 import { useConnectionStore } from '../../store/connection';
 
 import { readNativeProfileSelection } from './native-profile-queries';
-
-interface ProfileSnapshot {
-  key: string;
-  scope: string;
-  profiles: NativeProfileInfo[];
-  status?: NativeProfileStatusResult;
-  error?: string;
-}
 
 export function useNativeProfileSelection(input: {
   enabled: boolean;
@@ -31,21 +36,21 @@ export function useNativeProfileSelection(input: {
   const connection = useConnectionStore((state) => state.status);
   const principalId = useConnectionStore((state) => state.principalId);
   const gatewayUrl = useConnectionStore((state) => state.gatewayUrl);
+  const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
   const gatewayProfile = useConnectionStore((state) => state.activeProfileId);
   const scope = JSON.stringify([principalId, gatewayUrl, gatewayProfile, input.node, input.runner]);
   const [choice, setChoice] = useState<{ scope: string; profile?: NativeProfileReference }>();
   const selected = input.fixedProfile ?? (choice?.scope === scope ? choice.profile : undefined);
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
   useEffect(() => {
     setChoice(undefined);
   }, [scope]);
   const [refreshVersion, setRefreshVersion] = useState(0);
-  const [snapshot, setSnapshot] = useState<ProfileSnapshot>();
+  const [refreshError, setRefreshError] = useState<string>();
   const revision = useRef(0);
   const connectionGeneration = client?.connectionGeneration;
   const key = JSON.stringify([
     scope,
+    authorityEpoch,
     connectionGeneration,
     connection,
     selected,
@@ -54,54 +59,65 @@ export function useNativeProfileSelection(input: {
   ]);
   const keyRef = useRef(key);
   keyRef.current = key;
-  const currentSnapshot = snapshot?.key === key ? snapshot : undefined;
-  const profiles =
-    currentSnapshot?.profiles ??
-    (input.enabled && input.supported && connection === 'connected' && snapshot?.scope === scope
-      ? snapshot.profiles
-      : []);
+  const nativeOwner = getResourceNativeOwnerId();
+  const listQuery = useMemo(
+    () =>
+      input.enabled && input.supported && nativeOwner
+        ? nativeObservationQuery<NativeProfileListResult>(
+            Methods.NATIVE_PROFILE_LIST,
+            { executionNodeId: input.node },
+            nativeOwner,
+          )
+        : undefined,
+    [input.enabled, input.supported, input.node, nativeOwner],
+  );
+  const statusQuery = useMemo(
+    () =>
+      input.enabled && selected && nativeOwner
+        ? nativeObservationQuery<NativeProfileStatusResult>(
+            Methods.NATIVE_PROFILE_STATUS,
+            { executionNodeId: input.node, profileId: selected.profileId },
+            nativeOwner,
+          )
+        : undefined,
+    [input.enabled, input.node, selected, nativeOwner],
+  );
+  const listObservation = useResourceQuery(listQuery);
+  const statusObservation = useResourceQuery(statusQuery);
+  const profiles = (listObservation.data?.profiles ?? []).filter(
+    (profile) => profile.runner === input.runner,
+  );
+  let observedError: string | undefined;
+  const registered = selected && profiles.find((profile) => profile.id === selected.profileId);
+  if (selected) {
+    if (
+      !registered ||
+      !sameNativeProfileReference(selected, nativeProfileReference(input.node, registered))
+    )
+      observedError =
+        'Profile registration changed or is missing. Select a profile explicitly to continue.';
+    else if (statusObservation.data) {
+      try {
+        validateNativeProfileStatus(selected, registered, statusObservation.data);
+      } catch (cause) {
+        observedError = cause instanceof Error ? cause.message : String(cause);
+      }
+    }
+  }
+  const currentSnapshot =
+    listObservation.status === 'ready' && (!selected || statusObservation.status === 'ready')
+      ? { profiles, status: statusObservation.data, error: observedError }
+      : undefined;
   const current = useCallback(
     (started: string, generation: number | undefined, version: number) =>
       keyRef.current === started &&
       revision.current === version &&
       client?.connectionState === 'connected' &&
       client.connectionGeneration === generation &&
-      (client.authenticatedPrincipal?.id ?? null) === principalId,
-    [client, principalId],
+      (client.authenticatedPrincipal?.id ?? null) === principalId &&
+      useConnectionStore.getState().authorityEpoch === authorityEpoch,
+    [client, principalId, authorityEpoch],
   );
-  useEffect(() => {
-    const version = ++revision.current;
-    if (!input.enabled || !input.supported || !client || connection !== 'connected') return;
-    const generation = client.connectionGeneration;
-    const isCurrent = () => current(key, generation, version);
-    void readNativeProfileSelection(
-      client,
-      input.node,
-      input.runner,
-      selectedRef.current,
-      isCurrent,
-    ).then(
-      (result) => {
-        if (result && isCurrent()) setSnapshot({ key, scope, ...result });
-      },
-      (cause) => {
-        if (isCurrent()) setSnapshot({ key, scope, profiles: [], error: String(cause) });
-      },
-    );
-    return () => {
-      revision.current++;
-    };
-  }, [
-    client,
-    connection,
-    input.enabled,
-    input.supported,
-    input.node,
-    input.runner,
-    key,
-    scope,
-    current,
-  ]);
   const reason = selected
     ? !input.supported
       ? 'Profiles are unavailable on this node.'
@@ -109,16 +125,27 @@ export function useNativeProfileSelection(input: {
         ? 'Checking profile login.'
         : (currentSnapshot.error ?? nativeProfileLoginReason(currentSnapshot.status))
     : undefined;
-  const ready = input.enabled && connection === 'connected' && !reason;
+  const ready =
+    input.enabled &&
+    connection === 'connected' &&
+    (input.supported ? !!currentSnapshot : !selected) &&
+    !reason;
   return {
     viewModel: {
       visible: input.supported || !!selected,
       profiles,
       selected,
       status: currentSnapshot?.status,
-      error: currentSnapshot?.error,
+      error:
+        refreshError ??
+        currentSnapshot?.error ??
+        listObservation.error?.message ??
+        statusObservation.error?.message,
       reason,
-      loading: input.supported && !currentSnapshot,
+      loading:
+        input.supported &&
+        (listObservation.status === 'loading' ||
+          (!!selected && statusObservation.status === 'loading')),
       ready,
     },
     actions: {
@@ -138,6 +165,14 @@ export function useNativeProfileSelection(input: {
         revision.current++;
         keyRef.current = '';
         setRefreshVersion((value) => value + 1);
+        void Promise.all(
+          [listQuery, statusQuery]
+            .filter((query) => !!query)
+            .filter((query) => getResourceCache()?.read<unknown>(query).error)
+            .map((query) => getResourceCache()?.retry<unknown>(query)),
+        ).catch((cause) => {
+          setRefreshError(String(cause));
+        });
       },
       validate: async (): Promise<NativeProfileReference | undefined> => {
         if (!ready || !client)
@@ -145,18 +180,25 @@ export function useNativeProfileSelection(input: {
         if (!current(key, connectionGeneration, revision.current))
           throw new Error('Gateway identity changed before launch.');
         if (!selected) return undefined;
+        const cache = getResourceCache();
+        const workspaceKey = getResourceWorkspaceKey();
+        if (!cache || !nativeOwner)
+          throw new Error('The current runner profile store is unavailable.');
         const version = ++revision.current;
         const generation = client.connectionGeneration;
-        const isCurrent = () => current(key, generation, version);
+        const isCurrent = () =>
+          current(key, generation, version) &&
+          cache === getResourceCache() &&
+          workspaceKey === getResourceWorkspaceKey() &&
+          nativeOwner === getResourceNativeOwnerId();
         const result = await readNativeProfileSelection(
-          client,
+          { cache, nativeOwnerId: nativeOwner },
           input.node,
           input.runner,
           selected,
           isCurrent,
         );
         if (!result || !isCurrent()) throw new Error('Profile selection changed before launch.');
-        setSnapshot({ key, scope, ...result });
         const blocked = result.error ?? nativeProfileLoginReason(result.status);
         if (blocked) throw new Error(blocked);
         return selected;

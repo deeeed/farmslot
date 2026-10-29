@@ -52,7 +52,7 @@ export function DiffWorkspaceCockpit({
   readyDecisionId: string | null;
   reviewDecisionId: string | null;
   retroDecisionId: string | null;
-  diffSource: 'artifact' | 'live workspace' | 'missing';
+  diffSource: 'gate package' | 'artifact' | 'live workspace' | 'missing';
   workspaceRouteContext: WorkspaceRouteContext;
 }) {
   const router = useRouter();

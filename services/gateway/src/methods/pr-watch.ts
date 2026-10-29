@@ -13,6 +13,7 @@ import {
 } from '@farmslot/protocol';
 
 import { initPRQueueAdmission } from '../backlog/pr-admission.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { farmslotRoot, loadProjectConfig } from '../fleet/state.js';
 import { PRRepairDispatcher } from '../pr-monitoring/dispatch.js';
 import { verifyPRSourceAccountChange } from '../pr-monitoring/github-account.js';
@@ -206,8 +207,15 @@ export async function routePRWatchMethod(
     return { handled: true, value: { policy } };
   }
   const id = string(p.id, 'id');
-  if (method === Methods.PR_WATCH_GET)
-    return { handled: true, value: { monitor: presentMonitor(service.store.get(id, ownerId)) } };
+  if (method === Methods.PR_WATCH_GET) {
+    try {
+      return { handled: true, value: { monitor: presentMonitor(service.store.get(id, ownerId)) } };
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Monitor not found')
+        throw new GatewayMethodError('NOT_FOUND', error.message);
+      throw error;
+    }
+  }
   if (method === Methods.PR_WATCH_REFRESH)
     return {
       handled: true,

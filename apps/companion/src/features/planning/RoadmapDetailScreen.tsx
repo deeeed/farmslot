@@ -3,6 +3,7 @@ import React from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
 
 import type { useRoadmapDetailController } from './use-roadmap-detail-controller';
@@ -19,6 +20,7 @@ export default function RoadmapDetailScreen({ screen }: { screen: RoadmapDetailS
         <Text style={state.error ? styles.error : baseStyles.textSecondary}>
           {state.error ?? 'Loading roadmap item…'}
         </Text>
+        <ResourceReadStatus observation={state.observation} label="roadmap" />
         {state.error ? (
           <Pressable style={styles.retry} onPress={() => void actions.refresh()}>
             <Text style={styles.view}>Retry</Text>
@@ -52,6 +54,7 @@ export default function RoadmapDetailScreen({ screen }: { screen: RoadmapDetailS
         {item.tags?.length ? <Text style={styles.muted}>{item.tags.join(' · ')}</Text> : null}
       </View>
 
+      <ResourceReadStatus observation={state.observation} label="roadmap" />
       {state.error ? (
         <View style={styles.refreshError}>
           <Text style={styles.error}>{state.error}</Text>

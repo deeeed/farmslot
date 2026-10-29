@@ -7,7 +7,6 @@ import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
-  Events,
   evidenceAttestationAvailable,
   isPublishApprovalAction,
   isValidEvidenceAttestationReason,
@@ -16,6 +15,7 @@ import {
   type RunDecision,
   type RunGetResult,
 } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import {
   gateReviewLineageOptions,
   ReviewDispatchViewModel,
@@ -27,6 +27,7 @@ import type { MediaViewerItem } from '../../components/MediaViewer';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useGateCriterionDrafts } from '../../hooks/useGateCriterionDrafts';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
 import type { RunAcceptance } from '../../hooks/useRunAcceptance';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
@@ -36,6 +37,7 @@ import {
   type VisualArtifactPair,
 } from '../../lib/artifact-url';
 import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
+import { currentFarmConnection } from '../../lib/connection-authority';
 import { decisionResolveRequest, gateActionReasons } from '../../lib/decision-resolve';
 import {
   evidenceMediaItems,
@@ -50,9 +52,9 @@ import {
   type GateReviewVerdict,
   HUMAN_GATE_DECISION_TYPE,
 } from '../../lib/gate-review';
-import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
+import { getResourceCache } from '../../lib/resource-cache';
 import { requestAnotherReviewRound } from '../../lib/review-budget';
-import { runRefreshEventMatches } from '../../lib/run-refresh';
+import { assertNativeDecisionReady, assertNativeRunReady } from '../../lib/run-collections';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
 import { decisionDetailFromRun } from '../decision-workspace/components/decision-workspace-panels';
@@ -69,6 +71,8 @@ export interface GateReviewMedia {
 
 export interface GateReviewViewModel {
   run: Run;
+  observation: ResourceQueryState<RunGetResult>;
+  commandsReady: boolean;
   reviewPicker: ReviewDispatchViewModel;
   decision: RunDecision;
   summary: GateReviewSummary;
@@ -93,14 +97,6 @@ export type GateReviewScreenState =
   | { status: 'error'; message: string }
   | { status: 'ready'; viewModel: GateReviewViewModel };
 
-const RUN_EVENTS = [
-  Events.RUN_UPDATED,
-  Events.RUN_COMPLETED,
-  Events.RUN_DECISION_NEW,
-  Events.RUN_DECISION_UPDATED,
-  Events.RUN_DECISION_RESOLVED,
-] as const;
-
 export function useGateReviewController({ runId, decisionId }: GateReviewRouteParams) {
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
@@ -108,16 +104,21 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const authHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
   const connection = useConnectedTransport();
-  const removeDecision = useDecisionStore((s) => s.removeDecision);
-  // The store's run comes from `run.list`, which trims gate payloads, so the
-  // screen reads its own full copy through `run.get`.
-  const [run, setRun] = useState<Run | null>(null);
+  const decisionsObservation = useDecisionStore((s) => s.observation);
+  const query = useMemo(
+    () => (runId ? resourceQuery<RunGetResult>('run.get', { runId }) : undefined),
+    [runId],
+  );
+  const observation = useResourceQuery(query);
+  const run = observation.data?.run ?? null;
+  const actionsCurrent =
+    connection !== null &&
+    decisionsObservation.status === 'ready' &&
+    observation.status === 'ready';
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendingActionId, setSendingActionId] = useState<string | null>(null);
   const [media, setMedia] = useState<GateReviewMedia | null>(null);
   useEffect(() => setMedia(null), [authorityEpoch, runId, decisionId]);
-
-  const requestRef = useRef(0);
   const reviewPicker = useMemo(
     () =>
       new ReviewDispatchViewModel({
@@ -137,63 +138,14 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     });
   }, [decisionId, reviewPicker, run]);
 
-  const refresh = useCallback(
-    async (reason: string) => {
-      if (!client || !runId) return;
-      const requestId = requestRef.current + 1;
-      requestRef.current = requestId;
-      try {
-        const result = await client.request<RunGetResult>('run.get', { runId });
-        if (requestRef.current !== requestId) return;
-        setRun(result.run);
-        setLoadError(null);
-      } catch (err) {
-        if (requestRef.current !== requestId) return;
-        if (isGatewayBackgroundPauseError(err)) {
-          // Backgrounding pauses gateway requests; the gate on screen stays the
-          // last answer until the next event or refresh replaces it.
-          console.warn(`Gate review refresh paused after ${reason}: ${(err as Error).message}`);
-          return;
-        }
-        setLoadError(`Failed to load the run after ${reason}: ${(err as Error).message}`);
-      }
-    },
-    [client, runId],
-  );
-
-  // Another run, gateway or principal makes the copy on screen someone else's
-  // answer: drop it along with any read still in flight.
+  // The shared cache owns full detail, reconnect reads and notification catch-up.
   useEffect(() => {
-    requestRef.current += 1;
-    setRun(null);
     setLoadError(null);
     setSendingActionId(null);
-  }, [authorityEpoch, gatewayUrl, refresh]);
-
-  useEffect(() => {
-    if (connection === null) {
-      requestRef.current += 1;
-      return;
-    }
-    void refresh('connect');
-  }, [connection, refresh]);
-
-  useEffect(() => {
-    if (!client || !runId) return;
-    const unsubscribers = RUN_EVENTS.map((event) =>
-      client.subscribe(event, (payload) => {
-        const update = payload as { run?: Run; runId?: string };
-        if (!runRefreshEventMatches(runId, update)) return;
-        if (update.run?.id === runId) {
-          requestRef.current += 1;
-          setRun(update.run);
-          return;
-        }
-        void refresh(event);
-      }),
-    );
-    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [client, refresh, runId]);
+  }, [authorityEpoch, gatewayUrl, runId, decisionId]);
+  const retry = useCallback(async () => {
+    if (query) await getResourceCache()?.retry(query);
+  }, [query]);
 
   const decision = run?.decisions.find((candidate) => candidate.id === decisionId) ?? null;
   const gate = useHumanGateGuard(client, run, decision);
@@ -223,6 +175,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         : [];
     return {
       run,
+      observation,
+      commandsReady: actionsCurrent,
       reviewPicker,
       decision,
       summary: gateReviewSummary(decision),
@@ -238,12 +192,20 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       ).pairs,
       media,
       guard: gate.guard,
-      actions: gate.actions,
+      actions: gate.actions.map((action) =>
+        actionsCurrent
+          ? action
+          : {
+              ...action,
+              disabledReason: 'Wait for current decisions before acting.',
+            },
+      ),
       attestationReason: reasonInput,
       draftActions,
       authHeaders,
     };
   }, [
+    actionsCurrent,
     draftActions,
     reasonInput,
     attestationReason,
@@ -252,6 +214,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     gate,
     gatewayUrl,
     media,
+    observation,
     reviewPicker,
     run,
   ]);
@@ -284,6 +247,16 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const resolve = useCallback(
     (action: GateReviewAction, selectionData?: Record<string, unknown>) => {
       if (!client || !run || !decision || decision.resolvedAt) return;
+      try {
+        assertNativeDecisionReady(decision.id);
+        assertNativeRunReady(run.id, run);
+      } catch (error) {
+        Alert.alert(
+          'Decision is not current',
+          error instanceof Error ? error.message : String(error),
+        );
+        return;
+      }
       if (action.disabledReason) {
         // The button is disabled; this only guards a stale press racing a re-render.
         Alert.alert(action.label, action.disabledReason);
@@ -319,6 +292,16 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         {
           text: 'Send',
           onPress: () => {
+            try {
+              assertNativeDecisionReady(decision.id);
+              assertNativeRunReady(run.id, run);
+            } catch (error) {
+              Alert.alert(
+                'Decision is not current',
+                error instanceof Error ? error.message : String(error),
+              );
+              return;
+            }
             const latest = latestRef.current;
             const current = latest.gate?.actions.find((candidate) => candidate.id === action.id);
             if (!latest.run || !latest.decision || latest.decision.resolvedAt || !current) {
@@ -362,7 +345,15 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
               return;
             }
             setSendingActionId(action.id);
+            const currentConnection = currentFarmConnection(client, useConnectionStore.getState);
             const scope = criterionDrafts.scopeVersion;
+            // Writes stay direct; the cached run and decisions observe their notifications.
+            // A run-bound publish gate confirms only run.resolveDecision; skips go through drafts.
+            const resolveConfirmed = async () => {
+              if (confirmed.method !== Methods.RUN_RESOLVE_DECISION)
+                throw new Error(`Gate review does not send ${confirmed.method}`);
+              return client.request(Methods.RUN_RESOLVE_DECISION, confirmed.params, null);
+            };
             const submit = () =>
               isPublishApprovalAction(action.id) && criterionDrafts.entries.length
                 ? draftState.submit({
@@ -371,17 +362,17 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
                     actionId: action.id,
                     reason: latest.reasonInput,
                     selectionData,
-                    applied: setRun,
+                    applied: () => {},
                   })
-                : client.request(confirmed.method, confirmed.params, null);
+                : resolveConfirmed();
             void submit()
               .then(() => {
-                if (scope !== criterionDrafts.scopeVersion) return;
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                removeDecision(decision.id);
-                return refresh(`resolve ${action.id}`);
+                if (scope === criterionDrafts.scopeVersion && currentConnection())
+                  return Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               })
-              .catch(draftState.reportError(scope, 'Failed to resolve'))
+              .catch((err: Error) => {
+                if (currentConnection()) draftState.reportError(scope, 'Failed to resolve')(err);
+              })
               .finally(() => {
                 if (scope === criterionDrafts.scopeVersion) setSendingActionId(null);
               });
@@ -389,23 +380,14 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         },
       ]);
     },
-    [
-      attestationReason,
-      draftState,
-      criterionDrafts,
-      client,
-      decision,
-      refresh,
-      removeDecision,
-      run,
-    ],
+    [attestationReason, draftState, criterionDrafts, client, decision, run],
   );
 
   const state = gateReviewScreenState({
     run,
     decision,
     viewModel,
-    loadError,
+    loadError: loadError ?? observation.error?.message ?? null,
     sendingActionId: sendingActionId ?? criterionDrafts.submissionActionId,
   });
 
@@ -449,15 +431,15 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         reason?: string,
       ) => {
         if (!gate) throw new Error('The gate evidence review is unavailable.');
+        assertNativeRunReady(runId, run ?? undefined);
         await gate.acceptance.recordVisualReview(claimId, verdict, reason);
-        await refresh('visual review');
       },
       markUntestable: async (claimId: string, reason: string) => {
         const model = viewModel?.acceptance.evidenceModel;
         if (!client || !run || !decision || !model) return;
         try {
+          assertNativeRunReady(run.id, run);
           await requestClaimUntestableOverride(client, run.id, decision, model, claimId, reason);
-          await refresh('claim override');
         } catch (error) {
           setLoadError(error instanceof Error ? error.message : String(error));
         }
@@ -465,8 +447,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       giveAnotherRound: async (brief: string) => {
         if (!client || !run || !decision) return;
         try {
+          assertNativeRunReady(run.id, run);
           await requestAnotherReviewRound(client, run.id, decision, brief);
-          await refresh('review budget extension');
         } catch (error) {
           setLoadError(error instanceof Error ? error.message : String(error));
         }
@@ -482,18 +464,18 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
           return;
         setSendingActionId('refresh-package');
         try {
+          assertNativeRunReady(run.id, run);
           await client.request(Methods.RUN_REFRESH_PUBLISH_PACKAGE, {
             runId: run.id,
             decisionId: decision.id,
           });
-          await refresh('package refresh');
         } catch (error) {
           setLoadError(error instanceof Error ? error.message : String(error));
         } finally {
           setSendingActionId(null);
         }
       },
-      refresh: () => void refresh('manual refresh'),
+      refresh: () => void retry(),
       openEvidence,
       openLog,
       resolve,

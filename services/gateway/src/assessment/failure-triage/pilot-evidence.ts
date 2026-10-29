@@ -1,18 +1,32 @@
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { corpusIntegrityPassed } from './corpus-integrity.js';
 import { CORPORA } from './corpus-lock.js';
 import { triageGate, triageMetrics } from './metrics.js';
 import { RUBRIC_VERSION, textDigest } from './packet.js';
+import { TRIAGE_PILOT_RECEIPT_HASH } from './pilot-source.js';
+import { readTriageFile } from './read-source.js';
 import type { TriageCorpus, TriageResult } from './types.js';
 
-/** Exact receipts from one reviewed experiment. Admitting another requires a reviewed source change. */
-export const TRIAGE_PILOT_RECEIPT_HASH =
-  'afe213b7c88ed4e0b2a9d432144c9f8417f4cddfa778a0f48a766e09b5ca8862';
+export {
+  TRIAGE_PILOT_FILE_NAMES,
+  TRIAGE_PILOT_RECEIPT_HASH,
+  TriagePilotObservationUnavailable,
+} from './pilot-source.js';
+
+let assertObserved: (directory: string) => void = () => undefined;
+
+/** The gateway owns observation; standalone receipt verification remains usable offline. */
+export function setTriagePilotObservationGuard(guard: (directory: string) => void): void {
+  assertObserved = guard;
+}
 
 export async function verifyTriagePilotEvidence(directory: string) {
-  const manifestBytes = await readFile(path.join(directory, 'receipt-manifest.json'), 'utf8');
+  assertObserved(directory);
+  const manifestBytes = await readTriageFile(
+    path.join(directory, 'receipt-manifest.json'),
+    16 * 1024,
+  );
   if (textDigest(manifestBytes) !== TRIAGE_PILOT_RECEIPT_HASH)
     throw new Error('Unapproved triage evaluation receipt');
   // The exact-byte hash admits this schema and its fixed local filenames.
@@ -22,7 +36,7 @@ export async function verifyTriagePilotEvidence(directory: string) {
   };
   const files: Record<string, string> = {};
   for (const [name, expected] of Object.entries(manifest.files)) {
-    const bytes = await readFile(path.join(directory, name), 'utf8');
+    const bytes = await readTriageFile(path.join(directory, name), 1024 * 1024);
     if (textDigest(bytes) !== expected) throw new Error('Changed triage evaluation artifact');
     files[name] = bytes;
   }
@@ -72,6 +86,7 @@ export async function verifyTriagePilotEvidence(directory: string) {
   });
   if (!gate.eligible || report.decision !== 'pilot')
     throw new Error('Triage pilot prerequisite failed');
+  assertObserved(directory);
   return {
     receiptHash: TRIAGE_PILOT_RECEIPT_HASH,
     corpusHash: corpus.corpusHash,

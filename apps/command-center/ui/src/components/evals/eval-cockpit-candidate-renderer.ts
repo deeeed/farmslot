@@ -6,7 +6,7 @@ import { defaultModelForRunner, ReviewDispatchViewModel } from '@farmslot/review
 import '../shared/review-dispatch-picker.js';
 
 import { EVAL_CANDIDATE_RUNNERS } from '../../utils/runner-options.js';
-import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
+import { visibleReviewDispatchCatalog } from '../../utils/runner-visible-models.js';
 import type { ReviewDispatchChangeDetail } from '../shared/review-dispatch-picker.js';
 
 import { type CandidateTemplateChoice, EVAL_REVIEW_MODE_OPTIONS } from './eval-cockpit-model.js';
@@ -16,7 +16,7 @@ const executionPickers = new WeakMap<CandidateRow, ReviewDispatchViewModel>();
 
 function executionPicker(row: CandidateRow) {
   const catalog = {
-    runners: rememberedReviewDispatchCatalog()
+    runners: visibleReviewDispatchCatalog()
       .runners.filter((option) => EVAL_CANDIDATE_RUNNERS.some((id) => id === option.id))
       .map((option) => ({
         ...option,

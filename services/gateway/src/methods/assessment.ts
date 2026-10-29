@@ -16,6 +16,7 @@ import {
   recordAssessmentFeedback,
 } from '../assessment/store.js';
 import { summarizeAssessments } from '../assessment/summary.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 function assertParams(params: unknown, allowed: string[]): void {
@@ -92,12 +93,32 @@ export async function assessmentSummary() {
 export async function assessmentExport(params: AssessmentReportParams) {
   assertParams(params, ['id', 'assessmentId']);
   const { assessmentReport } = await import('../assessment/report.js');
-  return assessmentReport(owner(), params.id, params.assessmentId);
+  try {
+    return await assessmentReport(owner(), params.id, params.assessmentId);
+  } catch (error) {
+    if (
+      params.id !== undefined &&
+      error instanceof Error &&
+      (Reflect.get(error, 'code') === 'ENOENT' || error.message === 'Assessment artifact expired')
+    )
+      throw new GatewayMethodError('NOT_FOUND', 'Assessment report not found or expired');
+    throw error;
+  }
 }
 
 export async function assessmentGet(params: AssessmentRecordParams) {
   assertParams(params, ['id']);
-  return assessmentRecord(owner(), params.id);
+  try {
+    return await assessmentRecord(owner(), params.id);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (Reflect.get(error, 'code') === 'ENOENT' ||
+        error.message === 'Assessment not found or expired')
+    )
+      throw new GatewayMethodError('NOT_FOUND', 'Assessment not found or expired');
+    throw error;
+  }
 }
 
 export async function assessmentEvaluate(params: AssessmentEvaluationParams) {

@@ -10,9 +10,13 @@ import type { Run } from '@farmslot/protocol';
 // The run store must be isolated before anything imports it.
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-stacked-tick-test-'));
 process.env.FARMSLOT_RUNS_DIR = path.join(testDir, 'runs');
-test.after(() => rm(testDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 
 const runs = await import('../runs/store.js');
+test.after(async () => {
+  // Creation and updates persist in the background; drain those writes before removing their home.
+  for (const run of runs.getAllRuns()) await runs.persistRunNow(run, 'stacked tick test teardown');
+  await rm(testDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+});
 const { cancelPlan } = await import('./cancel-transition.js');
 const { routeRunTransition } = await import('./transition-router.js');
 await runs.loadAllRuns();

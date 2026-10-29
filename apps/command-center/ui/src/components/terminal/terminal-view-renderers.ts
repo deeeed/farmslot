@@ -15,6 +15,14 @@ import {
 
 export type TerminalMode = 'pty' | 'poll' | 'none';
 
+export type TmuxActionMethod =
+  | typeof Methods.TMUX_SPLIT
+  | typeof Methods.TMUX_SELECT_PANE
+  | typeof Methods.TMUX_KILL_PANE
+  | typeof Methods.TMUX_ZOOM_PANE
+  | typeof Methods.TMUX_NEW_WINDOW
+  | typeof Methods.TMUX_SELECT_WINDOW;
+
 export interface TmuxWindowSummary {
   index: number;
   name: string;
@@ -57,7 +65,7 @@ export interface TmuxToolbarContext {
   cancelRename: () => void;
   toggleSelectMode: () => void;
   sendRawKeys: (data: string) => void;
-  tmuxAction: (method: string, params?: Record<string, unknown>) => void | Promise<void>;
+  tmuxAction: (method: TmuxActionMethod, params?: Record<string, unknown>) => void | Promise<void>;
   nativeWorkers?: ReturnType<typeof nativeWorkerTabs>;
   selectedNativeKey?: string;
   selectNative?: (contextId: string | null) => void;

@@ -1,6 +1,6 @@
 import { FlashList } from '@shopify/flash-list';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,11 +10,14 @@ import {
   type PRRecommendation,
   type PRStatus,
   type RunCreateResult,
+  sourceObservationAge,
   type SourceSelection,
 } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import { useSharedViewSelection } from '../features/quick-actions/QuickActionsProvider';
 import { SourceStatusSection } from '../features/sources/SourceStatusSection';
+import { useResourceQuery } from '../hooks/useResourceQuery';
 import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -27,7 +30,9 @@ import {
   type PRDashboardRow,
   type PRDashboardSortMode,
 } from '../lib/pr-dashboard';
+import { getResourceCache } from '../lib/resource-cache';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
+import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
 import {
   artifactFilterParamForWorkspaceNav,
   familySectionRouteContextParams,
@@ -37,6 +42,8 @@ import {
 import { useConnectionStore } from '../store/connection';
 import { useFilterStore } from '../store/filters';
 import { usePRStore } from '../store/prs';
+
+import { ResourceReadStatus } from './ResourceReadStatus';
 
 type PRFilter = 'attention' | 'active' | 'ready' | 'all';
 
@@ -48,6 +55,9 @@ const FILTERS: Array<{ id: PRFilter; label: string }> = [
 ];
 
 const PR_LIST_TIMEOUT_MS = 30_000;
+const EMPTY_PRS: PRStatus[] = [];
+const prListQuery = resourceQuery<PRListResult>(Methods.PR_LIST);
+const screenshotMode = process.env.EXPO_PUBLIC_STORE_SCREENSHOTS === '1';
 
 const RECOMMENDATION_LABELS: Record<PRRecommendation, string> = {
   WORKING: 'Working',
@@ -327,16 +337,35 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
   const status = useConnectionStore((s) => s.status);
   const globalFilters = useFilterStore((s) => s.filters);
   const clearGlobalFilters = useFilterStore((s) => s.clearAll);
-  const prs = usePRStore((s) => s.prs);
-  const loading = usePRStore((s) => s.loading);
-  const error = usePRStore((s) => s.lastError);
-  const updatedAt = usePRStore((s) => s.updatedAt);
-  const setPRs = usePRStore((s) => s.setPRs);
-  const setPRLoading = usePRStore((s) => s.setLoading);
-  const setPRError = usePRStore((s) => s.setError);
+  const access = useWorkspaceRenderAccess();
+  const canonicalObservation = useResourceQuery(
+    !screenshotMode && access === 'farm' ? prListQuery : undefined,
+  );
+  const fixturePRs = usePRStore((state) => (screenshotMode ? state.prs : EMPTY_PRS));
+  const fixtureObservation = useMemo<ResourceQueryState<PRListResult>>(
+    () => ({ status: 'ready', data: { prs: fixturePRs } }),
+    [fixturePRs],
+  );
+  const observation = screenshotMode ? fixtureObservation : canonicalObservation;
+  const prs = observation.data?.prs ?? EMPTY_PRS;
+  const loading = observation.status === 'loading';
+  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
   const [filter, setFilter] = useState<PRFilter>('all');
   const [sortMode, setSortMode] = useState<PRDashboardSortMode>('group');
   const [refreshing, setRefreshing] = useState(false);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const checking = useRef<symbol | null>(null);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    checking.current = null;
+    setRefreshing(false);
+    setCommandError(null);
+  }, [authorityEpoch]);
+  useEffect(() => {
+    if (!observation.data) return;
+    const timer = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, [observation.data]);
   const [dispatchingKey, setDispatchingKey] = useState<string | null>(null);
   const [sourceSelections, setSourceSelections] = useState<SourceSelection[]>([]);
   const [sourceSelectionRefusal, setSourceSelectionRefusal] = useState<string | undefined>();
@@ -370,49 +399,31 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
     [prWorkspaceRouteContext.decisionKind],
   );
 
-  // `force` makes the gateway re-read GitHub before answering; otherwise it
-  // serves its warm copy and pushes pr.list.updated when the refresh lands.
-  const fetchPRs = useCallback(
-    async (opts: { force?: boolean } = {}) => {
-      if (!client) {
-        setPRLoading(false);
-        return;
-      }
-      const isCurrent = currentFarmConnection(client);
+  const checkGitHub = useCallback(async () => {
+    if (!client || checking.current) return;
+    const isCurrent = currentFarmConnection(client);
+    if (!isCurrent()) return;
+    const ticket = Symbol();
+    checking.current = ticket;
+    setRefreshing(true);
+    setCommandError(null);
+    try {
+      // Explicit source check. Its notification, not this reply, updates the shared list.
+      await client.request<PRListResult>(Methods.PR_LIST, { force: true }, PR_LIST_TIMEOUT_MS);
+    } catch (err) {
       if (!isCurrent()) return;
-      setRefreshing(true);
-      setPRLoading(true);
-      setPRError(null);
-      try {
-        const result = await client.request<PRListResult>(
-          Methods.PR_LIST,
-          opts.force ? { force: true } : {},
-          PR_LIST_TIMEOUT_MS,
-        );
-        if (isCurrent()) setPRs(result.prs);
-      } catch (err) {
-        if (!isCurrent()) return;
-        setPRError(`Failed to load PR list: ${(err as Error).message}`);
-      } finally {
+      setCommandError(`Failed to check GitHub: ${(err as Error).message}`);
+    } finally {
+      if (checking.current === ticket) {
+        checking.current = null;
         setRefreshing(false);
       }
-    },
-    [client, setPRError, setPRLoading, setPRs],
-  );
-
-  useEffect(() => {
-    if (status === 'connected' && (!updatedAt || Date.now() - updatedAt > PR_LIST_TIMEOUT_MS)) {
-      void fetchPRs();
     }
-  }, [fetchPRs, status, updatedAt]);
-
-  useEffect(() => {
-    if (status !== 'connected') return;
-    const interval = setInterval(() => {
-      void fetchPRs();
-    }, 60_000);
-    return () => clearInterval(interval);
-  }, [fetchPRs, status]);
+  }, [client]);
+  const retryRead = useCallback(() => {
+    if (!client || !observation.error || !currentFarmConnection(client)()) return;
+    return getResourceCache()?.retry(prListQuery);
+  }, [client, observation.error]);
 
   const commandCenterPRs = useMemo(
     () => filterDashboardPRs(prs, globalFilters),
@@ -512,12 +523,24 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
         {showStackTitle ? <View /> : <Text style={styles.screenTitle}>Pull Requests</Text>}
         <Pressable
           style={[styles.actionButton, styles.headerRefreshButton]}
-          onPress={() => void fetchPRs({ force: true })}
-          disabled={refreshing}
+          onPress={() => void checkGitHub()}
+          disabled={refreshing || status !== 'connected'}
         >
-          <Text style={styles.actionText}>{refreshing ? 'Refreshing…' : 'Refresh'}</Text>
+          <Text style={styles.actionText}>{refreshing ? 'Checking GitHub…' : 'Check GitHub'}</Text>
         </Pressable>
       </View>
+      {observation.data ? (
+        <Text style={styles.scopeText}>
+          Last GitHub observation:{' '}
+          {sourceObservationAge(observation.sourceObservation?.observedAt, now)}
+        </Text>
+      ) : null}
+      <ResourceReadStatus
+        observation={observation}
+        label="PRs"
+        onRetry={() => void retryRead()}
+        retryDisabled={status !== 'connected'}
+      />
       <View style={styles.summaryRow}>
         <Pressable
           accessibilityRole="button"
@@ -580,7 +603,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
                 : 'Opened from a run, slot, family, artifact, diff, or review workspace.'
               : loading
                 ? 'Loading gateway PR cache…'
-                : 'Not found in the current gateway PR cache. Tap Refresh if this PR was just created.'}
+                : 'Not found in the current gateway PR observation. Check GitHub if this PR was just created.'}
           </Text>
         </View>
       ) : null}
@@ -619,7 +642,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
           </Text>
         </Pressable>
       </View>
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {commandError ? <Text style={styles.errorText}>{commandError}</Text> : null}
     </View>
   );
 
@@ -631,18 +654,10 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
           <Text style={baseStyles.textSecondary}>
             {status !== 'connected'
               ? 'Connect to gateway.'
-              : error
-                ? 'Refresh after the gateway responds.'
+              : observation.error
+                ? 'Retry the failed PR read, or check GitHub explicitly.'
                 : 'No PRs match this filter.'}
           </Text>
-          {status === 'connected' ? (
-            <Pressable
-              style={[styles.actionButton, styles.refreshButton]}
-              onPress={() => void fetchPRs({ force: true })}
-            >
-              <Text style={styles.actionText}>Refresh</Text>
-            </Pressable>
-          ) : null}
         </View>
       ) : (
         <FlashList
@@ -1027,5 +1042,4 @@ const styles = StyleSheet.create({
     minWidth: 86,
     paddingVertical: spacing.xs,
   },
-  refreshButton: { alignSelf: 'center', marginTop: spacing.sm },
 });

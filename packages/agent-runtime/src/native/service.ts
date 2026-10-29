@@ -12,7 +12,7 @@ import { readWorkspaceText } from './workspace-files.js';
 
 export class NativeSessionMethodError extends Error {
   constructor(
-    readonly code: 'INVALID_PARAMS' | 'NATIVE_SESSION_ERROR',
+    readonly code: 'INVALID_PARAMS' | 'NATIVE_SESSION_ERROR' | 'NOT_FOUND',
     message: string,
   ) {
     super(message);
@@ -191,6 +191,8 @@ export async function routeNativeSession(
     }
   } catch (error) {
     if (error instanceof NativeSessionMethodError) throw error;
+    if ((error as { code?: string }).code === 'NOT_FOUND')
+      throw new NativeSessionMethodError('NOT_FOUND', (error as Error).message);
     throw new NativeSessionMethodError('NATIVE_SESSION_ERROR', (error as Error).message);
   }
 }

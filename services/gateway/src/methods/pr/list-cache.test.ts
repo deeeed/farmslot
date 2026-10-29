@@ -7,6 +7,7 @@ import { describe, test } from 'node:test';
 import { Events, type PRStatus } from '@farmslot/protocol';
 
 import { githubQueryBudget } from '../../integrations/github-query-budget.js';
+import { resourceRevisions } from '../../resources/revisions.js';
 
 import {
   loadPRListCache,
@@ -14,6 +15,7 @@ import {
   PR_LIST_CARRY_MAX_MS,
   PR_LIST_CLIENT_INTEREST_MS,
   PR_LIST_STALE_MS,
+  prListResourceKey,
   resetPRListCacheForTests,
   servePRList,
   setPRListBroadcast,
@@ -503,6 +505,156 @@ describe('PR list cache', { concurrency: 1 }, () => {
         [2],
         'the hour counts from the first failure before the restart',
       );
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('a first failed observation has no success age, while a known empty success keeps its age on failure', async () => {
+    const { cleanup } = isolate();
+    try {
+      const first = await servePRList(async () => list([], false, ['org/app#1']), { now: 1000 });
+      assert.equal(first.observation?.observedAt, undefined);
+      assert.notEqual(first.observation?.status, 'ready');
+      resetPRListCacheForTests();
+      loadPRListCache();
+      const restored = await servePRList(
+        async () => {
+          throw new Error('Unexpected fetch');
+        },
+        { now: 1001, legacyInterest: false },
+      );
+      assert.equal(restored.observation?.observedAt, undefined);
+      const project = await servePRList(
+        async () => {
+          throw new Error('Unexpected project fetch');
+        },
+        { now: 1002, legacyInterest: false, project: 'app' },
+      );
+      assert.equal(project.observation?.observedAt, undefined);
+      const empty = await servePRList(async () => list([]), { now: 2000, force: true });
+      assert.equal(empty.observation?.status, 'ready');
+      assert.equal(empty.observation?.observedAt, 2000);
+      const failed = await servePRList(async () => list([], false, ['org/app#1']), {
+        now: 3000,
+        force: true,
+      });
+      assert.equal(failed.observation?.status, 'stale');
+      assert.equal(failed.observation?.observedAt, 2000);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('failed collection preserves success time and readable value, including a gateway cache reload', async () => {
+    const { cleanup } = isolate();
+    try {
+      const key = prListResourceKey();
+      const before = resourceRevisions.revision(key);
+      const first = await servePRList(async () => list([pr(71)]), { now: 1_000 });
+      assert.equal(first.observation?.status, 'ready');
+      assert.equal(first.observation?.observedAt, 1_000);
+      assert(resourceRevisions.revision(key) > before);
+      const successRevision = resourceRevisions.revision(key);
+      await assert.rejects(
+        servePRList(
+          async () => {
+            throw new Error('collector source failed');
+          },
+          { force: true, now: 2_000 },
+        ),
+        /collector source failed/,
+      );
+      assert(
+        resourceRevisions.revision(key) > successRevision,
+        'Readable failure advances the owning key',
+      );
+      let reads = 0;
+      const warm = await servePRList(
+        async () => {
+          reads++;
+          return list([pr(72)]);
+        },
+        { now: 2_001, legacyInterest: false },
+      );
+      assert.equal(reads, 0);
+      assert.equal(warm.prs[0].pr, 71);
+      assert.equal(warm.fetchedAt, first.fetchedAt);
+      assert.equal(warm.observation?.observedAt, 1_000);
+      assert.equal(warm.observation?.status, 'stale');
+      assert.equal(warm.observation?.error?.message, 'collector source failed');
+      resetPRListCacheForTests();
+      loadPRListCache();
+      const restored = await servePRList(
+        async () => {
+          reads++;
+          return list([pr(72)]);
+        },
+        { now: 2_002, legacyInterest: false },
+      );
+      assert.equal(reads, 0);
+      assert.equal(restored.observation?.observedAt, 1_000);
+      assert.equal(restored.observation?.error?.message, 'collector source failed');
+      assert.equal(restored.prs[0].pr, 71);
+      const recovered = await servePRList(async () => list([pr(72)]), { force: true, now: 3_000 });
+      assert.equal(recovered.observation?.status, 'ready');
+      assert.equal(recovered.observation?.observedAt, 3_000);
+      assert.equal(recovered.observation?.error, undefined);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('admitted warm reads do not start GitHub work after TTL or local invalidations', async () => {
+    const { cleanup } = isolate();
+    try {
+      let calls = 0;
+      const fetch = async () => {
+        calls++;
+        return list([pr(1)]);
+      };
+      const initial = await servePRList(fetch, { now: 1_000, legacyInterest: false });
+      const revision = resourceRevisions.revision(prListResourceKey());
+      const localRead = await servePRList(fetch, {
+        now: 1_000 + PR_LIST_CLIENT_INTEREST_MS * 2,
+        legacyInterest: false,
+      });
+      assert.equal(
+        calls,
+        1,
+        'The shared collector, not a local projection read, owns upstream refresh',
+      );
+      assert.equal(localRead.observation?.observedAt, initial.observation?.observedAt);
+      assert.equal(resourceRevisions.revision(prListResourceKey()), revision);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('a truncated farm copy uses one independent shared collector for the normalized project', async () => {
+    const { cleanup } = isolate();
+    try {
+      await servePRList(async () => list([pr(1, { project: 'a' })], true), { now: 1_000 });
+      let calls = 0;
+      let release!: () => void;
+      const scoped = () =>
+        new Promise<{ prs: PRStatus[]; truncated: boolean }>((resolve) => {
+          calls++;
+          release = () => resolve(list([pr(2, { project: 'b' })]));
+        });
+      const first = servePRList(scoped, { project: 'b', now: 1_001 });
+      const second = servePRList(scoped, { project: 'b', now: 1_001 });
+      assert.equal(calls, 1);
+      release();
+      const [one, two] = await Promise.all([first, second]);
+      assert.deepEqual(
+        one.prs.map((row) => row.pr),
+        [2],
+      );
+      assert.equal(one.fetchedAt, two.fetchedAt);
+      assert.equal(peekPRList()?.prs[0].pr, 1, 'Scoped completion cannot replace the farm result');
+      assert.notDeepEqual(prListResourceKey(), prListResourceKey('b'));
+      assert.equal(peekPRList('b')?.prs[0].pr, 2);
     } finally {
       cleanup();
     }

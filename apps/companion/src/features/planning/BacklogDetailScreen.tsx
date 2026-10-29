@@ -3,6 +3,7 @@ import React from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
 
 import type { useBacklogDetailController } from './use-backlog-detail-controller';
@@ -34,8 +35,13 @@ export default function BacklogDetailScreen({ screen }: { screen: BacklogDetailS
         <Text style={state.error ? styles.error : baseStyles.textSecondary}>
           {state.error ?? 'Loading backlog item…'}
         </Text>
+        <ResourceReadStatus observation={state.observation} label="backlog" />
         {state.error ? (
-          <Pressable style={styles.secondaryButton} onPress={() => void actions.refresh()}>
+          <Pressable
+            style={styles.secondaryButton}
+            disabled={!state.connected || !state.canRetry}
+            onPress={() => void actions.refresh()}
+          >
             <Text style={styles.secondaryText}>Retry</Text>
           </Pressable>
         ) : null}
@@ -88,10 +94,14 @@ export default function BacklogDetailScreen({ screen }: { screen: BacklogDetailS
         </View>
       </View>
 
+      <ResourceReadStatus observation={state.observation} label="backlog" />
       {state.error ? (
         <View style={styles.errorBanner}>
           <Text style={styles.error}>{state.error}</Text>
-          <Pressable onPress={() => void actions.refresh()}>
+          <Pressable
+            disabled={!state.connected || !state.canRetry}
+            onPress={() => void actions.refresh()}
+          >
             <Text style={styles.secondaryText}>Retry</Text>
           </Pressable>
         </View>
@@ -141,7 +151,11 @@ export default function BacklogDetailScreen({ screen }: { screen: BacklogDetailS
 
       <View style={styles.actions}>
         {editable ? (
-          <Pressable style={styles.primaryButton} onPress={() => actions.openEdit(item.id)}>
+          <Pressable
+            style={styles.primaryButton}
+            disabled={!state.ready}
+            onPress={() => actions.openEdit(item.id)}
+          >
             <Text style={styles.primaryText}>Edit before dispatch</Text>
           </Pressable>
         ) : null}
@@ -150,9 +164,6 @@ export default function BacklogDetailScreen({ screen }: { screen: BacklogDetailS
             <Text style={styles.primaryText}>Open active run</Text>
           </Pressable>
         ) : null}
-        <Pressable style={styles.secondaryButton} onPress={() => void actions.refresh()}>
-          <Text style={styles.secondaryText}>{state.loading ? 'Refreshing…' : 'Refresh'}</Text>
-        </Pressable>
       </View>
 
       <DocumentViewer

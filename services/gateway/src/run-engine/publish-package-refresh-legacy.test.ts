@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { ReadyGatePrPackage, ReviewStatus } from '@farmslot/protocol';
+import { type ReadyGatePrPackage, reviewDiffHash, type ReviewStatus } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const completion = await import('../run-completion/orchestrator.js');
@@ -14,7 +14,6 @@ const prerequisites = await import('./gate-prerequisites.js');
 const artifacts = await import('./task-artifacts.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { deleteTestRunIfPresent, makeReadyGatePackage } = await import('./test-fixtures.js');
-const { reviewDiffHash } = await import('../core/review-diff-identity.js');
 const { computeReadyGateReviewSubjectHash } =
   await import('../run-completion/ready-gate-package.js');
 let prepared: ReadyGatePrPackage;

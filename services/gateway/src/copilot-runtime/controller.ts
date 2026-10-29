@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { open, stat } from 'node:fs/promises';
+import { open, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 
 import {
@@ -34,6 +34,8 @@ import { resolveProjectRuntimeDir } from '../core/config.js';
 import { getActiveResources } from '../fleet/resource-manager.js';
 import { getCachedFleet } from '../fleet/state.js';
 import { resolveTmuxTargetWorker } from '../refinement/session.js';
+import { resourceRevisions } from '../resources/revisions.js';
+import { workspaceObservations, workspaceSourceId } from '../resources/workspace-observations.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { writeRunnerPromptSentinel } from '../runners/observability-sentinel.js';
 import {
@@ -86,6 +88,7 @@ export interface CopilotRuntimeControllerOptions {
   emit?: Emit;
   now?: () => Date;
   inspectCheckout?: typeof inspectCopilotCheckout;
+  observeCheckout?: (checkout: string) => Promise<() => Promise<void>>;
   buildBootstrap?: typeof buildLiveCopilotBootstrapBrief;
   buildLaunch?: typeof buildCopilotLaunch;
   sendInstruction?: typeof sendRunnerInstructionSafely;
@@ -103,6 +106,7 @@ export class CopilotRuntimeController {
   private readonly emit: Emit;
   private readonly now: () => Date;
   private readonly inspectCheckout: typeof inspectCopilotCheckout;
+  private readonly observeCheckout: (checkout: string) => Promise<() => Promise<void>>;
   private readonly buildBootstrap: typeof buildLiveCopilotBootstrapBrief;
   private readonly buildLaunch: typeof buildCopilotLaunch;
   private readonly sendInstruction: typeof sendRunnerInstructionSafely;
@@ -113,6 +117,7 @@ export class CopilotRuntimeController {
   private readonly resolveTerminalWorker: typeof resolveTmuxTargetWorker;
   private persisted: PersistedCopilotRuntime | null = null;
   private initialized = false;
+  private publishedSession: string | undefined;
   private startPromise: Promise<CopilotStartResult> | null = null;
   private transcriptTimer: ReturnType<typeof setInterval> | null = null;
   private transcriptPollInFlight = false;
@@ -125,6 +130,19 @@ export class CopilotRuntimeController {
     this.emit = options.emit ?? (() => undefined);
     this.now = options.now ?? (() => new Date());
     this.inspectCheckout = options.inspectCheckout ?? inspectCopilotCheckout;
+    this.observeCheckout =
+      options.observeCheckout ??
+      (async (checkout) => {
+        const root = await realpath(checkout);
+        return workspaceObservations.capture({
+          root,
+          sourceId: workspaceSourceId('local', root),
+          keys: [{ family: 'copilot', ownerId: 'gateway-copilot' }],
+          // Recheck the trusted checkout binding, including symlink retargeting.
+          // The server reauthorizes the global-admin read after it completes.
+          current: async () => this.checkout === checkout && (await realpath(checkout)) === root,
+        });
+      });
     this.buildBootstrap = options.buildBootstrap ?? buildLiveCopilotBootstrapBrief;
     this.buildLaunch = options.buildLaunch ?? buildCopilotLaunch;
     this.sendInstruction = options.sendInstruction ?? sendRunnerInstructionSafely;
@@ -204,6 +222,7 @@ export class CopilotRuntimeController {
   async status(): Promise<CopilotStatusResult> {
     await this.initialize();
     await this.reconcileRuntimePresence();
+    const confirmCheckout = await this.observeCheckout(this.checkout);
     const checkout = await this.inspectCheckout(this.checkout);
     const workload = this.workload(this.persisted?.session.status === 'running');
     if (!this.persisted) {
@@ -262,6 +281,7 @@ export class CopilotRuntimeController {
         });
       }
     }
+    await confirmCheckout();
     return { session: this.persisted.session };
   }
 
@@ -832,6 +852,14 @@ export class CopilotRuntimeController {
   private async persist(): Promise<void> {
     if (!this.persisted) return;
     await this.store.save(this.persisted);
+    // status() writes its read timestamp and transcript ingestion advances an offset.
+    // Neither alone changes the runtime projection; publishing them would invalidate
+    // every status read with its own write and prevent the query becoming ready.
+    const current = JSON.stringify({ ...this.persisted.session, updatedAt: undefined });
+    if (current !== this.publishedSession) {
+      this.publishedSession = current;
+      resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot' });
+    }
   }
 
   private emitRuntime(): void {

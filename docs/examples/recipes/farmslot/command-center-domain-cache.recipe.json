@@ -1,0 +1,98 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Mounted domain readers observe real owning writes",
+  "description": "Use an isolated gateway, launch-time fixtures and real browser views. Independent protocol writers and an external rule-file rename update PR, assessment, analytics and copilot readers. Provider execution is not claimed. Commands remain live-only; no runner launch is included.",
+  "proofTargets": [
+    {
+      "id": "prMonitorWriter",
+      "claim": "A real lifecycle command updates the mounted monitor and visible button without Refresh."
+    },
+    {
+      "id": "prRuleFileWriter",
+      "claim": "An external rule-file replacement updates the mounted rule without Refresh."
+    },
+    {
+      "id": "prSourceErrorRecovery",
+      "claim": "Malformed rules retain stale displayed data with errors and disabled commands, then recover."
+    },
+    {
+      "id": "assessmentFeedbackWriter",
+      "claim": "Real feedback updates the mounted fixture assessment before its retained timer."
+    },
+    {
+      "id": "analyticsWriter",
+      "claim": "A real other-project backfill updates mounted filtered charts and global dimensions."
+    },
+    {
+      "id": "copilotConfigurationWriter",
+      "claim": "A real configuration command updates the mounted stopped copilot without launching it."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-domain-cache.mjs",
+        "timeout_ms": 180000,
+        "intent": "Prove real owning writes update mounted domain readers on one isolated runtime.",
+        "next": "pr-monitor"
+      },
+      "pr-monitor": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"prMonitorWriter\":true",
+        "intent": "An independent lifecycle writer changes the mounted monitor and actual button.",
+        "proves": ["prMonitorWriter"],
+        "next": "pr-rules"
+      },
+      "pr-rules": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"prRuleFileWriter\":true",
+        "intent": "An external atomic rule change reaches the mounted canonical rule collection.",
+        "proves": ["prRuleFileWriter"],
+        "next": "pr-source-error"
+      },
+      "pr-source-error": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"prSourceErrorRecovery\":true",
+        "intent": "Rule source errors retain stale data, refuse commands and recover from repaired bytes.",
+        "proves": ["prSourceErrorRecovery"],
+        "next": "assessment"
+      },
+      "assessment": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"assessmentFeedbackWriter\":true",
+        "intent": "Actual feedback updates the selected fixture record before the retained timer.",
+        "proves": ["assessmentFeedbackWriter"],
+        "next": "analytics"
+      },
+      "analytics": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"analyticsWriter\":true",
+        "intent": "A real backfill of another project updates the open filtered aggregate.",
+        "proves": ["analyticsWriter"],
+        "next": "copilot"
+      },
+      "copilot": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"copilotConfigurationWriter\":true",
+        "intent": "The mounted copilot follows an independent configuration write without starting a runner.",
+        "proves": ["copilotConfigurationWriter"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

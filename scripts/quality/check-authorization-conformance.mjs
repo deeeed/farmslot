@@ -632,7 +632,30 @@ function isForbiddenCall(call, name, checker) {
   });
 }
 
+// Pure in-memory Node computations, named by module and declaring container. Node's own
+// declarations have no body to follow, and a hash or byte count reaches no I/O or authority.
+function isPureNodeIntrinsic(call, checker) {
+  const pureNodeIntrinsics = new Set([
+    'crypto:createHash',
+    'crypto:Hash.update',
+    'crypto:Hash.digest',
+    'buffer:BufferConstructor.byteLength',
+  ]);
+  const expression = call.expression;
+  let symbol = checker.getSymbolAtLocation(
+    ts.isPropertyAccessExpression(expression) ? expression.name : expression,
+  );
+  if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+  return (symbol?.declarations ?? []).some((declaration) => {
+    const module = /@types\/node\/(\w+)\.d\.ts$/u.exec(declaration.getSourceFile().fileName)?.[1];
+    const container = declaration.parent?.name?.text;
+    const name = `${container ? `${container}.` : ''}${declaration.name?.getText()}`;
+    return pureNodeIntrinsics.has(`${module}:${name}`);
+  });
+}
+
 function isKnownIntrinsic(call, checker) {
+  if (isPureNodeIntrinsic(call, checker)) return true;
   const expression = call.expression;
   if (ts.isIdentifier(expression)) {
     return new Set([

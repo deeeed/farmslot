@@ -99,6 +99,7 @@ import {
   type GitDiscardParams,
   type GitFilesParams,
   type GitLogParams,
+  type GitShowBatchParams,
   type GitShowParams,
   type GitStageParams,
   type GitStatusParams,
@@ -241,7 +242,7 @@ import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
 import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js';
 // Method handlers
 import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
-import { getAllNodes, registerNode } from '../fleet/machine-registry.js';
+import { getAllNodes, getNode, registerNode } from '../fleet/machine-registry.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
 import { pairingCandidates, pairingCreate } from '../fleet/pairing.js';
 import {
@@ -250,6 +251,7 @@ import {
 } from '../fleet/resource-manager.js';
 import { slotCleanup } from '../fleet/slot-cleanup.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { forgetGitHubAccountsClientInterest } from '../integrations/github-accounts.js';
 import {
   machinePauseExecute,
   machinePausePreview,
@@ -378,7 +380,7 @@ import {
   fleetRefreshSlotsCancel,
 } from '../methods/fleet-refresh.js';
 import { gatewayDoctor } from '../methods/gateway-doctor.js';
-import { gatewayStatus } from '../methods/gateway-status.js';
+import { forgetGatewayUpdateClientInterest, gatewayStatus } from '../methods/gateway-status.js';
 import { gatewayUpdate } from '../methods/gateway-update.js';
 import {
   gitBranchDiff,
@@ -387,6 +389,7 @@ import {
   gitFiles,
   gitLog,
   gitShow,
+  gitShowBatch,
   gitStage,
   gitStatus,
   gitUnstage,
@@ -403,7 +406,9 @@ import {
 } from '../methods/llm-auth.js';
 import { llmConfigGet, llmConfigSet, llmTiers } from '../methods/llm-config.js';
 import { nativeSessionRoute } from '../methods/native-session.js';
-import { prForSlot, prList, prMonitor, prStatus } from '../methods/pr.js';
+import { prList, prMonitor, readPRForSlot, readPRStatus } from '../methods/pr.js';
+import { forgetPRDetailClientInterest } from '../methods/pr/detail-observations.js';
+import { forgetPRListClientInterest } from '../methods/pr/list-cache.js';
 import {
   prAddComment,
   prDeleteComment,
@@ -427,7 +432,10 @@ import {
   principalReuseRetiredId,
   principalRevokeRole,
 } from '../methods/principal.js';
-import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
+import {
+  forgetProviderAccountsClientInterest,
+  providerAccountsSnapshot,
+} from '../methods/provider-accounts.js';
 import {
   recipeCancel,
   recipeCommand,
@@ -563,6 +571,8 @@ import {
 import { metroSubscribe, metroUnsubscribe } from '../methods/workspace.js';
 import { getAllThumbnails, subscribeThumbnails } from '../observability/thumbnail-cache.js';
 import { farmslotRoot } from '../projects/repo-root.js';
+import { nativeObservations } from '../resources/native-observations.js';
+import { upstreamObservers } from '../resources/upstream-observers.js';
 import { rememberNativeExecutionNode } from '../runners/native/execution-nodes.js';
 import { unsubscribePty } from '../runtime/pty-stream.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
@@ -637,6 +647,51 @@ export async function routeMethod(
   } catch (error) {
     if (error instanceof GatewayMethodError) throw error;
     throw new GatewayInternalError('RPC authorization resolution failed', error);
+  }
+  // Reserve/commit observer replacement before any asynchronous family dispatch.
+  switch (method) {
+    case Methods.RESOURCE_OBSERVERS_REPLACE: {
+      if (state.clientKind !== 'ui' && state.clientKind !== 'companion')
+        throw new GatewayMethodError(
+          'AUTH_FORBIDDEN',
+          'Collector observers require a viewer connection',
+        );
+      const ownerId = actingPrincipal.id;
+      const ownerGeneration = actingPrincipal.generation ?? 0;
+      const clientKind = state.clientKind;
+      const replacement = upstreamObservers.prepareReplacement(state, params, {
+        isActive: () => context.isActiveClient(state) && state.clientKind === clientKind,
+        assertRead: (query) => {
+          const current = authorizeGatewayMethod(authRuntime, state, query.method);
+          if (current.id !== ownerId || (current.generation ?? 0) !== ownerGeneration)
+            throw new GatewayMethodError('AUTH_FORBIDDEN', 'Collector observer owner changed');
+        },
+        refuse: (error) => {
+          const denied =
+            error instanceof GatewayMethodError &&
+            ['AUTH_REQUIRED', 'AUTH_FORBIDDEN'].includes(error.code);
+          if (!denied) console.error('[upstream-observers] Read authorization failed:', error);
+          state.ws.close(
+            denied ? 1008 : 1011,
+            'Collector observation authority requires reconnect',
+          );
+        },
+      });
+      const result = replacement.commit();
+      if (result.applied) {
+        if (upstreamObservers.manages(state, Methods.PR_LIST)) forgetPRListClientInterest(state.id);
+        for (const detail of [Methods.PR_STATUS, Methods.PR_FOR_SLOT, Methods.PR_REVIEW_COMMENTS])
+          if (upstreamObservers.manages(state, detail))
+            forgetPRDetailClientInterest(state.id, detail);
+        if (upstreamObservers.manages(state, Methods.GATEWAY_STATUS))
+          forgetGatewayUpdateClientInterest(state.id);
+        if (upstreamObservers.manages(state, Methods.CONFIG_GITHUB_ACCOUNTS))
+          forgetGitHubAccountsClientInterest(state.id);
+        if (upstreamObservers.manages(state, Methods.PROVIDER_ACCOUNTS_SNAPSHOT))
+          forgetProviderAccountsClientInterest(state.id);
+      }
+      return result;
+    }
   }
   return runWithSessionOriginator(actingPrincipal, async () => {
     if (method === Methods.TERMINAL_INPUT) {
@@ -746,11 +801,16 @@ async function routeAuthorizedMethod(
     case Methods.GATEWAY_UPDATE:
       return gatewayUpdate(p as GatewayUpdateParams);
     case Methods.GATEWAY_STATUS:
-      return gatewayStatus(p as GatewayStatusParams);
+      return gatewayStatus(p as GatewayStatusParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.GATEWAY_STATUS),
+      });
     case Methods.GATEWAY_DOCTOR:
       return gatewayDoctor(p as GatewayDoctorParams, authRuntime);
     case Methods.RUNNER_MODEL_CATALOG:
-      return runnerModelCatalog(p);
+      return runnerModelCatalog(p, {
+        legacyInterest: !upstreamObservers.manages(state, Methods.RUNNER_MODEL_CATALOG),
+      });
     case Methods.RUNNER_VISIBLE_MODELS_GET:
       return runnerVisibleModelsGet(p);
     case Methods.RUNNER_VISIBLE_MODELS_SET:
@@ -825,7 +885,10 @@ async function routeAuthorizedMethod(
     case Methods.FLEET_PR_SUMMARY:
       return fleetPrSummary(p as FleetPrSummaryParams);
     case Methods.PROVIDER_ACCOUNTS_SNAPSHOT:
-      return providerAccountsSnapshot(p as ProviderAccountsSnapshotParams);
+      return providerAccountsSnapshot(p as ProviderAccountsSnapshotParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PROVIDER_ACCOUNTS_SNAPSHOT),
+      });
     case Methods.SLOT_OPEN_EDITOR:
       return slotOpenEditor(p as { slotId: string; editor: string });
     case Methods.SLOT_ACTION_LIST:
@@ -1153,13 +1216,22 @@ async function routeAuthorizedMethod(
     case Methods.PR_WATCH_PROJECT_POLICY_SET:
       return (await routePRWatchMethod(method, p)).value;
     case Methods.PR_STATUS:
-      return prStatus(p as PRStatusParams);
+      return readPRStatus(p as PRStatusParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PR_STATUS),
+      });
     case Methods.PR_LIST:
-      return prList(p as PRListParams);
+      return prList(p as PRListParams, undefined, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PR_LIST),
+      });
     case Methods.PR_MONITOR:
       return prMonitor(p as PRStatusParams | undefined, emit);
     case Methods.PR_REVIEW_COMMENTS:
-      return prReviewComments(p as PRReviewCommentsParams);
+      return prReviewComments(p as PRReviewCommentsParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PR_REVIEW_COMMENTS),
+      });
     case Methods.PR_ADD_COMMENT:
       return prAddComment(p as PRAddCommentParams);
     case Methods.PR_EDIT_COMMENT:
@@ -1171,7 +1243,10 @@ async function routeAuthorizedMethod(
     case Methods.PR_RESOLVE_THREAD:
       return prResolveThread(p as PRResolveThreadParams);
     case Methods.PR_FOR_SLOT:
-      return prForSlot(p as PRForSlotParams);
+      return readPRForSlot(p as PRForSlotParams, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.PR_FOR_SLOT),
+      });
 
     // Advisory acceptance-evidence assessment
     case Methods.ACCEPTANCE_EVIDENCE_GET:
@@ -1205,13 +1280,24 @@ async function routeAuthorizedMethod(
     // Nodes
     case 'node.connect': {
       requireNodeSession(authRuntime, state);
-      const { machine, pid, protocolVersion, capabilities, gatewayUrl, execCancellation } = p as {
+      const {
+        machine,
+        pid,
+        protocolVersion,
+        capabilities,
+        gatewayUrl,
+        execCancellation,
+        conditionalWrites,
+        observationCapabilities,
+      } = p as {
         machine: string;
         pid: number;
         protocolVersion?: string;
         capabilities?: import('@farmslot/protocol').RecipeRuntimeCapabilityDeclaration[];
         gatewayUrl?: unknown;
         execCancellation?: unknown;
+        conditionalWrites?: unknown;
+        observationCapabilities?: import('@farmslot/protocol').NodeObservationCapabilities;
       };
       const resolved = authRuntime.resolver.resolveSessionPrincipal(state);
       assertNativeMachineAssignment(
@@ -1263,6 +1349,7 @@ async function routeAuthorizedMethod(
               },
             }
           : undefined;
+      const previousNativeNode = getNode(machine);
       registerNode(
         machine,
         pid,
@@ -1273,6 +1360,36 @@ async function routeAuthorizedMethod(
         nativeAuthority,
         typeof gatewayUrl === 'string' ? gatewayUrl : undefined,
         execCancellation === true,
+        {
+          ...(observationCapabilities?.workers === 1 ? { workers: 1 as const } : {}),
+          ...(observationCapabilities?.files === 1 ? { files: 1 as const } : {}),
+          ...(observationCapabilities?.workspace === 1 ? { workspace: 1 as const } : {}),
+        },
+        () => {
+          if (
+            !state.authenticated ||
+            state.ws.readyState !== WebSocket.OPEN ||
+            state.authentication?.kind !== authentication?.kind ||
+            (state.authentication?.kind === 'credential' &&
+              authentication?.kind === 'credential' &&
+              state.authentication.credentialId !== authentication.credentialId)
+          )
+            return false;
+          const current = authRuntime.resolver.resolveSessionPrincipal(state);
+          return (
+            authRuntime.resolver.isSoloMode() ||
+            (current.ok &&
+              current.principal.id === principalId &&
+              current.principal.subject.type === 'node' &&
+              current.principal.subject.machine === machine)
+          );
+        },
+        conditionalWrites === true,
+      );
+      nativeObservations.registrationChanged(
+        machine,
+        nativeSessions?.ownerPrincipalId,
+        previousNativeNode?.ws,
       );
       markMachineOnline(machine, capabilities);
       const versionMatch = protocolVersion === PROTOCOL_VERSION;
@@ -1415,7 +1532,10 @@ async function routeAuthorizedMethod(
     case Methods.CONFIG_PROJECTS:
       return configProjects();
     case Methods.CONFIG_GITHUB_ACCOUNTS:
-      return configGitHubAccounts(params);
+      return configGitHubAccounts(params, {
+        legacyClientId: state.id,
+        legacyInterest: !upstreamObservers.manages(state, Methods.CONFIG_GITHUB_ACCOUNTS),
+      });
     case Methods.CONFIG_PROJECT:
       return configProject(p as ConfigProjectParams);
     case Methods.CONFIG_TEMPLATES:
@@ -1487,7 +1607,9 @@ async function routeAuthorizedMethod(
     case Methods.GIT_LOG:
       return gitLog(p as GitLogParams);
     case Methods.GIT_SHOW:
-      return gitShow(p as GitShowParams);
+      return (p as { paths?: unknown }).paths !== undefined
+        ? gitShowBatch(p as GitShowBatchParams)
+        : gitShow(p as GitShowParams);
     case Methods.GIT_FILES:
       return gitFiles(p as GitFilesParams);
     case Methods.GIT_STAGE:

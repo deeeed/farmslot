@@ -5,6 +5,7 @@ import {
   type GatewayAuthConnectResult,
   Methods,
   type NativeExecutionNodeDeclaration,
+  type NodeObservationCapabilities,
   PROTOCOL_VERSION,
   type RecipeRuntimeCapabilityDeclaration,
   type RequestFrame,
@@ -189,6 +190,9 @@ export interface NodeRegisterOptions {
   capabilities: RecipeRuntimeCapabilityDeclaration[];
   nativeSessions?: NativeExecutionNodeDeclaration;
   execCancellation?: boolean;
+  /** The node checks `expectedHash` on file writes (ADR-009 Amendment 1). */
+  conditionalWrites?: boolean;
+  observationCapabilities?: NodeObservationCapabilities;
   /** The URL this node dials; the gateway hands it to workers on this machine. */
   gatewayUrl?: string;
   timeoutMs?: number;
@@ -215,7 +219,11 @@ export function registerNode(
       pid: options.pid,
       protocolVersion: PROTOCOL_VERSION,
       capabilities: options.capabilities,
+      ...(options.observationCapabilities
+        ? { observationCapabilities: options.observationCapabilities }
+        : {}),
       ...(options.execCancellation ? { execCancellation: true } : {}),
+      ...(options.conditionalWrites ? { conditionalWrites: true } : {}),
       ...(options.nativeSessions ? { nativeSessions: options.nativeSessions } : {}),
       ...(options.gatewayUrl ? { gatewayUrl: options.gatewayUrl } : {}),
     },

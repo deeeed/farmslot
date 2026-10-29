@@ -1,0 +1,127 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Upstream collectors follow fake GitHub and runner sources",
+  "description": "Use a private farm, a fixture actor, a completed run and fake gh and provider CLIs to observe shared sampling, notifications, retained errors, idle panels, sanitized SQLite and cold offline recovery for GitHub accounts, PR detail and runner seats. Offline PR detail comes from the persisted pr.list row of a run-backed PR; the monitored PR's own detail needs the memory-only monitor list. No GitHub, provider, native or real runner CLI execution.",
+  "proofTargets": [
+    {
+      "id": "upstreamSharedSampling",
+      "claim": "Two visible browser viewers share one fake-source sample per normalized accounts, PR detail and seats query, and only the first holds persistent SQLite."
+    },
+    {
+      "id": "upstreamSourceNotification",
+      "claim": "A fake upstream change reaches open panels without Refresh: PR detail through its passive collector, accounts and seats from one viewer's explicit check to the other by notification."
+    },
+    {
+      "id": "upstreamErrorRetention",
+      "claim": "A fake source failure keeps the last successful values with their original source age and shows the error; recovery returns both viewers to current."
+    },
+    {
+      "id": "upstreamNoIdleReads",
+      "claim": "With accounts, PR detail and seats mounted in visible windows and no source sampled, the panels send zero collector reads for at least 61 seconds."
+    },
+    {
+      "id": "upstreamColdOffline",
+      "claim": "After the controller stops the gateway, a new browser runtime restores the stored accounts, the listed PR's detail and the seats as stale with their original source age, disables seat actions, and sends no gateway reads."
+    },
+    {
+      "id": "upstreamColdRecovery",
+      "claim": "The same cold browser runtime recovers accounts, PR detail and seats after the controller restarts the gateway, without Refresh."
+    },
+    {
+      "id": "upstreamDurableSanitization",
+      "claim": "The actual SQLite rows hold only the sanitized projection: no inspection commands, auth paths, raw stderr, gateway error text or tokens."
+    },
+    {
+      "id": "upstreamFakeSourcesOnly",
+      "claim": "Every upstream answer came from the case's fake gh and runner CLIs under the gateway's restricted PATH and HOME."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-upstream-collectors.mjs",
+        "timeout_ms": 1800000,
+        "intent": "Observe fake GitHub and runner sources through the real gateway collectors.",
+        "next": "upstreamSharedSampling"
+      },
+      "upstreamSharedSampling": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"upstreamSharedSampling\":true",
+        "intent": "Two visible viewers share one source sample and one persistent owner.",
+        "proves": ["upstreamSharedSampling"],
+        "next": "upstreamSourceNotification"
+      },
+      "upstreamSourceNotification": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"upstreamSourceNotification\":true",
+        "intent": "Source changes reach open panels without Refresh.",
+        "proves": ["upstreamSourceNotification"],
+        "next": "upstreamErrorRetention"
+      },
+      "upstreamErrorRetention": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"upstreamErrorRetention\":true",
+        "intent": "Source failures keep last values, source age and a visible error.",
+        "proves": ["upstreamErrorRetention"],
+        "next": "upstreamNoIdleReads"
+      },
+      "upstreamNoIdleReads": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"upstreamNoIdleReads\":true",
+        "intent": "Settled visible panels send no collector reads for over 61 seconds.",
+        "proves": ["upstreamNoIdleReads"],
+        "next": "upstreamColdOffline"
+      },
+      "upstreamColdOffline": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"upstreamColdOffline\":true",
+        "intent": "A new offline runtime restores stored collectors with source age.",
+        "proves": ["upstreamColdOffline"],
+        "next": "upstreamColdRecovery"
+      },
+      "upstreamColdRecovery": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"upstreamColdRecovery\":true",
+        "intent": "The same cold runtime recovers after the gateway restarts.",
+        "proves": ["upstreamColdRecovery"],
+        "next": "upstreamDurableSanitization"
+      },
+      "upstreamDurableSanitization": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"upstreamDurableSanitization\":true",
+        "intent": "Actual SQLite rows hold only the sanitized projection.",
+        "proves": ["upstreamDurableSanitization"],
+        "next": "upstreamFakeSourcesOnly"
+      },
+      "upstreamFakeSourcesOnly": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"upstreamFakeSourcesOnly\":true",
+        "intent": "Every upstream answer came from the case fake CLIs.",
+        "proves": ["upstreamFakeSourcesOnly"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -1,0 +1,241 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native shared decision and saved review contexts",
+  "description": "Use the isolated authenticated proof gateway and owned device. Select FARMSLOT_HOME, FARMSLOT_RUNS_DIR, FARMSLOT_DISABLE_ORCHESTRATION=1, FARMSLOT_OFFLINE_PROOF=1, FARMSLOT_NATIVE_RUN_RECEIPT and a per-device FARMSLOT_AGENT_DEVICE_STATE_DIR. A unique run is seeded only while the owned gateway is stopped; teardown removes that run. No publication or gate action is sent.",
+  "proofTargets": [
+    {
+      "id": "native-saved-review",
+      "claim": "The mounted run screen renders the saved review verdict and reviewed SHA from its shared full-run observation."
+    },
+    {
+      "id": "native-decision-workspace",
+      "claim": "The embedded decision workspace derives its pending gate from the shared decision and full-run observations."
+    },
+    {
+      "id": "native-gate-stale-actions",
+      "claim": "The actual gate action is enabled while both inputs are current, disabled while they are stale, and enabled after current reconnect reads without resolving the private decision."
+    },
+    {
+      "id": "native-shared-diff",
+      "claim": "The mounted diff derives its full run and recipe groups from shared observations; a cold offline restart restores the saved run and exact observation time, displays its age, and reconnects to current inputs."
+    },
+    {
+      "id": "native-artifact-command-refusal",
+      "claim": "The actual Sync artifacts button is enabled for current shared inputs and shows the real gateway refusal when its owned run has no slot."
+    },
+    {
+      "id": "native-shared-artifacts",
+      "claim": "The artifact view keeps its frozen decision query and shared manifest; cold offline startup restores the exact saved full run and observation time, renders its age with sync disabled, and waits for current run and recipe reads on reconnect."
+    }
+  ],
+  "workflow": {
+    "entry": "capture-start",
+    "teardown": "cleanup",
+    "nodes": {
+      "prepare": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs prepare-context",
+        "timeout_ms": 90000,
+        "intent": "Seed one uniquely owned pending gate and saved review before gateway restart.",
+        "next": "open-review"
+      },
+      "open-review": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs open-context",
+        "timeout_ms": 90000,
+        "intent": "Open the actual run evidence screen and require its current full-run observation.",
+        "next": "review-data-proof"
+      },
+      "review-visible": {
+        "action": "ui.wait_for",
+        "text": "Saved verdict: APPROVE",
+        "timeout_ms": 30000,
+        "intent": "The native saved-review panel renders its canonical full verdict.",
+        "next": "sha-visible"
+      },
+      "sha-visible": {
+        "action": "ui.wait_for",
+        "text_contains": ["Reviewed SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        "timeout_ms": 30000,
+        "intent": "The native saved-review panel preserves the reviewed commit identity.",
+        "next": "review-capture"
+      },
+      "review-capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-saved-review.png",
+        "intent": "Record the actual saved review panel.",
+        "covers": ["native-saved-review"],
+        "next": "open-workspace"
+      },
+      "open-workspace": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs workspace-context",
+        "timeout_ms": 90000,
+        "intent": "Open the embedded decision workspace with the real pending gate.",
+        "next": "workspace-data-proof"
+      },
+      "workspace-visible": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-decision-workspace",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "The actual decision workspace is mounted.",
+        "next": "workspace-capture"
+      },
+      "workspace-capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-decision-workspace.png",
+        "intent": "Record the current shared gate workspace.",
+        "covers": ["native-decision-workspace"],
+        "next": "stale-gate"
+      },
+      "stale-gate": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs stale-context",
+        "timeout_ms": 120000,
+        "intent": "Verify the actual gate button changes from enabled to disabled across disconnect and back after current reconnect reads.",
+        "next": "stale-proof"
+      },
+      "stale-proof": {
+        "action": "assert_output",
+        "source": "stale-gate",
+        "stream": "stdout",
+        "match": "\"nativeGateStaleActions\":true",
+        "intent": "Require actual native button readiness and unchanged pending decision bytes.",
+        "proves": ["native-gate-stale-actions"],
+        "next": "open-diff"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "cleanup": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs cleanup-context",
+        "timeout_ms": 90000,
+        "intent": "Remove only the unique private fixture with the owned gateway stopped.",
+        "next": "cleanup-done"
+      },
+      "cleanup-done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "review-data-proof": {
+        "action": "assert_output",
+        "source": "open-review",
+        "stream": "stdout",
+        "match": "\"nativeContextReady\":true",
+        "intent": "Require the real mounted context to observe current shared data before the visible UI checks.",
+        "proves": ["native-saved-review"],
+        "next": "review-visible"
+      },
+      "workspace-data-proof": {
+        "action": "assert_output",
+        "source": "open-workspace",
+        "stream": "stdout",
+        "match": "\"nativeContextReady\":true",
+        "intent": "Require the real mounted context to observe current shared data before the visible UI checks.",
+        "proves": ["native-decision-workspace"],
+        "next": "workspace-visible"
+      },
+      "capture-start": {
+        "action": "ui.screenshot",
+        "path": "screenshots/context-start.png",
+        "intent": "Start native recording before setup and endpoint proof.",
+        "next": "prepare"
+      },
+      "open-diff": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs diff-context",
+        "timeout_ms": 90000,
+        "intent": "Open the actual diff and require its rendered inputs to equal canonical observations.",
+        "next": "diff-visible"
+      },
+      "diff-visible": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-diff",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "Require the real native diff screen to be visible.",
+        "next": "diff-capture"
+      },
+      "diff-capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-diff-current.png",
+        "intent": "Show the selected run and recipe context before disconnect so its saved offline counterpart can be compared.",
+        "covers": ["native-shared-diff"],
+        "next": "cold-diff"
+      },
+      "cold-diff": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs cold-diff-context",
+        "timeout_ms": 120000,
+        "intent": "Cold restart offline and prove exact saved run, visible age, no invented recipe data and current reconnect.",
+        "next": "diff-proof"
+      },
+      "diff-proof": {
+        "action": "assert_output",
+        "source": "cold-diff",
+        "stream": "stdout",
+        "match": "\"nativeDiffCold\":true",
+        "intent": "Require the actual cold diff and reconnect proof.",
+        "proves": ["native-shared-diff"],
+        "next": "open-artifacts"
+      },
+      "open-artifacts": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs artifacts-context",
+        "timeout_ms": 90000,
+        "intent": "Open the selected decision inventory and exercise its real sync command without a worker slot.",
+        "next": "artifacts-data-proof"
+      },
+      "artifacts-data-proof": {
+        "action": "assert_output",
+        "source": "open-artifacts",
+        "stream": "stdout",
+        "match": "\"nativeArtifactProjection\":true",
+        "intent": "Require canonical rendered inputs, frozen query selection and the visible gateway refusal.",
+        "proves": ["native-artifact-command-refusal"],
+        "next": "artifacts-visible"
+      },
+      "artifacts-visible": {
+        "action": "ui.wait_for",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "The selected run title is visible above its Files inventory.",
+        "next": "artifact-item-visible",
+        "text_contains": ["Offline shared gate"]
+      },
+      "artifacts-capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-artifacts-current.png",
+        "intent": "Show the current decision inventory and its artifact sync result before disconnect.",
+        "covers": ["native-artifact-command-refusal"],
+        "next": "cold-artifacts"
+      },
+      "cold-artifacts": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs cold-artifacts-context",
+        "timeout_ms": 120000,
+        "intent": "Restart offline and require the saved manifest, exact observation time, visible age, disabled sync and current reconnect.",
+        "next": "artifacts-proof"
+      },
+      "artifacts-proof": {
+        "action": "assert_output",
+        "source": "cold-artifacts",
+        "stream": "stdout",
+        "match": "\"nativeArtifactCold\":true",
+        "intent": "Require the real artifact view to restore saved context and reauthorize actions after reconnect.",
+        "proves": ["native-shared-artifacts"],
+        "next": "done"
+      },
+      "artifact-item-visible": {
+        "action": "ui.wait_for",
+        "text_contains": ["Saved artifact inventory"],
+        "timeout_ms": 30000,
+        "intent": "The saved artifact inventory row appears in the actual Files list.",
+        "next": "artifacts-capture"
+      }
+    }
+  }
+}

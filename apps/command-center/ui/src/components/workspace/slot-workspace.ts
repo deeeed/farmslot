@@ -14,10 +14,14 @@ import './git-changes.js';
 import './tab-bar.js';
 
 import { gateway } from '../../gateway-client.js';
+import { heldRunFileDiff } from '../../held-run-diff.js';
+import { getResourceCache } from '../../resource-cache.js';
+import { getRunForSlot } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 import type { FileEntry } from './file-tree.js';
+import { retainOpenedChildren, WorkspaceReads } from './workspace-reads.js';
 // NOTE: diff-review and code-viewer use createRenderRoot()=>this (no Shadow DOM)
 // so they don't work inside slot-workspace's Shadow DOM. We use a plain text
 // viewer for file content. Diff rendering uses a simple pre-formatted view.
@@ -58,8 +62,22 @@ export class SlotWorkspace extends LitElement {
   // Slot workspaces have no branch-diff patterns here; the defaults apply.
   private readonly _testFilter = new DiffTestFilterController(this);
 
-  private _gitPollTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly reads: WorkspaceReads = new WorkspaceReads(
+    this,
+    () => {
+      if (this.reads?.ready) this._error = '';
+    },
+    undefined,
+    () => {
+      this._liveEntries = [];
+      this._liveGitData = null;
+      this._liveFileContents = new Map();
+      this._liveDiffContents = new Map();
+    },
+  );
   private _prevSlotId = '';
+  /** Held-diff fallbacks still waiting; live teardown stops them with the reads. */
+  private readonly _heldDiffReads = new Set<AbortController>();
 
   private get _isLive(): boolean {
     return this.slotId !== '' && this.fileEntries.length === 0;
@@ -304,10 +322,18 @@ export class SlotWorkspace extends LitElement {
 
     try {
       const [fsResult, gitResult] = await Promise.all([
-        gateway.request<FsListResult>(Methods.FS_LIST, { slotId: this.slotId, path: '.' }),
-        gateway.request<GitStatusResult>(Methods.GIT_STATUS, { slotId: this.slotId }),
+        this.reads.read<FsListResult>(
+          Methods.FS_LIST,
+          { slotId: this.slotId, path: '.' },
+          (result) => {
+            this._liveEntries = retainOpenedChildren(this._liveEntries, result.entries);
+          },
+        ),
+        this.reads.read<GitStatusResult>(Methods.GIT_STATUS, { slotId: this.slotId }, (result) => {
+          this._liveGitData = result;
+        }),
       ]);
-      this._liveEntries = fsResult.entries;
+      this._liveEntries = retainOpenedChildren(this._liveEntries, fsResult.entries);
       this._liveGitData = {
         branch: gitResult.branch,
         headSha: gitResult.headSha,
@@ -320,42 +346,26 @@ export class SlotWorkspace extends LitElement {
     } finally {
       this._loading = false;
     }
-
-    // Poll git status every 30s
-    this._gitPollTimer = setInterval(() => this._refreshGitStatus(), 30_000);
   }
 
   private _teardownLive() {
-    if (this._gitPollTimer) {
-      clearInterval(this._gitPollTimer);
-      this._gitPollTimer = null;
-    }
-  }
-
-  private async _refreshGitStatus() {
-    if (!this._isLive) return;
-    try {
-      const result = await gateway.request<GitStatusResult>(Methods.GIT_STATUS, {
-        slotId: this.slotId,
-      });
-      this._liveGitData = {
-        branch: result.branch,
-        headSha: result.headSha,
-        ahead: result.ahead,
-        behind: result.behind,
-        changes: result.changes,
-      };
-    } catch {
-      // Silently ignore poll failures
-    }
+    this.reads.clear();
+    for (const controller of this._heldDiffReads) controller.abort();
+    this._heldDiffReads.clear();
   }
 
   private async _loadDirectory(dirPath: string) {
     try {
-      const result = await gateway.request<FsListResult>(Methods.FS_LIST, {
-        slotId: this.slotId,
-        path: dirPath,
-      });
+      const result = await this.reads.read<FsListResult>(
+        Methods.FS_LIST,
+        {
+          slotId: this.slotId,
+          path: dirPath,
+        },
+        (result) => {
+          this._liveEntries = this._updateTreeChildren(this._liveEntries, dirPath, result.entries);
+        },
+      );
       this._liveEntries = this._updateTreeChildren(this._liveEntries, dirPath, result.entries);
     } catch (err) {
       this._error = err instanceof Error ? err.message : 'Failed to load directory';
@@ -382,10 +392,16 @@ export class SlotWorkspace extends LitElement {
   private async _handleFileSelect(path: string) {
     if (this._isLive && !this._liveFileContents.has(path)) {
       try {
-        const result = await gateway.request<FsReadResult>(Methods.FS_READ, {
-          slotId: this.slotId,
-          path,
-        });
+        const result = await this.reads.read<FsReadResult>(
+          Methods.FS_READ,
+          {
+            slotId: this.slotId,
+            path,
+          },
+          (result) => {
+            this._liveFileContents = new Map(this._liveFileContents).set(path, result.content);
+          },
+        );
         const next = new Map(this._liveFileContents);
         next.set(path, result.content);
         this._liveFileContents = next;
@@ -400,19 +416,37 @@ export class SlotWorkspace extends LitElement {
 
   private async _handleChangeSelect(path: string) {
     if (this._isLive && !this._liveDiffContents.has(path)) {
-      try {
-        const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
-          slotId: this.slotId,
-          path,
-        });
-        const next = new Map(this._liveDiffContents);
-        next.set(path, result.diff);
-        this._liveDiffContents = next;
-      } catch (err) {
-        const next = new Map(this._liveDiffContents);
-        next.set(path, `Error: ${err instanceof Error ? err.message : 'Failed to load diff'}`);
-        this._liveDiffContents = next;
-      }
+      const read = this.reads
+        .read<GitDiffResult>(
+          Methods.GIT_DIFF,
+          {
+            slotId: this.slotId,
+            path,
+          },
+          (result) => {
+            this._liveDiffContents = new Map(this._liveDiffContents).set(path, result.diff);
+          },
+        )
+        .then(
+          (result) => result.diff,
+          (err: unknown) => `Error: ${err instanceof Error ? err.message : 'Failed to load diff'}`,
+        );
+      // Offline, a file with no saved diff shows its section of the held active-run diff.
+      const controller = new AbortController();
+      const held =
+        gateway.connectionState === 'connected'
+          ? undefined
+          : heldRunFileDiff(getResourceCache(), getRunForSlot(this.slotId), path, {
+              signal: controller.signal,
+            });
+      this._heldDiffReads.add(controller);
+      const diff = await (
+        held ? Promise.race([read, held.then((section) => section ?? read)]) : read
+      ).finally(() => {
+        controller.abort();
+        this._heldDiffReads.delete(controller);
+      });
+      this._liveDiffContents = new Map(this._liveDiffContents).set(path, diff);
     }
     this._openFile(path, 'diff');
   }
@@ -439,6 +473,17 @@ export class SlotWorkspace extends LitElement {
         Loading...
       </div>`;
     }
+    if (this.reads.status && this._isLive)
+      return html`<p role="status">${this.reads.status}</p>
+        ${this.reads.error
+          ? html`<button @click=${() => this.reads.retry()}>Retry</button>`
+          : nothing}${this._liveEntries.length
+          ? html`<file-tree
+              .entries=${this._entries}
+              @file-select=${(e: CustomEvent) => this._handleFileSelect(e.detail.path)}
+              @dir-expand=${(e: CustomEvent) => this._handleDirExpand(e.detail.path)}
+            ></file-tree>`
+          : nothing}`;
     if (this._error) {
       return html`<div
         style="padding: ${spacing.lg}; color: ${colors.statusFail}; font-size: ${fonts.sizeSm}"

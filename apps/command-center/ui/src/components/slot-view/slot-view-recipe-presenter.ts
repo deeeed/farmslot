@@ -40,7 +40,6 @@ import {
 import {
   refreshSlotViewArtifactMirror,
   resetSlotViewRecipePanelState,
-  scheduleSlotViewRecipeRunsRefresh,
 } from './slot-view-recipe-run-effects.js';
 import { renderRecipeRunsList } from './slot-view-recipe-run-list-renderers.js';
 import {
@@ -58,6 +57,10 @@ export abstract class SlotViewRecipePresenter extends SlotViewState {
   abstract _syncUrlState(): void;
   abstract _saveLayout(): void;
   abstract _refreshLinkedRun(prevRunStatus: string | null): Promise<string | null>;
+  abstract _requireCurrentRun(): Run;
+  abstract _requireCurrentRecipes(): Run;
+  abstract _captureRunScope(): () => boolean;
+  abstract _retryRunReads(): Promise<void>;
   abstract _onResizeStart(type: 'review', event: MouseEvent): void;
   abstract _requestedRecipeRunFromUrl(): string | null;
   abstract _requestedRecipeArtifactFromUrl(): string | null;
@@ -269,10 +272,6 @@ export abstract class SlotViewRecipePresenter extends SlotViewState {
     this._recipeLightboxScopePaths = null;
     this._recipeLightboxScopeLabel = '';
     if (index !== null) this._recipeLightboxIndex = index;
-  }
-
-  _refreshRecipeRuns(run: Run | null): void {
-    scheduleSlotViewRecipeRunsRefresh(this, run);
   }
 
   async _copyRecipeCommand(recipeArtifactPath = '', useSelectedRecipeRun = false) {

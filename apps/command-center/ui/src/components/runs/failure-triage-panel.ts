@@ -7,8 +7,11 @@ import {
   type FailureTriageView,
   Methods,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 const checks: Record<string, string> = {
   inspect_prepare: 'Inspect preparation and configuration',
@@ -33,6 +36,24 @@ export class FailureTriagePanel extends LitElement {
   @state() private used = false;
   @state() private correction = '';
   private generation = 0;
+  private includeEvidence = false;
+  private readonly observation: ResourceQueryController<FailureTriageView> =
+    new ResourceQueryController<FailureTriageView>(this, (state) => {
+      const view = state.data;
+      if (this.view?.record?.id !== view?.record?.id) {
+        this.correction = '';
+        this.used = false;
+      }
+      if (
+        this.linkedAssessmentId &&
+        (!this.observation.ready ||
+          view?.record?.id !== this.linkedAssessmentId ||
+          !view?.decisionLinkable)
+      )
+        this.emitDecisionLink(null);
+      this.view = view;
+      this.error = state.error?.message ?? '';
+    });
   static styles = css`
     :host {
       display: block;
@@ -84,45 +105,39 @@ export class FailureTriagePanel extends LitElement {
   `;
   protected updated(changed: Map<string, unknown>) {
     if (changed.has('runId') || changed.has('runVersion')) {
+      this.generation++;
+      this.busy = false;
+      this.analyzing = false;
       this.view = undefined;
+      this.includeEvidence = false;
       this.used = false;
       this.correction = '';
       if (this.runId) void this.load();
+      else this.observation.setQuery(undefined);
     }
+  }
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.generation++;
+    this.busy = false;
+    this.analyzing = false;
   }
   private async load(includeEvidence = false) {
-    const generation = ++this.generation;
-    this.busy = true;
-    this.analyzing = false;
-    this.error = '';
-    try {
-      const view = await gateway.request<FailureTriageView>(Methods.FAILURE_TRIAGE_GET, {
+    if (!this.runId) return;
+    this.includeEvidence = includeEvidence;
+    this.observation.setQuery(
+      resourceQuery<FailureTriageView>(Methods.FAILURE_TRIAGE_GET, {
         runId: this.runId,
-        includeEvidence,
-      });
-      if (generation === this.generation) {
-        if (this.view?.record?.id !== view.record?.id) {
-          this.correction = '';
-          this.used = false;
-        }
-        if (
-          this.linkedAssessmentId &&
-          (view.record?.id !== this.linkedAssessmentId || !view.decisionLinkable)
-        )
-          this.emitDecisionLink(null);
-        this.view = view;
-      }
-    } catch {
-      if (generation === this.generation) {
-        if (this.linkedAssessmentId) this.emitDecisionLink(null);
-        this.error = 'Advice could not be loaded. Refresh to retry.';
-      }
-    } finally {
-      if (generation === this.generation) this.busy = false;
-    }
+        includeEvidence: this.includeEvidence,
+      }),
+    );
+    await this.observation.retry();
   }
+
   private async analyze() {
-    const v = this.view;
+    const v = this.observation.ready ? this.observation.requireReady() : undefined;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.connectionEpoch;
     if (!v?.snapshotHash || v.availability !== 'ready') return;
     const generation = ++this.generation;
     const retryOf = v.retryAllowed && v.record ? v.record.id : undefined;
@@ -136,7 +151,11 @@ export class FailureTriagePanel extends LitElement {
         snapshotHash: v.snapshotHash,
         ...(retryOf ? { retryOf } : {}),
       });
-      if (generation === this.generation) {
+      if (
+        generation === this.generation &&
+        owner === getResourceWorkspaceKey() &&
+        connection === gateway.connectionEpoch
+      ) {
         if (this.view?.record?.id !== view.record?.id) {
           this.correction = '';
           this.used = false;
@@ -146,10 +165,14 @@ export class FailureTriagePanel extends LitElement {
           (view.record?.id !== this.linkedAssessmentId || !view.decisionLinkable)
         )
           this.emitDecisionLink(null);
-        this.view = view;
+        await this.observation.retry();
       }
     } catch {
-      if (generation === this.generation) {
+      if (
+        generation === this.generation &&
+        owner === getResourceWorkspaceKey() &&
+        connection === gateway.connectionEpoch
+      ) {
         if (this.linkedAssessmentId) this.emitDecisionLink(null);
         this.error = 'Advice was not returned. Refresh its saved status before retrying.';
       }
@@ -171,17 +194,19 @@ export class FailureTriagePanel extends LitElement {
   }
   private toggleDecisionLink() {
     const id = this.view?.record?.id;
-    if (!id || !this.view?.advice) return;
+    if (!id || !this.view?.advice || !this.observation.ready) return;
     this.emitDecisionLink(this.linkedAssessmentId === id ? null : id);
   }
   private async feedback(verdict: 'correct' | 'incorrect' | 'insufficient-context') {
-    const record = this.view?.record;
+    const record = this.observation.ready ? this.observation.requireReady().record : undefined;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.connectionEpoch;
     if (!record || this.busy || (verdict === 'incorrect' && !this.correction)) return;
     const generation = ++this.generation;
     this.busy = true;
     this.error = '';
     try {
-      const updated = await gateway.request<AssessmentRecord>(Methods.FAILURE_TRIAGE_FEEDBACK, {
+      await gateway.request<AssessmentRecord>(Methods.FAILURE_TRIAGE_FEEDBACK, {
         id: record.id,
         expectedRevision: record.feedback.length,
         questionId: 'cause',
@@ -191,10 +216,18 @@ export class FailureTriagePanel extends LitElement {
         evidenceRef: 'operator:manual-check',
         ...(verdict === 'incorrect' ? { correctedAnswer: this.correction } : {}),
       });
-      if (generation === this.generation && this.view)
-        this.view = { ...this.view, record: updated };
+      if (
+        generation === this.generation &&
+        owner === getResourceWorkspaceKey() &&
+        connection === gateway.connectionEpoch
+      )
+        await this.observation.retry();
     } catch {
-      if (generation === this.generation)
+      if (
+        generation === this.generation &&
+        owner === getResourceWorkspaceKey() &&
+        connection === gateway.connectionEpoch
+      )
         this.error = 'Feedback was not saved. Refresh before retrying.';
     } finally {
       if (generation === this.generation) this.busy = false;
@@ -273,9 +306,17 @@ export class FailureTriagePanel extends LitElement {
               reserved maximum: $${record.reservation?.maxUsd.toFixed(6) ?? 'unknown'}
             </p>`
         : nothing}
-      <button ?disabled=${this.busy} @click=${() => this.load()}>Refresh</button>
+      ${this.observation.state.error
+        ? html`<button
+            ?disabled=${this.busy}
+            data-triage-action="retry"
+            @click=${() => this.observation.retry()}
+          >
+            Retry
+          </button>`
+        : nothing}
       <button
-        ?disabled=${this.busy || v?.availability !== 'ready'}
+        ?disabled=${this.busy || !this.observation.ready || v?.availability !== 'ready'}
         data-triage-action="analyze"
         @click=${this.analyze}
       >
@@ -301,7 +342,11 @@ export class FailureTriagePanel extends LitElement {
       )}
       ${v?.advice && record?.status === 'completed'
         ? html`${this.canLinkDecision && v.decisionLinkable
-              ? html`<button data-triage-action="link-decision" @click=${this.toggleDecisionLink}>
+              ? html`<button
+                    ?disabled=${!this.observation.ready}
+                    data-triage-action="link-decision"
+                    @click=${this.toggleDecisionLink}
+                  >
                     ${this.linkedAssessmentId === record.id
                       ? 'Remove from next decision'
                       : 'Associate with next decision'}</button
@@ -333,20 +378,23 @@ export class FailureTriagePanel extends LitElement {
               </select> </label
             ><br />
             <button
-              ?disabled=${this.busy}
+              ?disabled=${this.busy || !this.observation.ready}
               data-triage-feedback="correct"
               @click=${() => this.feedback('correct')}
             >
               Correct
             </button>
             <button
-              ?disabled=${this.busy || !this.correction}
+              ?disabled=${this.busy || !this.observation.ready || !this.correction}
               data-triage-feedback="incorrect"
               @click=${() => this.feedback('incorrect')}
             >
               Incorrect
             </button>
-            <button ?disabled=${this.busy} @click=${() => this.feedback('insufficient-context')}>
+            <button
+              ?disabled=${this.busy || !this.observation.ready}
+              @click=${() => this.feedback('insufficient-context')}
+            >
               Insufficient context
             </button>
             ${record.feedback.length

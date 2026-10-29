@@ -1,16 +1,16 @@
-import { html } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { html, nothing } from 'lit';
+import { customElement, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type {
-  SlotStatus,
-  TaskProgressUpdatedPayload,
+  TaskProgressResult,
   TerminalData,
   TerminalExitedPayload,
   TerminalModePayload,
   TmuxListResult,
 } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
+import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import {
   listSlotTmuxWindows,
   nativeWorkerAttemptKey,
@@ -23,7 +23,8 @@ import '../progress-tracker/progress-tracker.js';
 import '../chat/native-session-view.js';
 
 import { gateway } from '../../gateway-client.js';
-import { getState } from '../../state.js';
+import { getState, subscribe } from '../../state.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   dropCarriesFiles,
@@ -57,6 +58,7 @@ import {
   renderTerminalChrome,
   renderTmuxToolbar,
   type TerminalMode,
+  type TmuxActionMethod,
 } from './terminal-view-renderers.js';
 import { TerminalViewState } from './terminal-view-state.js';
 import { syncTerminalRunnerAccent, terminalViewStyles } from './terminal-view-styles.js';
@@ -75,6 +77,87 @@ const TARGET_CHANGE_DEBOUNCE_MS = 50;
 export class TerminalView extends TerminalViewState {
   private _pendingOperatorMessage: OperatorMessageInput | null = null;
   static styles = [terminalViewStyles, terminalAttachmentStyles];
+  @state() private progressObservation: ResourceQueryState<TaskProgressResult> = {
+    status: 'loading',
+  };
+  private progressAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly progressQuery = new ResourceQueryController<TaskProgressResult>(
+    this,
+    (state) => {
+      this.progressObservation = state;
+      if (state.data && state.status !== 'ready' && !this.progressAgeTimer)
+        this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
+      else if (!state.data || state.status === 'ready') {
+        clearInterval(this.progressAgeTimer);
+        this.progressAgeTimer = undefined;
+      }
+      this._taskMarkdown = state.data?.markdown ?? '';
+    },
+  );
+
+  protected override willUpdate(changed: Map<string, unknown>) {
+    if (
+      [
+        'slotId',
+        'runId',
+        'role',
+        'contextId',
+        'workerRefJson',
+        'nativeWorker',
+        'bareSession',
+        '_postmortem',
+      ].some((key) => changed.has(key))
+    ) {
+      this._syncProgressQuery();
+    }
+  }
+
+  private _syncProgressQuery(): void {
+    this.progressQuery.setQuery(
+      !this.nativeWorker &&
+        !this._workerRef() &&
+        !this.bareSession &&
+        !this._postmortem &&
+        this._hasTarget()
+        ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, this._targetParams())
+        : undefined,
+    );
+    this._taskMarkdown = this.progressQuery.belongsToWorkspace
+      ? (this.progressQuery.state.data?.markdown ?? '')
+      : '';
+  }
+
+  private _renderProgressStatus() {
+    const observation = this.progressObservation;
+    if (
+      !(
+        this.progressQuery.belongsToWorkspace &&
+        !this.nativeWorker &&
+        !this._workerRef() &&
+        !this.bareSession &&
+        !this._postmortem
+      )
+    )
+      return nothing;
+    if (observation.status === 'ready' || observation.status === 'loading') return nothing;
+    return html`<div class="progress-strip" data-terminal-progress=${observation.status}>
+      ${observation.data
+        ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`
+        : nothing}
+      ${observation.status === 'unsupported'
+        ? 'Progress updates are unavailable on this gateway.'
+        : nothing}
+      ${observation.error
+        ? html`<span role="alert">Progress read failed: ${observation.error.message}</span>
+            <button
+              ?disabled=${gateway.connectionState !== 'connected'}
+              @click=${() => this.progressQuery.retry()}
+            >
+              Retry reading progress
+            </button>`
+        : nothing}
+    </div>`;
+  }
 
   connectedCallback() {
     super.connectedCallback();
@@ -91,6 +174,8 @@ export class TerminalView extends TerminalViewState {
   }
 
   disconnectedCallback() {
+    clearInterval(this.progressAgeTimer);
+    this.progressAgeTimer = undefined;
     super.disconnectedCallback();
     this._log('disconnectedCallback');
     // Paired with connectedCallback's bind. Deliberately not in _dispose(): the HMR recovery
@@ -202,7 +287,6 @@ export class TerminalView extends TerminalViewState {
     // suggest the new target has attachments it never received.
     this._attachmentQueue?.clear();
     this._terminal.clear();
-    this._taskMarkdown = '';
     this._mode = 'none';
     this._exited = false;
     this._recoveryMessage = gateway.connectionState === 'connected' ? '' : 'Waiting for gateway';
@@ -500,20 +584,11 @@ export class TerminalView extends TerminalViewState {
       }
     });
 
-    if (!worker) {
-      this._unsubSlot = gateway.subscribe(Events.SLOT_CHANGED, (payload: unknown) => {
-        if (subscribeSeq !== this._subscribeSeq) return;
-        const slot = payload as SlotStatus;
-        if (slot.slot === this.slotId) {
-          this._lifecycle = slot.lifecycle;
-          this._agent = slot.agent;
-          this._runner = slot.runner ?? '';
-          this._model = slot.model ?? '';
-          this._taskId = slot.taskId || '';
-          this._syncRunSummary();
-        }
+    // Slot facts come from the shared fleet observation, never from event payloads.
+    if (!worker)
+      this._unsubSlot = subscribe(() => {
+        if (subscribeSeq === this._subscribeSeq) this._syncRunSummary();
       });
-    }
 
     this._unsubExit = gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
       if (subscribeSeq !== this._subscribeSeq) return;
@@ -554,21 +629,6 @@ export class TerminalView extends TerminalViewState {
         this._terminal?.writeln('\x1b[33m[Session ended]\x1b[0m');
       }
     });
-
-    if (!worker) this._fetchTaskProgress();
-
-    // Subscribe to real-time task progress updates
-    if (!worker) {
-      this._unsubTaskProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
-        Events.TASK_PROGRESS_UPDATED,
-        (p) => {
-          if (subscribeSeq !== this._subscribeSeq) return;
-          if (this._matchesTarget(p) && p.progress?.markdown) {
-            this._taskMarkdown = p.progress.markdown;
-          }
-        },
-      );
-    }
 
     // In poll mode, get initial snapshot (PTY gives full screen immediately)
     setTimeout(async () => {
@@ -784,20 +844,6 @@ export class TerminalView extends TerminalViewState {
       .catch((err) => this._warn('terminal resize', err));
   }
 
-  private async _fetchTaskProgress() {
-    if (!this.slotId) return;
-    try {
-      const res = await gateway.request<{ slotId: string; markdown: string }>(
-        Methods.TASK_PROGRESS,
-        this._targetParams(),
-      );
-      this._taskMarkdown = res.markdown;
-    } catch (err) {
-      this._warn('task progress fetch', err);
-      this._taskMarkdown = '';
-    }
-  }
-
   // Tear down stream subscriptions only — keeps terminal + resize observer alive
   private _teardownStreams(
     remoteUnsubscribe = true,
@@ -833,13 +879,11 @@ export class TerminalView extends TerminalViewState {
     this._unsubSlot?.();
     this._unsubMode?.();
     this._unsubExit?.();
-    this._unsubTaskProgress?.();
     clearTimeout(this._resizeTimer);
     this._unsubData = undefined;
     this._unsubSlot = undefined;
     this._unsubMode = undefined;
     this._unsubExit = undefined;
-    this._unsubTaskProgress = undefined;
     this._activeSubscribeIdentity = null;
     this._activeSubscribePostmortem = false;
   }
@@ -1004,7 +1048,7 @@ export class TerminalView extends TerminalViewState {
 
   // --- Tmux control ---
 
-  private async _tmuxAction(method: string, params: Record<string, unknown> = {}) {
+  private async _tmuxAction(method: TmuxActionMethod, params: Record<string, unknown> = {}) {
     try {
       const target =
         method === Methods.TMUX_SELECT_WINDOW
@@ -1223,7 +1267,7 @@ export class TerminalView extends TerminalViewState {
         ? getState().runs.find((run) => run.id === this.runId)
         : undefined;
 
-    return renderTerminalChrome({
+    const terminal = renderTerminalChrome({
       showInputBar:
         !this.nativeWorker && !this._retiredTarget && !this.compact && this._mode !== 'pty',
       retiredTarget: this._retiredTarget,
@@ -1285,6 +1329,7 @@ export class TerminalView extends TerminalViewState {
       onDragLeave: () => this._handleDragLeave(),
       onDrop: (event) => this._handleDrop(event),
     });
+    return html`${this._renderProgressStatus()}${terminal}`;
   }
 }
 

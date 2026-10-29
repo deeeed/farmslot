@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>OPFS write teardown diagnostic</title>
+<p id="status">Opening an isolated OPFS file</p>
+<script type="module">
+  const query = new URLSearchParams(location.search);
+  const id = query.get('id');
+  if (!/^[a-z0-9-]+$/.test(id ?? '')) throw new Error('Select a diagnostic ID');
+  if (query.get('landed') === '1') {
+    document.querySelector('#status').textContent = 'Navigation completed';
+  } else {
+    const worker = new Worker(new URL('./opfs-write-teardown.worker.js', import.meta.url));
+    const stop = query.get('stop');
+    window.addEventListener(
+      'pagehide',
+      (event) => {
+        sessionStorage.setItem(
+          'farmslot-opfs-teardown-receipt',
+          JSON.stringify({ id, persisted: event.persisted, mode: stop }),
+        );
+        if (stop === 'pagehide' || (stop === 'discard' && !event.persisted)) worker.terminate();
+      },
+      { once: true },
+    );
+    if (stop === 'beforeunload')
+      window.addEventListener('beforeunload', () => worker.terminate(), { once: true });
+    worker.onmessage = ({ data }) => {
+      document.querySelector('#status').textContent = JSON.stringify(data);
+      if (data.phase === 'writing' && query.get('navigate') === '1')
+        location.href = `${location.pathname}?id=${id}&landed=1#opfs-diagnostic`;
+    };
+    worker.postMessage({ id });
+  }
+</script>

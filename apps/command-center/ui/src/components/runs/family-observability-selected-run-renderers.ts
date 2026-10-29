@@ -42,6 +42,7 @@ interface FamilySelectedRunDetailRenderOptions {
   runs: readonly FamilyObservabilityRunSummary[];
   prs: readonly PRStatus[];
   fullRun: Run | null;
+  commandsReady?: boolean;
   fullRunLoading: boolean;
   fullRunError: string | undefined;
   selectedStep: RunStep | null;
@@ -82,6 +83,7 @@ export function renderFamilySelectedRunDetail(options: FamilySelectedRunDetailRe
       run: options.run,
       decision: retrospective,
       onResolve: options.onResolveRetrospective,
+      disabled: options.commandsReady === false,
     })}
     ${renderFamilyPublishGateReopen(options)} ${renderFamilyRunFiles(options)}
     ${renderFamilyRunSummaryGrid({ run: options.run, runs: options.runs, prs: options.prs })}
@@ -150,6 +152,7 @@ function renderFamilyAgentSessions(options: FamilySelectedRunDetailRenderOptions
   if (options.fullRun) {
     return renderRunAgentSessions(options.fullRun, {
       states: options.sessionStates,
+      actionsBlocked: options.commandsReady === false,
       onCopy: options.onCopySession,
       onOpenOnHost: options.onOpenOnHost,
     });
@@ -217,9 +220,11 @@ function renderFamilyPublishGateReopen(options: FamilySelectedRunDetailRenderOpt
                   slotId=${options.fullRun.slotId ?? ''}
                   branch=${options.fullRun.branch ?? ''}
                   runner=${options.fullRun.metrics.runner ?? ''}
-                  .postureBlockedReason=${decision.resolvedAt
-                    ? null
-                    : 'Resolve this gate from Run Detail so resource posture can be chosen.'}
+                  .postureBlockedReason=${options.commandsReady === false
+                    ? 'Wait for current run details before acting.'
+                    : decision.resolvedAt
+                      ? null
+                      : 'Resolve this gate from Run Detail so resource posture can be chosen.'}
                 ></ready-workspace>
               </div>
             `
@@ -271,7 +276,8 @@ function renderFamilyRunPipelineDetail(options: FamilySelectedRunDetailRenderOpt
             <step-inspector
               .step=${options.selectedStep}
               .run=${options.fullRun}
-              .allowReplay=${isFamilyStepReplayAllowed(options.fullRun, options.replayingStep)}
+              .allowReplay=${options.commandsReady !== false &&
+              isFamilyStepReplayAllowed(options.fullRun, options.replayingStep)}
               @inspector-close=${() => options.onCloseStepInspector()}
               @step-replay=${(
                 event: CustomEvent<{

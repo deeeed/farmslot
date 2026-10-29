@@ -3,6 +3,7 @@ import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js
 import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
+import { refreshSlotViewDrafts } from './slot-view-edit-effects.js';
 import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
 import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
 import { connectSlotViewLayoutObserver } from './slot-view-resize-effects.js';
@@ -10,7 +11,6 @@ import { connectSlotViewLayoutObserver } from './slot-view-resize-effects.js';
 /** Reset slot-local state before render when navigating to a different slot. */
 export function prepareSlotViewSlotChange(view: SlotView): void {
   view._fileUrlReady = false;
-  view._cancelFileRestoreRetry();
   view._cancelResourceRestoreRetry();
   view._resetRecipePanelState();
   view._dismissedReviewDrawerKey = '';
@@ -39,10 +39,7 @@ export function prepareSlotViewSlotChange(view: SlotView): void {
       void view._beginLiveRecovery();
     } else {
       view._liveInitPending = true;
-      view._recoveryPhase = 'stale';
-      view._recoveryMessage = 'Waiting for gateway reconnect';
-      view._wsLoading = false;
-      view._wsError = '';
+      void view._beginLiveRecovery();
     }
   } else {
     view._teardownLive();
@@ -66,6 +63,23 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
   if (changed.has('slotId') && view.slotId) {
     view._loadSlot();
     void view._refreshLinkedRun(view._linkedRun?.status ?? null);
+  }
+  // Another slot, or the slot's run changing, selects which drafts are current.
+  if (changed.has('slotId') || changed.has('_slot')) {
+    const previous = changed.get('_slot') as { currentRunId?: string | null } | null | undefined;
+    if (changed.has('slotId') || previous?.currentRunId !== view._slot?.currentRunId) {
+      view._saveConflict = undefined;
+      view._editNotice = '';
+      void refreshSlotViewDrafts(view);
+    }
+  }
+  if (
+    changed.has('_linkedRun') &&
+    (changed.get('_linkedRun') as { id?: string } | null)?.id !== view._linkedRun?.id &&
+    view._isLive
+  ) {
+    view._workspaceReads.clear();
+    void view._beginLiveRecovery();
   }
   // Sync URL-backed local state
   if (
@@ -116,16 +130,6 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
     if (!panel?.activeIds.includes(targetResource)) {
       view._ensureResourcePanelSelection(targetResource, 2);
     }
-  }
-  const requestedFile = view._requestedFileFromUrl();
-  if (
-    view._fileUrlReady &&
-    requestedFile &&
-    !view._activeFile &&
-    view._recoveryPhase === 'live' &&
-    view._openFiles.length === 0
-  ) {
-    view._scheduleUrlRestoreRetry(requestedFile, 1);
   }
   // Auto-open review panel when a review gate decision becomes pending
   if (changed.has('_slot') && view._slot) {

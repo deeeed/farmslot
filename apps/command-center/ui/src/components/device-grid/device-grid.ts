@@ -4,7 +4,6 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type {
-  FleetStatusResult,
   ResourceControlAction,
   ResourceListResult,
   ResourceStatus,
@@ -63,7 +62,6 @@ export class DeviceGrid extends LitElement {
   @state() private _resourceStatuses = new Map<string, ResourceStatus>();
   @state() private _hydrating = false;
 
-  private _unsubFleet?: () => void;
   private _unsubResource?: () => void;
   private _unsubState?: () => void;
   private _globalFilters: AppState['globalFilters'] = { projects: [], machines: [] };
@@ -376,10 +374,6 @@ export class DeviceGrid extends LitElement {
 
     document.addEventListener('click', this._onDocClick);
 
-    this._unsubFleet = gateway.subscribe(Events.FLEET_UPDATED, () => {
-      this._fetchAllResources();
-    });
-
     this._unsubResource = gateway.subscribe<ResourceStatusUpdatedPayload>(
       Events.RESOURCE_STATUS_UPDATED,
       (p) => {
@@ -394,11 +388,15 @@ export class DeviceGrid extends LitElement {
       },
     );
 
+    let fleet = initial.fleet;
     this._unsubState = subscribe((s: AppState) => {
       const prev = this._globalFilters;
+      const fleetChanged = fleet !== s.fleet;
+      fleet = s.fleet;
       this._globalFilters = s.globalFilters;
       this._hydrating = isHydrating(s, 'fleet');
       if (
+        fleetChanged ||
         prev.projects !== s.globalFilters.projects ||
         prev.machines !== s.globalFilters.machines
       ) {
@@ -412,7 +410,6 @@ export class DeviceGrid extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('click', this._onDocClick);
-    this._unsubFleet?.();
     this._unsubResource?.();
     this._unsubState?.();
   }
@@ -449,9 +446,15 @@ export class DeviceGrid extends LitElement {
   }
 
   private async _fetchAllResources() {
+    const fleet = getState().fleet;
+    if (!fleet) {
+      this._availableResources = [];
+      this._resourceStatuses = new Map();
+      return;
+    }
+    if (gateway.connectionState !== 'connected') return;
     try {
-      const result = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
-      const filtered = this._applyFilters(result.fleet.slots);
+      const filtered = this._applyFilters(fleet.slots);
 
       const resources: AvailableResource[] = [];
       const statusMap = new Map<string, ResourceStatus>();
@@ -470,6 +473,7 @@ export class DeviceGrid extends LitElement {
         }),
       );
 
+      if (fleet !== getState().fleet) return;
       for (const entry of entries) {
         if (entry.status !== 'fulfilled') continue;
         const { slot, resources: slotResources } = entry.value;

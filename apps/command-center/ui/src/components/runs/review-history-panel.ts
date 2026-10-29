@@ -5,11 +5,13 @@ import {
   type FamilyObservabilityArtifact,
   type FsReadResult,
   type GitDiffResult,
+  type GitShowParams,
   type GitShowResult,
   Methods,
   reviewedFindingContext,
   type Run,
 } from '@farmslot/protocol';
+import { resourceQuery, type ResourceReadMethod } from '@farmslot/protocol/client-cache';
 import {
   loadReviewHistoryArtifacts,
   mergeReviewHistoryArtifacts,
@@ -26,12 +28,36 @@ import '../shared/diff-viewer-modal.js';
 import '../diff-viewer/code-viewer.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 import { runArtifactApiPath } from '../workspace/workspace-artifacts.js';
 
 import { reviewHistoryStyles } from './review-history-styles.js';
 import { renderReviewAttempt, renderReviewFix } from './step-inspector-review-renderer.js';
+
+/** Live slot review reads share the current owner's workspace cache; a ready entry is current. */
+async function readReviewWorkspace<T>(method: ResourceReadMethod, params: unknown): Promise<T> {
+  const cache = getResourceCache();
+  const owner = getResourceWorkspaceKey();
+  if (!cache) throw new Error('Workspace store is unavailable');
+  const query = resourceQuery<T>(method, params);
+  let state = cache.read(query);
+  if (state.status !== 'ready') state = await cache.retry(query);
+  if (cache !== getResourceCache() || owner !== getResourceWorkspaceKey())
+    throw new Error('Farm connection changed');
+  if (state.status !== 'ready' || state.data === undefined)
+    throw new Error(state.error?.message ?? 'Wait for a current workspace source');
+  return state.data;
+}
+
+/** A slotless review run has no live workspace; it reads its frozen head through the run. */
+async function readReviewSource(params: GitShowParams): Promise<GitShowResult> {
+  if (params.slotId) return readReviewWorkspace<GitShowResult>(Methods.GIT_SHOW, params);
+  const { runId = '', ref, path } = params;
+  if (!runId || !ref || !path) throw new Error('Reviewed source is unavailable');
+  return gateway.request<GitShowResult>(Methods.GIT_SHOW, { slotId: '', runId, ref, path });
+}
 
 @customElement('review-history-panel')
 export class ReviewHistoryPanel extends LitElement {
@@ -104,11 +130,22 @@ export class ReviewHistoryPanel extends LitElement {
         },
         async (params) => {
           if (!isRecoveryEpochCurrent(epoch)) throw new Error('Farm connection changed');
-          return (await gateway.request<FsReadResult>(Methods.FS_READ, params)).content;
+          return (await readReviewWorkspace<FsReadResult>(Methods.FS_READ, params)).content;
         },
         async (params) => {
           if (!isRecoveryEpochCurrent(epoch)) throw new Error('Farm connection changed');
-          return (await gateway.request<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
+          if (params.slotId)
+            return (await readReviewWorkspace<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
+          const { runId = '', base = '', head = '' } = params;
+          if (!runId || !base || !head) throw new Error('Review range is unavailable');
+          return (
+            await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
+              slotId: '',
+              runId,
+              base,
+              head,
+            })
+          ).diff;
         },
       );
       if (current())
@@ -232,7 +269,7 @@ export class ReviewHistoryPanel extends LitElement {
     };
     this.source = selection;
     try {
-      const result = await gateway.request<GitShowResult>(Methods.GIT_SHOW, params);
+      const result = await readReviewSource(params);
       if (this.source !== selection || !isRecoveryEpochCurrent(selection.epoch)) return;
       const context = reviewedFindingContext(result.content, finding.line!);
       this.source = {

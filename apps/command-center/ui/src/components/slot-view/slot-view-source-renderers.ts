@@ -5,6 +5,8 @@ import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 
 import type { SlotView } from './slot-view.js';
+import { editSlotViewFile, slotViewEditable } from './slot-view-edit-effects.js';
+import { renderSlotViewSaveControl } from './slot-view-edit-renderers.js';
 import { basename, extToLanguage, isImageFile, isMediaFile, realPath } from './slot-view-model.js';
 
 export function renderSearchPanel(view: SlotView) {
@@ -144,6 +146,7 @@ export function renderSourcePanel(view: SlotView) {
             ? html`
                 <div class="sv-section-body sv-pinned-body" style="height:${view._pinnedHeight}px">
                   <file-tree
+                    .actionsDisabled=${view._isLive && !view._workspaceReads.ready}
                     .entries=${view._pinnedEntries}
                     .gitStatus=${view._gitStatusMap}
                     .selectedPath=${realPath(view._activeFile)}
@@ -224,20 +227,7 @@ export function renderEditorHeader(view: SlotView) {
             `
           : ''}
         ${tab.type === 'file' && !isBranchDiff && !isImageFile(filePath) && !isMediaFile(filePath)
-          ? html`
-              <button
-                class="sv-save-btn ${view._saveFeedback}"
-                ?disabled=${view._saveFeedback === 'saving'}
-                @click=${view._saveFile}
-                title="Save (writes to disk)"
-              >
-                ${view._saveFeedback === 'saving'
-                  ? 'Saving...'
-                  : view._saveFeedback === 'saved'
-                    ? 'Saved'
-                    : 'Save'}
-              </button>
-            `
+          ? renderSlotViewSaveControl(view)
           : ''}
       </div>
     </div>
@@ -291,11 +281,21 @@ export function renderEditor(view: SlotView) {
     </div>`;
   }
 
-  const content = view._files.get(view._activeFile) ?? '';
+  // A current draft's edited text is what the user is editing, over the file as last read.
+  const content =
+    view._fileDrafts.get(view._activeFile)?.editedContent ??
+    view._files.get(view._activeFile) ??
+    '';
   const lang = extToLanguage(filePath);
   const commentThreads = view._getCommentThreadsForFile(filePath);
+  const editing = !isBranchDiff && slotViewEditable(view, view._activeFile);
+  const activeFile = view._activeFile;
   return html`<code-viewer
     .content=${content || ''}
+    .readOnly=${!editing}
+    .contentRevision=${view._editorRevision}
+    @content-change=${(e: CustomEvent<{ content: string }>) =>
+      void editSlotViewFile(view, activeFile, e.detail.content)}
     .language=${lang}
     .filename=${basename(filePath)}
     .filePath=${filePath}

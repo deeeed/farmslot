@@ -7,12 +7,15 @@ import { customElement } from 'lit/decorators.js';
 
 import type {
   ArtifactRef,
+  GitBranchDiffFile,
   GitBranchDiffResult,
   GitDiffResult,
   GitShowResult,
+  GitStatusResult,
   ReviewGatePayload,
   ReviewLineComment,
   RunDecision,
+  RunGetResult,
 } from '@farmslot/protocol';
 import {
   buildRunResolveDecisionParams,
@@ -23,6 +26,7 @@ import {
   reviewedFindingContext,
   reviewPostingFingerprint,
   reviewPostRecommendation,
+  sourceObservationAge,
 } from '@farmslot/protocol';
 import { refreshReviewGateView, reviewGateRefreshBlocksPost } from '@farmslot/review-dispatch';
 
@@ -34,7 +38,21 @@ import '../shared/step-artifacts.js';
 import '../shared/diff-viewer-modal.js';
 import './recipe-output-panel.js';
 
+import { fetchRunArtifactBytes } from '../../content-prefetch.js';
 import { gateway } from '../../gateway-client.js';
+import {
+  blobKey,
+  CONTENT_MISMATCH,
+  decisionDiffArtifact,
+  frozenDiffAlias,
+  heldBlobId,
+  heldDiffFiles,
+  heldFileDiff,
+  openedContentKeeper,
+  openHeldText,
+  readVerifiedText,
+  type VerifiedText,
+} from '../../held-content.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
 import { renderMarkdown } from '../../utils/markdown.js';
@@ -63,6 +81,7 @@ import {
   reviewCommentsByFile,
   reviewThreadsForFile,
 } from './review-workspace-comment-model.js';
+import { ReviewWorkspaceQueries } from './review-workspace-queries.js';
 import { renderReviewWorkspaceStyles } from './review-workspace-renderers.js';
 import {
   renderReviewBranchBanner,
@@ -78,14 +97,179 @@ import {
   dedupeWorkspaceEvidenceArtifacts,
   renderWorkspaceEvidencePreview,
 } from './workspace-evidence-preview.js';
+import { WorkspaceReads } from './workspace-reads.js';
 import {
   parseReviewWorkspaceHashState,
   type ReviewWorkspaceTab,
   writeReviewWorkspaceHashState,
 } from './workspace-url-state.js';
 
+const REVIEW_DIFF_MISMATCH = 'This diff does not match the reviewed snapshot, so it is not shown.';
+const REVIEW_DIFF_GONE = 'The review changed while its diff was loading and has no diff.';
+const UNRECORDED_REVIEW =
+  'The reviewed revision was not recorded. Source for this review is unavailable.';
+
 @customElement('review-workspace')
 export class ReviewWorkspace extends ReviewWorkspaceState {
+  readonly _queries = new ReviewWorkspaceQueries(this);
+  // Live slot sources are shared observations. Review-gate slots may drop currentRunId after
+  // handoff, so these reads stay unpinned like their former requests; commands check the slot.
+  private readonly _reads = new WorkspaceReads(this);
+  private _commandRequest?: object;
+  private _recoveryRequest?: object;
+  private _restoreReviewSource = false;
+  private _proposeScope?: { current(): boolean };
+  /** The review's held diff, listed while the live or saved source cannot be read. */
+  private _heldDiff?: string;
+  /** Every diff modal open and close; a modal read applies only to the request it started for. */
+  private _diffModalRequest = 0;
+
+  get _usesMockData(): boolean {
+    return window.location.hash.startsWith('#dev/');
+  }
+
+  _reviewInputsChanged(): void {
+    this.requestUpdate();
+  }
+
+  _retireReviewScope(): void {
+    this._commandRequest = undefined;
+    this._reads.clear();
+    this._heldDiff = undefined;
+    this._recoveryRequest = undefined;
+    this._posting = false;
+    this._refreshing = false;
+    this._refreshError = '';
+    this._checkingOut = false;
+    this._actionError = '';
+    this._preservedInclusion = undefined;
+    this._preservedIncludeEvidence = undefined;
+    this._clearProposingLatch();
+    this._proposeError = null;
+    this._confirmTimer.clear();
+    this._sourceLoadEpoch++;
+    this._initialized = false;
+    this._lastCurationFingerprint = '';
+    this._recoveryInFlight = false;
+    this._selectedFile = '';
+    this._selectedCommentIdx = -1;
+    this._diffFiles = [];
+    this._fileDiff = '';
+    this._fileDiffLoading = false;
+    this._diffLoading = false;
+    this._commentFileContent = '';
+    this._commentFileError = '';
+    this._commentFileLoading = false;
+    this._diffModalOpen = false;
+    this._diffModalRequest++;
+    this._diffModalUrl = '';
+    this._diffModalText = '';
+    this._diffModalNotice = '';
+    this._lightboxOpen = false;
+    this._artifactLightboxItems = null;
+    this._recipeRunning = false;
+    this._evidenceOverrides = new Map();
+  }
+
+  private get _actionsPaused(): boolean {
+    return this.readOnly || this._isRecovering || (!this._usesMockData && !this._queries.ready);
+  }
+
+  /** Offline with the review diff held: findings stay readable while actions wait. */
+  private get _readingHeldDiff(): boolean {
+    return this._recoveryPhase === 'stale' && this._heldDiff !== undefined;
+  }
+
+  /**
+   * The review's diff by identity: a saved review's frozen commits by alias, then the retained
+   * input diff by `diffHash`. With `fetch`, a connected client reads the retained diff, and shows
+   * and keeps it only when it verifies. The read is pinned to the bundle the review payload
+   * records; an older payload records none, so its read is the run's current one, and
+   * verification rejects a diff a later retain put at the same path.
+   */
+  private async _reviewDiffText(fetch: boolean): Promise<VerifiedText> {
+    const snapshot = this._payload?.reviewSnapshot;
+    const loaded = this._queries.run.state.data?.run;
+    const run = loaded?.id === this.runId ? loaded : undefined;
+    const subject = run?.reviewWorkspaceSubject;
+    const base = subject?.baseSha ?? snapshot?.baseSha;
+    const head = subject?.headSha ?? snapshot?.headSha;
+    if (this.workspaceView && this.runId && base && head) {
+      const frozen = await openHeldText(frozenDiffAlias(this.runId, base, head));
+      if (frozen !== undefined) return frozen;
+    }
+    if (!snapshot?.diffHash) return undefined;
+    const key = { kind: 'diff' as const, id: snapshot.diffHash };
+    const path = snapshot.diffPath;
+    const held = await openHeldText(key);
+    if (held !== undefined || !fetch || !path) return held;
+    if (gateway.connectionState !== 'connected') return undefined;
+    return readVerifiedText(
+      key,
+      () => fetchRunArtifactBytes(decisionDiffArtifact(this.runId, path, this._payload, run)),
+      'gate',
+      snapshot.untrackedFiles,
+    );
+  }
+
+  /** Lists the review's diff from its bytes. False when they are not available. */
+  private async _showReviewDiff(fetch: boolean): Promise<boolean> {
+    const captured = this._queries.capture();
+    const text = await this._reviewDiffText(fetch);
+    if (typeof text !== 'string' || !captured.ownsView()) return false;
+    this._heldDiff = text;
+    this._diffError = '';
+    this._diffFiles = heldDiffFiles(text);
+    await this._selectListedFile(this._diffFiles);
+    return true;
+  }
+
+  /** The hash's file, else the first listed file with comments, else the first listed file. */
+  private async _selectListedFile(files: GitBranchDiffFile[]): Promise<void> {
+    const visible = this._testFilter.split(files).visible;
+    const { source } = parseReviewWorkspaceHashState();
+    const first =
+      visible.find((f) => f.path === source?.file) ??
+      visible.find((f) => this._commentCountByFile.has(f.path)) ??
+      visible[0];
+    if (first) {
+      await this._selectFile(first.path, false);
+    } else {
+      // Nothing listed: drop a previous selection so showing tests loads this diff's file.
+      this._selectedFile = '';
+      this._fileDiff = '';
+    }
+  }
+
+  private _beginReviewCommand(actionId?: string) {
+    if (this._commandRequest) return;
+    try {
+      if (this._actionsPaused) throw new Error('Wait for current review inputs before acting.');
+      const decision = this._queries.requireDecision(actionId);
+      const captured = this._queries.capture();
+      const runId = this.runId;
+      const request = {};
+      this._confirmTimer.clear();
+      this._commandRequest = request;
+      this._actionError = '';
+      return {
+        runId,
+        decision,
+        current: () => this._commandRequest === request && captured.current(),
+        ownsView: () => this._commandRequest === request && captured.ownsView(),
+        finish: () => {
+          if (this._commandRequest !== request || !captured.ownsView()) return;
+          this._commandRequest = undefined;
+          this._posting = false;
+          this._refreshing = false;
+          this._checkingOut = false;
+        },
+      };
+    } catch (error) {
+      this._actionError = error instanceof Error ? error.message : String(error);
+      return;
+    }
+  }
   private readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this._diffTestPatterns,
     onChange: () => this._onHideTestsChanged(),
@@ -104,7 +288,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     writeReviewWorkspaceHashState({
       tab: this._activeTab,
       source: comment
-        ? reviewCommentLocation(comment, this._payload.reviewSnapshot?.headSha ?? undefined)
+        ? reviewCommentLocation(comment, this._payload?.reviewSnapshot?.headSha ?? undefined)
         : this._selectedFile
           ? { file: this._selectedFile }
           : null,
@@ -122,7 +306,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       const index = reviewCommentIndex(
         this._comments,
         source,
-        this._payload.reviewSnapshot?.headSha ?? undefined,
+        this._payload?.reviewSnapshot?.headSha ?? undefined,
       );
       if (index < 0) {
         this._sourceLoadEpoch++;
@@ -144,8 +328,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     }
   }
 
-  private get _payload(): ReviewGatePayload {
-    return this.decision.payload as ReviewGatePayload;
+  private get _payload(): ReviewGatePayload | undefined {
+    const decision = this._queries.decision;
+    return decision?.payload?.kind === 'review' ? decision.payload : undefined;
   }
 
   private get _baseRef(): string {
@@ -174,17 +359,47 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private _openReviewInputDiff(): void {
     const diffPath =
-      this._payload.reviewSnapshot?.diffPath ??
-      this._payload.reviewInputArtifactPaths?.find(
+      this._payload?.reviewSnapshot?.diffPath ??
+      this._payload?.reviewInputArtifactPaths?.find(
         (path) => path.endsWith('diff.txt') || path.endsWith('.diff'),
       );
     if (!diffPath) return;
-    this._diffModalTitle = `Review input ${this._payload.reviewSnapshot?.headSha?.slice(0, 7) ?? 'diff'}`;
-    this._diffModalUrl =
-      this._payload.artifactUrls?.[diffPath] ??
-      this._payload.artifactUrls?.[workspaceArtifactBasename(diffPath)] ??
+    this._diffModalTitle = `Review input ${this._payload?.reviewSnapshot?.headSha?.slice(0, 7) ?? 'diff'}`;
+    const url =
+      this._payload?.artifactUrls?.[diffPath] ??
+      this._payload?.artifactUrls?.[workspaceArtifactBasename(diffPath)] ??
       runArtifactUrl(this.runId, { path: diffPath });
+    this._diffModalText = '';
+    this._diffModalNotice = '';
     this._diffModalOpen = true;
+    const request = ++this._diffModalRequest;
+    const snapshot = this._payload?.reviewSnapshot;
+    if (diffPath !== snapshot?.diffPath) {
+      this._diffModalUrl = url;
+      return;
+    }
+    // The retained diff opens from held bytes; the modal reads the URL only when they are missing.
+    this._diffModalUrl = '';
+    // A late read must not fill a modal reopened since, for another owner or review.
+    const captured = this._queries.capture();
+    const identity = () => {
+      const current = this._payload?.reviewSnapshot;
+      return JSON.stringify([current?.diffHash, current?.baseSha, current?.headSha]);
+    };
+    const reviewed = identity();
+    void this._reviewDiffText(true).then((text) => {
+      if (!captured.ownsView() || request !== this._diffModalRequest) return;
+      if (identity() !== reviewed) {
+        // The snapshot changed during the read: the open modal reads the current one's diff.
+        if (this._payload?.reviewSnapshot?.diffPath) this._openReviewInputDiff();
+        else this._diffModalNotice = REVIEW_DIFF_GONE;
+        return;
+      }
+      if (typeof text === 'string') this._diffModalText = text;
+      // A diff that fails the snapshot's identity is not shown, nor read again from its URL.
+      else if (text === CONTENT_MISMATCH) this._diffModalNotice = REVIEW_DIFF_MISMATCH;
+      else this._diffModalUrl = url;
+    });
   }
 
   /** Map of file path → comments for that file */
@@ -227,7 +442,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._unsubDecision = gateway.subscribe<{ runId: string; decision: RunDecision }>(
       Events.RUN_DECISION_NEW,
       (p) => {
-        if (p.runId !== this.runId) return;
+        if (p.runId !== this.runId || !this._proposeScope?.current()) return;
         if (p.decision?.type !== 'improvement') return;
         this._clearProposingLatch();
       },
@@ -235,7 +450,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._unsubImprovementFail = gateway.subscribe<{ runId: string; error: string }>(
       Events.RUN_IMPROVEMENT_FAILED,
       (p) => {
-        if (p.runId !== this.runId) return;
+        if (p.runId !== this.runId || !this._proposeScope?.current()) return;
         this._proposeError = p.error || 'Improvement analysis failed';
         this._clearProposingLatch();
       },
@@ -260,20 +475,47 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._proposingTimer = undefined;
     }
     this._proposing = false;
+    this._proposeScope = undefined;
   }
 
   private _lastCurationFingerprint = '';
 
-  willUpdate() {
-    if (this.decision) {
-      const next = reviewPostingFingerprint(this._payload);
-      if (this._lastCurationFingerprint && this._lastCurationFingerprint !== next)
+  willUpdate(changed: Map<string, unknown>) {
+    this._queries.sync();
+    if (changed.has('resourcePosture') || changed.has('postureBlockedReason'))
+      this._confirmTimer.clear();
+    const payload = this._payload;
+    if (payload) {
+      const next = reviewPostingFingerprint(payload);
+      if (this._lastCurationFingerprint !== next) {
+        this._restoreReviewSource = true;
         this._confirmTimer.clear();
-      this._lastCurationFingerprint = next;
+        const preserved = this._preservedInclusion;
+        this._preservedInclusion = undefined;
+        this._includedComments = new Set(
+          this._comments.flatMap((comment, index) =>
+            !preserved || preserved.get(this._commentKey(comment)) !== false ? [index] : [],
+          ),
+        );
+        this._includeEvidence = this._preservedIncludeEvidence ?? true;
+        this._preservedIncludeEvidence = undefined;
+        this._selectedRecommendation = reviewPostRecommendation(payload);
+        this._lastCurationFingerprint = next;
+        this._sourceLoadEpoch++;
+        this._commentFileContent = '';
+        this._commentFileError = '';
+        this._commentFileLoading = false;
+        this._fileDiff = '';
+        this._fileDiffLoading = false;
+        this._selectedCommentIdx = -1;
+        this._lightboxOpen = false;
+        this._artifactLightboxItems = null;
+        this._normalizeActiveTab();
+      }
     }
-    if (!this._initialized && this.decision) {
+    if (!this._initialized && payload) {
       this._includedComments = new Set(this._comments.map((_, i) => i));
-      this._selectedRecommendation = reviewPostRecommendation(this._payload);
+      this._selectedRecommendation = reviewPostRecommendation(payload);
       this._initialized = true;
       this._readTabFromHash();
       this._normalizeActiveTab();
@@ -282,29 +524,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   override updated(changed: Map<string, unknown>) {
-    if (changed.has('decision') && this._initialized) {
-      if (this._preservedInclusion) {
-        // Refresh in progress — preserve reviewer curation across payload replace.
-        // New comments (no match) default to included, matching initial seeding.
-        const snapshot = this._preservedInclusion;
-        this._preservedInclusion = undefined;
-        const next = new Set<number>();
-        this._comments.forEach((c, i) => {
-          const wasIncluded = snapshot.get(this._commentKey(c));
-          if (wasIncluded === undefined || wasIncluded) next.add(i);
-        });
-        this._includedComments = next;
-      } else {
-        this._includedComments = new Set(this._comments.map((_, i) => i));
-      }
-      if (this._preservedIncludeEvidence !== undefined) {
-        this._includeEvidence = this._preservedIncludeEvidence;
-        this._preservedIncludeEvidence = undefined;
-      } else {
-        this._includeEvidence = true;
-      }
-      this._selectedRecommendation = reviewPostRecommendation(this._payload);
-      this._normalizeActiveTab();
+    if (this._restoreReviewSource && this._initialized && this._payload) {
+      this._restoreReviewSource = false;
       if (!this._isRecovering) void this._restoreSourceFromHash();
     }
     // Re-check if slotId changes
@@ -325,6 +546,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private async _beginRecovery() {
+    if (!this._payload) return;
     if (!this.slotId && !this.workspaceView) {
       // No slot context (e.g. dev harness) — skip recovery, show content directly
       this._recoveryPhase = 'live';
@@ -335,12 +557,16 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     if (gateway.connectionState !== 'connected') {
       this._recoveryPhase = 'stale';
       this._recoveryMessage = 'Waiting for gateway to resume review context…';
+      void this._showReviewDiff(false);
       return;
     }
     // Coalesce double-fire from willUpdate + updated lifecycles so we don't
     // burn an extra ~400ms branch-diff round trip per panel open.
     if (this._recoveryInFlight) return;
     this._recoveryInFlight = true;
+    const request = {};
+    this._recoveryRequest = request;
+    const captured = this._queries.capture();
 
     // Diff view has no dependency on fleet/runs/decisions bootstrap — fire git
     // RPCs immediately rather than blocking on waitForCoreHydration (which can
@@ -352,9 +578,12 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     try {
       await this._loadBranchDiff(epoch);
     } finally {
-      this._recoveryInFlight = false;
+      if (this._recoveryRequest === request && captured.ownsView()) {
+        this._recoveryInFlight = false;
+        this._recoveryRequest = undefined;
+      }
     }
-    if (!this._isRecovering) await this._restoreSourceFromHash();
+    if (captured.current() && !this._isRecovering) await this._restoreSourceFromHash();
   }
 
   // --- Data loading ---
@@ -364,6 +593,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     opts: { forceRefreshSlotBranch?: boolean } = {},
   ) {
     if (!this.slotId && !this.workspaceView) return;
+    const captured = this._queries.capture();
+    const current = () =>
+      captured.current() && epoch === this._recoveryEpoch && isRecoveryEpochCurrent(epoch);
     this._diffLoading = true;
     this._diffError = '';
     this._branchMismatch = false;
@@ -376,13 +608,15 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       // forceRefreshSlotBranch — slot-view's _liveGitData is event-driven and
       // can lag a checkout by hundreds of ms, which would otherwise leave the
       // diff view stuck on a stale mismatch banner.
-      if (this.slotId && this.branch && !this._payload.reviewSnapshot?.headSha) {
+      if (this.slotId && this.branch && !this._payload?.reviewSnapshot?.headSha) {
         let currentBranch = opts.forceRefreshSlotBranch ? '' : this.slotBranch;
         if (!currentBranch) {
-          const status = await gateway.request<{ branch: string }>(Methods.GIT_STATUS, {
-            slotId: this.slotId,
-          });
-          if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+          const status = await this._reads.read<GitStatusResult>(
+            Methods.GIT_STATUS,
+            { slotId: this.slotId },
+            (next) => this._slotStatusChanged(next.branch),
+          );
+          if (!current()) return;
           currentBranch = status.branch;
         }
         this._slotBranch = currentBranch;
@@ -397,34 +631,34 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         }
       }
 
-      const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
-        ...committedReviewBranchDiffRequest(
-          this.slotId,
-          this._baseRef,
-          this._payload.reviewSnapshot,
-        ),
-        ...(this.workspaceView ? { runId: this.runId } : {}),
-      });
-      if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      // A saved review's frozen diff never changes, so held bytes need no read.
+      if (this.workspaceView && (await this._showReviewDiff(false))) return;
+      this._reads.releaseMethods([Methods.GIT_BRANCH_DIFF]);
+      const result = this.workspaceView
+        ? await this._readSavedRange<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF)
+        : await this._reads.read<GitBranchDiffResult>(
+            Methods.GIT_BRANCH_DIFF,
+            committedReviewBranchDiffRequest(
+              this.slotId,
+              this._baseRef,
+              this._payload?.reviewSnapshot,
+            ),
+            (next) => {
+              if (!current()) return;
+              this._diffFiles = next.files;
+              this._diffTestPatterns = next.testFilePatterns ?? null;
+            },
+          );
+      if (!current()) return;
+      this._heldDiff = undefined;
       this._diffFiles = result.files;
       this._diffTestPatterns = result.testFilePatterns ?? null;
-      // Auto-select the first listed file with comments, or the first listed file
-      const visible = this._testFilter.split(result.files).visible;
-      const { source } = parseReviewWorkspaceHashState();
-      const first =
-        visible.find((f) => f.path === source?.file) ??
-        visible.find((f) => this._commentCountByFile.has(f.path)) ??
-        visible[0];
-      if (first) {
-        await this._selectFile(first.path, false);
-      } else {
-        // Nothing listed: drop a previous selection so showing tests loads this diff's file.
-        this._selectedFile = '';
-        this._fileDiff = '';
-      }
+      await this._selectListedFile(result.files);
     } catch (err) {
-      if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
+      if (!current()) return;
       console.error('[review-workspace] branch diff failed:', err);
+      if (await this._showReviewDiff(true)) return;
+      if (!current()) return;
       if (this.workspaceView) {
         // Saved evidence is independent of the Git source. Keep it readable when the source is unavailable.
         this._diffError = err instanceof Error ? err.message : String(err);
@@ -437,12 +671,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         this._recoveryMessage = 'Review workspace failed to recover — retry when ready.';
       }
     } finally {
-      if (epoch === this._recoveryEpoch) this._diffLoading = false;
-      if (
-        epoch === this._recoveryEpoch &&
-        isRecoveryEpochCurrent(epoch) &&
-        this._recoveryPhase !== 'error'
-      ) {
+      if (captured.ownsView() && epoch === this._recoveryEpoch) this._diffLoading = false;
+      if (current() && this._recoveryPhase !== 'error') {
         this._recoveryPhase = 'live';
         this._recoveryMessage = '';
       }
@@ -452,14 +682,48 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     }
   }
 
+  /** Saved review workspaces read only their frozen commits; the gateway refuses any other range. */
+  private _readSavedRange<T>(
+    method: typeof Methods.GIT_BRANCH_DIFF | typeof Methods.GIT_DIFF,
+    path = '',
+  ): Promise<T> {
+    const runId = this.runId;
+    const base = this._payload?.reviewSnapshot?.baseSha ?? '';
+    const head = this._payload?.reviewSnapshot?.headSha ?? '';
+    if (!runId || !base || !head) throw new Error(UNRECORDED_REVIEW);
+    return gateway.request<T>(
+      method,
+      path
+        ? { slotId: '', runId, base, head, path, target: 'head' }
+        : { slotId: '', runId, base, head },
+    );
+  }
+
+  private _readSavedSource(ref: string, path: string): Promise<GitShowResult> {
+    const runId = this.runId;
+    if (!runId || !ref || !path) throw new Error(UNRECORDED_REVIEW);
+    return gateway.request<GitShowResult>(Methods.GIT_SHOW, { slotId: '', runId, ref, path });
+  }
+
+  /** A newer slot status settles a branch mismatch, including after a checkout. */
+  private _slotStatusChanged(branch: string) {
+    this._slotBranch = branch;
+    if (this._branchMismatch && (branch === this.branch || branch.endsWith(this.branch)))
+      void this._loadBranchDiff();
+  }
+
   private async _checkoutBranch() {
-    if (!this.slotId || !this.branch || this._isRecovering) return;
+    if (!this.slotId || !this.branch) return;
+    const command = this._beginReviewCommand();
+    if (!command) return;
     this._checkingOut = true;
     try {
+      this._queries.requireSlot();
       await gateway.request(Methods.SLOT_PREPARE, {
         slotId: this.slotId,
         branch: this.branch,
       });
+      if (!command.current()) return;
       // Reload diff after checkout. Force a fresh GIT_STATUS — the parent
       // slot-view's _liveGitData is event-driven and can still hold the
       // pre-checkout branch at this point, which would leave the workspace
@@ -467,9 +731,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._branchMismatch = false;
       await this._loadBranchDiff(undefined, { forceRefreshSlotBranch: true });
     } catch (err) {
-      console.error('[review-workspace] checkout failed:', err);
+      if (command.current()) this._actionError = err instanceof Error ? err.message : String(err);
     } finally {
-      this._checkingOut = false;
+      command.finish();
     }
   }
 
@@ -498,6 +762,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private async _selectFile(path: string, syncHash = true) {
     const epoch = ++this._sourceLoadEpoch;
+    const captured = this._queries.capture();
     this._selectedFile = path;
     // Clear comment selection when navigating via file tab (not comment click)
     this._selectedCommentIdx = -1;
@@ -508,29 +773,46 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     if (syncHash) this._syncSourceToHash();
     this._fileDiffLoading = true;
     this._fileDiff = '';
+    const current = () => captured.current() && epoch === this._sourceLoadEpoch;
+    if (this._heldDiff !== undefined) {
+      this._fileDiff = heldFileDiff(this._heldDiff, path) ?? '';
+      this._fileDiffLoading = false;
+      return;
+    }
+    this._reads.releaseMethods([Methods.GIT_DIFF]);
     try {
-      const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
-        ...committedReviewFileDiffRequest(
-          this.slotId,
-          path,
-          this._baseRef,
-          this._payload.reviewSnapshot,
-        ),
-        ...(this.workspaceView ? { runId: this.runId } : {}),
-      });
-      if (epoch === this._sourceLoadEpoch) this._fileDiff = result.diff;
+      const result = this.workspaceView
+        ? await this._readSavedRange<GitDiffResult>(Methods.GIT_DIFF, path)
+        : await this._reads.read<GitDiffResult>(
+            Methods.GIT_DIFF,
+            committedReviewFileDiffRequest(
+              this.slotId,
+              path,
+              this._baseRef,
+              this._payload?.reviewSnapshot,
+            ),
+            (next) => {
+              if (current()) this._fileDiff = next.diff;
+            },
+          );
+      if (current()) this._fileDiff = result.diff;
     } catch (err) {
-      console.error('[review-workspace] file diff failed:', err);
-      if (epoch === this._sourceLoadEpoch) this._fileDiff = '';
+      if (!current()) return;
+      // The file's section of the review diff stands in for an unreadable source.
+      const held = await this._reviewDiffText(true);
+      const section = typeof held === 'string' ? heldFileDiff(held, path) : undefined;
+      if (!current()) return;
+      this._fileDiff = section ?? '';
+      if (section === undefined) this._diffError = err instanceof Error ? err.message : String(err);
     } finally {
-      if (epoch === this._sourceLoadEpoch) this._fileDiffLoading = false;
+      if (captured.ownsView() && epoch === this._sourceLoadEpoch) this._fileDiffLoading = false;
     }
   }
 
   // --- Actions ---
 
   private _toggleComment(idx: number) {
-    if (this.readOnly || this._isRecovering) return;
+    if (this._actionsPaused) return;
     const next = new Set(this._includedComments);
     if (next.has(idx)) next.delete(idx);
     else next.add(idx);
@@ -543,16 +825,15 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private _handlePost() {
     if (
-      this.readOnly ||
-      this._isRecovering ||
+      this._actionsPaused ||
       reviewGateRefreshBlocksPost(this._refreshing, this._refreshError) ||
-      !this._postAvailable
+      !this._postAvailable ||
+      !this._payload
     )
       return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
-    const decision = this.decision;
     const selectionData = {
       reviewFingerprint: reviewPostingFingerprint(this._payload),
       includedIndices: [...this._includedComments],
@@ -563,54 +844,59 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         : {}),
     };
     this._confirmAction('post', async () => {
+      const command = this._beginReviewCommand('post');
+      if (!command) return;
       this._posting = true;
       try {
         await gateway.request(
           Methods.RUN_RESOLVE_DECISION,
           buildRunResolveDecisionParams({
-            runId: this.runId,
-            decision,
+            runId: command.runId,
+            decision: command.decision,
             actionId: 'post',
             ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
             selectionData,
           }),
         );
       } catch (err) {
-        console.error('Failed to post review:', err);
+        if (command.current()) this._actionError = err instanceof Error ? err.message : String(err);
       } finally {
-        this._posting = false;
+        command.finish();
       }
     });
   }
 
   private _handleDismiss() {
-    if (this.readOnly || this._isRecovering) return;
+    if (this._actionsPaused) return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
     this._confirmAction('dismiss', async () => {
+      const command = this._beginReviewCommand('dismiss');
+      if (!command) return;
       this._posting = true;
       try {
         await gateway.request(
           Methods.RUN_RESOLVE_DECISION,
           buildRunResolveDecisionParams({
-            runId: this.runId,
-            decision: this.decision,
+            runId: command.runId,
+            decision: command.decision,
             actionId: 'dismiss',
             ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
           }),
         );
       } catch (err) {
-        console.error('Failed to dismiss review:', err);
+        if (command.current()) this._actionError = err instanceof Error ? err.message : String(err);
       } finally {
-        this._posting = false;
+        command.finish();
       }
     });
   }
 
   private async _handleRefresh() {
-    if (this._isRecovering || this._refreshing) return;
-    this._confirmTimer.clear();
+    if (this._refreshing) return;
+    const command = this._beginReviewCommand();
+    if (!command) return;
     this._refreshing = true;
     // Snapshot reviewer's curation keyed on comment identity so it survives
     // the payload replace that refreshReviewGate triggers.
@@ -619,58 +905,69 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     );
     this._preservedIncludeEvidence = this._includeEvidence;
     this._refreshError = '';
-    const runId = this.runId;
-    const epoch = currentRecoveryEpoch();
-    const refreshed = await refreshReviewGateView(
-      () => gateway.request(Methods.RUN_REFRESH_REVIEW_GATE, { runId }),
-      () => gateway.request(Methods.RUN_GET, { runId }),
-    );
-    if (!isRecoveryEpochCurrent(epoch) || this.runId !== runId || !this.isConnected) {
-      if (this.runId === runId)
-        this._refreshError = 'Gateway connection changed. Refresh review again before posting.';
-      this._refreshing = false;
-      return;
+    try {
+      const refreshed = await refreshReviewGateView(
+        () =>
+          gateway.request<RunGetResult>(Methods.RUN_REFRESH_REVIEW_GATE, { runId: command.runId }),
+        async () => {
+          if (!command.current()) throw new Error('The review view changed during refresh.');
+          const state = await this._queries.run.retry();
+          if (state.status !== 'ready' || !state.data)
+            throw state.error ?? new Error('The current review run is unavailable.');
+          return state.data;
+        },
+      );
+      if (command.ownsView()) {
+        this._refreshError = command.current()
+          ? (refreshed.error ?? '')
+          : 'Gateway connection changed. Refresh review again before posting.';
+        if (this._refreshError) {
+          this._actionError = this._refreshError;
+          this._preservedInclusion = undefined;
+          this._preservedIncludeEvidence = undefined;
+        }
+      }
+    } finally {
+      command.finish();
     }
-    if (refreshed.run && refreshed.run.id === runId) {
-      this.run = refreshed.run;
-      const decision = refreshed.run.decisions.find((entry) => entry.id === this.decision.id);
-      if (decision) this.decision = decision;
-    }
-    this._refreshError = refreshed.error ?? '';
-    if (refreshed.error) {
-      this._preservedInclusion = undefined;
-      this._preservedIncludeEvidence = undefined;
-    }
-    this._refreshing = false;
   }
 
   private async _handleProposeImprovement() {
-    if (this._isRecovering || this._proposing) return;
+    if (this._proposing) return;
+    const command = this._beginReviewCommand();
+    if (!command) return;
+    const scope = this._queries.capture();
+    this._proposeScope = scope;
     this._proposing = true;
     this._proposeError = null;
     // Latch stays held until the improvement decision arrives via RUN_DECISION_NEW
     // or the timeout fires — run.proposeImprovement is fire-and-forget, so the
     // RPC returning doesn't mean analysis finished.
     this._proposingTimer = setTimeout(() => {
-      this._clearProposingLatch();
+      if (this._proposeScope === scope && scope.ownsView()) this._clearProposingLatch();
     }, ReviewWorkspace.PROPOSING_TIMEOUT_MS);
     try {
       await gateway.request(Methods.RUN_PROPOSE_IMPROVEMENT, {
-        runId: this.runId,
+        runId: command.runId,
         rationale:
           'review-pr human gate — analyze what went wrong in the evidence review / recipe coverage and propose a recipe/process fix',
       });
     } catch (err) {
-      const msg = (err as Error).message || 'Unknown error';
-      console.error('Failed to propose improvement:', err);
-      this._proposeError = msg;
-      this._clearProposingLatch();
+      if (command.current()) {
+        this._proposeError = err instanceof Error ? err.message : String(err);
+        this._clearProposingLatch();
+      }
+    } finally {
+      command.finish();
     }
   }
 
   private async _handleRecipeRerun() {
+    if (this._actionsPaused) return;
+    const scope = this._queries.capture();
     this._setActiveTab('recipe');
     await this.updateComplete;
+    if (!scope.current() || this._actionsPaused) return;
     this.querySelector<RecipeOutputPanel>('recipe-output-panel')?.rerun();
   }
 
@@ -683,9 +980,38 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   // Styles injected in render() since we use light DOM
 
   override render() {
-    if (!this.decision) return html`<div class="diff-empty">No review decision</div>`;
+    const observation = this._queries.run.state;
+    const observations = this._usesMockData
+      ? nothing
+      : html`
+          ${observation.status === 'stale' && observation.observedAt !== undefined
+            ? html`<div class="rw-loading-banner" data-testid="review-run-age">
+                Saved review run, ${sourceObservationAge(observation.observedAt)}. Actions wait for
+                a current read.
+              </div>`
+            : nothing}
+          ${observation.error
+            ? html`<div role="alert" data-testid="review-run-error">
+                Could not read review run: ${observation.error.message}
+                <button @click=${() => this._queries.run.retry()}>Retry</button>
+              </div>`
+            : nothing}
+          ${observation.status === 'unsupported'
+            ? html`<div role="status">
+                Live review run updates are unavailable on this gateway.
+              </div>`
+            : nothing}
+          ${this._actionError
+            ? html`<div role="alert" data-testid="review-action-error">${this._actionError}</div>`
+            : nothing}
+        `;
+    if (!this._queries.decision)
+      return html`${observations}
+        <div class="diff-empty">No saved review decision is available.</div>`;
     const payload = this._payload;
-    if (!payload) return html`<div class="diff-empty">Invalid review payload</div>`;
+    if (!payload)
+      return html`${observations}
+        <div class="diff-empty">Invalid review payload</div>`;
     const recipeHost = createReviewWorkspaceRecipeHostEntry({
       runId: this.runId,
       slotId: this.slotId,
@@ -695,17 +1021,17 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     const mediaArtifacts = this._mediaArtifacts;
 
     return html`
-      ${renderReviewWorkspaceStyles(this._recoveryPhase)} ${this._renderTopBar()}
+      ${renderReviewWorkspaceStyles(this._recoveryPhase)} ${observations} ${this._renderTopBar()}
       ${this._renderLoadingBanner()}
-      ${this._refreshError
-        ? html`<div class="rw-source-context" role="alert">${this._refreshError}</div>`
-        : nothing}
-      ${this.showHistory && this.run
-        ? html`<review-history-panel .run=${this.run}></review-history-panel>`
+      ${this.showHistory && this._queries.run.state.data?.run
+        ? html`<review-history-panel
+            .run=${this._queries.run.state.data.run}
+          ></review-history-panel>`
         : nothing}
       ${this._branchMismatch ? this._renderBranchBanner() : nothing}
+
       <div class="rw-split">
-        ${this._isRecovering
+        ${this._isRecovering && observation.status !== 'stale'
           ? html`
               <div class="rw-recovery-overlay" role="status" aria-live="polite">
                 <div class="rw-recovery-card">
@@ -811,10 +1137,13 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       <diff-viewer-modal
         .open=${this._diffModalOpen}
         .title=${this._diffModalTitle}
+        .diffText=${this._diffModalText}
         .artifactUrl=${this._diffModalUrl}
+        .notice=${this._diffModalNotice}
         .testPatterns=${this._diffTestPatterns}
         @diff-modal-close=${() => {
           this._diffModalOpen = false;
+          this._diffModalRequest++;
         }}
       ></diff-viewer-modal>
     `;
@@ -841,7 +1170,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       slotBranch: this._slotBranch,
       branch: this.branch,
       checkingOut: this._checkingOut,
-      recovering: this._isRecovering,
+      recovering: this._isRecovering || (!this._usesMockData && !this._queries.ready),
       refresh: () => this._loadBranchDiff(undefined, { forceRefreshSlotBranch: true }),
       checkout: () => this._checkoutBranch(),
     });
@@ -867,13 +1196,20 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     recipeHost: ReturnType<typeof createReviewWorkspaceRecipeHostEntry>,
   ) {
     if (!recipeHost.outputTarget) return nothing;
+    const owner = this._queries.capture();
     const visible = this._activeTab === 'recipe' || this._recipeRunning;
     return html`
       <div class="rw-recipe-output-host" style="${visible ? '' : 'display:none'}">
         <recipe-output-panel
           runId=${recipeHost.outputTarget.runId}
           slotId=${recipeHost.outputTarget.slotId}
+          .disabled=${this._actionsPaused}
+          .beforeRun=${() => {
+            this._queries.requireDecision();
+            this._queries.requireSlot();
+          }}
           @running-change=${(e: CustomEvent<boolean>) => {
+            if (e.detail ? !owner.current() : !owner.ownsView()) return;
             this._recipeRunning = e.detail;
             if (e.detail) this._setActiveTab('recipe');
           }}
@@ -952,7 +1288,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
                   ? html`<button
                       class="rw-recipe-toggle"
                       style="color:${colors.statusOk}"
-                      ?disabled=${!this.slotId}
+                      ?disabled=${!this.slotId || this._actionsPaused}
                       @click=${() => void this._handleRecipeRerun()}
                     >
                       Rerun Recipe
@@ -990,7 +1326,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   private _renderTopBar() {
     if (this.readOnly)
       return html`<div class="rw-top-bar">
-        <strong>${this._payload.recommendation}</strong
+        <strong>${this._payload?.recommendation}</strong
         ><span>Saved review · ${this._comments.length} line comments</span>
       </div>`;
     return renderReviewTopBar({
@@ -1010,7 +1346,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       posting: this._posting,
       postAvailable: this._postAvailable,
       postBlocked: reviewGateRefreshBlocksPost(this._refreshing, this._refreshError),
-      recovering: this._isRecovering,
+      recovering: this._actionsPaused,
       refreshing: this._refreshing,
       proposing: this._proposing,
       proposeError: this._proposeError,
@@ -1023,8 +1359,10 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private get _postAvailable() {
-    return (
-      !this.decision.resolvedAt && this.decision.actions.some((action) => action.id === 'post')
+    return Boolean(
+      this._queries.decision &&
+      !this._queries.decision.resolvedAt &&
+      this._queries.decision.actions.some((action) => action.id === 'post'),
     );
   }
 
@@ -1035,7 +1373,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       selectedFile: this._selectedFile,
       findingOpen: this._selectedCommentIdx >= 0 || Boolean(this._commentFileError),
       commentCounts: this._commentCountByFile,
-      recovering: this._isRecovering,
+      recovering: this._isRecovering && !this._readingHeldDiff,
       selectFile: (path) => this._selectFile(path),
       renderCodePanel: () => this._renderCodePanel(),
     });
@@ -1043,7 +1381,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private _renderCommentItem(c: ReviewLineComment, idx: number) {
     return renderReviewCommentItem({
-      readOnly: this.readOnly,
+      readOnly: this._actionsPaused,
       comment: c,
       selected: this._selectedCommentIdx === idx,
       included: this._includedComments.has(idx),
@@ -1053,8 +1391,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private async _navigateToComment(c: ReviewLineComment, idx: number, syncHash = true) {
-    if (this._isRecovering) return;
+    if (this._isRecovering && !this._readingHeldDiff) return;
     const epoch = ++this._sourceLoadEpoch;
+    const captured = this._queries.capture();
     this._selectedCommentIdx = idx;
     this._selectedFile = c.path;
     this._revealLine = 0;
@@ -1063,37 +1402,56 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._commentFileLoading = true;
     this._fileDiffLoading = false;
     if (syncHash) this._syncSourceToHash();
-    const reviewedHead = this._payload.reviewSnapshot?.headSha?.trim();
+    const reviewedHead = this._payload?.reviewSnapshot?.headSha?.trim();
     if (!reviewedHead) {
       this._commentFileError =
         'The reviewed revision was not recorded. Source for this finding is unavailable.';
       this._commentFileLoading = false;
       return;
     }
-    try {
-      const result = await gateway.request<GitShowResult>(Methods.GIT_SHOW, {
-        slotId: this.slotId,
-        ...(this.workspaceView ? { runId: this.runId } : {}),
-        ref: reviewedHead,
-        path: c.path,
-      });
-      if (epoch !== this._sourceLoadEpoch) return;
-      this._commentFileContent = result.content;
-      const context = reviewedFindingContext(result.content, c.line);
+    const show = (content: string) => {
+      this._commentFileContent = content;
+      const context = reviewedFindingContext(content, c.line);
       if (context.available) this._revealLine = c.line;
       else this._commentFileError = context.note;
+    };
+    // The reviewed file by its blob id in the review diff, held on this device.
+    const diff = this._heldDiff ?? (await this._reviewDiffText(false));
+    const id = typeof diff === 'string' ? heldBlobId(diff, c.path, 'head') : undefined;
+    const held = id ? await openHeldText({ kind: 'blob', id }) : undefined;
+    if (!captured.ownsView() || epoch !== this._sourceLoadEpoch) return;
+    if (held !== undefined || gateway.connectionState !== 'connected') {
+      if (held !== undefined) show(held);
+      else this._commentFileError = 'Reviewed source is not held on this device.';
+      this._commentFileLoading = false;
+      return;
+    }
+    this._reads.releaseMethods([Methods.GIT_SHOW]);
+    const keep = openedContentKeeper('gate');
+    try {
+      const result = this.workspaceView
+        ? await this._readSavedSource(reviewedHead, c.path)
+        : // The reviewed head is immutable; later workspace notices carry the same content.
+          await this._reads.read<GitShowResult>(
+            Methods.GIT_SHOW,
+            { slotId: this.slotId, ref: reviewedHead, path: c.path },
+            () => {},
+          );
+      if (!captured.current() || epoch !== this._sourceLoadEpoch) return;
+      keep(blobKey(result.content), result.content);
+      show(result.content);
     } catch (error) {
-      if (epoch === this._sourceLoadEpoch)
+      if (captured.current() && epoch === this._sourceLoadEpoch)
         this._commentFileError =
           error instanceof Error ? error.message : 'Reviewed source is unavailable.';
     } finally {
-      if (epoch === this._sourceLoadEpoch) this._commentFileLoading = false;
+      if (captured.ownsView() && epoch === this._sourceLoadEpoch) this._commentFileLoading = false;
     }
   }
 
   private _renderCodePanel() {
     const comment = this._selectedCommentIdx >= 0 ? this._comments[this._selectedCommentIdx] : null;
-    const reviewedHead = this._payload.reviewSnapshot?.headSha;
+    const reviewedHead = this._payload?.reviewSnapshot?.headSha;
     const sourceHeader = comment
       ? html` <div class="rw-source-context" title=${reviewedHead ?? ''}>
           ${reviewedHead ? `Reviewed ${reviewedHead.slice(0, 8)}` : 'Reviewed revision unavailable'}

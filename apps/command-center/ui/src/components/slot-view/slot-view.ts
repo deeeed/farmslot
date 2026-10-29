@@ -4,11 +4,14 @@ import { customElement } from 'lit/decorators.js';
 import type {
   AgentContextSummary,
   GatewayStatusResult,
+  NodesListResult,
   Run,
   SlotActionSummary,
   SlotStatus,
+  TaskProgressResult,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, sourceObservationAge } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../workspace/file-tree.js';
 import '../progress-tracker/progress-tracker.js';
@@ -38,6 +41,7 @@ import '../shared/media-lightbox.js';
 import '../workspace/recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getEditorDrafts, subscribeResourceCache } from '../../resource-cache.js';
 import { colors, lifecycleColor } from '../../styles/theme-tokens.js';
 import { setPinnedSlotLabel } from '../../utils/pinned-slots.js';
 import {
@@ -46,6 +50,7 @@ import {
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 
@@ -75,19 +80,21 @@ import {
   toggleSlotViewSidebar,
 } from './slot-view-control-effects.js';
 import {
+  applySlotViewTaskProgress,
+  bindSlotViewTaskProgress,
   fetchSlotViewActions,
   fetchSlotViewRepoPath,
   fetchSlotViewResources,
-  fetchSlotViewStructuredProgress,
   loadSlotViewSlot,
-  parseSlotViewTaskSteps,
 } from './slot-view-data-effects.js';
+import { refreshSlotViewDrafts } from './slot-view-edit-effects.js';
 import {
   openSlotViewEditor,
   revealSlotViewArtifacts,
   runSlotViewGitAction,
   saveSlotViewFile,
   setSlotViewEditor,
+  type SlotViewGitActionMethod,
 } from './slot-view-file-command-effects.js';
 import {
   handleSlotViewGlyphClick,
@@ -101,7 +108,6 @@ import { saveLayout } from './slot-view-layout.js';
 import {
   applySlotViewLinkedRun,
   clearSelectedSlotViewAgentContextForSlot,
-  refreshSlotViewLinkedRun,
   requestedSlotViewRunFromUrl,
 } from './slot-view-linked-run-effects.js';
 import {
@@ -160,6 +166,7 @@ import {
   openSlotViewBranchDiffFile,
   slotViewCommentThreadsForFile,
 } from './slot-view-review-effects.js';
+import { SlotViewRunQueries } from './slot-view-run-queries.js';
 import {
   executeSlotViewSearch,
   handleSlotViewDiagnosticNavigate,
@@ -193,7 +200,6 @@ import {
 import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
 import { handleSlotViewUpdated, handleSlotViewWillUpdate } from './slot-view-update-effects.js';
 import {
-  cancelSlotViewFileRestoreRetry,
   cancelSlotViewResourceRestoreRetry,
   ensureSlotViewResourcePanelSelection,
   handleSlotViewHashChange,
@@ -201,7 +207,6 @@ import {
   restoreSlotViewFileFromUrl,
   restoreSlotViewHistoryFromUrl,
   restoreSlotViewResourceFromUrl,
-  scheduleSlotViewUrlRestoreRetry,
   syncSlotViewUrlState,
 } from './slot-view-url-effects.js';
 import {
@@ -219,6 +224,21 @@ import {
 
 @customElement('slot-view')
 export class SlotView extends SlotViewRecipePresenter {
+  readonly _runQueries = new SlotViewRunQueries(this);
+  private readonly gatewayStatusQuery = new ResourceQueryController<GatewayStatusResult>(this, () =>
+    this._applyWorkerHistoryCapability(),
+  );
+  private progressAgeTimer?: ReturnType<typeof setInterval>;
+  readonly _progressQuery = new ResourceQueryController<TaskProgressResult>(this, (state) => {
+    this._progressObservation = state;
+    if (state.data && state.status !== 'ready' && !this.progressAgeTimer)
+      this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
+    else if (!state.data || state.status === 'ready') {
+      clearInterval(this.progressAgeTimer);
+      this.progressAgeTimer = undefined;
+    }
+    applySlotViewTaskProgress(this);
+  });
   /** The editor's diff tab; opened from the tree and search too, so it filters itself. */
   readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this._branchDiffTestPatterns,
@@ -251,8 +271,21 @@ export class SlotView extends SlotViewRecipePresenter {
     return requestedSlotViewRunFromUrl();
   }
 
-  async _refreshLinkedRun(prevRunStatus: string | null): Promise<string | null> {
-    return refreshSlotViewLinkedRun(this, prevRunStatus);
+  async _refreshLinkedRun(_prevRunStatus: string | null): Promise<string | null> {
+    return this._runQueries.sync();
+  }
+
+  _requireCurrentRun(): Run {
+    return this._runQueries.requireRun();
+  }
+  _requireCurrentRecipes(): Run {
+    return this._runQueries.requireRecipes();
+  }
+  _captureRunScope(): () => boolean {
+    return this._runQueries.capture();
+  }
+  _retryRunReads(): Promise<void> {
+    return this._runQueries.retry();
   }
 
   _onHashChange = () => {
@@ -268,32 +301,51 @@ export class SlotView extends SlotViewRecipePresenter {
     super.connectedCallback();
     connectSlotView(this);
     void this._refreshWorkerHistoryCapability();
+    // Editing: which nodes check edits, and the drafts of the rendered owner's scope.
+    this._nodesQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
+    void getEditorDrafts().then((store) => {
+      if (!this.isConnected) return;
+      this._draftStore = store;
+      void refreshSlotViewDrafts(this);
+    });
+    this._unsubDrafts = subscribeResourceCache(() => void refreshSlotViewDrafts(this));
   }
 
   disconnectedCallback() {
+    clearInterval(this.progressAgeTimer);
+    this.progressAgeTimer = undefined;
+    clearTimeout(this._autosaveTimer);
+    this._unsubDrafts?.();
     super.disconnectedCallback();
     disconnectSlotView(this);
   }
 
   willUpdate(changed: Map<string, unknown>) {
     handleSlotViewWillUpdate(this, changed);
+    if (['slotId', '_slot', '_linkedRun', 'fileEntries'].some((key) => changed.has(key)))
+      bindSlotViewTaskProgress(this);
   }
 
   updated(changed: Map<string, unknown>) {
+    if (changed.has('slotId') || changed.has('_slot')) this._runQueries.sync();
     handleSlotViewUpdated(this, changed);
   }
 
-  async _refreshWorkerHistoryCapability() {
-    try {
-      const status = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {}, 5_000);
-      this._workerHistoryEnabled = Boolean(status.capabilities?.experimentalWorkerHistory);
-      if (!this._workerHistoryEnabled && this._bottomTab === 'history') {
-        this._bottomTab = 'terminal';
-      }
-    } catch (err) {
-      console.warn(`[slot-view] worker history capability check failed: ${(err as Error).message}`);
-      this._workerHistoryEnabled = false;
-    }
+  _refreshWorkerHistoryCapability(): void {
+    this.gatewayStatusQuery.setQuery(resourceQuery<GatewayStatusResult>(Methods.GATEWAY_STATUS));
+    this._applyWorkerHistoryCapability();
+  }
+
+  private _applyWorkerHistoryCapability(): void {
+    const state = this.gatewayStatusQuery.state;
+    // Remote update freshness is separate from this installed, read-only history capability.
+    this._workerHistoryEnabled = Boolean(
+      this.gatewayStatusQuery.belongsToWorkspace &&
+      state.status !== 'unsupported' &&
+      (!state.error || state.error.code === state.sourceObservation?.error?.code) &&
+      state.data?.capabilities?.experimentalWorkerHistory,
+    );
+    if (!this._workerHistoryEnabled && this._bottomTab === 'history') this._bottomTab = 'terminal';
   }
 
   /** Set after initial file-from-URL restore is complete (prevents clearing ?file= before it's read) */
@@ -361,14 +413,6 @@ export class SlotView extends SlotViewRecipePresenter {
     cancelSlotViewResourceRestoreRetry(this);
   }
 
-  _cancelFileRestoreRetry() {
-    cancelSlotViewFileRestoreRetry(this);
-  }
-
-  _scheduleUrlRestoreRetry(file: string, attemptsLeft = 2) {
-    scheduleSlotViewUrlRestoreRetry(this, file, attemptsLeft);
-  }
-
   async _openFileFromUrl(file: string) {
     await openSlotViewFileFromUrl(this, file);
   }
@@ -400,11 +444,11 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   async _parseTaskSteps() {
-    await parseSlotViewTaskSteps(this);
+    bindSlotViewTaskProgress(this);
   }
 
   async _fetchStructuredProgress() {
-    await fetchSlotViewStructuredProgress(this);
+    bindSlotViewTaskProgress(this);
   }
 
   _agentContexts(): AgentContextSummary[] {
@@ -458,8 +502,10 @@ export class SlotView extends SlotViewRecipePresenter {
     this._wsError = '';
     this._wsLoading = true;
 
-    const hydrated = await waitForRecoveryHydration(epoch);
-    if (!hydrated || this._recoveryEpoch !== epoch) return;
+    if (gateway.connectionState === 'connected') {
+      const hydrated = await waitForRecoveryHydration(epoch);
+      if (!hydrated || this._recoveryEpoch !== epoch) return;
+    }
 
     await this._initLive(epoch);
     const requestedFile = this._requestedFileFromUrl();
@@ -470,9 +516,6 @@ export class SlotView extends SlotViewRecipePresenter {
       this._recoveryEpoch === epoch
     ) {
       await this._openFileFromUrl(requestedFile);
-      if (!this._activeFile) {
-        this._scheduleUrlRestoreRetry(requestedFile);
-      }
     }
   }
 
@@ -578,7 +621,7 @@ export class SlotView extends SlotViewRecipePresenter {
 
   // --- Git actions ---
 
-  async _gitAction(method: string, path: string) {
+  async _gitAction(method: SlotViewGitActionMethod, path: string) {
     await runSlotViewGitAction(this, method, path);
   }
 
@@ -893,6 +936,34 @@ export class SlotView extends SlotViewRecipePresenter {
     return renderEditor(this);
   }
 
+  private _renderProgressStatus() {
+    const observation = this._progressObservation;
+    if (
+      !this._progressQuery.belongsToWorkspace ||
+      !this._slot?.taskFile ||
+      observation.status === 'ready' ||
+      observation.status === 'loading'
+    )
+      return nothing;
+    return html`<div role="status" data-slot-view-progress=${observation.status}>
+      ${observation.data
+        ? html`Saved progress, ${sourceObservationAge(observation.observedAt)}.`
+        : nothing}
+      ${observation.status === 'unsupported'
+        ? 'Progress updates are unavailable on this gateway.'
+        : nothing}
+      ${observation.error
+        ? html`<span role="alert">Progress read failed: ${observation.error.message}</span>
+            <button
+              ?disabled=${gateway.connectionState !== 'connected'}
+              @click=${() => this._progressQuery.retry()}
+            >
+              Retry reading progress
+            </button>`
+        : nothing}
+    </div>`;
+  }
+
   override render() {
     const slot = this._slot;
     if (this._loading && !slot) {
@@ -918,8 +989,10 @@ export class SlotView extends SlotViewRecipePresenter {
                 : '',
           })
         : nothing}
-      ${renderSlotPrepareBanner(this)} ${renderSlotViewBody(this, { hasResources })}
+      ${renderSlotPrepareBanner(this)} ${this._renderProgressStatus()}
+      ${renderSlotViewBody(this, { hasResources })}
       <slot-history-modal
+        .disabled=${this._isRecoveryBlocked}
         slot-id=${this.slotId}
         .project=${this._slot?.project ?? ''}
         slot-branch=${this._git?.branch ?? this._slot?.branch ?? ''}
@@ -938,6 +1011,7 @@ export class SlotView extends SlotViewRecipePresenter {
         slot-branch=${this._git?.branch ?? this._slot?.branch ?? ''}
         .slotHealth=${this._slot?.health ?? null}
         .open=${this._loadRunOpen}
+        .disabled=${this._isRecoveryBlocked && this._recoveryPhase !== 'error'}
         @close=${() => {
           this._loadRunOpen = false;
         }}

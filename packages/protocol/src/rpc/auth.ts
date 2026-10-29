@@ -2,6 +2,7 @@ import { isRecord } from '../recipe/common.js';
 
 import type { RoleBinding, SelfPrincipalSummary } from './principal.js';
 import { Methods } from './registry.js';
+import type { ResourceObserversCapability } from './resource-observers.js';
 
 export const AuthMethods = {
   connect: Methods.AUTH_CONNECT,
@@ -14,6 +15,18 @@ export const AuthMethods = {
 export type GatewayAuthClientKind = 'ui' | 'companion' | 'node';
 export type GatewayAuthMode = 'none' | 'token' | 'password';
 export type GatewayWorkspaceAccess = 'farm' | 'native' | 'none';
+
+/** Experimental ADR-071 notification capability, present on every new gateway connect reply. */
+export interface GatewayResourceChangesCapability {
+  /** Dispatch verifies node producer admission for source-backed observed reads. */
+  observedReads?: 1;
+  workspaceReads?: 1;
+  version: 1;
+  epoch: string;
+  versionLists: boolean;
+  /** Advertise only once the named read stamps, collector writers and admission work together. */
+  upstreamObservers?: ResourceObserversCapability;
+}
 
 export interface GatewayAuthConnectParams {
   clientKind: GatewayAuthClientKind;
@@ -36,6 +49,11 @@ export interface GatewayAuthConnectResult {
     personSessions?: boolean;
     /** Client shell selection; every RPC still checks current server authority. */
     workspaceAccess?: GatewayWorkspaceAccess;
+    /** Absent only on gateways predating ADR-071. */
+    resourceChanges?: GatewayResourceChangesCapability;
+    batchedContent?: boolean;
+    /** `expectedHash` and `runId` on file edits, and `hash` on `fs.read`. Experimental. */
+    conditionalFileWrites?: boolean;
   };
   /** Optional only for compatibility with older gateways. */
   principal?: SelfPrincipalSummary;

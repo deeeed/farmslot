@@ -8,7 +8,7 @@ import {
   type WaveformPoint,
 } from '@siteed/audio-ui';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -28,15 +28,19 @@ import {
   Methods,
   type TerminalData,
   type TerminalWorkerSnapshotResult,
-  type TmuxWorkerNodeResult,
+  type TmuxWorkerListResult,
   type TmuxWorkerRef,
+  tmuxWorkerRefsMatch,
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-actions';
+import { getResourceCache } from '../../lib/resource-cache';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
   appendTerminalTailText,
@@ -115,6 +119,7 @@ export default function WorkerTerminalScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   const draftParam = (Array.isArray(params.draft) ? params.draft[0] : params.draft)?.trim() ?? '';
+  const focused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
   const status = useConnectionStore((s) => s.status);
   const terminalRef = useRef<XtermTerminalViewHandle>(null);
@@ -192,7 +197,35 @@ export default function WorkerTerminalScreen() {
     ? `${worker.nodeId} · ${worker.session}:${worker.windowName ?? worker.window ?? '0'}.${worker.pane ?? '0'}`
     : 'Missing worker target';
   const connectionReady = status === 'connected' && Boolean(client);
-  const workerReady = connectionReady && Boolean(worker);
+  const workerQuery = useMemo(
+    () =>
+      worker
+        ? resourceQuery<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, { machine: worker.nodeId })
+        : undefined,
+    [worker?.nodeId],
+  );
+  const inventory = useResourceQuery(focused ? workerQuery : undefined);
+  const workerReady =
+    connectionReady &&
+    inventory.status === 'ready' &&
+    Boolean(
+      worker &&
+      inventory.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker)),
+    );
+  const requireWorkerInventory = useCallback(() => {
+    const current = workerQuery ? getResourceCache()?.read(workerQuery) : undefined;
+    if (
+      !focused ||
+      !client ||
+      client !== useConnectionStore.getState().client ||
+      client.connectionState !== 'connected' ||
+      current?.status !== 'ready' ||
+      !worker ||
+      !current.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker))
+    )
+      throw new Error('Wait for current worker inventory before acting.');
+    return current.data;
+  }, [client, workerQuery, worker, focused]);
   const hasVoiceDraft = voiceDraft.trim().length > 0;
   const voiceEditableInstruction = hasVoiceDraft ? voiceDraft : voiceTranscript;
   const hasVoiceEditableInstruction = voiceEditableInstruction.trim().length > 0;
@@ -348,13 +381,19 @@ export default function WorkerTerminalScreen() {
   const sendInput = useCallback(
     (data: string) => {
       if (!client || !worker) return;
+      try {
+        requireWorkerInventory();
+      } catch (error) {
+        setError(getErrorMessage(error));
+        return;
+      }
       client
         .request(Methods.TERMINAL_WORKER_INPUT, { worker, data }, 10_000)
         .catch((err: Error) => {
           setError(err.message);
         });
     },
-    [client, worker],
+    [client, worker, requireWorkerInventory],
   );
 
   const openWindowPicker = useCallback(async () => {
@@ -363,11 +402,7 @@ export default function WorkerTerminalScreen() {
     setWindowPickerLoading(true);
     setWindowPickerError(null);
     try {
-      const result = await client.request<{ nodes: TmuxWorkerNodeResult[] }>(
-        Methods.TMUX_WORKER_LIST,
-        { includeDisconnected: false },
-        10_000,
-      );
+      const result = requireWorkerInventory();
       const node = result.nodes.find((entry) => entry.nodeId === worker.nodeId);
       const panes = node?.ok
         ? node.workers.filter((pane) => pane.ref.session === worker.session)
@@ -384,7 +419,22 @@ export default function WorkerTerminalScreen() {
     } finally {
       setWindowPickerLoading(false);
     }
-  }, [client, worker]);
+  }, [client, worker, requireWorkerInventory]);
+
+  useEffect(() => {
+    if (!windowPickerOpen || !worker) return;
+    if (!workerReady) {
+      setWindowPickerPanes([]);
+      setWindowPickerError(inventory.error?.message ?? 'Wait for current worker inventory.');
+      return;
+    }
+    const panes =
+      inventory.data?.nodes
+        .find((node) => node.nodeId === worker.nodeId)
+        ?.workers.filter((pane) => pane.ref.session === worker.session) ?? [];
+    setWindowPickerPanes(panes);
+    setWindowPickerError(panes.length ? null : 'No windows found for this session.');
+  }, [windowPickerOpen, worker, workerReady, inventory]);
 
   const selectWindow = useCallback(
     (windowIndex: string) => {
@@ -409,6 +459,7 @@ export default function WorkerTerminalScreen() {
     if (!data || !client || !worker || isSending) return false;
     setIsSending(true);
     try {
+      requireWorkerInventory();
       await client.request(Methods.TERMINAL_WORKER_INPUT, { worker, data }, 10_000);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setVoiceStatus('idle');
@@ -425,11 +476,17 @@ export default function WorkerTerminalScreen() {
     } finally {
       setIsSending(false);
     }
-  }, [client, isSending, voiceContext, voiceEditableInstruction, worker]);
+  }, [client, isSending, voiceContext, voiceEditableInstruction, worker, requireWorkerInventory]);
 
   const resize = useCallback(
     (size: TerminalSize) => {
       if (!client || !worker) return;
+      try {
+        requireWorkerInventory();
+      } catch (error) {
+        setError(getErrorMessage(error));
+        return;
+      }
       client
         .request(
           Methods.TERMINAL_WORKER_RESIZE,
@@ -438,7 +495,7 @@ export default function WorkerTerminalScreen() {
         )
         .catch((err: Error) => setError(err.message));
     },
-    [client, worker],
+    [client, worker, requireWorkerInventory],
   );
 
   const promptOpenMicrophoneSettings = useCallback((message: string) => {
@@ -676,6 +733,24 @@ export default function WorkerTerminalScreen() {
             </Pressable>
           </View>
         )}
+        {!workerReady ? (
+          <View>
+            <Text style={styles.error}>
+              {inventory.error?.message ??
+                (inventory.status === 'unsupported'
+                  ? 'Worker observations are unsupported.'
+                  : 'Saved terminal selection. Wait for current worker inventory before sending input.')}
+            </Text>
+            <Pressable
+              disabled={!connectionReady}
+              onPress={() => {
+                if (workerQuery) void getResourceCache()?.retry(workerQuery);
+              }}
+            >
+              <Text style={styles.headerButtonText}>Retry worker inventory</Text>
+            </Pressable>
+          </View>
+        ) : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <View style={styles.terminalArea}>
           <TerminalViewSurface

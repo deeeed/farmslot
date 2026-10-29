@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { Methods } from '../src/rpc/registry.js';
-import { createSourceCommandClient, type SourceRpcRequest } from '../src/sources/client.js';
+import {
+  createSourceCommandClient,
+  type PreparedSourceCommand,
+  type SourceRpcRequest,
+} from '../src/sources/client.js';
 
 import { sourceStatusFixture } from './fixtures/source-status.js';
 
@@ -60,6 +64,20 @@ test('unsupported pins, local refs and immutable runs refuse before mutation', a
     client.prepareUnpin({ sourceId: 'pack', scope: 'run', targetId: 'run-1' }),
     /already admitted/,
   );
+});
+
+test('a cache-backed client refuses while its cache is unavailable and never reads status directly', async () => {
+  const methods: string[] = [];
+  const client = createSourceCommandClient(
+    async <T>(method: PreparedSourceCommand['method']): Promise<T> => {
+      methods.push(method);
+      return {} as T;
+    },
+    () => undefined,
+  );
+  await assert.rejects(client.status(), /Wait for source facts/);
+  await assert.rejects(client.prepareSync(), /Wait for source facts/);
+  assert.deepEqual(methods, []);
 });
 
 test('a response for another operation cannot confirm a source mutation', async () => {

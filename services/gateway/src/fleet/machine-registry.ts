@@ -1,7 +1,14 @@
 import type { WebSocket } from 'ws';
 
-import type { NativeExecutionNodeDeclaration, NodeInfo } from '@farmslot/protocol';
+import type {
+  NativeExecutionNodeDeclaration,
+  NodeInfo,
+  NodeObservationCapabilities,
+} from '@farmslot/protocol';
 
+import { revokeNodeFileObservations } from '../resources/node-file-observations.js';
+import { resourceRevisions } from '../resources/revisions.js';
+import { publishWorkerResources, scheduleWorkerStatusExpiry } from '../resources/worker-changes.js';
 import { advanceSourceRevision } from '../sources/change-signal.js';
 
 export interface ConnectedNode {
@@ -16,6 +23,10 @@ export interface ConnectedNode {
   /** URL the node itself dials to reach this gateway (its GATEWAY_URL). */
   gatewayUrl?: string;
   execCancellation?: boolean;
+  /** The node checks `expectedHash` on file writes (ADR-009 Amendment 1). */
+  conditionalWrites?: boolean;
+  observationCapabilities?: NodeObservationCapabilities;
+  observationAuthority?: () => boolean;
 }
 
 const nodes = new Map<string, ConnectedNode>();
@@ -43,7 +54,12 @@ export function registerNode(
   nativeAuthority?: ConnectedNode['nativeAuthority'],
   gatewayUrl?: string,
   execCancellation?: boolean,
+  observationCapabilities?: NodeObservationCapabilities,
+  observationAuthority?: () => boolean,
+  conditionalWrites?: boolean,
 ): void {
+  const previous = nodes.get(machine);
+  if (previous) revokeNodeFileObservations(previous.ws);
   const versionMatch = protocolVersion != null && protocolVersion === gatewayProtocolVersion;
   nodes.set(machine, {
     machine,
@@ -53,12 +69,19 @@ export function registerNode(
     versionMatch: protocolVersion != null ? versionMatch : undefined,
     ws,
     nativeSessions,
+    observationCapabilities,
+    observationAuthority,
     nativeAuthority,
     gatewayUrl: workerGatewayUrl(gatewayUrl),
     ...(execCancellation ? { execCancellation: true } : {}),
+    ...(conditionalWrites ? { conditionalWrites: true } : {}),
   });
   // Source status reads node receipts live; a reconnect changes what it can report.
   advanceSourceRevision();
+  scheduleWorkerStatusExpiry(machine, []);
+  publishWorkerResources(machine);
+  resourceRevisions.advance({ family: 'node', scope: 'farm' });
+  resourceRevisions.advance({ family: 'node', nodeId: machine });
 }
 
 export function unregisterByWs(ws: WebSocket): string | null {
@@ -66,6 +89,10 @@ export function unregisterByWs(ws: WebSocket): string | null {
     if (node.ws === ws) {
       nodes.delete(machine);
       advanceSourceRevision();
+      scheduleWorkerStatusExpiry(machine, []);
+      publishWorkerResources(machine);
+      resourceRevisions.advance({ family: 'node', scope: 'farm' });
+      resourceRevisions.advance({ family: 'node', nodeId: machine });
       return machine;
     }
   }
@@ -84,6 +111,7 @@ export function getAllNodes(): NodeInfo[] {
     protocolVersion: node.protocolVersion,
     versionMatch: node.versionMatch,
     ...(node.execCancellation ? { execCancellation: true } : {}),
+    ...(node.conditionalWrites ? { conditionalWrites: true } : {}),
     uptime: (Date.now() - new Date(node.connectedAt).getTime()) / 1000,
   }));
 }

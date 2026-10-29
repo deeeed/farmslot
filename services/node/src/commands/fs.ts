@@ -4,9 +4,17 @@ import { constants } from 'node:fs';
 import { access, lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix, resolve, sep } from 'node:path';
 
-import { expandTilde, type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
+import {
+  expandTilde,
+  type FileWatchHandle,
+  type FileWatchOptions,
+  watchFile,
+} from '@farmslot/capabilities/fs-watch';
 import {
   FILE_TRANSFER_CHUNK_MAX_BYTES,
+  type FsConflictDetails,
+  FsErrorCodes,
+  type NodeFsDeleteParams,
   type NodeFsPathParams,
   type NodeFsReadBase64Params,
   type NodeFsReadChunkParams,
@@ -56,6 +64,58 @@ function actionableNoFollowError(error: unknown, relPath: string): never {
   throw error;
 }
 
+// ─── Conditional edits (ADR-009 Amendment 1) ───
+
+function sha256(bytes: Buffer | string): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/** Refusals carry `details`, which the gateway passes through to the client. */
+function conflictError(reason: 'hash' | 'destination-exists', currentHash: string | null): Error {
+  const error = new Error(
+    reason === 'hash'
+      ? 'The file changed since it was read'
+      : 'The rename destination already exists',
+  ) as NodeJS.ErrnoException & { details: FsConflictDetails };
+  error.code = FsErrorCodes.conflict;
+  error.details = { reason, ...(currentHash ? { currentHash } : {}) };
+  return error;
+}
+
+/** SHA-256 of a file's raw bytes, or null when nothing exists at the path. */
+async function currentFileHash(target: string, relPath: string): Promise<string | null> {
+  let handle;
+  try {
+    handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    if (!(await handle.stat()).isFile())
+      throw new Error(`File versions apply to files only: ${relPath}`);
+    return sha256(await handle.readFile());
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    return actionableNoFollowError(error, relPath);
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function assertFileHash(target: string, relPath: string, expectedHash: string) {
+  const currentHash = await currentFileHash(target, relPath);
+  if (currentHash !== expectedHash) throw conflictError('hash', currentHash);
+}
+
+async function assertDestinationAbsent(target: string, relPath: string) {
+  let entry;
+  try {
+    entry = await lstat(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  // A directory or other non-file has no hash. A symlink keeps its refusal in the hash read.
+  if (!entry.isFile() && !entry.isSymbolicLink()) throw conflictError('destination-exists', null);
+  throw conflictError('destination-exists', await currentFileHash(target, relPath));
+}
+
 export async function fsList(params: NodeFsPathParams): Promise<{ entries: FsEntry[] }> {
   const { target } = confinedPath(params);
   const dirEntries = await readdir(target, { withFileTypes: true });
@@ -95,12 +155,14 @@ export async function fsList(params: NodeFsPathParams): Promise<{ entries: FsEnt
   return { entries };
 }
 
-export async function fsRead(params: NodeFsPathParams): Promise<{ content: string }> {
+export async function fsRead(params: NodeFsPathParams): Promise<{ content: string; hash: string }> {
   const { target } = confinedPath(params);
   let handle;
   try {
     handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
-    return { content: await handle.readFile('utf-8') };
+    // Hash the raw bytes before decoding, as fs.hash does.
+    const bytes = await handle.readFile();
+    return { content: bytes.toString('utf-8'), hash: sha256(bytes) };
   } catch (error) {
     return actionableNoFollowError(error, params.relPath);
   } finally {
@@ -108,18 +170,30 @@ export async function fsRead(params: NodeFsPathParams): Promise<{ content: strin
   }
 }
 
-export async function fsWrite(params: NodeFsWriteParams): Promise<{ ok: true }> {
+export async function fsWrite(params: NodeFsWriteParams): Promise<{ ok: true; hash?: string }> {
   const { target } = confinedPath(params);
+  // Best effort: a hashed write checks, then writes. Creating uses O_EXCL.
+  if (typeof params.expectedHash === 'string')
+    await assertFileHash(target, params.relPath, params.expectedHash);
   let handle;
   try {
     handle = await open(
       target,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_NOFOLLOW |
+        (params.expectedHash === null ? constants.O_EXCL : constants.O_TRUNC),
       0o666,
     );
     await handle.writeFile(params.content, 'utf-8');
-    return { ok: true };
+    // Unconditional writes reply as before; a conditional one returns the new hash.
+    return {
+      ok: true,
+      ...(params.expectedHash !== undefined ? { hash: sha256(params.content) } : {}),
+    };
   } catch (error) {
+    if (params.expectedHash === null && (error as NodeJS.ErrnoException).code === 'EEXIST')
+      throw conflictError('hash', await currentFileHash(target, params.relPath));
     return actionableNoFollowError(error, params.relPath);
   } finally {
     await handle?.close();
@@ -158,16 +232,25 @@ export async function fsWriteFiles(
   return { ok: true, count: params.files.length };
 }
 
-export async function fsRename(params: NodeFsRenameParams): Promise<{ ok: true }> {
+export async function fsRename(params: NodeFsRenameParams): Promise<{ ok: true; hash?: string }> {
   const oldTarget = confinedPath({ root: params.root, relPath: params.oldRelPath }).target;
   const newTarget = confinedPath({ root: params.root, relPath: params.newRelPath }).target;
+  if (typeof params.expectedHash === 'string') {
+    await assertFileHash(oldTarget, params.oldRelPath, params.expectedHash);
+    await assertDestinationAbsent(newTarget, params.newRelPath);
+  }
   await rename(oldTarget, newTarget);
-  return { ok: true };
+  // A rename keeps the bytes, so the checked hash is the new one.
+  return { ok: true, ...(params.expectedHash ? { hash: params.expectedHash } : {}) };
 }
 
-export async function fsDelete(params: NodeFsPathParams): Promise<{ ok: true }> {
+export async function fsDelete(params: NodeFsDeleteParams): Promise<{ ok: true }> {
   const { target } = confinedPath(params);
-  await rm(target, { recursive: true });
+  if (typeof params.expectedHash === 'string') {
+    // The hash check refuses directories: a hashed delete applies to files only.
+    await assertFileHash(target, params.relPath, params.expectedHash);
+    await rm(target);
+  } else await rm(target, { recursive: true });
   return { ok: true };
 }
 
@@ -285,9 +368,7 @@ export async function fsWriteChunk(params: {
         params.offset + written,
       );
       if (result.bytesWritten <= 0) {
-        throw new Error(
-          `fs.writeChunk short write at offset ${params.offset + written} (0 bytes)`,
-        );
+        throw new Error(`fs.writeChunk short write at offset ${params.offset + written} (0 bytes)`);
       }
       written += result.bytesWritten;
     }
@@ -391,10 +472,11 @@ export function fsWatchStart(
   requestId: string,
   params: { path: string },
   onChange: (content: string) => void,
+  options: FileWatchOptions = {},
 ): void {
   // Clean up existing watcher for this ID if any
   fsWatchStop(requestId);
-  activeWatchers.set(requestId, watchFile(params.path, onChange));
+  activeWatchers.set(requestId, watchFile(params.path, onChange, options));
 }
 
 export function fsWatchStop(requestId: string): boolean {

@@ -1,9 +1,9 @@
-import { open } from 'node:fs/promises';
 import path from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { digest } from '../../assessment/failure-triage/packet.js';
+import { digest } from '../../assessment/failure-triage/packet-identity.js';
+import { readTriageFile } from '../../assessment/failure-triage/read-source.js';
 import type { TriagePrice } from '../../assessment/failure-triage/types.js';
 import { assertNoCredentials } from '../../assessment/record-validation.js';
 
@@ -29,24 +29,7 @@ export type TriagePolicy =
       approvals: TriageSourceApproval[];
     };
 
-/** Bounded reads apply to configuration and registered evidence; no tail/truncation. */
-export async function readTriageFile(file: string, maxBytes: number): Promise<string> {
-  const handle = await open(file, 'r');
-  try {
-    if (!(await handle.stat()).isFile()) throw new Error('Triage source is not a file');
-    const buffer = Buffer.alloc(maxBytes + 1);
-    let offset = 0;
-    while (offset <= maxBytes) {
-      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
-      if (!bytesRead) break;
-      offset += bytesRead;
-    }
-    if (offset > maxBytes) throw new Error('Triage source exceeds its byte limit');
-    return new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, offset));
-  } finally {
-    await handle.close();
-  }
-}
+export { readTriageFile } from '../../assessment/failure-triage/read-source.js';
 
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -60,12 +43,10 @@ const hash = (value: unknown): value is string =>
 const keys = (value: Record<string, unknown>, allowed: string[]) =>
   Object.keys(value).every((k) => allowed.includes(k));
 
-export async function readTriagePolicy(): Promise<TriagePolicy> {
+export async function readTriagePolicy(home = farmslotHome()): Promise<TriagePolicy> {
   let value: unknown;
   try {
-    value = JSON.parse(
-      await readTriageFile(path.join(farmslotHome(), 'triage-policy.json'), 128 * 1024),
-    );
+    value = JSON.parse(await readTriageFile(path.join(home, 'triage-policy.json'), 128 * 1024));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT')
       return { enabled: false, policyVersion: 'absent' };

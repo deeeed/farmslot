@@ -32,13 +32,16 @@ import {
   ROADMAP_ITEM_STAGES,
   ROADMAP_UNASSIGNED_PROJECT,
   roadmapDeliveryView,
+  sourceObservationAge,
 } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import './roadmap-graph-composer.js';
 import '../shared/review-dispatch-picker.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
@@ -63,6 +66,7 @@ import {
   syncedDraftProject,
   syncedDraftTargetProjects,
 } from '../shared/planning-projects.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   applyWorkInventorySort,
   focusWorkInventoryRow,
@@ -93,7 +97,6 @@ import {
   promotionDraftAttachment,
   promotionDraftsFromRoadmapItem,
   roadmapDeliveryBacklinks,
-  roadmapDeliveryRefreshRevision,
   type RoadmapSortDirection,
   type RoadmapSortKey,
   sortRoadmapItems,
@@ -183,31 +186,24 @@ export class RoadmapPanel extends LitElement {
   /** Harness/injection hook: full gateway projections keyed by roadmap item id. */
   @property({ attribute: false }) delivery: RoadmapDeliveryProjection[] | null = null;
   @state() private _deliverySummaries: RoadmapDeliverySummary[] = [];
-  /** Content revision of the gateway-derived projection's inputs. */
-  private _deliveryRevision = '';
-  /**
-   * Every `RUN_UPDATED` can trigger a delivery reload while runs execute, and `_load`
-   * writes the same summaries. Stamping each fetch lets a slow earlier response be
-   * dropped instead of overwriting newer data; the in-flight flag collapses a burst
-   * into one pass plus a single trailing re-run.
-   */
-  private _deliveryGeneration = 0;
-  /**
-   * Separate from `_deliveryGeneration` on purpose. A delivery-only reload writes
-   * summaries but never `_allItems`, so it must not be able to invalidate a full
-   * refresh's item list — sharing one counter made a run update silently discard a
-   * filter/search change that was already in flight.
-   */
   private _listGeneration = 0;
   private _selectionGeneration = 0;
-  private _deliveryReloadInFlight = false;
-  private _deliveryReloadQueued = false;
-  /**
-   * Detail requests need their own stamp: the item id alone does not order two
-   * overlapping `roadmap.get` calls for the *same* selected item, so the older
-   * response could land last and restore stale lineage.
-   */
-  private _deliveryDetailGeneration = 0;
+  private _pendingSelection?: { itemId: string; generation: number; fileHash?: string };
+  private readonly _listQuery = new ResourceQueryController<RoadmapListResult>(this, (state) =>
+    this._adoptListObservation(state),
+  );
+  private readonly _detailQuery = new ResourceQueryController<RoadmapGetResult>(this, (state) => {
+    if (this.items || this.delivery) return;
+    this._deliveryDetail = state.data?.delivery ?? null;
+    this._deliveryDetailLoading = state.status === 'loading';
+  });
+  private readonly _deliveredQueries = new Map<string, ResourceQueryController<RoadmapGetResult>>();
+  private get _commandsReady(): boolean {
+    return this._listQuery.ready;
+  }
+  private _requireCurrentRoadmap(): void {
+    this._listQuery.requireReady();
+  }
   /** Distinguishes "lineage still loading" from "no lineage" so the panel never blanks silently. */
   @state() private _deliveryDetailLoading = false;
   @state() private _deliveryDetail: RoadmapDeliveryProjection | null = null;
@@ -234,7 +230,6 @@ export class RoadmapPanel extends LitElement {
   @state() private _deliveredExpanded = false;
   @state() private _deliveredDetails: RoadmapDeliveryProjection[] = [];
   @state() private _deliveredLoading = false;
-  private _deliveredGeneration = 0;
   @state() private _filterTags = '';
   @state() private _filterSearch = '';
   @state() private _includeArchived = false;
@@ -286,7 +281,6 @@ export class RoadmapPanel extends LitElement {
 
   @state() private _promotionDrafts: PromotionDraft[] = [];
 
-  private _unsubscribeConnection?: () => void;
   private _unsubscribeVisibleModels?: () => void;
   @state() private _visibleModelsError = '';
   private _unsubscribeState?: () => void;
@@ -829,10 +823,7 @@ export class RoadmapPanel extends LitElement {
     }
     window.addEventListener('keydown', this._onKeydown);
     window.addEventListener('hashchange', this._onHashChange);
-    this._unsubscribeConnection = gateway.onConnectionChange((state) => {
-      if (state === 'connected' && !this.items) void this._refresh();
-    });
-    if (gateway.connectionState === 'connected' && !this.items) void this._refresh();
+    if (!this.items) void this._refresh();
     this._unsubscribeVisibleModels = watchVisibleModels((error) => {
       this._visibleModelsError = error;
       this.requestUpdate();
@@ -841,14 +832,13 @@ export class RoadmapPanel extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    ++this._deliveredGeneration;
-    this._unsubscribeConnection?.();
+    ++this._listGeneration;
+    this._clearDeliveredQueries();
     this._unsubscribeVisibleModels?.();
     this._unsubscribeState?.();
     this._narrowMedia?.removeEventListener('change', this._onNarrowChange);
     window.removeEventListener('keydown', this._onKeydown);
     window.removeEventListener('hashchange', this._onHashChange);
-    this._unsubscribeConnection = undefined;
     this._unsubscribeState = undefined;
   }
 
@@ -920,27 +910,6 @@ export class RoadmapPanel extends LitElement {
   private _syncState(state: AppState) {
     const previousProjects = this._globalFilters.projects.join('\0');
     this._slots = this.slots ?? state.fleet?.slots ?? [];
-    // Delivery is derived by the gateway, so the panel cannot recompute it locally —
-    // but it must still notice that the inputs moved. Counting entries is not enough:
-    // the transitions that matter most (a run reaching done, a backlog item shipping)
-    // leave both lengths unchanged, so the revision tracks content freshness too.
-    // Promotion provenance is a supported lineage path with no `roadmapItemId` on the
-    // backlog row, so those ids have to be named explicitly or their updates go unseen.
-    const promotionBacklogIds = new Set(
-      (this.items ?? this._allItems).flatMap((item) =>
-        (item.promotion ?? []).flatMap((entry) =>
-          entry.backlogItemId ? [entry.backlogItemId] : [],
-        ),
-      ),
-    );
-    const revision = roadmapDeliveryRefreshRevision(
-      state.runDeletionsRevision,
-      state.runs,
-      state.backlogItems,
-      promotionBacklogIds,
-    );
-    const deliveryInputsChanged = this._deliveryRevision !== revision;
-    this._deliveryRevision = revision;
     this._backlogItems = state.backlogItems;
     this._workGraphs = state.workGraphs;
     this._globalFilters = state.globalFilters;
@@ -952,12 +921,6 @@ export class RoadmapPanel extends LitElement {
         this._syncEditor(selected);
         this._writeUrlState();
       }
-    }
-    // Injected projections (dev harness) are authoritative; only the connected
-    // path needs to re-read from the gateway.
-    // Refresh both surfaces: reloading only the detail left every list badge stale.
-    if (deliveryInputsChanged && !this.items && !this.delivery) {
-      void this._reloadDelivery();
     }
     if (previousProjects !== this._globalFilters.projects.join('\0')) {
       if (this._deliveredExpanded) void this._loadDeliveredDetails();
@@ -983,7 +946,7 @@ export class RoadmapPanel extends LitElement {
           fallbackProjects: [ROADMAP_UNASSIGNED_PROJECT],
         });
       }
-      if (this._allItems.length > 0) {
+      if (this._allItems.length > 0 && (this.items !== null || this._listQuery.ready)) {
         const visibleItems = this._items;
         if (!visibleItems.some((item) => item.id === this._selectedId)) {
           this._syncEditor(this._resolveSelectedItem(visibleItems));
@@ -1092,10 +1055,9 @@ export class RoadmapPanel extends LitElement {
     items: RoadmapItem[],
     selectedId = this._selectedId,
   ): RoadmapItem | null {
-    return (
-      items.find((item) => item.id === selectedId) ??
-      (this._selectionDismissed ? null : (items[0] ?? null))
-    );
+    const selected = items.find((item) => item.id === selectedId);
+    if (selectedId && !selected && this.items === null && !this._listQuery.ready) return null;
+    return selected ?? (this._selectionDismissed ? null : (items[0] ?? null));
   }
 
   private get _selected(): RoadmapItem | null {
@@ -1127,6 +1089,7 @@ export class RoadmapPanel extends LitElement {
 
   private _syncEditor(item: RoadmapItem | null) {
     if (!item) {
+      this._detailQuery.setQuery(undefined);
       this._selectedId = '';
       this._deliveryDetail = null;
       this._editorMode = 'view';
@@ -1261,64 +1224,115 @@ export class RoadmapPanel extends LitElement {
     if (!this._promptPreviews[promptPath]) void this._loadPromptPreview(promptPath);
   }
 
-  private async _refresh(
-    selectId = this._selectedId,
-    selectionGeneration = this._selectionGeneration,
-  ) {
+  private _adoptListObservation(state: ResourceQueryState<RoadmapListResult>): void {
+    if (this.items) return;
+    if (this._filterSearch.trim() && state.data) return;
+    if (!state.data) {
+      this._allItems = [];
+      this._deliverySummaries = [];
+      this._detailQuery.setQuery(undefined);
+      this._clearDeliveredQueries();
+      if (this._listQuery.ready) this._syncEditor(null);
+      return;
+    }
+    this._adoptListResult(state.data);
+  }
+
+  private _adoptListResult(result: RoadmapListResult): void {
+    this._allItems = result.items;
+    this._deliverySummaries = result.delivery ?? [];
+    const pending = this._pendingSelection;
+    const pendingItem =
+      pending && pending.generation === this._selectionGeneration
+        ? result.items.find((item) => item.id === pending.itemId)
+        : undefined;
+    if (pending && pending.generation !== this._selectionGeneration)
+      this._pendingSelection = undefined;
+    if (pendingItem && (!pending?.fileHash || pendingItem.fileHash === pending.fileHash)) {
+      this._pendingSelection = undefined;
+      this._syncEditor(pendingItem);
+    } else {
+      const selected = this._resolveSelectedItem(this._items);
+      const authoritative = this.items !== null || this._listQuery.ready;
+      if (!selected) {
+        if (authoritative) this._syncEditor(null);
+      } else if (
+        (!this._selectedId || !this._editHash || authoritative) &&
+        (selected.id !== this._selectedId ||
+          !this._editHash ||
+          (authoritative &&
+            this._editorMode !== 'edit' &&
+            !this._promotionOpen &&
+            !this._runnerPickerOpen &&
+            selected.fileHash !== this._editHash))
+      )
+        this._syncEditor(selected);
+      else if (selected) this._syncDeliveryDetail(selected.id);
+    }
+    this._writeUrlState();
+    if (this._deliveredExpanded) this._loadDeliveredDetails();
+  }
+
+  private _followMutation(item: RoadmapItem, generation: number): void {
+    if (generation !== this._selectionGeneration) return;
+    this._pendingSelection = { itemId: item.id, generation, fileHash: item.fileHash };
+    const result = this._listQuery.state.data;
+    if (result) this._adoptListResult(result);
+  }
+
+  private async _refresh(): Promise<void> {
     if (this.items) {
       this._syncState(getState());
       return;
     }
-    this._busy = 'refresh';
-    this._error = '';
-    // Two independent claims. The list generation orders refreshes against each other
-    // (double-click, or a filter change during an in-flight read). The delivery
-    // generation orders summary writes against `_reloadDelivery`, which carries fresher
-    // summaries but no items — so it may win the summaries without discarding the list.
-    const listGeneration = ++this._listGeneration;
-    const deliveryGeneration = ++this._deliveryGeneration;
+    const generation = ++this._listGeneration;
+    const search = this._filterSearch.trim();
+    const params = {
+      ...(this._filterProject !== 'all' ? { project: this._filterProject } : {}),
+      ...(this._filterStage !== 'all' ? { stage: this._filterStage } : {}),
+      ...(this._filterTags.trim() ? { tags: tagsFromInput(this._filterTags) } : {}),
+      includeArchived: this._includeArchived,
+    };
+    if (!search) {
+      this._listQuery.setQuery(resourceQuery(Methods.ROADMAP_LIST, params));
+      this._adoptListObservation(this._listQuery.state);
+      return;
+    }
+    // Searches are explicit, nonpersisted operations. The shared collection remains the command prerequisite.
+    this._listQuery.setQuery(resourceQuery(Methods.ROADMAP_LIST, params));
+    const workspace = getResourceWorkspaceKey();
+    const epoch = gateway.connectionEpoch;
+    this._busy = 'search';
     try {
       const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
-        ...(this._filterProject !== 'all' ? { project: this._filterProject } : {}),
-        ...(this._filterStage !== 'all' ? { stage: this._filterStage } : {}),
-        ...(this._filterTags.trim() ? { tags: tagsFromInput(this._filterTags) } : {}),
-        ...(this._filterSearch.trim() ? { search: this._filterSearch.trim() } : {}),
-        includeArchived: this._includeArchived,
+        ...params,
+        search,
       });
-      if (listGeneration !== this._listGeneration) return;
-      this._allItems = result.items;
-      // A delivery reload that landed while this refresh was in flight holds newer
-      // summaries; keep them rather than reverting to this response's snapshot.
-      if (deliveryGeneration === this._deliveryGeneration) {
-        this._deliverySummaries = result.delivery ?? [];
-      }
-      // Promoting or shipping changes lineage without changing the selection, so
-      // an explicit refresh must re-fetch the detail projection rather than reuse
-      // the cached one for the same item id.
-      this._deliveryDetail = null;
-      const visibleItems = this._items;
-      const selected = this._resolveSelectedItem(
-        visibleItems,
-        selectionGeneration === this._selectionGeneration ? selectId : this._selectedId,
-      );
-      this._syncEditor(selected);
-      this._writeUrlState();
-      if (this._deliveredExpanded) void this._loadDeliveredDetails();
-    } catch (err) {
-      // A superseded refresh's failure must not report over the newer one's data.
-      if (listGeneration === this._listGeneration) this._error = (err as Error).message;
+      if (
+        generation !== this._listGeneration ||
+        workspace !== getResourceWorkspaceKey() ||
+        epoch !== gateway.connectionEpoch
+      )
+        return;
+      this._adoptListResult(result);
+    } catch (error) {
+      if (generation === this._listGeneration && workspace === getResourceWorkspaceKey())
+        this._error = (error as Error).message;
     } finally {
-      this._busy = '';
+      if (generation === this._listGeneration) this._busy = '';
     }
   }
 
   private async _create(event: Event) {
+    const workspace = getResourceWorkspaceKey();
+    const epoch = gateway.connectionEpoch;
     event.preventDefault();
     const selectionGeneration = this._selectionGeneration;
     this._busy = 'create';
     this._error = '';
     this._message = '';
     try {
+      this._requireCurrentRoadmap();
       const result = await gateway.request<RoadmapSaveResult>(Methods.ROADMAP_SAVE, {
         item: {
           project: this._newProject || ROADMAP_UNASSIGNED_PROJECT,
@@ -1330,6 +1344,7 @@ export class RoadmapPanel extends LitElement {
           body: this._newBody || 'Raw idea.\n',
         },
       });
+      if (workspace !== getResourceWorkspaceKey() || epoch !== gateway.connectionEpoch) return;
       this._newTitle = '';
       this._newBody = '';
       this._newTags = '';
@@ -1340,7 +1355,7 @@ export class RoadmapPanel extends LitElement {
       });
       this._newTargetProjectsTouched = false;
       this._message = 'Roadmap item captured';
-      await this._refresh(result.item.id, selectionGeneration);
+      this._followMutation(result.item, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1349,12 +1364,15 @@ export class RoadmapPanel extends LitElement {
   }
 
   private async _saveSelected() {
+    const workspace = getResourceWorkspaceKey();
+    const epoch = gateway.connectionEpoch;
     if (!this._selected) return;
     const selectionGeneration = this._selectionGeneration;
     this._busy = 'save';
     this._error = '';
     this._message = '';
     try {
+      this._requireCurrentRoadmap();
       const result = await gateway.request<RoadmapSaveResult>(Methods.ROADMAP_SAVE, {
         expectedHash: this._editHash,
         item: {
@@ -1369,8 +1387,9 @@ export class RoadmapPanel extends LitElement {
           promotion: this._selected.promotion,
         },
       });
+      if (workspace !== getResourceWorkspaceKey() || epoch !== gateway.connectionEpoch) return;
       this._message = 'Roadmap item saved';
-      await this._refresh(result.item.id, selectionGeneration);
+      this._followMutation(result.item, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1379,12 +1398,15 @@ export class RoadmapPanel extends LitElement {
   }
 
   private async _refineSelected(launch: boolean) {
+    const workspace = getResourceWorkspaceKey();
+    const epoch = gateway.connectionEpoch;
     if (!this._selected) return;
     const selectionGeneration = this._selectionGeneration;
     this._busy = launch ? 'refine-launch' : 'refine';
     this._error = '';
     this._message = '';
     try {
+      this._requireCurrentRoadmap();
       const result = await gateway.request<RoadmapRefineResult>(Methods.ROADMAP_REFINE, {
         itemId: this._selected.id,
         expectedHash: this._editHash,
@@ -1395,6 +1417,7 @@ export class RoadmapPanel extends LitElement {
         ...(this._refineCommand.trim() ? { runnerCommand: this._refineCommand.trim() } : {}),
         ...(this._refineSafetyTier ? { safetyTier: this._refineSafetyTier as SafetyTier } : {}),
       });
+      if (workspace !== getResourceWorkspaceKey() || epoch !== gateway.connectionEpoch) return;
       const selectedRunner = [result.runner, result.model, result.safetyTier]
         .filter(Boolean)
         .join(' ');
@@ -1405,7 +1428,7 @@ export class RoadmapPanel extends LitElement {
           : `Refinement terminal reopened${runnerSuffix}: ${result.attachCommand}`
         : `Refinement prompt ready${runnerSuffix}: ${result.promptPath}`;
       if (launch) this._setRunnerPickerOpen(false);
-      await this._refresh(result.item.id, selectionGeneration);
+      this._followMutation(result.item, selectionGeneration);
       if (launch && result.tmuxWorker) this._navigateToWorkerTerminal(result.tmuxWorker);
     } catch (err) {
       this._error = (err as Error).message;
@@ -1446,6 +1469,8 @@ export class RoadmapPanel extends LitElement {
   }
 
   private async _deleteSelected() {
+    const workspace = getResourceWorkspaceKey();
+    const epoch = gateway.connectionEpoch;
     // Snapshot the target rather than re-reading `_selected`, which falls back to
     // `_items[0]` and so can resolve to a different item than the one named in the
     // prompt. This is defence in depth, not a live bug: `window.confirm` blocks the JS
@@ -1463,12 +1488,15 @@ export class RoadmapPanel extends LitElement {
     this._error = '';
     this._message = '';
     try {
+      this._requireCurrentRoadmap();
       await gateway.request(Methods.ROADMAP_DELETE, {
         itemId: target.id,
         expectedHash,
       });
+      if (workspace !== getResourceWorkspaceKey() || epoch !== gateway.connectionEpoch) return;
       this._message = 'Roadmap item deleted';
-      await this._refresh('');
+      this._syncEditor(null);
+      this._writeUrlState();
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1590,12 +1618,15 @@ export class RoadmapPanel extends LitElement {
   }
 
   private async _promoteSelected() {
+    const workspace = getResourceWorkspaceKey();
+    const epoch = gateway.connectionEpoch;
     if (!this._selected) return;
     const selectionGeneration = this._selectionGeneration;
     this._busy = 'promote';
     this._error = '';
     this._message = '';
     try {
+      this._requireCurrentRoadmap();
       const result = await gateway.request<RoadmapPromoteResult>(Methods.ROADMAP_PROMOTE, {
         itemId: this._selected.id,
         expectedHash: this._editHash,
@@ -1606,8 +1637,9 @@ export class RoadmapPanel extends LitElement {
           tags: tagsFromInput(this._editTags),
         })),
       });
+      if (workspace !== getResourceWorkspaceKey() || epoch !== gateway.connectionEpoch) return;
       this._message = `Promoted ${result.backlogItems.length} backlog spec${result.backlogItems.length === 1 ? '' : 's'}`;
-      await this._refresh(result.roadmapItem.id, selectionGeneration);
+      this._followMutation(result.roadmapItem, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1635,70 +1667,10 @@ export class RoadmapPanel extends LitElement {
     void this._loadDeliveryDetail(itemId);
   }
 
-  /** Re-reads list summaries and the open item's lineage after its inputs changed. */
-  private async _reloadDelivery() {
-    if (this._deliveryReloadInFlight) {
-      this._deliveryReloadQueued = true;
-      return;
-    }
-    this._deliveryReloadInFlight = true;
-    const generation = ++this._deliveryGeneration;
-    try {
-      const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
-        ...(this._filterProject !== 'all' ? { project: this._filterProject } : {}),
-        ...(this._filterStage !== 'all' ? { stage: this._filterStage } : {}),
-        includeArchived: this._includeArchived,
-      });
-      if (generation === this._deliveryGeneration) {
-        this._deliverySummaries = result.delivery ?? [];
-        const selected = this._selected;
-        if (selected?.id !== this._selectedId) {
-          this._syncEditor(selected);
-          this._writeUrlState();
-        }
-        if (this._deliveredExpanded) void this._loadDeliveredDetails();
-      }
-    } catch (err) {
-      // Same generation guard as the success path. A superseded request failing after
-      // a newer `_refresh` already succeeded would otherwise report "unavailable" over
-      // data that is in fact loaded and current.
-      if (generation === this._deliveryGeneration) {
-        this._error = `Delivery badges unavailable: ${(err as Error).message}`;
-      }
-    }
-    if (this._selectedId && generation === this._deliveryGeneration) {
-      this._deliveryDetail = null;
-      await this._loadDeliveryDetail(this._selectedId);
-    }
-    this._deliveryReloadInFlight = false;
-    // One trailing pass covers every update that arrived while this one ran.
-    if (this._deliveryReloadQueued) {
-      this._deliveryReloadQueued = false;
-      void this._reloadDelivery();
-    }
-  }
-
-  private async _loadDeliveryDetail(itemId: string) {
-    const generation = ++this._deliveryDetailGeneration;
-    const superseded = () =>
-      this._selectedId !== itemId || generation !== this._deliveryDetailGeneration;
-    this._deliveryDetailLoading = true;
-    try {
-      const result = await gateway.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId });
-      if (superseded()) return;
-      this._deliveryDetail = result.delivery ?? null;
-    } catch (err) {
-      // Lineage is supplementary to the editor; surface the failure instead of
-      // rendering a silently empty delivery panel. A superseded request's error is
-      // dropped deliberately: a newer request owns the panel, and reporting the stale
-      // one would show an error for lineage the user is no longer looking at.
-      if (superseded()) return;
-      this._error = `Delivery lineage unavailable: ${(err as Error).message}`;
-    } finally {
-      // Only the newest request owns the flag; a superseded one clearing it would
-      // hide the placeholder while its replacement is still in flight.
-      if (generation === this._deliveryDetailGeneration) this._deliveryDetailLoading = false;
-    }
+  private _loadDeliveryDetail(itemId: string): void {
+    this._detailQuery.setQuery(resourceQuery(Methods.ROADMAP_GET, { itemId }));
+    this._deliveryDetail = this._detailQuery.state.data?.delivery ?? null;
+    this._deliveryDetailLoading = this._detailQuery.state.status === 'loading';
   }
 
   private _deliverySummaryFor(itemId: string): RoadmapDeliverySummary | null {
@@ -1709,32 +1681,48 @@ export class RoadmapPanel extends LitElement {
     if (this._deliveredExpanded === open) return;
     this._deliveredExpanded = open;
     if (open) void this._loadDeliveredDetails();
-    else ++this._deliveredGeneration;
+    else this._clearDeliveredQueries();
   }
 
-  private async _loadDeliveredDetails() {
-    const generation = ++this._deliveredGeneration;
-    this._deliveredLoading = true;
-    this._deliveredDetails = [];
-    try {
-      const results = await Promise.all(
-        this._deliveryView.delivered.map(async (item) => {
-          if (this.delivery) return this.delivery.find((entry) => entry.roadmapItemId === item.id);
-          return (await gateway.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId: item.id }))
-            .delivery;
-        }),
-      );
-      if (generation === this._deliveredGeneration) {
-        this._deliveredDetails = results.filter((entry): entry is RoadmapDeliveryProjection =>
-          Boolean(entry),
-        );
-      }
-    } catch (err) {
-      if (generation === this._deliveredGeneration)
-        this._error = `Delivered PR links unavailable: ${(err as Error).message}`;
-    } finally {
-      if (generation === this._deliveredGeneration) this._deliveredLoading = false;
+  private _clearDeliveredQueries(): void {
+    for (const controller of this._deliveredQueries.values()) {
+      controller.hostDisconnected();
+      this.removeController(controller);
     }
+    this._deliveredQueries.clear();
+    this._deliveredDetails = [];
+    this._deliveredLoading = false;
+  }
+
+  private _loadDeliveredDetails(): void {
+    if (this.delivery) {
+      this._deliveredDetails = this.delivery.filter((entry) =>
+        this._deliveryView.delivered.some((item) => item.id === entry.roadmapItemId),
+      );
+      this._deliveredLoading = false;
+      return;
+    }
+    const ids = new Set(this._deliveryView.delivered.map((item) => item.id));
+    for (const [id, controller] of this._deliveredQueries)
+      if (!ids.has(id)) {
+        controller.hostDisconnected();
+        this.removeController(controller);
+        this._deliveredQueries.delete(id);
+      }
+    const adopt = () => {
+      const states = [...this._deliveredQueries.values()].map((controller) => controller.state);
+      this._deliveredDetails = states.flatMap((state) =>
+        state.data?.delivery ? [state.data.delivery] : [],
+      );
+      this._deliveredLoading = states.some((state) => state.status === 'loading');
+    };
+    for (const itemId of ids)
+      if (!this._deliveredQueries.has(itemId)) {
+        const controller = new ResourceQueryController<RoadmapGetResult>(this, adopt);
+        this._deliveredQueries.set(itemId, controller);
+        controller.setQuery(resourceQuery(Methods.ROADMAP_GET, { itemId }));
+      }
+    adopt();
   }
 
   /** `testId` separates the per-row list badge from the selected item's detail badge. */
@@ -2025,7 +2013,8 @@ export class RoadmapPanel extends LitElement {
         <button
           type="button"
           data-testid=${`roadmap-promote-save-${index}`}
-          ?disabled=${!persistedAttachment ||
+          ?disabled=${!this._commandsReady ||
+          !persistedAttachment ||
           !attachmentChanged ||
           this._busy === `promotion-draft-save-${index}`}
           title=${persistedAttachment
@@ -2038,7 +2027,7 @@ export class RoadmapPanel extends LitElement {
         <button
           class="danger"
           type="button"
-          ?disabled=${this._promotionDrafts.length <= 1}
+          ?disabled=${!this._commandsReady || this._promotionDrafts.length <= 1}
           @click=${() => this._removePromotionSpec(index)}
         >
           Remove
@@ -2127,7 +2116,7 @@ export class RoadmapPanel extends LitElement {
                 <button
                   data-testid="roadmap-refine-continue-existing"
                   type="button"
-                  ?disabled=${this._busy === 'refine-launch'}
+                  ?disabled=${!this._commandsReady || this._busy === 'refine-launch'}
                   @click=${() => this._continueExistingRefinementSession()}
                 >
                   Continue
@@ -2191,7 +2180,7 @@ export class RoadmapPanel extends LitElement {
             <button
               data-testid="roadmap-refine-runner-launch"
               type="button"
-              ?disabled=${this._busy === 'refine-launch' || loadingSession}
+              ?disabled=${!this._commandsReady || this._busy === 'refine-launch' || loadingSession}
               @click=${() =>
                 existingSession
                   ? this._continueExistingRefinementSession()
@@ -2262,7 +2251,7 @@ export class RoadmapPanel extends LitElement {
       <div class="actions" style="margin-top: 10px;">
         <button
           data-testid="roadmap-create"
-          ?disabled=${this._busy === 'create' || !this._newTitleForSubmit()}
+          ?disabled=${!this._commandsReady || this._busy === 'create' || !this._newTitleForSubmit()}
         >
           Save rough roadmap item
         </button>
@@ -2356,7 +2345,6 @@ export class RoadmapPanel extends LitElement {
           }}
         />
       </label>
-      <button class="secondary" @click=${() => this._refresh()}>Refresh</button>
     </div>`;
   }
 
@@ -2500,7 +2488,7 @@ export class RoadmapPanel extends LitElement {
       <div class="actions" style="margin-top: 10px;">
         <button
           data-testid="roadmap-promote"
-          ?disabled=${item.stage !== 'refined' || this._busy === 'promote'}
+          ?disabled=${!this._commandsReady || item.stage !== 'refined' || this._busy === 'promote'}
           @click=${this._promoteSelected}
         >
           Promote ${this._promotionDrafts.length}
@@ -2612,6 +2600,7 @@ export class RoadmapPanel extends LitElement {
             <button
               class="secondary"
               data-testid="roadmap-prepare-prompt"
+              ?disabled=${!this._commandsReady}
               title="Generate the refinement prompt file and mark this roadmap item as refining. This does not launch a runner."
               @click=${() => this._refineSelected(false)}
             >
@@ -2619,6 +2608,7 @@ export class RoadmapPanel extends LitElement {
             </button>
             <button
               data-testid="roadmap-refine-runner"
+              ?disabled=${!this._commandsReady}
               title="Choose a runner/model, then launch or attach the tmux refinement session for this roadmap item."
               @click=${() => this._openRunnerPicker()}
             >
@@ -2681,6 +2671,7 @@ export class RoadmapPanel extends LitElement {
               ? html`<button
                   class="secondary"
                   data-testid="roadmap-restore"
+                  ?disabled=${!this._commandsReady}
                   @click=${() =>
                     this._setSelectedStage(item.promotion?.length ? 'promoted' : 'rough')}
                 >
@@ -2689,6 +2680,7 @@ export class RoadmapPanel extends LitElement {
               : html`<button
                   class="secondary"
                   data-testid="roadmap-archive"
+                  ?disabled=${!this._commandsReady}
                   @click=${() => this._setSelectedStage('archived')}
                 >
                   Archive
@@ -2697,6 +2689,7 @@ export class RoadmapPanel extends LitElement {
               ? html`<button
                   class="danger"
                   data-testid="roadmap-delete"
+                  ?disabled=${!this._commandsReady}
                   @click=${this._deleteSelected}
                 >
                   Delete
@@ -2705,6 +2698,7 @@ export class RoadmapPanel extends LitElement {
             <button
               class="secondary"
               data-testid="roadmap-prepare-prompt"
+              ?disabled=${!this._commandsReady}
               title="Generate the refinement prompt file and mark this roadmap item as refining. This does not launch a runner."
               @click=${() => this._refineSelected(false)}
             >
@@ -2712,6 +2706,7 @@ export class RoadmapPanel extends LitElement {
             </button>
             <button
               data-testid="roadmap-refine-runner"
+              ?disabled=${!this._commandsReady}
               title="Choose a runner/model, then launch or attach the tmux refinement session for this roadmap item."
               @click=${() => this._openRunnerPicker()}
             >
@@ -2719,7 +2714,7 @@ export class RoadmapPanel extends LitElement {
             </button>
             <button
               data-testid="roadmap-save"
-              ?disabled=${this._busy === 'save'}
+              ?disabled=${!this._commandsReady || this._busy === 'save'}
               @click=${this._saveSelected}
             >
               Save
@@ -2810,15 +2805,48 @@ export class RoadmapPanel extends LitElement {
             specs.
           </p>
         </div>
-        <button
-          class="secondary"
-          data-testid="roadmap-refresh"
-          ?disabled=${this._busy === 'refresh'}
-          @click=${() => this._refresh()}
-        >
-          Refresh
-        </button>
+        ${this._listQuery.state.error
+          ? html`<button data-testid="roadmap-read-retry" @click=${() => this._listQuery.retry()}>
+              Retry
+            </button>`
+          : nothing}
       </div>
+      ${!this.items && this._listQuery.state.status === 'stale'
+        ? html`<p data-testid="roadmap-stale">
+            Saved roadmap, ${sourceObservationAge(this._listQuery.state.observedAt)}. Actions wait
+            for a current read.
+          </p>`
+        : nothing}
+      ${!this.items && this._listQuery.state.error
+        ? html`<div class="error" data-testid="roadmap-read-error">
+            ${this._listQuery.state.error.message}
+          </div>`
+        : nothing}
+      ${this._detailQuery.state.error
+        ? html`<div class="error" data-testid="roadmap-detail-error">
+            Delivery lineage unavailable: ${this._detailQuery.state.error.message}<button
+              @click=${() => this._detailQuery.retry()}
+            >
+              Retry
+            </button>
+          </div>`
+        : nothing}
+      ${[...this._deliveredQueries.values()].some((controller) => controller.state.error)
+        ? html`<div class="error" data-testid="roadmap-delivered-error">
+            Delivered PR links unavailable:
+            ${[...this._deliveredQueries.values()].find((controller) => controller.state.error)
+              ?.state.error?.message}<button
+              @click=${() =>
+                Promise.all(
+                  [...this._deliveredQueries.values()]
+                    .filter((controller) => controller.state.error)
+                    .map((controller) => controller.retry()),
+                )}
+            >
+              Retry
+            </button>
+          </div>`
+        : nothing}
       ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
       ${this._message ? html`<div class="message">${this._message}</div>` : nothing}
       <div class="list-toolbar">

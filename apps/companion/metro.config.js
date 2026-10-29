@@ -8,6 +8,7 @@ const { isWorkspaceSourceModule } = require('./metro-workspace-source.cjs');
 const projectRoot = __dirname;
 const monorepoRoot = path.resolve(projectRoot, '../..');
 const protocolRoot = path.resolve(monorepoRoot, 'packages/protocol');
+const localStoreRoot = path.resolve(monorepoRoot, 'packages/local-store');
 const reviewDispatchRoot = path.resolve(monorepoRoot, 'packages/review-dispatch');
 const sdkRoot = path.resolve(monorepoRoot, 'packages/adapter-sdk');
 const recipeRunnerRoot = path.resolve(monorepoRoot, 'packages/recipe-runner');
@@ -36,7 +37,7 @@ function shouldRewriteProtocolJsImport(originModulePath, moduleName) {
   return (
     moduleName.startsWith('.') &&
     moduleName.endsWith('.js') &&
-    [protocolRoot, reviewDispatchRoot, sdkRoot, recipeRunnerRoot].some((root) =>
+    [protocolRoot, localStoreRoot, reviewDispatchRoot, sdkRoot, recipeRunnerRoot].some((root) =>
       isWorkspaceSourceModule(originModulePath, root, originResolveBases),
     )
   );

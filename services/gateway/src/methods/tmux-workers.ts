@@ -23,9 +23,20 @@ import {
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
 
-import { getAllNodes, getNode } from '../fleet/machine-registry.js';
+import { type ConnectedNode, getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
+import {
+  publishWorkerResources,
+  scheduleWorkerStatusExpiry,
+  WORKER_PANE_RECENT_CHANGE_MS,
+  WORKER_SIGNAL_FRESH_MS,
+} from '../resources/worker-changes.js';
+import {
+  type AdmittedWorkerSource,
+  assertWorkerObservationCurrent,
+  requireWorkerObservation,
+} from '../resources/worker-observations.js';
 import {
   isRunnerPaneRetired,
   normalizeRunner,
@@ -43,13 +54,16 @@ function correlationRuns() {
 }
 
 const TMUX_PANES_TIMEOUT_MS = 5_000;
-const SIGNAL_FRESH_MS = 120_000;
-const PANE_RECENT_CHANGE_MS = 30_000;
+const SIGNAL_FRESH_MS = WORKER_SIGNAL_FRESH_MS;
+const PANE_RECENT_CHANGE_MS = WORKER_PANE_RECENT_CHANGE_MS;
 const NODE_TMUX_PUSH_SNAPSHOT_FRESH_MS = 30_000;
 // Degraded fallback when live tmux.panes times out — cap age so inventory cannot lie forever.
 const NODE_TMUX_STALE_FALLBACK_MAX_MS = 5 * 60_000;
 const FILTERED_WORKER_ERROR = 'worker target is excluded by tmux worker filter config';
-const nodeTmuxPaneSnapshots = new Map<string, { observedAt: number; panes: NodeTmuxPane[] }>();
+const nodeTmuxPaneSnapshots = new Map<
+  string,
+  { observedAt: number; panes: NodeTmuxPane[]; connection?: ConnectedNode }
+>();
 
 const WAITING_RUN_STATUSES: ReadonlySet<RunStatus> = new Set([
   'blocked',
@@ -528,19 +542,22 @@ export function rememberNodeTmuxPaneSnapshot(params: {
   nodeTmuxPaneSnapshots.set(params.nodeId, {
     observedAt: params.observedAt,
     panes: params.panes,
+    connection: getNode(params.nodeId),
   });
+  publishWorkerResources(params.nodeId);
+  scheduleWorkerStatusExpiry(params.nodeId, params.panes);
 }
 
 function freshNodeTmuxPaneSnapshot(nodeId: string, now: number): NodeTmuxPane[] | null {
   const snapshot = nodeTmuxPaneSnapshots.get(nodeId);
-  if (!snapshot) return null;
+  if (!snapshot || snapshot.connection !== getNode(nodeId)) return null;
   if (now - snapshot.observedAt > NODE_TMUX_PUSH_SNAPSHOT_FRESH_MS) return null;
   return snapshot.panes;
 }
 
 function staleNodeTmuxPaneSnapshot(nodeId: string, now: number): NodeTmuxPane[] | null {
   const snapshot = nodeTmuxPaneSnapshots.get(nodeId);
-  if (!snapshot) return null;
+  if (!snapshot || snapshot.connection !== getNode(nodeId)) return null;
   if (now - snapshot.observedAt > NODE_TMUX_STALE_FALLBACK_MAX_MS) return null;
   return snapshot.panes;
 }
@@ -735,7 +752,10 @@ export async function tmuxWorkerList(
     observedAt,
     requestPanes: async (nodeId) => {
       const cached = freshNodeTmuxPaneSnapshot(nodeId, observedAt);
-      if (cached) return cached;
+      if (cached) {
+        scheduleWorkerStatusExpiry(nodeId, cached);
+        return cached;
+      }
       const stale = staleNodeTmuxPaneSnapshot(nodeId, observedAt);
       const node = getNode(nodeId);
       if (!node) throw new Error(`node ${nodeId} is not connected`);
@@ -748,15 +768,59 @@ export async function tmuxWorkerList(
             timeout: TMUX_PANES_TIMEOUT_MS,
           },
         );
-        return normalizeNodeTmuxPanesResult(payload);
+        if (getNode(nodeId) !== node)
+          throw new Error('Node connection changed during worker inventory read');
+        const panes = normalizeNodeTmuxPanesResult(payload);
+        scheduleWorkerStatusExpiry(nodeId, panes);
+        return panes;
       } catch (error) {
         // Live tmux.panes can block for the full timeout under load. Prefer a
         // degraded stale push snapshot over an empty inventory row.
-        if (stale) return stale;
+        if (stale && getNode(nodeId) === node) {
+          scheduleWorkerStatusExpiry(nodeId, stale);
+          return stale;
+        }
         throw error;
       }
     },
   });
+}
+
+/** Shared reads use producer-owned snapshots, never the imperative collector or age fallback. */
+export async function tmuxWorkerObservedList(
+  params: TmuxWorkerListParams = {},
+): Promise<TmuxWorkerListResult> {
+  const [allPools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus()]);
+  const requested = new Set(params.machines ?? []);
+  if (params.machine) requested.add(params.machine);
+  const pools = allPools.filter((pool) => !requested.size || requested.has(pool.machine));
+  const nodeIds = [
+    ...new Set([
+      ...pools.map((pool) => pool.machine),
+      ...getAllNodes().map((node) => node.machine),
+    ]),
+  ].filter((machine) => !requested.size || requested.has(machine));
+  // A requested but unknown source is an error, never an empty authoritative inventory.
+  for (const machine of requested) if (!nodeIds.includes(machine)) nodeIds.push(machine);
+  const admitted = new Map<string, AdmittedWorkerSource>();
+  for (const nodeId of nodeIds) admitted.set(nodeId, requireWorkerObservation(nodeId));
+  const result = await buildTmuxWorkerListFromSources({
+    pools,
+    fleet,
+    activeRuns: correlationRuns(),
+    nodeIds,
+    connectedNodeIds: new Set(nodeIds),
+    includeDisconnected: params.includeDisconnected,
+    observedAt: Date.now(),
+    requestPanes: async (nodeId) => {
+      const source = admitted.get(nodeId)!;
+      assertWorkerObservationCurrent(source);
+      scheduleWorkerStatusExpiry(nodeId, source.panes);
+      return source.panes;
+    },
+  });
+  for (const source of admitted.values()) assertWorkerObservationCurrent(source);
+  return result;
 }
 
 export async function buildTmuxWorkerUpdateFromNodeSnapshot(payload: {
@@ -823,5 +887,7 @@ export async function tmuxWorkerEndSession(params: TmuxWorkerEndSessionParams): 
   const confirmation = JSON.parse(result.stdout);
   if (confirmation.ok !== true) throw new Error('Session termination was not confirmed');
   nodeTmuxPaneSnapshots.delete(worker.nodeId);
+  scheduleWorkerStatusExpiry(worker.nodeId, []);
+  publishWorkerResources(worker.nodeId);
   return { ok: true };
 }

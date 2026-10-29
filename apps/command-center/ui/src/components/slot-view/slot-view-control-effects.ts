@@ -66,77 +66,71 @@ export async function toggleSlotViewManualMode(view: SlotView, toManual: boolean
 }
 
 export async function pauseSlotViewRun(view: SlotView) {
-  if (!view._linkedRun || view._isRecoveryBlocked) return;
+  if (!view._linkedRun || view._runActionsBlocked) return;
+  let current = () => view.isConnected;
+  view._runCommandError = '';
   try {
-    await gateway.request(Methods.RUN_PAUSE, { runId: view._linkedRun.id });
-  } catch (err) {
-    console.error('[slot-view] pause failed:', err);
+    const run = view._requireCurrentRun();
+    current = view._captureRunScope();
+    await gateway.request(Methods.RUN_PAUSE, { runId: run.id });
+  } catch (error) {
+    if (current()) view._runCommandError = error instanceof Error ? error.message : String(error);
   }
 }
 
 export async function resumeSlotViewRun(view: SlotView) {
-  if (!view._linkedRun || view._isRecoveryBlocked) return;
+  if (!view._linkedRun || view._runActionsBlocked) return;
+  let current = () => view.isConnected;
+  view._runCommandError = '';
   try {
-    await gateway.request(Methods.RUN_RESUME, { runId: view._linkedRun.id });
-  } catch (err) {
-    console.error('[slot-view] resume failed:', err);
+    const run = view._requireCurrentRun();
+    current = view._captureRunScope();
+    await gateway.request(Methods.RUN_RESUME, { runId: run.id });
+  } catch (error) {
+    if (current()) view._runCommandError = error instanceof Error ? error.message : String(error);
   }
 }
 
 export async function restoreSlotViewTmuxWorker(view: SlotView) {
-  if (!view.slotId || !view._linkedRun || view._isRecoveryBlocked || view._tmuxRestoreRunning) {
-    return;
-  }
-  view._tmuxRestoreRunning = true;
-  view._tmuxRestoreFeedback = '';
-  view._tmuxRestoreError = '';
-  try {
-    const result = (await gateway.request(Methods.TMUX_WORKER_RESTORE, {
-      slotId: view.slotId,
-      runId: view._linkedRun.id,
-      mode: 'restore-window',
-    })) as TmuxWorkerRestoreResult;
-    const contexts = result.contexts;
-    const restored = contexts.find((ctx) => ctx.status === 'restored-window') ?? contexts[0];
-    view._tmuxRestoreFeedback =
-      restored?.detail ??
-      (result.restored ? 'Worker tmux window restored' : 'Worker tmux state reconciled');
-    await view._refreshLinkedRun(null);
-  } catch (err) {
-    view._tmuxRestoreError = err instanceof Error ? err.message : String(err);
-    console.error('[slot-view] tmux worker restore failed:', err);
-  } finally {
-    view._tmuxRestoreRunning = false;
-  }
+  return recoverWorker(view, 'restore-window');
 }
 
 export async function reloadSlotViewWorkerSession(view: SlotView) {
-  if (!view.slotId || !view._linkedRun || view._isRecoveryBlocked || view._tmuxRestoreRunning) {
+  return recoverWorker(view, 'reload-session');
+}
+
+async function recoverWorker(view: SlotView, mode: 'restore-window' | 'reload-session') {
+  if (!view.slotId || !view._linkedRun || view._runActionsBlocked || view._tmuxRestoreRequest)
     return;
-  }
+  const request = Symbol('recover-worker');
+  view._tmuxRestoreRequest = request;
   view._tmuxRestoreRunning = true;
   view._tmuxRestoreFeedback = '';
   view._tmuxRestoreError = '';
+  let current = () => view.isConnected;
   try {
-    const result = (await gateway.request(Methods.TMUX_WORKER_RESTORE, {
+    const run = view._requireCurrentRun();
+    current = view._captureRunScope();
+    const result = await gateway.request<TmuxWorkerRestoreResult>(Methods.TMUX_WORKER_RESTORE, {
       slotId: view.slotId,
-      runId: view._linkedRun.id,
-      mode: 'reload-session',
-    })) as TmuxWorkerRestoreResult;
-    const contexts = result.contexts;
-    const reloaded =
-      contexts.find((ctx) => ctx.status === 'reloaded-session') ??
-      contexts.find((ctx) => ctx.status === 'live') ??
-      contexts[0];
+      runId: run.id,
+      mode,
+    });
+    if (!current()) return;
+    const recovered =
+      result.contexts.find(
+        (context) => context.status === 'restored-window' || context.status === 'reloaded-session',
+      ) ?? result.contexts[0];
     view._tmuxRestoreFeedback =
-      reloaded?.detail ??
-      (result.restored ? 'Worker session reloaded' : 'Worker session is already live');
-    await view._refreshLinkedRun(null);
-  } catch (err) {
-    view._tmuxRestoreError = err instanceof Error ? err.message : String(err);
-    console.error('[slot-view] worker session reload failed:', err);
+      recovered?.detail ??
+      (result.restored ? 'Worker session restored' : 'Worker session state reconciled');
+  } catch (error) {
+    if (current()) view._tmuxRestoreError = error instanceof Error ? error.message : String(error);
   } finally {
-    view._tmuxRestoreRunning = false;
+    if (view._tmuxRestoreRequest === request) {
+      view._tmuxRestoreRequest = undefined;
+      view._tmuxRestoreRunning = false;
+    }
   }
 }
 
@@ -167,16 +161,20 @@ export async function replaySlotViewRunStep(
   skipPrepare?: boolean,
   prepareProfile?: string,
 ) {
-  if (!view._linkedRun || view._isRecoveryBlocked) return;
+  if (!view._linkedRun || view._runActionsBlocked) return;
+  let current = () => view.isConnected;
+  view._runCommandError = '';
   try {
+    const run = view._requireCurrentRun();
+    current = view._captureRunScope();
     await gateway.request(Methods.RUN_REPLAY_STEP, {
-      runId: view._linkedRun.id,
+      runId: run.id,
       stepName,
       skipPrepare: skipPrepare || undefined,
       prepareProfile: prepareProfile || undefined,
     });
-    view._runPanelSelectedStep = null;
-  } catch (err) {
-    console.error('Replay step failed:', err);
+    if (current()) view._runPanelSelectedStep = null;
+  } catch (error) {
+    if (current()) view._runCommandError = error instanceof Error ? error.message : String(error);
   }
 }

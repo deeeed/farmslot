@@ -5,10 +5,9 @@ import type { ReviewContinuationContext } from '@farmslot/protocol';
 import { executionModelFromSelection, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import {
-  clearVisibleModels,
-  rememberedReviewDispatchCatalog,
-  rememberVisibleModels,
-} from '../../utils/runner-visible-cache.js';
+  setObservedVisibleModels,
+  visibleReviewDispatchCatalog,
+} from '../../utils/runner-visible-models.js';
 
 import type { DispatchPayloadDraftInput } from './dispatch-wizard-actions.js';
 import { buildDispatchQueueAddParams, buildRunCreateParams } from './dispatch-wizard-payload.js';
@@ -76,12 +75,23 @@ test('standalone WARM dispatch refuses an unbound retained review', () => {
   assert.throws(() => dispatchWizardExecutionOptions('review-pr', picker), /reviewId lineage/);
 });
 
+const observed = (models: string[], defaultModel: string) => [
+  {
+    runner: 'claude',
+    models,
+    pickerModels: models,
+    defaultModel,
+    defaultConfigured: true,
+    configured: true,
+  },
+];
+
 test('wizard runner defaults honor saved preferences without replacing restored model choices', () => {
-  clearVisibleModels();
+  setObservedVisibleModels([]);
   try {
     const state = new DispatchStateFixture();
-    rememberVisibleModels('claude', ['sonnet', 'opus'], 'sonnet');
-    state._executionPicker.setCatalog(rememberedReviewDispatchCatalog());
+    setObservedVisibleModels(observed(['sonnet', 'opus'], 'sonnet'));
+    state._executionPicker.setCatalog(visibleReviewDispatchCatalog());
     assert.equal(state._executionPicker.selection!.model, null);
     assert.equal(
       executionModelFromSelection(
@@ -100,11 +110,11 @@ test('wizard runner defaults honor saved preferences without replacing restored 
     assert.equal(buildDispatchQueueAddParams(draft).model, 'sonnet');
 
     state._model = 'opus';
-    rememberVisibleModels('claude', ['haiku'], 'haiku');
-    state._executionPicker.setCatalog(rememberedReviewDispatchCatalog());
+    setObservedVisibleModels(observed(['haiku'], 'haiku'));
+    state._executionPicker.setCatalog(visibleReviewDispatchCatalog());
     assert.equal(state._executionPicker.selection!.model, 'opus');
     assert.equal(dispatchWizardExecutionOptions('dev', state._executionPicker).model, 'opus');
   } finally {
-    clearVisibleModels();
+    setObservedVisibleModels([]);
   }
 });

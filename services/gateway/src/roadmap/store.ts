@@ -59,6 +59,7 @@ import {
   updateBacklogItem,
 } from '../backlog/store.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { farmslotRoot, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
 import {
@@ -69,6 +70,7 @@ import {
   shellQuote,
   tmuxSessionExists,
 } from '../refinement/session.js';
+import { publishPlanningResources } from '../resources/planning-changes.js';
 import { runnerDefaultModel } from '../runners/registry.js';
 import { getAllRunsWithArchived } from '../runs/store.js';
 import type { WorkOriginator } from '../security/work-originator.js';
@@ -84,6 +86,13 @@ import {
 const VALID_STAGES = new Set<RoadmapItemStage>(ROADMAP_ITEM_STAGES);
 const VALID_SOURCE_KINDS = new Set<string>(ROADMAP_SOURCE_KINDS);
 const ROADMAP_ROOT = process.env.FARMSLOT_ROADMAP_DIR ?? path.join(farmslotRoot, '.roadmap');
+export { ROADMAP_ROOT as roadmapRoot };
+let assertObservationAvailable = (): void => {};
+
+/** Startup binds the actual filesystem observer; direct store callers keep their existing reads. */
+export function setRoadmapObservationGuard(assertReady: () => void): void {
+  assertObservationAvailable = assertReady;
+}
 const BACKLOG_SPEC_ROOT =
   process.env.FARMSLOT_BACKLOG_SPEC_DIR ?? path.join(farmslotRoot, '.backlog', 'specs');
 const REFINEMENT_PROMPT_ROOT =
@@ -477,11 +486,13 @@ async function collectRoadmapItemFiles(): Promise<string[]> {
 }
 
 async function loadAllItems(): Promise<RoadmapItem[]> {
+  assertObservationAvailable();
   const files = await collectRoadmapItemFiles();
   const items: RoadmapItem[] = [];
   for (const file of files) {
     items.push(await readItemFile(file));
   }
+  assertObservationAvailable();
   return items.sort(
     (a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.title.localeCompare(b.title),
   );
@@ -590,7 +601,7 @@ export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<
 export async function getRoadmapItem(params: RoadmapGetParams): Promise<RoadmapGetResult> {
   if (!params.itemId?.trim()) throw new Error('roadmap.get requires itemId');
   const item = await findRoadmapItemById(params.itemId.trim());
-  if (!item) throw new Error(`Roadmap item not found: ${params.itemId}`);
+  if (!item) throw new GatewayMethodError('NOT_FOUND', `Roadmap item not found: ${params.itemId}`);
   // One backlog snapshot feeds both projections: they must agree, and a second
   // scan could observe a concurrent backlog mutation between them.
   const backlogItems = listBacklogItems({ includeArchived: true }).items;
@@ -1262,6 +1273,7 @@ async function saveRoadmapItemUnlocked(params: RoadmapSaveParams): Promise<Roadm
   const content = renderMarkdown(meta, body);
   await writeRoadmapFile(targetPath, content);
   if (existing && targetPath !== currentPath) await unlink(currentPath);
+  publishPlanningResources('roadmap', meta.id);
   return { item: hydrateItem(meta, body, targetPath, content) };
 }
 
@@ -1281,6 +1293,7 @@ async function deleteRoadmapItemUnlocked(
     throw new Error('Promoted roadmap items cannot be deleted; archive them instead');
   }
   await unlink(resolveRoadmapPath(current.filePath));
+  publishPlanningResources('roadmap', current.id, 'deleted');
   return { ok: true };
 }
 
@@ -1340,6 +1353,7 @@ export async function startRoadmapRefinement(
   const prompt = await resolveRoadmapRefinementPrompt(item, projectConfig, runner, model);
   const absolutePromptPath = await allocateRefinementPromptPath(item);
   await writeRoadmapFile(absolutePromptPath, prompt);
+  publishPlanningResources('roadmap', item.id);
   const promptPath = repoRelative(absolutePromptPath);
   const launched =
     params.launch === true && !existingSession

@@ -9,15 +9,23 @@
 import path from 'node:path';
 
 import { type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
+import type { NodeFsChangedPayload } from '@farmslot/protocol';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal as checkIsLocal } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { slotReadFile } from '../core/slot-io.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import {
+  assertFileObservationsAdmitted,
+  forgetNodeFileObservation,
+  watchNodeFile,
+} from '../resources/node-file-observations.js';
+import { resourceRevisions } from '../resources/revisions.js';
 
-export type BranchChangeHandler = (slotId: string, branch: string) => void;
+export type BranchChangeHandler = (slotId: string, branch: string) => void | Promise<void>;
 
 interface BranchWatch {
   slotId: string;
@@ -28,12 +36,16 @@ interface BranchWatch {
   host: string;
   sshTarget: string;
   lastBranch?: string;
+  observationRevision?: number;
+  reading?: boolean;
+  observationError?: string;
   // Set only for the gateway-local fallback watch (local slot, no node). Stopped on unwatch.
   localWatch?: FileWatchHandle;
   // Set when the watch runs through the machine's node — the fs.watch request id, so
   // unwatch can send fs.watch.stop and the node doesn't leak the watcher (or double-watch
   // after a reconnect). Mirrors services/gateway/src/tasks/watcher.ts.
   nodeWatchRequestId?: string;
+  nodeWatchArmed?: boolean;
 }
 
 const activeWatches = new Map<string, BranchWatch>();
@@ -52,8 +64,8 @@ export function onBranchChange(handler: BranchChangeHandler): void {
   handlers.push(handler);
 }
 
-function emit(slotId: string, branch: string): void {
-  for (const h of handlers) h(slotId, branch);
+async function emit(slotId: string, branch: string): Promise<void> {
+  for (const h of handlers) await h(slotId, branch);
 }
 
 // ─── Parse .git/HEAD content ───
@@ -113,18 +125,17 @@ export async function watchBranch(slotId: string): Promise<void> {
   // Either way it upgrades to the node's fs.watch when that machine's node connects
   // (node.connect → restartBranchWatchesForMachine).
   const node = getNode(slot.machine);
-  if (node) {
+  if (node && (!slotIsLocal || node.observationCapabilities?.files === 1)) {
     try {
-      await sendNodeRequest(
+      await watchNodeFile(
         node,
-        'fs.watch',
-        { path: gitHeadPath },
-        {
-          onRequestId: (id) => {
-            bw.nodeWatchRequestId = id;
-          },
+        gitHeadPath,
+        (id) => {
+          bw.nodeWatchRequestId = id;
         },
+        () => invalidateBranchObservation(bw),
       );
+      bw.nodeWatchArmed = true;
       console.log(`[branch-watcher] watching ${slotId} via node ${slot.machine}: ${gitHeadPath}`);
     } catch (err) {
       console.log(
@@ -132,7 +143,23 @@ export async function watchBranch(slotId: string): Promise<void> {
       );
     }
   } else if (slotIsLocal) {
-    bw.localWatch = watchFile(gitHeadPath, (content) => debouncedUpdate(slotId, content));
+    bw.localWatch = watchFile(
+      gitHeadPath,
+      (content) => {
+        bw.observationRevision = (bw.observationRevision ?? 0) + 1;
+        bw.observationError = undefined;
+        invalidateBranchObservation(bw);
+        debouncedUpdate(slotId, content);
+      },
+      {
+        onUnavailable: (observation) => {
+          bw.observationError =
+            observation.kind === 'error' ? observation.error.message : 'Git HEAD was deleted.';
+          bw.observationRevision = (bw.observationRevision ?? 0) + 1;
+          invalidateBranchObservation(bw);
+        },
+      },
+    );
     console.log(
       `[branch-watcher] no node for ${slot.machine} — gateway-local fallback watch for ${slotId}: ${gitHeadPath}`,
     );
@@ -158,6 +185,7 @@ export async function unwatchBranch(slotId: string): Promise<void> {
 
   bw.localWatch?.stop();
   if (bw.nodeWatchRequestId) {
+    forgetNodeFileObservation(bw.nodeWatchRequestId);
     // Tell the node to drop its fs.watch — otherwise it leaks the watcher and, after a
     // reconnect, would double-watch. Best-effort: if the node is gone the watch dies with it.
     const node = getNode(bw.machine);
@@ -177,14 +205,18 @@ export async function unwatchBranch(slotId: string): Promise<void> {
 
 // ─── Handle remote agent fs.changed events for .git/HEAD ───
 
-export function handleBranchFsChanged(payload: {
-  machine: string;
-  path: string;
-  content: string;
-}): boolean {
+export function handleBranchFsChanged(payload: NodeFsChangedPayload): boolean {
   for (const [slotId, bw] of activeWatches) {
-    if (bw.machine === payload.machine && bw.gitHeadPath === payload.path) {
-      debouncedUpdate(slotId, payload.content);
+    if (
+      bw.nodeWatchRequestId &&
+      bw.nodeWatchRequestId === payload.requestId &&
+      bw.machine === payload.machine &&
+      bw.gitHeadPath === payload.path
+    ) {
+      debouncedUpdate(
+        slotId,
+        payload.kind === 'deleted' || payload.kind === 'error' ? undefined : payload.content,
+      );
       return true;
     }
   }
@@ -210,6 +242,7 @@ async function readAndEmit(slotId: string, content?: string): Promise<void> {
   const bw = activeWatches.get(slotId);
   if (!bw) return;
 
+  bw.reading = true;
   try {
     let branch = '';
     const vars = await loadSlotVars(slotId);
@@ -223,11 +256,17 @@ async function readAndEmit(slotId: string, content?: string): Promise<void> {
       const raw = content ?? (await slotReadFile(bw, bw.gitHeadPath));
       branch = parseBranch(raw);
     }
+    bw.observationError = undefined;
+    if (activeWatches.get(slotId) !== bw) return;
     if (branch === bw.lastBranch) return;
     bw.lastBranch = branch;
-    emit(slotId, branch);
+    await emit(slotId, branch);
   } catch (err) {
+    bw.observationError = (err as Error).message;
     console.log(`[branch-watcher] error reading ${slotId}: ${(err as Error).message}`);
+  } finally {
+    bw.reading = false;
+    invalidateBranchObservation(bw);
   }
 }
 
@@ -258,7 +297,10 @@ async function pollRemoteBranches(): Promise<void> {
   try {
     // Poll every registered watch (local + remote) — a fallback refresh in case a node
     // fs.changed event was missed or the machine's node is not connected.
-    for (const slotId of activeWatches.keys()) {
+    for (const [slotId, bw] of activeWatches) {
+      // Supported sources update through their existing watcher; never turn the
+      // legacy degraded fallback into a renewal poll for shared observations.
+      if (bw.localWatch || bw.nodeWatchArmed) continue;
       await readAndEmit(slotId);
     }
   } finally {
@@ -292,4 +334,48 @@ export async function stopAllBranchWatches(): Promise<void> {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+}
+
+function invalidateBranchObservation(watch: BranchWatch): void {
+  resourceRevisions.advance({ family: 'slots', scope: 'farm' });
+  resourceRevisions.advance({ family: 'slot', slotId: watch.slotId });
+}
+
+/** Admit only fleet/slot projections with armed, healthy branch sources. */
+export async function assertBranchObservationsAdmitted(slotId?: string): Promise<() => void> {
+  const fleet = await loadFleetStatus(false, true);
+  const slots = fleet.slots.filter((slot) => slot.enabled && (!slotId || slot.slot === slotId));
+  const checks = slots.map((slot) => {
+    const watch = activeWatches.get(slot.slot);
+    // The gateway status-file writer owns default fleet rows. Optional branch
+    // enrichment fences only its own active projections, never all fleet reads.
+    if (!watch) return () => {};
+    if (!watch.localWatch && !watch.nodeWatchRequestId) return () => {};
+    if (watch.reading || debounceTimers.has(slot.slot))
+      throw new GatewayMethodError(
+        'RESOURCE_OBSERVATION_UNAVAILABLE',
+        'Branch projection is updating.',
+      );
+    if (watch.observationError)
+      throw new GatewayMethodError('RESOURCE_OBSERVATION_FAILED', watch.observationError);
+    const revision = watch.observationRevision ?? 0;
+    const check = watch.nodeWatchRequestId
+      ? assertFileObservationsAdmitted([watch.nodeWatchRequestId])
+      : () => {};
+    return () => {
+      if (
+        activeWatches.get(slot.slot) !== watch ||
+        watch.observationError ||
+        (watch.observationRevision ?? 0) !== revision
+      )
+        throw new GatewayMethodError(
+          'RESOURCE_OBSERVATION_CHANGED',
+          'The branch observation changed during this read.',
+        );
+      check();
+    };
+  });
+  return () => {
+    for (const check of checks) check();
+  };
 }

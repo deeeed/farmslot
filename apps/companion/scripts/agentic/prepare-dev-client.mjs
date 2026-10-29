@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { openAndroidDevClient, openSimulatorDevClient } from './simulator-dev-client.mjs';
+import { devClientUrl, openAndroidDevClient } from './simulator-dev-client.mjs';
 
 const androidPreferences = 'shared_prefs/expo.modules.devmenu.sharedpreferences.xml';
 const preferences = [
@@ -44,8 +44,15 @@ export async function prepareDevClient(platform, target, bundleId) {
         String(value),
       ]);
     }
-    execFileSync('xcrun', ['simctl', 'launch', '--terminate-running-process', target, bundleId]);
-    await openSimulatorDevClient(target, { waitForBridge: false });
+    execFileSync('xcrun', [
+      'simctl',
+      'launch',
+      '--terminate-running-process',
+      target,
+      bundleId,
+      '--initialUrl',
+      devClientUrl(),
+    ]);
     return;
   }
   execFileSync('adb', ['-s', target, 'shell', 'am', 'force-stop', bundleId]);

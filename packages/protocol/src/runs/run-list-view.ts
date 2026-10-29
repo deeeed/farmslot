@@ -10,6 +10,7 @@ import {
 import type { SlotStatus } from '../contracts/slots.js';
 
 import { runLinkedTicketRefs } from './linked-tickets.js';
+import type { RunListProjection } from './run-list-filter.js';
 import { resolveRunSlotId } from './slot-resolution.js';
 
 /** `active` follows `isActiveListRun`, `history` keeps terminal runs, `all` keeps every run. */
@@ -28,12 +29,18 @@ export interface RunListQuery {
   search?: string;
 }
 
-/** The runs a run list shows, in input order. Command Center and Companion both list through this. */
-export function selectRunList(runs: readonly Run[], query: RunListQuery): Run[] {
+/**
+ * The runs a run list shows, in input order. Command Center and Companion both list through this.
+ * A version-list projection selects exactly as the run it was made from.
+ */
+export function selectRunList<R extends Run | RunListProjection>(
+  runs: readonly R[],
+  query: RunListQuery,
+): R[] {
   const [tag] = normalizeRunTags(query.tag ? [query.tag] : []);
   const search = query.search?.trim().toLowerCase();
   return runs.filter(
-    (run) =>
+    (run: Run | RunListProjection) =>
       inScope(run, query.scope) &&
       (!query.projects?.length || query.projects.includes(run.project)) &&
       (!query.machines?.length || onMachines(run, query.machines, query.slotMachines)) &&
@@ -59,30 +66,34 @@ export function mergeRunsById(existing: readonly Run[], incoming: readonly Run[]
   return [...byId.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
-function inScope(run: Run, scope: RunListScope): boolean {
+function slotOf(run: Run | RunListProjection): string | null {
+  return 'projected' in run ? run.slotId : resolveRunSlotId(run);
+}
+
+function inScope(run: Run | RunListProjection, scope: RunListScope): boolean {
   if (scope === 'active') return isActiveListRun(run);
   if (scope === 'history') return isTerminalRunStatus(run.status);
   return true;
 }
 
 function onMachines(
-  run: Run,
+  run: Run | RunListProjection,
   machines: readonly string[],
   slotMachines: ReadonlyMap<string, string> | undefined,
 ): boolean {
-  const slotId = resolveRunSlotId(run);
+  const slotId = slotOf(run);
   if (!slotId) return false;
   const machine = slotMachines?.get(slotId);
   if (machine) return machines.includes(machine);
   return machines.some((name) => slotId === name || slotId.startsWith(`${name}-`));
 }
 
-function matchesSearch(run: Run, search: string): boolean {
+function matchesSearch(run: Run | RunListProjection, search: string): boolean {
   return [
     run.ticketOrPr,
     run.summary,
-    ...runLinkedTicketRefs(run),
-    resolveRunSlotId(run),
+    ...('projected' in run ? run.linkedTicketRefs : runLinkedTicketRefs(run)),
+    slotOf(run),
     run.metrics.disposition?.replace(/_/g, ' '),
     ...(run.tags ?? []),
   ].some((value) => value?.toLowerCase().includes(search));

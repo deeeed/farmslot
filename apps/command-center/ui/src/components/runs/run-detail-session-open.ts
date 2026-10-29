@@ -61,6 +61,7 @@ export async function openRunnerSessionOnHost(input: {
   runId: string;
   runStatus?: Run['status'];
   row: Pick<RunSessionRow, 'contextId' | 'role' | 'slotId'>;
+  isCurrent?: () => boolean;
 }): Promise<OpenRunnerSessionOnHostResult> {
   const failed = (message: string, extra: Partial<OpenRunnerSessionOnHostResult> = {}) => ({
     ok: false,
@@ -73,6 +74,7 @@ export async function openRunnerSessionOnHost(input: {
   });
 
   let result: RunSessionCommandResult;
+  if (input.isCurrent?.() === false) return failed('The run view changed. Open the session again.');
   try {
     result = await gateway.request<RunSessionCommandResult>(Methods.RUN_SESSION_COMMAND, {
       runId: input.runId,
@@ -82,6 +84,8 @@ export async function openRunnerSessionOnHost(input: {
   } catch (err) {
     return failed((err as Error).message);
   }
+
+  if (input.isCurrent?.() === false) return failed('The run view changed. Open the session again.');
 
   const location = locationFromResult(result);
   const slotId = location.slotId ?? input.row.slotId;

@@ -3,11 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import {
   type FsReadResult,
   type GitDiffResult,
-  type GitShowResult,
   Methods,
   type ReviewChainEntry,
   type ReviewedFindingContext,
-  reviewedFindingContext,
   type Run,
 } from '@farmslot/protocol';
 import {
@@ -26,6 +24,7 @@ import {
 import { artifactUrl } from '../../lib/artifact-url';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
+import { loadReviewFindingSource, readReviewWorkspace } from '../../lib/review-curation';
 import { useConnectionStore } from '../../store/connection';
 
 export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
@@ -63,11 +62,17 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
       },
       async (params) => {
         if (!current()) throw new Error('Farm connection changed');
-        return (await client.request<FsReadResult>(Methods.FS_READ, params)).content;
+        return (await readReviewWorkspace<FsReadResult>(Methods.FS_READ, params)).content;
       },
       async (params) => {
         if (!current()) throw new Error('Farm connection changed');
-        return (await client.request<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
+        if (params.slotId)
+          return (await readReviewWorkspace<GitDiffResult>(Methods.GIT_DIFF, params)).diff;
+        const { runId = '', base = '', head = '' } = params;
+        if (!runId || !base || !head) throw new Error('Review range is unavailable');
+        return (
+          await client.request<GitDiffResult>(Methods.GIT_DIFF, { slotId: '', runId, base, head })
+        ).diff;
       },
     )
       .then((artifacts) => {
@@ -109,18 +114,14 @@ export function useReviewHistory(run: Run, chain: ReviewChainEntry[]) {
     const request = {};
     selection.current = request;
     const key = `${round.key}:${finding.id}`;
-    const current = currentFarmConnection(client, useConnectionStore.getState);
+    const connected = currentFarmConnection(client, useConnectionStore.getState);
+    const current = () => selection.current === request && connected();
     setSource({ identity, key, loading: true });
     try {
-      const result = await client.request<GitShowResult>(Methods.GIT_SHOW, params);
-      if (selection.current === request && current())
-        setSource({
-          identity,
-          key,
-          context: reviewedFindingContext(result.content, finding.line!),
-        });
+      const context = await loadReviewFindingSource(client, params, finding.line!, current);
+      if (context) setSource({ identity, key, context });
     } catch (error) {
-      if (selection.current === request && current())
+      if (current())
         setSource({ identity, key, error: error instanceof Error ? error.message : String(error) });
     }
   };

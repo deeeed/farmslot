@@ -1,0 +1,75 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Configuration commands acknowledge drafts and follow source notices",
+  "description": "On the isolated recorded browser, save a synthetic private API key, set its provider active and edit disabled project maxAttempts. Hold original resource notices to distinguish command acknowledgement from canonical source reads. Repair a private registration error and prove Retry rereads only that failure. No provider test, OAuth, import, copilot or native execution.",
+  "proofTargets": [
+    {
+      "id": "keyCommandWaitsForNotice",
+      "claim": "The real key Save clears its local input after the command reply; provider registration changes only after an original source notice and observed read."
+    },
+    {
+      "id": "activeProviderPreservesDraft",
+      "claim": "Set Active waits for source notification to change canonical and rendered provider configuration, while retaining an unsaved typed key draft."
+    },
+    {
+      "id": "retryReadsOnlyFailure",
+      "claim": "After a real registration source error, Retry reads only the failed auth list while healthy config and tiers observations remain unchanged."
+    },
+    {
+      "id": "projectCommandPreservesDraftBoundary",
+      "claim": "Saving a real maxAttempts draft acknowledges that draft without adopting the command's project reply; canonical and rendered project collection changes follow source notices while recovery remains disabled."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-configuration-commands.mjs",
+        "timeout_ms": 180000,
+        "intent": "Save private configuration through real controls and source notices.",
+        "next": "key"
+      },
+      "key": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"keyCommandWaitsForNotice\":true",
+        "intent": "Acknowledge the key input and wait for its registration notice.",
+        "proves": ["keyCommandWaitsForNotice"],
+        "next": "provider"
+      },
+      "provider": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"activeProviderPreservesDraft\":true",
+        "intent": "Update the active provider while preserving an unsaved key draft.",
+        "proves": ["activeProviderPreservesDraft"],
+        "next": "retry"
+      },
+      "retry": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"retryReadsOnlyFailure\":true",
+        "intent": "Retry the failed auth read while healthy queries keep their state.",
+        "proves": ["retryReadsOnlyFailure"],
+        "next": "project"
+      },
+      "project": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"projectCommandPreservesDraftBoundary\":true",
+        "intent": "Save the disabled project policy and follow its source notice.",
+        "proves": ["projectCommandPreservesDraftBoundary"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

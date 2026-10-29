@@ -50,6 +50,7 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @state() _refreshError = '';
   @state() _proposing = false;
   @state() _proposeError: string | null = null;
+  @state() _actionError = '';
   @state() _pendingConfirm: string | null = null;
   readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
@@ -106,6 +107,9 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @state() _diffModalOpen = false;
   @state() _diffModalTitle = 'Review input diff';
   @state() _diffModalUrl = '';
+  @state() _diffModalText = '';
+  /** Shown in place of a diff that could not be shown, such as one that failed verification. */
+  @state() _diffModalNotice = '';
   @state() _splitPct = 50; // review takes this % of available height
   readonly _splitResizer = new VerticalSplitResizer({
     getSplitPct: () => this._splitPct,

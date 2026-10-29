@@ -5,7 +5,6 @@ import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
-  CiCheckUpdatedPayload,
   PRStatus,
   RecipeRunArtifactGroup,
   Run,
@@ -42,7 +41,6 @@ export abstract class RunDetailState extends LitElement {
   @state() acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null = null;
   /** Why the evidence manifest behind that fallback could not be read. */
   @state() acceptanceEvidenceLinksError: string | null = null;
-  @state() ciStatus: CiCheckUpdatedPayload | null = null;
   @state() liveTimeoutPrStatus: PRStatus | null = null;
   @state() liveTimeoutPrStatusRefreshing = false;
   @state() liveTimeoutPrStatusFailed = false;
@@ -51,7 +49,6 @@ export abstract class RunDetailState extends LitElement {
   @state() _now = Date.now();
   @state() selectedStep: RunStep | null = null;
   @state() selectedStepProgress: TaskProgressStructured | null = null;
-  _selectedStepProgressKey = '';
   @state() _pendingConfirm: string | null = null;
   @state() _decisionResolveError: { runId: string; decisionId: string; message: string } | null =
     null;
@@ -93,19 +90,13 @@ export abstract class RunDetailState extends LitElement {
   @state() _connectionStale = false;
   @state() _directRunRefreshing = false;
   @state() _directRunRefreshFailed = false;
-  /** When the last direct fetch of a trimmed list row failed; gates the retry. */
-  _directRunFailedAt: number | null = null;
   @state() _directRunUnavailable = false;
   @state() _evidenceLightboxOpen = false;
   @state() _evidenceLightboxItems: LightboxItem[] = [];
   /** What the open lightbox steps through: the run's output, or one criterion's evidence. */
   @state() _evidenceLightboxScope = RUN_OUTPUT_SCOPE;
-  /** A worker-progress read (which carries the acceptance data) is in flight. */
+  /** Acceptance data has no cached value or error while its shared query loads. */
   @state() _taskProgressLoading = false;
-  /** A finished run's acceptance data was read once for a criterion link. */
-  _acceptanceRequested = false;
-  /** That read is queued to start after the current update. */
-  _acceptanceFetchQueued = false;
   /** The criterion whose evidence the open lightbox steps through, if any. */
   _evidenceLightboxCriterionId: string | null = null;
   /** The criterion's files were asked for as a gallery instead of the recording review. */
@@ -117,23 +108,11 @@ export abstract class RunDetailState extends LitElement {
   @state() _selectedRecipeRunId = '';
   _confirmTimer?: ReturnType<typeof setTimeout>;
   _jumpTimer?: ReturnType<typeof setTimeout>;
-  _recipeRunsRefreshToken = Symbol('run-detail-recipe-runs');
-  _recipeRunsRefreshInFlight: Promise<void> | null = null;
-  _recipeRunsRefreshInFlightRunId = '';
   _pendingRecipeRunSelectionId = '';
-  _recipeRunsDelayedRefreshTimer?: ReturnType<typeof setTimeout>;
   unsub?: () => void;
-  unsubProgress?: () => void;
-  unsubCI?: () => void;
   _clock?: ReturnType<typeof setInterval>;
   _suppressHashSync = false;
-  _missingRunFetchAttempted = false;
   _lastRequestedRunId = '';
-  _directRun: Run | null = null;
-  _directRunRequestSeq = 0;
-  _taskProgressRequestSeq = 0;
-  _siblingsRequestSeq = 0;
-  _lastTaskProgressFetchAt = 0;
   _liveTimeoutRequestSeq = 0;
   _lastLiveTimeoutFetchAt = 0;
   _liveTimeoutKey = '';

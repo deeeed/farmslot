@@ -1,0 +1,82 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native run-reader recovery",
+  "description": "Use the isolated proof gateway, owned native device and FARMSLOT_RUN_PROOF_FIXTURE. Create and remove only a disabled private idle Git slot. Temporarily fault only the owned mirror run's retained manifest, restore exact bytes, and recover through the actual Retry button. No worker session starts, shared farm writes or UI state injection.",
+  "proofTargets": [
+    {
+      "id": "native-unbound-slot-diff",
+      "claim": "An idle slot with no bound or retained run renders its real working-tree diff."
+    },
+    {
+      "id": "native-artifact-error-retry",
+      "claim": "A failed refresh keeps artifact inputs stale with errors and the actual Retry button recovers both shared reads without reconnecting."
+    },
+    {
+      "id": "native-run-diff-error-retry",
+      "claim": "Run Diff retains its data through failed shared reads and its actual Retry button recovers both observations without reconnecting."
+    }
+  ],
+  "workflow": {
+    "entry": "before",
+    "nodes": {
+      "before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-run-recovery-before.png",
+        "intent": "Start the owned device capture before exercising the real readers.",
+        "next": "unbound"
+      },
+      "unbound": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs unbound-slot-diff",
+        "timeout_ms": 90000,
+        "intent": "Compare an actual idle slot's Git diff with its rendered native diff.",
+        "next": "unbound-proof"
+      },
+      "unbound-proof": {
+        "action": "assert_output",
+        "source": "unbound",
+        "stream": "stdout",
+        "match": "\"nativeUnboundSlotDiff\":true",
+        "intent": "Require the working-tree edit to remain visible without a run.",
+        "proves": ["native-unbound-slot-diff"],
+        "next": "retry"
+      },
+      "retry": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs retry-artifacts",
+        "timeout_ms": 120000,
+        "intent": "Retain artifact data through an actual gateway read error and use contextual Retry.",
+        "next": "retry-proof"
+      },
+      "retry-proof": {
+        "action": "assert_output",
+        "source": "retry",
+        "stream": "stdout",
+        "match": "\"nativeArtifactRetry\":true",
+        "intent": "Require the visible Retry button to recover both failed observations.",
+        "proves": ["native-artifact-error-retry"],
+        "next": "diff-retry"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "diff-retry": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs retry-diff",
+        "timeout_ms": 120000,
+        "intent": "Prove the sibling Run Diff reader also recovers retained data through explicit Retry.",
+        "next": "diff-retry-proof"
+      },
+      "diff-retry-proof": {
+        "action": "assert_output",
+        "source": "diff-retry",
+        "stream": "stdout",
+        "match": "\"nativeRunDiffRetry\":true",
+        "intent": "Require both shared reads to recover through the actual Run Diff Retry button.",
+        "proves": ["native-run-diff-error-retry"],
+        "next": "done"
+      }
+    }
+  }
+}

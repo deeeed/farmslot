@@ -9,7 +9,7 @@ export async function inspectCopilotCheckout(checkout: string): Promise<CopilotC
   const [{ stdout: branchOut }, { stdout: headOut }, { stdout: statusOut }] = await Promise.all([
     execFileAsync('git', ['branch', '--show-current'], { cwd: checkout }),
     execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: checkout }),
-    execFileAsync('git', ['status', '--porcelain=v1'], { cwd: checkout }),
+    execFileAsync('git', ['--no-optional-locks', 'status', '--porcelain=v1'], { cwd: checkout }),
   ]);
   const dirtyPaths = statusOut
     .split('\n')

@@ -84,6 +84,8 @@ export interface MaterializeRunBundleRequest {
   farmslotRoot: string;
   run: Run;
   taskDir: string;
+  /** Gateway-written files read from this directory instead of `taskDir`. */
+  gatewayFiles?: { taskDir: string; paths: readonly string[] };
   artifacts: readonly ArtifactRef[];
   manifestDigest: string;
   /** Persisted identity of this acquisition, including task and generation. */
@@ -626,7 +628,10 @@ async function completeRetainedPayloads(
             meta.bytes,
           );
         } else {
-          const source = resolvePathInsideRoot(await realpath(request.taskDir), relative);
+          const root = request.gatewayFiles?.paths.includes(relative)
+            ? request.gatewayFiles.taskDir
+            : request.taskDir;
+          const source = resolvePathInsideRoot(await realpath(root), relative);
           if ((await realpath(source)) !== source)
             throw new Error('Retained repair source is redirected.');
           copied = await copyHashed(source, temp, meta.bytes);
@@ -1072,6 +1077,8 @@ export async function materializeRunBundle(
     let bundleBytes = Buffer.byteLength(intent.runJson);
     let storeBytes = await chargedCaptureBytes(request, acquisitionSize);
     const taskRoot = await realpath(request.taskDir);
+    const gatewayRoot = request.gatewayFiles && (await realpath(request.gatewayFiles.taskDir));
+    const gatewayPaths = new Set(request.gatewayFiles?.paths);
     const ordered = [...request.artifacts].sort(
       (a, b) =>
         Number(isRunBundleMedia(a.path)) - Number(isRunBundleMedia(b.path)) ||
@@ -1090,7 +1097,10 @@ export async function materializeRunBundle(
           missingData.push(`excluded:${artifact.path}`);
           continue;
         }
-        const source = resolvePathInsideRoot(taskRoot, artifact.path);
+        const source = resolvePathInsideRoot(
+          gatewayRoot && gatewayPaths.has(artifact.path) ? gatewayRoot : taskRoot,
+          artifact.path,
+        );
         let size: number;
         try {
           if ((await realpath(source)) !== source || !(await lstat(source)).isFile())

@@ -101,6 +101,8 @@ export class DiffViewerModal extends LitElement {
   @property() title = 'Diff';
   @property() diffText = '';
   @property() artifactUrl = '';
+  /** Shown in place of the diff, such as for content that failed verification. */
+  @property() notice = '';
   /**
    * Effective test-file globs from the host's `git.branchDiff` result, so the
    * modal agrees with the changed-files list on what counts as a test. Null
@@ -112,11 +114,26 @@ export class DiffViewerModal extends LitElement {
   @state() private _loading = false;
   @state() private _error = '';
   @state() private _selectedPath = '';
+  /** The URL read in flight; closing or changing source aborts it, so it never applies. */
+  private _pendingLoad?: AbortController;
   private readonly _testFilter = new DiffTestFilterController(this, {
     patterns: () => this.testPatterns,
   });
 
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._abortLoad();
+  }
+
+  private _abortLoad(): void {
+    this._pendingLoad?.abort();
+    this._pendingLoad = undefined;
+    this._loading = false;
+  }
+
   override updated(changed: Map<string, unknown>): void {
+    if (changed.has('open') || changed.has('artifactUrl') || changed.has('diffText'))
+      this._abortLoad();
     if (!this.open && (changed.has('artifactUrl') || changed.has('diffText'))) {
       this._loadedText = this.diffText || '';
       this._selectedPath = '';
@@ -143,17 +160,25 @@ export class DiffViewerModal extends LitElement {
       this._selectedPath = '';
       return;
     }
+    const pending = new AbortController();
+    this._pendingLoad = pending;
     this._loading = true;
     try {
-      const response = await gatewayHttpFetch(this.artifactUrl);
+      const response = await gatewayHttpFetch(this.artifactUrl, { signal: pending.signal });
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      this._loadedText = await response.text();
+      const text = await response.text();
+      if (pending.signal.aborted) return;
+      this._loadedText = text;
       this._selectDefault();
     } catch (err) {
+      if (pending.signal.aborted) return;
       this._loadedText = '';
       this._error = err instanceof Error ? err.message : String(err);
     } finally {
-      this._loading = false;
+      if (this._pendingLoad === pending) {
+        this._pendingLoad = undefined;
+        this._loading = false;
+      }
     }
   }
 
@@ -405,18 +430,20 @@ export class DiffViewerModal extends LitElement {
               ${this._renderDiffTree(tree.children, selected?.path)}
             </div>
             <div class="dvm-main">
-              ${this._loading
-                ? html`<div class="dvm-empty">Loading diff…</div>`
-                : this._error
-                  ? html`<div class="dvm-empty">Failed to load diff: ${this._error}</div>`
-                  : selected
-                    ? html`<diff-review
-                        .diff=${selected.diff}
-                        .filename=${selected.path}
-                      ></diff-review>`
-                    : parsed.length > 0
-                      ? html`<div class="dvm-empty">Only test files changed (hidden)</div>`
-                      : html`<div class="dvm-empty">No diff content available.</div>`}
+              ${this.notice
+                ? html`<div class="dvm-empty" role="alert">${this.notice}</div>`
+                : this._loading
+                  ? html`<div class="dvm-empty">Loading diff…</div>`
+                  : this._error
+                    ? html`<div class="dvm-empty">Failed to load diff: ${this._error}</div>`
+                    : selected
+                      ? html`<diff-review
+                          .diff=${selected.diff}
+                          .filename=${selected.path}
+                        ></diff-review>`
+                      : parsed.length > 0
+                        ? html`<div class="dvm-empty">Only test files changed (hidden)</div>`
+                        : html`<div class="dvm-empty">No diff content available.</div>`}
             </div>
           </div>
         </div>

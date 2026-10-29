@@ -1,5 +1,5 @@
 import { html } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 
 import type {
   FamilyObservabilityArtifact,
@@ -18,18 +18,23 @@ import {
   Events,
   isRunEvidenceVideoArtifact,
   Methods,
+  sourceObservationAge,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import '../shared/media-lightbox.js';
 import '../shared/diff-viewer-modal.js';
 import './grade-semantic-picker.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
+import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import type { LightboxPair } from '../shared/media-lightbox-types.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 import type { RecipeOutputPanel } from '../workspace/recipe-output-panel.js';
 
@@ -126,6 +131,97 @@ const COPY_COMPARE_PROMPT = 'compare-prompt';
 
 @customElement('family-observability')
 export class FamilyObservability extends FamilyObservabilityState {
+  private boundFamilyId = '';
+  @state() private observationNow = Date.now();
+  private ageTimer?: ReturnType<typeof setInterval>;
+  private readonly familyQuery = new ResourceQueryController<FamilyObservabilityGetResult>(
+    this,
+    (observation) => {
+      if (this.snapshotOverride) return;
+      this.snapshot = observation.data?.snapshot ?? null;
+      this.loading = observation.status === 'loading' && !observation.data;
+      this.error = observation.error?.message ?? '';
+      if (this.snapshot) {
+        const ids = this.snapshot.runs.map(({ runId }) => runId);
+        const { route, params } = parseHashRoute();
+        const requested =
+          route === `family/${this.familyId}` ? params.get('run') : this.initialRunId;
+        this.selectedRunId =
+          requested && ids.includes(requested)
+            ? requested
+            : ids.includes(this.selectedRunId)
+              ? this.selectedRunId
+              : this.initialRunId && ids.includes(this.initialRunId)
+                ? this.initialRunId
+                : (this.snapshot.runs[0]?.runId ?? '');
+        if (
+          route === `family/${this.familyId}` &&
+          this.selectedRunId &&
+          params.get('run') !== this.selectedRunId
+        ) {
+          params.set('run', this.selectedRunId);
+          history.replaceState(null, '', buildHash(route, params));
+        }
+        this._applyDiffModalFromHash();
+      } else {
+        this.report = null;
+        this._diffModal = null;
+        this._lightboxOpen = false;
+        this._selectedStep = null;
+        this._gradeDraft = new Map();
+        this._editingRunId = '';
+        this._sessionStates = {};
+        this._sessionRequestSeq = {};
+        this._mdPreviewCache.clear();
+      }
+      this._ensureFullRun(this.selectedRunId || this.initialRunId);
+      this._syncAgeTimer();
+    },
+  );
+  private readonly fullRunQuery = new ResourceQueryController<RunGetResult>(this, () =>
+    this._syncAgeTimer(),
+  );
+
+  private _syncAgeTimer(): void {
+    const stale = [this.familyQuery.state, this.fullRunQuery.state].some(
+      (value) => value.data && value.status === 'stale',
+    );
+    if (stale && !this.ageTimer)
+      this.ageTimer = setInterval(() => {
+        this.observationNow = Date.now();
+      }, 1000);
+    if (!stale && this.ageTimer) {
+      clearInterval(this.ageTimer);
+      this.ageTimer = undefined;
+    }
+  }
+
+  private _fullRunFor(runId: string): Run | null {
+    if (this.snapshotOverride) return this.fullRunOverrides.find(({ id }) => id === runId) ?? null;
+    const run = this.fullRunQuery.state.data?.run;
+    return run?.id === runId ? run : null;
+  }
+
+  private _captureCurrent(runId?: string): () => boolean {
+    const key = getResourceWorkspaceKey();
+    const generation = gateway.resourceConnectionId;
+    const familyId = this.familyId;
+    return () =>
+      this.isConnected &&
+      key === getResourceWorkspaceKey() &&
+      generation === gateway.resourceConnectionId &&
+      gateway.connectionState === 'connected' &&
+      this.familyId === familyId &&
+      (!runId || runId === this.selectedRunId);
+  }
+
+  private _requireRunReady(runId: string): Run {
+    this.familyQuery.requireReady();
+    const run = this.fullRunQuery.requireReady().run;
+    if (run.id !== runId) throw new Error('Select the current run before acting.');
+    return run;
+  }
+
   private _selectRun = (runId: string) => {
     if (this.selectedRunId !== runId) {
       this._selectedStep = null;
@@ -165,7 +261,9 @@ export class FamilyObservability extends FamilyObservabilityState {
     if (this._replayingStep) return;
     this._replayingStep = true;
     this._replayError = '';
+    const current = this._captureCurrent(runId);
     try {
+      this._requireRunReady(runId);
       await gateway.request(Methods.RUN_REPLAY_STEP, {
         runId,
         stepName,
@@ -173,53 +271,22 @@ export class FamilyObservability extends FamilyObservabilityState {
         prepareProfile: prepareProfile || undefined,
         freshDispatch: freshDispatch || undefined,
       });
-      this._selectedStep = null;
-      // Drop the cached Run so the next selection re-fetches the post-replay
-      // pipeline state instead of rendering the stale snapshot.
-      const next = new Map(this._fullRuns);
-      next.delete(runId);
-      this._fullRuns = next;
-      void this._loadSnapshot();
-      void this._ensureFullRun(runId);
+      if (current()) this._selectedStep = null;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this._replayError = msg;
+      if (current()) this._replayError = msg;
       console.error('[family-observability] replay step failed', err);
     } finally {
-      this._replayingStep = false;
+      if (current()) this._replayingStep = false;
     }
   }
 
-  private async _ensureFullRun(runId: string): Promise<void> {
-    if (!runId || this._fullRuns.has(runId) || this._fullRunLoading.has(runId)) return;
-    const nextLoading = new Set(this._fullRunLoading);
-    nextLoading.add(runId);
-    this._fullRunLoading = nextLoading;
-    if (this._fullRunError.has(runId)) {
-      const nextErr = new Map(this._fullRunError);
-      nextErr.delete(runId);
-      this._fullRunError = nextErr;
-    }
-    try {
-      const res = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
-      if (!this.isConnected) return;
-      if (this._fullRuns.get(runId) === res.run) return;
-      const next = new Map(this._fullRuns);
-      next.set(runId, res.run);
-      this._fullRuns = next;
-    } catch (error) {
-      if (!this.isConnected) return;
-      const msg = error instanceof Error ? error.message : String(error);
-      const nextErr = new Map(this._fullRunError);
-      nextErr.set(runId, msg);
-      this._fullRunError = nextErr;
-    } finally {
-      if (this._fullRunLoading.has(runId)) {
-        const next = new Set(this._fullRunLoading);
-        next.delete(runId);
-        this._fullRunLoading = next;
-      }
-    }
+  private _ensureFullRun(runId: string): void {
+    this.fullRunQuery.setQuery(
+      !this.snapshotOverride && runId
+        ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId })
+        : undefined,
+    );
   }
   connectedCallback(): void {
     super.connectedCallback();
@@ -236,14 +303,6 @@ export class FamilyObservability extends FamilyObservabilityState {
       this._fleetSlots = s.fleet?.slots ?? [];
       this._prs = s.prs ?? [];
     });
-    this._unsubGateway = gateway.onConnectionChange((state) => {
-      if (state === 'connected' && !this.snapshot && !this.snapshotOverride && this.familyId) {
-        void this._loadSnapshot();
-      }
-      if (state === 'connected' && this.selectedRunId) {
-        void this._ensureFullRun(this.selectedRunId);
-      }
-    });
     this._unsubDecisionEvent = gateway.subscribe<{ runId: string; decision: RunDecision }>(
       Events.RUN_DECISION_NEW,
       (payload) => this._onDecisionNew(payload),
@@ -259,16 +318,14 @@ export class FamilyObservability extends FamilyObservabilityState {
     void this._loadImprovementModel();
   }
 
+  private readonly configurationModel = new ResourceQueryController<LLMConfigGetResult>(
+    this,
+    (state) => {
+      this._improvementModel = state.data?.improvementModel ?? '';
+    },
+  );
   private async _loadImprovementModel(): Promise<void> {
-    try {
-      const res = await gateway.request<LLMConfigGetResult>(Methods.LLM_CONFIG_GET, {});
-      this._improvementModel = res.improvementModel ?? '';
-    } catch (error) {
-      // Family observability still works without an improvement model; keep
-      // the UI usable while surfacing the optional config read failure.
-      console.warn('[family-observability] failed to load improvement model', error);
-      this._improvementModel = '';
-    }
+    this.configurationModel.setQuery(resourceQuery<LLMConfigGetResult>(Methods.LLM_CONFIG_GET));
   }
 
   disconnectedCallback(): void {
@@ -276,7 +333,6 @@ export class FamilyObservability extends FamilyObservabilityState {
     window.removeEventListener('keydown', this._onModalKeyDown);
     window.removeEventListener('hashchange', this._onHashChange);
     this._unsubState?.();
-    this._unsubGateway?.();
     this._unsubDecisionEvent?.();
     this._unsubDecisionUpdated?.();
     this._unsubImprovementFail?.();
@@ -285,9 +341,8 @@ export class FamilyObservability extends FamilyObservabilityState {
     this._mdPreviewCache.clear();
     this._pairsCache = null;
     this._evidenceMatrixCache = null;
-    this._fullRuns = new Map();
-    this._fullRunLoading = new Set();
-    this._fullRunError = new Map();
+    clearInterval(this.ageTimer);
+    this.ageTimer = undefined;
     this._diffModal = null;
   }
 
@@ -363,12 +418,8 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   updated(changed: Map<string, unknown>): void {
     this.classList.toggle('gate-maximized', this._gateOpen && this._gateMaximized);
-    if (changed.has('familyId') || changed.has('snapshotOverride')) {
-      void this._loadSnapshot();
-    }
-    if (changed.has('fullRunOverrides')) {
-      this._applyFullRunOverrides();
-    }
+    if (changed.has('familyId') || changed.has('snapshotOverride')) this._loadSnapshot();
+    if (changed.has('fullRunOverrides')) this.requestUpdate();
     if (changed.has('initialRunId') && this.initialRunId) {
       this._selectRun(this.initialRunId);
     }
@@ -387,61 +438,46 @@ export class FamilyObservability extends FamilyObservabilityState {
     return selectedFamilyRun(this.snapshot, this.selectedRunId);
   }
 
-  private async _loadSnapshot() {
-    this.report = null;
+  private _loadSnapshot(): void {
+    if (this.boundFamilyId !== this.familyId) {
+      this.boundFamilyId = this.familyId;
+      this.selectedRunId = this.initialRunId;
+      this.report = null;
+      this._sessionStates = {};
+      this._sessionRequestSeq = {};
+      this._gradeDraft = new Map();
+      this._mdPreviewCache.clear();
+    }
+    this.familyQuery.setQuery(
+      !this.snapshotOverride && this.familyId
+        ? resourceQuery(Methods.FAMILY_OBSERVABILITY_GET, { familyId: this.familyId })
+        : undefined,
+    );
     if (this.snapshotOverride) {
       this.snapshot = this.snapshotOverride;
       this.selectedRunId = this.initialRunId || this.snapshotOverride.runs[0]?.runId || '';
-      this._applyFullRunOverrides();
-      this._applyDiffModalFromHash();
-      this.error = '';
-      return;
-    }
-    if (!this.familyId) return;
-    if (this.loading) return;
-    this.loading = true;
-    this.error = '';
-    try {
-      const result = await gateway.request<FamilyObservabilityGetResult>(
-        Methods.FAMILY_OBSERVABILITY_GET,
-        { familyId: this.familyId },
-      );
-      this.snapshot = result.snapshot;
-      this.selectedRunId =
-        this.initialRunId || this.selectedRunId || result.snapshot.runs[0]?.runId || '';
-      this._applyDiffModalFromHash();
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
-      this.snapshot = null;
-    } finally {
       this.loading = false;
+      this.error = '';
+      this._applyDiffModalFromHash();
     }
-  }
-
-  private _applyFullRunOverrides(): void {
-    if (!this.fullRunOverrides.length) return;
-    const next = new Map(this._fullRuns);
-    for (const run of this.fullRunOverrides) {
-      next.set(run.id, run);
-    }
-    this._fullRuns = next;
+    this._ensureFullRun(this.selectedRunId || this.initialRunId);
   }
 
   private async _generateReport() {
     if (!this.familyId) return;
     this.reportLoading = true;
+    const current = this._captureCurrent();
     try {
+      this.familyQuery.requireReady();
       const result = await gateway.request<{
         snapshot: FamilyObservabilitySnapshot;
         report: FamilyReport;
       }>(Methods.FAMILY_REPORT_GENERATE, { familyId: this.familyId, forceRefresh: true });
-      this.snapshot = result.snapshot;
-      this.report = result.report;
-      if (!this.selectedRunId) this.selectedRunId = result.snapshot.runs[0]?.runId ?? '';
+      if (current()) this.report = result.report;
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (current()) this.error = error instanceof Error ? error.message : String(error);
     } finally {
-      this.reportLoading = false;
+      if (current()) this.reportLoading = false;
     }
   }
 
@@ -601,10 +637,16 @@ export class FamilyObservability extends FamilyObservabilityState {
   }
 
   private async _rerunOnWarmSlot(run: FamilyObservabilityRunSummary) {
+    if (!this.familyQuery.ready || !this.fullRunQuery.ready) {
+      this.error = 'Wait for current run details before acting.';
+      return;
+    }
+    const current = this._captureCurrent(run.runId);
     const check = this._canRerunOnWarmSlot(run);
     if (!check.ok || !check.slotId) return;
     this._showRerunOutput = true;
     await this.updateComplete;
+    if (!current() || !this.familyQuery.ready || !this.fullRunQuery.ready) return;
     const panel = this.renderRoot.querySelector<RecipeOutputPanel>('recipe-output-panel');
     panel?.rerun();
   }
@@ -649,30 +691,74 @@ export class FamilyObservability extends FamilyObservabilityState {
     decision: RunDecision,
     actionId: string,
   ) {
+    const current = this._captureCurrent(run.runId);
     try {
+      const full = this._requireRunReady(run.runId);
+      const selected = full.decisions.find(({ id }) => id === decision.id);
+      if (!selected || selected.resolvedAt)
+        throw new Error('The decision changed. Review the current run.');
       await gateway.request(
         Methods.RUN_RESOLVE_DECISION,
-        buildRunResolveDecisionParams({ runId: run.runId, decision, actionId }),
+        buildRunResolveDecisionParams({ runId: run.runId, decision: selected, actionId }),
       );
-      await this._loadSnapshot();
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (current()) this.error = error instanceof Error ? error.message : String(error);
     }
   }
 
+  private _renderReadStatus() {
+    return [this.familyQuery.state, this.fullRunQuery.state].map((value, index) =>
+      value.data && value.status === 'stale' && value.observedAt !== undefined
+        ? html`<div role="status">
+            Saved ${index ? 'run' : 'family'},
+            ${sourceObservationAge(value.observedAt, this.observationNow)}. Actions wait for a
+            current read.
+          </div>`
+        : '',
+    );
+  }
+
+  private async _retryReads(): Promise<void> {
+    const failed = [this.familyQuery, this.fullRunQuery].filter((query) => query.state.error);
+    await Promise.all((failed.length ? failed : [this.familyQuery]).map((query) => query.retry()));
+  }
+
   override render() {
-    if (this.loading) return html`<div class="empty">Loading retrospective…</div>`;
-    if (this.error) return html`<div class="empty">${this.error}</div>`;
-    if (!this.snapshot) return html`<div class="empty">No retrospective data</div>`;
+    if (!this.snapshot) {
+      const savedRun = this.fullRunQuery.state.data?.run;
+      return html`${this._renderReadStatus()}
+        <div class="empty">
+          ${this.error ||
+          (gateway.connectionState === 'connected'
+            ? 'Loading retrospective…'
+            : 'Connect to load the family summary.')}
+        </div>
+        ${savedRun
+          ? html`<div>${savedRun.ticketOrPr}</div>
+              <a href="#run/${savedRun.id}">Open saved run</a>`
+          : ''}
+        ${this.error
+          ? html`<button @click=${() => void this._retryReads()}>Retry family</button>`
+          : ''}`;
+    }
     const snapshot = this.snapshot;
     const selectedRun = this._selectedRun;
-    return renderFamilyObservabilityPage({
+    return html`${this._renderReadStatus()}${this.error || this.fullRunQuery.state.error
+      ? html`<div role="alert">
+          ${this.error || this.fullRunQuery.state.error?.message}<button
+            @click=${() => void this._retryReads()}
+          >
+            Retry family
+          </button>
+        </div>`
+      : ''}${renderFamilyObservabilityPage({
       snapshot,
       selectedRun,
       selectedRunId: this.selectedRunId,
       prs: this._prs,
       report: this.report,
       reportLoading: this.reportLoading,
+      commandsReady: this.familyQuery.ready,
       selectedExperimentKey: this._selectedExperimentKey,
       copiedPrompt: this._copiedAction === COPY_COMPARE_PROMPT,
       compareTab: this._compareTab,
@@ -700,7 +786,11 @@ export class FamilyObservability extends FamilyObservabilityState {
       renderRecipePanel: (targetRun) =>
         renderFamilyRecipeSection({
           selectedRun: targetRun,
-          rerunCheck: this._canRerunOnWarmSlot(targetRun),
+          rerunCheck:
+            this.familyQuery.ready && this.fullRunQuery.ready
+              ? this._canRerunOnWarmSlot(targetRun)
+              : { ok: false, reason: 'Wait for current run details before acting.' },
+          commandsReady: this.familyQuery.ready && this.fullRunQuery.ready,
           recipeView: this._recipeView,
           showRerunOutput: this._showRerunOutput,
           editingRunId: this._editingRunId,
@@ -782,7 +872,7 @@ export class FamilyObservability extends FamilyObservabilityState {
         this._tokenTrajectory = trajectory;
         this._persistTokenViewHash();
       },
-    });
+    })}`;
   }
 
   private _getGradeDraft(run: FamilyObservabilityRunSummary): GradeDraft {
@@ -841,17 +931,19 @@ export class FamilyObservability extends FamilyObservabilityState {
     this._gradeError = '';
     this._submittingGradeFor = run.runId;
     const grade = humanGradeFromDraft({ ...draft, semantic: draft.semantic });
+    const current = this._captureCurrent(run.runId);
     try {
+      this._requireRunReady(run.runId);
       await gateway.request(Methods.RUN_GRADE, { runId: run.runId, grade });
+      if (!current()) return;
       this._editingRunId = '';
       const next = new Map(this._gradeDraft);
       next.delete(run.runId);
       this._gradeDraft = next;
-      await this._loadSnapshot();
     } catch (err) {
-      this._gradeError = err instanceof Error ? err.message : String(err);
+      if (current()) this._gradeError = err instanceof Error ? err.message : String(err);
     } finally {
-      this._submittingGradeFor = '';
+      if (current()) this._submittingGradeFor = '';
     }
   }
 
@@ -861,21 +953,25 @@ export class FamilyObservability extends FamilyObservabilityState {
     // Don't clear pending state on the analyzing placeholder — the LLM is
     // still running; completion arrives via RUN_DECISION_UPDATED with a
     // terminal analysisStatus.
+    if (!this.familyQuery.belongsToWorkspace) return;
     const status = (payload.decision.payload as { analysisStatus?: string } | undefined)
       ?.analysisStatus;
     if (status === 'analyzing') {
-      void this._loadSnapshot();
       return;
     }
     this._proposalTracker.markDone(payload.runId);
     this._proposalTracker.setError(payload.runId, null);
-    void this._loadSnapshot();
   }
 
   private _onDecisionUpdated(payload: { runId?: string; decision: RunDecision }): void {
     if (payload.decision?.type !== 'improvement') return;
     const runId = payload.runId;
-    if (!runId || !this.snapshot?.runs.some((r) => r.runId === runId)) return;
+    if (
+      !this.familyQuery.belongsToWorkspace ||
+      !runId ||
+      !this.snapshot?.runs.some((r) => r.runId === runId)
+    )
+      return;
     const status = (
       payload.decision.payload as { analysisStatus?: string; analysisError?: string } | undefined
     )?.analysisStatus;
@@ -888,29 +984,29 @@ export class FamilyObservability extends FamilyObservabilityState {
     } else {
       this._proposalTracker.setError(runId, null);
     }
-    void this._loadSnapshot();
   }
 
   private _onImprovementFailed(payload: { runId: string; error: string }): void {
-    if (!this._proposingFor.has(payload.runId)) return;
+    if (!this.familyQuery.belongsToWorkspace || !this._proposingFor.has(payload.runId)) return;
     this._proposalTracker.markDone(payload.runId);
     this._proposalTracker.setError(payload.runId, payload.error || 'Improvement analysis failed');
   }
 
   private async _proposeImprovement(run: FamilyObservabilityRunSummary) {
     this._proposalTracker.start(run.runId);
+    const current = this._captureCurrent(run.runId);
     try {
+      this._requireRunReady(run.runId);
       await gateway.request(Methods.RUN_PROPOSE_IMPROVEMENT, { runId: run.runId });
     } catch (err) {
+      if (!current()) return;
       this._proposalTracker.setError(run.runId, err instanceof Error ? err.message : String(err));
       this._proposalTracker.markDone(run.runId);
     }
   }
 
-  private _onRerunRunningChange(event: CustomEvent<boolean>) {
-    if (event.detail === false) {
-      void this._loadSnapshot();
-    }
+  private _onRerunRunningChange(_event: CustomEvent<boolean>) {
+    this.requestUpdate();
   }
 
   private _familyDiffLinkRenderers() {
@@ -1012,9 +1108,10 @@ export class FamilyObservability extends FamilyObservabilityState {
       run,
       runs: this.snapshot?.runs ?? [],
       prs: this._prs,
-      fullRun: this._fullRuns.get(run.runId) ?? null,
-      fullRunLoading: this._fullRunLoading.has(run.runId),
-      fullRunError: this._fullRunError.get(run.runId),
+      fullRun: this._fullRunFor(run.runId),
+      commandsReady: this.familyQuery.ready && this.fullRunQuery.ready,
+      fullRunLoading: this.fullRunQuery.state.status === 'loading',
+      fullRunError: this.fullRunQuery.state.error?.message,
       selectedStep: this._selectedStep,
       replayingStep: this._replayingStep,
       replayError: this._replayError,
@@ -1038,11 +1135,11 @@ export class FamilyObservability extends FamilyObservabilityState {
       onTogglePublishGateMaximize: this._togglePublishGateMaximize,
       sessionStates: this._sessionStates,
       onCopySession: (row, kind) => {
-        const fullRun = this._fullRuns.get(run.runId);
+        const fullRun = this._fullRunFor(run.runId);
         if (fullRun) void this._copyRunnerSessionCommand(fullRun.id, row, kind);
       },
       onOpenOnHost: (row) => {
-        const fullRun = this._fullRuns.get(run.runId);
+        const fullRun = this._fullRunFor(run.runId);
         if (fullRun) void this._openRunnerSessionOnHost(fullRun.id, fullRun.status, row);
       },
     });
@@ -1053,12 +1150,24 @@ export class FamilyObservability extends FamilyObservabilityState {
     runStatus: Run['status'],
     row: RunSessionRow,
   ): Promise<void> {
+    if (!this.familyQuery.ready || !this.fullRunQuery.ready) {
+      this.error = 'Wait for current run details before acting.';
+      return;
+    }
+    const current = this._captureCurrent(runId);
     const requestSeq = (this._sessionRequestSeq[row.contextId] ?? 0) + 1;
     this._sessionRequestSeq = { ...this._sessionRequestSeq, [row.contextId]: requestSeq };
     const requestStillCurrent = () =>
-      requestSeq === this._sessionRequestSeq[row.contextId] && this.selectedRunId === runId;
+      current() &&
+      requestSeq === this._sessionRequestSeq[row.contextId] &&
+      this.selectedRunId === runId;
     this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'opening' } };
-    const opened = await openRunnerSessionOnHost({ runId, runStatus, row });
+    const opened = await openRunnerSessionOnHost({
+      runId,
+      runStatus,
+      row,
+      isCurrent: () => requestStillCurrent() && this.fullRunQuery.ready,
+    });
     if (!requestStillCurrent()) return;
     this._sessionStates = {
       ...this._sessionStates,
@@ -1087,10 +1196,17 @@ export class FamilyObservability extends FamilyObservabilityState {
     row: RunSessionRow,
     kind: RunSessionCopyKind,
   ): Promise<void> {
+    if (!this.familyQuery.ready || !this.fullRunQuery.ready) {
+      this.error = 'Wait for current run details before acting.';
+      return;
+    }
+    const current = this._captureCurrent(runId);
     const requestSeq = (this._sessionRequestSeq[row.contextId] ?? 0) + 1;
     this._sessionRequestSeq = { ...this._sessionRequestSeq, [row.contextId]: requestSeq };
     const requestStillCurrent = () =>
-      requestSeq === this._sessionRequestSeq[row.contextId] && this.selectedRunId === runId;
+      current() &&
+      requestSeq === this._sessionRequestSeq[row.contextId] &&
+      this.selectedRunId === runId;
     this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'loading' } };
     try {
       const result = await gateway.request<RunSessionCommandResult>(Methods.RUN_SESSION_COMMAND, {
@@ -1098,6 +1214,7 @@ export class FamilyObservability extends FamilyObservabilityState {
         contextId: row.contextId,
         role: row.role,
       });
+      if (!requestStillCurrent()) return;
       const command = runSessionCommandTextForKind(result, kind);
       let copyError: string | null = null;
       if (command) {
@@ -1127,12 +1244,14 @@ export class FamilyObservability extends FamilyObservabilityState {
     const key = familyArtifactKey(artifact);
     if (this._mdPreviewCache.has(key)) return;
     putCapped(this._mdPreviewCache, key, { status: 'loading' }, MD_CACHE_LIMIT);
+    const current = this._captureCurrent();
     gatewayHttpFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();
       })
       .then((text) => {
+        if (!current()) return;
         putCapped(
           this._mdPreviewCache,
           key,
@@ -1142,6 +1261,7 @@ export class FamilyObservability extends FamilyObservabilityState {
         this._mdPreviewVersion += 1;
       })
       .catch((err: Error) => {
+        if (!current()) return;
         putCapped(this._mdPreviewCache, key, { status: 'err', error: err.message }, MD_CACHE_LIMIT);
         this._mdPreviewVersion += 1;
       });

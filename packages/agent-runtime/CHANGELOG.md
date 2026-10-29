@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Observe native host journal commits and shared account status without replaying commands; preserve structured missing-session errors.
+
 - Ship the acceptance-contract TypeScript declaration in the public package.
 
 - Support acknowledged acceptance derivation and revision-bound proof destinations for PR completion.

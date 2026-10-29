@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add the conditional-edits browser proof: hashed and run-bound saves, a refused save with both versions, stale-run drafts, worker writes after a save, typing during a save, read-only editors without the capability or on a node that cannot check edits, no draft sent on reconnect, drafts deleted with their count on sign-out and principal change, an untracked file opened offline, and the slot PR, review threads and slot PR recovery paths.
+
+- Add the offline gate-review browser proof: prefetch order and the stop after a refusal, a pending gate opened offline with both sides held, an untracked file prefetched while an ignored `.env` is never read or stored, and fix-loop bytes. The client-store baseline gains a gate phase that counts gateway frames plus run-artifact bytes and names where the diff came from.
+
 - Prove fast fleet bootstrap independently of background workspace completion, retaining admission bounds and release guards.
 
 - Prove criterion confirmation, reversible drafts across reloads, and approval through the browser and existing gate actions.
@@ -31,6 +35,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 - Let browser proofs set an exact narrow viewport and system appearance.
 
 - Verify blocked review-fix recovery through the existing Resume control and its rendered active state.
+
 - Prove frozen review finding navigation, review/fix timelines and native session tabs through the connected operator views.
 
 - Restore shared review finding links at their exact file and line, with explicit unavailable-source states.
@@ -44,6 +49,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 - Add a live canvas probe for the current actor, elapsed time, completed rounds and bounded labels.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM, plus review command, cold-view, slot/branch/node/resource-writer, fleet-freshness and planning/PR/assessment/analytics authority proofs. CDP form fills accept sensitive input through stdin without placing it in process arguments.
 
 ## 0.15.0 - 2026-10-19
 

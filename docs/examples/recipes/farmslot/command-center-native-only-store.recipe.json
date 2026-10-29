@@ -1,0 +1,127 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native-only conversation history survives an offline browser restart",
+  "description": "Run the Command Center native-store proof as an issued native-only person assigned one private execution node. Select that person profile through FARMSLOT_GATEWAY_PROFILE and the fixture through FARMSLOT_NATIVE_STORE_PROOF. The native host serves one setup-time closed history through the actual node and gateway. This proves the native-only shell layout, 200 complete messages, one saved SQLite history, cold age and disabled Resume, current recovery and no command replay. The separate farm-role recipe proves ten-session eviction. Setup journals do not represent provider execution. Use only private roots, owned ports and the existing isolated CDP browser; evidence stays outside source.",
+  "proofTargets": [
+    {
+      "id": "actualHostRead",
+      "claim": "The actual native host supplies complete history to the real conversation view."
+    },
+    {
+      "id": "messages",
+      "claim": "Opened histories retain the last 200 complete messages."
+    },
+    {
+      "id": "sqliteHistories",
+      "claim": "The native-only browser stores its opened history in SQLite."
+    },
+    {
+      "id": "coldHistory",
+      "claim": "A new offline document restores the opened conversation."
+    },
+    {
+      "id": "savedAge",
+      "claim": "Cold restoration preserves the exact saved time and visible age."
+    },
+    {
+      "id": "staleResumeDisabled",
+      "claim": "The actual Resume action is disabled while saved data is stale."
+    },
+    {
+      "id": "recovery",
+      "claim": "Current reads restore history and Resume authority after gateway restart."
+    },
+    {
+      "id": "commands",
+      "claim": "Clicking the stale action neither sends nor replays a command."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "FARMSLOT_NATIVE_STORE_PROOF_OWNER=b node apps/command-center/scripts/prove-native-store.mjs",
+        "timeout_ms": 240000,
+        "intent": "Prove native history retention and cold restoration in the actual browser.",
+        "next": "actualHostRead"
+      },
+      "actualHostRead": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"actualHostRead\":true",
+        "intent": "The actual native host supplies complete history to the real conversation view.",
+        "proves": ["actualHostRead"],
+        "next": "messages"
+      },
+      "messages": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"messages\":200",
+        "intent": "Opened histories retain the last 200 complete messages.",
+        "proves": ["messages"],
+        "next": "sqliteHistories"
+      },
+      "sqliteHistories": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"sqliteHistories\":1",
+        "intent": "The native-only browser stores its opened history in SQLite.",
+        "proves": ["sqliteHistories"],
+        "next": "coldHistory"
+      },
+      "coldHistory": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"coldHistory\":true",
+        "intent": "A new offline document restores the opened conversation.",
+        "proves": ["coldHistory"],
+        "next": "savedAge"
+      },
+      "savedAge": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"savedAge\":true",
+        "intent": "Cold restoration preserves the exact saved time and visible age.",
+        "proves": ["savedAge"],
+        "next": "staleResumeDisabled"
+      },
+      "staleResumeDisabled": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"staleResumeDisabled\":true",
+        "intent": "The actual Resume action is disabled while saved data is stale.",
+        "proves": ["staleResumeDisabled"],
+        "next": "recovery"
+      },
+      "recovery": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"recovery\":true",
+        "intent": "Current reads restore history and Resume authority after gateway restart.",
+        "proves": ["recovery"],
+        "next": "commands"
+      },
+      "commands": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"commands\":0",
+        "intent": "Clicking the stale action neither sends nor replays a command.",
+        "proves": ["commands"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native shared slot run contexts",
+  "description": "Use the explicitly owned gateway and device with FARMSLOT_RUN_PROOF_FIXTURE pointing to the private mirror fixture. The command updates only its tags, opens the real slot workspace and slot diff, cold restarts the app offline, then restores tags. It never prepares a slot or starts a session.",
+  "proofTargets": [
+    {
+      "id": "native-slot-shared",
+      "claim": "The mounted slot workspace shares its full run, history and recipe observations and follows an external write."
+    },
+    {
+      "id": "native-slot-diff-shared",
+      "claim": "The actual slot diff uses shared full-run and recipe observations."
+    },
+    {
+      "id": "native-slot-cold",
+      "claim": "A cold offline pinned slot route renders the saved full run with its exact observation time and age; fleet and recipe data are not invented."
+    }
+  ],
+  "workflow": {
+    "entry": "before",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs slot-context",
+        "timeout_ms": 180000,
+        "intent": "Prove native slot reads, external updates and cold offline restoration.",
+        "next": "shared"
+      },
+      "shared": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeSlotProjection\":true",
+        "intent": "Require the mounted slot workspace to use shared observations.",
+        "proves": ["native-slot-shared"],
+        "next": "diff"
+      },
+      "diff": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeSlotDiffProjection\":true",
+        "intent": "Require shared run and recipe observations in the actual slot diff.",
+        "proves": ["native-slot-diff-shared"],
+        "next": "cold"
+      },
+      "cold": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeSlotCold\":true",
+        "intent": "Require actual cold restoration, exact timestamp and visible saved age.",
+        "proves": ["native-slot-cold"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-slot-before.png",
+        "intent": "Start the native device session before reading actual slot controls.",
+        "next": "prove"
+      }
+    }
+  }
+}

@@ -20,6 +20,8 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { resourceRevisions } from '../resources/revisions.js';
+
 import { getCopilotDir } from './chat-memory.js';
 
 export interface ObservedEvent {
@@ -153,6 +155,8 @@ export function initCopilotObserver(broadcastFn: BroadcastFn): void {
 // ─── Called by the observedBroadcast wrapper in index.ts ───
 
 export function routeEventToObserver(type: string, payload: unknown): void {
+  // Cache invalidations are infrastructure, never new observer evidence.
+  if (type === Events.RESOURCE_CHANGED) return;
   try {
     dispatch(type, payload);
   } catch (err) {
@@ -268,6 +272,7 @@ function observe(
 
   eventLog.push(event);
   if (eventLog.length > MAX_LOG) eventLog.shift();
+  resourceRevisions.advance({ family: 'copilot', ownerId: 'gateway-copilot' });
 
   console.log(`[copilot-observer] ${severity.toUpperCase()} ${type}: ${summary}`);
 
@@ -295,6 +300,7 @@ function pushObserverNotification(
 // ─── Query interface (used by chat-context.ts) ───
 
 export function getRecentEvents(windowMs = 2 * 60 * 60 * 1000): ObservedEvent[] {
+  scheduleObserverWindow(windowMs);
   const cutoff = Date.now() - windowMs;
   return eventLog.filter((e) => new Date(e.ts).getTime() > cutoff);
 }
@@ -320,6 +326,7 @@ export function readObserverEvidence(params: ObserverEvidenceQuery = {}): Observ
     MAX_OBSERVER_EVIDENCE_LIMIT,
   );
   const { filters, truncated: filterTruncated } = normalizeObserverFilters(params);
+  scheduleObserverWindow(windowMs);
   const cutoff = Date.now() - windowMs;
   const filterMatched = timestampedEvents(eventLog).filter((event) =>
     matchesObserverFilters(event, filters),
@@ -350,6 +357,21 @@ export function readObserverEvidence(params: ObserverEvidenceQuery = {}): Observ
     freshness: events.length === 0 ? 'empty' : 'fresh',
     uncertainty: [...uncertainty],
   };
+}
+
+function scheduleObserverWindow(windowMs: number): void {
+  const now = Date.now();
+  const deadline = timestampedEvents(eventLog)
+    .map((event) => event.timestampMs + windowMs)
+    .filter((at) => at > now)
+    .sort((left, right) => left - right)[0];
+  // All filters share the evidence key. Schedule the earliest log expiry for
+  // each bounded window so one filtered reader cannot postpone another's change.
+  resourceRevisions.scheduleInvalidation(
+    `copilot-observer-window:${windowMs}`,
+    { family: 'copilot', ownerId: 'gateway-copilot' },
+    deadline,
+  );
 }
 
 function short(id: string): string {

@@ -1,0 +1,560 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Run and decision store validation",
+  "description": "ADR-071 migration proof through real gateway endpoints, browser inbox actions and filtered run lists. Run from the checkout with an isolated FARMSLOT_HOME, FARMSLOT_GATEWAY_PROFILE, FARMSLOT_PROJECTS_DIR and FARMSLOT_POOL_DIR inside that home, GATEWAY_PORT, VITE_PORT, FARMSLOT_CDP_PORT and FARMSLOT_OFFLINE_PROOF=1. FARMSLOT_RUN_PROOF_FIXTURE selects an owned run seeded before gateway startup, its private worker repo and task directory. FARMSLOT_RUN_WEB_EVIDENCE_DIR selects browser captures. The helper verifies gateway ownership and fixture paths. Detail and native proofs remain for the rest of the migration.",
+  "proofTargets": [
+    {
+      "id": "file-decision-resolution",
+      "claim": "Resolving a file-backed decision by its explicit id returns success, removes its real source and removes it from the gateway inbox."
+    },
+    {
+      "id": "late-artifact-arrival",
+      "claim": "Worker completion alone sends no gateway artifact notice; actual mirror arrival publishes an artifacts change and makes the transferred bytes readable from the retained HTTP endpoint with their exact hash, size and bundle identity."
+    },
+    {
+      "id": "missing-run-identity",
+      "claim": "Authorized reads of absent run details and recipe groups return RUN_NOT_FOUND so stored details can be evicted."
+    },
+    {
+      "id": "inbox-expiry",
+      "claim": "A completed pending decision expires at the existing 48-hour boundary, publishes an inbox change and disappears without rewriting its retained run."
+    },
+    {
+      "id": "quiet-gate-reads",
+      "claim": "After prerequisite evaluation, repeated reads of an unchanged active no-change gate leave its run bytes and resource revisions unchanged."
+    },
+    {
+      "id": "feedback-consumption",
+      "claim": "Acknowledging a rule already recorded in a private library commits its feedback consumption, invalidates the inbox and updates the current retrospective."
+    },
+    {
+      "id": "run-read-stamps",
+      "claim": "Run lists, details, decisions, family snapshots, recipe groups, slot history and tags return the current epoch and their declared resource dependencies."
+    },
+    {
+      "id": "browser-inbox-notification",
+      "claim": "A worker-created file decision appears in the real browser inbox without Refresh."
+    },
+    {
+      "id": "browser-inbox-refusal",
+      "claim": "A physical file deletion refusal remains visible beside the pending browser decision."
+    },
+    {
+      "id": "browser-inbox-stale-actions",
+      "claim": "Disconnected saved decisions disable actions, reject the real keyboard shortcut and repaint their saved age."
+    },
+    {
+      "id": "browser-inbox-cold-reconnect",
+      "claim": "A new offline browser document restores the actual saved inbox and observation time; reconnect requires a current read and an explicit resolve removes its physical source."
+    },
+    {
+      "id": "browser-filtered-run-notifications",
+      "claim": "External tag writes add and remove rows in the open filtered run list without Refresh."
+    },
+    {
+      "id": "browser-filtered-run-offline",
+      "claim": "A new offline document restores the saved filtered run list and observation age, disables command controls, and enables them only after current reconnect reads."
+    },
+    {
+      "id": "browser-explicit-batch-archive",
+      "claim": "One explicit browser selection archives both owned runs through real commands and retains each archive after notification-driven collection updates."
+    },
+    {
+      "id": "browser-full-run-notification",
+      "claim": "An external writer updates the open full-run observation and its rendered tags without Refresh."
+    },
+    {
+      "id": "browser-detail-artifact-arrival",
+      "claim": "Actual mirror acquisition updates both the open full-run artifact inventory and its observed recipe groups."
+    },
+    {
+      "id": "browser-full-run-offline",
+      "claim": "A new offline document restores full saved run details and observation age with disabled command controls, then waits for a current reconnect read."
+    },
+    {
+      "id": "browser-deleted-detail-eviction",
+      "claim": "An authorized missing detail read removes the displayed run and its actual SQLite row, and a new offline document cannot restore it."
+    },
+    {
+      "id": "browser-shared-comparison",
+      "claim": "Both compared runs and their family snapshot follow shared observations; an external writer updates the open comparison and a new offline document restores both full runs with their original observation times and visible ages."
+    },
+    {
+      "id": "browser-shared-family",
+      "claim": "The family page observes its snapshot and selected full run, visibly follows a second-client cancellation, disables stale report generation, and offers its persisted selected run after a cold offline reload."
+    },
+    {
+      "id": "browser-shared-load-dialog",
+      "claim": "The actual load-run dialog observes its canonical project list, follows an external cancellation and retires confirmation, keeps saved rows with visible age and disabled actions while offline, persists its accepted SQLite observation, waits for current reconnect reads without replay, and shows a real prepare refusal from its owned slot."
+    },
+    {
+      "id": "browser-shared-history",
+      "claim": "Pointer-only slot writes and membership changes update current markers in the actual shared history dialog; read errors retain rows, stale controls stay disabled, and reconnect never replays prepare."
+    },
+    {
+      "id": "browser-store-navigation",
+      "claim": "Real back/forward-cache navigation retires the SQLite worker, then reopens it and reauthenticates before current data renders, preserving saved runs and database integrity."
+    },
+    {
+      "id": "browser-shared-slot-run",
+      "claim": "SlotView observes its actual full run and recipe inventory, follows external writes and mirror acquisition, preserves saved facts after read failure and cold offline launch, and requires current reads before sync without replaying commands."
+    },
+    {
+      "id": "browser-shared-dispatch-runs",
+      "claim": "The real comparison picker follows readable external run changes through its shared query, refuses stale keyboard selection, saves exact query timestamps, and revalidates its selected full baseline without replaying selection or dispatch."
+    },
+    {
+      "id": "browser-shared-ready-workspace",
+      "claim": "Actual gate workspace observes shared run/frozen evidence, retains cold offline gate facts and refuses stale actions."
+    },
+    {
+      "id": "browser-review-current-inputs",
+      "claim": "The actual review workspace shares the canonical full-run decision, preserves curation across metadata changes and retires old confirmations."
+    },
+    {
+      "id": "browser-review-command-refusal",
+      "claim": "An explicit review refresh refusal from the real gateway remains visible without resolving the decision."
+    },
+    {
+      "id": "browser-review-offline-owner",
+      "claim": "A cold offline review renders saved age with actions disabled; a former view command cannot write into its successor, and neither owned fixture decision resolves after reconnect."
+    },
+    {
+      "id": "browser-recipe-start-ownership",
+      "claim": "A real recipe rerun refusal clears parent busy state; an interrupted start retires output ownership with visible uncertain delivery, reconnect leaves replay controls idle, and reopening the review has no former output. Successful recipe streaming remains separate acceptance."
+    }
+  ],
+  "workflow": {
+    "entry": "file-decision",
+    "nodes": {
+      "file-decision": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs file-decision",
+        "timeout_ms": 360000,
+        "intent": "Create a disposable worker decision and resolve it through the real gateway.",
+        "next": "file-decision-proof"
+      },
+      "file-decision-proof": {
+        "action": "assert_output",
+        "source": "file-decision",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require the acknowledged decision's source and inbox entry to be gone.",
+        "proves": ["file-decision-resolution"],
+        "next": "mirror-arrival"
+      },
+      "mirror-arrival": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs mirror-arrival",
+        "timeout_ms": 360000,
+        "intent": "Acquire a late worker artifact through the real mirror and retention writers.",
+        "next": "mirror-arrival-proof"
+      },
+      "mirror-arrival-proof": {
+        "action": "assert_output",
+        "source": "mirror-arrival",
+        "stream": "stdout",
+        "match": "\"artifactChangeObserved\":true",
+        "intent": "Require an artifact notice and retained bytes with matching hash and identity.",
+        "proves": ["late-artifact-arrival"],
+        "next": "missing-run"
+      },
+      "missing-run": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs missing-run",
+        "timeout_ms": 60000,
+        "intent": "Read absent run details and recipe groups through an authorized connection.",
+        "next": "missing-run-proof"
+      },
+      "missing-run-proof": {
+        "action": "assert_output",
+        "source": "missing-run",
+        "stream": "stdout",
+        "match": "\"structuredMissingRun\":true",
+        "intent": "Require the specific missing-run error code on both real read endpoints.",
+        "proves": ["missing-run-identity"],
+        "next": "inbox-expiry"
+      },
+      "inbox-expiry": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs inbox-expiry",
+        "timeout_ms": 180000,
+        "intent": "Start with a private run near its real inbox deadline and observe expiry.",
+        "next": "inbox-expiry-proof"
+      },
+      "inbox-expiry-proof": {
+        "action": "assert_output",
+        "source": "inbox-expiry",
+        "stream": "stdout",
+        "match": "\"expiredInboxNotice\":true",
+        "intent": "Require a deadline notice, an absent inbox entry and unchanged run bytes.",
+        "proves": ["inbox-expiry"],
+        "next": "quiet-gate"
+      },
+      "quiet-gate": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs quiet-gate",
+        "timeout_ms": 180000,
+        "intent": "Read an active no-change gate repeatedly through its real prerequisite path.",
+        "next": "quiet-gate-proof"
+      },
+      "quiet-gate-proof": {
+        "action": "assert_output",
+        "source": "quiet-gate",
+        "stream": "stdout",
+        "match": "\"unchangedGateQuiet\":true",
+        "intent": "Require unchanged gate facts, no new invalidation and no persisted rewrite.",
+        "proves": ["quiet-gate-reads"],
+        "next": "feedback-consumption"
+      },
+      "feedback-consumption": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs feedback-consumption",
+        "timeout_ms": 180000,
+        "intent": "Acknowledge a private landed rule and read its current feedback consumption.",
+        "next": "feedback-consumption-proof"
+      },
+      "feedback-consumption-proof": {
+        "action": "assert_output",
+        "source": "feedback-consumption",
+        "stream": "stdout",
+        "match": "\"retrospectiveConsumptionUpdated\":true",
+        "intent": "Require durable consumption and the matching live retrospective projection.",
+        "proves": ["feedback-consumption"],
+        "next": "query-stamps"
+      },
+      "query-stamps": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs query-stamps",
+        "timeout_ms": 120000,
+        "intent": "Read all migrated run methods through the authenticated gateway connection.",
+        "next": "query-stamps-proof"
+      },
+      "query-stamps-proof": {
+        "action": "assert_output",
+        "source": "query-stamps",
+        "stream": "stdout",
+        "match": "\"stampedRunReads\":9",
+        "intent": "Require the current epoch and declared dependencies on all seven read replies.",
+        "proves": ["run-read-stamps"],
+        "next": "inbox-web"
+      },
+      "inbox-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs inbox-web",
+        "timeout_ms": 360000,
+        "intent": "Drive a private browser inbox through notification, physical refusal, offline reload and explicit resolution.",
+        "next": "inbox-web-notification-proof"
+      },
+      "inbox-web-notification-proof": {
+        "action": "assert_output",
+        "source": "inbox-web",
+        "stream": "stdout",
+        "match": "\"inboxNotificationObserved\":true",
+        "intent": "Require the worker file to appear as a visible current decision without Refresh.",
+        "proves": ["browser-inbox-notification"],
+        "next": "inbox-web-refusal-proof"
+      },
+      "inbox-web-refusal-proof": {
+        "action": "assert_output",
+        "source": "inbox-web",
+        "stream": "stdout",
+        "match": "\"resolveRefusalVisible\":true",
+        "intent": "Require the actual file refusal to remain visible on the pending card.",
+        "proves": ["browser-inbox-refusal"],
+        "next": "inbox-web-stale-proof"
+      },
+      "inbox-web-stale-proof": {
+        "action": "assert_output",
+        "source": "inbox-web",
+        "stream": "stdout",
+        "match": "\"staleActionsRefused\":true",
+        "intent": "Require disabled stale buttons, a refused keyboard action and repainting saved age.",
+        "proves": ["browser-inbox-stale-actions"],
+        "next": "inbox-web-cold-proof"
+      },
+      "inbox-web-cold-proof": {
+        "action": "assert_output",
+        "source": "inbox-web",
+        "stream": "stdout",
+        "match": "\"coldInboxRestored\":true",
+        "intent": "Require actual saved inbox hydration, current-read recovery and explicit physical resolution.",
+        "proves": ["browser-inbox-cold-reconnect"],
+        "next": "list-web"
+      },
+      "list-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs list-web",
+        "timeout_ms": 360000,
+        "intent": "Observe an owned run through external tag changes and a real offline browser reload.",
+        "next": "list-web-membership-proof"
+      },
+      "list-web-membership-proof": {
+        "action": "assert_output",
+        "source": "list-web",
+        "stream": "stdout",
+        "match": "\"filteredMembershipUpdates\":true",
+        "intent": "Require external writes to update both entry and removal in the open tagged view.",
+        "proves": ["browser-filtered-run-notifications"],
+        "next": "list-web-offline-proof"
+      },
+      "list-web-offline-proof": {
+        "action": "assert_output",
+        "source": "list-web",
+        "stream": "stdout",
+        "match": "\"coldFilteredListRestored\":true",
+        "intent": "Require actual saved filtered rows, repainting age and command readiness across a cold reload.",
+        "proves": ["browser-filtered-run-offline"],
+        "next": "bulk-archive-web"
+      },
+      "bulk-archive-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs bulk-archive-web",
+        "timeout_ms": 360000,
+        "intent": "Select two disposable completed runs in the browser and archive both with one action.",
+        "next": "bulk-archive-proof"
+      },
+      "bulk-archive-proof": {
+        "action": "assert_output",
+        "source": "bulk-archive-web",
+        "stream": "stdout",
+        "match": "\"explicitBatchArchived\":2",
+        "intent": "Require both actual archive files and both missing active reads after the single selection.",
+        "proves": ["browser-explicit-batch-archive"],
+        "next": "detail-web"
+      },
+      "detail-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs detail-web",
+        "timeout_ms": 360000,
+        "intent": "Observe real external writes and mirror arrival, then cold-reload the full run offline.",
+        "next": "detail-notification-proof"
+      },
+      "detail-notification-proof": {
+        "action": "assert_output",
+        "source": "detail-web",
+        "stream": "stdout",
+        "match": "\"fullDetailNotifications\":true",
+        "intent": "Require the rendered detail to follow its full canonical run query after an external write.",
+        "proves": ["browser-full-run-notification"],
+        "next": "detail-artifact-proof"
+      },
+      "detail-artifact-proof": {
+        "action": "assert_output",
+        "source": "detail-web",
+        "stream": "stdout",
+        "match": "\"actualMirrorObservedInDetailAndRecipes\":true",
+        "intent": "Require actual acquisition to update both full detail and recipe inventories through their observations.",
+        "proves": ["browser-detail-artifact-arrival"],
+        "next": "detail-offline-proof"
+      },
+      "detail-offline-proof": {
+        "action": "assert_output",
+        "source": "detail-web",
+        "stream": "stdout",
+        "match": "\"coldFullDetailRestored\":true",
+        "intent": "Require full saved details, exact age and disabled commands across an actual offline document reload.",
+        "proves": ["browser-full-run-offline"],
+        "next": "detail-deletion-web"
+      },
+      "detail-deletion-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs detail-deletion-web",
+        "timeout_ms": 360000,
+        "intent": "Archive a disposable run and inspect its real missing read, browser view and SQLite eviction.",
+        "next": "detail-deletion-proof"
+      },
+      "detail-deletion-proof": {
+        "action": "assert_output",
+        "source": "detail-deletion-web",
+        "stream": "stdout",
+        "match": "\"actualSqliteRowRemoved\":true",
+        "intent": "Require the actual saved detail row to disappear and stay absent in a fresh offline document.",
+        "proves": ["browser-deleted-detail-eviction"],
+        "next": "compare-web"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "compare-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs compare-web",
+        "timeout_ms": 180000,
+        "intent": "Prove both canonical comparison runs, external notifications, cold offline restoration and current reconnect.",
+        "next": "compare-proof"
+      },
+      "compare-proof": {
+        "action": "assert_output",
+        "source": "compare-web",
+        "stream": "stdout",
+        "match": "\"coldComparison\":true",
+        "intent": "Require shared comparison ownership, actual cold full-run rendering and current family reads.",
+        "proves": ["browser-shared-comparison"],
+        "next": "family-web"
+      },
+      "family-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs family-web",
+        "timeout_ms": 180000,
+        "intent": "Prove live family updates, stale guards and recovery without replay.",
+        "next": "family-proof"
+      },
+      "family-proof": {
+        "action": "assert_output",
+        "source": "family-web",
+        "stream": "stdout",
+        "match": "\"coldFamilySelection\":true",
+        "intent": "Require actual family notification/rendering, stale control state and persisted selected detail.",
+        "proves": ["browser-shared-family"],
+        "next": "load-modal-web"
+      },
+      "load-modal-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs load-modal-web",
+        "timeout_ms": 240000,
+        "intent": "Browse the owned project through the real slot dialog and verify notification, saved state and guarded prepare behavior.",
+        "next": "load-modal-proof"
+      },
+      "load-modal-proof": {
+        "action": "assert_output",
+        "source": "load-modal-web",
+        "stream": "stdout",
+        "match": "\"dialogCommandRefusalVisible\":true",
+        "intent": "Require canonical visible rows, current-input guards, actual persistence and the physical prepare refusal.",
+        "proves": ["browser-shared-load-dialog"],
+        "next": "history-web"
+      },
+      "history-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs history-web",
+        "timeout_ms": 240000,
+        "intent": "Prove slot history follows binding writes and guards stale prepare.",
+        "next": "history-proof"
+      },
+      "history-proof": {
+        "action": "assert_output",
+        "source": "history-web",
+        "stream": "stdout",
+        "match": "\"sharedHistoryProof\":true",
+        "intent": "Require history updates, saved age and safe recovery after read failures.",
+        "proves": ["browser-shared-history"],
+        "next": "store-navigation-web"
+      },
+      "store-navigation-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs store-navigation-web",
+        "timeout_ms": 180000,
+        "intent": "Prove browser navigation reopens SQLite with fresh authenticated reads.",
+        "next": "store-navigation-proof"
+      },
+      "store-navigation-proof": {
+        "action": "assert_output",
+        "source": "store-navigation-web",
+        "stream": "stdout",
+        "match": "\"navigationStoreLifecycle\":true",
+        "intent": "Require actual back/forward-cache restoration and fresh authenticated SQLite query ownership.",
+        "proves": ["browser-store-navigation"],
+        "next": "slot-run-web"
+      },
+      "slot-run-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs slot-run-web",
+        "timeout_ms": 240000,
+        "intent": "Prove slot run updates, artifact arrival and cold offline recovery.",
+        "next": "slot-run-proof"
+      },
+      "slot-run-proof": {
+        "action": "assert_output",
+        "source": "slot-run-web",
+        "stream": "stdout",
+        "match": "\"coldSlotFullRun\":true",
+        "intent": "Require canonical slot facts, guarded commands and exact saved timestamps.",
+        "proves": ["browser-shared-slot-run"],
+        "next": "dispatch-runs-web"
+      },
+      "dispatch-runs-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs dispatch-runs-web",
+        "timeout_ms": 240000,
+        "intent": "Prove picker updates, stale guards and saved baseline recovery.",
+        "next": "dispatch-runs-proof"
+      },
+      "dispatch-runs-proof": {
+        "action": "assert_output",
+        "source": "dispatch-runs-web",
+        "stream": "stdout",
+        "match": "\"selectedFullRunObserved\":true",
+        "intent": "Require actual list and full-run ownership, saved rows, guarded selection and reconnect without dispatch.",
+        "proves": ["browser-shared-dispatch-runs"],
+        "next": "ready-workspace-web"
+      },
+      "ready-workspace-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs ready-workspace-web",
+        "timeout_ms": 240000,
+        "intent": "Prove gate updates, visible refusal and cold offline recovery.",
+        "next": "ready-workspace-proof"
+      },
+      "ready-workspace-proof": {
+        "action": "assert_output",
+        "source": "ready-workspace-web",
+        "stream": "stdout",
+        "match": "\"coldWorkspaceGate\":true",
+        "intent": "Require canonical run and frozen evidence ownership, visible refusal, saved age and reconnect without command replay.",
+        "proves": ["browser-shared-ready-workspace"],
+        "next": "review-workspace-web"
+      },
+      "review-workspace-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs review-workspace-web",
+        "timeout_ms": 240000,
+        "intent": "Prove actual review input, command refusal and offline reply ownership.",
+        "next": "review-input-proof"
+      },
+      "review-input-proof": {
+        "action": "assert_output",
+        "source": "review-workspace-web",
+        "stream": "stdout",
+        "match": "\"reviewConfirmationRetired\":true",
+        "intent": "Require canonical updates, retained curation and a new confirmation.",
+        "proves": ["browser-review-current-inputs"],
+        "next": "review-refusal-proof"
+      },
+      "review-refusal-proof": {
+        "action": "assert_output",
+        "source": "review-workspace-web",
+        "stream": "stdout",
+        "match": "\"reviewCommandErrorVisible\":true",
+        "intent": "Require the real protocol refusal to remain visible.",
+        "proves": ["browser-review-command-refusal"],
+        "next": "review-owner-proof"
+      },
+      "review-owner-proof": {
+        "action": "assert_output",
+        "source": "review-workspace-web",
+        "stream": "stdout",
+        "match": "\"reviewOwnerReplyFenced\":true",
+        "intent": "Require cold saved facts and owner-bound interrupted command handling.",
+        "proves": ["browser-review-offline-owner"],
+        "next": "recipe-owner-web"
+      },
+      "recipe-owner-web": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-runs.mjs recipe-owner-web",
+        "timeout_ms": 240000,
+        "intent": "Exercise review rerun on the disabled mirror without starting a worker.",
+        "next": "recipe-owner-proof"
+      },
+      "recipe-owner-proof": {
+        "action": "assert_output",
+        "source": "recipe-owner-web",
+        "stream": "stdout",
+        "match": "\"recipeInterruptedOwnerRetired\":true",
+        "intent": "Require visible refusal, retired ownership and idle reopened output.",
+        "proves": ["browser-recipe-start-ownership"],
+        "next": "done"
+      }
+    }
+  }
+}

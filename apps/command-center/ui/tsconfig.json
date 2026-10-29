@@ -7,6 +7,8 @@
       "@farmslot/recipe-runner/evidence": ["../../../packages/recipe-runner/src/evidence/index.ts"],
       "@farmslot/protocol": ["../../../packages/protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../../../packages/protocol/src/*"],
+      "@farmslot/local-store": ["../../../packages/local-store/src/index.ts"],
+      "@farmslot/local-store/*": ["../../../packages/local-store/src/*"],
       "@farmslot/theme": ["../../../packages/theme/src/index.ts"],
       "@farmslot/theme/*": ["../../../packages/theme/src/*"],
       "@farmslot/review-dispatch": ["../../../packages/review-dispatch/src/index.ts"]

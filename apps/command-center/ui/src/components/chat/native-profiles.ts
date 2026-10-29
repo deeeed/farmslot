@@ -7,9 +7,16 @@ import {
   type NativeProfileListResult,
   type NativeProfileStatusResult,
 } from '@farmslot/protocol';
+import { nativeObservationQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
+import {
+  getResourceCache,
+  getResourceNativeOwnerId,
+  subscribeResourceCache,
+} from '../../resource-cache.js';
 
+import { observeNativeResource } from './native-session-observation.js';
 import type { NativeSessionApi } from './native-workspace.js';
 
 export interface NativeProfileSelection {
@@ -35,6 +42,10 @@ export class NativeProfiles extends LitElement {
   @state() private mutating = false;
   @state() private error = '';
   private revision = 0;
+  private ownerStop?: () => void;
+  private listStop?: () => void;
+  private statusStop?: () => void;
+  private listCurrent = false;
   private selectedContextId = '';
   private selectionTimer?: ReturnType<typeof setTimeout>;
 
@@ -97,11 +108,7 @@ export class NativeProfiles extends LitElement {
   `;
 
   protected updated(changed: Map<PropertyKey, unknown>) {
-    if (
-      changed.has('executionNodeId') ||
-      changed.has('api') ||
-      (this.runnerOnly && changed.has('runner'))
-    ) {
+    if (changed.has('executionNodeId') || (this.runnerOnly && changed.has('runner'))) {
       this.selected = '';
       this.selectedContextId = '';
       this.status = undefined;
@@ -110,9 +117,22 @@ export class NativeProfiles extends LitElement {
       void this.refresh();
     }
   }
+  connectedCallback() {
+    super.connectedCallback();
+    this.ownerStop = subscribeResourceCache(() => {
+      this.revision++;
+      this.listCurrent = false;
+      this.status = undefined;
+      this.selection(undefined, false);
+      void this.refresh();
+    });
+  }
   disconnectedCallback() {
     clearTimeout(this.selectionTimer);
     this.revision++;
+    this.listStop?.();
+    this.statusStop?.();
+    this.ownerStop?.();
     super.disconnectedCallback();
   }
   private selection(profile: NativeProfileInfo | undefined, ready: boolean) {
@@ -124,29 +144,62 @@ export class NativeProfiles extends LitElement {
       }),
     );
   }
-  private async refresh() {
-    clearTimeout(this.selectionTimer);
-    const revision = ++this.revision;
-    this.busy = true;
-    this.error = '';
-    this.selection(
-      this.profiles.find((profile) => profile.id === this.selected),
-      false,
+  private async retryProfiles() {
+    const owner = getResourceNativeOwnerId();
+    const cache = getResourceCache();
+    if (!owner || !cache) return;
+    const queries = [
+      nativeObservationQuery(
+        Methods.NATIVE_PROFILE_LIST,
+        { executionNodeId: this.executionNodeId },
+        owner,
+      ),
+      ...(this.selected
+        ? [
+            nativeObservationQuery(
+              Methods.NATIVE_PROFILE_STATUS,
+              { executionNodeId: this.executionNodeId, profileId: this.selected },
+              owner,
+            ),
+          ]
+        : []),
+    ];
+    await Promise.all(
+      queries.filter((query) => cache.read(query).error).map((query) => cache.retry(query)),
     );
-    try {
-      const result = await this.api.request<NativeProfileListResult>(Methods.NATIVE_PROFILE_LIST, {
-        executionNodeId: this.executionNodeId,
-      });
-      if (!this.isConnected || revision !== this.revision) return;
-      this.profiles = this.runnerOnly
-        ? result.profiles.filter((profile) => profile.runner === this.runner)
-        : result.profiles;
-      await this.choose(this.selected, this.selectedContextId);
-    } catch (error) {
-      if (revision === this.revision) this.error = (error as Error).message;
-    } finally {
-      if (revision === this.revision) this.busy = false;
+  }
+  private async refresh() {
+    this.listStop?.();
+    this.statusStop?.();
+    const owner = getResourceNativeOwnerId();
+    if (!owner) {
+      this.profiles = [];
+      this.selection(undefined, false);
+      return;
     }
+    const node = this.executionNodeId;
+    const query = nativeObservationQuery<NativeProfileListResult>(
+      Methods.NATIVE_PROFILE_LIST,
+      { executionNodeId: node },
+      owner,
+    );
+    this.listStop = observeNativeResource(query, (state) => {
+      if (node !== this.executionNodeId || !this.isConnected) return;
+      this.revision++;
+      this.statusStop?.();
+      this.status = undefined;
+      this.listCurrent = state.status === 'ready';
+      this.profiles = (state.data?.profiles ?? []).filter(
+        (profile) => !this.runnerOnly || profile.runner === this.runner,
+      );
+      this.error = state.error?.message ?? '';
+      this.selection(
+        this.profiles.find((profile) => profile.id === this.selected),
+        false,
+      );
+      this.busy = state.status === 'loading';
+      if (this.listCurrent) void this.choose(this.selected, this.selectedContextId);
+    });
   }
   private chooseAfterNavigation(id: string) {
     clearTimeout(this.selectionTimer);
@@ -171,7 +224,7 @@ export class NativeProfiles extends LitElement {
     this.status = undefined;
     this.error = '';
     const profile = this.profiles.find((item) => item.id === id);
-    this.selection(profile, !id);
+    this.selection(profile, !id && this.listCurrent);
     if (!profile) {
       if (id)
         this.error = 'Profile is unavailable. Choose another profile or the node default account.';
@@ -192,26 +245,39 @@ export class NativeProfiles extends LitElement {
       return;
     }
     this.busy = true;
-    try {
-      const status = await this.api.request<NativeProfileStatusResult>(
-        Methods.NATIVE_PROFILE_STATUS,
-        { executionNodeId: this.executionNodeId, profileId: id },
-      );
-      if (!this.isConnected || revision !== this.revision) return;
-      if (
-        status.profile.accountContextId !== profile.accountContextId ||
-        status.profile.id !== profile.id ||
-        status.profile.runner !== profile.runner ||
-        status.profile.state !== 'active'
-      )
-        throw new Error('Profile changed. Refresh profiles and choose it again.');
-      this.status = status;
-      this.selection(profile, status.account.login === 'authenticated');
-    } catch (error) {
-      if (revision === this.revision) this.error = (error as Error).message;
-    } finally {
-      if (revision === this.revision) this.busy = false;
+    this.statusStop?.();
+    const owner = getResourceNativeOwnerId();
+    if (!owner) {
+      this.selection(profile, false);
+      return;
     }
+    const query = nativeObservationQuery<NativeProfileStatusResult>(
+      Methods.NATIVE_PROFILE_STATUS,
+      { executionNodeId: this.executionNodeId, profileId: id },
+      owner,
+    );
+    this.statusStop = observeNativeResource(query, (state) => {
+      if (!this.isConnected || revision !== this.revision) return;
+      const status = state.data;
+      const matches =
+        status &&
+        status.profile.id === profile.id &&
+        status.profile.accountContextId === profile.accountContextId &&
+        status.profile.runner === profile.runner &&
+        status.profile.state === 'active';
+      this.status = matches ? status : undefined;
+      this.busy = state.status === 'loading';
+      this.error =
+        state.error?.message ??
+        (status && !matches ? 'Profile changed. Select it explicitly again.' : '');
+      this.selection(
+        profile,
+        this.listCurrent &&
+          state.status === 'ready' &&
+          !!matches &&
+          status.account.login === 'authenticated',
+      );
+    });
   }
   private async add() {
     this.mutating = true;
@@ -296,13 +362,15 @@ export class NativeProfiles extends LitElement {
         </select></label
       >
       <div class="row">
-        <button
-          data-testid="native-profile-refresh"
-          ?disabled=${disabled}
-          @click=${() => void this.refresh()}
-        >
-          Refresh profiles
-        </button>
+        ${this.error
+          ? html`<button
+              data-testid="native-profile-refresh"
+              ?disabled=${disabled}
+              @click=${() => void this.retryProfiles()}
+            >
+              Retry reading profiles
+            </button>`
+          : nothing}
         ${profile
           ? html`<button
               data-testid="native-profile-remove"

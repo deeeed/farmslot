@@ -1,41 +1,27 @@
-// Reactive state store — holds fleet/PR/decision data, updated by gateway events
+// Reactive view state. Shared cache observations own gateway collection facts.
 
 import type {
   BacklogItem,
   BacklogListResult,
-  BacklogUpdatedPayload,
   ConfigProjectsResult,
   DecisionListResult,
-  DecisionNewPayload,
-  DecisionResolvedPayload,
   DispatchQueueListResult,
   FleetStatus,
   FleetStatusResult,
-  FleetUpdatedPayload,
   GitHubRateLimitPayload,
   MonitorViolation,
   MonitorViolationPayload,
   PendingDecision,
   PRListResult,
-  PRListUpdatedPayload,
   PRStatus,
-  PRUpdatedPayload,
   QueueItem,
-  QueueUpdatedPayload,
   Run,
-  RunCompletedPayload,
-  RunCreatedPayload,
-  RunDeletedPayload,
   RunFamilyReadinessSummary,
   RunListResult,
   RunListSummaryMeta,
   RunProjectAnalyticsSummary,
-  RunUpdatedPayload,
-  SlotChangedPayload,
-  SlotStatus,
   WorkGraphListResult,
   WorkGraphProjection,
-  WorkGraphUpdatedPayload,
 } from '@farmslot/protocol';
 import {
   buildRunFamilyReadinessSummaries,
@@ -43,14 +29,27 @@ import {
   DEFAULT_BRANCH,
   Events,
   isTerminalRunStatus,
-  mergeRunsById,
+  mergeRunListObservations,
   Methods,
 } from '@farmslot/protocol';
+import {
+  type GatewayResourceCache,
+  resourceQuery,
+  type ResourceQueryState,
+} from '@farmslot/protocol/client-cache';
 
 import { notify as browserNotify } from './utils/notifications.js';
 import { safeLsGet, safeLsRemove } from './utils/storage.js';
+import { contentPrefetchTargets } from './content-prefetch.js';
 import { type ConnectionState, gateway } from './gateway-client.js';
-import { startSourceChangeFeed } from './source-change-feed.js';
+import {
+  getResourceCache,
+  getResourceWorkspaceAccess,
+  getResourceWorkspaceKey,
+  initializeResourceCache,
+  setContentPrefetchTargets,
+  subscribeResourceCache,
+} from './resource-cache.js';
 import {
   filtersHash,
   type GlobalFilters,
@@ -106,11 +105,13 @@ export interface AppState {
   // left over from a prior connection. Reset on disconnect.
   bootstrapFailed: HydratedSlices;
   fleet: FleetStatus | null;
+  fleetObservation: ResourceQueryState<FleetStatusResult>;
   prs: PRStatus[];
+  prsObservation: ResourceQueryState<PRListResult>;
   decisions: PendingDecision[];
   runs: Run[];
-  /** Moves for every RUN_DELETED event, including ids outside the paginated run list. */
-  runDeletionsRevision: number;
+  runsObservation: ResourceQueryState<RunListResult>;
+  decisionsObservation: ResourceQueryState<DecisionListResult>;
   runSummaryMeta: RunListSummaryMeta | null;
   runFamilySummaries: RunFamilyReadinessSummary[];
   runProjectAnalytics: RunProjectAnalyticsSummary[];
@@ -118,12 +119,6 @@ export interface AppState {
   backlogItems: BacklogItem[];
   workGraphs: WorkGraphProjection[];
   violations: MonitorViolation[];
-  /** When the served PR list was fetched from GitHub (gateway `fetchedAt`), else receipt time. */
-  prsUpdatedAt: number;
-  /** True while the gateway answered from its warm list and is refreshing from GitHub. */
-  prsRefreshing: boolean;
-  /** Why the gateway's last background PR refresh failed; null once one succeeds. */
-  prsRefreshError: string | null;
   globalFilters: GlobalFilters;
   projectDefaultBranches: Record<string, string>;
   projectSlotTracking: Record<
@@ -141,8 +136,8 @@ export type AppStateSliceSnapshot = Pick<
   AppState,
   | 'fleet'
   | 'prs'
+  | 'prsObservation'
   | 'runs'
-  | 'runDeletionsRevision'
   | 'runSummaryMeta'
   | 'runFamilySummaries'
   | 'runProjectAnalytics'
@@ -192,10 +187,13 @@ const state: AppState = {
   hydrated: { ...EMPTY_HYDRATED },
   bootstrapFailed: { ...EMPTY_HYDRATED },
   fleet: null,
+  fleetObservation: { status: 'loading' },
   prs: [],
+  prsObservation: { status: 'loading' },
   decisions: [],
   runs: [],
-  runDeletionsRevision: 0,
+  runsObservation: { status: 'loading' },
+  decisionsObservation: { status: 'loading' },
   runSummaryMeta: null,
   runFamilySummaries: [],
   runProjectAnalytics: [],
@@ -203,9 +201,6 @@ const state: AppState = {
   backlogItems: [],
   workGraphs: [],
   violations: [],
-  prsUpdatedAt: 0,
-  prsRefreshing: false,
-  prsRefreshError: null,
   globalFilters: loadGlobalFilters(),
   projectDefaultBranches: {},
   projectSlotTracking: {},
@@ -216,9 +211,13 @@ function clearWorkspaceState(): void {
   // Authentication transitions must not leave the previous owner's farm in memory.
   Object.assign(state, {
     fleet: null,
+    fleetObservation: { status: 'loading' },
     prs: [],
+    prsObservation: { status: 'loading' },
     decisions: [],
     runs: [],
+    runsObservation: { status: 'loading' },
+    decisionsObservation: { status: 'loading' },
     runSummaryMeta: null,
     runFamilySummaries: [],
     runProjectAnalytics: [],
@@ -226,16 +225,12 @@ function clearWorkspaceState(): void {
     backlogItems: [],
     workGraphs: [],
     violations: [],
-    prsUpdatedAt: 0,
-    prsRefreshing: false,
-    prsRefreshError: null,
     globalFilters: { projects: [], machines: [] },
     projectDefaultBranches: {},
     projectSlotTracking: {},
     githubQuota: null,
     workspaceAccess: 'none',
   });
-  state.runDeletionsRevision += 1;
 }
 
 interface WorkspaceOwner {
@@ -327,9 +322,7 @@ export function updateProjectSlotTracking(
   notify();
 }
 
-// pr.list fans out into several gh calls per candidate PR; cold/reconnect
-// runs routinely exceed the 15s default. Used by both the shared bootstrap
-// in fetchInitialState and pr-board's manual/poll refresh.
+// Explicit GitHub checks and selected PR detail reads can exceed the default request budget.
 export const PR_LIST_TIMEOUT_MS = 30_000;
 
 // Flow types that are expected to produce a PR. `dev` runs are exploratory
@@ -403,14 +396,6 @@ function newBootstrapState(epoch: number): BootstrapState {
   };
 }
 
-function deferEvent(slice: HydratedSlice, fn: () => void): void {
-  if (!activeBootstrap || activeBootstrap.ready.has(slice)) {
-    fn();
-    return;
-  }
-  activeBootstrap.buffer[slice].push(fn);
-}
-
 // Coalesce notifies during a batch (e.g. per-slice drain) so N upserts
 // fire one listener sweep instead of N. `notify()` no-ops while
 // `notifyDepth > 0`; the outermost `coalesceNotify` fires a single
@@ -446,6 +431,209 @@ function notify(): void {
   fireNotify();
 }
 
+export const runHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, {
+  limit: 1000,
+  includeFamilySummaries: true,
+  includeProjectAnalytics: true,
+});
+export const activeRunsQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, { active: true });
+export const decisionsQuery = resourceQuery<DecisionListResult>(Methods.DECISION_LIST);
+export const fleetQuery = resourceQuery<FleetStatusResult>(Methods.FLEET_STATUS);
+export const backlogQuery = resourceQuery<BacklogListResult>(Methods.BACKLOG_LIST, {
+  includeArchived: true,
+});
+export const workGraphsQuery = resourceQuery<WorkGraphListResult>(Methods.WORK_GRAPH_LIST, {
+  includeArchived: true,
+});
+export const queueQuery = resourceQuery<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST);
+export const projectsQuery = resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS);
+export const prsQuery = resourceQuery<PRListResult>(Methods.PR_LIST);
+
+/**
+ * The default branch both prefetch and held reads give `activeRunDiffBase`: the run's project's,
+ * which a stacked run's stack base precedes, and `main` follows.
+ */
+export function runProjectDefaultBranch(run: Pick<Run, 'project'>): string | undefined {
+  return state.projectDefaultBranches[run.project];
+}
+
+let collectionCache: GatewayResourceCache | undefined;
+let collectionWorkspaceKey: string | undefined;
+let collectionFarm = false;
+let collectionObservers: Array<() => void> = [];
+
+/** These arrays are view projections; notifications and persistence belong to the shared cache. */
+function bindFarmCollections(): void {
+  const cache = getResourceCache();
+  const workspaceKey = getResourceWorkspaceKey();
+  const farm =
+    getResourceWorkspaceAccess() === 'farm' ||
+    (gateway.connectionState === 'connected' && gateway.workspaceAccess === 'farm');
+  if (
+    collectionCache === cache &&
+    collectionWorkspaceKey === workspaceKey &&
+    collectionFarm === farm
+  )
+    return;
+  for (const stop of collectionObservers) stop();
+  collectionObservers = [];
+  collectionCache = cache;
+  collectionWorkspaceKey = workspaceKey;
+  collectionFarm = farm;
+  state.runsObservation = { status: 'loading' };
+  state.decisionsObservation = { status: 'loading' };
+  state.fleetObservation = { status: 'loading' };
+  state.prsObservation = { status: 'loading' };
+  state.fleet = null;
+  state.runs = [];
+  state.prs = [];
+  state.decisions = [];
+  state.backlogItems = [];
+  state.workGraphs = [];
+  state.queueItems = [];
+  state.projectDefaultBranches = {};
+  state.projectSlotTracking = {};
+  setContentPrefetchTargets([]);
+  if (!cache || !farm) {
+    notify();
+    return;
+  }
+  if (gateway.connectionState !== 'connected') state.workspaceAccess = 'farm';
+  const current = () => collectionCache === cache && collectionWorkspaceKey === workspaceKey;
+  // Runs start once the projects name their default branches, so no read uses a passing base.
+  const prefetchTargetsChanged = () => {
+    if (cache.read(projectsQuery).status === 'loading') return;
+    setContentPrefetchTargets(
+      contentPrefetchTargets(state.decisions, cache.read(activeRunsQuery).data?.runs ?? []),
+      runProjectDefaultBranch,
+    );
+  };
+  collectionObservers.push(
+    cache.observe(prsQuery, (result) => {
+      if (!current()) return;
+      state.prsObservation = result;
+      state.prs = result.data?.prs ?? [];
+      state.hydrated = { ...state.hydrated, prs: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, prs: Boolean(result.error) };
+      notify();
+    }),
+  );
+  collectionObservers.push(
+    cache.observe(fleetQuery, (result) => {
+      if (!current()) return;
+      const previous = state.fleet;
+      state.fleetObservation = result;
+      state.fleet = result.data?.fleet ?? null;
+      state.hydrated = { ...state.hydrated, fleet: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, fleet: Boolean(result.error) };
+      if (previous && result.status === 'ready') {
+        for (const slot of state.fleet?.slots ?? [])
+          if (
+            slot.lifecycle === 'ready' &&
+            previous.slots.some((row) => row.slot === slot.slot && row.lifecycle === 'busy')
+          )
+            browserNotify('Dispatch complete', {
+              body: `${slot.slot} finished (${slot.taskId || 'task'})`,
+              tag: `complete-${slot.slot}`,
+              route: `#slot/${slot.slot}`,
+            });
+      }
+      notify();
+    }),
+  );
+  collectionObservers.push(
+    cache.observe(backlogQuery, (result) => {
+      if (!current()) return;
+      state.backlogItems = result.data?.items ?? [];
+      state.hydrated = { ...state.hydrated, backlog: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, backlog: Boolean(result.error) };
+      notify();
+    }),
+  );
+  collectionObservers.push(
+    cache.observe(workGraphsQuery, (result) => {
+      if (!current()) return;
+      state.workGraphs = result.data?.graphs ?? [];
+      state.hydrated = { ...state.hydrated, workGraphs: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, workGraphs: Boolean(result.error) };
+      notify();
+    }),
+  );
+  collectionObservers.push(
+    cache.observe(queueQuery, (result) => {
+      if (!current()) return;
+      state.queueItems = result.data?.items ?? [];
+      state.hydrated = { ...state.hydrated, queue: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, queue: Boolean(result.error) };
+      notify();
+    }),
+  );
+  collectionObservers.push(
+    cache.observe(projectsQuery, (result) => {
+      if (!current()) return;
+      const projects = result.data?.projects ?? [];
+      state.projectDefaultBranches = Object.fromEntries(
+        projects.map((project) => [project.name, project.defaultBranch || DEFAULT_BRANCH]),
+      );
+      state.projectSlotTracking = Object.fromEntries(
+        projects.map((project) => [
+          project.name,
+          {
+            defaultBranch: project.defaultBranch || DEFAULT_BRANCH,
+            slotTrackingBranch: project.slotTrackingBranch,
+            worktreeBase: project.worktreeBase,
+          },
+        ]),
+      );
+      state.hydrated = { ...state.hydrated, projects: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, projects: Boolean(result.error) };
+      prefetchTargetsChanged();
+      notify();
+    }),
+  );
+  const observeRuns = () => {
+    if (!current()) return;
+    const result = mergeRunListObservations(
+      cache.read(activeRunsQuery),
+      cache.read(runHistoryQuery),
+    );
+    state.runsObservation = result;
+    state.runs = result.data?.runs ?? [];
+    state.runSummaryMeta = result.data?.summaryMeta ?? null;
+    state.runFamilySummaries = result.data?.familySummaries ?? [];
+    state.runProjectAnalytics = result.data?.projectAnalytics ?? [];
+    state.hydrated = { ...state.hydrated, runs: result.status !== 'loading' };
+    state.bootstrapFailed = { ...state.bootstrapFailed, runs: Boolean(result.error) };
+    prefetchTargetsChanged();
+    notify();
+  };
+  collectionObservers.push(cache.observe(runHistoryQuery, observeRuns));
+  collectionObservers.push(cache.observe(activeRunsQuery, observeRuns));
+  collectionObservers.push(
+    cache.observe(decisionsQuery, (result) => {
+      if (!current()) return;
+      const previous = state.decisionsObservation.data;
+      state.decisionsObservation = result;
+      state.decisions = result.data?.decisions ?? [];
+      state.hydrated = { ...state.hydrated, decisions: result.status !== 'loading' };
+      state.bootstrapFailed = { ...state.bootstrapFailed, decisions: Boolean(result.error) };
+      if (previous && result.status === 'ready') {
+        const ids = new Set(previous.decisions.map(({ id }) => id));
+        for (const decision of state.decisions)
+          if (!ids.has(decision.id))
+            browserNotify('Decision needed', {
+              body: decision.title,
+              tag: `decision-${decision.id}`,
+              route: '#decisions',
+              attention: true,
+            });
+      }
+      prefetchTargetsChanged();
+      notify();
+    }),
+  );
+}
+
 // --- Public API ---
 
 export function getState(): Readonly<AppState> {
@@ -456,8 +644,8 @@ export function captureStateSlices(): AppStateSliceSnapshot {
   return {
     fleet: state.fleet,
     prs: state.prs,
+    prsObservation: state.prsObservation,
     runs: state.runs,
-    runDeletionsRevision: state.runDeletionsRevision,
     runSummaryMeta: state.runSummaryMeta,
     runFamilySummaries: state.runFamilySummaries,
     runProjectAnalytics: state.runProjectAnalytics,
@@ -471,8 +659,8 @@ export function captureStateSlices(): AppStateSliceSnapshot {
 export function restoreStateSlices(snapshot: AppStateSliceSnapshot): void {
   state.fleet = snapshot.fleet;
   state.prs = snapshot.prs;
+  state.prsObservation = snapshot.prsObservation;
   state.runs = snapshot.runs;
-  state.runDeletionsRevision = snapshot.runDeletionsRevision;
   state.runSummaryMeta = snapshot.runSummaryMeta;
   state.runFamilySummaries = snapshot.runFamilySummaries;
   state.runProjectAnalytics = snapshot.runProjectAnalytics;
@@ -496,75 +684,28 @@ export function updateFleet(fleet: FleetStatus): void {
   notify();
 }
 
-export function updateSlot(slot: SlotStatus): void {
-  if (!state.fleet) return;
-  const idx = state.fleet.slots.findIndex((s) => s.slot === slot.slot);
-  const prev = idx >= 0 ? state.fleet.slots[idx] : null;
-  const newSlots = [...state.fleet.slots];
-  if (idx >= 0) {
-    newSlots[idx] = slot;
-  } else {
-    newSlots.push(slot);
-  }
-
-  // Detect dispatch completion: working -> released/ready
-  if (prev?.lifecycle === 'busy' && slot.lifecycle === 'ready') {
-    browserNotify('Dispatch complete', {
-      body: `${slot.slot} finished (${slot.taskId || 'task'})`,
-      tag: `complete-${slot.slot}`,
-      route: `#slot/${slot.slot}`,
-    });
-  }
-
-  state.fleet = { ...state.fleet, slots: newSlots };
-  notify();
+/** Commands recheck the cache so a rendered button cannot outlive its current read. */
+export function isFleetCurrent(): boolean {
+  const result = getResourceCache()?.read(fleetQuery);
+  return (
+    gateway.connectionState === 'connected' &&
+    gateway.workspaceAccess === 'farm' &&
+    result?.status === 'ready' &&
+    result.data !== undefined &&
+    !result.data.fleet.stale
+  );
 }
 
-export function updatePRs(
-  prs: PRStatus[],
-  meta: { fetchedAt?: string; refreshing?: boolean } = {},
-): void {
+export function requireCurrentFleet(): FleetStatus {
+  if (!isFleetCurrent()) throw new Error('Wait for a current fleet read before acting.');
+  return getResourceCache()!.read(fleetQuery).data!.fleet;
+}
+
+/** Dev-harness fixtures only. Production PR projections are written by the shared observer. */
+export function updatePRs(prs: PRStatus[]): void {
   state.prs = prs;
-  const fetched = meta.fetchedAt ? Date.parse(meta.fetchedAt) : NaN;
-  state.prsUpdatedAt = Number.isFinite(fetched) ? fetched : Date.now();
-  state.prsRefreshing = meta.refreshing ?? false;
-  state.prsRefreshError = null;
+  state.prsObservation = { status: 'ready', data: { prs } };
   state.bootstrapFailed = { ...state.bootstrapFailed, prs: false };
-  notify();
-}
-
-function samePRKey(a: Pick<PRStatus, 'repo' | 'pr'>, b: Pick<PRStatus, 'repo' | 'pr'>): boolean {
-  return a.repo === b.repo && a.pr === b.pr;
-}
-
-export function updatePR(pr: PRStatus): void {
-  const idx = state.prs.findIndex((p) => samePRKey(p, pr));
-  // Replace the array ref so `this._prs = s.prs` in subscribers triggers
-  // Lit's reactive comparison; in-place mutation would be missed.
-  state.prs = idx >= 0 ? state.prs.map((p, i) => (i === idx ? pr : p)) : [...state.prs, pr];
-  // One patched row does not make the whole list freshly fetched; prsUpdatedAt stays.
-  state.bootstrapFailed = { ...state.bootstrapFailed, prs: false };
-  notify();
-}
-
-/** A gateway refresh finished with no list change. */
-export function markPRsRefreshed(fetchedAt: string | undefined): void {
-  const fetched = fetchedAt ? Date.parse(fetchedAt) : NaN;
-  if (Number.isFinite(fetched) && fetched > state.prsUpdatedAt) state.prsUpdatedAt = fetched;
-  state.prsRefreshing = false;
-  state.prsRefreshError = null;
-  state.bootstrapFailed = { ...state.bootstrapFailed, prs: false };
-  notify();
-}
-
-/**
- * A PR refresh failed; keep the list, flag it. `gatewayError` carries the
- * gateway's own background-refresh message, absent when our request failed.
- */
-export function markPRsRefreshFailed(gatewayError?: string): void {
-  state.prsRefreshing = false;
-  state.prsRefreshError = gatewayError ?? null;
-  state.bootstrapFailed = { ...state.bootstrapFailed, prs: true };
   notify();
 }
 
@@ -573,74 +714,8 @@ export function updateDecisions(decisions: PendingDecision[]): void {
   notify();
 }
 
-/**
- * Merge a snapshot from `decision.list` into local state. Caller passes the
- * set of decision ids known BEFORE the snapshot request was fired; any
- * local id outside that set arrived during the request window (e.g. an
- * analyzing placeholder via RUN_DECISION_NEW) and must survive the merge.
- * Old local ids absent from the snapshot are server-resolved → drop.
- */
-export function mergeDecisions(snapshot: PendingDecision[], preRequestIds: Set<string>): void {
-  const snapshotIds = new Set(snapshot.map((d) => d.id));
-  const newLocal = state.decisions.filter(
-    (d) => !snapshotIds.has(d.id) && !preRequestIds.has(d.id),
-  );
-  state.decisions = [...snapshot, ...newLocal];
-  notify();
-}
-
-export function addDecision(decision: PendingDecision): void {
-  if (state.decisions.some((d) => d.id === decision.id)) return;
-  state.decisions = [...state.decisions, decision];
-  browserNotify('Decision needed', {
-    body: `${decision.title}`,
-    tag: `decision-${decision.id}`,
-    route: '#decisions',
-    attention: true,
-  });
-  notify();
-}
-
-export function removeDecision(id: string): void {
-  state.decisions = state.decisions.filter((d) => d.id !== id);
-  notify();
-}
-
-export function updateDecision(decision: PendingDecision): void {
-  const idx = state.decisions.findIndex((d) => d.id === decision.id);
-  // Strictly an update — if the id isn't in the inbox the decision was either
-  // never seen (NEW arrived after UPDATED — unlikely with the gateway's
-  // ordering) or already removed via RESOLVED. Re-adding here would resurrect
-  // a resolved card; safer to drop. Log so the rare reorder/reload race is
-  // visible rather than silently swallowed.
-  if (idx === -1) {
-    console.warn(
-      `[state] updateDecision dropped — id=${decision.id.slice(0, 8)} not in inbox (NEW unseen or already RESOLVED)`,
-    );
-    return;
-  }
-  state.decisions = state.decisions.map((d, i) => (i === idx ? decision : d));
-  notify();
-}
-
-/**
- * Drop any local decisions that the run's authoritative `decisions` array now
- * shows as resolved. Recovers the inbox from missed RUN_DECISION_RESOLVED
- * events (e.g. when the resolve happened in another tab or before subscribe).
- */
-export function sweepResolvedFromRun(run: Run): void {
-  const resolvedIds = new Set((run.decisions ?? []).filter((d) => d.resolvedAt).map((d) => d.id));
-  if (resolvedIds.size === 0) return;
-  const before = state.decisions.length;
-  state.decisions = state.decisions.filter((d) => !resolvedIds.has(d.id));
-  if (state.decisions.length !== before) notify();
-}
-
-// Bootstrap path: server returns authoritative summaries with `totalCount`. Adopt
-// them as-is. Live path (`upsertRun`/`removeRun`) recomputes locally from the
-// already-flowing `RUN_*` events so the strip never goes stale and we don't
-// burn a round-trip per delta. Helper is pure (no fs/network — enforced by
-// `protocol/run-family-readiness.test.ts`), so doing it client-side is cheap.
+// Development fixtures can provide rows without server summaries. Product
+// observations use the summary metadata from their canonical query result.
 function recomputeRunSummariesInPlace(): void {
   if (!state.runSummaryMeta) return;
   state.runFamilySummaries = buildRunFamilyReadinessSummaries(state.runs);
@@ -665,39 +740,6 @@ export function updateRuns(
     recomputeRunSummariesInPlace();
   }
   state.bootstrapFailed = { ...state.bootstrapFailed, runs: false };
-  notify();
-}
-
-export function upsertRun(run: Run): void {
-  const idx = state.runs.findIndex((r) => r.id === run.id);
-  state.runs = idx >= 0 ? state.runs.map((r, i) => (i === idx ? run : r)) : [run, ...state.runs];
-  // Track local create against the server-snapshot total so isTruncated reflects
-  // the post-event state. RUN_DELETED would otherwise flip isTruncated=true even
-  // when totalCount and runs.length both dropped together.
-  if (idx < 0 && state.runSummaryMeta) {
-    state.runSummaryMeta = {
-      ...state.runSummaryMeta,
-      totalCount: state.runSummaryMeta.totalCount + 1,
-    };
-  }
-  recomputeRunSummariesInPlace();
-  notify();
-}
-
-export function removeRun(runId: string): void {
-  // RUN_DELETED doubles as archive notification. The id may be outside the
-  // paginated state.runs snapshot, but gateway-derived projections still include
-  // it and must invalidate even when this local array stays byte-for-byte equal.
-  state.runDeletionsRevision++;
-  const before = state.runs.length;
-  state.runs = state.runs.filter((r) => r.id !== runId);
-  if (state.runs.length !== before && state.runSummaryMeta) {
-    state.runSummaryMeta = {
-      ...state.runSummaryMeta,
-      totalCount: Math.max(0, state.runSummaryMeta.totalCount - 1),
-    };
-  }
-  recomputeRunSummariesInPlace();
   notify();
 }
 
@@ -801,6 +843,9 @@ export function waitForCoreHydration(epoch?: number): Promise<void> {
 // --- Wire up gateway events ---
 
 export function initState(): void {
+  initializeResourceCache();
+  subscribeResourceCache(bindFarmCollections);
+  bindFarmCollections();
   // Keep URL ↔ state in sync: inbound hash changes refresh filter state; state
   // changes re-write the hash so filters ride along across route navigations.
   if (typeof window !== 'undefined') {
@@ -838,164 +883,13 @@ export function initState(): void {
       resetBootstrapState();
     }
     const ownerChanged = syncWorkspaceOwner(conn);
+    bindFarmCollections();
     setConnection(conn);
     if (ownerChanged) notifyWorkspaceOwnerChange();
     if (conn === 'connected' && gateway.workspaceAccess === 'farm') {
       const epoch = gateway.connectionEpoch;
       void fetchInitialState(epoch);
     }
-  });
-
-  startSourceChangeFeed();
-
-  // Fleet events
-  gateway.subscribe<FleetUpdatedPayload>(Events.FLEET_UPDATED, (p) => {
-    if (p.fleet) deferEvent('fleet', () => updateFleet(p.fleet!));
-  });
-
-  gateway.subscribe<SlotChangedPayload>(Events.SLOT_CHANGED, (p) => {
-    if (p.slot) deferEvent('fleet', () => updateSlot(p.slot!));
-  });
-
-  // PR events
-  gateway.subscribe<PRUpdatedPayload>(Events.PR_UPDATED, (p) => {
-    if (p.pr) deferEvent('prs', () => updatePR(p.pr!));
-  });
-  // The gateway refreshed its warm PR list from GitHub: a changed list
-  // replaces ours; an unchanged one only clears the refreshing flag.
-  gateway.subscribe<PRListUpdatedPayload>(Events.PR_LIST_UPDATED, (p) => {
-    deferEvent('prs', () => {
-      if (p.error) markPRsRefreshFailed(p.error);
-      else if (p.prs) updatePRs(p.prs, { fetchedAt: p.fetchedAt });
-      else markPRsRefreshed(p.fetchedAt);
-    });
-  });
-
-  // Decision events (file-based + run-based).
-  // The emitter shape is two flavors: either { decision, slotId, runId } or the decision fields
-  // spread directly onto the root. Normalize both here.
-  //
-  // Used by both NEW and UPDATED handlers so a placeholder card swapped in
-  // place keeps its runMeta + slotId + context (Apply/Chat need runId).
-  const buildPendingDecision = (p: DecisionNewPayload): PendingDecision | null => {
-    const d = p.decision ?? p;
-    if (!d.id) return null;
-    let runMeta: PendingDecision['runMeta'];
-    if (p.runId) {
-      const run = state.runs.find((r) => r.id === p.runId);
-      if (run) {
-        runMeta = {
-          runId: run.id,
-          familyId: run.familyId,
-          flowType: run.flowType,
-          ticketOrPr: run.ticketOrPr,
-          prNumber: run.prNumber ?? undefined,
-          branch: run.branch ?? undefined,
-          runner: run.metrics?.runner ?? undefined,
-          model: run.metrics?.model ?? undefined,
-          summary: run.summary ?? undefined,
-        };
-      }
-    }
-    const payload = 'payload' in d ? d.payload : undefined;
-    return {
-      id: d.id,
-      type: (d.type ?? 'unknown') as PendingDecision['type'],
-      slotId: p.slotId ?? null,
-      title: d.title ?? '',
-      description: d.description ?? '',
-      context: { runId: p.runId, ...(d.context ?? {}) },
-      actions: d.actions ?? [],
-      createdAt: d.createdAt ?? new Date().toISOString(),
-      payload,
-      runMeta,
-    };
-  };
-
-  const onDecisionNew = (p: DecisionNewPayload) => {
-    // Build the decision only after the runs slice has drained, so runMeta
-    // reflects any buffered RUN_CREATED/RUN_UPDATED for the decision's run.
-    // Slices drain in RPC-resolution order, so DECISION_LIST may finish
-    // before RUN_LIST. The decisions buffer itself is gated behind runs in
-    // `markReady` via `pendingDecisionsDrain`. Every decision event for a
-    // decision ID stays in the decisions buffer and drains in insertion order,
-    // so a DECISION_NEW → DECISION_RESOLVED sequence cannot re-add a resolved
-    // decision.
-    deferEvent('decisions', () => {
-      const decision = buildPendingDecision(p);
-      if (decision) addDecision(decision);
-    });
-  };
-  gateway.subscribe<DecisionNewPayload>(Events.DECISION_NEW, onDecisionNew);
-  gateway.subscribe<DecisionNewPayload>(Events.RUN_DECISION_NEW, onDecisionNew);
-
-  const onDecisionResolved = (p: DecisionResolvedPayload) => {
-    const id = p.id ?? p.decisionId;
-    if (id) deferEvent('decisions', () => removeDecision(id));
-  };
-  gateway.subscribe<DecisionResolvedPayload>(Events.DECISION_RESOLVED, onDecisionResolved);
-  gateway.subscribe<DecisionResolvedPayload>(Events.RUN_DECISION_RESOLVED, onDecisionResolved);
-
-  const onDecisionUpdated = (p: DecisionNewPayload) => {
-    deferEvent('decisions', () => {
-      const decision = buildPendingDecision(p);
-      if (decision) updateDecision(decision);
-    });
-  };
-  gateway.subscribe<DecisionNewPayload>(Events.DECISION_UPDATED, onDecisionUpdated);
-  gateway.subscribe<DecisionNewPayload>(Events.RUN_DECISION_UPDATED, onDecisionUpdated);
-
-  // Run events
-  gateway.subscribe<RunCreatedPayload>(Events.RUN_CREATED, (p) => {
-    if (p.run) {
-      console.log(
-        `[state] RUN_CREATED runId=${p.run.id.slice(0, 8)} status=${p.run.status} decisions=${p.run.decisions?.length ?? 0}`,
-      );
-      deferEvent('runs', () => upsertRun(p.run!));
-    }
-  });
-
-  gateway.subscribe<RunUpdatedPayload>(Events.RUN_UPDATED, (p) => {
-    if (p.run) {
-      const unresolvedReview = (p.run.decisions ?? []).some(
-        (d) => !d.resolvedAt && (d.payload as { kind?: string } | undefined)?.kind === 'review',
-      );
-      console.log(
-        `[state] RUN_UPDATED runId=${p.run.id.slice(0, 8)} status=${p.run.status} decisions=${p.run.decisions?.length ?? 0} unresolvedReview=${unresolvedReview}`,
-      );
-      deferEvent('runs', () => upsertRun(p.run!));
-      // Authoritative sweep — drop any local decisions the run already shows as
-      // resolved (recovers from missed DECISION_RESOLVED events after restart
-      // or cross-tab resolves).
-      const run = p.run!;
-      deferEvent('decisions', () => sweepResolvedFromRun(run));
-    }
-  });
-
-  gateway.subscribe<RunCompletedPayload>(Events.RUN_COMPLETED, (p) => {
-    if (p.run) {
-      console.log(`[state] RUN_COMPLETED runId=${p.run.id.slice(0, 8)} status=${p.run.status}`);
-      deferEvent('runs', () => upsertRun(p.run!));
-    }
-  });
-
-  gateway.subscribe<RunDeletedPayload>(Events.RUN_DELETED, (p) => {
-    if (p.runId) deferEvent('runs', () => removeRun(p.runId));
-  });
-
-  // Queue events
-  gateway.subscribe<QueueUpdatedPayload>(Events.QUEUE_UPDATED, (p) => {
-    if (p.items) deferEvent('queue', () => updateQueueItems(p.items));
-  });
-
-  // Backlog events
-  gateway.subscribe<BacklogUpdatedPayload>(Events.BACKLOG_UPDATED, (p) => {
-    if (p.items) deferEvent('backlog', () => updateBacklogItems(p.items));
-  });
-
-  // Work graph events
-  gateway.subscribe<WorkGraphUpdatedPayload>(Events.WORK_GRAPH_UPDATED, (p) => {
-    if (p.graph) deferEvent('workGraphs', () => upsertWorkGraph(p.graph));
   });
 
   // GitHub API rate-limit telemetry (github-client.ts emits after each call).
@@ -1149,118 +1043,58 @@ async function runFetchInitialState(
   // failure and mark the slice failed so the UI can show "cached/stale"
   // affordances instead of false empty states; ephemeral slices that do not
   // have a safe stale rendering path still clear below.
-  const fleetJob = gateway
-    .request<FleetStatusResult>(Methods.FLEET_STATUS)
-    .then((r) => {
-      if (stillCurrent() && r.fleet) updateFleet(r.fleet);
-    })
+  const cache = getResourceCache();
+  const fleetJob = (
+    cache
+      ? cache.retry(fleetQuery)
+      : Promise.reject(new Error('Offline fleet store is unavailable'))
+  )
     .catch(() => markFailed('fleet'))
     .finally(() => markReady('fleet'));
-  const decisionsJob = gateway
-    .request<DecisionListResult>(Methods.DECISION_LIST)
-    .then((r) => {
-      if (stillCurrent() && r.decisions) updateDecisions(r.decisions);
-    })
-    .catch(() => {
-      if (stillCurrent()) updateDecisions([]);
-      markFailed('decisions');
-    })
+  const decisionsJob = (
+    cache
+      ? cache.retry(decisionsQuery)
+      : Promise.reject(new Error('Offline decision store is unavailable'))
+  )
+    .catch(() => markFailed('decisions'))
     .finally(() => markReady('decisions'));
-  // The newest-runs window can miss a long-lived active run; the active list never does.
-  const runsJob = Promise.all([
-    gateway.request<RunListResult>(Methods.RUN_LIST, {
-      limit: 1000,
-      includeFamilySummaries: true,
-      includeProjectAnalytics: true,
-    }),
-    gateway.request<RunListResult>(Methods.RUN_LIST, { active: true }),
-  ])
-    .then(([r, active]) => {
-      if (stillCurrent() && r.runs) updateRuns(mergeRunsById(r.runs, active.runs ?? []), r);
-    })
+  const runsJob = (
+    cache
+      ? Promise.all([cache.retry(runHistoryQuery), cache.retry(activeRunsQuery)])
+      : Promise.reject(new Error('Offline run store is unavailable'))
+  )
     .catch(() => markFailed('runs'))
     .finally(() => markReady('runs'));
-  const queueJob = gateway
-    .request<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST, {})
-    .then((r) => {
-      if (stillCurrent() && r.items) updateQueueItems(r.items);
-    })
-    .catch(() => {
-      if (stillCurrent()) updateQueueItems([]);
-      markFailed('queue');
-    })
+  const queueJob = (
+    cache
+      ? cache.retry(queueQuery)
+      : Promise.reject(new Error('Offline planning store is unavailable'))
+  )
+    .catch(() => markFailed('queue'))
     .finally(() => markReady('queue'));
-  const backlogJob = gateway
-    .request<BacklogListResult>(Methods.BACKLOG_LIST, { includeArchived: true })
-    .then((r) => {
-      if (stillCurrent() && r.items) updateBacklogItems(r.items);
-    })
-    .catch(() => {
-      if (stillCurrent()) updateBacklogItems([]);
-      markFailed('backlog');
-    })
+  const backlogJob = (
+    cache
+      ? cache.retry(backlogQuery)
+      : Promise.reject(new Error('Offline planning store is unavailable'))
+  )
+    .catch(() => markFailed('backlog'))
     .finally(() => markReady('backlog'));
-  const workGraphsJob = gateway
-    .request<WorkGraphListResult>(Methods.WORK_GRAPH_LIST, { includeArchived: true })
-    .then((r) => {
-      if (stillCurrent() && r.graphs) updateWorkGraphs(r.graphs);
-    })
-    .catch(() => {
-      if (stillCurrent()) updateWorkGraphs([]);
-      markFailed('workGraphs');
-    })
+  const workGraphsJob = (
+    cache
+      ? cache.retry(workGraphsQuery)
+      : Promise.reject(new Error('Offline planning store is unavailable'))
+  )
+    .catch(() => markFailed('workGraphs'))
     .finally(() => markReady('workGraphs'));
-  const projectsJob = gateway
-    .request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
-    .then((r) => {
-      if (stillCurrent() && r.projects) {
-        updateProjectDefaultBranches(
-          Object.fromEntries(r.projects.map((p) => [p.name, p.defaultBranch || DEFAULT_BRANCH])),
-        );
-        updateProjectSlotTracking(
-          Object.fromEntries(
-            r.projects.map((p) => [
-              p.name,
-              {
-                defaultBranch: p.defaultBranch || DEFAULT_BRANCH,
-                slotTrackingBranch: p.slotTrackingBranch,
-                worktreeBase: p.worktreeBase,
-              },
-            ]),
-          ),
-        );
-      }
-    })
-    .catch(() => {
-      if (stillCurrent()) {
-        updateProjectDefaultBranches({});
-        updateProjectSlotTracking({});
-      }
-      markFailed('projects');
-    })
+  const projectsJob = (
+    cache
+      ? cache.retry(projectsQuery)
+      : Promise.reject(new Error('Configuration store is unavailable'))
+  )
+    .catch(() => markFailed('projects'))
     .finally(() => markReady('projects'));
 
-  // PR_LIST fans out across multiple gh calls per candidate PR; cold runs
-  // routinely exceed the 15s default. Keep the 30s budget but gate
-  // `waitForCoreHydration` on the five core slices only — workspace recovery
-  // (slot-view, ready/review workspaces) has no PR dependency and must not
-  // wait up to 30s on GitHub latency. The prs job still participates in
-  // the bootstrap lifecycle (awaited before activeBootstrap is cleared) so
-  // `markReady('prs')` lands under the correct identity guard, the buffer
-  // drains, and hydrated.prs flips.
-  const prsJob = gateway
-    .request<PRListResult>(Methods.PR_LIST, undefined, PR_LIST_TIMEOUT_MS)
-    .then((r) => {
-      if (stillCurrent() && r.prs)
-        updatePRs(r.prs, { fetchedAt: r.fetchedAt, refreshing: r.refreshing });
-    })
-    .catch(() => markFailed('prs'))
-    .finally(() => markReady('prs'));
-
-  // Gate `waitForCoreHydration` on the five core slices. Any caller awaiting
-  // it after this point sees lastHydratedEpoch bumped even if PR_LIST is
-  // still in flight, which is what spares workspace recovery from the
-  // PR_LIST timeout.
+  // PRs recover independently through their cache observer; core workspaces do not await GitHub.
   await Promise.allSettled([
     fleetJob,
     decisionsJob,
@@ -1275,7 +1109,4 @@ async function runFetchInitialState(
     notify();
   }
   resolveCoreHydration();
-  // Keep activeBootstrap alive until PR_LIST settles too, so its
-  // markReady/markFailed run under the correct identity guard.
-  await prsJob;
 }

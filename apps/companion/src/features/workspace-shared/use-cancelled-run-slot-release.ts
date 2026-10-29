@@ -8,12 +8,17 @@ import {
 } from '@farmslot/protocol';
 
 import { currentFarmConnection } from '../../lib/connection-authority';
+import { assertNativeFleetReady } from '../../lib/run-collections';
 import { useConnectionStore } from '../../store/connection';
+import { useFleetStore } from '../../store/fleet';
 
 /** Releases a cancelled run's kept slot once the operator confirms (ADR-054, 2026-10-19). */
 export function useCancelledRunSlotRelease(hold: CancelledRunSlotHold) {
   const client = useConnectionStore((state) => state.client);
   const connected = useConnectionStore((state) => state.status === 'connected');
+  const fleetCurrent = useFleetStore(
+    (state) => state.observation.status === 'ready' && !state.fleet?.stale,
+  );
   const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,6 +28,7 @@ export function useCancelledRunSlotRelease(hold: CancelledRunSlotHold) {
     setReleasing(true);
     setError(null);
     try {
+      assertNativeFleetReady();
       const refusal = await releaseCancelledRunSlot(
         (method, params, timeoutMs) => client.request<SlotReleaseResult>(method, params, timeoutMs),
         hold,
@@ -42,5 +48,10 @@ export function useCancelledRunSlotRelease(hold: CancelledRunSlotHold) {
     ]);
   }, [hold, release]);
 
-  return { confirmRelease, releasing, error, disabled: !client || !connected || releasing };
+  return {
+    confirmRelease,
+    releasing,
+    error,
+    disabled: !client || !connected || !fleetCurrent || releasing,
+  };
 }

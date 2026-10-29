@@ -1,6 +1,8 @@
 // state.ts — Read/watch .farm-status.json, pool/*.json, projects/*/project.json
 // Transforms raw JSON into protocol types
 
+import { once } from 'node:events';
+import { statSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -26,9 +28,12 @@ import {
   type TmuxWorkerFilterConfig,
   validateQaConfig,
 } from '@farmslot/protocol';
+import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
   declaredProjectNames,
+  invalidateProjectVarsCache,
   isIgnoredPoolFile,
   normalizeRawProjectAutoRecovery,
   normalizeRawProjectBacklog,
@@ -43,7 +48,21 @@ import {
   readSourceRuntimeSettings,
   usesRuntimeSettings,
 } from '../core/config.js';
+import { watchedEventPath } from '../core/file-observation.js';
+import { onStatusCommit } from '../core/state.js';
+import { TriagePilotObservation } from '../intelligence/triage/pilot-observation.js';
+import { getFarmslotStorePath, getOpenClawStorePath } from '../llm/auth-store.js';
+import { invalidateLLMConfig } from '../llm/config.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
+import { capabilityResourceChanges } from '../resources/capability-changes.js';
+import { publishConfigurationResources } from '../resources/configuration-changes.js';
+import { resourceRevisions } from '../resources/revisions.js';
+import {
+  slotResourceChanges as slotResources,
+  statusCheckedAt,
+  statusSlotResources,
+} from '../resources/slot-run-bindings.js';
+import { publishWorkerResources } from '../resources/worker-changes.js';
 
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
@@ -261,6 +280,21 @@ function normalizePublicationReview(
 }
 
 let cachedFleet: FleetStatus | null = null;
+// A workspace overlay is bound to its row's recovery owner, which slot rows do not carry.
+const workspaceRecoveryIds = new WeakMap<FleetStatus, ReadonlyMap<string, string | null>>();
+let fleetReadVersion = 0;
+onStatusCommit((snapshot) => {
+  cachedFleet = null;
+  fleetReadVersion++;
+  try {
+    slotResources.observe(statusSlotResources(snapshot), statusCheckedAt(snapshot));
+  } catch (error) {
+    // The file committed, but cannot serve trustworthy slot facts or bindings.
+    // Invalidate saved readers and propagate the owning writer's failure.
+    slotResources.unavailable();
+    throw error;
+  }
+});
 const changeHandlers: StateChangeHandler[] = [];
 
 // ─── Task progress overlay (enriched by task-watcher, not persisted to disk) ───
@@ -272,6 +306,15 @@ interface TaskProgressOverlay {
 
 const taskProgressCache = new Map<string, TaskProgressOverlay>();
 
+function setSlotOverlay<T>(cache: Map<string, T>, slotId: string, value: T | undefined): void {
+  if (canonicalResourceJson(cache.get(slotId)) === canonicalResourceJson(value)) return;
+  if (value === undefined) cache.delete(slotId);
+  else cache.set(slotId, structuredClone(value));
+  // Readers apply current overlays to the retained base rows. Fence an older in-flight file read.
+  fleetReadVersion++;
+  slotResources.overlayChanged(slotId);
+}
+
 export function setTaskProgressOverlay(
   slotId: string,
   phase: string | null,
@@ -279,17 +322,17 @@ export function setTaskProgressOverlay(
   total: number,
 ): void {
   if (!phase || total === 0) {
-    taskProgressCache.delete(slotId);
+    clearTaskProgressOverlay(slotId);
     return;
   }
-  taskProgressCache.set(slotId, {
+  setSlotOverlay(taskProgressCache, slotId, {
     taskPhase: `${phase} ${completed}/${total}`,
     taskStepProgress: completed / total,
   });
 }
 
 export function clearTaskProgressOverlay(slotId: string): void {
-  taskProgressCache.delete(slotId);
+  setSlotOverlay(taskProgressCache, slotId, undefined);
 }
 
 // ─── PR Health overlay (populated by CI monitor ticks) ───
@@ -297,15 +340,11 @@ export function clearTaskProgressOverlay(slotId: string): void {
 const prHealthCache = new Map<string, SlotStatus['prHealth']>();
 
 export function setPrHealthOverlay(slotId: string, prHealth: SlotStatus['prHealth']): void {
-  if (!prHealth) {
-    prHealthCache.delete(slotId);
-    return;
-  }
-  prHealthCache.set(slotId, prHealth);
+  setSlotOverlay(prHealthCache, slotId, prHealth);
 }
 
 export function clearPrHealthOverlay(slotId: string): void {
-  prHealthCache.delete(slotId);
+  setSlotOverlay(prHealthCache, slotId, undefined);
 }
 
 // ─── Branch overlay (enriched by branch-watcher, not persisted to disk) ───
@@ -313,16 +352,15 @@ export function clearPrHealthOverlay(slotId: string): void {
 const branchOverlayCache = new Map<string, string>();
 const workspaceOverlayCache = new Map<string, NonNullable<SlotStatus['workspace']>>();
 export function setWorkspaceOverlay(slotId: string, workspace: SlotStatus['workspace']): void {
-  if (workspace) workspaceOverlayCache.set(slotId, workspace);
-  else workspaceOverlayCache.delete(slotId);
+  setSlotOverlay(workspaceOverlayCache, slotId, workspace ?? undefined);
 }
 
 export function setBranchOverlay(slotId: string, branch: string): void {
-  branchOverlayCache.set(slotId, branch);
+  setSlotOverlay(branchOverlayCache, slotId, branch);
 }
 
 export function clearBranchOverlay(slotId: string): void {
-  branchOverlayCache.delete(slotId);
+  setSlotOverlay(branchOverlayCache, slotId, undefined);
 }
 
 // ─── Raw JSON shape from .farm-status.json ───
@@ -570,9 +608,10 @@ function computeResourceRollup(slot: SlotStatus): ResourceRollup {
   return 'coherent';
 }
 
-function transformFleet(raw: RawStatus): FleetStatus {
-  const slots = raw.slots.map((s) => {
-    const slot = transformSlot(s);
+function withFleetOverlays(fleet: FleetStatus): FleetStatus {
+  const recoveryIds = workspaceRecoveryIds.get(fleet);
+  const slots = fleet.slots.map((base) => {
+    const slot = { ...base };
     const workspace = workspaceOverlayCache.get(slot.slot);
     if (
       workspace &&
@@ -580,12 +619,12 @@ function transformFleet(raw: RawStatus): FleetStatus {
         Date.parse(workspace.observedAt) > Date.parse(slot.workspace.observedAt)) &&
       Date.now() - Date.parse(workspace.observedAt) < 30_000 &&
       workspace.branch === slot.branch &&
-      workspace.epoch === (Number(s.slot_epoch) || 0) &&
-      workspace.currentRunId === (s.current_run_id ?? null) &&
-      workspace.cleanupRunId === (s.cleanup_run_id ?? null) &&
-      workspace.handoffRunId === (s.handoff_run_id ?? null) &&
-      workspace.recoveryId === (s.workspace_recovery?.id ?? null) &&
-      (!s.head_sha || s.head_sha === workspace.headSha)
+      workspace.epoch === (slot.slotEpoch ?? 0) &&
+      workspace.currentRunId === slot.currentRunId &&
+      workspace.cleanupRunId === (slot.cleanupRunId ?? null) &&
+      workspace.handoffRunId === (slot.handoffRunId ?? null) &&
+      workspace.recoveryId === (recoveryIds?.get(slot.slot) ?? null) &&
+      (!slot.headSha || slot.headSha === workspace.headSha)
     )
       slot.workspace = workspace;
 
@@ -605,10 +644,14 @@ function transformFleet(raw: RawStatus): FleetStatus {
     slot.resourceRollup = computeResourceRollup(slot);
     return slot;
   });
-  // Enrich slots with host load from node health
   enrichSlotHostLoad(slots);
+  return { ...fleet, slots, machines: getAllMachineHealth() };
+}
+
+function transformFleet(raw: RawStatus): FleetStatus {
+  const slots = raw.slots.map(transformSlot);
   return {
-    checkedAt: raw.checked_at,
+    checkedAt: statusCheckedAt(raw) ?? '',
     slots,
     summary: computeSummary(slots),
   };
@@ -631,20 +674,43 @@ export function markGhostSlots(fleet: FleetStatus, liveIds: ReadonlySet<string>)
 
 // ─── Public API ───
 
-export async function loadFleetStatus(forceRefresh = false): Promise<FleetStatus> {
+export async function loadFleetStatus(
+  forceRefresh = false,
+  strictRead = false,
+): Promise<FleetStatus> {
   if (cachedFleet && !forceRefresh) return getCachedFleet()!;
+  const version = ++fleetReadVersion;
+  let next: FleetStatus;
   try {
     const content = await readFile(statusFile, 'utf-8');
     const raw: RawStatus = JSON.parse(content);
+    const resources = statusSlotResources(raw);
     const liveIds = new Set(
       (await loadPoolConfigs()).flatMap((pool) => pool.slots.map((slot) => slot.id)),
     );
-    cachedFleet = markGhostSlots(transformFleet(raw), liveIds);
+    next = markGhostSlots(transformFleet(raw), liveIds);
+    workspaceRecoveryIds.set(
+      next,
+      new Map(
+        raw.slots.map((s): [string, string | null] => [s.slot, s.workspace_recovery?.id ?? null]),
+      ),
+    );
+    if (version === fleetReadVersion) {
+      cachedFleet = next;
+      slotResources.observe(resources, statusCheckedAt(raw));
+      slotResources.observePool(liveIds);
+    }
   } catch (err) {
+    if (version === fleetReadVersion) {
+      cachedFleet = null;
+      slotResources.unavailable();
+    }
+    if (strictRead) throw err;
     console.error(
       `[state] loadFleetStatus failed: ${(err as Error).message} — falling back to empty fleet`,
     );
-    cachedFleet = {
+    // Keep this bootstrap fallback out of the cache so strict queries still see the source error.
+    next = {
       checkedAt: new Date().toISOString(),
       slots: [],
       summary: {
@@ -659,13 +725,12 @@ export async function loadFleetStatus(forceRefresh = false): Promise<FleetStatus
       },
     };
   }
-  return getCachedFleet()!;
+  return withFleetOverlays(next);
 }
 
 export function getCachedFleet(): FleetStatus | null {
   // Connection health is live state, independent of the status-file snapshot.
-  if (cachedFleet) cachedFleet.machines = getAllMachineHealth();
-  return cachedFleet;
+  return cachedFleet ? withFleetOverlays(cachedFleet) : null;
 }
 
 export function setCachedFleetForTests(fleet: FleetStatus | null): void {
@@ -687,24 +752,58 @@ export function stateChangeHandlerCountForTests(): number {
   return changeHandlers.length;
 }
 
-export function startFileWatcher(): void {
-  const watcher = watch(statusFile, { persistent: true, ignoreInitial: true });
-  watcher.on('change', async () => {
-    await loadFleetStatus(true);
-    if (cachedFleet) {
-      for (const handler of changeHandlers) {
-        handler(cachedFleet);
-      }
+export function startFileWatcher() {
+  // A file watch can lose an unlink immediately after a change on macOS.
+  // Keep watching its directory across atomic replacements and recreation.
+  const directory = path.dirname(statusFile);
+  const prRulesFile = path.resolve(farmslotRoot, '.pr-rules.json');
+  const reloadPRRules = async () => {
+    try {
+      const { reloadPRRulesFromFile } = await import('../methods/pr-rules.js');
+      await reloadPRRulesFromFile();
+    } catch (error) {
+      // The owning store latches this failure and refuses reads/actions until a valid reload.
+      console.error('[state] PR rule source reload failed:', error);
     }
+  };
+  const watcher = watch(directory, {
+    persistent: true,
+    ignoreInitial: true,
+    depth: 0,
+    ignored: (file) => file !== directory && file !== statusFile && file !== prRulesFile,
+  });
+  watcher.on('all', async (event, file) => {
+    if (event !== 'change' && event !== 'add' && event !== 'unlink') return;
+    if (file === prRulesFile) {
+      await reloadPRRules();
+      return;
+    }
+    const fleet = await loadFleetStatus(true);
+    for (const handler of changeHandlers) handler(fleet);
+  });
+  watcher.on('raw', (_event, filename: unknown, details: unknown) => {
+    if (watchedEventPath(filename, details) === prRulesFile) void reloadPRRules();
   });
 
   // Watch pool config changes — hot-reload without gateway restart
   let poolDebounce: ReturnType<typeof setTimeout> | undefined;
-  const poolWatcher = watch(path.join(poolDir, '*.json'), {
+  const poolWatcher = watch(poolDir, {
     persistent: true,
     ignoreInitial: true,
+    depth: 0,
+    ignored: (file) =>
+      file !== poolDir && (!file.endsWith('.json') || isIgnoredPoolFile(path.basename(file))),
   });
-  poolWatcher.on('all', () => {
+  const poolChanged = (file: string) => {
+    if (
+      path.dirname(file) !== poolDir ||
+      !file.endsWith('.json') ||
+      isIgnoredPoolFile(path.basename(file))
+    )
+      return;
+    publishConfigurationResources();
+    capabilityResourceChanges.catalogChanged();
+    publishWorkerResources();
     clearTimeout(poolDebounce);
     poolDebounce = setTimeout(async () => {
       try {
@@ -723,7 +822,142 @@ export function startFileWatcher(): void {
         console.error('[state] pool refresh failed:', (err as Error).message);
       }
     }, 2000);
+  };
+  poolWatcher.on('all', (event, file) => {
+    if (['add', 'change', 'unlink'].includes(event)) poolChanged(file);
   });
+  poolWatcher.on('raw', (_event, filename: unknown, details: unknown) => {
+    const file = watchedEventPath(filename, details);
+    if (file) poolChanged(file);
+  });
+  const selectedHome = farmslotHome();
+  const runtimeSettingsDir = path.join(selectedHome, 'sources', 'runtime-settings');
+  // Watch only each project's config and the bounded runtime settings directory.
+  // Source-bound immutable packs announce their new lock through the sources key.
+  const llmConfigFile = path.join(selectedHome, 'llm-config.json');
+  const assessmentFiles = [
+    'assessment-config.json',
+    'assessment-suggestion-policy.json',
+    'decision-advice-policy.json',
+    'triage-policy.json',
+  ].map((name) => path.join(selectedHome, name));
+  const triagePilotObservation = new TriagePilotObservation(selectedHome);
+  const triagePilotReady = triagePilotObservation.refresh();
+  const registrationFiles = [llmConfigFile, getFarmslotStorePath(), getOpenClawStorePath()];
+  const registrationParent = path.dirname(getOpenClawStorePath());
+  // A missing optional root can finish Chokidar's multi-root readiness before
+  // its other trees are armed. Give it an existing ancestor and its own owner.
+  let registrationRoot = registrationParent;
+  while (!statSync(registrationRoot, { throwIfNoEntry: false }))
+    registrationRoot = path.dirname(registrationRoot);
+  const registrationWatcher = watch(registrationRoot, {
+    persistent: true,
+    ignoreInitial: true,
+    ignored: (file) =>
+      file !== registrationRoot &&
+      file !== getOpenClawStorePath() &&
+      !getOpenClawStorePath().startsWith(`${file}${path.sep}`),
+  });
+  registrationWatcher.on('all', (event, file) => {
+    if (file === getOpenClawStorePath() && ['add', 'change', 'unlink'].includes(event))
+      publishConfigurationResources();
+  });
+  registrationWatcher.on('raw', (_event, filename: unknown, details: unknown) => {
+    if (watchedEventPath(filename, details) === getOpenClawStorePath())
+      publishConfigurationResources();
+  });
+  const projectWatcher = watch([projectsDir, selectedHome], {
+    persistent: true,
+    ignoreInitial: true,
+    depth: 4,
+    ignored: (file, stats) => {
+      if (assessmentFiles.includes(file)) return false;
+      if (registrationFiles.includes(file) || file === registrationParent) return false;
+      if (file === projectsDir || file === selectedHome || file === runtimeSettingsDir)
+        return false;
+      // Chokidar follows existing ancestors until a missing settings directory appears.
+      if (runtimeSettingsDir.startsWith(`${file}${path.sep}`)) return false;
+      const projectParts = path.relative(projectsDir, file).split(path.sep);
+      if (!projectParts[0].startsWith('..') && !path.isAbsolute(projectParts[0])) {
+        if (projectParts.length === 1) return stats?.isFile() ?? false;
+        if (projectParts.length === 2 && projectParts[1] === 'project.json') return false;
+        if (projectParts[1] === 'templates') return stats?.isFile() ? !file.endsWith('.md') : false;
+        if (projectParts[1] === 'learnings')
+          return (
+            projectParts.length > 3 ||
+            (stats?.isFile() ? projectParts[2] !== 'LEARNINGS.md' : false)
+          );
+        return true;
+      }
+      return path.dirname(file) !== runtimeSettingsDir || !file.endsWith('.json');
+    },
+  });
+  const projectChanged = (file: string) => {
+    if (assessmentFiles.includes(file)) {
+      if (file === path.join(selectedHome, 'triage-policy.json'))
+        void triagePilotObservation.refresh();
+      resourceRevisions.advance({ family: 'assessment', scope: 'farm' });
+      return;
+    }
+    if (registrationFiles.includes(file)) {
+      if (file === llmConfigFile) invalidateLLMConfig();
+      publishConfigurationResources();
+      return;
+    }
+    if (path.dirname(file) === runtimeSettingsDir && file.endsWith('.json')) {
+      const project = path.basename(file, '.json');
+      invalidateProjectVarsCache(project);
+      publishConfigurationResources(project);
+      capabilityResourceChanges.catalogChanged();
+      publishWorkerResources();
+      return;
+    }
+    const projectRelative = path.relative(projectsDir, file).split(path.sep);
+    if (projectRelative[0] === '..' || path.isAbsolute(projectRelative[0])) return;
+    if (
+      (projectRelative.length >= 3 && projectRelative[1] === 'templates' && file.endsWith('.md')) ||
+      (projectRelative.length === 3 &&
+        projectRelative[1] === 'learnings' &&
+        projectRelative[2] === 'LEARNINGS.md')
+    ) {
+      invalidateProjectVarsCache(projectRelative[0]);
+      publishConfigurationResources(projectRelative[0]);
+      return;
+    }
+    if (projectRelative.length !== 2 || projectRelative[1] !== 'project.json') return;
+    const project = projectRelative[0];
+    invalidateProjectVarsCache(project);
+    publishConfigurationResources(project);
+    capabilityResourceChanges.catalogChanged();
+    publishWorkerResources();
+  };
+  projectWatcher.on('all', (event, file) => {
+    if (['add', 'change', 'unlink'].includes(event)) projectChanged(file);
+  });
+  projectWatcher.on('raw', (_event, filename: unknown, details: unknown) => {
+    const file = watchedEventPath(filename, details);
+    if (file) projectChanged(file);
+  });
+  return {
+    ready: Promise.all([
+      once(watcher, 'ready'),
+      once(poolWatcher, 'ready'),
+      once(projectWatcher, 'ready'),
+      once(registrationWatcher, 'ready'),
+      triagePilotReady,
+    ]),
+    assertTriagePilotObserved: (directory: string) => triagePilotObservation.assertReady(directory),
+    async close(): Promise<void> {
+      clearTimeout(poolDebounce);
+      await Promise.all([
+        watcher.close(),
+        poolWatcher.close(),
+        projectWatcher.close(),
+        registrationWatcher.close(),
+        triagePilotObservation.close(),
+      ]);
+    },
+  };
 }
 
 // ─── Pool configs ───
@@ -800,7 +1034,7 @@ export async function loadPoolConfig(machine: string): Promise<PoolConfig | null
 
 // ─── Project configs ───
 
-export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
+export async function loadProjectConfigs(strictRead = false): Promise<ProjectConfig[]> {
   const projects: ProjectConfig[] = [];
   try {
     const dirs = declaredProjectNames() ?? (await readdir(projectsDir));
@@ -987,6 +1221,8 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         // An entry with no project.json at all — a bare directory, or a plain
         // file like README.md — is not a project and is not worth reporting.
         const code = (error as NodeJS.ErrnoException).code;
+        // Client observations must not turn a failed decode into authoritative empty membership.
+        if (strictRead && code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
         if (code !== 'ENOENT' && code !== 'ENOTDIR') {
           console.error(
             `[state] project ${dir}: skipped, its project.json could not be loaded: ${(error as Error).message}`,
@@ -994,14 +1230,19 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         }
       }
     }
-  } catch {
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (strictRead && code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
     /* projects dir might not exist */
   }
   return projects;
 }
 
-export async function loadProjectConfig(project: string): Promise<ProjectConfig | null> {
-  const projects = await loadProjectConfigs();
+export async function loadProjectConfig(
+  project: string,
+  strictRead = false,
+): Promise<ProjectConfig | null> {
+  const projects = await loadProjectConfigs(strictRead);
   return projects.find((p) => p.name === project) ?? null;
 }
 

@@ -10,6 +10,7 @@ export interface RunListToolbarContext<Tab extends string> {
   tab: Tab;
   activeCount: number;
   manageMode: boolean;
+  actionsReady?: boolean;
   setTab: (tab: Tab) => void;
   setManageMode: (manageMode: boolean) => void;
   openNewRun: () => void;
@@ -46,7 +47,9 @@ export function renderRunListToolbar<Tab extends string>(ctx: RunListToolbarCont
       >
         ${ctx.manageMode ? 'Done managing' : 'Manage runs'}
       </button>
-      <button class="new-run-btn" @click=${ctx.openNewRun}>+ New Run</button>
+      <button class="new-run-btn" ?disabled=${ctx.actionsReady === false} @click=${ctx.openNewRun}>
+        + New Run
+      </button>
     </div>
   `;
 }

@@ -11,23 +11,69 @@ export interface FsReadParams {
   slotId: string;
   path: string;
 }
-export interface FsWriteParams {
+/**
+ * Conditional edits (ADR-009 Amendment 1). `expectedHash` is the SHA-256 of the raw bytes the
+ * caller read; `null` means the path must not exist. `runId` names the run the slot must serve,
+ * and `null` requires the slot to have no run.
+ */
+interface FsConditionalParams {
+  expectedHash?: string | null;
+  runId?: string | null;
+}
+
+export interface FsWriteParams extends FsConditionalParams {
   slotId: string;
   path: string;
   content: string;
 }
 
-export type FsWriteResult = OkResult;
+export interface FsWriteResult extends OkResult {
+  /**
+   * SHA-256 of the bytes written. Returned only when the write carried `expectedHash`; omitted for
+   * unconditional writes and by older gateways.
+   */
+  hash?: string;
+}
 
-export interface FsRenameParams {
+/** With a precondition, the destination must not exist. */
+export interface FsRenameParams extends FsConditionalParams {
   slotId: string;
   oldPath: string;
   newPath: string;
 }
 
-export interface FsDeleteParams {
+export interface FsRenameResult extends OkResult {
+  /**
+   * SHA-256 of the moved file, the source the precondition checked. Returned only when the rename
+   * carried `expectedHash`; omitted for unconditional renames and by older gateways.
+   */
+  hash?: string;
+}
+
+/** A hashed delete applies to files only. */
+export interface FsDeleteParams extends FsConditionalParams {
   slotId: string;
   path: string;
+}
+
+/** Error codes of the conditional file methods. */
+export const FsErrorCodes = {
+  /** The precondition failed; the error's details are `FsConflictDetails`. */
+  conflict: 'FS_CONFLICT',
+  /** A conditional write to a node that does not advertise `conditionalWrites`. */
+  preconditionUnsupported: 'FS_PRECONDITION_UNSUPPORTED',
+} as const;
+
+export type FsErrorCode = (typeof FsErrorCodes)[keyof typeof FsErrorCodes];
+
+/** Why an `FS_CONFLICT` edit was refused. */
+export interface FsConflictDetails {
+  /** `hash`: the file differs. `run`: the slot serves another run. `destination-exists`: a guarded rename's target exists. */
+  reason: 'hash' | 'run' | 'destination-exists';
+  /** The file's current hash; absent when the file does not exist. */
+  currentHash?: string;
+  /** The run the slot serves; `null` when it serves none. */
+  currentRunId?: string | null;
 }
 
 export interface FsRevealParams {
@@ -38,6 +84,7 @@ export interface FsRevealParams {
 export interface FsMkdirParams {
   slotId: string;
   path: string;
+  runId?: string | null;
 }
 export interface FsListResult {
   entries: FileEntry[];
@@ -46,6 +93,8 @@ export interface FsListResult {
 export interface FsReadResult {
   content: string;
   language: string;
+  /** SHA-256 of the raw bytes, like the node's `fs.hash`. Omitted by hosts without conditional writes. */
+  hash?: string;
 }
 
 export interface NodeFsPathParams {
@@ -53,14 +102,53 @@ export interface NodeFsPathParams {
   relPath: string;
 }
 
+export interface FileWatchFailure {
+  code?: string;
+  message: string;
+}
+
+export type FileWatchUnavailable = { kind: 'deleted' } | { kind: 'error'; error: FileWatchFailure };
+
+export interface NodeFsWatchParams {
+  path: string;
+  /** Recursive names/bytes/git-metadata observation, negotiated separately from file content. */
+  workspace?: 1;
+  /** Opt in to explicit deletion/error observations; absent retains content-only delivery. */
+  observations?: 1;
+}
+
+/** Experimental arm acknowledgement. Missing initial means no verified observation. */
+export interface NodeFsWatchResult {
+  watching: true;
+  observations?: 1;
+  initial?: { kind: 'updated'; content: string } | ({ content: '' } & FileWatchUnavailable);
+}
+
+interface NodeFsWatchIdentity {
+  requestId: string;
+  machine: string;
+  path: string;
+}
+
+/** Existing nodes omit kind. Content remains a string for the established wire contract. */
+export type NodeFsChangedPayload = NodeFsWatchIdentity &
+  ({ kind?: 'updated'; content: string } | ({ content: '' } & FileWatchUnavailable));
+
 export interface NodeFsWriteParams extends NodeFsPathParams {
   content: string;
+  expectedHash?: string | null;
 }
 
 export interface NodeFsRenameParams {
   root: string;
   oldRelPath: string;
   newRelPath: string;
+  expectedHash?: string | null;
+}
+
+/** Deletes carry the precondition here, so `NodeFsPathParams` stays shared and unchanged. */
+export interface NodeFsDeleteParams extends NodeFsPathParams {
+  expectedHash?: string | null;
 }
 
 export interface NodeFsWriteFileEntry {
@@ -105,4 +193,18 @@ export interface NodeFsWriteChunkResult {
   ok: true;
   bytesWritten: number;
   offset: number;
+}
+
+/** Existing fs.watch/fs.watch.stop and node.fs.changed; workspace mode never carries file bytes. */
+export interface NodeFsWorkspaceWatchResult {
+  workspace: 1;
+  ready: true;
+}
+export interface NodeFsWorkspaceChangedPayload {
+  requestId: string;
+  path: string;
+  machine: string;
+  workspace: 1;
+  kind: 'updated' | 'error';
+  error?: { message: string };
 }

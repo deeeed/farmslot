@@ -12,6 +12,7 @@ test('node native execution rejects other owners and conflicting execution ident
     supportsProfiles: true,
     supportsWorkerStopAttestation: true,
     supportsStructuredResults: true,
+    supportsObservations: true,
   });
   await assert.rejects(
     service.route({ owner: 'another', method: 'native.session.list', params: {} }),

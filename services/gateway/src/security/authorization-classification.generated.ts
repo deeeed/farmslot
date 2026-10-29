@@ -254,6 +254,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'resource.device.inventory': { classification: 'admin' },
   'resource.health': { classification: 'admin' },
   'resource.list': { classification: 'admin' },
+  'resource.observers.replace': { classification: 'admin' },
   'resource.pressure.history': { classification: 'admin' },
   'resource.pressure.snapshot': { classification: 'admin' },
   'resource.watch.setEnabled': { classification: 'admin' },

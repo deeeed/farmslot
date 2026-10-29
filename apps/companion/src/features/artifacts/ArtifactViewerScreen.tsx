@@ -1,667 +1,119 @@
 import { FlashList } from '@shopify/flash-list';
-import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  Text,
-  View,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
-import {
-  Events,
-  extractRunArtifactManifest,
-  Methods,
-  type Run,
-  type RunGetResult,
-  type RunRecipeRunsForRunResult,
-  type RunRefreshMirrorResult,
-} from '@farmslot/protocol';
-import type { SharedRunArtifactSelection } from '@farmslot/protocol/surfaces/view-links';
+import { Pressable, Text, View } from 'react-native';
 
 import { ArtifactCard } from '../../components/ArtifactCard';
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { MediaViewer } from '../../components/MediaViewer';
 import { RecipeRunControls } from '../../components/RecipeRunControls';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
-import { useConnectedRefresh } from '../../hooks/useConnectedRefresh';
-import { useReread } from '../../hooks/useReread';
-import {
-  type ArtifactStickyChromeLayout,
-  artifactStickyChromeThreshold,
-  artifactStickyChromeVisible,
-} from '../../lib/artifact-sticky-chrome';
 import {
   type ArtifactManifestEntry,
-  artifactsForRecipeRun,
-  artifactUrlForEntry,
   classifyArtifact,
-  countVisualArtifactPairs,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
-  DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  resolveRecipeRunSelection,
 } from '../../lib/artifact-url';
-import {
-  type ArtifactWorkspaceFilter,
-  buildArtifactWorkspaceCounts,
-  filterArtifactWorkspace,
-  isArtifactWorkspaceFilter,
-} from '../../lib/artifact-workspace';
 import { diffArtifactCandidate } from '../../lib/diff';
-import { evidenceMediaItems } from '../../lib/evidence-media-items';
-import { gatewayFetch } from '../../lib/gateway-http-auth';
-import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
-import { runRefreshEventMatches } from '../../lib/run-refresh';
 import { baseStyles, spacing } from '../../lib/theme';
-import { recordVisualClaimReview } from '../../lib/visual-claim-review';
-import { selectArtifactWorkspaceDecision } from '../../lib/workspace-decisions';
-import {
-  artifactWorkspaceNavCurrent,
-  targetWorkspaceRouteContextParams,
-  workspaceRouteContextParams,
-} from '../../lib/workspace-navigation';
-import { useConnectionStore } from '../../store/connection';
-import { useRunStore } from '../../store/runs';
 
-import {
-  ArtifactHeader,
-  ArtifactStickyFilter,
-  routeParamString,
-} from './components/artifact-viewer-panels';
+import { ArtifactHeader, ArtifactStickyFilter } from './components/artifact-viewer-panels';
 import { artifactViewerStyles as styles } from './styles/artifact-viewer.styles';
-import { useAcceptanceEvidenceViewer } from './use-acceptance-evidence-viewer';
-
-const ARTIFACT_FILTERS: Array<{ id: ArtifactWorkspaceFilter; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'before', label: 'Before' },
-  { id: 'after', label: 'After' },
-  { id: 'review', label: 'Review files' },
-  { id: 'visual', label: 'Visual files' },
-  { id: 'docs', label: 'Doc files' },
-  { id: 'diffs', label: 'Diff files' },
-  { id: 'recipes', label: 'Recipe files' },
-  { id: 'supporting', label: 'Other' },
-];
-const ARTIFACT_STICKY_NAV_FALLBACK_THRESHOLD = 180;
-const ARTIFACT_STICKY_NAV_ACTIVATION_LEAD = 96;
-const ARTIFACT_STICKY_NAV_MAX_THRESHOLD = 32;
-const RECIPE_COMPLETION_REFRESH_DELAY_MS = 5500;
-
-const keepRecipeRunList = (result: RunRecipeRunsForRunResult): RunRecipeRunsForRunResult => ({
-  ...result,
-  recordedEvidence: undefined,
-});
+import { useArtifactViewerController } from './use-artifact-viewer-controller';
 
 export default function ArtifactViewerScreen() {
+  const { viewModel, actions } = useArtifactViewerController();
   const {
-    runId,
-    recipeRun,
-    artifact,
-    filter,
-    workspace,
-    decisionKind,
-    ac,
-    evidence,
-    evidenceDecision,
-  } = useLocalSearchParams<{
-    runId: string;
-    recipeRun?: string;
-    artifact?: string | string[];
-    filter?: string | string[];
-    workspace?: string | string[];
-    decisionKind?: string | string[];
-    /** Acceptance criterion whose evidence the viewer opens on (with `evidence`). */
-    ac?: string | string[];
-    evidence?: string | string[];
-    evidenceDecision?: string | string[];
-  }>();
-  const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const isFocused = useIsFocused();
-  const client = useConnectionStore((s) => s.client);
-  const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
-  const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
-  const storeRun = useRunStore((s) => s.runs.find((r) => r.id === runId));
-  const [run, setRun] = useState<Run | null>(storeRun ?? null);
-  const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [viewerUri, setViewerUri] = useState<string | null>(null);
-  const [documentViewer, setDocumentViewer] = useState<{
-    title: string;
-    body: string;
-    sharedArtifact: SharedRunArtifactSelection;
-  } | null>(null);
-  const [artifactFilter, setArtifactFilter] = useState<ArtifactWorkspaceFilter>('all');
-  const [artifactQuery, setArtifactQuery] = useState('');
-  const [filterLayout, setFilterLayout] = useState<ArtifactStickyChromeLayout | null>(null);
-  const [stickyNavVisible, setStickyNavVisible] = useState(false);
-  const [artifactMirrorEpoch, setArtifactMirrorEpoch] = useState(0);
-  const [artifactMirrorRefreshing, setArtifactMirrorRefreshing] = useState(false);
-  const [artifactMirrorFeedback, setArtifactMirrorFeedback] = useState<string | null>(null);
-  const stickyNavVisibleRef = useRef(false);
-  const documentAbortRef = useRef<AbortController | null>(null);
-  const runRefreshRequestRef = useRef(0);
-  const runRefreshRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recipeCompletionRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const frozenDecision = useMemo(
-    () =>
-      selectArtifactWorkspaceDecision(
-        run,
-        routeParamString(recipeRun),
-        routeParamString(evidenceDecision).trim(),
-      ),
-    [evidenceDecision, recipeRun, run],
-  );
-  const frozenHash =
-    frozenDecision?.payload?.kind === 'ready'
-      ? frozenDecision.payload.prPackage?.packageHash
-      : frozenDecision?.payload?.kind === 'output-review'
-        ? frozenDecision.payload.manifestDigest
-        : undefined;
-  const acceptanceViewer = useAcceptanceEvidenceViewer({
-    client,
     run,
-    recipeRunId:
-      typeof recipeRun === 'string' && recipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
-        ? recipeRun
-        : undefined,
-    criterionId: routeParamString(ac).trim(),
-    decisionId: frozenDecision?.id,
-    evidencePath: routeParamString(evidence).trim(),
-    gatewayUrl,
-    authHeaders: artifactAuthHeaders,
-  });
-
-  useEffect(() => {
-    return () => {
-      documentAbortRef.current?.abort();
-      if (runRefreshRetryRef.current) clearTimeout(runRefreshRetryRef.current);
-      if (recipeCompletionRefreshRef.current) clearTimeout(recipeCompletionRefreshRef.current);
-    };
-  }, []);
-
-  const requestedRecipeRunId = typeof recipeRun === 'string' ? recipeRun : null;
-  const requestedArtifactQuery = routeParamString(artifact).trim();
-  const requestedFilterParam = routeParamString(filter).trim();
-  const requestedFilter = isArtifactWorkspaceFilter(requestedFilterParam)
-    ? requestedFilterParam
-    : null;
-  const refreshRun = useCallback(
-    async (reason: string) => {
-      if (!client || !runId) return;
-      const requestId = runRefreshRequestRef.current + 1;
-      runRefreshRequestRef.current = requestId;
-      try {
-        const result = await client.request<RunGetResult>('run.get', { runId });
-        if (runRefreshRequestRef.current !== requestId) return;
-        setRun(result.run);
-        setError(null);
-      } catch (err) {
-        if (runRefreshRequestRef.current !== requestId) return;
-        if (isGatewayBackgroundPauseError(err)) {
-          // App route transitions can briefly pause the gateway; retry once
-          // instead of replacing already-loaded evidence with transient noise.
-          console.warn(`Run artifacts refresh paused after ${reason}: ${(err as Error).message}`);
-          if (!runRefreshRetryRef.current) {
-            runRefreshRetryRef.current = setTimeout(() => {
-              runRefreshRetryRef.current = null;
-              void refreshRun(`${reason} resume`);
-            }, 1200);
-          }
-          return;
-        }
-        setError(`Failed to refresh run artifacts after ${reason}: ${(err as Error).message}`);
-      }
-    },
-    [client, runId],
-  );
-
-  useEffect(() => {
-    void refreshRun('initial load');
-  }, [refreshRun]);
-
-  useEffect(() => {
-    if (storeRun?.id === runId) setRun(storeRun);
-  }, [runId, storeRun]);
-
-  const frozenDecisionId = frozenDecision?.id;
-  const readRecipeRuns = useMemo(
-    () =>
-      client && runId
-        ? () =>
-            client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-              runId,
-              includeRecordedEvidence: true,
-              ...(frozenDecisionId
-                ? { decisionId: frozenDecisionId, evidenceSnapshotHash: frozenHash }
-                : {}),
-              ...(requestedRecipeRunId &&
-              requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
-                ? { recipeRunId: requestedRecipeRunId }
-                : {}),
-            })
-        : null,
-    [client, requestedRecipeRunId, runId, frozenDecisionId, frozenHash],
-  );
-  // Its error is its own: a later successful read clears it, whatever else failed meanwhile.
-  const recipeRead = useReread(
-    readRecipeRuns,
-    (reason, message) => `Failed to refresh recipe runs after ${reason}: ${message}`,
-    // The run's recipe-run list is the same for every selection, so the picker stays while a
-    // newly selected recipe run (or the decision's evidence) loads; its evidence does not.
-    { keepOnReset: keepRecipeRunList },
-  );
-  const refreshRecipeRuns = recipeRead.refresh;
-  const recipeRunGroupsLoaded = recipeRead.settled;
-  const recordedEvidence = recipeRead.value?.recordedEvidence ?? null;
-  const recipeRuns = useMemo(() => recipeRead.value?.recipeRuns ?? [], [recipeRead.value]);
-  const gatewaySelectedRecipeRunId = recipeRead.value?.selectedRecipeRunId ?? null;
-
-  useEffect(() => {
-    if (!client || !runId) return;
-    const maybeRefreshRun = (payload: unknown, reason: string) => {
-      if (!runRefreshEventMatches(runId, payload as { run?: Run; runId?: string })) return;
-      const eventRun = (payload as { run?: Run }).run;
-      if (eventRun?.id === runId) {
-        runRefreshRequestRef.current += 1;
-        setRun(eventRun);
-        setError(null);
-      } else {
-        void refreshRun(reason);
-      }
-      void refreshRecipeRuns(reason, false);
-    };
-    const unsubscribers = [
-      client.subscribe(Events.RUN_UPDATED, (payload) => maybeRefreshRun(payload, 'run.updated')),
-      client.subscribe(Events.RUN_COMPLETED, (payload) =>
-        maybeRefreshRun(payload, 'run.completed'),
-      ),
-      client.subscribe(Events.RUN_STEP_COMPLETED, (payload) =>
-        maybeRefreshRun(payload, 'run.step.completed'),
-      ),
-      client.subscribe(Events.RUN_DECISION_NEW, (payload) =>
-        maybeRefreshRun(payload, 'run.decision.new'),
-      ),
-      client.subscribe(Events.RUN_DECISION_UPDATED, (payload) =>
-        maybeRefreshRun(payload, 'run.decision.updated'),
-      ),
-      client.subscribe(Events.RUN_DECISION_RESOLVED, (payload) =>
-        maybeRefreshRun(payload, 'run.decision.resolved'),
-      ),
-    ];
-    return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
-    };
-  }, [client, refreshRecipeRuns, refreshRun, runId]);
-
-  useEffect(() => {
-    if (!client || !runId) return;
-    const timer = setInterval(() => {
-      void refreshRun('poll');
-    }, 30_000);
-    return () => clearInterval(timer);
-  }, [client, refreshRun, runId]);
-
-  // Each reconnect re-reads, as run detail does, and keeps the open evidence on screen, so
-  // a load paused before the gateway connected, or during a restart, is retried.
-  useConnectedRefresh(refreshRecipeRuns);
-
-  const refreshAfterRecipeComplete = useCallback(
-    (_requestId: string) => {
-      void Promise.all([
-        refreshRun('recipe completion'),
-        refreshRecipeRuns('recipe completion', false),
-      ]);
-      if (recipeCompletionRefreshRef.current) {
-        clearTimeout(recipeCompletionRefreshRef.current);
-      }
-      recipeCompletionRefreshRef.current = setTimeout(() => {
-        recipeCompletionRefreshRef.current = null;
-        void Promise.all([
-          refreshRun('recipe artifact settle'),
-          refreshRecipeRuns('recipe artifact settle', false),
-        ]);
-      }, RECIPE_COMPLETION_REFRESH_DELAY_MS);
-    },
-    [refreshRecipeRuns, refreshRun],
-  );
-
-  useEffect(() => {
-    setSelectedRecipeRunId(
-      requestedRecipeRunId === DECISION_EVIDENCE_RECIPE_RUN_PARAM
-        ? null
-        : resolveRecipeRunSelection(recipeRuns, requestedRecipeRunId, gatewaySelectedRecipeRunId),
-    );
-  }, [gatewaySelectedRecipeRunId, recipeRuns, requestedRecipeRunId]);
-
-  useEffect(() => {
-    if (!requestedArtifactQuery) return;
-    if (!requestedFilter) setArtifactFilter('all');
-    setArtifactQuery(requestedArtifactQuery);
-  }, [requestedArtifactQuery, requestedFilter]);
-
-  const awaitingRequestedRecipeRun = Boolean(
-    !recipeRunGroupsLoaded &&
-    requestedRecipeRunId &&
-    requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  );
-
-  const selectedRecipeRun = useMemo(
-    () => recipeRuns.find((group) => group.id === selectedRecipeRunId) ?? null,
-    [recipeRuns, selectedRecipeRunId],
-  );
-  const workspaceRecipeRunId =
-    requestedRecipeRunId === DECISION_EVIDENCE_RECIPE_RUN_PARAM
-      ? DECISION_EVIDENCE_RECIPE_RUN_PARAM
-      : selectedRecipeRunId;
-  const manifest = useMemo(() => {
-    if (awaitingRequestedRecipeRun) return [];
-    if (frozenDecision?.payload?.kind === 'ready')
-      return (
-        frozenDecision.payload.prPackage?.evidenceManifest ??
-        frozenDecision.payload.artifactManifest ??
-        []
-      );
-    if (frozenDecision?.payload?.kind === 'output-review')
-      return run?.output?.artifactManifest ?? [];
-    if (selectedRecipeRun) return artifactsForRecipeRun(selectedRecipeRun);
-    return run ? extractRunArtifactManifest(run) : [];
-  }, [awaitingRequestedRecipeRun, run, selectedRecipeRun, frozenDecision]);
-  const artifactUrlFor = useCallback(
-    (entry: ArtifactManifestEntry) =>
-      artifactUrlForEntry(gatewayUrl, runId ?? '', entry, artifactMirrorEpoch),
-    [artifactMirrorEpoch, gatewayUrl, runId],
-  );
-  const evidenceModel = useMemo(
-    () =>
-      createEvidenceReviewModel({
-        context: 'artifact',
-        gateDecision: frozenDecision ?? undefined,
-        comparisonSnapshot: recordedEvidence?.comparisonSnapshot,
-        artifacts: manifest,
-        package: recordedEvidence?.input,
-        contractVersion: recordedEvidence?.contractVersion,
-        visualReviewAuthority: recordedEvidence?.visualReviewAuthority,
-        visualReviewContext: recordedEvidence?.visualReviewContext,
-        readErrors: recordedEvidence?.errors,
-        artifactPrefix: recordedEvidence?.artifactPrefix,
-        packagePath: recordedEvidence?.packagePath,
-      }),
-    [recordedEvidence, manifest, frozenDecision],
-  );
-  const visualPairCount = useMemo(
-    () => countVisualArtifactPairs(manifest, evidenceModel),
-    [manifest, evidenceModel],
-  );
-  const artifactCounts = useMemo(
-    () => buildArtifactWorkspaceCounts(manifest, evidenceModel),
-    [manifest, evidenceModel],
-  );
-  const filteredSingles = useMemo(
-    () => filterArtifactWorkspace(manifest, artifactFilter, artifactQuery, evidenceModel),
-    [artifactFilter, artifactQuery, manifest, evidenceModel],
-  );
-  const availableFilters = useMemo(
-    () =>
-      selectedRecipeRun
-        ? ARTIFACT_FILTERS.filter((item) => item.id !== 'recipes')
-        : ARTIFACT_FILTERS,
-    [selectedRecipeRun],
-  );
-  const artifactDiffPath = useMemo(() => diffArtifactCandidate(manifest)?.path ?? null, [manifest]);
-  const workspaceNavCurrent = artifactWorkspaceNavCurrent(
-    workspaceRecipeRunId,
+    runId,
+    runObservation,
+    recipeObservation,
+    insets,
+    stickyNavVisible,
     artifactFilter,
+    artifactQuery,
+    artifactCounts,
+    filteredSingles,
     visualPairCount,
-  );
-  const workspaceRouteContext = useMemo(
-    () =>
-      workspaceRouteContextParams(
-        routeParamString(workspace),
-        routeParamString(decisionKind),
-        workspaceNavCurrent,
-      ),
-    [decisionKind, workspace, workspaceNavCurrent],
-  );
-  const diffRouteContext = useMemo(
-    () => targetWorkspaceRouteContextParams('diff', workspaceRouteContext.decisionKind),
-    [workspaceRouteContext.decisionKind],
-  );
-  const stickyNavThreshold = artifactStickyChromeThreshold(
-    filterLayout,
-    ARTIFACT_STICKY_NAV_FALLBACK_THRESHOLD,
-    ARTIFACT_STICKY_NAV_ACTIVATION_LEAD,
-    ARTIFACT_STICKY_NAV_MAX_THRESHOLD,
-  );
-
-  const handleListScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const visible = artifactStickyChromeVisible(
-        event.nativeEvent.contentOffset.y,
-        stickyNavThreshold,
-      );
-      if (stickyNavVisibleRef.current === visible) return;
-      stickyNavVisibleRef.current = visible;
-      setStickyNavVisible(visible);
-    },
-    [stickyNavThreshold],
-  );
-
-  const rememberFilterOffset = useCallback((event: LayoutChangeEvent) => {
-    const { y, height } = event.nativeEvent.layout;
-    setFilterLayout({ y, height });
-  }, []);
-
-  useEffect(() => {
-    if (selectedRecipeRun && artifactFilter === 'recipes') setArtifactFilter('all');
-  }, [artifactFilter, selectedRecipeRun]);
-
-  useEffect(() => {
-    if (requestedFilter) {
-      setArtifactFilter(
-        selectedRecipeRun && requestedFilter === 'recipes' ? 'all' : requestedFilter,
-      );
-      return;
-    }
-    if (!requestedArtifactQuery) setArtifactFilter('all');
-  }, [requestedArtifactQuery, requestedFilter, selectedRecipeRun]);
-
-  const refreshArtifactMirror = useCallback(async () => {
-    if (!client || !runId || artifactMirrorRefreshing) return;
-    setArtifactMirrorRefreshing(true);
-    setArtifactMirrorFeedback(null);
-    try {
-      const result = await client.request<RunRefreshMirrorResult>(Methods.RUN_REFRESH_MIRROR, {
-        runId,
-      });
-      if (!result.ok) {
-        setArtifactMirrorFeedback(result.reason || 'Refresh failed');
-        return;
-      }
-      setArtifactMirrorEpoch((value) => value + 1);
-      setArtifactMirrorFeedback(result.copied > 0 ? `Synced ${result.copied}` : 'Up to date');
-      await Promise.all([
-        refreshRun('manual mirror refresh'),
-        refreshRecipeRuns('manual mirror refresh', false),
-      ]);
-    } catch (err) {
-      setArtifactMirrorFeedback(`Refresh failed: ${(err as Error).message}`);
-    } finally {
-      setArtifactMirrorRefreshing(false);
-    }
-  }, [artifactMirrorRefreshing, client, refreshRecipeRuns, refreshRun, runId]);
-
-  useEffect(() => {
-    if (!artifactMirrorFeedback) return;
-    const timer = setTimeout(() => setArtifactMirrorFeedback(null), 2500);
-    return () => clearTimeout(timer);
-  }, [artifactMirrorFeedback]);
-
-  const openVisualArtifact = useCallback(
-    (uri: string) => {
-      evidenceModel.clearSelection();
-      setViewerUri(uri);
-    },
-    [evidenceModel],
-  );
-  const visualViewerItems = useMemo(
-    () =>
-      evidenceMediaItems(manifest, artifactUrlFor, artifactAuthHeaders, evidenceModel, {
-        runId,
-        slotId: run?.slotId ?? undefined,
-        recipeRunId:
-          selectedRecipeRun?.groupKind === CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
-            ? undefined
-            : selectedRecipeRun?.id,
-      }),
-    [
-      artifactAuthHeaders,
-      artifactUrlFor,
-      evidenceModel,
-      manifest,
-      runId,
-      run?.slotId,
-      selectedRecipeRun,
-    ],
-  );
-  const viewerIndex = viewerUri ? visualViewerItems.findIndex((item) => item.uri === viewerUri) : 0;
-
-  const openDocument = useCallback(
-    (url: string, path: string, recipeRunId?: string) => {
-      const sharedArtifact = { runId, path, slotId: run?.slotId ?? undefined, recipeRunId };
-      documentAbortRef.current?.abort();
-      const controller = new AbortController();
-      documentAbortRef.current = controller;
-      gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.text();
-        })
-        .then((body) =>
-          setDocumentViewer({ title: path.split('/').pop() ?? path, body, sharedArtifact }),
-        )
-        .catch((err: Error) => {
-          // Abort is the expected cleanup path when the operator closes/navigates mid-fetch.
-          if (err.name === 'AbortError') return;
-          setError(`Failed to load ${path}: ${err.message}`);
-        });
-    },
-    [artifactAuthHeaders, runId, run?.slotId],
-  );
-  const openReviewDocument = useCallback(
-    (entry: ArtifactManifestEntry) => {
-      if (!runId) return;
-      openDocument(
-        artifactUrlForEntry(gatewayUrl, runId, entry, artifactMirrorEpoch),
-        entry.path,
-        entry.recipeRunId,
-      );
-    },
-    [artifactMirrorEpoch, gatewayUrl, openDocument, runId],
-  );
-
-  const openProofArtifact = useCallback(
-    (entry: ArtifactManifestEntry) => {
-      const retained = manifest.find((file) => file.path === entry.path) ?? entry;
-      if (classifyArtifact(retained) === 'document') {
-        setViewerUri(null);
-        openReviewDocument(retained);
-      } else {
-        setViewerUri(artifactUrlFor(retained));
-      }
-    },
-    [artifactUrlFor, manifest, openReviewDocument],
-  );
-
-  const handleSelectRecipeRun = useCallback(
-    (recipeRunId: string | null) => {
-      setArtifactFilter('all');
-      setArtifactQuery('');
-      router.setParams({
-        artifact: undefined,
-        filter: undefined,
-        ac: undefined,
-        evidence: undefined,
-        recipeRun: recipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-      });
-    },
-    [router],
-  );
-
-  const handleFilterChange = useCallback(
-    (nextFilter: ArtifactWorkspaceFilter) => {
-      setArtifactFilter(nextFilter);
-      router.setParams({ filter: nextFilter === 'all' ? undefined : nextFilter });
-    },
-    [router],
-  );
-
-  const openDiffPath = useCallback(
-    (path?: string) => {
-      if (!runId) return;
-      if (!path && !artifactDiffPath && run?.slotId) {
-        router.push({
-          pathname: '/workspace/slot/[slotId]/diff',
-          params: { slotId: run.slotId, ...diffRouteContext },
-        });
-        return;
-      }
-      router.push({
-        pathname: '/workspace/run/[runId]/diff',
-        params: {
-          runId,
-          ...diffRouteContext,
-          ...(path ? { path } : {}),
-          ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
-        },
-      });
-    },
-    [artifactDiffPath, diffRouteContext, router, run?.slotId, runId, workspaceRecipeRunId],
-  );
-
-  const renderItem = useCallback(
-    ({ item, index }: { item: ArtifactManifestEntry; index: number }) => {
-      if (!runId) return null;
-      const url = artifactUrlFor(item);
-      const mediaType = classifyArtifact(item);
-      const isDiffArtifact = diffArtifactCandidate([item])?.path === item.path;
-      return (
-        <View style={[styles.artifactCell, index % 2 === 0 && styles.artifactCellLeft]}>
-          <ArtifactCard
-            url={url}
-            path={item.path}
-            purpose={item.purpose}
-            type={item.type}
-            label={item.label}
-            mimeType={item.mimeType}
-            sizeBytes={item.sizeBytes}
-            authHeaders={artifactAuthHeaders}
-            onPressImage={mediaType === 'image' ? () => openVisualArtifact(url) : undefined}
-            onPressVideo={mediaType === 'video' ? () => openVisualArtifact(url) : undefined}
-            onPressDocument={
-              mediaType === 'document'
-                ? isDiffArtifact
-                  ? () => openDiffPath(item.path)
-                  : () => openDocument(url, item.path, item.recipeRunId)
-                : undefined
-            }
-            documentLabel={isDiffArtifact ? 'DIFF' : undefined}
-            documentHint={isDiffArtifact ? 'Tap to review diff' : undefined}
-          />
-        </View>
-      );
-    },
-    [artifactAuthHeaders, artifactUrlFor, openDiffPath, openDocument, openVisualArtifact, runId],
-  );
+    availableFilters,
+    manifest,
+    gatewayUrl,
+    artifactAuthHeaders,
+    recipeRuns,
+    selectedRecipeRunId,
+    selectedRecipeRun,
+    artifactMirrorEpoch,
+    artifactMirrorRefreshing,
+    artifactMirrorFeedback,
+    recordedEvidence,
+    evidenceModel,
+    reviewer,
+    client,
+    commandsReady,
+    ownerKey,
+    error,
+    isFocused,
+    viewerUri,
+    viewerIndex,
+    visualViewerItems,
+    acceptanceViewer,
+    documentViewer,
+  } = viewModel;
+  const {
+    handleListScroll,
+    refreshArtifactMirror,
+    handleSelectRecipeRun,
+    openVisualArtifact,
+    openReviewDocument,
+    openDiffPath,
+    rememberFilterOffset,
+    openDocument,
+    artifactUrlFor,
+  } = actions;
+  const renderItem = ({ item, index }: { item: ArtifactManifestEntry; index: number }) => {
+    if (!runId) return null;
+    const url = artifactUrlFor(item);
+    const mediaType = classifyArtifact(item);
+    const isDiffArtifact = diffArtifactCandidate([item])?.path === item.path;
+    return (
+      <View style={[styles.artifactCell, index % 2 === 0 && styles.artifactCellLeft]}>
+        <ArtifactCard
+          url={url}
+          path={item.path}
+          purpose={item.purpose}
+          type={item.type}
+          label={item.label}
+          mimeType={item.mimeType}
+          sizeBytes={item.sizeBytes}
+          authHeaders={artifactAuthHeaders}
+          onPressImage={mediaType === 'image' ? () => openVisualArtifact(url) : undefined}
+          onPressVideo={mediaType === 'video' ? () => openVisualArtifact(url) : undefined}
+          onPressDocument={
+            mediaType === 'document'
+              ? isDiffArtifact
+                ? () => openDiffPath(item.path)
+                : () => openDocument(url, item.path, item.recipeRunId)
+              : undefined
+          }
+          documentLabel={isDiffArtifact ? 'DIFF' : undefined}
+          documentHint={isDiffArtifact ? 'Tap to review diff' : undefined}
+        />
+      </View>
+    );
+  };
 
   if (!run) {
     return (
       <View style={[baseStyles.container, styles.center, { paddingBottom: insets.bottom }]}>
+        <ResourceReadStatus observation={runObservation} label="run artifacts" />
         <Text style={baseStyles.textSecondary}>Loading...</Text>
+        {runObservation.error ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry artifacts"
+            onPress={actions.retry}
+          >
+            <Text style={baseStyles.textSecondary}>Retry</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
@@ -678,11 +130,7 @@ export default function ArtifactViewerScreen() {
             visible={filteredSingles.length}
             visualPairCount={visualPairCount}
             filters={availableFilters}
-            onFilterChange={(nextFilter) => {
-              handleFilterChange(nextFilter);
-              setArtifactQuery('');
-              router.setParams({ artifact: undefined });
-            }}
+            onFilterChange={actions.selectFilter}
           />
         </View>
       ) : null}
@@ -699,6 +147,17 @@ export default function ArtifactViewerScreen() {
         ]}
         ListHeaderComponent={
           <>
+            <ResourceReadStatus observation={runObservation} label="run artifacts" />
+            <ResourceReadStatus observation={recipeObservation} label="recipe evidence" />
+            {runObservation.error || recipeObservation.error ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry artifacts"
+                onPress={actions.retry}
+              >
+                <Text style={baseStyles.textSecondary}>Retry</Text>
+              </Pressable>
+            ) : null}
             <ArtifactHeader
               run={run}
               gatewayUrl={gatewayUrl}
@@ -714,55 +173,25 @@ export default function ArtifactViewerScreen() {
               availableFilters={availableFilters}
               artifactMirrorEpoch={artifactMirrorEpoch}
               artifactMirrorRefreshing={artifactMirrorRefreshing}
+              commandsReady={commandsReady}
               artifactMirrorFeedback={artifactMirrorFeedback}
               onRefreshArtifactMirror={refreshArtifactMirror}
-              onFilterChange={(nextFilter) => {
-                handleFilterChange(nextFilter);
-                setArtifactQuery('');
-                router.setParams({ artifact: undefined });
-              }}
+              onFilterChange={actions.selectFilter}
               onSelectRecipeRun={handleSelectRecipeRun}
               onOpenVisual={openVisualArtifact}
               onOpenDocument={openReviewDocument}
               onOpenDiff={openDiffPath}
               onFilterLayout={rememberFilterOffset}
-              onClearFocusedArtifact={() => {
-                setArtifactQuery('');
-                router.setParams({
-                  artifact: undefined,
-                  filter: undefined,
-                  recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                });
-              }}
+              onClearFocusedArtifact={actions.clearArtifactFocus}
             />
             <TaskAcceptancePanel
               acceptanceStatus={recordedEvidence?.input?.claims ?? null}
               evidenceModel={evidenceModel}
-              judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
-              onRecordVisualReview={async (id, verdict, reason) => {
-                await recordVisualClaimReview(client, runId, evidenceModel, id, verdict, reason);
-                await refreshRecipeRuns('visual review', false);
-              }}
+              judgmentRows={evidenceModel.judgmentRows(reviewer)}
+              onRecordVisualReview={commandsReady ? actions.recordVisualReview : undefined}
               showOccurrences
-              onOpenEvidence={(id, path) => {
-                evidenceModel.selectClaim(id, path);
-                openProofArtifact({
-                  path,
-                  purpose: 'evidence',
-                  recipeRunId: selectedRecipeRunId ?? undefined,
-                });
-              }}
-              onOpenOccurrence={(index) => {
-                const selected = evidenceModel.selectOccurrence(index);
-                const path = selected?.clips[0]?.videoPath ?? selected?.artifacts[0]?.path;
-                if (path)
-                  openProofArtifact({
-                    path: evidenceModel.artifactPath(path),
-                    purpose: 'evidence',
-                    recipeRunId: selectedRecipeRunId ?? undefined,
-                  });
-                else setError(selected?.message ?? 'This recipe step has no proof artifact.');
-              }}
+              onOpenEvidence={actions.openEvidence}
+              onOpenOccurrence={actions.openOccurrence}
             />
             {recipeRuns.length > 0 ? (
               <View style={styles.recipeControlsWrap}>
@@ -776,7 +205,9 @@ export default function ArtifactViewerScreen() {
                       ? null
                       : selectedRecipeRun?.id
                   }
-                  onComplete={refreshAfterRecipeComplete}
+                  key={ownerKey}
+                  commandsReady={commandsReady}
+                  assertCurrent={actions.assertCurrentInputs}
                 />
               </View>
             ) : null}
@@ -786,9 +217,9 @@ export default function ArtifactViewerScreen() {
           <Text style={styles.emptyText}>No files match the current filter.</Text>
         }
       />
-      {(error ?? recipeRead.error ?? acceptanceViewer.error) && (
+      {error && (
         <Text style={[styles.errorText, { paddingBottom: spacing.lg + insets.bottom }]}>
-          {error ?? recipeRead.error ?? acceptanceViewer.error}
+          {error}
         </Text>
       )}
       <MediaViewer
@@ -798,7 +229,7 @@ export default function ArtifactViewerScreen() {
         items={visualViewerItems}
         authHeaders={artifactAuthHeaders}
         initialIndex={viewerIndex}
-        onClose={() => setViewerUri(null)}
+        onClose={actions.closeMedia}
       />
       <MediaViewer
         testID="companion-ac-evidence-viewer"
@@ -814,7 +245,7 @@ export default function ArtifactViewerScreen() {
         sharedArtifact={documentViewer?.sharedArtifact}
         title={documentViewer?.title ?? ''}
         body={documentViewer?.body ?? ''}
-        onClose={() => setDocumentViewer(null)}
+        onClose={actions.closeDocument}
       />
     </View>
   );

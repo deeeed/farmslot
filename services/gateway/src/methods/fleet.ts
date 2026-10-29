@@ -36,7 +36,9 @@ import {
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { fleetStaleThresholdMs, isFleetCheckedAtStale } from '../fleet/freshness.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
@@ -49,7 +51,11 @@ import {
 } from './dispatch/slot-scoring.js';
 import { checkFixtureSteps } from './slot/check.js';
 import { isLinkedGitWorktreeMarker, probeDefaultBranch } from './slot/slot-tracking.js';
-import { enrichFleetWorkspaces, observedFleetWorkspaces } from './slot/workspace.js';
+import {
+  enrichFleetWorkspaces,
+  markFailedWorkspacesUnverified,
+  observedFleetWorkspaces,
+} from './slot/workspace.js';
 
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
@@ -63,18 +69,7 @@ export function setFleetWorkspacePublisher(publish: FleetWorkspacePublisher | un
   workspacePublisher = publish;
 }
 
-const FLEET_STALE_MS_DEFAULT = 5 * 60_000;
-
-export function fleetStaleThresholdMs(): number {
-  const raw = Number(process.env.FARMSLOT_FLEET_STALE_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : FLEET_STALE_MS_DEFAULT;
-}
-
-export function isFleetCheckedAtStale(checkedAt: string, nowMs = Date.now()): boolean {
-  const ts = Date.parse(checkedAt);
-  if (!Number.isFinite(ts)) return true;
-  return nowMs - ts > fleetStaleThresholdMs();
-}
+export { fleetStaleThresholdMs, isFleetCheckedAtStale };
 
 interface FleetWorkspaceObservations {
   read(fleet: FleetStatus): FleetStatus;
@@ -88,7 +83,7 @@ export interface FleetStatusDeps {
 }
 
 const defaultFleetStatusDeps: FleetStatusDeps = {
-  load: () => loadFleetStatus(),
+  load: () => loadFleetStatus(false, true),
   refresh: () => fleetRefresh(),
   workspaces: { read: observedFleetWorkspaces, refresh: enrichFleetWorkspaces },
 };
@@ -118,14 +113,16 @@ function refreshWorkspaceObservations(
       // Owners may have changed while Git/network reads ran. Publish current
       // rows, never the captured fleet that started the observation.
       const current = workspaces.read(await deps.load());
-      const changed = current.slots.some((slot) => {
+      const changed = current.slots.filter((slot) => {
         const before = previous.get(slot.slot);
         return (
           before?.workspace !== slot.workspace || before?.workspaceError !== slot.workspaceError
         );
       });
+      // Cached fleet reads learn of every changed observation, failures included.
+      for (const slot of changed) slotResourceChanges.overlayChanged(slot.slot);
       // A cached observation must not create a fleet.updated -> status loop.
-      if (changed) publish?.(fleetStatusResult(current).fleet);
+      if (changed.length) publish?.(fleetStatusResult(current).fleet);
     })
     .catch((error: unknown) => {
       // A failed passive read keeps the saved response available. Slot failures
@@ -135,6 +132,14 @@ function refreshWorkspaceObservations(
     .finally(() => {
       workspaceRefreshInFlight = null;
     });
+}
+
+/** The cached fleet read: completed observations now, never waiting for background probes. */
+export function observedFleetStatus(loaded: FleetStatus): FleetStatusResult {
+  const observed = observedFleetWorkspaces(loaded);
+  // The refresh compares against main's plain rows, so a failing slot cannot loop.
+  refreshWorkspaceObservations(observed, defaultFleetStatusDeps, workspacePublisher);
+  return { fleet: markFailedWorkspacesUnverified(loaded, observed) };
 }
 
 export async function fleetStatus(

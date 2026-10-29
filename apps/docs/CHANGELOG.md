@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document resource revision stamps and the resource change event in the generated gateway API reference.
+
 - Document shared CI-watch card status and exact monitor deadlines.
 
 - Document checklist row timing and monthly analytics step durations.

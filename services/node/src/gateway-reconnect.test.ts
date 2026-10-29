@@ -99,6 +99,11 @@ test('daemon bounds transient reconnects, registers once and preserves auth refu
     namedExports: {
       NativeNodeSessions: class {
         declaration = undefined;
+        async startObservation() {}
+        stopObservation() {}
+        observationReceipt() {
+          return undefined;
+        }
       },
     },
   });

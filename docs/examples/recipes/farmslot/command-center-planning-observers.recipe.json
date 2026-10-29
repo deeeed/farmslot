@@ -1,0 +1,62 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Idle planning observers share canonical data without polling",
+  "description": "On one isolated gateway and actual mounted browser panel, attach two read-only canonical cache observers and count real outgoing planning read frames for 16 seconds. No source writes, cache/UI injection or native work.",
+  "proofTargets": [
+    {
+      "id": "multipleCanonicalObservers",
+      "claim": "Two additional real cache observers share the mounted backlog query and remain attached for the entire measured window."
+    },
+    {
+      "id": "noPeriodicPlanningReads",
+      "claim": "A continuously mounted online planning view produces zero periodic planning reads across a16second interval on the same document, connection and principal."
+    },
+    {
+      "id": "ownedFixtureRemoved",
+      "claim": "Normal sign-out closes the owned tab, removes the disposable item and preserves original planning facts."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-planning-race.mjs observers",
+        "timeout_ms": 120000,
+        "intent": "Prove planning observers through the actual isolated browser and owning gateway.",
+        "next": "multipleCanonicalObservers"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "multipleCanonicalObservers": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"multipleCanonicalObservers\":true",
+        "intent": "Verify both additional observers remain attached throughout the window.",
+        "proves": ["multipleCanonicalObservers"],
+        "next": "noPeriodicPlanningReads"
+      },
+      "noPeriodicPlanningReads": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"noPeriodicPlanningReads\":true",
+        "intent": "Verify zero planning reads during the online idle window.",
+        "proves": ["noPeriodicPlanningReads"],
+        "next": "ownedFixtureRemoved"
+      },
+      "ownedFixtureRemoved": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"ownedFixtureRemoved\":true",
+        "intent": "Verify sign-out, tab closure and owned fixture removal.",
+        "proves": ["ownedFixtureRemoved"],
+        "next": "done"
+      }
+    }
+  }
+}

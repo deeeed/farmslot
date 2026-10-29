@@ -74,7 +74,7 @@ export const CANCELLED_RUN_SLOT_RELEASE_TIMEOUT_MS = 5 * 60_000;
 /** Releases the slot; returns why it was not released, or null once it was. */
 export async function releaseCancelledRunSlot(
   request: (
-    method: string,
+    method: typeof Methods.SLOT_RELEASE,
     params: SlotReleaseParams,
     timeoutMs: number,
   ) => Promise<SlotReleaseResult>,

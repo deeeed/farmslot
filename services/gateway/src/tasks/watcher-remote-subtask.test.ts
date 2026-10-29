@@ -17,6 +17,7 @@ import * as realState from '../core/state.js';
 import * as realMachineRegistry from '../fleet/machine-registry.js';
 import * as realNodeRpc from '../fleet/node-rpc.js';
 import * as realFleetState from '../fleet/state.js';
+import * as realFileObservations from '../resources/node-file-observations.js';
 import * as realRunStore from '../runs/store.js';
 
 const SLOT_ID = 'slot-remote-subtask';
@@ -119,34 +120,45 @@ mock.module('../fleet/machine-registry.js', {
   },
 });
 
+const sendFixtureNodeRequest = async (
+  _node: unknown,
+  method: string,
+  params: unknown,
+  opts?: { onRequestId?: (id: string) => void },
+) => {
+  if (method === 'fs.watch') {
+    requestCounter += 1;
+    const requestId = `req-${requestCounter}`;
+    const watched = (params as { path: string }).path;
+    // The gateway records the id through this callback, exactly as the real
+    // transport hands it back before the response arrives.
+    opts?.onRequestId?.(requestId);
+    watchCalls.push({ requestId, path: watched });
+    return { watching: true };
+  }
+  if (method === 'fs.watch.stop') {
+    stopCalls.push((params as { requestId: string }).requestId);
+    return { stopped: true };
+  }
+  // Nothing else should reach the node: slot-io is mocked to the local
+  // filesystem, so any other method here is the watcher taking a path this
+  // test did not intend.
+  throw new Error(`unexpected node method ${method}`);
+};
+
 mock.module('../fleet/node-rpc.js', {
   namedExports: {
     ...realNodeRpc,
-    sendNodeRequest: async (
-      _node: unknown,
-      method: string,
-      params: unknown,
-      opts?: { onRequestId?: (id: string) => void },
-    ) => {
-      if (method === 'fs.watch') {
-        requestCounter += 1;
-        const requestId = `req-${requestCounter}`;
-        const watched = (params as { path: string }).path;
-        // The gateway records the id through this callback, exactly as the real
-        // transport hands it back before the response arrives.
-        opts?.onRequestId?.(requestId);
-        watchCalls.push({ requestId, path: watched });
-        return { watching: true };
-      }
-      if (method === 'fs.watch.stop') {
-        stopCalls.push((params as { requestId: string }).requestId);
-        return { stopped: true };
-      }
-      // Nothing else should reach the node: slot-io is mocked to the local
-      // filesystem, so any other method here is the watcher taking a path this
-      // test did not intend.
-      throw new Error(`unexpected node method ${method}`);
-    },
+    sendNodeRequest: sendFixtureNodeRequest,
+  },
+});
+
+// Keep this transport-bookkeeping test at its boundary; verified source admission has separate tests.
+mock.module('../resources/node-file-observations.js', {
+  namedExports: {
+    ...realFileObservations,
+    watchNodeFile: (node: unknown, file: string, onRequestId: (id: string) => void) =>
+      sendFixtureNodeRequest(node, 'fs.watch', { path: file, observations: 1 }, { onRequestId }),
   },
 });
 

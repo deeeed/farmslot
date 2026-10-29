@@ -15,6 +15,7 @@ import {
   reviewPostingFingerprint,
   type ReviewViewedFilesResult,
   type Run,
+  type RunArtifactBundleRef,
   selectReviewFindings,
 } from '@farmslot/protocol';
 import { ReviewApprovalPolicyError } from '@farmslot/protocol/review-approval-policy.cjs';
@@ -169,6 +170,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
   let reviewArtifactUrls = new Map<string, string>();
   let evidenceMarkdown: string | null = null;
   let artifactManifest: ArtifactRef[] = [];
+  let artifactBundle: RunArtifactBundleRef | undefined;
 
   if (prNumber && current.taskFile) {
     try {
@@ -185,7 +187,10 @@ export async function executeReviewGate(runId: string): Promise<void> {
 
   if (current.taskFile) {
     try {
-      artifactManifest = await retainedRunArtifactManifest(getRun(runId)!);
+      const retained = getRun(runId)!;
+      artifactManifest = await retainedRunArtifactManifest(retained);
+      // The manifest was read from this retained capture, so the gate can name it.
+      artifactBundle = retained.artifactBundle ?? retained.output?.artifactBundle;
     } catch (err) {
       // Review posting can continue without a refreshed manifest, but the
       // failure must stay visible because missing evidence is actionable.
@@ -285,6 +290,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
     lineComments: review.lineComments,
     artifactManifest: artifactManifest.length > 0 ? artifactManifest : undefined,
     artifactUrls: reviewArtifactUrls.size > 0 ? Object.fromEntries(reviewArtifactUrls) : undefined,
+    artifactBundle,
     reviewSnapshot,
     session: await completedReviewSessionTrace(getRun(runId)!, reviewSnapshot),
     reviewInputArtifactPaths: reviewInputArtifactPaths.length
@@ -702,10 +708,13 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   const workerLearnings = await readTaskArtifactText(run, 'learnings.md');
 
   let artifactManifest: ArtifactRef[] | undefined;
+  let artifactBundle: RunArtifactBundleRef | undefined;
   if (run.taskFile) {
     try {
       // Project the fresh capture, including media deliberately removed from acquisition staging.
-      artifactManifest = await retainedRunArtifactManifest(getRun(runId)!);
+      const retained = getRun(runId)!;
+      artifactManifest = await retainedRunArtifactManifest(retained);
+      artifactBundle = retained.artifactBundle ?? retained.output?.artifactBundle;
     } catch (err) {
       // Recovery is intentional: refresh continues with the previously
       // persisted manifest (no rescan applied). But surface the failure
@@ -724,7 +733,8 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     lineComments: review.lineComments,
     recommendation: review.recommendation,
     workerLearnings,
-    ...(artifactManifest ? { artifactManifest } : {}),
+    // The manifest and the capture it was read from move together.
+    ...(artifactManifest ? { artifactManifest, artifactBundle } : {}),
   };
   const nextDescription = `**Recommendation:** ${review.recommendation}\n**Line comments:** ${review.lineCommentSummary}\n\n${review.summary}`;
   const nextDecision = {

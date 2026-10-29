@@ -11,6 +11,8 @@ import {
   runnerSupportsNativeTaskReuse,
 } from '../runners/registry.js';
 import { describeVisibleModels } from '../runners/visible-models.js';
+import { loadCredentialStore } from '../security/credential-store.js';
+import { nativeOwnerAssignedMachines } from '../security/native-node.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 
 export {
@@ -23,6 +25,7 @@ export async function nativeCatalog(
   owner: string,
   allowWorkers = true,
 ): Promise<NativeSessionCatalogResult> {
+  const assigned = nativeOwnerAssignedMachines(loadCredentialStore().principals, owner);
   const contexts: NativeSessionCatalogResult['contexts'] = [
     ...(ownsLocalNativeProfile(owner)
       ? [{ cwd: farmslotRoot, label: 'Farmslot checkout', supportsProfiles: true }]
@@ -37,6 +40,7 @@ export async function nativeCatalog(
       if (
         executionNodeId !== 'local' &&
         (!owner ||
+          !assigned.has(executionNodeId) ||
           node?.nativeSessions?.ownerPrincipalId !== owner ||
           !node.nativeAuthority?.valid())
       )
@@ -98,5 +102,38 @@ function nativeModelPreferences(
       effectiveDefault && !models.includes(effectiveDefault)
         ? [effectiveDefault, ...models]
         : models,
+  };
+}
+
+/** Resolve workspace ownership through the same authenticated session/worker route as the read. */
+export async function resolveObservedNativeWorkspace(
+  principal: import('@farmslot/protocol').Principal,
+  params: Record<string, unknown>,
+): Promise<import('../resources/workspace-read.js').NativeWorkspaceIdentity> {
+  const { nativeSessionRoute } = await import('./native-session.js');
+  const { Methods } = await import('@farmslot/protocol');
+  const { runWithSessionOriginator } = await import('../security/work-originator.js');
+  const { session } = (await runWithSessionOriginator(principal, () =>
+    nativeSessionRoute(
+      Methods.NATIVE_SESSION_READ,
+      {
+        ...params,
+        limit: 1,
+      },
+      principal,
+    ),
+  )) as import('@farmslot/protocol').NativeSessionReadResult;
+  if (session.workerManaged && ['closed', 'failed', 'closing'].includes(session.state))
+    throw new Error('Current workspace is unavailable for a closed or transferred worker');
+  return {
+    ownerId: session.ownerPrincipalId,
+    sessionId: session.id,
+    nodeId: session.executionNodeId,
+    cwd: session.cwd,
+    generation: session.generation,
+    leaseId: session.workerLeaseId,
+    profileId: session.profileId,
+    accountContextId: session.accountContextId,
+    state: ['closed', 'failed', 'closing'].includes(session.state) ? session.state : 'open',
   };
 }

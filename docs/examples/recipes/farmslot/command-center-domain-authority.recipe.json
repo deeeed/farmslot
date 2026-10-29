@@ -1,0 +1,87 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Memory-only domains follow actual account authority",
+  "description": "Use real private sources, account form and admin-to-operator downgrade. Inspect canonical memory and rendered projections, then new source on recovery. No provider or browser command.",
+  "proofTargets": [
+    {
+      "id": "domainPrincipalClears",
+      "claim": "A real account switch clears the old owner projection before current authorized domain data is shown."
+    },
+    {
+      "id": "domainRoleClears",
+      "claim": "An admin-to-operator downgrade keeps farm access and clears forbidden canonical and rendered domain facts."
+    },
+    {
+      "id": "domainRecoveryReadsNewSource",
+      "claim": "Restored admin authority reads and renders a real source change committed while access was absent."
+    },
+    {
+      "id": "originalAccountRestored",
+      "claim": "The disposable credential, principal and profile are retired and the original account is restored unchanged."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-planning-authority.mjs {{params.domain}}-authority",
+        "timeout_ms": 180000,
+        "intent": "Switch accounts, remove admin and recover the selected domain view.",
+        "next": "domainPrincipalClears"
+      },
+      "domainPrincipalClears": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"domainPrincipalClears\":true",
+        "intent": "Clear the old owner domain projection through the actual account switch.",
+        "proves": ["domainPrincipalClears"],
+        "next": "domainRoleClears"
+      },
+      "domainRoleClears": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"domainRoleClears\":true",
+        "intent": "Keep farm access while clearing forbidden canonical and visible facts.",
+        "proves": ["domainRoleClears"],
+        "next": "domainRecoveryReadsNewSource"
+      },
+      "domainRecoveryReadsNewSource": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"domainRecoveryReadsNewSource\":true",
+        "intent": "Read the changed owning source after admin authority returns.",
+        "proves": ["domainRecoveryReadsNewSource"],
+        "next": "originalAccountRestored"
+      },
+      "originalAccountRestored": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"originalAccountRestored\":true",
+        "intent": "Restore the original account and retire the disposable identity.",
+        "proves": ["originalAccountRestored"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  },
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "domain": {
+        "type": "string",
+        "enum": ["assessment", "analytics"],
+        "default": "assessment",
+        "description": "Existing domain to prove on the isolated private stack."
+      }
+    }
+  }
+}

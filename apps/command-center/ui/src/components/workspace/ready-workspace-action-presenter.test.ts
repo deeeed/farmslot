@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import { type GitBranchDiffFile, Methods, type RunDecision } from '@farmslot/protocol';
+import {
+  type GitBranchDiffFile,
+  Methods,
+  type ReadyGatePayload,
+  type Run,
+  type RunDecision,
+} from '@farmslot/protocol';
 import { CriterionDraftModel, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { FakeControllerHost } from '../../testing/fake-controller-host.js';
@@ -15,10 +21,13 @@ let branchDiffReply: (() => Promise<{ files: GitBranchDiffFile[] }>) | undefined
 let fileDiffReply: ((path?: string) => Promise<{ diff: string }>) | undefined;
 // Decision submission: the reply to run.resolveDecision, its requested window, and the run a
 // later run.get reads.
+let refreshReply: () => Promise<unknown> = async () => ({});
 let resolveReply: () => Promise<unknown> = async () => ({});
 const resolveWindows: unknown[] = [];
 let gatewayDecision: { id: string; resolvedAt?: string; resolvedAction?: string } = { id: 'gate' };
 let runReadable = true;
+let queryReady = true;
+let connection = 1;
 mock.module('../../gateway-client.js', {
   namedExports: {
     gateway: {
@@ -30,19 +39,13 @@ mock.module('../../gateway-client.js', {
         params: { slotId: string; path?: string },
         window?: unknown,
       ) => {
+        if (method === Methods.RUN_REFRESH_PUBLISH_PACKAGE) return refreshReply();
         if (method === Methods.RUN_RESOLVE_DECISION) {
           resolveWindows.push(window);
           return resolveReply();
         }
-        if (method === Methods.RUN_GET) {
-          if (!runReadable) throw new Error('Not connected');
-          return { run: { decisions: [gatewayDecision] } };
-        }
-        if (method === Methods.GIT_BRANCH_DIFF)
-          return branchDiffReply ? branchDiffReply() : { files: branchFiles[params.slotId] ?? [] };
-        fileDiffRequests.push(`${params.slotId}:${params.path}`);
-        if (fileDiffReply) return fileDiffReply(params.path);
-        return { diff: `diff from ${params.slotId}` };
+        if (method === Methods.RUN_GET) assert.fail('The shared observation owns run reads');
+        assert.fail(`The shared workspace observation owns ${method} reads (${params.slotId})`);
       },
     },
   },
@@ -86,6 +89,64 @@ function makePresenter(fields: Partial<Presenter> = {}): Presenter {
     _fileDiff: '',
     _fileDiffLoading: false,
     ...fields,
+  });
+  Object.defineProperty(view, '_usesMockData', { value: false });
+  Object.assign(view, {
+    _reads: {
+      async read<T>(
+        method: string,
+        params: { slotId: string; path?: string },
+        apply: (value: T) => void,
+      ) {
+        let value: unknown;
+        if (method === Methods.GIT_BRANCH_DIFF)
+          value = branchDiffReply
+            ? await branchDiffReply()
+            : { files: branchFiles[params.slotId] ?? [] };
+        else {
+          fileDiffRequests.push(`${params.slotId}:${params.path}`);
+          value = fileDiffReply
+            ? await fileDiffReply(params.path)
+            : { diff: `diff from ${params.slotId}` };
+        }
+        apply(value as T);
+        return value as T;
+      },
+      releaseMethods: () => undefined,
+      clear: () => undefined,
+    },
+    _queries: {
+      get decision() {
+        return view.decision;
+      },
+      get ready() {
+        return queryReady;
+      },
+      requireDecision() {
+        if (!queryReady) throw new Error('Wait for a current read before acting.');
+        return view.decision;
+      },
+      run: {
+        belongsToWorkspace: true,
+        get ready() {
+          return runReadable;
+        },
+        get state() {
+          return { data: { run: view.run } };
+        },
+        retry: async () =>
+          runReadable
+            ? { status: 'ready', data: { run: { decisions: [gatewayDecision] } } }
+            : { status: 'error' },
+      },
+      capture() {
+        const owner = JSON.stringify([view.runId, view.slotId, view.decision?.id]);
+        const currentConnection = connection;
+        const ownsView = () =>
+          owner === JSON.stringify([view.runId, view.slotId, view.decision?.id]);
+        return { ownsView, current: () => ownsView() && currentConnection === connection };
+      },
+    },
   });
   // Field initializers do not run on a prototype-built view; wire the filter
   // the way the presenter does.
@@ -339,6 +400,7 @@ function gateDecision(id = 'gate'): RunDecision {
 }
 function submittingPresenter(): Presenter {
   runReadable = true;
+  queryReady = true;
   return makePresenter({ runId: 'run-a', decision: gateDecision(), _recoveryPhase: 'live' });
 }
 
@@ -460,4 +522,100 @@ test('a reply for a gate the view no longer shows leaves the shown gate alone', 
   await submitting;
   assert.equal(view._actionMessage, '');
   assert.equal(view._actionTone, '');
+});
+
+test('stale shared inputs refuse a direct handler call without sending a command', async () => {
+  const view = submittingPresenter();
+  queryReady = false;
+  resolveWindows.length = 0;
+  await view._resolve('hold');
+  assert.deepEqual(resolveWindows, []);
+  assert.match(view._actionMessage, /current run and evidence/);
+  queryReady = true;
+});
+
+test('a lost connection drops its acknowledgement and clears only its request busy state', async () => {
+  let reply!: () => void;
+  resolveReply = () =>
+    new Promise((resolve) => {
+      reply = () => resolve({});
+    });
+  const view = submittingPresenter();
+  const submitting = view._resolve('hold');
+  assert.equal(view._acting, true);
+  connection++;
+  reply();
+  await submitting;
+  assert.equal(view._acting, false);
+  assert.notEqual(view._actionTone, 'success');
+});
+
+test('an immediate repeated handler call cannot send the same decision twice', async () => {
+  let reply!: () => void;
+  resolveReply = () =>
+    new Promise((resolve) => {
+      reply = () => resolve({});
+    });
+  resolveWindows.length = 0;
+  const view = submittingPresenter();
+  const first = view._resolve('hold');
+  await view._resolve('hold');
+  assert.equal(resolveWindows.length, 1);
+  reply();
+  await first;
+});
+
+test('package refresh reports its result without adopting command-returned run records', async () => {
+  const payload = { kind: 'ready', prPackage: { packageHash: 'old-package' } } as ReadyGatePayload;
+  const decision = { ...gateDecision(), payload };
+  const run = { id: 'run-a', decisions: [decision] } as Run;
+  const view = makePresenter({
+    runId: 'run-a',
+    run,
+    decision,
+    _recoveryPhase: 'live',
+    _selectedEvidenceKeys: ['old.png'],
+  });
+  refreshReply = async () => ({
+    run: { id: 'wrong-run' },
+    packageHash: 'new-package',
+    preservedEvidenceKeys: ['new.png'],
+    addedEvidenceKeys: [],
+    droppedEvidenceKeys: [],
+  });
+  await view._refreshPublishPackage(payload);
+  assert.equal(view.run, run);
+  assert.equal(view.decision, decision);
+  assert.deepEqual(view._selectedEvidenceKeys, ['old.png']);
+  assert.equal(view._refreshingPackage, false);
+  const refreshed = {
+    ...decision,
+    payload: { ...payload, prPackage: { ...payload.prPackage!, packageHash: 'new-package' } },
+  };
+  view.decision = refreshed;
+  Reflect.get(view, '_applyPendingPackageSelection').call(view);
+  assert.deepEqual(view._selectedEvidenceKeys, ['new.png']);
+});
+
+test('retiring a workspace clears the prior owner curation and file contents', () => {
+  const view = makePresenter({
+    _selectedEvidenceKeys: ['private.png'],
+    _evidenceAttestationReason: 'private reason',
+    _legacyTaskPromptText: 'private prompt',
+    _fileDiff: 'private diff',
+    _selectedFile: 'private.ts',
+  });
+  Object.assign(view, {
+    _confirmTimer: {
+      clear() {
+        return undefined;
+      },
+    },
+  });
+  view._retireWorkspaceCommands();
+  assert.equal(view._selectedEvidenceKeys, null);
+  assert.equal(view._evidenceAttestationReason, '');
+  assert.equal(view._legacyTaskPromptText, '');
+  assert.equal(view._fileDiff, '');
+  assert.equal(view._selectedFile, '');
 });

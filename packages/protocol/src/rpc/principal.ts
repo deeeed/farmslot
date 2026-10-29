@@ -27,6 +27,8 @@ export type AuthenticationRef =
 /** The authenticated caller only. Never describes another principal. */
 export interface SelfPrincipalSummary {
   id: string;
+  /** Absent only on older gateways; such connections cannot open a persistent client store. */
+  generation?: number;
   displayName: string;
   subjectKind: PrincipalSubject['type'];
   roles: RoleBinding[];

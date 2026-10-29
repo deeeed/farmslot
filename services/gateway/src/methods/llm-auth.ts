@@ -66,7 +66,7 @@ const OAUTH_LOGIN_HANDLERS: Record<string, () => Promise<OAuthLoginFn>> = {
 const OAUTH_LOGIN_TIMEOUT_MS = Number(process.env.LLM_AUTH_LOGIN_TIMEOUT_MS ?? 5 * 60 * 1000);
 
 export async function llmAuthList(): Promise<LLMAuthListResult> {
-  const store = await loadAuthProfileStore(getFarmslotStorePath());
+  const store = await loadAuthProfileStore(getFarmslotStorePath(), { strict: true });
   const profiles = store
     ? Object.entries(store.profiles).map(([id, cred]) => {
         const base = {
@@ -97,7 +97,7 @@ export async function llmAuthList(): Promise<LLMAuthListResult> {
   }
 
   // Check OpenClaw store
-  const openclawStore = await loadAuthProfileStore(getOpenClawStorePath());
+  const openclawStore = await loadAuthProfileStore(getOpenClawStorePath(), { strict: true });
   const openclawProviders = openclawStore
     ? [...new Set(Object.values(openclawStore.profiles).map((c) => c.provider))]
     : [];

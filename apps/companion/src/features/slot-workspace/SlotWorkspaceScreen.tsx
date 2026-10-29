@@ -1,6 +1,7 @@
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { baseStyles, lifecycleColor, spacing } from '../../lib/theme';
 import { relativeTime } from '../workspace-shared/format';
@@ -16,10 +17,16 @@ export default function SlotWorkspaceScreen() {
     id,
     slot,
     workspaceRunId,
+    boundRunId,
     requestedArtifactPath,
     workspaceRouteContext,
     taskProgressError,
     currentRun,
+    runObservation,
+    progressObservation,
+    historyObservation,
+    recipeObservation,
+    retryRead,
     currentRecipeRuns,
     currentRecipeRunsLoaded,
     currentEvidenceModel,
@@ -45,10 +52,11 @@ export default function SlotWorkspaceScreen() {
     openLiveTerminal,
   } = useSlotWorkspaceController();
 
-  if (!slot) {
+  if (!slot && !currentRun) {
     return (
       <View style={[baseStyles.container, styles.center, { paddingBottom: insets.bottom }]}>
-        <Text style={baseStyles.textSecondary}>Slot not found</Text>
+        <Text style={baseStyles.textSecondary}>Slot details unavailable</Text>
+        <ResourceReadStatus observation={runObservation} label="slot run" />
       </View>
     );
   }
@@ -73,22 +81,27 @@ export default function SlotWorkspaceScreen() {
       >
         <View style={styles.headerCard}>
           <View style={styles.row}>
-            <Text style={styles.slotName}>{slot.slot}</Text>
+            <Text style={styles.slotName}>{slot?.slot ?? id}</Text>
             <View
-              style={[styles.badge, { backgroundColor: `${lifecycleColor(slot.lifecycle)}30` }]}
+              style={[
+                styles.badge,
+                { backgroundColor: `${lifecycleColor(slot?.lifecycle ?? 'unknown')}30` },
+              ]}
             >
-              <Text style={[styles.badgeText, { color: lifecycleColor(slot.lifecycle) }]}>
-                {slot.lifecycle}
+              <Text
+                style={[styles.badgeText, { color: lifecycleColor(slot?.lifecycle ?? 'unknown') }]}
+              >
+                {slot?.lifecycle ?? 'Slot details unavailable'}
               </Text>
             </View>
           </View>
           <Text style={baseStyles.textSecondary}>
-            {slot.machine} | {slot.platform}
+            {slot ? `${slot.machine} | ${slot.platform}` : 'Showing the saved run'}
           </Text>
-          {slot.branch && (
+          {slot?.branch && (
             <Text style={[baseStyles.textSecondary, { marginTop: spacing.sm }]}>{slot.branch}</Text>
           )}
-          {slot.dispatchedAt && (
+          {slot?.dispatchedAt && (
             <Text style={baseStyles.textMuted}>Dispatched {relativeTime(slot.dispatchedAt)}</Text>
           )}
         </View>
@@ -97,11 +110,24 @@ export default function SlotWorkspaceScreen() {
           <RunWorkspaceNav {...workspaceNavProps} />
         </View>
 
+        <ResourceReadStatus observation={runObservation} label="slot run" />
+        <ResourceReadStatus observation={historyObservation} label="slot history" />
+        <ResourceReadStatus observation={recipeObservation} label="slot recipe inventory" />
+        <ResourceReadStatus observation={progressObservation} label="task progress" />
+        {detailError ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry slot run reads"
+            onPress={() => void retryRead()}
+          >
+            <Text style={baseStyles.textSecondary}>Retry</Text>
+          </Pressable>
+        ) : null}
         {detailError ? <Text style={styles.errorText}>{detailError}</Text> : null}
 
         <SlotWorkspaceSection
-          slotId={slot.slot}
-          slotCurrentRunId={slot.currentRunId}
+          slotId={slot?.slot ?? id}
+          slotCurrentRunId={boundRunId}
           run={currentRun}
           recipeRuns={currentRecipeRuns}
           evidenceModel={currentEvidenceModel}
@@ -132,25 +158,27 @@ export default function SlotWorkspaceScreen() {
         />
 
         {/* Health Grid */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Health</Text>
-          <View style={styles.healthGrid}>
-            {Object.entries(slot.health).map(([key, val]) => (
-              <View key={key} style={styles.healthItem}>
-                <Text style={styles.healthLabel}>{key}</Text>
-                <Text style={[styles.healthValue, { color: healthColor(val) }]}>{val}</Text>
-              </View>
-            ))}
+        {slot ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Health</Text>
+            <View style={styles.healthGrid}>
+              {Object.entries(slot.health).map(([key, val]) => (
+                <View key={key} style={styles.healthItem}>
+                  <Text style={styles.healthLabel}>{key}</Text>
+                  <Text style={[styles.healthValue, { color: healthColor(val) }]}>{val}</Text>
+                </View>
+              ))}
+            </View>
           </View>
-        </View>
+        ) : null}
 
         {/* Runner / Model */}
-        {(slot.runner || slot.model) && (
+        {(slot?.runner || slot?.model) && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Worker</Text>
             <View style={styles.infoRow}>
-              {slot.runner && <Text style={baseStyles.textPrimary}>Runner: {slot.runner}</Text>}
-              {slot.model && <Text style={baseStyles.textPrimary}>Model: {slot.model}</Text>}
+              {slot?.runner && <Text style={baseStyles.textPrimary}>Runner: {slot.runner}</Text>}
+              {slot?.model && <Text style={baseStyles.textPrimary}>Model: {slot.model}</Text>}
             </View>
           </View>
         )}

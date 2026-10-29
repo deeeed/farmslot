@@ -12,6 +12,7 @@ import type {
   BacklogLaunchCandidate,
   BacklogLaunchPlan,
   BacklogLaunchSlotPolicy,
+  BacklogListResult,
   BacklogMarkReadyResult,
   BacklogRefinementSessionGetResult,
   BacklogRefineResult,
@@ -35,6 +36,7 @@ import type {
   TaskTemplateSelection,
   WorkerTemplateOption,
   WorkGraphActivateResult,
+  WorkGraphListResult,
   WorkGraphProjection,
   WorkGraphSchedulerTickResult,
 } from '@farmslot/protocol';
@@ -47,7 +49,9 @@ import {
   Methods,
   parseGitHubPullUrl,
   parseGitHubRef,
+  sourceObservationAge,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   defaultModelForRunner,
   resolveReviewDispatchDefaults,
@@ -62,10 +66,18 @@ import '../shared/slot-choice-list.js';
 import '../shared/slot-selector-modal.js';
 
 import { gateway } from '../../gateway-client.js';
-import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
+import {
+  type AppState,
+  backlogQuery,
+  getState,
+  type GlobalFilters,
+  subscribe,
+  workGraphsQuery,
+} from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
-import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
+import { visibleReviewDispatchCatalog } from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
@@ -91,6 +103,7 @@ import {
   renderChoiceButtons,
   renderToggleChips,
 } from '../shared/planning-controls.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 import {
@@ -114,7 +127,6 @@ import {
 } from '../terminal/split-view-model.js';
 
 import {
-  applyBacklogRefineItemRefresh,
   BACKLOG_SORT_KEYS,
   backlogCandidateExecution,
   backlogItemMatchesStatusFilter,
@@ -308,7 +320,7 @@ function defaultCandidate(role: DraftLaunchCandidate['role'], index: number): Dr
   const model =
     role === 'baseline'
       ? 'opus'
-      : (defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '');
+      : (defaultModelForRunner(runner, visibleReviewDispatchCatalog()) ?? '');
   return {
     id: role === 'baseline' ? 'baseline' : `comparison-${index}`,
     role,
@@ -384,6 +396,16 @@ export class BacklogPanel extends LitElement {
   @state() private _dispatchConfigBusy = '';
   @state() private _dispatchConfigError = '';
   @state() private _configProjectConfigs: ProjectConfig[] = [];
+  private readonly configurationProjects = new ResourceQueryController<ConfigProjectsResult>(
+    this,
+    (state) => {
+      this._configProjectConfigs = state.data?.projects ?? [];
+    },
+  );
+  private readonly configurationTemplates = new Map<
+    string,
+    ResourceQueryController<ConfigTemplateOptionsResult>
+  >();
   @state() private _configTemplateOptions: Record<string, WorkerTemplateOption[]> = {};
   @state() private _configTemplateOptionsError: Record<string, string> = {};
   @state() private _configTemplateOptionsLoading: Record<string, boolean> = {};
@@ -409,6 +431,18 @@ export class BacklogPanel extends LitElement {
   @state() private _refinementSessionLoading = '';
   @state() private _existingRefinementSession: BacklogRefinementSessionGetResult | null = null;
 
+  private readonly _backlogQuery = new ResourceQueryController<BacklogListResult>(this, () =>
+    this._sync(getState()),
+  );
+  private readonly _graphsQuery = new ResourceQueryController<WorkGraphListResult>(this, () =>
+    this._sync(getState()),
+  );
+  private get _commandsReady(): boolean {
+    return this._backlogQuery.ready;
+  }
+  private _requireCurrentBacklog(): void {
+    this._backlogQuery.requireReady();
+  }
   private _unsub?: () => void;
   private _unsubVisibleModels?: () => void;
   @state() private _visibleModelsError = '';
@@ -1271,6 +1305,8 @@ export class BacklogPanel extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this._backlogQuery.setQuery(backlogQuery);
+    this._graphsQuery.setQuery(workGraphsQuery);
     this._sync(getState());
     this._applyUrlStateFromHash();
     if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
@@ -1304,10 +1340,10 @@ export class BacklogPanel extends LitElement {
   }
 
   private _sync(s: AppState) {
-    this._items = this.items ?? s.backlogItems;
+    this._items = this.items ?? this._backlogQuery.state.data?.items ?? [];
     this._slots = this.slots ?? s.fleet?.slots ?? [];
     this._runs = this.demoRuns ?? s.runs;
-    this._workGraphs = s.workGraphs;
+    this._workGraphs = this._graphsQuery.state.data?.graphs ?? [];
     this._globalFilters = s.globalFilters;
     const nextDraftProject = syncedBacklogDraftProject({
       currentProject: this._draftProject,
@@ -1317,7 +1353,11 @@ export class BacklogPanel extends LitElement {
     if (nextDraftProject && nextDraftProject !== this._draftProject) {
       this._setDraftProject(nextDraftProject);
     }
-    if (this._selectedItemId && !this._filtered.some((item) => item.id === this._selectedItemId)) {
+    if (
+      (this.items !== null || this._backlogQuery.ready) &&
+      this._selectedItemId &&
+      !this._items.some((item) => item.id === this._selectedItemId)
+    ) {
       this._selectedItemId = '';
       this._selectedItemMode = 'view';
       this._dispatchConfigOpen = false;
@@ -1529,7 +1569,7 @@ export class BacklogPanel extends LitElement {
             data-testid=${testId}
             placeholder="custom project name"
             .value=${value}
-            ?disabled=${disabled}
+            ?disabled=${!this._commandsReady || disabled}
             @input=${(e: Event) => onSelect((e.target as HTMLInputElement).value)}
           />`
         : nothing}
@@ -1583,7 +1623,7 @@ export class BacklogPanel extends LitElement {
           data-testid=${`${testId}-source-ref`}
           placeholder="TAT-3463, owner/repo#1, or a URL"
           .value=${draft.sourceRef}
-          ?disabled=${dispatchScopeDisabled}
+          ?disabled=${!this._commandsReady || dispatchScopeDisabled}
           @input=${(event: Event) =>
             onChange({ sourceRef: (event.target as HTMLInputElement).value })}
         />
@@ -1625,7 +1665,7 @@ export class BacklogPanel extends LitElement {
           type="number"
           min="1"
           .value=${draft.priority}
-          ?disabled=${dispatchScopeDisabled}
+          ?disabled=${!this._commandsReady || dispatchScopeDisabled}
           @input=${(event: Event) =>
             onChange({ priority: (event.target as HTMLInputElement).value })}
         />
@@ -1637,7 +1677,7 @@ export class BacklogPanel extends LitElement {
           type="checkbox"
           title=${AUTO_DISPATCH_TOOLTIP}
           .checked=${draft.autoDispatch}
-          ?disabled=${dispatchScopeDisabled}
+          ?disabled=${!this._commandsReady || dispatchScopeDisabled}
           @change=${(event: Event) =>
             onChange({ autoDispatch: (event.target as HTMLInputElement).checked })}
         />
@@ -1712,9 +1752,8 @@ export class BacklogPanel extends LitElement {
     }
   }
 
-  /** After refinement, apply the returned item and re-fetch attached spec (surfaces validation errors). */
+  /** Spec reads remain imperative; the owning writer refreshes the shared backlog observation. */
   private async _refreshItemAfterRefinement(item: BacklogItem) {
-    this._items = applyBacklogRefineItemRefresh(this._items, item);
     if (shouldForceReloadBacklogSpecAfterRefine(item)) await this._loadSpec(item, { force: true });
   }
 
@@ -1895,38 +1934,47 @@ export class BacklogPanel extends LitElement {
   }
 
   private async _ensureDispatchConfigDataFor(project: string, flowType: FlowType): Promise<void> {
-    if (this._configProjectConfigs.length === 0) {
-      const result = await gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
-      this._configProjectConfigs = result.projects;
-    }
-
+    this.configurationProjects.setQuery(
+      resourceQuery<ConfigProjectsResult>(Methods.CONFIG_PROJECTS),
+    );
     const key = templateOptionsRequestKey(project, flowType);
-    if (this._configTemplateOptions[key] || this._configTemplateOptionsLoading[key]) return;
-    this._configTemplateOptionsLoading = { ...this._configTemplateOptionsLoading, [key]: true };
-    this._configTemplateOptionsError = { ...this._configTemplateOptionsError, [key]: '' };
-    try {
-      const result = await gateway.request<ConfigTemplateOptionsResult>(
-        Methods.CONFIG_TEMPLATE_OPTIONS,
-        {
-          project,
-          flowType,
-        },
+    let query = this.configurationTemplates.get(key);
+    if (!query) {
+      query = new ResourceQueryController<ConfigTemplateOptionsResult>(this, (state) => {
+        this._configTemplateOptions = {
+          ...this._configTemplateOptions,
+          [key]: state.data?.options ?? [],
+        };
+        this._configTemplateOptionsLoading = {
+          ...this._configTemplateOptionsLoading,
+          [key]: state.status === 'loading',
+        };
+        this._configTemplateOptionsError = {
+          ...this._configTemplateOptionsError,
+          [key]: state.error?.message ?? '',
+        };
+      });
+      this.configurationTemplates.set(key, query);
+      query.setQuery(
+        resourceQuery<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
+          project: project,
+          flowType: flowType,
+        }),
       );
-      this._configTemplateOptions = { ...this._configTemplateOptions, [key]: result.options };
-    } catch (error) {
-      this._configTemplateOptionsError = {
-        ...this._configTemplateOptionsError,
-        [key]: error instanceof Error ? error.message : String(error),
-      };
-    } finally {
-      this._configTemplateOptionsLoading = { ...this._configTemplateOptionsLoading, [key]: false };
     }
+    await Promise.all([
+      this.configurationProjects.ready
+        ? Promise.resolve(this.configurationProjects.state)
+        : this.configurationProjects.retry(),
+      query.ready ? Promise.resolve(query.state) : query.retry(),
+    ]);
   }
 
   private async _updateDispatchConfig(item: BacklogItem, patch: BacklogUpdateInput): Promise<void> {
     this._dispatchConfigBusy = item.id;
     this._dispatchConfigError = '';
     try {
+      this._requireCurrentBacklog();
       await gateway.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, {
         itemId: item.id,
         ...patch,
@@ -2000,10 +2048,7 @@ export class BacklogPanel extends LitElement {
           runner: candidate.runner ?? 'claude',
           model:
             candidate.model ??
-            defaultModelForRunner(
-              candidate.runner ?? 'claude',
-              rememberedReviewDispatchCatalog(),
-            ) ??
+            defaultModelForRunner(candidate.runner ?? 'claude', visibleReviewDispatchCatalog()) ??
             '',
           effort: candidate.effort ?? '',
           variant: candidate.variant ?? '',
@@ -2188,7 +2233,7 @@ export class BacklogPanel extends LitElement {
             backlogCandidateExecution(
               candidate,
               { runner, model: model ?? null, effort: effort ?? null },
-              rememberedReviewDispatchCatalog(),
+              visibleReviewDispatchCatalog(),
             ),
             item,
           );
@@ -2246,7 +2291,7 @@ export class BacklogPanel extends LitElement {
       <button
         class="secondary"
         type="button"
-        ?disabled=${!this._launchSelectorProject(key)}
+        ?disabled=${!this._commandsReady || !this._launchSelectorProject(key)}
         @click=${() => (this._launchSlotSelector = { key, index })}
       >
         Choose
@@ -2255,7 +2300,8 @@ export class BacklogPanel extends LitElement {
         ? html`<button
             class="secondary"
             type="button"
-            ?disabled=${draft.candidates.filter((row) => row.role === 'comparison').length <= 1}
+            ?disabled=${!this._commandsReady ||
+            draft.candidates.filter((row) => row.role === 'comparison').length <= 1}
             @click=${() =>
               this._setLaunchDraft(key, {
                 ...draft,
@@ -2307,7 +2353,8 @@ export class BacklogPanel extends LitElement {
           : html`<button
               class="secondary"
               type="button"
-              ?disabled=${this._dispatchConfigBusy === item.id ||
+              ?disabled=${!this._commandsReady ||
+              this._dispatchConfigBusy === item.id ||
               !canEditBacklogDispatchForUi(item)}
               @click=${() => this._setDispatchConfigOpen(true)}
             >
@@ -2359,7 +2406,10 @@ export class BacklogPanel extends LitElement {
 
   private _renderDispatchConfigModal(item: BacklogItem) {
     if (!this._dispatchConfigOpen || !canEditBacklogDispatchForUi(item)) return nothing;
-    const disabled = this._dispatchConfigBusy === item.id || !canEditBacklogDispatchForUi(item);
+    const disabled =
+      !this._commandsReady ||
+      this._dispatchConfigBusy === item.id ||
+      !canEditBacklogDispatchForUi(item);
     const templateState = this._templateOptionsStateForItem(item);
     return html`
       <div
@@ -2400,7 +2450,7 @@ export class BacklogPanel extends LitElement {
                 type="number"
                 min="1"
                 .value=${String(item.priority)}
-                ?disabled=${disabled}
+                ?disabled=${!this._commandsReady || disabled}
                 @change=${(event: Event) =>
                   this._updateDispatchConfig(item, {
                     priority: Number((event.target as HTMLInputElement).value),
@@ -2411,7 +2461,7 @@ export class BacklogPanel extends LitElement {
               <input
                 type="checkbox"
                 .checked=${item.autoDispatch !== false}
-                ?disabled=${disabled}
+                ?disabled=${!this._commandsReady || disabled}
                 @change=${(event: Event) =>
                   this._updateDispatchConfig(item, {
                     autoDispatch: (event.target as HTMLInputElement).checked,
@@ -2498,7 +2548,7 @@ export class BacklogPanel extends LitElement {
   private _renderEditDispatchConfig(item: BacklogItem) {
     const draft = this._metadataDraft(item);
     const scopeChanged = draft.project.trim() !== item.project || draft.flowType !== item.flowType;
-    const disabled = this._dispatchConfigBusy === item.id || scopeChanged;
+    const disabled = !this._commandsReady || this._dispatchConfigBusy === item.id || scopeChanged;
     return html`<section class="form-section" aria-label="Edit dispatch config">
       <div class="field-label">Dispatch config</div>
       <div class="muted">
@@ -2639,6 +2689,7 @@ export class BacklogPanel extends LitElement {
     }
     this._busy = 'create';
     try {
+      this._requireCurrentBacklog();
       await gateway.request<BacklogCreateResult>(Methods.BACKLOG_CREATE, {
         project: this._draftProject,
         title,
@@ -2693,9 +2744,16 @@ export class BacklogPanel extends LitElement {
   private async _enqueue(item: BacklogItem) {
     if (item.workGraphId) {
       await this._runItemAction(item.id, 'dispatch via graph', async () => {
-        const linkedGraph = this._workGraphs.find(
-          (candidate) => candidate.graph.id === item.workGraphId,
-        );
+        const currentItem = this._backlogQuery
+          .requireReady()
+          .items.find((row) => row.id === item.id);
+        if (currentItem?.status !== 'ready' || currentItem.workGraphId !== item.workGraphId)
+          throw new Error('The backlog dispatch configuration changed. Review the current item.');
+        const graphs = this._graphsQuery.requireReady().graphs;
+        const workspace = getResourceWorkspaceKey();
+        const epoch = gateway.connectionEpoch;
+        const linkedGraph = graphs.find((candidate) => candidate.graph.id === item.workGraphId);
+        if (!linkedGraph) throw new Error('The linked work graph is no longer available.');
         if (linkedGraph?.graph.status === 'paused') {
           return 'Graph is paused. Resume it in WorkGraph before dispatching this item.';
         }
@@ -2703,6 +2761,8 @@ export class BacklogPanel extends LitElement {
           await gateway.request<WorkGraphActivateResult>(Methods.WORK_GRAPH_ACTIVATE, {
             graphId: item.workGraphId,
           });
+          if (workspace !== getResourceWorkspaceKey() || epoch !== gateway.connectionEpoch)
+            throw new Error('The planning workspace changed.');
           return this._graphSchedulerMessage(
             item,
             await gateway.request<WorkGraphSchedulerTickResult>(Methods.WORK_GRAPH_SCHEDULER_TICK, {
@@ -2741,9 +2801,10 @@ export class BacklogPanel extends LitElement {
   }
 
   private async _deleteItem(item: BacklogItem) {
-    await this._runItemAction(item.id, 'delete', () =>
+    const deleted = await this._runItemAction(item.id, 'delete', () =>
       gateway.request<BacklogDeleteResult>(Methods.BACKLOG_DELETE, { itemId: item.id }),
     );
+    if (!deleted) return;
     this._confirmTimer.clear();
     if (this._selectedItemId === item.id) {
       this._selectedItemId = '';
@@ -2839,6 +2900,7 @@ export class BacklogPanel extends LitElement {
     this._error = '';
     this._message = '';
     try {
+      this._requireCurrentBacklog();
       const result = await gateway.request<BacklogAutoDispatchTickResult>(
         Methods.BACKLOG_AUTO_DISPATCH_TICK,
         this._project === 'all' ? {} : { project: this._project },
@@ -2852,14 +2914,21 @@ export class BacklogPanel extends LitElement {
   }
 
   private async _runItemAction(itemId: string, label: string, action: () => Promise<unknown>) {
+    const workspace = getResourceWorkspaceKey();
+    const epoch = gateway.connectionEpoch;
     this._busy = `${label}:${itemId}`;
     this._error = '';
     this._message = '';
     try {
+      this._requireCurrentBacklog();
       const result = await action();
+      if (workspace !== getResourceWorkspaceKey() || epoch !== gateway.connectionEpoch)
+        return false;
       this._message = typeof result === 'string' && result.trim() ? result : `${label} complete`;
       return true;
     } catch (err) {
+      if (workspace !== getResourceWorkspaceKey() || epoch !== gateway.connectionEpoch)
+        return false;
       this._error = (err as Error).message;
       return false;
     } finally {
@@ -3019,7 +3088,9 @@ export class BacklogPanel extends LitElement {
       </section>
       ${this._renderLaunchPlanEditor(NEW_PLAN_KEY)}
       <div class="actions" style="margin-top: 10px;">
-        <button ?disabled=${this._busy === 'create' || !canCreate}>Create</button>
+        <button ?disabled=${!this._commandsReady || this._busy === 'create' || !canCreate}>
+          Create
+        </button>
       </div>
       <slot-selector-modal
         .open=${this._slotSelectorOpen}
@@ -3115,7 +3186,7 @@ export class BacklogPanel extends LitElement {
           ? html`<button
               class=${this._confirmCleanupClass('archive', item.id, 'secondary')}
               type="button"
-              ?disabled=${busy}
+              ?disabled=${!this._commandsReady || busy}
               title="Hide from the default backlog list without deleting history"
               @click=${() => this._requestArchive(item)}
             >
@@ -3126,7 +3197,7 @@ export class BacklogPanel extends LitElement {
           ? html`<button
               class="secondary"
               type="button"
-              ?disabled=${busy}
+              ?disabled=${!this._commandsReady || busy}
               title="Return this item to ready for another dispatch"
               @click=${() => this._markReady(item)}
             >
@@ -3137,7 +3208,7 @@ export class BacklogPanel extends LitElement {
           ? html`<button
               class=${this._confirmCleanupClass('delete', item.id, 'danger')}
               type="button"
-              ?disabled=${busy}
+              ?disabled=${!this._commandsReady || busy}
               title=${item.workGraphId
                 ? 'Detach from the work graph before deleting'
                 : 'Permanently remove this backlog item'}
@@ -3192,6 +3263,7 @@ export class BacklogPanel extends LitElement {
     this._error = '';
     this._message = '';
     try {
+      this._requireCurrentBacklog();
       const result = await gateway.request<BacklogRefineResult>(Methods.BACKLOG_REFINE, {
         itemId: this._selectedItem.id,
         launch,
@@ -3318,7 +3390,7 @@ export class BacklogPanel extends LitElement {
                 <button
                   data-testid="backlog-refine-continue-existing"
                   type="button"
-                  ?disabled=${this._busy === 'refine-launch'}
+                  ?disabled=${!this._commandsReady || this._busy === 'refine-launch'}
                   @click=${() => this._continueExistingRefinementSession()}
                 >
                   Continue existing
@@ -3367,7 +3439,9 @@ export class BacklogPanel extends LitElement {
             class="secondary"
             type="button"
             data-testid="backlog-prepare-prompt"
-            ?disabled=${this._busy === 'refine' || this._busy === 'refine-launch'}
+            ?disabled=${!this._commandsReady ||
+            this._busy === 'refine' ||
+            this._busy === 'refine-launch'}
             @click=${() => this._refineSelected(false)}
           >
             Prepare prompt
@@ -3375,7 +3449,9 @@ export class BacklogPanel extends LitElement {
           <button
             type="button"
             data-testid="backlog-refine-launch"
-            ?disabled=${this._busy === 'refine' || this._busy === 'refine-launch'}
+            ?disabled=${!this._commandsReady ||
+            this._busy === 'refine' ||
+            this._busy === 'refine-launch'}
             @click=${() => this._refineSelected(true)}
           >
             ${picker.primaryLaunchLabel}
@@ -3394,7 +3470,9 @@ export class BacklogPanel extends LitElement {
       data-testid="backlog-refine-open-picker"
       type="button"
       title="Choose a runner/model, then launch or attach the tmux refinement session for this backlog item."
-      ?disabled=${item.status === 'archived' || this._busy.endsWith(item.id)}
+      ?disabled=${!this._commandsReady ||
+      item.status === 'archived' ||
+      this._busy.endsWith(item.id)}
       @click=${() => this._setRunnerPickerOpen(true)}
     >
       Refine with runner
@@ -3403,7 +3481,9 @@ export class BacklogPanel extends LitElement {
       mode === 'edit'
         ? html`<button
               class="secondary"
-              ?disabled=${this._busy.endsWith(item.id) || !this._metadataDirty(item)}
+              ?disabled=${!this._commandsReady ||
+              this._busy.endsWith(item.id) ||
+              !this._metadataDirty(item)}
               @click=${() => this._saveMetadata(item)}
             >
               Save item
@@ -3411,7 +3491,9 @@ export class BacklogPanel extends LitElement {
             ${canEditBacklogDispatchForUi(item)
               ? html`<button
                   class="secondary"
-                  ?disabled=${this._busy.endsWith(item.id) || !this._launchPlanDirty(item)}
+                  ?disabled=${!this._commandsReady ||
+                  this._busy.endsWith(item.id) ||
+                  !this._launchPlanDirty(item)}
                   @click=${() => this._saveLaunchPlan(item)}
                 >
                   Save launch plan
@@ -3420,7 +3502,7 @@ export class BacklogPanel extends LitElement {
             ${showEditDelete
               ? html`<button
                   class=${this._confirmCleanupClass('delete', item.id, 'danger')}
-                  ?disabled=${this._busy.endsWith(item.id)}
+                  ?disabled=${!this._commandsReady || this._busy.endsWith(item.id)}
                   @click=${() => this._requestDelete(item)}
                 >
                   ${this._confirmCleanupLabel('delete', item.id, 'Delete', 'Delete?')}
@@ -3434,7 +3516,7 @@ export class BacklogPanel extends LitElement {
       ${editActions} ${refineButton}
       ${canMarkReadyBacklogItemForUi(item)
         ? html`<button
-            ?disabled=${this._busy.endsWith(item.id)}
+            ?disabled=${!this._commandsReady || this._busy.endsWith(item.id)}
             @click=${() => this._markReady(item)}
           >
             Mark ready
@@ -3444,7 +3526,10 @@ export class BacklogPanel extends LitElement {
           >`}
       <button
         class="primary-action"
-        ?disabled=${item.status !== 'ready' || this._busy.endsWith(item.id)}
+        ?disabled=${!this._commandsReady ||
+        (Boolean(item.workGraphId) && !this._graphsQuery.ready) ||
+        item.status !== 'ready' ||
+        this._busy.endsWith(item.id)}
         @click=${() => this._enqueue(item)}
         title=${item.workGraphId
           ? 'Dispatch this linked backlog item through its WorkGraph so dependency state and graph run metadata stay intact.'
@@ -3454,7 +3539,9 @@ export class BacklogPanel extends LitElement {
       </button>
       <button
         class="secondary"
-        ?disabled=${!canDequeueBacklogItemForUi(item) || this._busy.endsWith(item.id)}
+        ?disabled=${!this._commandsReady ||
+        !canDequeueBacklogItemForUi(item) ||
+        this._busy.endsWith(item.id)}
         @click=${() => this._dequeue(item)}
       >
         Dequeue
@@ -3562,7 +3649,7 @@ export class BacklogPanel extends LitElement {
             class="secondary"
             type="button"
             title=${AUTO_DISPATCH_TOOLTIP}
-            ?disabled=${this._busy === 'auto'}
+            ?disabled=${!this._commandsReady || this._busy === 'auto'}
             @click=${this._autoDispatch}
           >
             Auto-dispatch
@@ -3633,6 +3720,21 @@ export class BacklogPanel extends LitElement {
         <h1>Backlog</h1>
         <span class="muted">Jira/GitHub/manual intake before dispatch</span>
       </div>
+      ${!this.items && this._backlogQuery.state.status === 'stale'
+        ? html`<p data-testid="backlog-stale">
+            Saved backlog, ${sourceObservationAge(this._backlogQuery.state.observedAt)}. Actions
+            wait for a current read.
+          </p>`
+        : nothing}
+      ${!this.items && this._backlogQuery.state.error
+        ? html`<div class="error" data-testid="backlog-read-error">
+            ${this._backlogQuery.state.error.message}<button
+              @click=${() => this._backlogQuery.retry()}
+            >
+              Retry
+            </button>
+          </div>`
+        : nothing}
       ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
       ${this._message ? html`<div class="message">${this._message}</div>` : nothing}
       ${this._renderFilterToolbar(filtered.length)} ${this._renderCreatePanel()}

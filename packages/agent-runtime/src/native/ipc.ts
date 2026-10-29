@@ -298,7 +298,11 @@ export function requestHost<T>(host: HostIdentity, request: HostRequest): Promis
     socket.on('end', () => {
       try {
         const result = object(JSON.parse(received));
-        if (typeof result.error === 'string') throw new Error(result.error);
+        if (typeof result.error === 'string')
+          throw Object.assign(
+            new Error(result.error),
+            result.errorCode === 'NOT_FOUND' ? { code: 'NOT_FOUND' } : {},
+          );
         resolve(result.value as T);
       } catch (error) {
         reject(error);

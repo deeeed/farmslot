@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import {
+  createGatewayResourceCache,
+  createMemoryResourceStore,
+  createResourceCacheTransport,
+  resourceQuery,
+} from '@farmslot/protocol/client-cache';
+
 import { installFakeGateway } from './testing/fake-gateway.js';
 import { initializeDesktopConnection } from './desktop-connection.js';
 import {
@@ -8,6 +15,304 @@ import {
   GATEWAY_SIGNED_OUT_STORAGE_KEY,
   GATEWAY_TOKEN_STORAGE_KEY,
 } from './gateway-url.js';
+
+test(
+  'shared Sources reads survive slow receipt verification while ordinary reads still time out',
+  { timeout: 4000 },
+  async (t) => {
+    const fake = installFakeGateway(t);
+    const { GatewayClient, gateway } = await import('./gateway-client.js');
+    const client = new GatewayClient('ws://localhost:1234/ws', { token: 'proof' });
+    t.after(() => {
+      client.disconnect();
+      gateway.disconnect();
+    });
+    client.connect();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const socket = fake.sockets.at(-1)!;
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const sources = client.requestResource('sources.status', {}).then(
+      (value) => ({ value }),
+      (error: Error) => ({ error }),
+    );
+    const sourcesId = socket.sent.at(-1)!.id;
+    const runs = assert.rejects(client.requestResource('run.list', {}), /timed out/);
+    t.mock.timers.tick(31_000);
+    const resourceState = { epoch: 'test', dependencies: [] };
+    socket.response(sourcesId, { configured: true }, resourceState);
+    await runs;
+    assert.deepEqual(await sources, { value: { data: { configured: true }, resourceState } });
+  },
+);
+
+test(
+  'shared run evidence reads keep their existing 60-second deadline',
+  { timeout: 4000 },
+  async (t) => {
+    const fake = installFakeGateway(t);
+    const { GatewayClient, gateway } = await import('./gateway-client.js');
+    const client = new GatewayClient('ws://localhost:1234/ws', { token: 'proof' });
+    t.after(() => {
+      client.disconnect();
+      gateway.disconnect();
+    });
+    client.connect();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const socket = fake.sockets.at(-1)!;
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    let complete = false;
+    const reading = client
+      .requestResource('run.recipeRunsForRun', { runId: 'retained' })
+      .then((value) => {
+        complete = true;
+        return value;
+      });
+    const id = socket.sent.at(-1)!.id;
+    t.mock.timers.tick(59_000);
+    await Promise.resolve();
+    assert.equal(complete, false);
+    socket.response(id, { recipeRuns: [], selectedRecipeRunId: null });
+    assert.deepEqual(await reading, {
+      data: { recipeRuns: [], selectedRecipeRunId: null },
+      resourceState: undefined,
+    });
+    const timedOut = assert.rejects(
+      client.requestResource('run.recipeRunsForRun', { runId: 'slow' }),
+      /60000ms/,
+    );
+    t.mock.timers.tick(60_000);
+    await timedOut;
+  },
+);
+
+for (const code of ['TIMEOUT', 'AUTH_FAILED']) {
+  test(`browser reconnect ${code} ${code === 'TIMEOUT' ? 'preserves' : 'deletes'} cached observations`, async (t) => {
+    const fake = installFakeGateway(t);
+    fake.authPayload = {
+      ok: true,
+      authMode: 'token',
+      principal: { id: 'operator', generation: 0, subjectKind: 'service', roles: [] },
+      capabilities: {
+        workspaceAccess: 'farm',
+        resourceChanges: { version: 1, epoch: 'test', versionLists: false },
+      },
+    };
+    const { GatewayClient, gateway } = await import('./gateway-client.js');
+    const client = new GatewayClient('ws://localhost:1234/ws', { token: 'proof' });
+    const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+    client.connect();
+    await settle();
+    const store = createMemoryResourceStore();
+    const cache = createGatewayResourceCache({
+      store,
+      transport: createResourceCacheTransport(client, () => ({
+        id: client.connectionEpoch,
+        connected: client.connectionState === 'connected',
+        gatewayUrl: client.gatewayUrl,
+        authentication: client.authenticatedConnection,
+      })),
+    });
+    t.after(async () => {
+      await cache.dispose();
+      client.disconnect();
+      gateway.disconnect();
+    });
+    const query = { ...resourceQuery<{ value: string }>('sources.status'), persisted: true };
+    const done = cache.retry(query);
+    await settle();
+    let socket = fake.sockets.at(-1)!;
+    socket.response(
+      socket.sent.at(-1)!.id,
+      { value: 'cached' },
+      { epoch: 'test', dependencies: [{ key: { family: 'sources', scope: 'farm' }, revision: 0 }] },
+    );
+    assert.equal((await done).status, 'ready');
+    fake.holdAuth = true;
+    client.reconnect();
+    await settle();
+    socket = fake.sockets.at(-1)!;
+    socket.failure(socket.sent.at(-1)!.id, { code, message: code });
+    await settle();
+    const state = await cache.retry(query);
+    assert.equal(store.deleted, code === 'AUTH_FAILED');
+    assert.equal(state.data?.value, code === 'TIMEOUT' ? 'cached' : undefined);
+    if (code === 'TIMEOUT') assert.equal(state.status, 'stale');
+  });
+}
+
+for (const refreshResult of ['session-ended', 'roles', 'workspace-access', 'generation'] as const) {
+  test(`a foreground refresh with ${refreshResult} clears the previous authority's cache`, async (t) => {
+    const fake = installFakeGateway(t);
+    const { GatewayClient, gateway } = await import('./gateway-client.js');
+    const { CommandCenterPersonSessionStorage } = await import('./person-session-storage.js');
+    const now = Date.now();
+    const grant = {
+      session: {
+        id: 'a'.repeat(32),
+        principalId: 'person-cache',
+        principalGeneration: 0,
+        deviceName: 'Browser',
+        deviceKind: 'command-center' as const,
+        createdAt: new Date(now).toISOString(),
+        lastRefreshedAt: new Date(now).toISOString(),
+        refreshExpiresAt: new Date(now + 86400_000).toISOString(),
+        revokedAt: null,
+      },
+      refreshToken: `fsr_${'a'.repeat(32)}_${'r'.repeat(43)}`,
+      accessToken: `fsa_${'a'.repeat(32)}_${'s'.repeat(43)}`,
+      accessExpiresAt: new Date(now + 3600_000).toISOString(),
+    };
+    const url = 'ws://localhost:1234/ws';
+    await new CommandCenterPersonSessionStorage([url]).save({
+      session: grant.session,
+      refreshToken: grant.refreshToken,
+    });
+    const authentication = {
+      ok: true,
+      authMode: 'token',
+      principal: {
+        id: 'person-cache',
+        generation: 0,
+        subjectKind: 'person',
+        displayName: 'Person',
+        roles: [],
+      },
+      capabilities: {
+        workspaceAccess: 'farm',
+        resourceChanges: { version: 1, epoch: 'test', versionLists: false },
+      },
+    };
+    fake.authPayload = authentication;
+    const client = new GatewayClient(url);
+    const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+    client.connect();
+    await settle();
+    const socket = fake.sockets.at(-1)!;
+    assert.equal(socket.sent.at(-1)!.method, 'auth.session.refresh');
+    socket.response(socket.sent.at(-1)!.id, grant);
+    await settle();
+    assert.equal(client.connectionState, 'connected');
+    const store = createMemoryResourceStore();
+    const cache = createGatewayResourceCache({
+      store,
+      transport: createResourceCacheTransport(client, () => ({
+        id: client.resourceConnectionId,
+        connected: client.connectionState === 'connected',
+        gatewayUrl: url,
+        authentication: client.authenticatedConnection,
+      })),
+    });
+    t.after(async () => {
+      await cache.dispose();
+      client.disconnect();
+      gateway.disconnect();
+    });
+    const query = { ...resourceQuery<{ private: string }>('sources.status'), persisted: true };
+    const first = cache.retry(query);
+    await settle();
+    socket.response(
+      socket.sent.at(-1)!.id,
+      { private: 'old principal' },
+      { epoch: 'test', dependencies: [{ key: { family: 'sources', scope: 'farm' }, revision: 0 }] },
+    );
+    assert.equal((await first).status, 'ready');
+    const refused = cache.retry(query);
+    const socketId = client.resourceConnectionId;
+    await settle();
+    socket.failure(socket.sent.at(-1)!.id, {
+      code: 'AUTH_SESSION_ENDED',
+      message: 'Refresh required',
+    });
+    await settle();
+    assert.equal(socket.sent.at(-1)!.method, 'auth.session.refresh');
+    if (refreshResult === 'session-ended') {
+      socket.failure(socket.sent.at(-1)!.id, {
+        code: 'AUTH_SESSION_ENDED',
+        message: 'Session revoked',
+      });
+    } else {
+      fake.authPayload = {
+        ...authentication,
+        principal: {
+          ...authentication.principal,
+          generation: refreshResult === 'generation' ? 1 : 0,
+          roles: refreshResult === 'roles' ? [{ role: 'operator', scope: { kind: 'global' } }] : [],
+        },
+        capabilities: {
+          ...authentication.capabilities,
+          workspaceAccess: refreshResult === 'workspace-access' ? 'native' : 'farm',
+        },
+      };
+      socket.response(socket.sent.at(-1)!.id, grant);
+      await settle();
+      assert.equal(
+        client.resourceConnectionId,
+        socketId,
+        'Authentication refreshed on the same socket',
+      );
+      assert.equal(fake.sockets.at(-1), socket);
+      assert(store.deleted, 'The refresh must notify the cache before the retried read replies');
+      assert.equal(cache.read(query).data, undefined);
+      socket.response(
+        socket.sent.at(-1)!.id,
+        { private: 'current authority' },
+        {
+          epoch: 'test',
+          dependencies: [{ key: { family: 'sources', scope: 'farm' }, revision: 0 }],
+        },
+      );
+    }
+    await refused;
+    if (refreshResult === 'session-ended') {
+      await cache.retry(query);
+      assert.equal(client.resourceConnectionReason, 'session-ended');
+      assert.equal(client.authenticatedConnection, undefined);
+      assert.equal(cache.read(query).data, undefined);
+    }
+    assert(store.deleted);
+  });
+}
+
+test('resource reads retain frame stamps, ordinary reads retain payloads and abort drops late replies', async (t) => {
+  const fake = installFakeGateway(t);
+  const { GatewayClient, gateway } = await import('./gateway-client.js');
+  const client = new GatewayClient();
+  t.after(() => {
+    client.disconnect();
+    gateway.disconnect();
+  });
+  await client.setAuthCredentials({ token: 'resource-test' });
+  const connected = new Promise<void>((resolve) =>
+    client.onConnectionChange((state) => {
+      if (state === 'connected') resolve();
+    }),
+  );
+  client.connect();
+  await connected;
+  const socket = fake.sockets.at(-1)!;
+  const stamp = {
+    epoch: 'test',
+    dependencies: [{ key: { family: 'sources', scope: 'farm' }, revision: 2 }],
+  };
+  const resource = client.requestResource('sources.status', {});
+  socket.response(socket.sent.at(-1)!.id, { revision: 2 }, stamp);
+  assert.deepEqual(await resource, { data: { revision: 2 }, resourceState: stamp });
+  const ordinary = client.request('sources.status');
+  socket.response(socket.sent.at(-1)!.id, { revision: 2 }, stamp);
+  assert.deepEqual(await ordinary, { revision: 2 });
+  const controller = new AbortController();
+  const pending = assert.rejects(
+    client.requestResource('sources.status', {}, controller.signal),
+    /aborted/,
+  );
+  const id = socket.sent.at(-1)!.id;
+  controller.abort();
+  socket.response(id, { revision: 1 }, stamp);
+  await pending;
+  const before = socket.sent.length;
+  await assert.rejects(client.requestResource('sources.status', {}, controller.signal), /aborted/);
+  assert.equal(socket.sent.length, before);
+});
 
 test('sign-out disconnects, rejects pending work, survives refresh and allows deliberate login', async (t) => {
   const fakeGateway = installFakeGateway(t, 'operator');
@@ -264,4 +569,33 @@ test('a pending judgment waits past the ordinary deadline for the server result'
   );
   client.disconnect();
   await interrupted;
+});
+
+test('a refused request carries its typed error details', async (t) => {
+  const fake = installFakeGateway(t);
+  const { GatewayClient, GatewayRequestError, gateway } = await import('./gateway-client.js');
+  const client = new GatewayClient();
+  t.after(() => {
+    client.disconnect();
+    gateway.disconnect();
+  });
+  await client.setAuthCredentials({ token: 'details-test' });
+  const connected = new Promise<void>((resolve) =>
+    client.onConnectionChange((state) => {
+      if (state === 'connected') resolve();
+    }),
+  );
+  client.connect();
+  await connected;
+  const socket = fake.sockets.at(-1)!;
+  const write = client.request('fs.write', { slotId: 'slot', path: 'a.ts', content: '' });
+  const details = { reason: 'run', currentRunId: 'run-2' };
+  socket.failure(socket.sent.at(-1)!.id, { code: 'FS_CONFLICT', message: 'moved', details });
+  const error = await write.then(
+    () => assert.fail('the write was refused'),
+    (reason: unknown) => reason,
+  );
+  assert.ok(error instanceof GatewayRequestError);
+  assert.equal(error.code, 'FS_CONFLICT');
+  assert.deepEqual(error.details, details);
 });

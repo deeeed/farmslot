@@ -1,9 +1,14 @@
+import { canonicalResourceJson, type ResourceKey } from '../client-cache/keys.js';
+import { normalizeRunner } from '../contracts/runner-ids.js';
 import {
   DEFAULT_CODEX_MODEL,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_MODEL,
   DEFAULT_PI_MODEL,
 } from '../contracts/runs.js';
+
+import { Methods } from './registry.js';
+import type { UpstreamObservation } from './resource-observers.js';
 
 // Pi's Anthropic OAuth provider uses Anthropic model IDs. Keep the provider
 // prefix so launch-command.ts cannot mistake them for xAI's bare model IDs.
@@ -75,7 +80,10 @@ export interface RunnerModelCatalogResult {
   status: RunnerModelCatalogStatus;
   source: RunnerModelCatalogSource;
   detail?: string;
+  /** Retained last-success models. A failed source keeps them with its original success time. */
   models: RunnerCatalogModel[];
+  /** Present for gateway-collected sources; absent for runners without a catalog. */
+  observation?: UpstreamObservation;
 }
 
 export interface RunnerVisibleModelsGetParams {
@@ -110,4 +118,102 @@ export interface RunnerVisibleModelsSetParams {
 export interface RunnerVisibleModelsSetResult {
   ok: true;
   runner: RunnerVisibleModelState;
+}
+
+const MAX_OBSERVED_ID_LENGTH = 256;
+
+function observationRecord(params: unknown, allowed: readonly string[]): Record<string, unknown> {
+  const input = params ?? {};
+  if (typeof input !== 'object' || Array.isArray(input))
+    throw new Error('Runner model observations require an object');
+  const record = Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined),
+  );
+  if (Object.keys(record).some((key) => !allowed.includes(key)))
+    throw new Error('Runner model observations do not accept commands, paths or refreshes');
+  return record;
+}
+
+/** The gateway's runner spelling, including aliases such as claude-code. */
+function observationRunner(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > MAX_OBSERVED_ID_LENGTH)
+    throw new Error('Runner model observations require a runner');
+  return normalizeRunner(value);
+}
+
+/** An alias reads its canonical runner's catalog, so both spellings share one query. */
+export function runnerModelCatalogObservationParams(params: unknown): RunnerModelCatalogParams {
+  return { runner: observationRunner(observationRecord(params, ['runner']).runner) };
+}
+
+/** Model IDs are not path selectors: provider-prefixed IDs such as `anthropic/...` stay valid. */
+export function runnerVisibleModelsObservationParams(
+  params: unknown,
+): RunnerVisibleModelsGetParams {
+  const record = observationRecord(params, ['runner', 'selectedModel']);
+  const selected = record.selectedModel;
+  if (selected !== null && selected !== undefined && typeof selected !== 'string')
+    throw new Error('selectedModel must be a model id');
+  // The gateway applies a selection only to one runner's picker.
+  if (record.runner === undefined) return {};
+  const runner = observationRunner(record.runner);
+  const selectedModel = typeof selected === 'string' ? selected.trim() : '';
+  if (!selectedModel) return { runner };
+  if (selectedModel.startsWith('-') || selectedModel.length > MAX_OBSERVED_ID_LENGTH)
+    throw new Error('selectedModel must be a model id');
+  return { runner, selectedModel };
+}
+
+/** Catalogs are gateway-host sources. The key never names a command, argv or catalog path. */
+export function runnerModelCatalogResourceKey(params: unknown): ResourceKey {
+  return {
+    family: 'upstream',
+    integration: 'providers',
+    queryId: `${Methods.RUNNER_MODEL_CATALOG}:${canonicalResourceJson(runnerModelCatalogObservationParams(params))}`,
+  };
+}
+
+/** Durable catalog: IDs, labels, reasoning/visibility fields and the source observation only. */
+export function runnerModelCatalogStoredData(data: unknown): RunnerModelCatalogResult {
+  const result = data as RunnerModelCatalogResult;
+  const observation = result.observation;
+  return {
+    runner: result.runner,
+    status: result.status,
+    source: result.source,
+    ...(result.detail === undefined ? {} : { detail: result.detail }),
+    models: result.models.map(({ id, label, reasoningModes, listed }) => ({
+      id,
+      ...(label === undefined ? {} : { label }),
+      reasoningModes: [...reasoningModes],
+      listed,
+    })),
+    ...(observation
+      ? {
+          observation: {
+            status: observation.status,
+            ...(observation.observedAt === undefined ? {} : { observedAt: observation.observedAt }),
+            ...(observation.error
+              ? { error: { code: observation.error.code, message: observation.error.message } }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+/** Durable preferences: visible IDs, defaults and the retained explicit selection only. */
+export function runnerVisibleModelsStoredData(data: unknown): RunnerVisibleModelsGetResult {
+  const result = data as RunnerVisibleModelsGetResult;
+  return {
+    runners: result.runners.map((state) => ({
+      runner: state.runner,
+      defaultModel: state.defaultModel,
+      defaultConfigured: state.defaultConfigured,
+      configured: state.configured,
+      models: [...state.models],
+      pickerModels: [...state.pickerModels],
+      ...(state.retainedModel === undefined ? {} : { retainedModel: state.retainedModel }),
+    })),
+  };
 }

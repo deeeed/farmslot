@@ -1,0 +1,99 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Offline client store startup and reconnect baseline",
+  "description": "Run five times on an isolated, paired iOS dev client with a self-contained pending gate. IOS_SIMULATOR and METRO_PORT select its own stack. Records native startup timing and actual received gateway bytes without changing application data.",
+  "paramsSchema": {
+    "type": "object",
+    "required": ["run_id", "slot_id"],
+    "additionalProperties": false,
+    "properties": {
+      "run_id": { "type": "string", "pattern": "^[a-zA-Z0-9-]+$" },
+      "slot_id": { "type": "string", "pattern": "^[a-zA-Z0-9-]+$" }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "native-baseline",
+      "claim": "The real Companion reads its run list after a cold launch and automatic socket reconnect."
+    },
+    {
+      "id": "native-diff-baseline",
+      "claim": "Companion reads a nonempty diff for the pending gate's workspace and renders its diff screen."
+    }
+  ],
+  "workflow": {
+    "entry": "cold-start",
+    "nodes": {
+      "cold-start": {
+        "action": "command",
+        "cmd": "node scripts/agentic/measure-offline-client-store.mjs cold",
+        "timeout_ms": 90000,
+        "intent": "Relaunch the real app and measure its first successful run list read.",
+        "next": "assert-cold"
+      },
+      "assert-cold": {
+        "action": "assert_output",
+        "source": "cold-start",
+        "stream": "stdout",
+        "match": "\"phase\"\\s*:\\s*\"cold\"",
+        "intent": "Require a cold-start receipt from the connected app.",
+        "proves": ["native-baseline"],
+        "next": "reconnect"
+      },
+      "reconnect": {
+        "action": "command",
+        "cmd": "node scripts/agentic/measure-offline-client-store.mjs reconnect",
+        "timeout_ms": 90000,
+        "intent": "Close the actual socket and measure the client's automatic recovery.",
+        "next": "assert-reconnect"
+      },
+      "assert-reconnect": {
+        "action": "assert_output",
+        "source": "reconnect",
+        "stream": "stdout",
+        "match": "\"phase\"\\s*:\\s*\"reconnect\"",
+        "intent": "Require a reconnect receipt from the connected app.",
+        "proves": ["native-baseline"],
+        "next": "open-diff"
+      },
+      "open-diff": {
+        "action": "command",
+        "cmd": "node scripts/agentic/measure-offline-client-store.mjs diff {{params.run_id}} {{params.slot_id}}",
+        "timeout_ms": 90000,
+        "intent": "Open the real gate workspace and measure its matching diff read.",
+        "next": "assert-diff"
+      },
+      "assert-diff": {
+        "action": "assert_output",
+        "source": "open-diff",
+        "stream": "stdout",
+        "match": "\"diffCharacters\"\\s*:\\s*[1-9]",
+        "intent": "Require actual diff content from the selected workspace.",
+        "proves": ["native-diff-baseline"],
+        "next": "diff-screen"
+      },
+      "diff-screen": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-diff",
+        "expected": "visible",
+        "intent": "Verify the real run diff screen is visible.",
+        "next": "diff-content"
+      },
+      "diff-content": {
+        "action": "ui.wait_for",
+        "text": "Workspace diff",
+        "expected": "visible",
+        "intent": "Verify the live workspace diff loaded instead of an unavailable artifact.",
+        "next": "capture-diff"
+      },
+      "capture-diff": {
+        "action": "ui.screenshot",
+        "path": "screenshots/gate-diff.png",
+        "intent": "Record the rendered gate workspace diff.",
+        "covers": ["native-diff-baseline"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

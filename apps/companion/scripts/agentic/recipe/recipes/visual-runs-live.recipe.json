@@ -1,0 +1,78 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native visual-review run observations",
+  "description": "Use the isolated proof gateway and owned native device with FARMSLOT_RUN_PROOF_FIXTURE. Seed a uniquely owned finished run with a source and actual app capture, acquire through the real bundle retention endpoint, and type the draft through the native input. External tags and an owned gateway outage verify canonical reads, disabled stale delivery and no replay. The unique run and source files are removed. No worker message is sent to an active session.",
+  "proofTargets": [
+    {
+      "id": "native-visual-shared",
+      "claim": "The mounted visual review uses canonical shared run and recipe observations and follows an external write."
+    },
+    {
+      "id": "native-visual-draft",
+      "claim": "The actual native note survives an external run update and a refused send to the finished run."
+    },
+    {
+      "id": "native-visual-stale",
+      "claim": "The existing visual review retains its draft, shows saved run age and disables delivery during a real gateway outage."
+    },
+    {
+      "id": "native-visual-reconnect",
+      "claim": "Current reconnect reads restore delivery readiness without replaying the refused feedback or resolving a gate."
+    }
+  ],
+  "workflow": {
+    "entry": "before",
+    "nodes": {
+      "before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-visual-before.png",
+        "intent": "Open the owned native device session before real-client verification.",
+        "next": "prove"
+      },
+      "prove": {
+        "action": "command",
+        "cmd": "node scripts/agentic/prove-offline-runs.mjs visual-context",
+        "timeout_ms": 240000,
+        "intent": "Prove canonical context, real note input, refused delivery, stale controls and reconnect without replay.",
+        "next": "shared"
+      },
+      "shared": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeVisualShared\":true",
+        "intent": "Require canonical observations and the external run update.",
+        "proves": ["native-visual-shared"],
+        "next": "draft"
+      },
+      "draft": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeVisualDraft\":true",
+        "intent": "Require the actual operator note to survive updates and delivery refusal.",
+        "proves": ["native-visual-draft"],
+        "next": "stale"
+      },
+      "stale": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeVisualStale\":true",
+        "intent": "Require saved run age and actual disabled feedback controls during the outage.",
+        "proves": ["native-visual-stale"],
+        "next": "reconnect"
+      },
+      "reconnect": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeVisualNoReplay\":true",
+        "intent": "Require current observations without replaying feedback or resolving the run's decisions.",
+        "proves": ["native-visual-reconnect"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

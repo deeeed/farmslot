@@ -26,35 +26,57 @@ Object.defineProperty(globalThis, 'window', {
 });
 const { ReadyWorkspace } = await import('./ready-workspace.js');
 
-test('a new run revision re-reads evidence without discarding the current review draft', async () => {
+test('a new run revision re-reads evidence without discarding the current review draft', () => {
   const view = Object.create(ReadyWorkspace.prototype) as InstanceType<typeof ReadyWorkspace>;
-  const reasons = { otherClaim: 'Keep this unfinished reason' };
+  const decision = { id: 'gate', payload: { kind: 'ready' } };
+  // The shared evidence observation owns the read; a run revision delivers its new source.
+  let evidence = {
+    belongsToWorkspace: true,
+    state: { status: 'ready', data: { selectedRecipeRunId: 'recipe-old' } },
+  };
+  const built: unknown[] = [];
   Object.assign(view, {
     requestUpdate: () => undefined,
     runId: 'run-a',
-    run: { updatedAt: 'new' },
-    decision: { id: 'gate' },
+    slotId: 'slot-a',
+    decision,
     mockData: false,
-    _evidenceRequest: 0,
-    _evidenceScope: { runId: 'run-a', decisionId: 'gate', runUpdatedAt: 'old' },
-    _evidenceLoaded: true,
+    _queries: {
+      get evidence() {
+        return evidence;
+      },
+      decision,
+    },
+    _reviewEvidenceModel: (...args: unknown[]) => {
+      built.push(args);
+      return {};
+    },
+  });
+  Object.defineProperty(view, '_usesMockData', { value: false });
+  Object.defineProperty(view, 'isConnected', { value: true });
+  view._sharedWorkspaceQueriesChanged();
+  assert.equal(built.length, 1);
+
+  const reasons = { otherClaim: 'Keep this unfinished reason' };
+  Object.assign(view, {
     _visualReviewReasons: reasons,
     _claimOverrideId: 'otherClaim',
     _claimOverrideReason: 'Unfinished override',
     _lightboxOpen: true,
-    _reviewEvidenceModel: () => ({}),
   });
-  Object.defineProperty(view, 'isConnected', { value: true });
-  const load: unknown = Reflect.get(view, '_loadReviewEvidence');
-  assert.equal(typeof load, 'function');
-  if (typeof load !== 'function') throw new Error('Expected the owning evidence reader');
-  const before = reads;
-  await load.call(view);
-  assert.equal(reads, before + 1);
+  evidence = {
+    belongsToWorkspace: true,
+    state: { status: 'ready', data: { selectedRecipeRunId: 'recipe-new' } },
+  };
+  view._sharedWorkspaceQueriesChanged();
+  assert.equal(built.length, 2, 'The new revision rebuilds evidence from the shared read');
+  assert.equal(Reflect.get(view, '_evidenceRecipeRunId'), 'recipe-new');
   assert.equal(Reflect.get(view, '_visualReviewReasons'), reasons);
   assert.equal(Reflect.get(view, '_claimOverrideReason'), 'Unfinished override');
   assert.equal(Reflect.get(view, '_claimOverrideId'), 'otherClaim');
   assert.equal(Reflect.get(view, '_lightboxOpen'), true);
-  await load.call(view);
-  assert.equal(reads, before + 1, 'An unchanged revision reuses the completed read');
+
+  view._sharedWorkspaceQueriesChanged();
+  assert.equal(built.length, 2, 'An unchanged revision reuses the completed read');
+  assert.equal(reads, 0, 'Evidence is never read around the shared observation');
 });

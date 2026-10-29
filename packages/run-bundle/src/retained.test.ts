@@ -105,6 +105,39 @@ test('retained report survives source mutation/removal and cold store reopen wit
   assert.equal(retried.manifest.bundleId, result.manifest.bundleId);
 });
 
+test('gateway-written files are retained from their own directory, not the source task', async (t) => {
+  const f = await fixture(t);
+  const gatewayDir = path.join(f.root, 'gateway-task');
+  await mkdir(path.join(gatewayDir, 'artifacts'), { recursive: true });
+  const body = 'diff --git a/f b/f\n';
+  await writeFile(path.join(gatewayDir, 'artifacts/package.diff'), body);
+  await writeFile(path.join(f.taskDir, 'artifacts/package.diff'), 'stale source copy');
+  const diff: ArtifactRef = {
+    path: 'artifacts/package.diff',
+    purpose: 'diff',
+    sha256: createHash('sha256').update(body).digest('hex'),
+    sizeBytes: Buffer.byteLength(body),
+  };
+  const result = await materializeRunBundle({
+    ...f.request,
+    artifacts: [...f.artifacts, diff],
+    gatewayFiles: { taskDir: gatewayDir, paths: [diff.path] },
+  });
+  assert.deepEqual(result.missingData, []);
+  for (const [file, expected] of [
+    [diff.path, body],
+    ['artifacts/report.html', '<h1>Retained report</h1>'],
+  ]) {
+    const entry = await resolveRunBundleEntry({
+      store: f.store,
+      ref: result.ref,
+      runId: f.run.id,
+      path: file,
+    });
+    assert.equal(await readFile(entry.path, 'utf8'), expected);
+  }
+});
+
 test('published capture retries its failed Run commit with identical manifest and no source read', async (t) => {
   const f = await fixture(t);
   await assert.rejects(
@@ -569,6 +602,33 @@ test('a missing inventoried payload keeps its expected identity and can be resto
   assert.deepEqual(restored.missingData, []);
   const bundle = await readRetainedRunBundle(f.store, restored.ref, f.run.id);
   assert.equal(await bundle.readText('artifacts/capture.mp4'), 'video bytes');
+});
+
+test('a missing gateway-written payload is restored from its own directory on retry', async (t) => {
+  const f = await fixture(t);
+  const gatewayDir = path.join(f.root, 'gateway-task');
+  await mkdir(path.join(gatewayDir, 'artifacts'), { recursive: true });
+  const body = 'diff --git a/f b/f\n';
+  const diff: ArtifactRef = {
+    path: 'artifacts/package.diff',
+    purpose: 'diff',
+    sha256: createHash('sha256').update(body).digest('hex'),
+    sizeBytes: Buffer.byteLength(body),
+  };
+  const request = {
+    ...f.request,
+    artifacts: [...f.artifacts, diff],
+    gatewayFiles: { taskDir: gatewayDir, paths: [diff.path] },
+  };
+  const first = await materializeRunBundle(request);
+  assert.ok(first.missingData.includes(`missing:${diff.path}`));
+  await writeFile(path.join(gatewayDir, diff.path), body);
+  await writeFile(path.join(f.taskDir, diff.path), 'stale source copy');
+  const restored = await materializeRunBundle(request);
+  assert.deepEqual(restored.ref, first.ref);
+  assert.deepEqual(restored.missingData, []);
+  const bundle = await readRetainedRunBundle(f.store, restored.ref, f.run.id);
+  assert.equal(await bundle.readText(diff.path), body);
 });
 
 test('GC releases terminal and deleted run reservations while retaining active admission', async (t) => {

@@ -56,6 +56,8 @@ export class MachineGroup extends LitElement {
   @property({ attribute: false }) providerAccountsError?: string;
   /** True while the canvas has a seat-snapshot fetch in flight for this machine. */
   @property({ type: Boolean }) providerAccountsFetching = false;
+  /** False while the gateway is disconnected; Retry and Refresh need a live probe. */
+  @property({ type: Boolean }) providerAccountsActionable = true;
   @state() private expandedSlotId: string | null = null;
   /** Accounts panel open (subscription matrix lives under a button, not header clutter). */
   @state() private accountsOpen = false;
@@ -422,9 +424,13 @@ export class MachineGroup extends LitElement {
       cursor: pointer;
       flex-shrink: 0;
     }
-    .setup-close:hover {
+    .setup-close:hover:not(:disabled) {
       color: ${unsafeCSS(colors.textPrimary)};
       border-color: ${unsafeCSS(colors.accent)};
+    }
+    .setup-close:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
     }
     .setup-body {
       padding: 8px 10px 12px;
@@ -731,6 +737,7 @@ export class MachineGroup extends LitElement {
                     <button
                       type="button"
                       class="setup-close"
+                      ?disabled=${!this.providerAccountsActionable}
                       @click=${() =>
                         this.dispatchEvent(
                           new CustomEvent('provider-accounts-refresh', {
@@ -757,6 +764,7 @@ export class MachineGroup extends LitElement {
               type="button"
               class="setup-close"
               data-testid="machine-accounts-refresh"
+              ?disabled=${!this.providerAccountsActionable}
               @click=${() =>
                 this.dispatchEvent(
                   new CustomEvent('provider-accounts-refresh', {

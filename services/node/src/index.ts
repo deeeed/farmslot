@@ -1,9 +1,13 @@
+import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 
 import WebSocket from 'ws';
 
+import { expandTilde } from '@farmslot/capabilities/fs-watch';
 import {
   type Frame,
+  type NodeFsChangedPayload,
+  type NodeFsWatchResult,
   PROTOCOL_VERSION,
   type RecipeRuntimeCapabilityDeclaration,
   type RequestFrame,
@@ -57,6 +61,11 @@ import {
 } from './commands/system-metrics.js';
 import * as tmux from './commands/tmux.js';
 import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
+import {
+  startWorkspaceWatch,
+  stopAllWorkspaceWatches,
+  stopWorkspaceWatch,
+} from './commands/workspace-watch.js';
 import { resolveGatewayCredential } from './gateway-credential.js';
 import {
   authenticateNode,
@@ -122,7 +131,9 @@ function connect(): void {
       return;
     }
     console.log('Disconnected from gateway');
+    nativeSessions.stopObservation();
     fsWatchStopAll();
+    stopAllWorkspaceWatches();
     stopMetricsSubscription();
     stopAllCaptures();
     stopAllResourceWatches();
@@ -168,6 +179,8 @@ async function handshake(socket: WebSocket): Promise<void> {
       nativeSessions: nativeSessions.declaration,
       gatewayUrl: GATEWAY_URL,
       execCancellation: true,
+      conditionalWrites: true,
+      observationCapabilities: { workers: 1, files: 1, workspace: 1 },
     });
     if (ws !== socket) {
       // Superseded while awaiting: the newer socket runs its own handshake and
@@ -175,6 +188,29 @@ async function handshake(socket: WebSocket): Promise<void> {
       socket.close();
       return;
     }
+    // One source owner per daemon, reannounced only on this authenticated socket.
+    try {
+      await nativeSessions.startObservation((receipt) => {
+        if (ws === socket && socket.readyState === WebSocket.OPEN)
+          socket.send(
+            JSON.stringify({ type: 'event', event: 'node.native.observation', payload: receipt }),
+          );
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !('code' in error) ||
+        error.code !== 'NATIVE_SOURCE_UNAVAILABLE'
+      )
+        throw error;
+      // The source failure is explicit; imperative commands keep their existing route.
+      const receipt = nativeSessions.observationReceipt();
+      if (receipt && ws === socket && socket.readyState === WebSocket.OPEN)
+        socket.send(
+          JSON.stringify({ type: 'event', event: 'node.native.observation', payload: receipt }),
+        );
+    }
+    if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
     // Registered — this connection is healthy, so future transport drops
     // start their retry climb from the floor again, and a later auth
     // regression earns a fresh hint.
@@ -291,6 +327,7 @@ function sendResponse(
   error?: string,
   errorCode?: string,
   responseSocket?: WebSocket,
+  details?: unknown,
 ): void {
   const destination = responseSocket ?? ws;
   if (!destination || destination.readyState !== WebSocket.OPEN) return;
@@ -299,7 +336,13 @@ function sendResponse(
     id,
     ok,
     payload: ok ? payload : undefined,
-    error: ok ? undefined : { code: errorCode ?? 'EXEC_ERROR', message: error ?? 'Unknown error' },
+    error: ok
+      ? undefined
+      : {
+          code: errorCode ?? 'EXEC_ERROR',
+          message: error ?? 'Unknown error',
+          ...(details !== undefined ? { details } : {}),
+        },
   };
   destination.send(JSON.stringify(frame));
 }
@@ -309,6 +352,19 @@ function requireString(params: Record<string, unknown>, key: string): string {
   const val = params[key];
   if (typeof val !== 'string') throw new Error(`Missing required string param: ${key}`);
   return val;
+}
+
+/** A file version precondition: a SHA-256 hex string, or null where the path must not exist. */
+function optionalExpectedHash(
+  params: Record<string, unknown>,
+  absentAllowed: boolean,
+): string | null | undefined {
+  const value = params.expectedHash;
+  if (value === undefined || typeof value === 'string' || (absentAllowed && value === null))
+    return value;
+  throw new Error(
+    absentAllowed ? 'expectedHash must be a string or null' : 'expectedHash must be a string',
+  );
 }
 
 function requireNumber(params: Record<string, unknown>, key: string): number {
@@ -366,7 +422,16 @@ async function handleRequest(
         break;
       }
       case 'native.session': {
-        sendResponse(frame.id, true, await nativeSessions.route(params));
+        sendResponse(
+          frame.id,
+          true,
+          params.observe === true
+            ? await nativeSessions.routeObserved(params)
+            : await nativeSessions.route(params),
+          undefined,
+          undefined,
+          socket,
+        );
         break;
       }
       case 'exec.cancel': {
@@ -488,8 +553,8 @@ async function handleRequest(
       case 'tmux.worker.watch.start': {
         const intervalMs = typeof params.intervalMs === 'number' ? params.intervalMs : undefined;
         startTmuxWorkerWatch(intervalMs, (change) => {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(
+          if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+          socket.send(
             JSON.stringify({
               type: 'event',
               event: 'node.tmux.workers.changed',
@@ -497,7 +562,14 @@ async function handleRequest(
             }),
           );
         });
-        sendResponse(frame.id, true, { watching: true });
+        sendResponse(
+          frame.id,
+          true,
+          { watching: true, observations: 1 },
+          undefined,
+          undefined,
+          socket,
+        );
         break;
       }
 
@@ -585,7 +657,8 @@ async function handleRequest(
         const root = requireString(params, 'root');
         const relPath = requireString(params, 'relPath');
         const content = requireString(params, 'content');
-        const result = await fsWrite({ root, relPath, content });
+        const expectedHash = optionalExpectedHash(params, true);
+        const result = await fsWrite({ root, relPath, content, expectedHash });
         sendResponse(frame.id, true, result);
         break;
       }
@@ -617,7 +690,8 @@ async function handleRequest(
         const root = requireString(params, 'root');
         const oldRelPath = requireString(params, 'oldRelPath');
         const newRelPath = requireString(params, 'newRelPath');
-        const result = await fsRename({ root, oldRelPath, newRelPath });
+        const expectedHash = optionalExpectedHash(params, false);
+        const result = await fsRename({ root, oldRelPath, newRelPath, expectedHash });
         sendResponse(frame.id, true, result);
         break;
       }
@@ -625,7 +699,8 @@ async function handleRequest(
       case 'fs.delete': {
         const root = requireString(params, 'root');
         const relPath = requireString(params, 'relPath');
-        const result = await fsDelete({ root, relPath });
+        const expectedHash = optionalExpectedHash(params, false);
+        const result = await fsDelete({ root, relPath, expectedHash });
         sendResponse(frame.id, true, result);
         break;
       }
@@ -660,23 +735,86 @@ async function handleRequest(
 
       case 'fs.watch': {
         const watchPath = requireString(params, 'path');
-        fsWatchStart(frame.id, { path: watchPath }, (content) => {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(
+        if (params.workspace === 1) {
+          const identity = {
+            requestId: frame.id,
+            machine: MACHINE_NAME,
+            path: watchPath,
+            workspace: 1,
+          };
+          const push = (payload: unknown) => {
+            if (ws === socket && socket.readyState === WebSocket.OPEN)
+              socket.send(JSON.stringify({ type: 'event', event: 'node.fs.changed', payload }));
+          };
+          await startWorkspaceWatch(
+            frame.id,
+            watchPath,
+            () => push({ ...identity, kind: 'updated' }),
+            (error) => push({ ...identity, kind: 'error', error: { message: error.message } }),
+          );
+          if (ws !== socket || socket.readyState !== WebSocket.OPEN) {
+            stopWorkspaceWatch(frame.id);
+            break;
+          }
+          sendResponse(frame.id, true, { workspace: 1, ready: true }, undefined, undefined, socket);
+          break;
+        }
+        const observations = params.observations === 1;
+        const sendChange = (payload: NodeFsChangedPayload) => {
+          if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+          socket.send(
             JSON.stringify({
               type: 'event',
               event: 'node.fs.changed',
-              payload: { requestId: frame.id, machine: MACHINE_NAME, path: watchPath, content },
+              payload,
             }),
           );
-        });
-        sendResponse(frame.id, true, { watching: true });
+        };
+        const identity = { requestId: frame.id, machine: MACHINE_NAME, path: watchPath };
+        fsWatchStart(
+          frame.id,
+          { path: watchPath },
+          (content) => sendChange({ ...identity, content }),
+          observations
+            ? {
+                onUnavailable: (observation) =>
+                  sendChange({ ...identity, content: '' as const, ...observation }),
+              }
+            : {},
+        );
+        let initial: NodeFsWatchResult['initial'] = undefined;
+        if (observations) {
+          try {
+            initial = { kind: 'updated', content: await readFile(expandTilde(watchPath), 'utf-8') };
+          } catch (error) {
+            const failure = error as NodeJS.ErrnoException;
+            initial =
+              failure.code === 'ENOENT'
+                ? { kind: 'deleted', content: '' }
+                : {
+                    kind: 'error',
+                    content: '',
+                    error: {
+                      message: failure.message,
+                      ...(failure.code ? { code: failure.code } : {}),
+                    },
+                  };
+          }
+        }
+        sendResponse(
+          frame.id,
+          true,
+          { watching: true, observations: 1, initial },
+          undefined,
+          undefined,
+          socket,
+        );
         break;
       }
 
       case 'fs.watch.stop': {
         const stopId = requireString(params, 'requestId');
-        const stopped = fsWatchStop(stopId);
+        const stopped = stopWorkspaceWatch(stopId) || fsWatchStop(stopId);
         sendResponse(frame.id, true, { stopped });
         break;
       }
@@ -784,7 +922,7 @@ async function handleRequest(
         sendResponse(frame.id, false, undefined, `Unknown method: ${frame.method}`);
     }
   } catch (err) {
-    const error = err as NodeJS.ErrnoException;
+    const error = err as NodeJS.ErrnoException & { details?: unknown };
     sendResponse(
       frame.id,
       false,
@@ -792,11 +930,13 @@ async function handleRequest(
       err instanceof Error ? err.message : String(err),
       typeof error.code === 'string' ? error.code : undefined,
       responseSocket,
+      error?.details,
     );
   }
 }
 
 async function shutdown(): Promise<void> {
+  nativeSessions.stopObservation();
   if (disposed) return;
   console.log('Shutting down node...');
   disposed = true;

@@ -1,7 +1,8 @@
-import { css, html, LitElement, unsafeCSS } from 'lit';
+import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import type {
+  FleetStatusResult,
   FleetThumbnailsUpdatedPayload,
   MachineHealth,
   MachinePauseExecuteParams,
@@ -13,14 +14,12 @@ import type {
   MachinePauseSelector,
   MachinePauseStatusResult,
   MachinePauseUpdatedPayload,
-  NodeConnectedPayload,
-  NodeDisconnectedPayload,
-  NodeHealthUpdatedPayload,
   NodeInfo,
   NodesListResult,
   PressureAdmissionControlState,
   PressureAdmissionGetResult,
   PressureAdmissionSetEnabledResult,
+  ProviderAccountsSnapshotResult,
   ResourceCleanupResult,
   ResourceListResult,
   ResourcePressureCleanupCandidate,
@@ -35,9 +34,10 @@ import type {
   SlotStatus,
   TaskProgressResult,
   TaskProgressStructured,
-  TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { Events, Methods, primaryRoleForFlow } from '@farmslot/protocol';
+import { Events, Methods, sourceObservationAge } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { fleetRecoverySummary } from '@farmslot/review-dispatch';
 
 import './machine-group.js';
@@ -50,10 +50,11 @@ import '../slot-actions/fleet-refresh-modal.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
-import { providerAccountsStore } from '../../provider-accounts-store.js';
-import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
+import { type AppState, fleetQuery, getState, isHydrating, subscribe } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   buildSlotPendingWork,
   type SlotPendingWork,
@@ -95,6 +96,9 @@ export class FleetCanvas extends LitElement {
   @state() private slots: SlotStatus[] = [];
   @state() private hydrating = false;
   @state() private bootstrapFailed = false;
+  @state() private fleetObservation: ResourceQueryState<FleetStatusResult> = { status: 'loading' };
+  @state() private now = Date.now();
+  private fleetAgeTimer?: ReturnType<typeof setInterval>;
   @state() private groupBy: FleetCanvasGroupBy = 'machine';
   @state() private filterProjects: string[] = [];
   @state() private filterMachines: string[] = [];
@@ -105,6 +109,9 @@ export class FleetCanvas extends LitElement {
   @state() private nodeInfo: Map<string, NodeInfo> = new Map();
   @state() private gatewayProtocolVersion = '';
   @state() private slotProgress: Map<string, TaskProgressStructured> = new Map();
+  @state() private progressObservations = new Map<string, ResourceQueryState<TaskProgressResult>>();
+  private progressAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
   @state() private slotRuns: Map<string, Run> = new Map();
   @state() private machineHealthMap: Map<string, MachineHealth> = new Map();
   @state() private slotResourceStatus: Map<string, Map<string, ResourceStatus>> = new Map();
@@ -130,8 +137,9 @@ export class FleetCanvas extends LitElement {
   @state() private machinePauseBusy: MachinePauseBusyAction = null;
   @state() private machinePauseActionError = '';
   @state() private machinePauseConnectionStale = false;
-  /** machine → provider subscription snapshot (labels only). */
-  private _providerAccountsUnsub: (() => void) | null = null;
+  /** Machines with an explicit live seat probe in flight. */
+  @state() private providerAccountsRefreshing = new Set<string>();
+  @state() private providerAccountsRefreshError = '';
   private _resourceFetched = false;
   private _resourcePressureFetchEpoch = 0;
   private _machinePauseFetchEpoch = 0;
@@ -141,19 +149,23 @@ export class FleetCanvas extends LitElement {
   private _pressureHistoryRefreshTimer?: ReturnType<typeof setTimeout>;
   private _resourcePressureRecoveryTimer?: ReturnType<typeof setTimeout>;
   private unsub?: () => void;
-  private _unsubConnected?: () => void;
-  private _unsubDisconnected?: () => void;
   private _unsubConnState?: () => void;
-  private _unsubFleetRefresh?: () => void;
-  private _unsubProgress?: () => void;
-  private _unsubRunUpdated?: () => void;
-  private _unsubRunCreated?: () => void;
   private _unsubNodeHealth?: () => void;
   private _unsubResourceStatus?: () => void;
   private _unsubThumbnails?: () => void;
   private _unsubMachinePauseUpdated?: () => void;
-  private _progressTimer?: ReturnType<typeof setInterval>;
   private _onHashChange = () => this._readUrlParams();
+  /** Every fleet machine's runner seats; the config page shares the same cached owners. */
+  private readonly providerAccountsQuery =
+    new ResourceQueryController<ProviderAccountsSnapshotResult>(this);
+  private readonly nodeQuery = new ResourceQueryController<NodesListResult>(this, (result) => {
+    const nodes = result.data?.nodes ?? [];
+    const changed = nodes.some((node) => this.nodeInfo.get(node.machine)?.pid !== node.pid);
+    this.onlineMachines = new Set(nodes.map((node) => node.machine));
+    this.nodeInfo = new Map(nodes.map((node) => [node.machine, node]));
+    this.gatewayProtocolVersion = result.data?.gatewayProtocolVersion ?? '';
+    if (changed && result.status === 'ready') this.scheduleResourcePressureRecoveryRefresh();
+  });
 
   static styles = css`
     :host {
@@ -301,15 +313,15 @@ export class FleetCanvas extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this._providerAccountsUnsub = providerAccountsStore.subscribe(() => this.requestUpdate());
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
 
-    // Fetch initial agent list — retry whenever gateway reconnects or fleet updates
-    this._fetchAgents();
+    this.nodeQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
+    this.providerAccountsQuery.setQuery(
+      resourceQuery<ProviderAccountsSnapshotResult>(Methods.PROVIDER_ACCOUNTS_SNAPSHOT),
+    );
     this._unsubConnState = gateway.onConnectionChange((s) => {
       if (s === 'connected') {
-        this._fetchAgents();
         this.scheduleResourcePressureRecoveryRefresh();
         if (this.machinePauseMachine) {
           this.machinePauseConnectionStale = true;
@@ -319,74 +331,13 @@ export class FleetCanvas extends LitElement {
         this.machinePauseConnectionStale = true;
       }
     });
-    let agentRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-    this._unsubFleetRefresh = gateway.subscribe(Events.FLEET_UPDATED, () => {
-      if (agentRefreshTimer) clearTimeout(agentRefreshTimer);
-      agentRefreshTimer = setTimeout(() => this._fetchAgents(), 5000);
-    });
-
-    // Track node connect/disconnect
-    this._unsubConnected = gateway.subscribe<NodeConnectedPayload>(Events.NODE_CONNECTED, (p) => {
-      this.onlineMachines = new Set([...this.onlineMachines, p.machine]);
-      const nextInfo = new Map(this.nodeInfo);
-      nextInfo.set(p.machine, {
-        machine: p.machine,
-        pid: p.pid,
-        connectedAt: new Date().toISOString(),
-        protocolVersion: p.protocolVersion,
-        versionMatch: p.versionMatch ?? p.protocolVersion === this.gatewayProtocolVersion,
-      });
-      this.nodeInfo = nextInfo;
-      // A reconnect is rare and can recover an initial snapshot/control fetch
-      // that raced node startup. Coalesce a burst of node registrations into
-      // one explicit full refresh while the resource view is open.
-      this.scheduleResourcePressureRecoveryRefresh();
-    });
-    this._unsubDisconnected = gateway.subscribe<NodeDisconnectedPayload>(
-      Events.NODE_DISCONNECTED,
-      (p) => {
-        const next = new Set(this.onlineMachines);
-        next.delete(p.machine);
-        this.onlineMachines = next;
-        const nextInfo = new Map(this.nodeInfo);
-        nextInfo.delete(p.machine);
-        this.nodeInfo = nextInfo;
-      },
-    );
-
-    // Subscribe to real-time task progress events
-    this._unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
-      Events.TASK_PROGRESS_UPDATED,
-      (p) => {
-        const slot = this.slots.find((candidate) => candidate.slot === p.slotId);
-        const flowRole = primaryRoleForFlow(slot?.currentFlowType);
-        const matchesCurrentRun = !!slot?.currentRunId && p.runId === slot.currentRunId;
-        const matchesPrimaryWorker = !p.contextId || p.role === 'primary' || p.role === flowRole;
-        if (p.progress.structured && matchesCurrentRun && matchesPrimaryWorker) {
-          const next = new Map(this.slotProgress);
-          next.set(p.slotId, p.progress.structured);
-          this.slotProgress = next;
-        }
-      },
-    );
-
-    // Rebuild slotRuns when runs change
-    this._unsubRunUpdated = gateway.subscribe(Events.RUN_UPDATED, () => this.buildSlotRuns());
-    this._unsubRunCreated = gateway.subscribe(Events.RUN_CREATED, () => this.buildSlotRuns());
-
     // Track node health updates
-    this._unsubNodeHealth = gateway.subscribe<NodeHealthUpdatedPayload>(
-      Events.NODE_HEALTH_UPDATED,
-      (p) => {
-        const next = new Map(this.machineHealthMap);
-        next.set(p.machine, p.health);
-        this.machineHealthMap = next;
-        // Keep pressure charts current on health beats with the LIGHTWEIGHT
-        // history read only (debounced). The full snapshot (resources +
-        // attribution) refreshes solely through explicit operator actions.
-        this.schedulePressureHistoryRefresh();
-      },
-    );
+    this._unsubNodeHealth = gateway.subscribe(Events.NODE_HEALTH_UPDATED, () => {
+      // Keep pressure charts current on health beats with the LIGHTWEIGHT
+      // history read only (debounced). The full snapshot (resources +
+      // attribution) refreshes solely through explicit operator actions.
+      this.schedulePressureHistoryRefresh();
+    });
 
     // Track resource status updates
     this._unsubResourceStatus = gateway.subscribe<ResourceStatusUpdatedPayload>(
@@ -432,10 +383,6 @@ export class FleetCanvas extends LitElement {
       .catch((err) => {
         console.warn(`[fleet-canvas] thumbnail fetch failed:`, (err as Error).message);
       });
-
-    // Fetch progress on init + poll as fallback (60s)
-    this.fetchAllProgress();
-    this._progressTimer = setInterval(() => this.fetchAllProgress(), 60_000);
 
     // Restore view params from URL, fall back to localStorage for migration
     this._readUrlParams();
@@ -484,48 +431,54 @@ export class FleetCanvas extends LitElement {
   }
 
   disconnectedCallback() {
+    clearInterval(this.fleetAgeTimer);
+    this.fleetAgeTimer = undefined;
     this.clearPressureHistoryRefresh();
     this.clearResourcePressureRecoveryRefresh();
-    this._providerAccountsUnsub?.();
-    this._providerAccountsUnsub = null;
     super.disconnectedCallback();
     this.unsub?.();
-    this._unsubConnected?.();
-    this._unsubDisconnected?.();
     this._unsubConnState?.();
-    this._unsubFleetRefresh?.();
-    this._unsubProgress?.();
-    this._unsubRunUpdated?.();
-    this._unsubRunCreated?.();
+    for (const query of this.progressQueries.values()) {
+      query.hostDisconnected();
+      this.removeController(query);
+    }
+    this.progressQueries.clear();
+    this.slotProgress = new Map();
+    this.progressObservations = new Map();
+    clearInterval(this.progressAgeTimer);
+    this.progressAgeTimer = undefined;
     this._unsubNodeHealth?.();
     this._unsubResourceStatus?.();
     this._unsubThumbnails?.();
     this._unsubMachinePauseUpdated?.();
     if (this._machinePauseEventTimer) clearTimeout(this._machinePauseEventTimer);
-    if (this._progressTimer) clearInterval(this._progressTimer);
     window.removeEventListener('hashchange', this._onHashChange);
   }
 
-  private async _fetchAgents() {
-    try {
-      const res = await gateway.request<NodesListResult>(Methods.NODES_LIST);
-      this.onlineMachines = new Set(res.nodes.map((a) => a.machine));
-      this.gatewayProtocolVersion = res.gatewayProtocolVersion;
-      const infoMap = new Map<string, NodeInfo>();
-      for (const a of res.nodes) infoMap.set(a.machine, a);
-      this.nodeInfo = infoMap;
-    } catch (err) {
-      console.warn(
-        '[fleet-canvas] node list fetch failed; connection change will retry:',
-        err instanceof Error ? err.message : String(err),
-      );
+  /** The observation stays live; only the operator's Refresh waits for a new probe. */
+  private async _refreshProviderAccounts(machine?: string, force = false) {
+    if (!force || !machine) {
+      await this.providerAccountsQuery.retry();
+      return;
     }
-  }
-
-  private async _fetchProviderAccounts(only?: string[], forceRefresh = false) {
-    const machines = only ?? [...new Set(this.slots.map((s) => s.machine))];
-    if (machines.length === 0) return;
-    await providerAccountsStore.fetch(machines, forceRefresh);
+    const owner = getResourceWorkspaceKey();
+    this.providerAccountsRefreshing = new Set(this.providerAccountsRefreshing).add(machine);
+    this.providerAccountsRefreshError = '';
+    try {
+      // Explicit live probe (~20s). Its source notification refreshes the shared observation.
+      await gateway.request<ProviderAccountsSnapshotResult>(
+        Methods.PROVIDER_ACCOUNTS_SNAPSHOT,
+        { machines: [machine], forceRefresh: true },
+        45_000,
+      );
+    } catch (err) {
+      if (owner === getResourceWorkspaceKey())
+        this.providerAccountsRefreshError = err instanceof Error ? err.message : String(err);
+    } finally {
+      const refreshing = new Set(this.providerAccountsRefreshing);
+      refreshing.delete(machine);
+      this.providerAccountsRefreshing = refreshing;
+    }
   }
 
   private syncState(s: AppState) {
@@ -534,6 +487,16 @@ export class FleetCanvas extends LitElement {
     this.slots = s.fleet?.slots ?? [];
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;
+    this.fleetObservation = s.fleetObservation;
+    if (s.fleetObservation.status === 'stale' && s.fleet && !this.fleetAgeTimer) {
+      this.now = Date.now();
+      this.fleetAgeTimer = setInterval(() => {
+        this.now = Date.now();
+      }, 1000);
+    } else if (s.fleetObservation.status !== 'stale' || !s.fleet) {
+      clearInterval(this.fleetAgeTimer);
+      this.fleetAgeTimer = undefined;
+    }
     this.filterProjects = s.globalFilters.projects;
     this.filterMachines = s.globalFilters.machines;
     const pressureFilterChanged =
@@ -543,34 +506,10 @@ export class FleetCanvas extends LitElement {
       void this.fetchResourceData();
     }
     // Populate machineHealthMap from fleet.machines
-    if (s.fleet?.machines) {
-      const next = new Map(this.machineHealthMap);
-      for (const mh of s.fleet.machines) next.set(mh.machine, mh);
-      this.machineHealthMap = next;
-    }
-    // Refresh provider subscription chips when fleet machines change
-    const prevMachines = new Set(prev.map((sl) => sl.machine));
-    const nextMachines = new Set(this.slots.map((sl) => sl.machine));
-    if (
-      prevMachines.size !== nextMachines.size ||
-      [...nextMachines].some((m) => !prevMachines.has(m)) ||
-      ([...nextMachines].some((m) => !providerAccountsStore.get(m)) && nextMachines.size > 0)
-    ) {
-      void this._fetchProviderAccounts();
-    }
-    // Refresh progress when working slots change
-    const prevWorking = new Set(
-      prev.filter((sl) => sl.lifecycle === 'busy' && sl.taskFile).map((sl) => sl.slot),
+    this.machineHealthMap = new Map(
+      (s.fleet?.machines ?? []).map((health) => [health.machine, health]),
     );
-    const newWorking = new Set(
-      this.slots.filter((sl) => sl.lifecycle === 'busy' && sl.taskFile).map((sl) => sl.slot),
-    );
-    if (
-      prevWorking.size !== newWorking.size ||
-      [...newWorking].some((id) => !prevWorking.has(id))
-    ) {
-      this.fetchAllProgress();
-    }
+    this.syncProgressQueries();
     // Fetch resource data when slots arrive and we're in resource view
     if (
       this.groupBy === 'resource' &&
@@ -607,30 +546,82 @@ export class FleetCanvas extends LitElement {
     this.slotRuns = next;
   }
 
-  private async fetchAllProgress() {
-    const workingSlots = this.slots.filter((s) => s.lifecycle === 'busy' && s.taskFile);
-    if (workingSlots.length === 0) {
-      if (this.slotProgress.size > 0) this.slotProgress = new Map();
-      return;
-    }
-    const next = new Map<string, TaskProgressStructured>();
-    await Promise.all(
-      workingSlots.map(async (s) => {
-        try {
-          const res = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-            slotId: s.slot,
-            ...(s.currentRunId ? { runId: s.currentRunId } : {}),
-          });
-          if (res.structured) next.set(s.slot, res.structured);
-        } catch (err) {
-          console.warn(
-            `[fleet-canvas] task progress fetch failed for ${s.slot}:`,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-      }),
+  private syncProgressQueries(): void {
+    const targets = new Map(
+      this.slots
+        .filter((slot) => slot.lifecycle === 'busy' && slot.taskFile)
+        .map((slot) => [slot.slot, slot]),
     );
-    this.slotProgress = next;
+    for (const [slotId, query] of this.progressQueries) {
+      if (targets.has(slotId)) continue;
+      query.hostDisconnected();
+      this.removeController(query);
+      this.progressQueries.delete(slotId);
+      this.slotProgress.delete(slotId);
+      this.progressObservations.delete(slotId);
+    }
+    for (const [slotId, slot] of targets) {
+      let query = this.progressQueries.get(slotId);
+      if (!query) {
+        query = new ResourceQueryController<TaskProgressResult>(this, (state) => {
+          if (!query || this.progressQueries.get(slotId) !== query) return;
+          const progress = new Map(this.slotProgress);
+          if (state.data?.structured) progress.set(slotId, state.data.structured);
+          else progress.delete(slotId);
+          this.slotProgress = progress;
+          this.progressObservations = new Map(this.progressObservations).set(slotId, state);
+          this.syncProgressAgeClock();
+        });
+        this.progressQueries.set(slotId, query);
+      }
+      query.setQuery(
+        resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+          slotId,
+          ...(slot.currentRunId ? { runId: slot.currentRunId } : {}),
+        }),
+      );
+    }
+    this.syncProgressAgeClock();
+  }
+
+  private syncProgressAgeClock(): void {
+    const saved = [...this.progressObservations.values()].some(
+      (state) => state.data && state.status !== 'ready',
+    );
+    if (saved && !this.progressAgeTimer)
+      this.progressAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
+    else if (!saved) {
+      clearInterval(this.progressAgeTimer);
+      this.progressAgeTimer = undefined;
+    }
+  }
+
+  private renderProgressReadStatus() {
+    return [...this.progressObservations].map(([slotId, state]) => {
+      const query = this.progressQueries.get(slotId);
+      if (!query?.belongsToWorkspace || state.status === 'ready' || state.status === 'loading')
+        return nothing;
+      return html`<span
+        class="rehydrating-banner"
+        data-fleet-progress-slot=${slotId}
+        data-progress-state=${state.status}
+      >
+        ${slotId}:
+        ${state.data ? html`Saved progress, ${sourceObservationAge(state.observedAt)}.` : nothing}
+        ${state.status === 'unsupported'
+          ? 'Progress updates are unavailable on this gateway.'
+          : nothing}
+        ${state.error
+          ? html`<span role="alert">Progress read failed: ${state.error.message}</span>
+              <button
+                ?disabled=${gateway.connectionState !== 'connected'}
+                @click=${() => query.retry()}
+              >
+                Retry reading progress
+              </button>`
+          : nothing}
+      </span>`;
+    });
   }
 
   private async fetchResourceData() {
@@ -1306,14 +1297,42 @@ export class FleetCanvas extends LitElement {
             placeholder="search slots..."
             @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}
           />
-          ${this.renderFleetRefreshTrigger()}
-          ${this.bootstrapFailed && this.slots.length > 0
+          ${this.renderFleetRefreshTrigger()} ${this.renderProgressReadStatus()}
+          ${this.fleetObservation.status === 'stale' && this.fleetObservation.data
+            ? html`<span class="rehydrating-banner" data-fleet-freshness="stale">
+                Saved fleet, ${sourceObservationAge(this.fleetObservation.observedAt, this.now)}.
+                Actions wait for a current read.
+              </span>`
+            : ''}
+          ${this.nodeQuery.state.status === 'stale' && this.nodeQuery.state.data
+            ? html`<span class="rehydrating-banner" data-node-freshness="stale">
+                Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt, this.now)}.
+              </span>`
+            : ''}
+          ${this.nodeQuery.state.error
+            ? html`<span role="alert"
+                >Could not read nodes: ${this.nodeQuery.state.error.message}
+                <button @click=${() => this.nodeQuery.retry()}>Retry reading nodes</button>
+              </span>`
+            : ''}
+          ${this.fleetObservation.data?.fleet.stale
             ? html`<span class="rehydrating-banner"
-                >Refresh failed… showing cached fleet state</span
+                >Fleet source is stale. Actions wait for a fresh observation.</span
               >`
-            : this.hydrating && this.slots.length > 0
-              ? html`<span class="rehydrating-banner">Reconnecting… showing last snapshot</span>`
-              : ''}
+            : ''}
+          ${this.fleetObservation.status === 'unsupported'
+            ? html`<span class="rehydrating-banner"
+                >Live fleet updates are unavailable on this gateway.</span
+              >`
+            : ''}
+          ${this.fleetObservation.error
+            ? html`<span role="alert"
+                >Could not read fleet: ${this.fleetObservation.error.message}
+                <button @click=${() => getResourceCache()?.retry(fleetQuery)}>
+                  Retry reading fleet
+                </button>
+              </span>`
+            : ''}
         </div>
         <div class="canvas">
           ${this.groupBy === 'resource' ? this.renderResourceView() : this.renderGroupView()}
@@ -1389,14 +1408,17 @@ export class FleetCanvas extends LitElement {
           .nodeInfoMap=${this.nodeInfo}
           .gatewayProtocolVersion=${this.gatewayProtocolVersion}
           .viewMode=${this.viewMode}
-          .providerAccounts=${providerAccountsStore.get(g.key)}
-          .providerAccountsError=${providerAccountsStore.error() ?? undefined}
-          .providerAccountsFetching=${providerAccountsStore.isFetching(g.key)}
+          .providerAccounts=${this.providerAccountsQuery.state.data?.machines.find(
+            (snapshot) => snapshot.machine === g.key,
+          )}
+          .providerAccountsError=${this.providerAccountsRefreshError ||
+          this.providerAccountsQuery.state.error?.message ||
+          undefined}
+          .providerAccountsFetching=${this.providerAccountsQuery.state.status === 'loading' ||
+          this.providerAccountsRefreshing.has(g.key)}
+          .providerAccountsActionable=${gateway.connectionState === 'connected'}
           @provider-accounts-refresh=${(e: CustomEvent<{ machine?: string; force?: boolean }>) =>
-            void this._fetchProviderAccounts(
-              e.detail?.machine ? [e.detail.machine] : undefined,
-              e.detail?.force === true,
-            )}
+            void this._refreshProviderAccounts(e.detail?.machine, e.detail?.force === true)}
           @slot-selected=${(e: CustomEvent) => {
             location.hash = `slot/${e.detail.slotId}`;
           }}

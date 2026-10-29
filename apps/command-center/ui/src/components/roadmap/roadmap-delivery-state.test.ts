@@ -10,7 +10,7 @@ import {
   type RoadmapItem,
 } from '@farmslot/protocol';
 
-// Execute the production summary reload and selection getter without booting the UI.
+// Execute production observation adoption and selection without booting the UI.
 const source = ts.createSourceFile(
   'roadmap-panel.ts',
   readFileSync(new URL('./roadmap-panel.ts', import.meta.url), 'utf8'),
@@ -25,7 +25,7 @@ assert(panel);
 const members = panel.members.filter(
   (member) =>
     member.name &&
-    ['_reloadDelivery', '_selected', '_resolveSelectedItem'].includes(member.name.getText(source)),
+    ['_adoptListResult', '_selected', '_resolveSelectedItem'].includes(member.name.getText(source)),
 );
 assert.equal(members.length, 3);
 const compiled = ts.transpileModule(
@@ -33,7 +33,7 @@ const compiled = ts.transpileModule(
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
 ).outputText;
 
-test('delivery refresh rebinds editor and detail when the selected item leaves the outcome filter', async () => {
+test('a current observation rebinds editor and detail when selection leaves the outcome filter', () => {
   const rows = [
     { id: 'first', title: 'First', fileHash: 'first-hash' },
     { id: 'second', title: 'Second', fileHash: 'second-hash' },
@@ -42,44 +42,59 @@ test('delivery refresh rebinds editor and detail when the selected item leaves t
     { roadmapItemId: 'first', status: 'delivered' } as RoadmapDeliverySummary,
     { roadmapItemId: 'second', status: 'active' } as RoadmapDeliverySummary,
   ];
-  const gateway = { request: async () => ({ delivery: summaries }) };
-  const Panel = new Function('gateway', 'Methods', `${compiled}; return Panel;`)(gateway, {
-    ROADMAP_LIST: 'roadmap.list',
-  });
+  const Panel = new Function(`${compiled}; return Panel;`)();
   const state = new Panel();
   Object.assign(state, {
     _selectedId: 'first',
+    _allItems: rows,
     _deliverySummaries: [],
-    _deliveryGeneration: 0,
-    _filterProject: 'all',
-    _filterStage: 'all',
-    _includeArchived: false,
-    _deliveryReloadInFlight: false,
-    _deliveryReloadQueued: false,
+    items: null,
+    _listQuery: { ready: true },
+    _selectionGeneration: 0,
+    _editHash: 'first-hash',
+    _editorMode: 'view',
     _deliveredExpanded: false,
   });
   Object.defineProperty(state, '_items', {
-    get: () => roadmapDeliveryView(rows, state._deliverySummaries, 'undelivered').items,
+    get: () => roadmapDeliveryView(state._allItems, state._deliverySummaries, 'undelivered').items,
   });
   let editor = rows[0];
   let detailId = 'first';
   let urlWrites = 0;
+  let editorWrites = 0;
   state._syncEditor = (item: RoadmapItem) => {
+    editorWrites++;
     editor = item;
     state._selectedId = item.id;
+    state._editHash = item.fileHash;
+    state._syncDeliveryDetail(item.id);
   };
   state._writeUrlState = () => {
     urlWrites++;
   };
-  state._loadDeliveryDetail = async (id: string) => {
+  state._syncDeliveryDetail = (id: string) => {
     detailId = id;
   };
-  await state._reloadDelivery();
+  state._adoptListResult({ items: rows, delivery: summaries });
   assert.equal(state._selected.id, 'second');
   assert.equal(editor.title, 'Second');
   assert.equal(editor.fileHash, 'second-hash');
   assert.equal(detailId, 'second');
   assert.equal(urlWrites, 1);
-  await state._reloadDelivery();
-  assert.equal(urlWrites, 1, 'a retained selection keeps its existing editor');
+  state._adoptListResult({ items: rows, delivery: summaries });
+  assert.equal(editorWrites, 1, 'a retained selection keeps its existing editor');
+  state._editorMode = 'edit';
+  state._adoptListResult({
+    items: rows.map((item) =>
+      item.id === 'second' ? { ...item, fileHash: 'external-change' } : item,
+    ),
+    delivery: summaries,
+  });
+  assert.equal(editorWrites, 1, 'a current observation cannot overwrite an open draft');
+  assert.equal(editor.fileHash, 'second-hash', 'the draft keeps its conditional-save base');
+  state._listQuery.ready = false;
+  state._adoptListResult({ items: [], delivery: [] });
+  assert.equal(state._selectedId, 'second', 'an incomplete read cannot retire selection');
+  assert.equal(editorWrites, 1, 'an incomplete read cannot clear the editor');
+  assert.equal(editor.fileHash, 'second-hash');
 });

@@ -1,5 +1,9 @@
 import type { PRStatus } from '../contracts/index.js';
 
+import type { UpstreamObservation } from './resource-observers.js';
+
+export * from './pr-observations.js';
+
 export interface PRStatusParams {
   pr: number;
   project?: string;
@@ -21,6 +25,7 @@ export interface PRReviewCommentsParams {
 export interface PRReviewCommentsResult {
   threads: import('../contracts/index.js').PRReviewThread[];
   currentUser: string;
+  observation?: UpstreamObservation;
 }
 
 export interface PRAddCommentParams {
@@ -87,13 +92,19 @@ export interface PRForSlotResult {
   repo: string | null;
   /** Pull request base branch, or the project's configured default when no PR exists. */
   baseRef: string;
+  /** Present when the answer came from the slot's shared GitHub lookup, not local slot state alone. */
+  observation?: UpstreamObservation;
+  /** `local`: the slot has no PR lookup context, so no GitHub observation applies. */
+  source?: 'local';
 }
 export interface PRStatusResult {
   pr: PRStatus;
+  observation?: UpstreamObservation;
 }
 
 export interface PRListResult {
   prs: PRStatus[];
+  observation?: UpstreamObservation;
   /** ISO time the served list was fetched from GitHub. Absent only when no list exists yet. */
   fetchedAt?: string;
   /** True when the gateway answered from its warm list while a GitHub refresh is still running. */

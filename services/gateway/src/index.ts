@@ -14,11 +14,18 @@ import { createServer as createHttpsServer } from 'node:https';
 import os from 'node:os';
 import { dirname, resolve } from 'node:path';
 
-import { type EvalTrialStartParams, Events, primaryRoleForFlow } from '@farmslot/protocol';
+import {
+  type EvalTrialStartParams,
+  Events,
+  Methods,
+  primaryRoleForFlow,
+  providerAccountsChangedKeys,
+} from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import './projects/gateway-status-process.js';
 
+import { setTriagePilotObservationGuard } from './assessment/failure-triage/pilot-evidence.js';
 import {
   initAutoRecovery,
   routeEventToAutoRecovery,
@@ -71,6 +78,10 @@ import {
   startFileWatcher,
   statusFile,
 } from './fleet/state.js';
+import {
+  startGitHubAccountsObservation,
+  wakeGitHubAccountsObservation,
+} from './integrations/github-accounts.js';
 import { loadBindingsCache } from './integrations/github-bindings-cache.js';
 import { initGitHubClient } from './integrations/github-client.js';
 import { initPrLinkage } from './integrations/pr-linkage.js';
@@ -83,14 +94,34 @@ import { assertDispatchPressureAdmissionEnvValid } from './methods/dispatch/pres
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
+import {
+  startGatewayUpdateObservation,
+  wakeGatewayUpdateObservation,
+} from './methods/gateway-status.js';
 import { fetchPRList } from './methods/pr.js';
-import { loadPRListCache, startPRListRefresher } from './methods/pr/list-cache.js';
+import {
+  startPRDetailObservations,
+  wakePRDetailObservations,
+} from './methods/pr/detail-observations.js';
+import {
+  loadPRListCache,
+  notifyPRListInterest,
+  startPRListRefresher,
+} from './methods/pr/list-cache.js';
 import { initPRPush } from './methods/pr-push.js';
 import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
 import { initPRMonitorDispatch, initPRMonitoring, monitorsSnapshot } from './methods/pr-watch.js';
+import {
+  startProviderAccountsObservation,
+  wakeProviderAccountsObservation,
+} from './methods/provider-accounts.js';
 import { resolveCreateSafetyTier } from './methods/run.js';
 import { resumeBlockedRunWhoseWorkerContinued } from './methods/run/replay-step.js';
 import { startRunRetention } from './methods/run/retention.js';
+import {
+  startRunnerModelCatalogObservation,
+  wakeRunnerModelCatalogObservation,
+} from './methods/runner-models.js';
 import {
   getRuntimeCapabilityRegistry,
   initRuntimeCapabilities,
@@ -99,7 +130,11 @@ import { initRuntimePosture } from './methods/runtime-posture.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
+import { resourceRevisions } from './resources/revisions.js';
+import { upstreamObservers } from './resources/upstream-observers.js';
 import { initReview } from './review/orchestrator.js';
+import { roadmapRoot, setRoadmapObservationGuard } from './roadmap/store.js';
+import { watchRoadmapItems } from './roadmap/watcher.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
 import { runBundleStore } from './run-completion/retained-artifacts.js';
 import {
@@ -139,6 +174,7 @@ import {
   broadcastEvent,
   broadcastPrincipalEvent,
   createWebSocketServer,
+  disposeServerResourceObservations,
   hasConnectedViewers,
   initServerGlobals,
 } from './server.js';
@@ -226,20 +262,50 @@ async function main(): Promise<void> {
   const releaseGatewaySingletonLock = acquireGatewaySingletonLock();
   let releaseGatewayPresence = (): void => {};
   let stopCredentialFreshnessPolling = (): void => {};
+  let stopPRListCollection = (): void => {};
+  let stopUpstreamInterest = (): void => {};
+  let stopGatewayUpdateCollection = async (): Promise<void> => {};
+  let stopGitHubAccountsCollection = async (): Promise<void> => {};
+  let stopPRDetailCollection = async (): Promise<void> => {};
+  let stopRunnerModelCatalogCollection = async (): Promise<void> => {};
+  let stopProviderAccountsCollection = async (): Promise<void> => {};
+  let shuttingDown = false;
   const releaseIdentityResources = (): void => {
+    stopUpstreamInterest();
+    stopPRListCollection();
     stopCredentialFreshnessPolling();
     releaseGatewayPresence();
     stopSourceReconciliation();
+    disposeServerResourceObservations();
     releaseGatewaySingletonLock();
   };
   process.once('exit', releaseIdentityResources);
+  const shutdown = async (code: number): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    stopUpstreamInterest();
+    stopPRListCollection();
+    try {
+      await Promise.all([
+        stopGatewayUpdateCollection(),
+        stopGitHubAccountsCollection(),
+        stopPRDetailCollection(),
+        stopRunnerModelCatalogCollection(),
+        stopProviderAccountsCollection(),
+      ]);
+    } catch (error) {
+      console.error('[gateway] Upstream observation shutdown failed:', error);
+      code = 1;
+    } finally {
+      releaseIdentityResources();
+      process.exit(code);
+    }
+  };
   process.once('SIGINT', () => {
-    releaseIdentityResources();
-    process.exit(130);
+    void shutdown(130);
   });
   process.once('SIGTERM', () => {
-    releaseIdentityResources();
-    process.exit(143);
+    void shutdown(143);
   });
 
   // Load env files from farmslot root — force-override existing env vars
@@ -368,9 +434,42 @@ async function main(): Promise<void> {
   // Warm PR dashboard list: serve the last snapshot immediately, refresh in
   // the background while a client is connected, push changes as pr.list.updated.
   loadPRListCache();
-  startPRListRefresher((force) => fetchPRList({ force }), {
+  stopPRListCollection = startPRListRefresher((force) => fetchPRList({ force }), {
     broadcast: observedBroadcast,
     hasClients: hasConnectedViewers,
+  });
+  stopGatewayUpdateCollection = await startGatewayUpdateObservation({
+    hasInterest: () => upstreamObservers.hasInterest(Methods.GATEWAY_STATUS),
+  });
+  stopGitHubAccountsCollection = startGitHubAccountsObservation({
+    hasInterest: () => upstreamObservers.hasInterest(Methods.CONFIG_GITHUB_ACCOUNTS),
+  });
+  stopPRDetailCollection = startPRDetailObservations({
+    hasInterest: (method, params) => upstreamObservers.hasInterest(method, params),
+  });
+  stopRunnerModelCatalogCollection = startRunnerModelCatalogObservation({
+    hasInterest: (runner) =>
+      upstreamObservers.hasInterest(Methods.RUNNER_MODEL_CATALOG, { runner }),
+  });
+  stopProviderAccountsCollection = startProviderAccountsObservation({
+    // An omitted machine selector observes every fleet machine, including later joiners.
+    hasInterest: (machine) =>
+      upstreamObservers.activeQueries(Methods.PROVIDER_ACCOUNTS_SNAPSHOT).some(({ params }) => {
+        const machines = (params as { machines?: string[] }).machines;
+        return !machines || machines.includes(machine);
+      }),
+    changed: (machine) => {
+      for (const key of providerAccountsChangedKeys(machine)) resourceRevisions.advance(key);
+    },
+  });
+  stopUpstreamInterest = upstreamObservers.subscribe(() => {
+    notifyPRListInterest();
+    // Expected source failures become retained error observations in the owning integration.
+    void wakeGatewayUpdateObservation();
+    void wakeGitHubAccountsObservation();
+    void wakePRDetailObservations();
+    void wakeRunnerModelCatalogObservation();
+    void wakeProviderAccountsObservation();
   });
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();
@@ -462,6 +561,10 @@ async function main(): Promise<void> {
     24 * 60 * 60 * 1000,
   );
   initReview(observedBroadcast);
+
+  // Roadmap reads become current only while the source directory is observed.
+  const roadmapObservation = await watchRoadmapItems(roadmapRoot);
+  setRoadmapObservationGuard(() => roadmapObservation.assertReady());
 
   // Load dispatch queue + init auto-dispatch
   await loadEvalSuiteCaps();
@@ -748,7 +851,8 @@ async function main(): Promise<void> {
   initServerGlobals();
 
   // Start watching .farm-status.json for changes
-  startFileWatcher();
+  const stateObservation = startFileWatcher();
+  setTriagePilotObservationGuard(stateObservation.assertTriagePilotObserved);
 
   // Local host polling shells out for disk/thermal/memory details. Keep it opt-in
   // because node agents already push metrics and gateway startup should be cheap.

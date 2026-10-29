@@ -4,6 +4,30 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Quick actions no longer hide the rest of the app from VoiceOver on iOS.
+
+- Evidence images and gate diffs no longer restart their reads or rebuild a loaded image on every connection status change, which aborted large downloads and could drop a failed read; reads still retry on reconnect and when the signed-in profile's headers change.
+
+- On gateways with version lists, run history shows every live run instead of the latest 80, filled and caught up in pages that each finish within the 60 s request timeout. Older gateways keep the 80-row read. The offline-store baseline measures run list reads to the merged list, after the last page.
+
+- Run and slot Diff screens observe the prefetched active-run diff online and offline. The slot diff base is the stack base, then the project's default branch, then main.
+
+- Prefetch pending gates, then active runs, into the device store. The gate package diff on the run Diff tab and evidence images up to 2 MB open from held content offline; live reads are shown and stored only when their bytes match `diffHash` or the manifest `sha256`, and a mismatch says so instead of loading the same file.
+
+- Decision CI context and the review dispatch picker observe shared PR, model catalog and visible-model observations; Refresh stays an explicit GitHub check.
+
+- Read review history task files, recorded diffs and finding source through the shared workspace cache; slotless review runs keep their frozen commit reads.
+
+- Share PR dashboard observations and revalidate native profiles and terminal targets through the current owner's cache; keep explicit upstream checks and stale-action guards.
+
+- Share observed project and template choices and restore bounded projects, backlog, roadmap, work graphs and dispatch queue offline with readable saved-age captions. Graph details and queue rows are read-only; read failures offer Retry. Observe PR automation and the shared copilot in memory. Source notices replace healthy planning, PR-queue and copilot Refresh controls; error Retry reads only failed queries. Actions require current observations and authority; commands stay live-only.
+
+- Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls.
+- Open saved native conversations under their retained workspace scope after an offline cold start; actions still require current authority.
+- Preserve a saved conversation's position while offline connection retries continue.
+
+- Bind run report visual judgments to the pending output-review snapshot and block submissions when evidence, progress or review context changes.
+
 - Send terminal typing and control keys in order, batch pending keys, and cancel unsent input when leaving a terminal.
 
 - Stop fleet recovery observations when its dialog closes; retain explicit release guards while background checks finish.
@@ -21,6 +45,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Show shared CI-watch status and live poll/timeout countdowns as plain text on run cards and pipelines.
 
 - Show completed checklist durations and live current-step elapsed time in Worker progress.
+
+- Share worker inventory across workers, keyboard context and terminal controls, with explicit unavailable states and Retry.
 
 - Keep run source and covered tickets on one compact line without duplicate ticket pills; show shared total and current-step elapsed time on the existing metadata line.
 
@@ -78,6 +104,11 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - A run that needs a decision shows it in the decision workspace with the same reason, findings or refused prerequisite, delivered head or report, and three actions as Command Center; an action that can't be taken shows why, and Accept needs a written reason. The Review queue labels it Needs decision, opens it with Open decision, and skips the held output review. When the gateway re-presents the decision (new output, a granted review round, a restart), the open workspace follows the new one and stays on it. Its run card says Needs decision instead of Failed.
 - The evidence workspace reads a `review` criterion as "Checked in review" or "Awaiting code review" instead of its raw verdict (ADR-062 Amendment 18).
+
+- Initialize SQLite resource storage in the platform cache directory, with a visible memory fallback and verified identity handling. Sources, fleet, run collections, full run details, slot workspaces and history, terminal and native-conversation run context, visual-review run context, diff and artifact contexts, family views, saved reviews and decision workspaces share live observations; saved results show their age and actions wait for current reads. Visual feedback retains replies in flight during refresh and prevents resending an accepted draft. Conversation controls keep their exact task binding and preserve unsent answers when a refresh interrupts submission. Idle slot diffs load without a bound run, and retained artifact/diff read failures offer Retry. Requires a new native build with Expo SQLite: the app version moves to 0.8.4, so updates for 0.8.3 builds never carry it. Native cold Runs and Inbox retain their original observation times, and stale visual judgments send no command.
+- Add reproducible client-store baseline recipes with a dev-only native startup and websocket byte counter.
+
+- Share persisted worker checklist observations across run lists, run and decision detail, slot/family workspaces, terminal contexts and acceptance panels, retaining their source errors and saved age through offline recovery. Acceptance and visual-review actions wait for current progress and evidence reads.
 
 ## 0.8.2 - 2026-10-16
 

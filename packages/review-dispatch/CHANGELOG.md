@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The sign-out confirmation states how many unsaved edits on this device it deletes.
+
 - Share fleet workspace rows, safe bulk release, discard confirmation and recovery progress between both operator apps.
 
 - Share plain CI-watch check counts, failing names, next poll and timeout countdown between both clients.

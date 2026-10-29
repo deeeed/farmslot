@@ -3,8 +3,49 @@ import { AsyncDirective } from 'lit/async-directive.js';
 import { directive } from 'lit/directive.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
+import { isRunArtifactImagePath } from '@farmslot/protocol';
+
 import { readGatewayAuth } from '../../gateway-url.js';
 import { gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+
+const MAX_HELD_MEDIA_URLS = 2000;
+const heldMediaIds = new Map<string, string>();
+/**
+ * Sources whose body failed its manifest `sha256`, per owner: settled until the URL, the
+ * identity or the owner changes. Another principal reads the source again.
+ */
+const mismatchedMedia = new WeakMap<object, Set<string>>();
+const NO_OWNER = {};
+
+/**
+ * Names the manifest `sha256` behind an evidence image URL, so the media seam shows only bytes
+ * that verify, at any size, and keeps what it loads within the 2 MB image cap (Content rule 4).
+ * Returns the URL unchanged.
+ */
+export function gatewayContentMediaUrl(
+  url: string,
+  artifact: { path: string; sha256?: string } | undefined,
+): string {
+  const sha256 = artifact?.sha256;
+  if (!sha256 || !/^[0-9a-f]{64}$/.test(sha256) || !isRunArtifactImagePath(artifact.path))
+    return url;
+  heldMediaIds.delete(url);
+  heldMediaIds.set(url, sha256);
+  if (heldMediaIds.size > MAX_HELD_MEDIA_URLS)
+    heldMediaIds.delete(heldMediaIds.keys().next().value!);
+  return url;
+}
+
+function objectMedia(blob: Blob): { url: string; dispose(): void } {
+  // Raw markup must not gain the dashboard's origin when opened as a blob.
+  const safeBlob = /^(?:text\/html|application\/(?:xhtml\+xml|xml)|image\/svg\+xml)/i.test(
+    blob.type,
+  )
+    ? new Blob([blob], { type: 'text/plain' })
+    : blob;
+  const objectUrl = URL.createObjectURL(safeBlob);
+  return { url: objectUrl, dispose: () => URL.revokeObjectURL(objectUrl) };
+}
 
 function hasGatewayMediaAuth(): boolean {
   const { token, password } = readGatewayAuth();
@@ -20,12 +61,7 @@ export function requiresGatewayMediaHeaders(url: string): boolean {
   return parsed.origin === origin && parsed.pathname.startsWith('/api/');
 }
 
-/** The owner releases the object URL when its view closes or changes source. */
-export async function loadGatewayMedia(
-  url: string,
-  signal: AbortSignal,
-): Promise<{ url: string; dispose(): void }> {
-  if (!requiresGatewayMediaHeaders(url)) return { url, dispose() {} };
+async function fetchGatewayMedia(url: string, signal: AbortSignal): Promise<Blob> {
   const resource = new URL(url, gatewayHttpOrigin());
   resource.searchParams.delete('token');
   resource.searchParams.delete('password');
@@ -33,14 +69,56 @@ export async function loadGatewayMedia(
   if (!response.ok) throw new Error(`Could not load gateway media (${response.status}).`);
   const blob = await response.blob();
   signal.throwIfAborted();
-  // Raw markup must not gain the dashboard's origin when opened as a blob.
-  const safeBlob = /^(?:text\/html|application\/(?:xhtml\+xml|xml)|image\/svg\+xml)/i.test(
-    blob.type,
-  )
-    ? new Blob([blob], { type: 'text/plain' })
-    : blob;
-  const objectUrl = URL.createObjectURL(safeBlob);
-  return { url: objectUrl, dispose: () => URL.revokeObjectURL(objectUrl) };
+  return blob;
+}
+
+/**
+ * An evidence image with a manifest `sha256` (Content rules 1 and 2): held bytes first, offline
+ * and online, else live bytes shown and kept only when they verify. A body that does not match
+ * is never shown, and its URL is not used in its place.
+ */
+async function loadContentMedia(url: string, sha256: string, signal: AbortSignal) {
+  // Loaded only when content can be held, so plain media keeps a light import graph.
+  const held = await import('../../held-content.js');
+  const owner = held.contentOwner() ?? NO_OWNER;
+  const key = { kind: 'artifact' as const, id: sha256 };
+  const data = await held.openHeldContent(key);
+  signal.throwIfAborted();
+  if (data) return objectMedia(new Blob([new Uint8Array(data)]));
+  // A settled mismatch is not fetched again, so a re-render cannot loop on the same body.
+  const source = `${url}\n${sha256}`;
+  if (mismatchedMedia.get(owner)?.has(source))
+    throw new Error('Gateway media does not match its manifest.');
+  let type = '';
+  const verified = await held.readVerifiedContent(
+    key,
+    async () => {
+      const blob = await fetchGatewayMedia(url, signal);
+      type = blob.type;
+      return new Uint8Array(await blob.arrayBuffer());
+    },
+    'gate',
+  );
+  if (verified === held.CONTENT_MISMATCH) {
+    const mismatched = mismatchedMedia.get(owner) ?? new Set<string>();
+    mismatchedMedia.set(owner, mismatched);
+    mismatched.add(source);
+    if (mismatched.size > MAX_HELD_MEDIA_URLS) mismatched.delete(mismatched.values().next().value!);
+    throw new Error('Gateway media does not match its manifest.');
+  }
+  signal.throwIfAborted();
+  return objectMedia(new Blob([new Uint8Array(verified)], { type }));
+}
+
+/** The owner releases the object URL when its view closes or changes source. */
+export async function loadGatewayMedia(
+  url: string,
+  signal: AbortSignal,
+): Promise<{ url: string; dispose(): void }> {
+  const sha256 = heldMediaIds.get(url);
+  if (sha256) return loadContentMedia(url, sha256, signal);
+  if (!requiresGatewayMediaHeaders(url)) return { url, dispose() {} };
+  return objectMedia(await fetchGatewayMedia(url, signal));
 }
 
 type GatewayMediaFormat = 'url' | 'html';
@@ -56,7 +134,11 @@ export class GatewayMedia extends AsyncDirective {
   render(url: string, format: GatewayMediaFormat = 'url') {
     this.lastUrl = url;
     this.lastFormat = format;
-    if (!(format === 'html' ? hasGatewayMediaAuth() : requiresGatewayMediaHeaders(url))) {
+    if (
+      !(format === 'html'
+        ? hasGatewayMediaAuth()
+        : requiresGatewayMediaHeaders(url) || heldMediaIds.has(url))
+    ) {
       this.release();
       this.source = undefined;
       return this.value(url, format);

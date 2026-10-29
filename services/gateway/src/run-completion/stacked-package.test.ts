@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import type { ReviewStatus, Run, RunStack } from '@farmslot/protocol';
+import {
+  reviewDiffHash,
+  reviewSnapshotIdentityText,
+  type ReviewStatus,
+  type Run,
+  type RunStack,
+} from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
@@ -144,6 +153,20 @@ mock.module('../review/pipeline-visual-review.js', {
     },
   },
 });
+const nativeDiffUtils = await import('../run-engine/diff-artifact-utils.js');
+let crashDiffWrite = false;
+// A crash during the package diff write leaves only a partial temporary file.
+mock.module('../run-engine/diff-artifact-utils.js', {
+  namedExports: {
+    ...nativeDiffUtils,
+    atomicWriteTextFile: async (target: string, content: string) => {
+      if (!crashDiffWrite || !target.endsWith('.diff'))
+        return nativeDiffUtils.atomicWriteTextFile(target, content);
+      await writeFile(`${target}.tmp.crashed`, content.slice(0, content.length / 2));
+      throw new Error('simulated crash during the diff write');
+    },
+  },
+});
 const {
   assertReadyGatePackageInputsCurrent,
   prepareCompletionPackage,
@@ -155,6 +178,7 @@ const { publicationBaseForRun, stackPrBase } = await import('../run-engine/stack
 const { parseGitNumstat } = await import('../run-engine/diff-artifacts.js');
 const { captureCurrentReviewSnapshot } = await import('../review/snapshots.js');
 const { assertPublicationReviewPolicySatisfied } = await import('../run-engine/gate-policy.js');
+const { serveRunArtifact } = await import('../methods/filesystem.js');
 
 let root = '';
 let git: (...args: string[]) => string;
@@ -311,6 +335,91 @@ test('standalone publication keeps the default 18-file package', async () => {
   assert.equal(standalone.reviewSnapshot?.baseRef, 'origin/main');
   assert.deepEqual(standalone.reviewSnapshot?.diffStat, fullDiff);
   assert.equal(templateBases.at(-1), 'main');
+});
+
+test('package preparation retains the exact diff and untracked manifest its diffHash fingerprints', async (t) => {
+  resetRun();
+  const untracked = path.join(repo, 'src', 'child', 'nouveau-café.ts');
+  await writeFile(path.join(repo, 'src', 'child', '0.ts'), 'déjà vu 日本\n', { flag: 'a' });
+  await writeFile(untracked, 'export const café = "☕";\n');
+  t.after(async () => {
+    git('checkout', '--', 'src/child/0.ts');
+    await rm(untracked, { force: true });
+  });
+  const { prPackage } = await prepareCompletionPackage(run.id, {
+    diffStat: fullDiff,
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  const taskDir = path.dirname(taskFile);
+  const retained = JSON.parse(
+    await readFile(path.join(taskDir, prPackage.artifactPath), 'utf8'),
+  ) as typeof prPackage;
+  const snapshot = retained.reviewSnapshot!;
+  assert.match(snapshot.diffPath!, /^artifacts\/publication-packages\/diff-[0-9a-f]{64}\.diff$/);
+  assert.deepEqual(
+    snapshot.untrackedFiles?.map((file) => file.path),
+    ['src/child/nouveau-café.ts'],
+  );
+  // Clients read the package's retained bundle entry, never the live task file.
+  await rm(path.join(taskDir, snapshot.diffPath!));
+  const server = createServer((request, response) => {
+    void serveRunArtifact(request, response);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const bundleDigest = retained.artifactBundle!.bundleDigest;
+  const query = new URLSearchParams({ runId: run.id, path: snapshot.diffPath!, bundleDigest });
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/run-artifact?${query}`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-farmslot-bundle-digest'), bundleDigest);
+  const diff = await response.text();
+  assert.match(diff, /déjà vu 日本/);
+  assert.equal(
+    reviewDiffHash(reviewSnapshotIdentityText(diff, snapshot.untrackedFiles ?? [])),
+    snapshot.diffHash,
+  );
+  assert.notEqual(reviewDiffHash(diff), snapshot.diffHash, 'the manifest is part of the identity');
+  // The same diff reuses its content-addressed file only while those bytes still verify.
+  await writeFile(path.join(taskDir, snapshot.diffPath!), diff.replace('日本', 'XX'));
+  await assert.rejects(
+    prepareCompletionPackage(run.id, {
+      diffStat: fullDiff,
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    }),
+    /Retained package diff changed/,
+  );
+});
+
+test('a crashed diff write never blocks a later preparation of the same diff', async (t) => {
+  resetRun();
+  await writeFile(path.join(repo, 'src', 'child', '1.ts'), 'interrupted\n', { flag: 'a' });
+  t.after(() => {
+    crashDiffWrite = false;
+    git('checkout', '--', 'src/child/1.ts');
+  });
+  const options = {
+    diffStat: fullDiff,
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' as const },
+  };
+  crashDiffWrite = true;
+  await assert.rejects(prepareCompletionPackage(run.id, options), /simulated crash/);
+  crashDiffWrite = false;
+  const { prPackage } = await prepareCompletionPackage(run.id, options);
+  const diffPath = prPackage.reviewSnapshot!.diffPath!;
+  const file = path.join(path.dirname(taskFile), diffPath);
+  assert.ok(existsSync(`${file}.tmp.crashed`), 'the crash targeted this diff');
+  const digest = createHash('sha256')
+    .update(await readFile(file))
+    .digest('hex');
+  assert.equal(diffPath, `artifacts/publication-packages/diff-${digest}.diff`);
+  await rm(`${file}.tmp.crashed`);
 });
 
 test('attachment at unchanged HEAD refuses the old publication base at approval and publication', async () => {

@@ -18,6 +18,7 @@ import {
 interface PendingRetrospectiveRenderOptions {
   run: FamilyObservabilityRunSummary;
   decision: RunDecision | null;
+  disabled?: boolean;
   onResolve: (run: FamilyObservabilityRunSummary, decision: RunDecision, actionId: string) => void;
 }
 
@@ -203,6 +204,7 @@ export function renderPendingRetrospectiveDecision(options: PendingRetrospective
           (action) => html`
             <button
               class="action-btn ${action.id === 'accept' ? 'primary' : ''}"
+              ?disabled=${options.disabled}
               @click=${() => options.onResolve(options.run, decision, action.id)}
             >
               ${action.label}

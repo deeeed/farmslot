@@ -752,13 +752,13 @@ export class DevHarness extends LitElement {
       <div style="display:flex;flex-direction:column;gap:16px">
         <div>
           <div style="color:#888;font:0.7rem monospace;padding:4px 16px">update available</div>
-          <update-banner .status=${behind}></update-banner>
+          <update-banner .status=${behind} .current=${true}></update-banner>
         </div>
         <div>
           <div style="color:#888;font:0.7rem monospace;padding:4px 16px">
             up to date (renders nothing)
           </div>
-          <update-banner .status=${upToDate}></update-banner>
+          <update-banner .status=${upToDate} .current=${true}></update-banner>
         </div>
       </div>
     `;

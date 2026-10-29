@@ -10,7 +10,7 @@ import type {
   Run,
 } from '@farmslot/protocol';
 
-import { clearVisibleModels, rememberVisibleModels } from '../../utils/runner-visible-cache.js';
+import { setObservedVisibleModels } from '../../utils/runner-visible-models.js';
 
 import {
   activeEvalRunCount,
@@ -469,11 +469,20 @@ test('sanitizeCandidateRows preserves saved model ids for launch validation', ()
 
 test('missing restored model uses the saved default rather than the first visible shortcut', () => {
   try {
-    rememberVisibleModels('cursor', ['composer-2.5'], 'claude-opus-5-5-high');
+    setObservedVisibleModels([
+      {
+        runner: 'cursor',
+        models: ['composer-2.5'],
+        pickerModels: ['composer-2.5', 'claude-opus-5-5-high'],
+        defaultModel: 'claude-opus-5-5-high',
+        defaultConfigured: true,
+        configured: true,
+      },
+    ]);
     const [row] = sanitizeCandidateRows([{ id: 'no-model', runner: 'cursor' }]);
     assert.equal(row.model, 'claude-opus-5-5-high');
   } finally {
-    clearVisibleModels();
+    setObservedVisibleModels([]);
   }
 });
 

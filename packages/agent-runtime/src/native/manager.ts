@@ -1101,7 +1101,9 @@ export class NativeSessionManager {
   private owned(owner: string, id: string, observations?: ProcessMetadataCache): SessionRecord {
     const record = this.sessions.get(id);
     if (!record || record.info.ownerPrincipalId !== owner)
-      throw new Error('Native session not found for this principal');
+      throw Object.assign(new Error('Native session not found for this principal'), {
+        code: 'NOT_FOUND',
+      });
     this.reconcileMissingProcess(record, observations);
     return record;
   }

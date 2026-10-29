@@ -235,6 +235,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `resource.device.inventory`             | admin          |                                                                                    |
 | `resource.health`                       | admin          |                                                                                    |
 | `resource.list`                         | admin          |                                                                                    |
+| `resource.observers.replace`            | admin          |                                                                                    |
 | `resource.pressure.history`             | admin          |                                                                                    |
 | `resource.pressure.snapshot`            | admin          |                                                                                    |
 | `resource.watch.setEnabled`             | admin          |                                                                                    |

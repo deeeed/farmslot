@@ -21,7 +21,7 @@ export function CopilotScreen({
   openNative: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const available = vm.connected && vm.runtime?.status === 'running' && !!vm.runtime.terminalWorker;
+  const available = vm.ready && vm.runtime?.status === 'running' && !!vm.runtime.terminalWorker;
   return (
     <View
       testID="companion-screen-copilot"
@@ -54,6 +54,12 @@ export function CopilotScreen({
           <Text style={styles.pendingDraftText}>{draft}</Text>
         </View>
       ) : null}
+      {vm.status === 'stale' ? (
+        <Text style={styles.hint}>
+          Saved status{vm.observedAt ? ` from ${new Date(vm.observedAt).toLocaleString()}` : ''}.
+          Waiting for a current read.
+        </Text>
+      ) : null}
       {vm.error ? <Text style={styles.error}>{vm.error}</Text> : null}
       {vm.runtime?.terminalReason ? (
         <Text style={styles.hint}>{vm.runtime.terminalReason}</Text>
@@ -78,14 +84,17 @@ export function CopilotScreen({
       >
         <Text style={styles.buttonText}>Native conversations</Text>
       </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        disabled={vm.loading || !vm.connected}
-        style={[styles.button, (vm.loading || !vm.connected) && styles.buttonDisabled]}
-        onPress={() => void actions.refresh()}
-      >
-        <Text style={styles.buttonText}>{vm.loading ? 'Checking…' : 'Refresh status'}</Text>
-      </Pressable>
+      {vm.error ? (
+        <Pressable
+          testID="companion-copilot-retry"
+          accessibilityRole="button"
+          disabled={vm.loading || !vm.connected}
+          style={[styles.button, (vm.loading || !vm.connected) && styles.buttonDisabled]}
+          onPress={() => void actions.refresh()}
+        >
+          <Text style={styles.buttonText}>{vm.loading ? 'Checking…' : 'Retry status'}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

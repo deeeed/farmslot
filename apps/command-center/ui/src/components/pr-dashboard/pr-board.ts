@@ -7,27 +7,29 @@ import type {
   PRRulePreview,
   PRRuleSubject,
   PRStatus,
+  PRStatusResult,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, sourceObservationAge } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import './pr-card.js';
 import './pr-automation-panel.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import {
   type AppState,
   getState,
   type GlobalFilters,
-  isHydrating,
-  markPRsRefreshFailed,
   PR_LIST_TIMEOUT_MS,
+  prsQuery,
   subscribe,
-  updatePRs,
 } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { safeLsGet, safeLsSet } from '../../utils/storage.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   activateWorkInventoryRow,
   focusWorkInventoryRow,
@@ -190,6 +192,10 @@ export class PRBoard extends LitElement {
   @state() private _mine: MineScope | null = loadMineScope();
   @state() private _mineEditing = false;
   @state() private _mineNotice = '';
+  private readonly _mineAccounts = new ResourceQueryController<ConfigGitHubAccountsResult>(
+    this,
+    (state) => this._prefillMineScope(state),
+  );
   private _mineLoginsDraft = '';
   @state() private _pane: PRPane = 'overview';
   @state() private _showHistory = false;
@@ -198,19 +204,21 @@ export class PRBoard extends LitElement {
     string,
     { context: string; loading: boolean; subject?: PRRuleSubject; error?: string }
   >();
-  @state() private _detailError = '';
-  @state() private _detailLoading = false;
-  private _detailRequestKey = '';
+  /** The selected PR's shared gateway observation; it is bound only when the list lacks that PR. */
+  private readonly _detailQuery = new ResourceQueryController<PRStatusResult>(this, (state) =>
+    this._receiveDetail(state),
+  );
+  private _detailTarget: { key: string; pr: PRKey } | null = null;
+  @state() private _detailUnavailable = '';
   private _detailEpoch = gateway.connectionEpoch;
-  private _detailSerial = 0;
   private _didInitialUpdate = false;
   @state() private _loading = false;
+  private _checkSerial = 0;
   @state() private _gatewayRefreshing = false;
   @state() private _gatewayRefreshError: string | null = null;
-  @state() private _lastRefreshed = 0;
+  @state() private _prsObservation: ResourceQueryState<PRListResult> = { status: 'loading' };
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _hydrating = false;
-  @state() private _bootstrapFailed = false;
   @state() private _lastRefreshError: string | null = null;
   @state() private _layout: PRLayout = safeLsGet(PR_LAYOUT_KEY) === 'board' ? 'board' : 'list';
   @state() private _sortMode: PRSortMode = safeLsGet(PR_SORT_KEY) === 'date' ? 'date' : 'group';
@@ -221,7 +229,6 @@ export class PRBoard extends LitElement {
   @state() private _modalPr: PRKey | null = null;
 
   private _unsubState?: () => void;
-  private _refreshInterval?: number;
   private _tickInterval?: number;
 
   static styles = css`
@@ -674,24 +681,11 @@ export class PRBoard extends LitElement {
     const initial = getState();
     this._syncState(initial);
     this._unsubState = subscribe((s) => this._syncState(s));
-    // Remounting the board after a successful shared bootstrap should reuse
-    // the cached prs slice rather than fan out another full PR_LIST. Only
-    // self-heal immediately when the shared bootstrap for this connection
-    // actually failed; otherwise freshness comes from the existing 60s poll
-    // cadence or an explicit manual refresh.
-    if (initial.connection === 'connected' && !this._hydrating && initial.bootstrapFailed.prs) {
-      this._fetchPRs();
-    }
-    void this._prefillMineScope();
-    this._refreshInterval = window.setInterval(() => {
-      if (
-        document.visibilityState === 'visible' &&
-        !this._automationEditing &&
-        this._section === 'prs' &&
-        this._scope !== 'monitored'
-      )
-        void this._fetchPRs();
-    }, 60_000);
+    if (!this._mine)
+      this._mineAccounts.setQuery(
+        resourceQuery<ConfigGitHubAccountsResult>(Methods.CONFIG_GITHUB_ACCOUNTS),
+      );
+    // Render source age locally. The gateway's admitted collector owns all passive sampling.
     this._tickInterval = window.setInterval(() => this.requestUpdate(), 15_000);
   }
 
@@ -701,7 +695,6 @@ export class PRBoard extends LitElement {
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('hashchange', this._onHashChange);
     this._unsubState?.();
-    if (this._refreshInterval) window.clearInterval(this._refreshInterval);
     if (this._tickInterval) window.clearInterval(this._tickInterval);
   }
 
@@ -717,7 +710,7 @@ export class PRBoard extends LitElement {
     ) {
       this._writeUrl();
     }
-    void this._ensureSelectedDetails();
+    this._ensureSelectedDetails();
     void this._ensureReviewObservation();
     if (this._section === 'reviews' && !this._automationEditing) {
       // Fill legacy rows once, with at most two read-only lookups at a time.
@@ -759,81 +752,62 @@ export class PRBoard extends LitElement {
         error: '',
         loading: true,
       };
-      this._detailRequestKey = '';
-      this._detailError = '';
-      this._detailLoading = false;
-      this._detailSerial++;
+      this._detailTarget = null;
+      this._detailUnavailable = '';
+      this._detailQuery.setQuery(undefined);
+      this._lastRefreshError = null;
+      this._checkSerial++;
+      this._loading = false;
     }
-    const wasHydrating = this._hydrating;
     const hadPrs = this._prs.length > 0;
     this._prs = s.prs;
     this._globalFilters = s.globalFilters;
-    this._hydrating = isHydrating(s, 'prs');
-    this._bootstrapFailed = s.bootstrapFailed.prs;
-    this._gatewayRefreshing = s.prsRefreshing;
-    this._gatewayRefreshError = s.prsRefreshError;
-    // Cold loads mount before the socket is up; prefill once it is.
-    if (s.connection === 'connected' && !this._mine) void this._prefillMineScope();
-    if (s.prsUpdatedAt > this._lastRefreshed) this._lastRefreshed = s.prsUpdatedAt;
+    this._prsObservation = s.prsObservation;
+    this._hydrating = s.prsObservation.status === 'loading';
+    this._gatewayRefreshing = s.prsObservation.data?.refreshing ?? false;
+    this._gatewayRefreshError = s.prsObservation.error?.message ?? null;
     // Legacy URLs (bare `pr=123` without repo) can't be resolved until the
     // PR list lands. Re-run _readUrl once PRs arrive so a cold-reload on a
     // shared link still hydrates the selection.
     if (!hadPrs && this._prs.length > 0 && this._selectedPr === null) {
       this._readUrl();
     }
-    // Recover from a failed bootstrap PR_LIST without waiting for the 60s
-    // poll. Only fetch when the slice's bootstrap actually rejected — a
-    // successful bootstrap (even one that returned zero PRs) already wrote
-    // authoritative data, so skipping avoids a duplicate fan-out to GitHub.
-    if (wasHydrating && !this._hydrating && s.bootstrapFailed.prs) {
-      this._fetchPRs();
-    }
   }
 
-  private async _fetchPRs(force = false) {
-    // Never race the shared bootstrap PR_LIST. This single gate covers
-    // every caller: mount-time, hydration-complete transition, 60s poll,
-    // and the manual Refresh button. `state.ts#fetchInitialState` owns
-    // PR_LIST during the hydrating window and will update shared state.
-    // The gateway answers from its warm list; `force` (manual Refresh)
-    // makes it re-fetch from GitHub before replying.
-    if (this._hydrating || this._loading) return;
+  private async _checkGitHub() {
+    if (
+      this._loading ||
+      gateway.connectionState !== 'connected' ||
+      gateway.workspaceAccess !== 'farm'
+    )
+      return;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    const serial = ++this._checkSerial;
     this._loading = true;
+    this._lastRefreshError = null;
     try {
-      const result = await gateway.request<PRListResult>(
-        Methods.PR_LIST,
-        force ? { force: true } : {},
-        PR_LIST_TIMEOUT_MS,
-      );
-      updatePRs(result.prs, { fetchedAt: result.fetchedAt, refreshing: result.refreshing });
-      this._lastRefreshError = null;
+      // Explicit upstream work. Its source publication updates all canonical observers.
+      await gateway.request<PRListResult>(Methods.PR_LIST, { force: true }, PR_LIST_TIMEOUT_MS);
     } catch (err) {
-      // Recover explicitly: retain the last known PR list but mark the slice
-      // failed so the board shows the stale-data banner and retries on the
-      // next poll/manual refresh instead of silently presenting old data.
-      markPRsRefreshFailed();
-      this._lastRefreshError = err instanceof Error ? err.message : String(err);
+      if (
+        serial === this._checkSerial &&
+        owner === getResourceWorkspaceKey() &&
+        connection === gateway.resourceConnectionId
+      )
+        this._lastRefreshError = err instanceof Error ? err.message : String(err);
     } finally {
-      this._loading = false;
+      if (serial === this._checkSerial) this._loading = false;
     }
   }
 
   private _formatAgo(): string {
-    if (!this._lastRefreshed) return '';
-    const seconds = Math.floor((Date.now() - this._lastRefreshed) / 1000);
-    if (seconds < 5) return 'just now';
-    if (seconds < 60) return `${seconds}s ago`;
-    return `${Math.floor(seconds / 60)}m ago`;
+    return sourceObservationAge(this._prsObservation.sourceObservation?.observedAt);
   }
 
-  private _handleRefresh() {
-    if (!this._loading) {
-      this._details = new Map();
-      this._detailRequestKey = '';
-      this._detailSerial++;
-      this._detailLoading = false;
-      void this._fetchPRs(true);
-    }
+  private _retryList() {
+    if (gateway.connectionState !== 'connected' || !this._prsObservation.error) return;
+    return getResourceCache()?.retry(prsQuery);
   }
 
   private _renderScopeSummary() {
@@ -926,38 +900,31 @@ export class PRBoard extends LitElement {
     return this._showHistory ? [...ACTIVE_COLUMNS, ...TERMINAL_COLUMNS] : ACTIVE_COLUMNS;
   }
   /**
-   * First visit on this browser: seed "Mine" with the gateway's configured
+   * First visit on this browser: seed "Mine" with the gateway's verified
    * GitHub logins so the default view is useful before anyone edits it.
    */
-  private _minePrefillInflight = false;
-  private async _prefillMineScope() {
-    if (this._mine || this._minePrefillInflight || gateway.connectionState !== 'connected') return;
-    this._minePrefillInflight = true;
-    try {
-      const result = await gateway.request<ConfigGitHubAccountsResult>(
-        Methods.CONFIG_GITHUB_ACCOUNTS,
-        {},
-      );
-      if (this._mine) return;
+  private _prefillMineScope(state: ResourceQueryState<ConfigGitHubAccountsResult>) {
+    if (this._mine) return this._mineAccounts.setQuery(undefined);
+    // Operators cannot read configured accounts (admin-only method), and an
+    // unverified inventory is not an empty one. Say so where the scope is
+    // edited instead of silently narrowing "Mine" to run-created PRs.
+    const failure =
+      state.error?.message ??
+      (state.sourceObservation?.observedAt === undefined ? state.data?.error : undefined);
+    if (failure) {
+      this._mineNotice = `Could not read the gateway's configured GitHub accounts (${failure}); add your logins here.`;
+      this._mine = { logins: [], includeRunOwned: true, adopted: [] };
+    } else if (state.data) {
       const next: MineScope = {
-        logins: normalizeLogins(result.accounts.map((account) => account.login)),
+        logins: normalizeLogins(state.data.accounts.map((account) => account.login)),
         includeRunOwned: true,
         adopted: [],
       };
-      // Persist so later loads are deterministic and skip the RPC.
+      // Persist so later loads are deterministic and skip the read.
       saveMineScope(next);
       this._mine = next;
-    } catch (error) {
-      // Operators cannot read configured accounts (admin-only method), and a
-      // gateway without accounts is valid too. Say so where the scope is
-      // edited instead of silently narrowing "Mine" to run-created PRs.
-      this._mineNotice = `Could not read the gateway's configured GitHub accounts (${
-        error instanceof Error ? error.message : String(error)
-      }); add your logins here.`;
-      this._mine = { logins: [], includeRunOwned: true, adopted: [] };
-    } finally {
-      this._minePrefillInflight = false;
-    }
+    } else return;
+    this._mineAccounts.setQuery(undefined);
   }
   private get _mineScope(): MineScope {
     return this._mine ?? { logins: [], includeRunOwned: true, adopted: [] };
@@ -1063,7 +1030,6 @@ export class PRBoard extends LitElement {
     if ((patch.scope !== undefined || patch.history !== undefined) && !this._selectedEntry)
       this._selectedPr = null;
     this._modalPr = null;
-    this._detailError = '';
     this._writeUrl(true, true);
     void this.updateComplete.then(() => {
       const pane = this.renderRoot.querySelector('.split-detail');
@@ -1193,55 +1159,55 @@ export class PRBoard extends LitElement {
         : nothing}
     </div>`;
   }
-  private async _ensureSelectedDetails() {
+  private _ensureSelectedDetails() {
+    // The list may still cover this PR, or an explicit check is about to replace it.
+    if (this._hydrating || this._loading) return;
     const entry = this._selectedEntry;
-    if (
-      this._section === 'automation' ||
-      (this._pane !== 'overview' && !!entry?.author) ||
-      !entry ||
-      entry.status ||
-      this._hydrating ||
-      this._loading ||
-      gateway.connectionState !== 'connected'
-    )
-      return;
-    const key = prWorkspaceKey(entry.key);
-    if (this._detailRequestKey === key && (this._detailLoading || this._detailError)) return;
-    this._detailRequestKey = key;
-    this._detailError = '';
-    const project = this._inventory.projectConfigs.find(
-      (p) => p.name === entry.project && p.ci.repo?.toLowerCase() === entry.key.repo.toLowerCase(),
+    const key = entry ? prWorkspaceKey(entry.key) : '';
+    if (key && key === this._detailTarget?.key) return;
+    const wanted = Boolean(
+      entry &&
+      this._section !== 'automation' &&
+      !(this._pane !== 'overview' && entry.author) &&
+      !entry.status,
     );
-    if (!project || (entry.key.host ?? 'github.com').toLowerCase() !== 'github.com') {
-      this._detailLoading = false;
-      this._detailError =
-        'The full viewer needs a matching Farmslot project. Monitoring and review controls are available in their tabs.';
-      return;
-    }
-    const serial = ++this._detailSerial;
-    const epoch = gateway.connectionEpoch;
-    this._detailLoading = true;
-    try {
-      const result = await gateway.request<{ pr: PRStatus }>(
-        Methods.PR_STATUS,
-        { pr: entry.key.pr, project: project.name },
-        PR_LIST_TIMEOUT_MS,
-      );
-      if (epoch !== gateway.connectionEpoch || serial !== this._detailSerial) return;
-      if (!matchesPrKey(result.pr, entry.key))
-        throw new Error('The gateway returned a different PR; its details were not displayed.');
-      this._details = new Map(this._details).set(key, result.pr);
-    } catch (error) {
-      if (
-        epoch === gateway.connectionEpoch &&
-        serial === this._detailSerial &&
-        this._selectedPr &&
-        prWorkspaceKey(this._selectedPr) === key
-      )
-        this._detailError = error instanceof Error ? error.message : String(error);
-    } finally {
-      if (serial === this._detailSerial) this._detailLoading = false;
-    }
+    const project =
+      entry && wanted && (entry.key.host ?? 'github.com').toLowerCase() === 'github.com'
+        ? this._inventory.projectConfigs.find(
+            (p) =>
+              p.name === entry.project && p.ci.repo?.toLowerCase() === entry.key.repo.toLowerCase(),
+          )
+        : undefined;
+    this._detailUnavailable =
+      wanted && !project
+        ? 'The full viewer needs a matching Farmslot project. Monitoring and review controls are available in their tabs.'
+        : '';
+    this._detailTarget = entry && project ? { key, pr: entry.key } : null;
+    this._detailQuery.setQuery(
+      entry && project
+        ? resourceQuery<PRStatusResult>(Methods.PR_STATUS, {
+            pr: entry.key.pr,
+            project: project.name,
+          })
+        : undefined,
+    );
+  }
+  private _receiveDetail(state: ResourceQueryState<PRStatusResult>) {
+    const target = this._detailTarget;
+    const pr = state.data?.pr;
+    if (target && pr && matchesPrKey(pr, target.pr))
+      this._details = new Map(this._details).set(target.key, pr);
+  }
+  private get _detailLoading(): boolean {
+    return this._detailTarget !== null && this._detailQuery.state.status === 'loading';
+  }
+  private get _detailError(): string {
+    const target = this._detailTarget;
+    const { data, error, status } = this._detailQuery.state;
+    if (!target) return this._detailUnavailable;
+    if (data && !matchesPrKey(data.pr, target.pr))
+      return 'The gateway returned a different PR; its details were not displayed.';
+    return !data && status === 'error' ? (error?.message ?? 'PR details are unavailable.') : '';
   }
   private _renderListRow(entry: PRWorkspaceEntry) {
     const selected = prKeyEqual(entry.key, this._selectedPr);
@@ -1324,11 +1290,11 @@ export class PRBoard extends LitElement {
   }
   private _renderListContent(entries: PRWorkspaceEntry[], hiddenTerminal: number) {
     if (!entries.length) {
-      if (this._lastRefreshError)
+      if (this._prsObservation.error)
         return renderPrBoardSkeleton(
           false,
           'Pull requests unavailable',
-          () => void this._fetchPRs(true),
+          () => void this._retryList(),
         );
       if (this._prsLoading) return renderPrBoardSkeleton(false);
       if (this._inventory.loading) return renderPrBoardSkeleton(false);
@@ -1469,13 +1435,21 @@ export class PRBoard extends LitElement {
           ? html`<span class="refresh-ago refreshing" role="status" aria-busy="true"
               >Fetching PR info…</span
             >`
-          : this._lastRefreshed
-            ? html`<span class="refresh-ago">${this._formatAgo()}</span>`
+          : this._prsObservation.data
+            ? html`<span class="refresh-ago">Last GitHub observation: ${this._formatAgo()}</span>`
             : nothing}
-        ${this._bootstrapFailed
+        ${this._prsObservation.status === 'stale'
           ? html`<span class="rehydrating-banner"
-              >${this._gatewayRefreshError ?? this._lastRefreshError ?? 'PR refresh unavailable'} ·
-              showing available data</span
+              >Saved PRs, ${this._formatAgo()}. Actions need current source checks.</span
+            >`
+          : this._prsObservation.status === 'unsupported'
+            ? html`<span class="rehydrating-banner"
+                >Live PR updates are unavailable on this gateway.</span
+              >`
+            : nothing}
+        ${this._gatewayRefreshError || this._lastRefreshError
+          ? html`<span class="rehydrating-banner"
+              >${this._gatewayRefreshError ?? this._lastRefreshError} · showing available data</span
             >`
           : nothing}
         ${this._inventory.error
@@ -1485,10 +1459,21 @@ export class PRBoard extends LitElement {
           ? nothing
           : html`<button
               class="refresh-btn ${this._loading ? 'loading' : ''}"
-              @click=${this._handleRefresh}
+              ?disabled=${this._loading ||
+              gateway.connectionState !== 'connected' ||
+              gateway.workspaceAccess !== 'farm'}
+              @click=${() => void this._checkGitHub()}
             >
-              ${this._loading ? 'Refreshing…' : 'Refresh PRs'}
+              ${this._loading ? 'Checking GitHub…' : 'Check GitHub'}
             </button>`}
+        ${!management && this._prsObservation.error
+          ? html`<button
+              ?disabled=${gateway.connectionState !== 'connected'}
+              @click=${() => void this._retryList()}
+            >
+              Retry PR read
+            </button>`
+          : nothing}
       </header>
       <nav class="workspace-nav" aria-label="PR sections">
         <button
@@ -1749,12 +1734,7 @@ export class PRBoard extends LitElement {
                     rel="noopener noreferrer"
                     >Open PR on GitHub</a
                   >${this._detailError
-                    ? html`<button
-                        @click=${() => {
-                          this._detailRequestKey = '';
-                          void this._ensureSelectedDetails();
-                        }}
-                      >
+                    ? html`<button @click=${() => void this._detailQuery.retry()}>
                         Retry details
                       </button>`
                     : nothing}`

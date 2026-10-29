@@ -1,72 +1,162 @@
-// list-cache.ts — gateway-owned warm copy of the PR dashboard list.
-//
-// `pr.list` fans out to GitHub for every candidate PR (slots + recent runs),
-// which routinely takes seconds cold and used to run on every client
-// bootstrap, poll, and page reload. The gateway now keeps the last result in
-// memory and on disk (FARMSLOT_DIR/.farm-cache/pr-list.json), answers from it
-// at once, refreshes in the background once it is older than
-// PR_LIST_STALE_MS while a client is connected, and broadcasts
-// `pr.list.updated` whenever a refresh changes the list.
-
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+// Gateway-owned PR observations. Each normalized scope shares one retained value and collector.
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 
 import {
   Events,
+  Methods,
   type PRListResult,
   type PRListUpdatedPayload,
   type PRStatus,
+  type UpstreamObservation,
 } from '@farmslot/protocol';
+import { resourceCollectorQuery, type ResourceKey } from '@farmslot/protocol/client-cache';
 
 import { farmCacheFile } from '../../core/farm-cache.js';
+import { GatewayMethodError } from '../../core/method-error.js';
 import { githubQueryBudget } from '../../integrations/github-query-budget.js';
+import { resourceRevisions } from '../../resources/revisions.js';
+import { upstreamObservers } from '../../resources/upstream-observers.js';
+
+import {
+  onPRRawObservation,
+  restoreRetainedPRRawObservations,
+  type RetainedPRRawObservation,
+  retainedPRRawObservations,
+} from './raw-cache.js';
 
 export interface PRListSnapshot {
   fetchedAt: string;
   prs: PRStatus[];
-  /** Candidate discovery hit its cap; project-scoped callers must not trust a filter of this copy. */
   truncated?: boolean;
 }
 
-/** `force` asks the fetcher to bypass its own GitHub caches; `failed` names PRs it could not read. */
-type PRListFetcher = (
-  force: boolean,
-) => Promise<{ prs: PRStatus[]; truncated: boolean; failed?: string[] }>;
+export interface PRListClientInterest {
+  legacyInterest?: boolean;
+  legacyClientId?: string;
+}
+
+interface PRListFetchResult {
+  prs: PRStatus[];
+  truncated: boolean;
+  failed?: string[];
+}
+
+type PRListFetcher = (force: boolean) => Promise<PRListFetchResult>;
 export type ServedPRList = PRListResult & { truncated: boolean };
 type Broadcast = (event: string, payload: unknown) => void;
 
-const CACHE_FILE_NAME = 'pr-list.json';
-/** Bump when PRStatus fields the UI dereferences change shape; older files are ignored. */
-const PR_LIST_SNAPSHOT_VERSION = 1;
-/** A served list older than this triggers a background refresh. */
-export const PR_LIST_STALE_MS = 60_000;
-/** Gateway-side polling only continues while a client recently asked for `pr.list`. */
-export const PR_LIST_CLIENT_INTEREST_MS = 6 * 60_000;
-const PR_LIST_UNCHANGED_BACKOFF_MS = [PR_LIST_STALE_MS, 2 * 60_000, 5 * 60_000] as const;
-/** A PR GitHub keeps failing to read is carried from the previous copy for at most this long. */
-export const PR_LIST_CARRY_MAX_MS = 60 * 60 * 1000;
-
-let snapshot: PRListSnapshot | null = null;
-let loaded = false;
-let inflight: { promise: Promise<PRListSnapshot>; forced: boolean } | null = null;
-let queuedForced: Promise<PRListSnapshot> | null = null;
-let broadcastFn: Broadcast = () => {};
-/** `repo#pr` → when the row first had to be carried because GitHub could not read it. */
-const carriedSince = new Map<string, number>();
-let lastClientListAt = 0;
-let unchangedStreak = 0;
-let lastReserveLogAt = 0;
-
-function cacheFile(): string {
-  return farmCacheFile(CACHE_FILE_NAME);
+interface CollectorState {
+  id: string;
+  project?: string;
+  loaded: boolean;
+  snapshot: PRListSnapshot | null;
+  carriedSince: Map<string, number>;
+  legacyInterest: Map<string | symbol, number>;
+  fetch?: PRListFetcher;
+  inflight?: { promise: Promise<PRListSnapshot>; forced: boolean };
+  queuedForced?: Promise<PRListSnapshot>;
+  attemptedAt?: number;
+  successfulObservedAt?: number;
+  failure?: { message: string; cause: unknown; code?: string };
+  incomplete: boolean;
+  unchangedStreak: number;
+  lastUsed: number;
 }
 
 interface StoredPRList extends PRListSnapshot {
   version: number;
-  /** `repo#pr` → epoch ms the row first had to be carried; survives restarts so the 1h cap holds. */
+  project?: string;
   carriedSince?: Record<string, number>;
+  observation?: UpstreamObservation;
+  attemptedAt?: number;
+  incomplete?: boolean;
+  raw?: RetainedPRRawObservation[];
 }
 
-/** The fields clients dereference without guards; anything else is tolerated. */
+export const PR_LIST_STALE_MS = 60_000;
+export const PR_LIST_CLIENT_INTEREST_MS = 6 * 60_000;
+export const PR_LIST_CARRY_MAX_MS = 60 * 60 * 1000;
+const MAX_COLLECTORS = 128;
+const BACKOFF_MS = [PR_LIST_STALE_MS, 2 * 60_000, 5 * 60_000] as const;
+const anonymousLegacyClient = Symbol('legacy-pr-list-reader');
+const collectors = new Map<string, CollectorState>();
+let broadcastFn: Broadcast = () => {};
+let lastReserveLogAt = 0;
+let useSerial = 0;
+let wakeCollector: (() => void) | undefined;
+let wakeQueued = false;
+
+/** Wake the existing eligibility-gated collector; this introduces no second timer. */
+export function notifyPRListInterest(): void {
+  if (wakeQueued) return;
+  wakeQueued = true;
+  queueMicrotask(() => {
+    wakeQueued = false;
+    wakeCollector?.();
+  });
+}
+
+export function prListResourceKey(project?: string): ResourceKey {
+  const query = resourceCollectorQuery(Methods.PR_LIST, project === undefined ? {} : { project });
+  return { family: 'upstream', integration: 'github', queryId: query.id };
+}
+
+function cacheFile(project?: string): string {
+  return farmCacheFile(
+    project === undefined
+      ? 'pr-list.json'
+      : `pr-list-${createHash('sha256').update(project).digest('hex')}.json`,
+  );
+}
+
+function hasLegacyInterest(state: CollectorState, now: number): boolean {
+  for (const [client, at] of state.legacyInterest)
+    if (now - at > PR_LIST_CLIENT_INTEREST_MS) state.legacyInterest.delete(client);
+  return state.legacyInterest.size > 0;
+}
+
+function observerInterest(project?: string): boolean {
+  return upstreamObservers.hasInterest(Methods.PR_LIST, project === undefined ? {} : { project });
+}
+
+function stateFor(project?: string): CollectorState {
+  const query = resourceCollectorQuery(Methods.PR_LIST, project === undefined ? {} : { project });
+  let state = collectors.get(query.id);
+  if (!state) {
+    if (collectors.size >= MAX_COLLECTORS) {
+      const oldest = [...collectors.values()]
+        .filter(
+          (entry) =>
+            !entry.inflight &&
+            !entry.queuedForced &&
+            !hasLegacyInterest(entry, Date.now()) &&
+            !observerInterest(entry.project),
+        )
+        .sort((a, b) => a.lastUsed - b.lastUsed)[0];
+      if (!oldest)
+        throw new GatewayMethodError('RESOURCE_LIMIT', 'Too many active upstream PR queries');
+      collectors.delete(oldest.id);
+      const file = cacheFile(oldest.project);
+      if (existsSync(file)) unlinkSync(file);
+    }
+    state = {
+      id: query.id,
+      project,
+      loaded: false,
+      snapshot: null,
+      carriedSince: new Map(),
+      legacyInterest: new Map(),
+      incomplete: false,
+      unchangedStreak: 0,
+      lastUsed: ++useSerial,
+    };
+    collectors.set(query.id, state);
+  }
+  state.lastUsed = ++useSerial;
+  return state;
+}
+
 function isPRStatusLike(value: unknown): value is PRStatus {
   const p = value as PRStatus;
   return (
@@ -84,280 +174,377 @@ function isPRStatusLike(value: unknown): value is PRStatus {
   );
 }
 
-function isStoredPRList(value: unknown): value is StoredPRList {
-  const v = value as StoredPRList;
-  return (
-    typeof v === 'object' &&
-    v !== null &&
-    v.version === PR_LIST_SNAPSHOT_VERSION &&
-    typeof v.fetchedAt === 'string' &&
-    Array.isArray(v.prs) &&
-    v.prs.every(isPRStatusLike)
+function observation(state: CollectorState): UpstreamObservation {
+  const observedAt = state.successfulObservedAt;
+  const stale = Boolean(
+    state.inflight || state.failure || state.incomplete || observedAt === undefined,
   );
+  return {
+    status: state.snapshot ? (stale ? 'stale' : 'ready') : 'error',
+    ...(observedAt === undefined ? {} : { observedAt }),
+    ...(state.failure
+      ? {
+          error: {
+            code: state.failure.code ?? 'UPSTREAM_UNAVAILABLE',
+            message: state.failure.message,
+          },
+        }
+      : state.incomplete
+        ? { error: { code: 'UPSTREAM_INCOMPLETE', message: 'The upstream PR list is incomplete' } }
+        : {}),
+  };
 }
 
-export function loadPRListCache(): void {
-  loaded = true;
-  const file = cacheFile();
-  if (!existsSync(file)) {
-    snapshot = null;
-    return;
-  }
+export function loadPRListCache(project?: string): void {
+  const state = stateFor(project);
+  state.loaded = true;
+  state.snapshot = null;
+  state.carriedSince.clear();
+  state.failure = undefined;
+  state.attemptedAt = undefined;
+  state.successfulObservedAt = undefined;
+  state.incomplete = false;
+  const file = cacheFile(project);
+  if (!existsSync(file)) return;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(file, 'utf-8'));
-    carriedSince.clear();
-    if (isStoredPRList(parsed)) {
-      snapshot = { fetchedAt: parsed.fetchedAt, prs: parsed.prs, truncated: parsed.truncated };
-      for (const [key, since] of Object.entries(parsed.carriedSince ?? {}))
-        if (typeof since === 'number' && Number.isFinite(since)) carriedSince.set(key, since);
-    } else snapshot = null;
-    if (snapshot)
-      console.log(
-        `[pr.list] warm list: ${snapshot.prs.length} PR(s) fetched ${snapshot.fetchedAt} (${file})`,
-      );
-    else console.warn(`[pr.list] ignoring warm list at ${file}: unknown version or shape`);
-  } catch (err) {
-    // A corrupt snapshot only costs one cold fetch; the next refresh rewrites it.
-    console.warn(`[pr.list] failed to read warm list ${file}: ${(err as Error).message}`);
-    snapshot = null;
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    const value = parsed as StoredPRList;
+    if (
+      !value ||
+      value.version !== 1 ||
+      value.project !== project ||
+      typeof value.fetchedAt !== 'string' ||
+      !Number.isFinite(Date.parse(value.fetchedAt)) ||
+      !Array.isArray(value.prs) ||
+      !value.prs.every(isPRStatusLike)
+    ) {
+      console.warn(`[pr.list] ignoring invalid warm snapshot at ${file}`);
+      return;
+    }
+    state.snapshot = { fetchedAt: value.fetchedAt, prs: value.prs, truncated: value.truncated };
+    for (const [key, at] of Object.entries(value.carriedSince ?? {}))
+      if (typeof at === 'number' && Number.isFinite(at)) state.carriedSince.set(key, at);
+    state.attemptedAt = Number.isFinite(value.attemptedAt) ? value.attemptedAt : undefined;
+    const sourceTime = value.observation
+      ? value.observation.observedAt
+      : state.carriedSince.size
+        ? undefined
+        : Date.parse(value.fetchedAt);
+    if (typeof sourceTime === 'number' && Number.isFinite(sourceTime) && sourceTime > 0)
+      state.successfulObservedAt = sourceTime;
+    if (value.observation?.error)
+      state.failure = {
+        ...value.observation.error,
+        cause: new Error(value.observation.error.message),
+      };
+    state.incomplete = value.incomplete === true || state.carriedSince.size > 0;
+    restoreRetainedPRRawObservations(value.raw);
+  } catch (error) {
+    // A corrupt optional warm copy costs a cold collection; no saved result becomes current.
+    state.snapshot = null;
+    console.warn(`[pr.list] cannot load warm snapshot ${file}: ${(error as Error).message}`);
   }
 }
 
-function persist(next: PRListSnapshot): void {
-  const file = cacheFile();
+function ensureLoaded(state: CollectorState): void {
+  if (!state.loaded) loadPRListCache(state.project);
+}
+
+function persist(state: CollectorState): void {
+  if (!state.snapshot) return;
+  const file = cacheFile(state.project);
   const tmp = `${file}.${process.pid}.tmp`;
   try {
     const stored: StoredPRList = {
-      version: PR_LIST_SNAPSHOT_VERSION,
-      ...next,
-      ...(carriedSince.size ? { carriedSince: Object.fromEntries(carriedSince) } : {}),
+      version: 1,
+      ...state.snapshot,
+      ...(state.project === undefined ? {} : { project: state.project }),
+      observation: observation(state),
+      attemptedAt: state.attemptedAt,
+      incomplete: state.incomplete,
+      raw: retainedPRRawObservations(state.snapshot.prs),
+      ...(state.carriedSince.size ? { carriedSince: Object.fromEntries(state.carriedSince) } : {}),
     };
-    writeFileSync(tmp, JSON.stringify(stored), 'utf-8');
+    writeFileSync(tmp, JSON.stringify(stored), { encoding: 'utf8', mode: 0o600 });
     renameSync(tmp, file);
-  } catch (err) {
-    // Disk persistence is an optimisation for the next gateway start; the
-    // in-memory copy already serves this process.
-    console.error(`[pr.list] persist failed: ${(err as Error).message}`);
+  } catch (error) {
+    // The readable in-memory observation survives an optional disk-cache write failure.
+    console.error(`[pr.list] persist failed: ${(error as Error).message}`);
   }
 }
 
-/** Where refresh completions and failures are announced (`pr.list.updated`). */
+function publish(state: CollectorState): void {
+  resourceRevisions.advance(prListResourceKey(state.project));
+}
+
 export function setPRListBroadcast(broadcast: Broadcast): void {
   broadcastFn = broadcast;
 }
 
 export function resetPRListCacheForTests(): void {
-  snapshot = null;
-  loaded = false;
-  inflight = null;
-  queuedForced = null;
+  collectors.clear();
   broadcastFn = () => {};
-  carriedSince.clear();
-  lastClientListAt = 0;
-  unchangedStreak = 0;
   lastReserveLogAt = 0;
+  useSerial = 0;
 }
 
-function ageMs(snap: PRListSnapshot, now: number): number {
-  const fetched = Date.parse(snap.fetchedAt);
-  return Number.isFinite(fetched) ? now - fetched : Number.POSITIVE_INFINITY;
+export function forgetPRListClientInterest(clientId: string): void {
+  for (const state of collectors.values()) state.legacyInterest.delete(clientId);
 }
 
-function unchangedRefreshDelayMs(): number {
-  const index = Math.min(unchangedStreak, PR_LIST_UNCHANGED_BACKOFF_MS.length - 1);
-  return PR_LIST_UNCHANGED_BACKOFF_MS[index];
+function delayMs(state: CollectorState): number {
+  return BACKOFF_MS[Math.min(state.unchangedStreak, BACKOFF_MS.length - 1)];
 }
 
-function graphqlBudgetReserved(now = Date.now()): boolean {
+function eligible(state: CollectorState, now: number): boolean {
+  return state.attemptedAt === undefined || now - state.attemptedAt >= PR_LIST_STALE_MS;
+}
+
+function budgetReserved(now: number): boolean {
   const retryAt = githubQueryBudget.anyReserved(now);
   if (!retryAt) return false;
-  if (now - lastReserveLogAt > 60_000) {
-    console.warn(`[pr.list] GraphQL budget reserved until ${retryAt}; keeping warm list`);
+  if (now - lastReserveLogAt > PR_LIST_STALE_MS) {
     lastReserveLogAt = now;
+    console.warn(`[pr.list] GraphQL budget reserved until ${retryAt}; keeping warm list`);
   }
   return true;
 }
 
-function hasRecentClientInterest(now: number): boolean {
-  return lastClientListAt > 0 && now - lastClientListAt <= PR_LIST_CLIENT_INTEREST_MS;
-}
-
-/**
- * PRs GitHub could not be read for keep the row from the previous copy, so a
- * partial outage never turns a known MERGED PR into a blank OPEN placeholder.
- */
-function withLastKnownState(prs: PRStatus[], failed: string[], now: number): PRStatus[] {
+function carryLastKnown(
+  state: CollectorState,
+  prs: PRStatus[],
+  failed: string[],
+  now: number,
+): PRStatus[] {
   const keys = new Set(failed);
-  for (const key of carriedSince.keys()) if (!keys.has(key)) carriedSince.delete(key);
-  if (failed.length === 0 || !snapshot) return prs;
+  for (const key of state.carriedSince.keys()) if (!keys.has(key)) state.carriedSince.delete(key);
+  if (!state.snapshot || !failed.length) return prs;
   const carried: PRStatus[] = [];
-  const expired: string[] = [];
-  for (const row of snapshot.prs) {
+  for (const row of state.snapshot.prs) {
     const key = `${row.repo}#${row.pr}`;
     if (!keys.has(key)) continue;
-    const since = carriedSince.get(key) ?? now;
-    carriedSince.set(key, since);
-    // Bounded: a PR that was deleted, or whose repo access was revoked, reads
-    // exactly like an outage, so it must not be carried forever.
+    const since = state.carriedSince.get(key) ?? now;
+    state.carriedSince.set(key, since);
     if (now - since > PR_LIST_CARRY_MAX_MS) {
-      expired.push(key);
-      carriedSince.delete(key);
+      state.carriedSince.delete(key);
       continue;
     }
     carried.push(row);
   }
-  if (carried.length)
-    console.warn(
-      `[pr.list] kept last known state for ${carried.length} PR(s): ${carried.map((p) => `${p.repo}#${p.pr}`).join(', ')}`,
-    );
-  if (expired.length)
-    console.warn(
-      `[pr.list] dropped ${expired.length} unreadable PR(s) after 1h: ${expired.join(', ')}`,
-    );
   return [...prs, ...carried];
 }
 
-function runRefresh(fetch: PRListFetcher, force: boolean, now: number): Promise<PRListSnapshot> {
-  // Register before invoking so a fetcher that throws synchronously cannot
-  // clear `inflight` first and leave a stale entry behind.
-  let settle!: { resolve: (value: PRListSnapshot) => void; reject: (reason: unknown) => void };
+function announce(state: CollectorState, changed: boolean): void {
+  // Legacy payload adoption owns only the farm list; a scoped result must never replace it.
+  if (state.project !== undefined) return;
+  const payload: PRListUpdatedPayload = state.failure
+    ? { fetchedAt: state.snapshot?.fetchedAt, error: state.failure.message }
+    : { fetchedAt: state.snapshot?.fetchedAt, ...(changed ? { prs: state.snapshot?.prs } : {}) };
+  broadcastFn(Events.PR_LIST_UPDATED, payload);
+}
+
+function runRefresh(
+  state: CollectorState,
+  fetch: PRListFetcher,
+  force: boolean,
+  now: number,
+  clock: () => number = Date.now,
+): Promise<PRListSnapshot> {
+  state.attemptedAt = now;
+  const previous = state.snapshot;
+  let settle!: { resolve(value: PRListSnapshot): void; reject(error: unknown): void };
   const entry = {
     promise: new Promise<PRListSnapshot>((resolve, reject) => {
       settle = { resolve, reject };
     }),
     forced: force,
   };
-  inflight = entry;
+  state.inflight = entry;
+  // The in-progress/freshness transition is readable before its notice.
+  publish(state);
   (async () => {
     try {
       const fetched = await fetch(force);
-      const prs = withLastKnownState(fetched.prs, fetched.failed ?? [], now);
-      const next: PRListSnapshot = {
-        fetchedAt: new Date(now).toISOString(),
+      if (collectors.get(state.id) !== state)
+        throw new GatewayMethodError('UPSTREAM_OBSOLETE', 'PR collector was retired');
+      const failed = fetched.failed ?? [];
+      const prs = carryLastKnown(state, fetched.prs, failed, now);
+      const next = {
+        fetchedAt: failed.length && previous ? previous.fetchedAt : new Date(now).toISOString(),
         prs,
         truncated: fetched.truncated,
       };
-      const changed = !snapshot || JSON.stringify(snapshot.prs) !== JSON.stringify(prs);
-      unchangedStreak = changed ? 0 : unchangedStreak + 1;
-      snapshot = next;
-      persist(next);
-      // Always announce completion so clients that were told `refreshing`
-      // can clear it; ship the list only when it differs.
-      const payload: PRListUpdatedPayload = changed
-        ? { fetchedAt: next.fetchedAt, prs }
-        : { fetchedAt: next.fetchedAt };
-      broadcastFn(Events.PR_LIST_UPDATED, payload);
+      const changed =
+        !previous ||
+        JSON.stringify(previous.prs) !== JSON.stringify(prs) ||
+        previous.truncated !== next.truncated;
+      state.snapshot = next;
+      // Source age starts when this collection completed, not when it was attempted.
+      if (!failed.length) state.successfulObservedAt = clock();
+      state.incomplete = failed.length > 0 || fetched.truncated;
+      state.failure = failed.length
+        ? {
+            message: `GitHub could not read ${failed.length} pull request(s): ${failed.join(', ').slice(0, 160)}`,
+            cause: new Error('Partial upstream observation'),
+            code: 'UPSTREAM_INCOMPLETE',
+          }
+        : undefined;
+      state.unchangedStreak = changed ? 0 : state.unchangedStreak + 1;
+      persist(state);
+      announce(state, changed);
       return next;
-    } catch (err) {
-      // Every client that was told `refreshing` (not only the caller that
-      // triggered this fetch) must hear that it ended, and how.
-      announceFailure(err);
-      throw err;
+    } catch (error) {
+      if (collectors.get(state.id) === state) {
+        state.failure = {
+          message:
+            error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
+          cause: error,
+        };
+        persist(state);
+        announce(state, false);
+      }
+      throw error;
     } finally {
-      if (inflight === entry) inflight = null;
+      if (state.inflight === entry) state.inflight = undefined;
+      if (collectors.get(state.id) === state) publish(state);
     }
   })().then(settle.resolve, settle.reject);
   return entry.promise;
 }
 
-function announceFailure(err: unknown): void {
-  const message = err instanceof Error ? err.message.slice(0, 200) : String(err);
-  const payload: PRListUpdatedPayload = { fetchedAt: snapshot?.fetchedAt, error: message };
-  broadcastFn(Events.PR_LIST_UPDATED, payload);
-}
-
-/**
- * One fetch at a time. A forced refresh that arrives while a non-forced one
- * is running must still reach GitHub, so it is queued behind it (and shared
- * by any further forced callers) instead of being answered by that fetch.
- */
-function refresh(fetch: PRListFetcher, force: boolean, now = Date.now()): Promise<PRListSnapshot> {
-  if (!inflight) return runRefresh(fetch, force, now);
-  if (!force || inflight.forced) return inflight.promise;
-  queuedForced ??= inflight.promise
+function refresh(
+  state: CollectorState,
+  fetch: PRListFetcher,
+  force: boolean,
+  now: number,
+  clock?: () => number,
+): Promise<PRListSnapshot> {
+  if (!state.inflight) return runRefresh(state, fetch, force, now, clock);
+  if (!force || state.inflight.forced) return state.inflight.promise;
+  state.queuedForced ??= state.inflight.promise
     .then(
-      () => runRefresh(fetch, true, Date.now()),
-      () => runRefresh(fetch, true, Date.now()),
+      () => runRefresh(state, fetch, true, Date.now()),
+      () => runRefresh(state, fetch, true, Date.now()),
     )
     .finally(() => {
-      queuedForced = null;
+      state.queuedForced = undefined;
     });
-  return queuedForced;
+  return state.queuedForced;
 }
 
-/** A background refresh failed; the warm copy stays and runRefresh already announced it. */
-function logBackgroundFailure(err: unknown): void {
+function backgroundFailure(error: unknown): void {
+  // The observation now retains the error beside its last success and has notified readers.
   console.warn(
-    `[pr.list] background refresh failed; keeping warm list: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`,
+    `[pr.list] background collection failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
   );
 }
 
-/**
- * Answer a `pr.list` request. Cold or `force`: run the fetch and wait. Warm:
- * answer immediately and, when the copy is older than PR_LIST_STALE_MS, start
- * one background refresh whose result reaches clients as `pr.list.updated`.
- */
 export async function servePRList(
   fetch: PRListFetcher,
-  opts: { force?: boolean; now?: number } = {},
+  opts: PRListClientInterest & { force?: boolean; now?: number; project?: string } = {},
 ): Promise<ServedPRList> {
-  if (!loaded) loadPRListCache();
+  const state = stateFor(opts.project);
+  ensureLoaded(state);
+  state.fetch = fetch;
   const now = opts.now ?? Date.now();
-  lastClientListAt = now;
-  if (opts.force || !snapshot) {
-    const fresh = await refresh(fetch, opts.force === true, opts.now);
-    return {
-      prs: fresh.prs,
-      fetchedAt: fresh.fetchedAt,
-      refreshing: false,
-      truncated: fresh.truncated === true,
-    };
+  if (opts.legacyInterest !== false)
+    state.legacyInterest.set(opts.legacyClientId ?? anonymousLegacyClient, now);
+  // A complete farm snapshot can seed a project observation without a second upstream read.
+  if (!state.snapshot && opts.project !== undefined && !opts.force) {
+    const global = collectors.get(resourceCollectorQuery(Methods.PR_LIST).id);
+    if (global?.snapshot && !global.snapshot.truncated) {
+      state.snapshot = {
+        ...global.snapshot,
+        prs: global.snapshot.prs.filter((row) => row.project === opts.project),
+      };
+      state.attemptedAt = global.attemptedAt;
+      state.successfulObservedAt = global.successfulObservedAt;
+      state.failure = global.failure;
+      state.incomplete = global.incomplete;
+      persist(state);
+    }
   }
-  if (ageMs(snapshot, now) > unchangedRefreshDelayMs() && !inflight && !graphqlBudgetReserved(now))
-    refresh(fetch, false, opts.now).catch(logBackgroundFailure);
+  if (!opts.force && !state.snapshot && !state.inflight && !eligible(state, now) && state.failure)
+    throw state.failure.cause;
+  // An explicit test clock fixes completion time too; otherwise completion is read when it happens.
+  const clock = opts.now === undefined ? Date.now : () => now;
+  if (opts.force || !state.snapshot) await refresh(state, fetch, opts.force === true, now, clock);
+  else if (
+    opts.legacyInterest !== false &&
+    now - Date.parse(state.snapshot.fetchedAt) > delayMs(state) &&
+    !state.inflight &&
+    eligible(state, now) &&
+    !budgetReserved(now)
+  )
+    refresh(state, fetch, false, now, clock).catch(backgroundFailure);
+  const snapshot = state.snapshot!;
   return {
     prs: snapshot.prs,
     fetchedAt: snapshot.fetchedAt,
-    refreshing: inflight !== null,
+    refreshing: Boolean(state.inflight),
     truncated: snapshot.truncated === true,
+    observation: observation(state),
   };
 }
 
-/** Current warm copy, for callers that must not trigger a fetch. */
-export function peekPRList(): PRListSnapshot | null {
-  if (!loaded) loadPRListCache();
-  return snapshot;
+export function peekPRList(project?: string): PRListSnapshot | null {
+  const state = stateFor(project);
+  ensureLoaded(state);
+  return state.snapshot;
 }
 
-/**
- * Keep the warm list fresh while someone is looking: every `intervalMs`, if a
- * client recently called `pr.list` and the copy is stale, refresh it. Returns a stop function.
- */
 export function startPRListRefresher(
   fetch: PRListFetcher,
   opts: {
     broadcast: Broadcast;
-    hasClients: () => boolean;
+    hasClients(): boolean;
+    hasObservers?(project?: string): boolean;
     intervalMs?: number;
     initialDelayMs?: number;
   },
 ): () => void {
   setPRListBroadcast(opts.broadcast);
-  if (!loaded) loadPRListCache();
+  const global = stateFor();
+  ensureLoaded(global);
+  global.fetch = fetch;
   const tick = () => {
     const now = Date.now();
-    if (!opts.hasClients() || inflight) return;
-    if (graphqlBudgetReserved(now)) return;
-    if (!hasRecentClientInterest(now)) return;
-    if (snapshot && ageMs(snapshot, now) <= unchangedRefreshDelayMs()) return;
-    refresh(fetch, false).catch(logBackgroundFailure);
+    if (!opts.hasClients() || budgetReserved(now)) return;
+    for (const state of collectors.values()) {
+      if (!state.fetch || state.inflight || state.queuedForced) continue;
+      if (
+        !(opts.hasObservers?.(state.project) ?? observerInterest(state.project)) &&
+        !hasLegacyInterest(state, now)
+      )
+        continue;
+      if (!eligible(state, now)) continue;
+      if (state.snapshot && now - Date.parse(state.snapshot.fetchedAt) <= delayMs(state)) continue;
+      refresh(state, state.fetch, false, now).catch(backgroundFailure);
+    }
   };
-  const initial = setTimeout(tick, opts.initialDelayMs ?? 3_000);
-  initial.unref();
+  wakeCollector = tick;
+  const initial = setTimeout(tick, opts.initialDelayMs ?? 3000);
   const timer = setInterval(tick, opts.intervalMs ?? PR_LIST_STALE_MS);
+  initial.unref();
   timer.unref();
   return () => {
     clearTimeout(initial);
     clearInterval(timer);
+    if (wakeCollector === tick) wakeCollector = undefined;
   };
 }
+
+onPRRawObservation((repo, pr) => {
+  for (const state of collectors.values()) {
+    if (
+      state.inflight ||
+      !state.snapshot?.prs.some(
+        (row) => row.repo.toLowerCase() === repo.toLowerCase() && row.pr === pr,
+      )
+    )
+      continue;
+    // Active CI can observe newer raw bytes without changing its own scheduling policy.
+    persist(state);
+    publish(state);
+  }
+});

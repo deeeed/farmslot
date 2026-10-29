@@ -35,13 +35,7 @@ function sessionStopped(session: NativeSessionInfo): boolean {
   );
 }
 
-/** Called only after execution-node ownership is authorized, using that node's environment. */
-export async function routeNativeProfile(
-  client: NativeSessionClient,
-  owner: string,
-  method: string,
-  params: Record<string, unknown>,
-): Promise<unknown> {
+export function validateNativeProfileParams(params: Record<string, unknown>): void {
   if (
     Object.keys(params).some(
       (key) =>
@@ -51,6 +45,16 @@ export async function routeNativeProfile(
     throw new Error(
       'Native profiles accept native directories, not credentials or environment overrides',
     );
+}
+
+/** Called only after execution-node ownership is authorized, using that node's environment. */
+export async function routeNativeProfile(
+  client: NativeSessionClient,
+  owner: string,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  validateNativeProfileParams(params);
   if (method === Methods.NATIVE_PROFILE_LIST) return { profiles: listNativeProfiles() };
   const id = string(params, 'profileId');
   if (method === Methods.NATIVE_PROFILE_ADD)

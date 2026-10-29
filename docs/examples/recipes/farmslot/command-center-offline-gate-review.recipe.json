@@ -1,0 +1,114 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Gate review prefetch holds a pending gate for offline review",
+  "description": "Use a private farm with one pending ready gate on a real package and three active runs on slot repositories to observe prefetch order, offline gate review with both diff sides held, an untracked file beside a gitignored .env, fix-loop transfer bytes, gate diff open measurements and an operator principal's refusal stop. Under the current gateway authorization prefetch needs admin reads (run.get, git.diff, git.show, decision.list), so an admin principal signs in for every check except the refusal; the operator signs in last, and its refusal is observed in the same tab right after sign-in and again on a reloaded page. No GitHub, provider, native or worker CLI execution.",
+  "proofTargets": [
+    {
+      "id": "gateReviewPrefetchOrder",
+      "claim": "On the first connection with a pending gate and three active runs, the gate's run.get is the first prefetch read and no more than two runs are prefetched at once."
+    },
+    {
+      "id": "gateReviewOffline",
+      "claim": "Right after prefetch and before any connected gate open, a new browser runtime with the gateway stopped renders the gate's details, package diff and evidence images from rows prefetch wrote, and sends no gateway frame."
+    },
+    {
+      "id": "gateReviewBothSides",
+      "claim": "Judged from the fixture's own blob sizes and bytes, every touched side of at most 1 MiB without NUL bytes is held under its git blob id, and both ids of the over-cap and the binary file are absent; after the fix loop the changed file's new side is held too."
+    },
+    {
+      "id": "gateReviewUntrackedEnv",
+      "claim": "An active run's untracked new file is in its held diff with its new side held, and its gitignored .env appears in no recorded websocket frame and no stored row or byte."
+    },
+    {
+      "id": "gateReviewFixLoopBytes",
+      "claim": "A new package for the same gate transfers only its new diff over HTTP; batched git.show lists the held bases, and every held or too-large reply entry carries no content."
+    },
+    {
+      "id": "gateReviewDiffMeasured",
+      "claim": "Opening the gate diff is measured on five new documents each with nothing held, after prefetch, and offline from held content, counting gateway frames and /api/run-artifact bytes and naming the read that supplied the diff."
+    },
+    {
+      "id": "gateReviewRefusalStops",
+      "claim": "An operator's first prefetch read is the gate's run.get; once its refusal reaches the page no further prefetch read is sent on that connection, in the same tab after sign-in and on a reloaded page; a forced reconnect is refused once more and stops again, and nothing is stored."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-offline-gate-review.mjs",
+        "timeout_ms": 2400000,
+        "intent": "Observe gate review prefetch, offline review and refusal in the real browser.",
+        "next": "gateReviewPrefetchOrder"
+      },
+      "gateReviewPrefetchOrder": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewPrefetchOrder\":true",
+        "intent": "The pending gate is read first and at most two runs are in flight.",
+        "proves": ["gateReviewPrefetchOrder"],
+        "next": "gateReviewOffline"
+      },
+      "gateReviewOffline": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewOffline\":true",
+        "intent": "The gate's details, diff and evidence images render offline.",
+        "proves": ["gateReviewOffline"],
+        "next": "gateReviewBothSides"
+      },
+      "gateReviewBothSides": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewBothSides\":true",
+        "intent": "Eligible bases are held by id and new sides match their blob ids.",
+        "proves": ["gateReviewBothSides"],
+        "next": "gateReviewUntrackedEnv"
+      },
+      "gateReviewUntrackedEnv": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewUntrackedEnv\":true",
+        "intent": "The untracked file is held and the ignored .env never leaves the slot.",
+        "proves": ["gateReviewUntrackedEnv"],
+        "next": "gateReviewFixLoopBytes"
+      },
+      "gateReviewFixLoopBytes": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewFixLoopBytes\":true",
+        "intent": "A new package moves only its new diff; held bases are not sent again.",
+        "proves": ["gateReviewFixLoopBytes"],
+        "next": "gateReviewDiffMeasured"
+      },
+      "gateReviewDiffMeasured": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewDiffMeasured\":true",
+        "intent": "Gate diff open is measured with nothing held, after prefetch and offline.",
+        "proves": ["gateReviewDiffMeasured"],
+        "next": "gateReviewRefusalStops"
+      },
+      "gateReviewRefusalStops": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"gateReviewRefusalStops\":true",
+        "intent": "The gate's refused run.get stops prefetch until a new connection.",
+        "proves": ["gateReviewRefusalStops"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

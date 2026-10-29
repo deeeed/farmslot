@@ -1,0 +1,62 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Analytics follows source observations with explicit time windows and error Retry",
+  "description": "Use the isolated gateway and a pre-client terminal run. Drive actual source deletion, visible window input and a real recoverable source-read error. No provider or worker execution; no client-state injection.",
+  "proofTargets": [
+    {
+      "id": "sourceUpdates",
+      "claim": "Actual terminal run deletion appends analytics and updates the mounted panel without Refresh."
+    },
+    {
+      "id": "relativeWindow",
+      "claim": "Update time window advances the current relative lower bound while preserving project filters."
+    },
+    {
+      "id": "contextualRetry",
+      "claim": "An actual source read error exposes Retry, which recovers the same selected query after source recovery."
+    }
+  ],
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-analytics-observations.mjs",
+        "timeout_ms": 120000,
+        "intent": "Prove source updates, relative selectors and contextual analytics Retry on the isolated gateway.",
+        "next": "sourceUpdates"
+      },
+      "sourceUpdates": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"sourceUpdates\":true",
+        "intent": "Actual terminal run deletion appends analytics and updates the mounted panel without Refresh.",
+        "proves": ["sourceUpdates"],
+        "next": "relativeWindow"
+      },
+      "relativeWindow": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"relativeWindow\":true",
+        "intent": "Update time window advances the current relative lower bound while preserving project filters.",
+        "proves": ["relativeWindow"],
+        "next": "contextualRetry"
+      },
+      "contextualRetry": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"contextualRetry\":true",
+        "intent": "An actual source read error exposes Retry, which recovers the same selected query after source recovery.",
+        "proves": ["contextualRetry"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

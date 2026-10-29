@@ -21,6 +21,7 @@ import {
   type SlotResource,
   type SlotStatus,
 } from '@farmslot/protocol';
+import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
 // ─── Placeholder helpers ───
@@ -33,6 +34,7 @@ import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { resolveRemoteFarmCommand } from '../node-support/remote-command.js';
 import { farmslotRoot } from '../projects/repo-root.js';
+import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 
 import { deviceControlVerdict } from './device-inventory.js';
 import { getAllNodes, getNode } from './machine-registry.js';
@@ -65,12 +67,31 @@ const streamStatusCache = new Map<string, Map<string, ResourceStreamStatus>>();
 // slotId → resourceId → ActiveResourcePointer. In-memory only; reconstructs
 // from the next `running` events after gateway restart.
 const activeResource = new Map<string, Map<string, ActiveResourcePointer>>();
+const slotProjectionFingerprints = new Map<string, string>();
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let broadcastFn: ((event: string, payload: unknown) => void) | null = null;
 const RESOURCE_POLL_CONCURRENCY = 4;
 let pollAllInFlight = false;
 const warnedUnconfiguredResources = new Map<string, string>();
 const loggedLegacySharedProviderInferences = new Set<string>();
+
+function publishSlotResourceObservation(slotId: string): void {
+  // Fleet coherence depends on resource status and run ownership, not PID or stream frames.
+  const fingerprint = canonicalResourceJson(
+    Object.fromEntries(
+      [...(statusCache.get(slotId) ?? [])].map(([id, status]) => [
+        id,
+        {
+          status,
+          runId: activeResource.get(slotId)?.get(id)?.runId ?? null,
+        },
+      ]),
+    ),
+  );
+  if ((slotProjectionFingerprints.get(slotId) ?? '{}') === fingerprint) return;
+  slotProjectionFingerprints.set(slotId, fingerprint);
+  slotResourceChanges.overlayChanged(slotId);
+}
 
 export function purgeRemovedSlotWarnings(
   warnings: Map<string, string>,
@@ -249,6 +270,7 @@ function setActiveResource(
     activeResource.set(slotId, slotMap);
   }
   slotMap.set(resourceId, pointer);
+  publishSlotResourceObservation(slotId);
 }
 
 export function deleteActiveResource(slotId: string, resourceId: string): void {
@@ -256,6 +278,7 @@ export function deleteActiveResource(slotId: string, resourceId: string): void {
   if (!slotMap) return;
   slotMap.delete(resourceId);
   if (slotMap.size === 0) activeResource.delete(slotId);
+  publishSlotResourceObservation(slotId);
 }
 
 // ─── Relaunch listener registry ───
@@ -316,6 +339,7 @@ export function setCachedResourceStatus(
   if (status !== 'running') {
     resetStreamStateIfInactiveLifecycle(slotId, resourceId, status);
   }
+  publishSlotResourceObservation(slotId);
   if (opts?.broadcast !== false) {
     broadcastSlotResources(slotId, [{ id: resourceId, status }]);
   }
@@ -335,6 +359,7 @@ function broadcastSlotResources(
   slotId: string,
   resources: Array<{ id: string; status: ResourceStatus }>,
 ): void {
+  publishSlotResourceObservation(slotId);
   if (!broadcastFn) return;
   broadcastFn('resource.status.updated', {
     slotId,

@@ -21,19 +21,19 @@ import type {
   PrincipalListResult,
   Run,
   SlotStatus,
-  TmuxWorkerInventoryUpdatedPayload,
   TmuxWorkerListResult,
   TmuxWorkerSummary,
 } from '@farmslot/protocol';
 import {
   ACCOUNT_SESSION_CONTROL,
   buildGatewayPairingQrPayload,
-  Events,
   hasUnsettledRunExecution,
   isTerminalRunStatus,
   Methods,
   personSessionCaption,
+  sourceObservationAge,
 } from '@farmslot/protocol';
+import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import {
   accountSignOutConfirmation,
   confirmAccountSignOut,
@@ -75,8 +75,9 @@ import {
   isVersionNewer,
 } from '../build-info.js';
 import { getDesktopConnection, isDesktopClient } from '../desktop-connection.js';
+import { retireDraftScope } from '../draft-scopes.js';
 import type { ConnectionState } from '../gateway-client.js';
-import { gateway, gatewayStatusMessage } from '../gateway-client.js';
+import { gateway } from '../gateway-client.js';
 import {
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_SOURCE_STORAGE_KEY,
@@ -85,6 +86,15 @@ import {
   readGatewayAuth,
   resolveGatewayConnectionSource,
 } from '../gateway-url.js';
+import {
+  dismissDeletedDraftNotice,
+  getDeletedDraftCount,
+  getEditorDrafts,
+  getEditorDraftScopeId,
+  getResourceWorkspaceAccess,
+  getResourceWorkspaceKey,
+  subscribeResourceCache,
+} from '../resource-cache.js';
 import {
   type AppState,
   getState,
@@ -104,6 +114,7 @@ import { hashParams } from '../utils/url-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
 import { runStatusColor } from './runs/run-utils.js';
+import { ResourceQueryController } from './shared/resource-query-controller.js';
 import { renderRunTitle } from './shared/run-title.js';
 import {
   activeSidebarRuns,
@@ -194,8 +205,6 @@ const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
 // Remembers which remote SHA the operator dismissed, so a newer update re-shows.
 const UPDATE_DISMISS_KEY = 'farmslot:update-banner-dismissed-sha';
 const WHATS_NEW_SEEN_VERSION_KEY = 'farmslot:whats-new-seen-version';
-// Local pulls should be reflected promptly; remote fetches remain cached by the gateway.
-const UPDATE_POLL_MS = 30_000;
 const ALPHA_COPY = 'Alpha surface — early, under-tested, and subject to change.';
 type PairingTarget = Pick<PairingCandidate, 'gatewayUrl' | 'kind' | 'profileName'>;
 
@@ -222,7 +231,26 @@ export class FarmApp extends LitElement {
   @state() private versionDetailsLoading = false;
   @state() private versionDetailsError = '';
   @state() private versionDetailsStatus: GatewayStatusResult | null = null;
+  private updateAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly updateQuery = new ResourceQueryController<GatewayStatusResult>(
+    this,
+    (result) => {
+      this.versionDetailsStatus = this.updateQuery.belongsToWorkspace
+        ? (result.data ?? null)
+        : null;
+      this.updateStatus = this.versionDetailsStatus?.update ?? null;
+      if (result.status === 'stale' && result.data && !this.updateAgeTimer)
+        this.updateAgeTimer = setInterval(() => this.requestUpdate(), 1000);
+      else if (result.status !== 'stale' || !result.data) {
+        clearInterval(this.updateAgeTimer);
+        this.updateAgeTimer = undefined;
+      }
+    },
+  );
   @state() private versionDetailsNodes: NodesListResult | null = null;
+  private readonly nodeQuery = new ResourceQueryController<NodesListResult>(this, (result) => {
+    this.versionDetailsNodes = result.data ?? null;
+  });
   @state() private versionDetailsCopied = false;
   @state() private whatsNewOpen = false;
   @state() private updateDismissedSha: string | null = localStorage.getItem(UPDATE_DISMISS_KEY);
@@ -237,6 +265,24 @@ export class FarmApp extends LitElement {
   @state() private pinnedSlots: PinnedWorkspacePreference[] = [];
   @state() private globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private tmuxWorkers: TmuxWorkerSummary[] = [];
+  @state() private workerObservation: ResourceQueryState<TmuxWorkerListResult> = {
+    status: 'loading',
+  };
+  private workerAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly workerQuery = new ResourceQueryController<TmuxWorkerListResult>(
+    this,
+    (state) => {
+      this.workerObservation = state;
+      this.tmuxWorkers =
+        state.data?.workers ?? state.data?.nodes.flatMap((node) => node.workers) ?? [];
+      if (state.data && state.status !== 'ready' && !this.workerAgeTimer)
+        this.workerAgeTimer = setInterval(() => this.requestUpdate(), 60_000);
+      else if (!state.data || state.status === 'ready') {
+        clearInterval(this.workerAgeTimer);
+        this.workerAgeTimer = undefined;
+      }
+    },
+  );
   @state() private chatOpen = false;
   @state() private chatUnread = 0;
   @state() private attentionAlert: AttentionAlertDetail | null = null;
@@ -255,6 +301,8 @@ export class FarmApp extends LitElement {
   @state() private authRememberMe = getDesktopConnection()?.rememberMe !== false;
   @state() private authSaveError = '';
   @state() private signingOut = false;
+  /** Unsaved editor drafts the sign-out confirmation names; signing out deletes them. */
+  @state() private signOutUnsavedDrafts = 0;
   @state() private pairingOpen = false;
   @state() private pairingBusy = false;
   @state() private pairingProfileName = DEFAULT_PAIRING_PROFILE_NAME;
@@ -283,14 +331,9 @@ export class FarmApp extends LitElement {
   @state() private onboardingConnectInput = '';
   @state() private onboardingError = '';
   private unsub?: () => void;
+  private unsubResourceCache?: () => void;
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
-  private tmuxWorkerRefreshTimer?: ReturnType<typeof setInterval>;
-  private tmuxWorkersPushAt = 0;
-  private tmuxWorkerListBackoffUntil = 0;
-  private unsubTmuxWorkerUpdated?: () => void;
-  private unsubConnForUpdate?: () => void;
-  private updatePollTimer?: ReturnType<typeof setInterval>;
 
   constructor() {
     super();
@@ -318,30 +361,14 @@ export class FarmApp extends LitElement {
     window.addEventListener(ALPHA_FEATURES_CHANGED, this.onAlphaFeaturesChanged as EventListener);
     window.addEventListener(ATTENTION_ALERT_EVENT, this.onAttentionAlert as EventListener);
     this.pinnedSlots = listPinnedSlotPreferences();
-    void this.refreshTmuxWorkers({ force: true });
-    this.tmuxWorkerRefreshTimer = setInterval(() => {
-      void this.refreshTmuxWorkers();
-    }, 10_000);
-    this.unsubTmuxWorkerUpdated = gateway.subscribe<TmuxWorkerInventoryUpdatedPayload>(
-      Events.TMUX_WORKER_INVENTORY_UPDATED,
-      (payload) => {
-        this.tmuxWorkersPushAt = Date.now();
-        this.tmuxWorkerListBackoffUntil = 0;
-        this.tmuxWorkers =
-          payload.result.workers ?? payload.result.nodes.flatMap((node) => node.workers);
-      },
-    );
-    // Update freshness needs an open socket, so check on each (re)connect plus a
-    // slow background poll. checkForUpdate tolerates a closed socket on its own.
-    this.unsubConnForUpdate = gateway.onConnectionChange((s) => {
-      if (s === 'connected') void this.checkForUpdate();
-    });
-    void this.checkForUpdate();
-    this.updatePollTimer = setInterval(() => {
-      void this.checkForUpdate();
-    }, UPDATE_POLL_MS);
+    this.bindWorkerInventory();
+    this.updateQuery.setQuery(resourceQuery<GatewayStatusResult>(Methods.GATEWAY_STATUS));
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
+    this.unsubResourceCache = subscribeResourceCache(() => {
+      this.parseHash();
+      this.requestUpdate();
+    });
     this.maybeOpenWhatsNew();
   }
 
@@ -361,16 +388,17 @@ export class FarmApp extends LitElement {
       this.onAlphaFeaturesChanged as EventListener,
     );
     window.removeEventListener(ATTENTION_ALERT_EVENT, this.onAttentionAlert as EventListener);
-    if (this.tmuxWorkerRefreshTimer) clearInterval(this.tmuxWorkerRefreshTimer);
-    if (this.updatePollTimer) clearInterval(this.updatePollTimer);
-    this.unsubTmuxWorkerUpdated?.();
-    this.unsubConnForUpdate?.();
+    clearInterval(this.workerAgeTimer);
+    this.workerAgeTimer = undefined;
+    clearInterval(this.updateAgeTimer);
+    this.updateAgeTimer = undefined;
     this.unsub?.();
+    this.unsubResourceCache?.();
   }
 
   private onPinnedSlotsChanged = () => {
     this.pinnedSlots = listPinnedSlotPreferences();
-    void this.refreshTmuxWorkers({ force: true });
+    this.bindWorkerInventory();
   };
 
   private onAlphaFeaturesChanged = (event: CustomEvent<{ enabled: boolean }>) => {
@@ -408,51 +436,75 @@ export class FarmApp extends LitElement {
     </div>`;
   }
 
-  private async refreshTmuxWorkers(opts: { force?: boolean } = {}): Promise<void> {
-    if (gateway.workspaceAccess !== 'farm') return;
-    if (this.pinnedSlots.length === 0) {
-      this.tmuxWorkers = [];
-      return;
-    }
-    if (!opts.force) {
-      if (Date.now() < this.tmuxWorkerListBackoffUntil) return;
-      // Node pushes inventory on change; skip the expensive list RPC while fresh.
-      if (this.tmuxWorkersPushAt > 0 && Date.now() - this.tmuxWorkersPushAt < 25_000) return;
-    }
-    try {
-      const result = await gateway.request<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {
-        includeDisconnected: true,
-      });
-      this.tmuxWorkers = result.workers ?? result.nodes.flatMap((node) => node.workers);
-      this.tmuxWorkerListBackoffUntil = 0;
-    } catch (err) {
-      // Worker telemetry is optional/recoverable. Keep pins visible, but downgrade activity to unknown.
-      console.warn('[app-shell] pinned slot worker telemetry unavailable', err);
-      this.tmuxWorkers = [];
-      this.tmuxWorkerListBackoffUntil = Date.now() + 30_000;
-    }
+  private bindWorkerInventory(): void {
+    this.workerQuery.setQuery(
+      this.pinnedSlots.length
+        ? resourceQuery<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {
+            includeDisconnected: true,
+          })
+        : undefined,
+    );
+    this.tmuxWorkers = this.workerQuery.belongsToWorkspace
+      ? (this.workerQuery.state.data?.workers ?? [])
+      : [];
   }
 
-  private async checkForUpdate(refresh = false): Promise<void> {
-    if (gateway.workspaceAccess !== 'farm') return;
+  private renderWorkerReadStatus() {
+    const state = this.workerObservation;
+    if (!this.pinnedSlots.length || !this.workerQuery.belongsToWorkspace) return nothing;
+    const sourceError = state.data?.nodes
+      .filter((node) => !node.ok)
+      .map((node) => `${node.nodeId}: ${node.error ?? 'worker inventory unavailable'}`)
+      .join('; ');
+    const error = state.error?.message ?? sourceError;
+    return html`
+      ${state.status !== 'ready' && state.data
+        ? html`<p data-pinned-workers-freshness="stale">
+            Saved workers, ${sourceObservationAge(state.observedAt)}.
+          </p>`
+        : nothing}
+      ${state.status === 'unsupported'
+        ? html`<p>Worker updates are unavailable on this gateway.</p>`
+        : nothing}
+      ${error
+        ? html`<p role="alert" data-pinned-workers-error>
+            ${error}
+            <button
+              ?disabled=${gateway.connectionState !== 'connected'}
+              @click=${() => this.workerQuery.retry()}
+            >
+              Retry reading workers
+            </button>
+          </p>`
+        : nothing}
+    `;
+  }
+
+  private async recheckUpdateSource(): Promise<void> {
+    if (
+      gateway.workspaceAccess !== 'farm' ||
+      gateway.connectionState !== 'connected' ||
+      this.versionDetailsLoading
+    )
+      return;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
+    this.versionDetailsLoading = true;
+    this.versionDetailsError = '';
     try {
-      const result = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {
-        refresh,
-      });
-      this.updateStatus = result.update;
+      // Explicit remote recheck. Its source notification owns the canonical result.
+      await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true }, 30_000);
     } catch (err) {
-      // Advisory only: a closed socket or timeout just means no fresh reading this
-      // cycle. We deliberately keep the last updateStatus rather than clearing it —
-      // an update that was available is still available while the gateway is briefly
-      // unreachable, and nulling it would flicker the banner on every reconnect. The
-      // next connect/poll re-checks and replaces it; never block the shell on this.
-      console.warn('[app-shell] gateway update status unavailable', err);
+      if (owner === getResourceWorkspaceKey() && connection === gateway.resourceConnectionId)
+        this.versionDetailsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.versionDetailsLoading = false;
     }
   }
 
   private renderUpdateBanner() {
     const s = this.updateStatus;
-    if (!s || (!s.updateAvailable && !s.operation)) return nothing;
+    if (!s || (!s.updateAvailable && !s.operation && !this.updateQuery.state.error)) return nothing;
     const dismissalKey = s.operation
       ? `${s.remoteSha}:${s.operation.id}:${s.operation.phase}`
       : s.remoteSha;
@@ -460,9 +512,15 @@ export class FarmApp extends LitElement {
       return nothing;
     return html`<update-banner
       .status=${s}
-      @refresh=${(event: CustomEvent<boolean>) => {
-        void this.checkForUpdate(event.detail);
-      }}
+      .current=${this.updateQuery.ready &&
+      this.updateQuery.state.sourceObservation?.status === 'ready'}
+      .checking=${this.versionDetailsLoading}
+      .age=${this.updateQuery.state.status === 'stale'
+        ? sourceObservationAge(this.updateQuery.state.sourceObservation?.observedAt)
+        : ''}
+      .readError=${this.updateQuery.state.error?.message ?? this.versionDetailsError}
+      @recheck=${() => void this.recheckUpdateSource()}
+      @retry=${() => void this.updateQuery.retry()}
       @dismiss=${() => this.dismissUpdateBanner()}
     ></update-banner>`;
   }
@@ -525,31 +583,24 @@ export class FarmApp extends LitElement {
     `;
   }
 
-  private async openVersionDetails(): Promise<void> {
+  private openVersionDetails(): void {
     this.versionDetailsOpen = true;
-    await this.refreshVersionDetails();
+    this.versionDetailsError = '';
+    this.nodeQuery.setQuery(resourceQuery<NodesListResult>(Methods.NODES_LIST));
   }
 
-  private async refreshVersionDetails(): Promise<void> {
-    if (gateway.connectionState !== 'connected') {
-      this.versionDetailsError = gatewayStatusMessage(gateway);
-      return;
-    }
-    this.versionDetailsLoading = true;
-    this.versionDetailsError = '';
-    this.versionDetailsCopied = false;
-    try {
-      const [status, nodes] = await Promise.all([
-        gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true }, 30_000),
-        gateway.request<NodesListResult>(Methods.NODES_LIST, {}, 10_000),
-      ]);
-      this.versionDetailsStatus = status;
-      this.versionDetailsNodes = nodes;
-    } catch (error) {
-      this.versionDetailsError = error instanceof Error ? error.message : String(error);
-    } finally {
-      this.versionDetailsLoading = false;
-    }
+  protected override updated(changed: Map<string, unknown>): void {
+    if (changed.has('versionDetailsOpen') && !this.versionDetailsOpen)
+      this.nodeQuery.setQuery(undefined);
+  }
+
+  private async retryVersionReadErrors(): Promise<void> {
+    if (gateway.connectionState !== 'connected') return;
+    await Promise.all(
+      [this.updateQuery, this.nodeQuery]
+        .filter((query) => query.state.error)
+        .map((query) => query.retry()),
+    );
   }
 
   private async copyVersionDiagnostics(): Promise<void> {
@@ -594,11 +645,19 @@ export class FarmApp extends LitElement {
           </div>
           <div class="fa-version-actions">
             <button
-              @click=${() => this.refreshVersionDetails()}
-              ?disabled=${this.versionDetailsLoading}
+              @click=${() => this.recheckUpdateSource()}
+              ?disabled=${this.versionDetailsLoading || gateway.connectionState !== 'connected'}
             >
-              ${this.versionDetailsLoading ? 'Refreshing…' : 'Refresh'}
+              ${this.versionDetailsLoading ? 'Checking upstream…' : 'Recheck upstream'}
             </button>
+            ${this.updateQuery.state.error || this.nodeQuery.state.error
+              ? html`<button
+                  @click=${() => void this.retryVersionReadErrors()}
+                  ?disabled=${gateway.connectionState !== 'connected'}
+                >
+                  Retry failed read
+                </button>`
+              : nothing}
             <button
               @click=${() => this.copyVersionDiagnostics()}
               ?disabled=${this.versionDetailsLoading}
@@ -617,6 +676,24 @@ export class FarmApp extends LitElement {
                 </button>`
               : nothing}
           </div>
+          ${this.nodeQuery.state.status === 'stale' && this.nodeQuery.state.data
+            ? html`<p>Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt)}.</p>`
+            : nothing}
+          ${this.updateQuery.state.status === 'stale' && this.updateQuery.state.data
+            ? html`<p>
+                Saved gateway update,
+                ${sourceObservationAge(this.updateQuery.state.sourceObservation?.observedAt)}.
+                Updating waits for a current source check.
+              </p>`
+            : nothing}
+          ${this.updateQuery.state.error
+            ? html`<p role="alert">
+                Could not check gateway updates: ${this.updateQuery.state.error.message}
+              </p>`
+            : nothing}
+          ${this.nodeQuery.state.error
+            ? html`<p role="alert">Could not read nodes: ${this.nodeQuery.state.error.message}</p>`
+            : nothing}
           ${this.versionDetailsError
             ? html`<div class="fa-version-error">${this.versionDetailsError}</div>`
             : nothing}
@@ -755,7 +832,9 @@ export class FarmApp extends LitElement {
   private get shownWorkspaceAccess(): 'farm' | 'native' | 'none' {
     const s = getState();
     if (s.connection === 'connected') return gateway.workspaceAccess;
-    return s.connection === 'auth_required' ? 'none' : s.workspaceAccess;
+    if (s.connection === 'auth_required') return 'none';
+    const remembered = getResourceWorkspaceAccess();
+    return remembered === 'none' ? s.workspaceAccess : remembered;
   }
 
   private parseHash() {
@@ -943,10 +1022,16 @@ export class FarmApp extends LitElement {
     this.signingOut = true;
     this.authSaveError = '';
     try {
+      const scopeId = getEditorDraftScopeId();
+      const drafts = scopeId ? await getEditorDrafts() : undefined;
+      this.signOutUnsavedDrafts = scopeId && drafts ? await drafts.countUnsaved(scopeId) : 0;
       await confirmAccountSignOut(
         () => this.confirmSignOut(),
         async () => {
-          await gateway.signOut();
+          // Drafts rule 6: the confirmation named the unsaved count; signing out deletes them,
+          // and the scope takes no draft until a connection opened after the sign-out.
+          if (scopeId && drafts) await retireDraftScope(drafts, scopeId, () => gateway.signOut());
+          else await gateway.signOut();
           this.authSecret = '';
           this.pairingOpen = false;
           this.pairingQrDataUrl = '';
@@ -957,6 +1042,7 @@ export class FarmApp extends LitElement {
       this.authSaveError = error instanceof Error ? error.message : 'Unable to sign out.';
     } finally {
       this.signingOut = false;
+      this.signOutUnsavedDrafts = 0;
     }
   }
 
@@ -1009,8 +1095,29 @@ export class FarmApp extends LitElement {
     });
   }
 
+  /** Drafts rule 6: a principal change deleted the previous account's unsaved drafts. */
+  private renderDraftNotice() {
+    const deleted = getDeletedDraftCount();
+    return deleted
+      ? html`<div
+          class="fa-draft-notice"
+          role="status"
+          data-testid="drafts-deleted-notice"
+          data-count=${deleted}
+        >
+          ${deleted} unsaved ${deleted === 1 ? 'edit' : 'edits'} from the previous account
+          ${deleted === 1 ? 'was' : 'were'} deleted.
+          <button @click=${() => dismissDeletedDraftNotice()}>Dismiss</button>
+        </div>`
+      : nothing;
+  }
+
   private renderAccountControl() {
-    const confirmation = accountSignOutConfirmation('Command Center');
+    // Revoking another device leaves this device's drafts alone.
+    const confirmation = accountSignOutConfirmation(
+      'Command Center',
+      this.revokeTarget ? 0 : this.signOutUnsavedDrafts,
+    );
     return html` <style>
         .fa-account-menu summary {
           list-style: none;
@@ -1059,6 +1166,18 @@ export class FarmApp extends LitElement {
         }
         .fa-account-confirm::backdrop {
           background: #0009;
+        }
+        .fa-draft-notice {
+          position: fixed;
+          right: 12px;
+          bottom: 8px;
+          z-index: 200;
+          padding: 6px 10px;
+          border: 1px solid #70551e;
+          border-radius: 4px;
+          background: #241d10;
+          color: #f2cf83;
+          font-size: 12px;
         }
         .fa-account-confirm h2 {
           margin: 0;
@@ -1134,6 +1253,14 @@ export class FarmApp extends LitElement {
           ${this.revokeTarget ? `Sign out ${this.revokeTarget.deviceName}?` : confirmation.title}
         </h2>
         <p>${confirmation.message}</p>
+        ${confirmation.drafts
+          ? html`<p
+              data-testid="account-sign-out-drafts"
+              data-count=${this.revokeTarget ? 0 : this.signOutUnsavedDrafts}
+            >
+              ${confirmation.drafts}
+            </p>`
+          : nothing}
         <form method="dialog">
           <button value="cancel" autofocus data-testid="account-sign-out-cancel">
             ${confirmation.cancel}
@@ -1164,9 +1291,20 @@ export class FarmApp extends LitElement {
 
   private async refreshPairingListenWarning() {
     this.pairingListenLoading = true;
+    const owner = getResourceWorkspaceKey();
+    const connection = gateway.resourceConnectionId;
     try {
-      const status = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {}, 5_000);
-      this.pairingListenWarning = pairingListenWarning(status.listen);
+      if (gateway.connectionState !== 'connected') throw new Error('Gateway is disconnected.');
+      const read = await this.updateQuery.retry();
+      if (owner !== getResourceWorkspaceKey() || connection !== gateway.resourceConnectionId)
+        return;
+      // Listen metadata is a live gateway fact. An origin-fetch error cannot disable LAN pairing;
+      // a transport/read failure still refuses the older retained listen snapshot.
+      if (!read.data || (read.error && read.error.code !== read.data.observation?.error?.code))
+        throw new Error(
+          read.error?.message ?? 'Current gateway listen information is unavailable.',
+        );
+      this.pairingListenWarning = pairingListenWarning(read.data.listen);
     } catch (err) {
       this.pairingListenWarning = `Could not read gateway listen address (${err instanceof Error ? err.message : 'unknown error'}). Retry before generating a LAN pairing QR.`;
     } finally {
@@ -1387,6 +1525,7 @@ export class FarmApp extends LitElement {
           <span>Pinned workspaces</span>
           <span>${pins.length}${hiddenCount > 0 ? `/${this.pinnedSlots.length}` : ''}</span>
         </div>
+        ${this.renderWorkerReadStatus()}
         ${pins.length === 0
           ? html`<div class="fa-active-runs-empty">
               ${hiddenCount > 0 ? 'hidden by filters' : 'none'}
@@ -1450,7 +1589,7 @@ export class FarmApp extends LitElement {
   }
 
   private pinnedSlotWorkerStatus(worker: TmuxWorkerSummary | null): string {
-    if (!worker) return 'unknown';
+    if (!worker || !this.workerQuery.ready) return 'unknown';
     const source = worker.status.source;
     const state = worker.status.state;
     const isRunnerSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
@@ -1474,11 +1613,12 @@ export class FarmApp extends LitElement {
   }
 
   private pinnedSlotNeedsAttention(worker: TmuxWorkerSummary | null): boolean {
-    return worker?.status.requiresAttention === true;
+    return this.workerQuery.ready && worker?.status.requiresAttention === true;
   }
 
   private pinnedSlotWorkerTitle(worker: TmuxWorkerSummary | null): string {
-    if (!worker) return 'No structured runner signal for this slot';
+    if (!worker || !this.workerQuery.ready)
+      return 'No current structured runner signal for this slot';
     const signal = `${worker.status.source}/${worker.status.confidence}`;
     const attention = worker.status.requiresAttention
       ? ` · needs attention (${worker.status.attentionReason ?? 'runner stopped'})`
@@ -1855,7 +1995,11 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
   private renderMainContent() {
     const item = NAV_ITEMS.find((navItem) => navItem.route === this.route);
     if (item?.maturity !== 'alpha') {
-      return html`<div class="fa-content">${this.renderContent()}</div>`;
+      return html`<div
+        class=${this.route === 'native' ? 'fa-content fa-content--stacked' : 'fa-content'}
+      >
+        ${this.renderContent()}
+      </div>`;
     }
     return html`
       <div class="fa-content fa-content--stacked">
@@ -2227,7 +2371,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           cursor: pointer;
         }
         native-session-view {
-          display: block;
+          display: flex;
           flex: 1;
           min-height: 0;
         }
@@ -2243,8 +2387,8 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
 
   render() {
     const access = this.shownWorkspaceAccess;
-    // A kept farm workspace stays on screen while it reconnects; its slices show as stale.
-    if (this.connection !== 'connected' && access !== 'farm') {
+    // Keep either saved workspace visible while its observations reconnect as stale.
+    if (this.connection !== 'connected' && access === 'none') {
       return this.connection === 'auth_required'
         ? this.renderAuthScreen()
         : this.renderOnboardingScreen();
@@ -2316,7 +2460,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         )}
         <div class="fa-sidebar-resize" @pointerdown=${this.onSidebarResizeStart}></div>
         <div style="flex:1"></div>
-        ${this.renderAccountControl()} ${this.renderVersionFooter()}
+        ${this.renderAccountControl()} ${this.renderDraftNotice()} ${this.renderVersionFooter()}
         <button
           class="fa-nav-btn ${this.chatOpen ? 'active' : ''}"
           title="Co-Pilot (Cmd+K)"

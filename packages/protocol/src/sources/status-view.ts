@@ -16,6 +16,17 @@ import {
 } from './pins.js';
 
 export type SourceViewAction = 'sync' | 'pin' | 'unpin';
+
+/** Display the age of a retained observation without requesting newer facts. */
+export function sourceObservationAge(observedAt: number | undefined, now = Date.now()): string {
+  if (observedAt === undefined) return 'age unknown';
+  const seconds = Math.floor(Math.max(0, now - observedAt) / 1000);
+  if (seconds < 60) return `${seconds}s old`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m old`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h old` : `${Math.floor(hours / 24)}d old`;
+}
 export const SOURCE_VIEW_ACTION_LABELS: Record<SourceViewAction, string> = {
   sync: 'Sync',
   pin: 'Pin branch',

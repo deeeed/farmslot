@@ -2,21 +2,23 @@ import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import {
-  Events,
   Methods,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityLease,
-  type RuntimeCapabilityLifecyclePayload,
   type RuntimeCapabilityProofRequirement,
   type RuntimeCapabilityReleaseResult,
   type RuntimeCapabilityStatusResult,
   type RuntimeCapabilityStopWarmResult,
 } from '@farmslot/protocol';
+import { sourceObservationAge } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   projectRuntimeCapabilityLeases,
@@ -57,68 +59,56 @@ export class RuntimeCapabilitiesPanel extends LitElement {
    */
   @state() private stopWarmViews: Record<string, RuntimeCapabilityStopWarmView | undefined> = {};
 
-  private refreshPending = false;
-  private unsubscribeEvent: (() => void) | null = null;
-  private unsubscribeConnection: (() => void) | null = null;
+  private actionRequest?: object;
+  private scopeKey = '';
+  private readonly query = new ResourceQueryController<RuntimeCapabilityStatusResult>(
+    this,
+    (result) => {
+      this.syncActionScope();
+      this.status = result.data ?? null;
+      this.loading = result.status === 'loading';
+      this.error = result.error?.message ?? '';
+    },
+  );
+
+  private syncActionScope(): void {
+    const scope = this.currentScope();
+    if (scope !== this.scopeKey) {
+      this.scopeKey = scope;
+      this.actionRequest = undefined;
+      this.busyAction = null;
+      this.actionError = '';
+      this.stopWarmViews = {};
+    }
+  }
+
+  private currentScope(): string {
+    return JSON.stringify([getResourceWorkspaceKey(), this.slotId, this.runId]);
+  }
 
   connectedCallback(): void {
     super.connectedCallback();
-    this.unsubscribeEvent = gateway.subscribe<RuntimeCapabilityLifecyclePayload>(
-      Events.RUNTIME_CAPABILITY_LIFECYCLE,
-      ({ event }) => {
-        if (event.slotId === this.slotId) void this.refresh();
-      },
-    );
-    this.unsubscribeConnection = gateway.onConnectionChange((connection) => {
-      if (connection === 'connected') void this.refresh();
-    });
-    if (gateway.connectionState === 'connected') void this.refresh();
+    this.bindQuery();
   }
 
   disconnectedCallback(): void {
-    this.unsubscribeEvent?.();
-    this.unsubscribeConnection?.();
-    this.unsubscribeEvent = null;
-    this.unsubscribeConnection = null;
+    this.actionRequest = undefined;
     super.disconnectedCallback();
   }
 
   protected updated(changed: Map<string, unknown>): void {
-    if (changed.has('slotId') && this.slotId && gateway.connectionState === 'connected') {
-      void this.refresh();
-    }
+    if (changed.has('slotId') || changed.has('runId')) this.bindQuery();
   }
 
-  private async refresh(): Promise<void> {
-    if (!this.slotId) return;
-    if (this.loading) {
-      this.refreshPending = true;
-      return;
-    }
-    const requestedSlotId = this.slotId;
-    this.loading = true;
-    try {
-      const status = await gateway.request<RuntimeCapabilityStatusResult>(
-        Methods.RUNTIME_CAPABILITY_STATUS,
-        { slotId: requestedSlotId },
-      );
-      if (requestedSlotId === this.slotId) {
-        this.status = status;
-        this.error = '';
-      } else {
-        this.refreshPending = true;
-      }
-    } catch (error) {
-      if (requestedSlotId === this.slotId) {
-        this.error = error instanceof Error ? error.message : String(error);
-      }
-    } finally {
-      this.loading = false;
-      if (this.refreshPending) {
-        this.refreshPending = false;
-        void this.refresh();
-      }
-    }
+  private bindQuery(): void {
+    this.syncActionScope();
+    this.query.setQuery(
+      this.slotId
+        ? resourceQuery<RuntimeCapabilityStatusResult>(Methods.RUNTIME_CAPABILITY_STATUS, {
+            slotId: this.slotId,
+          })
+        : undefined,
+    );
   }
 
   /**
@@ -141,7 +131,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
     // operator switching slots mid-action would otherwise retarget it.
     const slotId = this.slotId;
     const ownerRunId = lease.owner.runId;
-    await this.runRecovery(entry.id, 'release', slotId, async () => {
+    await this.runRecovery(entry, 'release', slotId, async (assertCurrent) => {
       const result = await gateway.request<RuntimeCapabilityReleaseResult>(
         Methods.RUNTIME_CAPABILITY_RELEASE,
         {
@@ -153,6 +143,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         },
         30_000,
       );
+      assertCurrent();
       if (!result.ok) {
         throw new Error(result.failures.map((failure) => failure.reason).join('; '));
       }
@@ -181,12 +172,13 @@ export class RuntimeCapabilitiesPanel extends LitElement {
 
   private async stopWarm(entry: RuntimeCapabilityCatalogEntry): Promise<void> {
     const slotId = this.slotId;
-    await this.runRecovery(entry.id, 'release', slotId, async () => {
+    await this.runRecovery(entry, 'release', slotId, async (assertCurrent) => {
       const result = await gateway.request<RuntimeCapabilityStopWarmResult>(
         Methods.RUNTIME_CAPABILITY_STOP_WARM,
         { slotId, capabilityId: entry.id },
         60_000,
       );
+      assertCurrent();
       const view = stopWarmOutcomeView(result);
       this.stopWarmViews = {
         ...this.stopWarmViews,
@@ -221,7 +213,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
   private async acquire(entry: RuntimeCapabilityCatalogEntry, ownerRunId: string): Promise<void> {
     const slotId = this.slotId;
     const requirement = this.proofRequirementFor(entry.id, ownerRunId);
-    await this.runRecovery(entry.id, 'acquire', slotId, async () => {
+    await this.runRecovery(entry, 'acquire', slotId, async (assertCurrent) => {
       if (!requirement) {
         throw new Error(
           `No stored proof plan for ${entry.id} on run ${ownerRunId}; the Gateway has no recorded reason or mode to acquire it under.`,
@@ -238,6 +230,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         },
         RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS,
       );
+      assertCurrent();
       if (!result.ok) {
         throw new Error(`Acquire refused: ${result.conflict.reason}`);
       }
@@ -258,7 +251,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
     const ownerRunId = lease.owner.runId;
     const parameters = lease.parameters;
     const requirement = this.proofRequirementFor(entry.id, ownerRunId);
-    await this.runRecovery(entry.id, 'restart', slotId, async () => {
+    await this.runRecovery(entry, 'restart', slotId, async (assertCurrent) => {
       if (!requirement) {
         throw new Error(
           `No stored proof plan for ${entry.id} on run ${ownerRunId}; restarting would have to invent the reason and mode it runs under.`,
@@ -275,6 +268,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         },
         30_000,
       );
+      assertCurrent();
       if (!released.ok) {
         throw new Error(released.failures.map((failure) => failure.reason).join('; '));
       }
@@ -289,6 +283,13 @@ export class RuntimeCapabilitiesPanel extends LitElement {
           }`,
         );
       }
+      await this.query.retry();
+      assertCurrent();
+      if (
+        this.query.requireReady().catalog.find((row) => row.id === entry.id)?.provenance.digest !==
+        entry.provenance.digest
+      )
+        throw new Error('The capability definition changed during restart.');
       const acquired = await gateway.request<RuntimeCapabilityAcquireResult>(
         Methods.RUNTIME_CAPABILITY_ACQUIRE,
         {
@@ -301,6 +302,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         },
         RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS,
       );
+      assertCurrent();
       if (!acquired.ok) {
         throw new Error(
           `Restart stopped the provider but re-acquire was refused: ${acquired.conflict.reason}`,
@@ -317,21 +319,47 @@ export class RuntimeCapabilitiesPanel extends LitElement {
    * needed to read.
    */
   private async runRecovery(
-    capabilityId: string,
+    entry: RuntimeCapabilityCatalogEntry,
     action: RuntimeCapabilityRecoveryAction,
     slotId: string,
-    perform: () => Promise<void>,
+    perform: (assertCurrent: () => void) => Promise<void>,
   ): Promise<void> {
-    this.busyAction = { capabilityId, action };
+    const scope = this.currentScope();
+    const connection = gateway.resourceConnectionId;
+    const request = {};
+    const ownsView = () =>
+      this.isConnected && this.currentScope() === scope && this.actionRequest === request;
+    const assertCurrent = () => {
+      if (
+        !ownsView() ||
+        gateway.connectionState !== 'connected' ||
+        gateway.resourceConnectionId !== connection
+      )
+        throw new Error(
+          'The capability connection or owner changed. Check current state before retrying.',
+        );
+    };
+    this.actionRequest = request;
+    this.busyAction = { capabilityId: entry.id, action };
     this.actionError = '';
     try {
-      await perform();
+      const status = this.query.requireReady();
+      if (
+        status.slotId !== slotId ||
+        status.catalog.find((row) => row.id === entry.id)?.provenance.digest !==
+          entry.provenance.digest
+      )
+        throw new Error('The capability changed. Review its current state before acting.');
+      assertCurrent();
+      await perform(assertCurrent);
     } catch (error) {
-      this.actionError = `${action} ${capabilityId}: ${error instanceof Error ? error.message : String(error)}`;
+      if (ownsView())
+        this.actionError = `${action} ${entry.id}: ${error instanceof Error ? error.message : String(error)}`;
     } finally {
-      this.busyAction = null;
-      // Only refresh the slot the action targeted; the operator may have moved.
-      if (slotId === this.slotId) await this.refresh();
+      if (ownsView()) {
+        this.busyAction = null;
+        this.actionRequest = undefined;
+      }
     }
   }
 
@@ -382,17 +410,32 @@ export class RuntimeCapabilitiesPanel extends LitElement {
             <h3>Runtime capabilities</h3>
             <p>Proof resources are acquired after a run declares its plan.</p>
           </div>
-          <button class="refresh" @click=${() => this.refresh()} ?disabled=${this.loading}>
-            ${this.loading ? 'Refreshing…' : 'Refresh'}
-          </button>
         </header>
-        ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
+        ${this.query.state.status === 'stale' && this.status
+          ? html`<p data-capability-freshness="stale">
+              Saved capabilities, ${sourceObservationAge(this.query.state.observedAt)}. Actions wait
+              for a current read.
+            </p>`
+          : nothing}
+        ${this.query.state.status === 'unsupported'
+          ? html`<p>
+              Live capability updates are unavailable on this gateway. Actions wait for a supported
+              current read.
+            </p>`
+          : nothing}
+        ${this.error
+          ? html`<div class="error" role="alert">
+              ${this.error}<button @click=${() => this.query.retry()}>
+                Retry reading capabilities
+              </button>
+            </div>`
+          : nothing}
         ${this.actionError
           ? html`<div class="error" role="alert" data-testid="runtime-capability-action-error">
               ${this.actionError}
             </div>`
           : nothing}
-        ${catalog.length === 0 && !this.loading
+        ${catalog.length === 0 && !this.loading && this.status && !this.error
           ? html`<div class="empty">No runtime capabilities configured for this project.</div>`
           : html` <div class="list">${catalog.map((entry) => this.renderCapability(entry))}</div> `}
       </section>
@@ -547,7 +590,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
             ? html`
                 <button
                   data-testid=${`runtime-capability-acquire-${entry.id}`}
-                  ?disabled=${busy !== null}
+                  ?disabled=${busy !== null || !this.query.ready}
                   @click=${() => this.acquire(entry, ownerRunId)}
                 >
                   ${busy === 'acquire' ? 'Acquiring…' : `Acquire ${entry.label}`}
@@ -558,7 +601,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
             ? html`
                 <button
                   data-testid=${`runtime-capability-restart-${entry.id}`}
-                  ?disabled=${busy !== null}
+                  ?disabled=${busy !== null || !this.query.ready}
                   @click=${() => this.restart(entry, stateLease)}
                 >
                   ${busy === 'restart' ? 'Restarting…' : `Restart ${entry.label}`}
@@ -570,7 +613,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
                 <button
                   class="release"
                   data-testid=${`runtime-capability-release-${entry.id}`}
-                  ?disabled=${busy !== null}
+                  ?disabled=${busy !== null || !this.query.ready}
                   @click=${() =>
                     usesWarmStop
                       ? this.stopWarm(entry)

@@ -112,7 +112,11 @@ export function useGateCriterionDrafts({
       ...input,
       run,
       execution: (id) => evidenceModel?.claimOverrideCandidate(id)?.recipeRunId,
-      requestSkip: (method, params) => client.request<RunOverrideClaimResult>(method, params, null),
+      requestSkip: (method, params) => {
+        if (method !== Methods.RUN_OVERRIDE_CLAIM)
+          throw new Error('Invalid criterion override request.');
+        return client.request<RunOverrideClaimResult>(Methods.RUN_OVERRIDE_CLAIM, params, null);
+      },
       assertCurrent: () => {
         const current = useConnectionStore.getState();
         if (

@@ -34,6 +34,7 @@ import type { TmuxWorkerRef } from '../rpc/tmux.js';
 import type { WorkerSignal } from './signal.js';
 
 export const Events = {
+  RESOURCE_CHANGED: 'resource.changed',
   // Fleet state changes
   FLEET_UPDATED: 'fleet.updated',
   SLOT_CHANGED: 'slot.changed',
@@ -164,8 +165,6 @@ export interface ResourceChangedPayload {
 
 export interface FleetUpdatedPayload {
   fleet: FleetStatus;
-  /** Carrier for ResourceChangedPayload until `resource.changed` exists (ADR-069 Amendment 1). */
-  resourceChanges?: ResourceChangedPayload;
 }
 
 export interface SlotChangedPayload {
@@ -393,8 +392,6 @@ export interface MachinePauseUpdatedPayload {
 
 export interface HelloPayload {
   fleet: FleetStatus | null;
-  /** Present when the gateway announces live source status (ADR-069 Amendment 1). */
-  resourceChanges?: ResourceChangedPayload;
 }
 
 export interface ChatResponsePayload {

@@ -24,7 +24,7 @@ import {
 import '../shared/review-dispatch-picker.js';
 import '../shared/slot-selector-modal.js';
 
-import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
+import { visibleReviewDispatchCatalog } from '../../utils/runner-visible-models.js';
 import type { ReviewDispatchChangeDetail } from '../shared/review-dispatch-picker.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 
@@ -38,7 +38,7 @@ export interface PRReviewExecutionChangeDetail {
 export function newPRExecution(): PRSlotExecutionProfile {
   return {
     slotPolicy: { kind: 'pool', allowedSlots: [] },
-    models: defaultReviewDispatchExecutionModels(rememberedReviewDispatchCatalog()),
+    models: defaultReviewDispatchExecutionModels(visibleReviewDispatchCatalog()),
   };
 }
 

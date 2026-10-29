@@ -3,7 +3,13 @@ import test from 'node:test';
 import { URL } from 'node:url';
 
 import { Events, Methods } from '@farmslot/protocol';
+import {
+  createGatewayResourceCache,
+  type ResourceQuery,
+  resourceQuery,
+} from '@farmslot/protocol/client-cache';
 
+import { ResourceCacheConformanceTransport } from '../../../../packages/protocol/src/client-cache/conformance';
 import { recordVisualClaimReview } from '../lib/visual-claim-review';
 
 import { mountHook } from './hook-harness.fixtures';
@@ -19,12 +25,71 @@ const progress = { acceptanceCriteria: [], acceptanceStatus: { schemaVersion: 2,
 /** Execute the actual hook with deterministic React scheduling and a read-only transport stub. */
 function mount(request: (method: string) => Promise<unknown>) {
   let connection: number | null = 1;
-  const client = { request, subscribe: () => () => undefined, authenticatedPrincipal: null };
+  let progressRevision = 0;
+  let artifactsRevision = 0;
+  const transport = new ResourceCacheConformanceTransport({
+    gatewayUrl: 'ws://acceptance.invalid/',
+  });
+  transport.setConnection({
+    connected: true,
+    id: 1,
+    capabilities: {
+      httpBearerAuth: true,
+      voiceInstructionFormatting: false,
+      resourceChanges: {
+        version: 1,
+        epoch: 'conformance-epoch',
+        versionLists: false,
+        observedReads: 1,
+      },
+    },
+  });
+  transport.request = async <T>(method: Parameters<typeof resourceQuery>[0], params: unknown) => {
+    const dependencies = resourceQuery(method, params).dependencies.map((key) => ({
+      key,
+      revision:
+        key.family === 'progress'
+          ? progressRevision
+          : key.family === 'artifacts'
+            ? artifactsRevision
+            : 0,
+    }));
+    return {
+      data: (method === Methods.RUN_GET ? { run } : await request(method)) as T,
+      resourceState: { epoch: 'conformance-epoch', dependencies },
+    };
+  };
+  const cache = createGatewayResourceCache({ transport });
+  const observers = new Map<string, () => void>();
+  const client = {
+    request,
+    subscribe: () => () => undefined,
+    authenticatedPrincipal: null,
+    connectionState: 'connected',
+  };
   const hook = mountHook<[typeof client, RunAcceptanceSource]>(
     new URL('./useRunAcceptance.ts', import.meta.url),
     'useRunAcceptance',
     {
       '@farmslot/protocol': { Methods, Events },
+      '@farmslot/protocol/client-cache': { resourceQuery },
+      './useResourceQuery': {
+        useResourceQuery<T>(query: ResourceQuery<T> | undefined) {
+          if (!query) return { status: 'loading' };
+          if (!observers.has(query.id))
+            observers.set(
+              query.id,
+              cache.observe(query, () => {}),
+            );
+          return cache.read(query);
+        },
+      },
+      '../lib/resource-cache': { getResourceCache: () => cache },
+      '../lib/run-collections': {
+        assertNativeRunReady: () => {
+          throw new Error('No command expected in acceptance-read tests');
+        },
+      },
       '@farmslot/adapter-sdk/evidence': {
         createEvidenceReviewModel: () => null,
         runEvidencePending: () => false,
@@ -52,8 +117,42 @@ function mount(request: (method: string) => Promise<unknown>) {
     },
     setConnected(connected: boolean) {
       connection = connected ? 1 : null;
+      client.connectionState = connected ? 'connected' : 'disconnected';
+      transport.setConnection({ connected, id: connected ? 2 : 1 });
     },
-    cleanup: hook.cleanup,
+    invalidateEvidence() {
+      artifactsRevision++;
+      transport.publish({
+        version: 1,
+        epoch: 'conformance-epoch',
+        changes: [
+          {
+            key: { family: 'artifacts', runId: run.id },
+            revision: artifactsRevision,
+            kind: 'updated',
+          },
+        ],
+      });
+    },
+    invalidateProgress() {
+      progressRevision++;
+      transport.publish({
+        version: 1,
+        epoch: 'conformance-epoch',
+        changes: [
+          {
+            key: { family: 'progress', runId: run.id },
+            revision: progressRevision,
+            kind: 'updated',
+          },
+        ],
+      });
+    },
+    async cleanup() {
+      hook.cleanup();
+      for (const stop of observers.values()) stop();
+      await cache.dispose();
+    },
   };
 }
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -90,7 +189,7 @@ test('cold Retry shows loading until the unchanged run acceptance read arrives',
   await settle();
   assert.equal(reads, 1);
   retry(failed);
-  mounted.render();
+  await settle();
   const waiting = mounted.render();
   assert.equal(waiting.error, null, 'A cold Retry must clear its old request error while loading');
   assert.equal(waiting.view, null);
@@ -100,7 +199,11 @@ test('cold Retry shows loading until the unchanged run acceptance read arrives',
   assert.equal(reads, 2);
   finish(progress);
   await settle();
-  assert.equal(evidenceReads, 1);
+  assert.equal(
+    evidenceReads,
+    2,
+    'Explicit Retry rereads the shared evidence query as well as criteria',
+  );
   assert.equal(mounted.render().error, null);
   assert.notEqual(mounted.render().view, null);
 });
@@ -140,18 +243,23 @@ test('Retry preserves a cached acceptance read and its error until the refresh a
   assert.notEqual(waiting.view, null);
   await settle();
   assert.equal(reads, 3);
+  assert.equal(mounted.render().error, failed.error, 'Keep the saved read error during refresh');
   finish(progress);
   await settle();
   assert.equal(mounted.render().error, null);
 });
 
-test('retry fences a response that began before the latest failed read', async (t) => {
+test('Retry shares an in-flight read and an invalidation schedules one current follow-up', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  t.mock.method(performance, 'now', () => Date.now());
   let reads = 0;
   let finish: (result: unknown) => void = () => assert.fail('first request did not start');
   const old = new Promise<unknown>((resolve) => {
     finish = resolve;
   });
   const mounted = mount(async (method) => {
+    if (method === Methods.RUN_RECIPE_RUNS_FOR_RUN)
+      return { recipeRuns: [], selectedRecipeRunId: null };
     assert.equal(method, Methods.TASK_PROGRESS);
     if (++reads === 1) return old;
     throw new Error('current read failure');
@@ -160,10 +268,22 @@ test('retry fences a response that began before the latest failed read', async (
   retry(mounted.render());
   mounted.render();
   await settle();
-  assert.equal(reads, 2);
+  assert.equal(reads, 1, 'Retry must share the in-flight progress read');
+  mounted.invalidateProgress();
   finish(progress);
   await settle();
+  assert.equal(reads, 1, 'The follow-up respects the declared progress interval');
+  t.mock.timers.tick(199);
+  await settle();
+  assert.equal(reads, 1, 'The stale response cannot cause an early automatic read');
+  t.mock.timers.tick(1);
+  await settle();
+  assert.equal(reads, 2, 'An invalidated response needs one follow-up read');
   assert.match(String(mounted.render().error), /current read failure/);
+  assert.equal(mounted.render().commandsReady, false);
+  t.mock.timers.tick(600);
+  await settle();
+  assert.equal(reads, 2, 'The failed follow-up must not enter a retry loop');
 });
 
 test('a disconnected cold Retry keeps its error until a connected read starts', async (t) => {
@@ -195,6 +315,7 @@ test('a disconnected cold Retry keeps its error until a connected read starts', 
   assert.equal(reads, 1);
   mounted.setConnected(true);
   mounted.render();
+  await settle();
   const waiting = mounted.render();
   assert.equal(waiting.error, null);
   assert.equal(waiting.view, null);
@@ -274,11 +395,93 @@ test('a failed evidence refresh preserves the retained selection until a success
   mounted.render();
   await settle();
   const waiting = mounted.render();
-  assert.equal(waiting.evidenceError, failed.evidenceError);
+  assert.equal(
+    waiting.evidenceError,
+    failed.evidenceError,
+    'Keep the last evidence error visible until its saved observation is replaced',
+  );
+  assert.equal(
+    waiting.commandsReady,
+    false,
+    'Saved evidence cannot authorize a command during Retry',
+  );
   assert.equal(waiting.recipeRunId, 'retained-execution');
   assert.equal(waiting.evidenceLoading, false);
   finish({ recipeRuns: [], selectedRecipeRunId: 'refreshed-execution' });
   await settle();
   assert.equal(mounted.render().evidenceError, null);
   assert.equal(mounted.render().recipeRunId, 'refreshed-execution');
+  assert.equal(mounted.render().commandsReady, true);
+});
+
+test('retained visual action rejects evidence invalidated after render before any command', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  t.mock.method(performance, 'now', () => Date.now());
+  let commands = 0;
+  let progressReads = 0;
+  let holdEvidence = false;
+  let release: (value: unknown) => void = () => assert.fail('held read missing');
+  const held = new Promise<unknown>((resolve) => {
+    release = resolve;
+  });
+  const mounted = mount(async (method) => {
+    if (method === Methods.TASK_PROGRESS) {
+      progressReads++;
+      return progress;
+    }
+    if (method === Methods.RUN_RECIPE_RUNS_FOR_RUN)
+      return holdEvidence ? held : { recipeRuns: [], selectedRecipeRunId: null };
+    commands++;
+    throw new Error('No command expected');
+  });
+  t.after(mounted.cleanup);
+  mounted.render();
+  await settle();
+  const ready = mounted.render();
+  assert.equal(ready.commandsReady, true);
+  holdEvidence = true;
+  mounted.invalidateEvidence();
+  // Progress shares the artifact dependency; its automatic reread waits 200ms.
+  await settle();
+  await assert.rejects(
+    (ready.recordVisualReview as (claim: string, verdict: string) => Promise<void>)(
+      'claim',
+      'confirmed',
+    ),
+    /current acceptance data/,
+  );
+  assert.equal(progressReads, 1);
+  assert.equal(commands, 0);
+  t.mock.timers.tick(200);
+  await settle();
+  assert.equal(progressReads, 2, 'Current progress must precede the separate evidence guard');
+  assert.equal(typeof ready.recordVisualReview, 'function');
+  await assert.rejects(
+    (ready.recordVisualReview as (claim: string, verdict: string) => Promise<void>)(
+      'claim',
+      'confirmed',
+    ),
+    /current evidence/,
+  );
+  assert.equal(commands, 0);
+  release({ recipeRuns: [], selectedRecipeRunId: null });
+  await settle();
+});
+
+test('retained visual action cannot follow navigation to another run', async (t) => {
+  const mounted = mount(async (method) =>
+    method === Methods.TASK_PROGRESS ? progress : { recipeRuns: [], selectedRecipeRunId: null },
+  );
+  t.after(mounted.cleanup);
+  mounted.render();
+  await settle();
+  const previous = mounted.render();
+  mounted.render({ ...run, id: 'other-run' });
+  await assert.rejects(
+    (previous.recordVisualReview as (claim: string, verdict: string) => Promise<void>)(
+      'claim',
+      'confirmed',
+    ),
+    /review context changed/,
+  );
 });

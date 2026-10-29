@@ -1,5 +1,6 @@
 import {
   extractRunArtifactManifest,
+  isTerminalRunStatus,
   Methods,
   type RecipeRunArtifactGroup,
   type Run,
@@ -7,6 +8,7 @@ import {
   type RunRecipeRunsForRunResult,
   type TerminalSendParams,
 } from '@farmslot/protocol';
+import { type GatewayResourceCache, resourceQuery } from '@farmslot/protocol/client-cache';
 import { operatorMessageInput } from '@farmslot/review-dispatch';
 
 import {
@@ -43,7 +45,14 @@ export interface VisualReviewGateway {
     artifact: VisualReviewArtifactRef,
   ): { uri: string; headers?: ArtifactHttpHeaders };
   /** Operator message into the run's worker input. Resolves once the gateway accepted it. */
-  sendWorkerMessage(params: TerminalSendParams): Promise<void>;
+  sendWorkerMessage(params: TerminalSendParams, expectedRun: Run): Promise<void>;
+}
+
+export interface VisualReviewResources {
+  cache: Pick<GatewayResourceCache, 'read'>;
+  sourceRunId: string;
+  /** The selected owner and exact connection must still own this port. */
+  current(): boolean;
 }
 
 /**
@@ -90,48 +99,72 @@ export function visualReviewConnectionId({
 export function createVisualReviewGateway(
   client: Pick<GatewayClient, 'request'>,
   connection: VisualReviewConnection,
+  resources: VisualReviewResources,
   liveConnection: () => VisualReviewConnection = () => connection,
 ): VisualReviewGateway {
   const { gatewayUrl, authHeaders } = connection;
   const connectionId = visualReviewConnectionId(connection);
-  const request = <T>(method: string, params: unknown): Promise<T> => {
-    if (visualReviewConnectionId(liveConnection()) !== connectionId) {
-      return Promise.reject(
-        new Error('The gateway connection changed. Reopen the review to continue.'),
-      );
-    }
-    return client.request<T>(method, params);
+  const assertCurrent = () => {
+    if (!resources.current() || visualReviewConnectionId(liveConnection()) !== connectionId)
+      throw new Error('The gateway connection changed. Reopen the review to continue.');
+  };
+  const readRun = (runId: string): Run => {
+    assertCurrent();
+    const state = resources.cache.read(resourceQuery<RunGetResult>(Methods.RUN_GET, { runId }));
+    if (state.status !== 'ready' || state.data?.run.id !== runId)
+      throw new Error('Wait for the current visual review run before acting.');
+    return state.data.run;
+  };
+  const readRecipes = (runId: string): RunRecipeRunsForRunResult => {
+    assertCurrent();
+    const state = resources.cache.read(
+      resourceQuery<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, { runId }),
+    );
+    if (state.status !== 'ready' || !state.data)
+      throw new Error('Wait for current visual review evidence before acting.');
+    return state.data;
   };
   const urlFor = (runId: string, artifact: VisualReviewArtifactRef) =>
     artifactUrl(gatewayUrl, runId, artifact.path, artifact.recipeRunId);
   return {
     connectionId,
     async getRun(runId) {
-      return (await request<RunGetResult>(Methods.RUN_GET, { runId })).run;
+      return readRun(runId);
     },
     async listRunArtifacts(run) {
-      const { recipeRuns } = await request<RunRecipeRunsForRunResult>(
-        Methods.RUN_RECIPE_RUNS_FOR_RUN,
-        { runId: run.id },
-      );
+      if (readRun(run.id) !== run)
+        throw new Error('The visual review run changed. Retry its source.');
+      const { recipeRuns } = readRecipes(run.id);
       return [
         ...extractRunArtifactManifest(run),
         ...recipeRuns.flatMap((group: RecipeRunArtifactGroup) => artifactsForRecipeRun(group)),
       ];
     },
     async readArtifactText(runId, artifact) {
+      assertCurrent();
       const response = await gatewayFetch(urlFor(runId, artifact), authHeaders);
+      assertCurrent();
       if (!response.ok) throw new Error(`${artifact.path}: HTTP ${response.status}`);
-      return response.text();
+      const text = await response.text();
+      assertCurrent();
+      return text;
     },
     imageSource(runId, artifact) {
       return artifactSource(urlFor(runId, artifact), authHeaders);
     },
-    async sendWorkerMessage(params) {
-      await request(Methods.TERMINAL_SEND, {
+    async sendWorkerMessage(params, expectedRun) {
+      readRun(resources.sourceRunId);
+      readRecipes(resources.sourceRunId);
+      const run = readRun(expectedRun.id);
+      if (run !== expectedRun || run.id !== params.runId || run.slotId !== params.slotId)
+        throw new Error('The feedback target changed. Review it again before sending.');
+      if (!run.slotId || isTerminalRunStatus(run.status))
+        throw new Error('This run no longer accepts worker feedback.');
+      await client.request(Methods.TERMINAL_SEND, {
         ...params,
         ...operatorMessageInput(params.text, params.operatorMessageId),
       });
+      assertCurrent();
     },
   };
 }

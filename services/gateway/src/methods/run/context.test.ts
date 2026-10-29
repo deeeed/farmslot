@@ -91,11 +91,18 @@ test('selectRecipeRunId falls back to artifact root then first group', () => {
   );
 });
 
+test('a missing run detail returns the eviction code instead of a transient method failure', async () => {
+  await assert.rejects(() => runGet({ runId: 'missing-stored-run' }), {
+    code: 'RUN_NOT_FOUND',
+    message: 'Run not found: missing-stored-run',
+  });
+});
+
 test('runRecipeRunsForRun throws for missing run id', async () => {
-  await assert.rejects(
-    () => runRecipeRunsForRun({ runId: 'missing-recipe-run' }),
-    /Run not found: missing-recipe-run/,
-  );
+  await assert.rejects(() => runRecipeRunsForRun({ runId: 'missing-recipe-run' }), {
+    code: 'RUN_NOT_FOUND',
+    message: 'Run not found: missing-recipe-run',
+  });
 });
 
 test('runRecipeRunsForRun returns empty groups for a run without recipe artifacts', async (t) => {

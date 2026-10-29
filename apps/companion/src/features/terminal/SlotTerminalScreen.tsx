@@ -9,9 +9,9 @@ import {
 } from '@siteed/audio-ui';
 import { Asset } from 'expo-asset';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -29,19 +29,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AGENT_ROLES,
   type CopilotFormatInstructionResult,
-  Events,
   extractRunArtifactManifest,
   Methods,
   type Run,
   type RunRecipeRunsForRunResult,
   type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
   type TerminalData,
   type TerminalSnapshotResult,
   type TmuxListResult,
   type TmuxWindow,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 import {
   listSlotTmuxWindows,
   type OperatorMessageInput,
@@ -51,9 +49,11 @@ import {
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
+import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -66,12 +66,7 @@ import {
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
-import {
-  type RunRefreshEvent,
-  runRefreshEventMatches,
-  runRefreshEventMatchesSlotWorkspace,
-  runRefreshEventRunId,
-} from '../../lib/run-refresh';
+import { getResourceCache } from '../../lib/resource-cache';
 import {
   hasRunWorkspaceDiff,
   selectSlotRecipeArtifactsForPreviewScope,
@@ -81,7 +76,6 @@ import {
   fallbackTaskProgressSummary,
   isSlotWorkerProgressActive,
   isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { slotTerminalRunnerPane, type TerminalControlKey } from '../../lib/terminal-controls';
@@ -92,7 +86,7 @@ import {
   buildCompanionTerminalTarget,
   type CompanionTerminalTargetParams,
   matchesCompanionTerminalTarget,
-  shouldUseBareTerminalSessionForRun,
+  targetWarningForRun,
 } from '../../lib/terminal-target';
 import { terminalTextRequest } from '../../lib/terminal-text-request';
 import { baseStyles, colors, spacing } from '../../lib/theme';
@@ -132,7 +126,6 @@ import {
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
 import { useTerminalPrefsStore } from '../../store/terminal-prefs';
-import { useSlotNativeSession } from '../native-conversation/use-slot-native-session';
 import { useQuickActionVoiceTarget } from '../quick-actions/QuickActionsProvider';
 import { useQuickActionComposerInset } from '../quick-actions/use-quick-action-composer-inset';
 import { useSlotWorkspaceTabs } from '../workspace-shared/slot-workspace-tabs';
@@ -155,7 +148,7 @@ import {
 } from './components/terminal-history-viewer';
 import { slotTerminalStyles as styles } from './styles/slot-terminal.styles';
 import { useTerminalInput } from './use-terminal-input';
-import { useTerminalTargetRun } from './use-terminal-target-run';
+import { useTerminalProof, useTerminalRunContext } from './use-terminal-run-context';
 
 const LINE_COUNT_OPTIONS = [25, 50, 100, 200] as const;
 const TERMINAL_DATA_EVENT = 'terminal.data';
@@ -268,6 +261,7 @@ export default function TerminalScreen() {
     voiceTranscript?: string | string[];
   }>();
   const router = useRouter();
+  const focused = useIsFocused();
   const slotId = requestedSlotId ?? '';
   const role = AGENT_ROLES.find((candidate) => candidate === roleParam);
   const insideSlotWorkspaceTabs = useSlotWorkspaceTabs();
@@ -309,27 +303,37 @@ export default function TerminalScreen() {
     routeParamString(fullscreenParam) === '1',
   );
   const orientationControls = useTerminalOrientationControls(terminalFullscreen);
-  const [bareTerminalSession, setBareTerminalSession] = useState(false);
-  const {
-    run: targetRun,
-    warning: targetWarning,
-    applyRun: applyTargetRunState,
-    refresh: refreshTargetRun,
-  } = useTerminalTargetRun(slotId, runId);
-  const native = useSlotNativeSession(targetRun, slotId, contextId, runId, {
-    role,
-    bareSession: bareTerminalSession,
-  });
-  const [targetRecipeRuns, setTargetRecipeRuns] = useState<RunRecipeRunsForRunResult['recipeRuns']>(
-    [],
-  );
-  const [targetRecipeArtifactCount, setTargetRecipeArtifactCount] = useState<number | null>(null);
-  const [targetRecipeAvailabilityError, setTargetRecipeAvailabilityError] = useState<string | null>(
-    null,
-  );
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
-  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
-  const terminalTargetParams = native.terminalTarget;
+  const terminalContext = useTerminalRunContext({ slotId, runId, contextId, role });
+  const targetRun = terminalContext.targetRun;
+  const native = terminalContext.native;
+  const targetWarning =
+    terminalContext.run.error?.message ??
+    terminalContext.slot.error?.message ??
+    (targetRun ? targetWarningForRun(targetRun, slotId) : null);
+  const targetRecipeRuns = terminalContext.recipes.data?.recipeRuns ?? [];
+  const targetRecipeArtifactCount = terminalContext.recipes.data
+    ? targetRecipeRuns.reduce((count, group) => count + artifactsForRecipeRun(group).length, 0)
+    : null;
+  const targetRecipeAvailabilityError = terminalContext.recipes.error?.message ?? null;
+  const progressQuery = useMemo(() => {
+    const target = taskProgressRequestForRun(targetRun);
+    return target
+      ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+          ...target,
+          ...(contextId ? { contextId } : {}),
+          ...(role ? { role } : {}),
+        })
+      : undefined;
+  }, [targetRun?.id, targetRun?.slotId, targetRun?.reviewWorkspace?.workspaceId, contextId, role]);
+  const progressObservation = useResourceQuery(progressQuery);
+  const taskProgress = progressObservation.data?.structured ?? null;
+  const taskProgressError = progressObservation.error
+    ? `Task progress unavailable: ${progressObservation.error.message}`
+    : null;
+  const terminalTargetParams = slotId || runId ? terminalContext.target : null;
+  const contextRef = useRef(terminalContext);
+  contextRef.current = terminalContext;
+
   const terminalTargetParamsRef = useRef<CompanionTerminalTargetParams | null>(
     terminalTargetParams,
   );
@@ -340,7 +344,57 @@ export default function TerminalScreen() {
   const consumedIncomingVoiceDraftRef = useRef('');
   const voiceDraftSlotRef = useRef<string | null>(null);
   const voiceDraftStateRef = useRef({ transcript: '', draft: '' });
-  const targetRecipeRunsRequestRef = useRef(0);
+  const subscriptionStarts = useRef(0);
+  const inputCommands = useRef(0);
+  const commandRequests = useRef(new Map<string, object>());
+  const requireTerminalTarget = useCallback(() => {
+    const context = contextRef.current;
+    if (context.scopeKey !== terminalContext.scopeKey)
+      throw new Error('The terminal target changed. Review it before acting.');
+    context.requireRun();
+    const target = terminalTargetParamsRef.current;
+    if (!target || JSON.stringify(target) !== JSON.stringify(context.target))
+      throw new Error('Wait for the selected terminal target before acting.');
+    return { target, ...context.capture() };
+  }, [terminalContext.scopeKey]);
+  const beginTerminalCommand = useCallback(
+    (kind: string) => {
+      const captured = requireTerminalTarget();
+      if (commandRequests.current.has(kind)) return;
+      const request = {};
+      commandRequests.current.set(kind, request);
+      return {
+        ...captured,
+        finish: (cleanup: () => void) => {
+          if (commandRequests.current.get(kind) !== request || !captured.ownsView()) return;
+          commandRequests.current.delete(kind);
+          cleanup();
+        },
+      };
+    },
+    [requireTerminalTarget],
+  );
+  useLayoutEffect(() => {
+    commandRequests.current.clear();
+    setIsSending(false);
+    setIsSendingControl(false);
+    setActiveControlKey(null);
+    setActiveTmuxAction(null);
+    setControlError(null);
+    setTmuxError(null);
+    setTmuxWindows([]);
+    setSnapshotRole(null);
+    setSnapshotContextId(null);
+    setSnapshotError(null);
+    setStreamMode('connecting');
+    setIsFormattingVoice(false);
+    setVoiceWarning(null);
+    setVoiceTargetSuggestion(null);
+    terminalTailTextRef.current = '';
+    setLines([]);
+    setLastUpdated(null);
+    terminalViewRef.current?.reset('');
+  }, [terminalContext.scopeKey]);
 
   useEffect(() => {
     lineCountRef.current = lineCount;
@@ -416,7 +470,27 @@ export default function TerminalScreen() {
     native.target?.label ??
     (streamMode === 'connecting' ? 'Connecting' : streamMode === 'ended' ? 'Ended' : 'Live');
   const terminalLabel = slotId || targetRun?.reviewWorkspace?.machine || 'Run terminal';
-  const terminalInputDisabledReason = streamMode === 'ended' ? 'Read-only · terminal ended' : null;
+  const terminalInputDisabledReason = !terminalContext.ready
+    ? 'Wait for current terminal run data'
+    : streamMode === 'ended'
+      ? 'Read-only · terminal ended'
+      : null;
+
+  useTerminalProof({
+    focused,
+    run: targetRun,
+    recipes: terminalContext.recipes,
+    terminalReady: terminalContext.ready,
+    terminalTarget: terminalContext.target ?? undefined,
+    terminalInputDisabledReason,
+    terminalStream: streamMode,
+    terminalControlBusy: isSendingControl,
+    terminalControlError: controlError,
+    terminalSnapshotError: snapshotError,
+    readTerminalText: () => terminalViewRef.current?.inspect?.() ?? Promise.resolve(''),
+    terminalInputCommands: inputCommands.current,
+    terminalSubscriptionStarts: subscriptionStarts.current,
+  });
   const sendTerminalInput = useTerminalInput(
     terminalTargetParams,
     terminalTargetParamsRef,
@@ -430,11 +504,14 @@ export default function TerminalScreen() {
       return;
     }
 
+    const captured = terminalContext.capture();
     try {
+      terminalContext.requireRun();
       const result = await client.request<TerminalSnapshotResult>('terminal.snapshot', {
         ...target,
         lines: lineCountRef.current,
       });
+      if (!captured.current()) return;
       const snapshotText = result.lines.join('\n');
       replaceTerminalTail(snapshotText, result.timestamp);
       terminalViewRef.current?.reset(snapshotText.replace(/\n/g, '\r\n'));
@@ -442,184 +519,49 @@ export default function TerminalScreen() {
       setSnapshotContextId(result.contextId ?? null);
       setSnapshotError(null);
     } catch (error) {
+      if (!captured.current()) return;
       setSnapshotError(`Snapshot failed: ${getErrorMessage(error)}`);
     }
-  }, [client, replaceTerminalTail]);
-
-  const refreshTargetRecipeRuns = useCallback(
-    async (reason: string, targetRunId: string | null, reset: boolean) => {
-      const requestId = targetRecipeRunsRequestRef.current + 1;
-      targetRecipeRunsRequestRef.current = requestId;
-      if (!client || !targetRunId) {
-        setTargetRecipeRuns([]);
-        setTargetRecipeArtifactCount(null);
-        setTargetRecipeAvailabilityError(null);
-        return;
-      }
-      if (reset) {
-        setTargetRecipeRuns([]);
-        setTargetRecipeArtifactCount(null);
-        setTargetRecipeAvailabilityError(null);
-      }
-      try {
-        const result = await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-          runId: targetRunId,
-        });
-        if (targetRecipeRunsRequestRef.current !== requestId) return;
-        setTargetRecipeRuns(result.recipeRuns);
-        const recipeArtifactCount = result.recipeRuns.reduce(
-          (count, group) => count + artifactsForRecipeRun(group).length,
-          0,
-        );
-        setTargetRecipeArtifactCount(recipeArtifactCount);
-        setTargetRecipeAvailabilityError(null);
-      } catch (error) {
-        if (targetRecipeRunsRequestRef.current !== requestId) return;
-        setTargetRecipeRuns([]);
-        setTargetRecipeArtifactCount(null);
-        setTargetRecipeAvailabilityError(
-          `Recipe artifacts unavailable after ${reason}: ${getErrorMessage(error)}`,
-        );
-      }
-    },
-    [client],
-  );
-
-  useEffect(() => {
-    if (!targetRun?.id) {
-      targetRecipeRunsRequestRef.current += 1;
-      setTargetRecipeRuns([]);
-      setTargetRecipeArtifactCount(null);
-      setTargetRecipeAvailabilityError(null);
-      return;
-    }
-
-    void refreshTargetRecipeRuns('initial load', targetRun.id, true);
-  }, [refreshTargetRecipeRuns, targetRun?.id]);
-
-  useEffect(() => {
-    if (!client || (!slotId && !runId)) return;
-    const handleRunEvent = (payload: unknown, reason: string) => {
-      const event = payload as RunRefreshEvent & { run?: Run | null };
-      const workspaceRunId = targetRun?.id ?? runId ?? null;
-      const matches = runId
-        ? runRefreshEventMatches(runId, event)
-        : runRefreshEventMatchesSlotWorkspace({ slotId, workspaceRunId }, event);
-      if (!matches) return;
-
-      const eventRunId = runRefreshEventRunId(event);
-      if (event.run && (!runId || event.run.id === runId)) {
-        applyTargetRunState(event.run);
-        void refreshTargetRecipeRuns(reason, event.run.id, false);
-        return;
-      }
-
-      void refreshTargetRun().then(({ run }) => {
-        if (run?.id) {
-          void refreshTargetRecipeRuns(reason, run.id, false);
-        } else if (eventRunId === workspaceRunId) {
-          void refreshTargetRecipeRuns(reason, eventRunId, false);
-        }
-      });
-    };
-    const unsubscribers = [
-      client.subscribe(Events.RUN_CREATED, (payload) => handleRunEvent(payload, 'run.created')),
-      client.subscribe(Events.RUN_UPDATED, (payload) => handleRunEvent(payload, 'run.updated')),
-      client.subscribe(Events.RUN_COMPLETED, (payload) => handleRunEvent(payload, 'run.completed')),
-      client.subscribe(Events.RUN_STEP_COMPLETED, (payload) =>
-        handleRunEvent(payload, 'run.step.completed'),
-      ),
-      client.subscribe(Events.RUN_DECISION_NEW, (payload) =>
-        handleRunEvent(payload, 'run.decision.new'),
-      ),
-      client.subscribe(Events.RUN_DECISION_RESOLVED, (payload) =>
-        handleRunEvent(payload, 'run.decision.resolved'),
-      ),
-      client.subscribe(Events.RUN_DECISION_UPDATED, (payload) =>
-        handleRunEvent(payload, 'run.decision.updated'),
-      ),
-    ];
-    return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
-    };
-  }, [
-    applyTargetRunState,
-    client,
-    refreshTargetRecipeRuns,
-    refreshTargetRun,
-    runId,
-    slotId,
-    targetRun?.id,
-  ]);
-
-  const fetchTaskProgress = useCallback(() => {
-    const params = taskProgressRequestForRun(targetRun);
-    if (!client || !params) return Promise.resolve();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
-      .then((result) => {
-        setTaskProgress(result.structured ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((error: Error) => {
-        setTaskProgressError(`Task progress unavailable: ${error.message}`);
-      });
-  }, [client, targetRun?.id, targetRun?.slotId, targetRun?.reviewWorkspace?.workspaceId]);
-
-  useEffect(() => {
-    if (!client || !targetRun) return;
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!shouldAcceptTaskProgressUpdate(targetRun, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, targetRun]);
-
-  useEffect(() => {
-    if (!isWorkerProgressActive(targetRun)) {
-      setTaskProgress(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, targetRun]);
+  }, [client, replaceTerminalTail, terminalContext.scopeKey]);
 
   const handleTerminalInput = useCallback(
     (data: string) => {
-      const target = terminalTargetParamsRef.current;
-      if (terminalInputDisabledReason || !client || !target || connectionStatus !== 'connected') {
-        return;
+      if (terminalInputDisabledReason || !client) return;
+      try {
+        const captured = requireTerminalTarget();
+        sendTerminalInput(data).catch((error: unknown) => {
+          // Navigation/disconnect deliberately discards unsent input.
+          if (!(error instanceof TerminalInputCancelledError) && captured.current())
+            setSnapshotError(`Terminal input failed: ${getErrorMessage(error)}`);
+        });
+      } catch (error) {
+        setSnapshotError(getErrorMessage(error));
       }
-      sendTerminalInput(data).catch((error: unknown) => {
-        // Navigation/disconnect deliberately discards unsent input.
-        if (!(error instanceof TerminalInputCancelledError))
-          setSnapshotError(`Terminal input failed: ${getErrorMessage(error)}`);
-      });
     },
-    [client, connectionStatus, terminalInputDisabledReason, sendTerminalInput],
+    [client, requireTerminalTarget, sendTerminalInput, terminalInputDisabledReason],
   );
 
   const handleTerminalResize = useCallback(
     (size: TerminalSize) => {
       terminalSizeRef.current = size;
-      const target = terminalTargetParamsRef.current;
-      if (!client || !target || connectionStatus !== 'connected') return;
-      client.request('terminal.resize', { ...target, ...size }, 10_000).catch((error: Error) => {
-        setSnapshotError(`Terminal resize failed: ${error.message}`);
-      });
+      if (!client || !contextRef.current.ready) return;
+      try {
+        const captured = requireTerminalTarget();
+        client
+          .request('terminal.resize', { ...captured.target, ...size }, 10_000)
+          .catch((error: Error) => {
+            if (captured.current()) setSnapshotError(`Terminal resize failed: ${error.message}`);
+          });
+      } catch (error) {
+        setSnapshotError(getErrorMessage(error));
+      }
     },
-    [client, connectionStatus],
+    [client, requireTerminalTarget],
   );
 
   useEffect(() => {
-    if (!client || (!slotId && !runId)) return;
-    if (connectionStatus !== 'connected') {
+    if (!focused || !client || (!slotId && !runId)) return;
+    if (!terminalContext.streamReady || connectionStatus !== 'connected') {
       setStreamMode('connecting');
       setSnapshotError('Waiting for gateway connection.');
       terminalViewRef.current?.setStatus('Waiting for gateway connection.');
@@ -627,6 +569,7 @@ export default function TerminalScreen() {
     }
     if (native.target || native.unavailable || (contextId && !targetRun)) return;
     let disposed = false;
+    const captured = terminalContext.capture();
     let target =
       terminalTargetParamsRef.current ??
       buildCompanionTerminalTarget({ slotId, runId, contextId, role, bareSession: false });
@@ -635,7 +578,7 @@ export default function TerminalScreen() {
     terminalViewRef.current?.setStatus('Connecting terminal…');
 
     const matchesTarget = (payload: { slotId?: string; runId?: string }) => {
-      return matchesCompanionTerminalTarget(payload, target);
+      return !disposed && captured.current() && matchesCompanionTerminalTarget(payload, target);
     };
 
     const unsubData = client.subscribe(TERMINAL_DATA_EVENT, (payload) => {
@@ -659,30 +602,31 @@ export default function TerminalScreen() {
     });
 
     const startTerminalSubscription = async () => {
-      const targetResult = await refreshTargetRun();
-      if (disposed) return;
-      const nextBareSession = shouldUseBareTerminalSessionForRun({
-        requestedRunId: runId,
-        requestedSlotId: slotId,
-        run: targetResult.run,
-      });
-      target = native.targetForBareSession(nextBareSession);
+      if (disposed || !captured.current()) return;
+      try {
+        terminalContext.requireRun();
+      } catch (error) {
+        setSnapshotError(getErrorMessage(error));
+        return;
+      }
+      target = terminalTargetParams!;
+
       terminalTargetParamsRef.current = target;
-      setBareTerminalSession(nextBareSession);
 
       try {
+        subscriptionStarts.current++;
         await client.request('terminal.subscribe', {
           ...target,
           interactive: true,
           cols: terminalSizeRef.current.cols,
           rows: terminalSizeRef.current.rows,
         });
-        if (!disposed) {
+        if (!disposed && captured.current()) {
           setSnapshotError(null);
           terminalViewRef.current?.setStatus('');
         }
       } catch (error) {
-        if (!disposed) {
+        if (!disposed && captured.current()) {
           setSnapshotError(`Live terminal subscribe failed: ${getErrorMessage(error)}`);
           setStreamMode('ended');
           terminalViewRef.current?.setStatus(
@@ -699,7 +643,7 @@ export default function TerminalScreen() {
       unsubData();
       unsubMode();
       unsubExit();
-      if (client.connectionState !== 'connected') return;
+      if (!captured.connectionCurrent()) return;
       client.request('terminal.unsubscribe', target).catch((error: Error) => {
         // Unsubscribe can race with slot teardown; after unmount there is no visible terminal
         // state to update, and the gateway also releases handlers when the socket closes.
@@ -710,7 +654,10 @@ export default function TerminalScreen() {
     appendTerminalTail,
     client,
     connectionStatus,
-    refreshTargetRun,
+    focused,
+    terminalContext.streamReady,
+    terminalContext.scopeKey,
+    terminalTargetParams,
     runId,
     slotId,
     contextId,
@@ -723,7 +670,9 @@ export default function TerminalScreen() {
 
   useEffect(() => {
     if (
+      !focused ||
       connectionStatus !== 'connected' ||
+      !terminalContext.streamReady ||
       native.target ||
       native.unavailable ||
       (contextId && !targetRun)
@@ -731,89 +680,118 @@ export default function TerminalScreen() {
       return;
     loadInitialSnapshot();
   }, [
+    focused,
     connectionStatus,
+    terminalContext.streamReady,
+    terminalContext.scopeKey,
     lineCount,
     loadInitialSnapshot,
     Boolean(native.target),
     native.unavailable,
-    Boolean(targetRun),
     contextId,
+    Boolean(targetRun),
   ]);
 
   const resolveTerminalTargetRun = useCallback(async (): Promise<Run | null> => {
-    if (!client || (!slotId && !runId)) return null;
-    return (await refreshTargetRun()).run;
-  }, [client, refreshTargetRun, runId, slotId]);
+    return contextRef.current.requireRun();
+  }, []);
 
   const sendControlKey = useCallback(
     async (control: TerminalControlKey) => {
-      const target = terminalTargetParamsRef.current;
-      if (!client || !target || isSendingControl) return;
-      setIsSendingControl(true);
-      setActiveControlKey(control.label);
-      setControlError(null);
+      if (!client || isSendingControl || terminalInputDisabledReason) return;
+      let command: ReturnType<typeof beginTerminalCommand>;
       try {
+        command = beginTerminalCommand('control');
+        if (!command) return;
+        setIsSendingControl(true);
+        setActiveControlKey(control.label);
+        setControlError(null);
+        inputCommands.current++;
         await sendTerminalInput(control.data);
+        if (!command.current()) return;
         await Haptics.impactAsync(
           control.danger ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light,
         );
       } catch (error) {
-        if (!(error instanceof TerminalInputCancelledError))
+        if (!(error instanceof TerminalInputCancelledError) && (!command || command.current()))
           setControlError(`Control failed: ${getErrorMessage(error)}`);
       } finally {
-        setIsSendingControl(false);
-        setActiveControlKey(null);
+        command?.finish(() => {
+          setIsSendingControl(false);
+          setActiveControlKey(null);
+        });
       }
     },
-    [client, isSendingControl, sendTerminalInput],
+    [
+      beginTerminalCommand,
+      client,
+      isSendingControl,
+      sendTerminalInput,
+      terminalInputDisabledReason,
+    ],
   );
 
   const refreshTmuxWindows = useCallback(async () => {
-    if (!client || !slotId || connectionStatus !== 'connected') {
+    if (!client || !slotId || connectionStatus !== 'connected' || !contextRef.current.ready) {
       setTmuxWindows([]);
       return;
     }
+    const captured = terminalContext.capture();
     try {
+      terminalContext.requireRun();
       const result = await listSlotTmuxWindows(slotId, (method, params) =>
         client.request<TmuxListResult>(method, params),
       );
+      if (!captured.current()) return;
+
       setTmuxWindows(result.windows);
       setTmuxError(null);
     } catch (error) {
+      if (!captured.current()) return;
       setTmuxWindows([]);
       setTmuxError(`Tmux state failed: ${getErrorMessage(error)}`);
     }
-  }, [client, connectionStatus, slotId]);
+  }, [client, connectionStatus, terminalContext.scopeKey]);
 
   const runTmuxAction = useCallback(
     async (label: string, method: MobileTmuxActionMethod, params: Record<string, unknown> = {}) => {
-      const target =
-        method === Methods.TMUX_SELECT_WINDOW
-          ? slotTmuxWindowTarget(slotId)
-          : terminalTargetParamsRef.current;
-      if (!client || !target?.slotId || connectionStatus !== 'connected' || activeTmuxAction)
+      if (
+        !client ||
+        !terminalTargetParamsRef.current?.slotId ||
+        activeTmuxAction ||
+        !contextRef.current.ready
+      )
         return;
-      setActiveTmuxAction(label);
-      setTmuxError(null);
+      let command: ReturnType<typeof beginTerminalCommand>;
       try {
+        command = beginTerminalCommand('tmux');
+        if (!command) return;
+        setActiveTmuxAction(label);
+        setTmuxError(null);
         await client.request(method, {
-          ...target,
+          ...(method === Methods.TMUX_SELECT_WINDOW
+            ? slotTmuxWindowTarget(slotId)
+            : command.target),
           ...params,
         });
+        if (!command.current()) return;
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (!command.current()) return;
         await refreshTmuxWindows();
       } catch (error) {
-        setTmuxError(`${label} failed: ${getErrorMessage(error)}`);
+        if (!command || command.current())
+          setTmuxError(`${label} failed: ${getErrorMessage(error)}`);
       } finally {
-        setActiveTmuxAction(null);
+        command?.finish(() => setActiveTmuxAction(null));
       }
     },
-    [activeTmuxAction, client, connectionStatus, refreshTmuxWindows, slotId],
+    [activeTmuxAction, beginTerminalCommand, client, refreshTmuxWindows, slotId],
   );
 
   useEffect(() => {
     if (
       connectionStatus !== 'connected' ||
+      !terminalContext.streamReady ||
       (!showTerminalControls && !showTerminalOptions && !native.tabs.length)
     )
       return;
@@ -821,6 +799,7 @@ export default function TerminalScreen() {
   }, [
     connectionStatus,
     refreshTmuxWindows,
+    terminalContext.streamReady,
     showTerminalControls,
     showTerminalOptions,
     terminalTargetParams,
@@ -830,51 +809,34 @@ export default function TerminalScreen() {
   const sendTerminalText = useCallback(
     async (text: string, setError: (message: string | null) => void): Promise<boolean> => {
       const trimmedText = text.trim();
-      if (!client || !trimmedText || isSending) return false;
-
-      setIsSending(true);
+      if (!client || !trimmedText || isSending || terminalInputDisabledReason) return false;
+      let command: ReturnType<typeof beginTerminalCommand>;
       try {
+        command = beginTerminalCommand('send');
+        if (!command) return false;
         const message =
           pendingOperatorMessage.current?.text === trimmedText
             ? pendingOperatorMessage.current
             : operatorMessageInput(trimmedText);
         pendingOperatorMessage.current = message;
-        const target = terminalTargetParamsRef.current;
-        if (target) {
-          const request = terminalTextRequest(target, message);
-          await client.request(request.method, request.params);
-          pendingOperatorMessage.current = null;
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          setError(null);
-          return true;
-        }
-        const run = await resolveTerminalTargetRun();
-        if (!run) {
-          setError('Could not verify an active run for this slot. Terminal send blocked.');
-          return false;
-        }
-        if (run.slotId && run.slotId !== slotId) {
-          setError(`Run moved to ${run.slotId}. Open that slot terminal before sending.`);
-          return false;
-        }
-        if (!run.slotId) {
-          setError('Run no longer has an active slot. Terminal send blocked.');
-          return false;
-        }
-        const request = terminalTextRequest({ slotId, runId: run.id }, message);
+        setIsSending(true);
+        inputCommands.current++;
+        const request = terminalTextRequest(command.target, message);
         await client.request(request.method, request.params);
-        pendingOperatorMessage.current = null;
+        if (!command.current()) return false;
+        if (pendingOperatorMessage.current === message) pendingOperatorMessage.current = null;
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        if (!command.current()) return false;
         setError(null);
         return true;
       } catch (error) {
-        setError(`Send failed: ${getErrorMessage(error)}`);
+        if (!command || command.current()) setError(`Send failed: ${getErrorMessage(error)}`);
         return false;
       } finally {
-        setIsSending(false);
+        command?.finish(() => setIsSending(false));
       }
     },
-    [client, isSending, resolveTerminalTargetRun, slotId],
+    [beginTerminalCommand, client, isSending, terminalInputDisabledReason],
   );
 
   const voiceRecorder = useAudioRecorder();
@@ -904,7 +866,8 @@ export default function TerminalScreen() {
     voiceTargetSuggestion?.slotId && voiceTargetSuggestion.slotId !== slotId
       ? voiceTargetSuggestion.slotId
       : null;
-  const voiceGatewayReady = connectionStatus === 'connected' && Boolean(client);
+  const voiceGatewayReady =
+    terminalContext.ready && connectionStatus === 'connected' && Boolean(client);
   const voiceTranscriptNeedsCleanup = voiceStatus === 'transcript_ready' && !hasVoiceDraft;
   const canCleanVoiceTranscript =
     voiceGatewayReady &&
@@ -1282,6 +1245,14 @@ export default function TerminalScreen() {
         setVoiceWarning('Open a slot terminal before cleaning a voice instruction.');
         return false;
       }
+      let command: ReturnType<typeof beginTerminalCommand>;
+      try {
+        command = beginTerminalCommand('format');
+      } catch (error) {
+        setVoiceWarning(getErrorMessage(error));
+        return false;
+      }
+      if (!command) return false;
       setIsFormattingVoice(true);
       setVoiceWarning(null);
       setVoiceTargetSuggestion(null);
@@ -1294,6 +1265,7 @@ export default function TerminalScreen() {
           const resolvedRun = await resolveTerminalTargetRun();
           formatRunId = resolvedRun?.id;
         }
+        if (!command.current()) return false;
         const result = await client.request<CopilotFormatInstructionResult>(
           'copilot.formatInstruction',
           {
@@ -1304,6 +1276,7 @@ export default function TerminalScreen() {
           },
           30_000,
         );
+        if (!command.current()) return false;
         const formattedDraft = result.draftText?.trim();
         if (!formattedDraft) {
           setVoiceWarning('copilot.formatInstruction returned no draft text.');
@@ -1327,14 +1300,16 @@ export default function TerminalScreen() {
         }
         return true;
       } catch (error) {
+        if (!command.current()) return false;
         const prefix = automatic ? 'Auto-clean failed' : 'Clean up failed';
         setVoiceWarning(`${prefix} via copilot.formatInstruction: ${getErrorMessage(error)}`);
         return false;
       } finally {
-        setIsFormattingVoice(false);
+        command.finish(() => setIsFormattingVoice(false));
       }
     },
     [
+      beginTerminalCommand,
       client,
       connectionStatus,
       isFormattingVoice,
@@ -1838,23 +1813,44 @@ export default function TerminalScreen() {
           {targetWarning && (
             <View style={styles.warningBox}>
               <Text style={styles.warningText}>{targetWarning}</Text>
-              <Pressable style={styles.retryButton} onPress={refreshTargetRun}>
-                <Text style={styles.warningRetryText}>Recheck</Text>
-              </Pressable>
+              {terminalContext.run.error || terminalContext.slot.error ? (
+                <Pressable style={styles.retryButton} onPress={() => void terminalContext.retry()}>
+                  <Text style={styles.warningRetryText}>Retry</Text>
+                </Pressable>
+              ) : null}
             </View>
           )}
           {targetRecipeAvailabilityError && (
             <View style={styles.warningBox}>
               <Text style={styles.warningText}>{targetRecipeAvailabilityError}</Text>
+              <Pressable accessibilityRole="button" onPress={() => void terminalContext.retry()}>
+                <Text style={styles.warningRetryText}>Retry</Text>
+              </Pressable>
             </View>
           )}
         </ScrollView>
       )}
 
+      <ResourceReadStatus observation={terminalContext.run} label="terminal run" />
+      {progressQuery ? (
+        <ResourceReadStatus observation={progressObservation} label="task progress" />
+      ) : null}
+      {progressObservation.error && progressQuery ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Retry task progress"
+          onPress={() => void getResourceCache()?.retry(progressQuery)}
+        >
+          <Text style={styles.warningRetryText}>Retry</Text>
+        </Pressable>
+      ) : null}
       <SlotTerminalSessionPane
+        key={terminalContext.scopeKey}
         native={native}
         windows={tmuxWindows}
-        disabled={connectionStatus !== 'connected' || Boolean(activeTmuxAction)}
+        disabled={
+          !terminalContext.ready || connectionStatus !== 'connected' || Boolean(activeTmuxAction)
+        }
         onTmuxAction={runTmuxAction}
         terminal={{
           ref: terminalViewRef,
@@ -2018,7 +2014,7 @@ export default function TerminalScreen() {
             <View style={styles.controlPanel}>
               <TerminalControlKeyBar
                 activeLabel={activeControlKey}
-                disabled={isSendingControl}
+                disabled={isSendingControl || Boolean(terminalInputDisabledReason)}
                 touchKeyboardEnabled={allowTerminalTouchKeyboard}
                 onPress={(control) => void sendControlKey(control)}
                 runnerPane={slotTerminalRunnerPane(slot, tmuxWindows)}
@@ -2030,7 +2026,7 @@ export default function TerminalScreen() {
                 <TmuxControlPanel
                   windows={tmuxWindows}
                   activeAction={activeTmuxAction}
-                  disabled={connectionStatus !== 'connected' || Boolean(activeTmuxAction)}
+                  disabled={Boolean(terminalInputDisabledReason) || Boolean(activeTmuxAction)}
                   onRefresh={refreshTmuxWindows}
                   onAction={runTmuxAction}
                 />

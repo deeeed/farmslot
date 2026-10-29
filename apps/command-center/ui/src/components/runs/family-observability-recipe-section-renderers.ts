@@ -21,6 +21,7 @@ interface FamilyRecipeRerunCheck {
 
 interface FamilyRecipeSectionOptions {
   selectedRun: FamilyObservabilityRunSummary | null;
+  commandsReady?: boolean;
   rerunCheck: FamilyRecipeRerunCheck;
   recipeView: RecipeCockpitView;
   showRerunOutput: boolean;
@@ -81,6 +82,7 @@ function renderRecipeSectionGradingPanel(
     run,
     draft: options.gradeDraft(run),
     isEditing: options.editingRunId === run.runId,
+    disabled: options.commandsReady === false,
     submitting: options.submittingGradeFor === run.runId,
     gradeError: options.gradeError,
     onStartEditing: options.onStartEditingGrade,
@@ -100,6 +102,7 @@ function renderRecipeSectionImprovementTrigger(
   return renderFamilyImprovementTrigger({
     run,
     proposing,
+    disabled: options.commandsReady === false,
     model: options.improvementModel || '…',
     elapsedSeconds: proposing ? options.elapsedSeconds(run.runId) : 0,
     error: options.proposalError.get(run.runId),

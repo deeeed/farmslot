@@ -16,6 +16,7 @@ import {
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import { principalOwnerStamp, samePrincipalOwner } from '../security/work-originator.js';
 
 import { TRIAGE_SPEND_BOUND_EXCEEDED, TRIAGE_SPEND_BOUND_UNVERIFIABLE } from './provider.js';
@@ -29,14 +30,26 @@ import {
 const RETENTION_DAYS = 30;
 const MAX_RECORDS = 5000;
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const assessmentKey = { family: 'assessment', scope: 'farm' } as const;
 const active = new Set<string>();
 const nextPruneAt = new Map<string, number>();
+interface ObservedAssessmentExpiry {
+  records: Map<string, number>;
+  revision: number;
+}
+const observedExpiries = new Map<string, ObservedAssessmentExpiry>();
 let failedWritesSinceStart = 0;
 export function assessmentAuditHealth(): import('@farmslot/protocol').AssessmentAuditHealth {
   return { status: failedWritesSinceStart ? 'degraded' : 'ok', failedWritesSinceStart };
 }
 export function recordAuditFailure(): void {
   failedWritesSinceStart++;
+  assessmentChanged();
+}
+
+function assessmentChanged(): void {
+  // Records are principal/generation scoped by their owning reads. Publish no owner or record IDs.
+  resourceRevisions.advance(assessmentKey);
 }
 let tail: Promise<unknown> = Promise.resolve();
 
@@ -46,6 +59,37 @@ function root(): string {
 function location(id: string): string {
   if (!ID.test(id)) throw new Error('Invalid assessment ID');
   return path.join(root(), `${id}.json`);
+}
+
+/** Retained history changes at its time boundary even when no writer runs. */
+function observeExpiry(records: AssessmentRecord[], replace = false): void {
+  const directory = root();
+  const previous = observedExpiries.get(directory);
+  const deadlines = replace
+    ? new Map<string, number>()
+    : (previous?.records ?? new Map<string, number>());
+  const now = Date.now();
+  let crossedDuringRead =
+    previous?.revision === resourceRevisions.revision(assessmentKey) &&
+    [...previous.records.values()].some((at) => at <= now);
+  for (const [id, at] of deadlines) if (at <= now) deadlines.delete(id);
+  for (const record of records) {
+    if (active.has(location(record.id))) continue;
+    const at = Date.parse(record.startedAt) + RETENTION_DAYS * 86400_000 + 1;
+    if (at > now) deadlines.set(record.id, at);
+    else crossedDuringRead = true;
+  }
+  // Catch up before cancelling a timer whose callback lost its event-loop turn.
+  if (crossedDuringRead) assessmentChanged();
+  observedExpiries.set(directory, {
+    records: deadlines,
+    revision: resourceRevisions.revision(assessmentKey),
+  });
+  resourceRevisions.scheduleInvalidation(
+    `assessment-history:${directory}`,
+    assessmentKey,
+    deadlines.size ? Math.min(...deadlines.values()) : undefined,
+  );
 }
 /** Session reads see only their own generation; a reused id never adopts older records. */
 function owns(ownerId: string, record: AssessmentRecord): boolean {
@@ -97,13 +141,17 @@ async function retained(prune = false): Promise<AssessmentRecord[]> {
   for (const name of names) {
     const record = await load(name.slice(0, -5));
     if (Date.parse(record.startedAt) < cutoff && !active.has(location(record.id))) {
-      if (prune) await rm(location(record.id));
+      if (prune) {
+        await rm(location(record.id));
+        assessmentChanged();
+      }
       continue;
     }
     if (record.status === 'started' && !active.has(location(record.id)))
       record.status = 'interrupted';
     records.push(record);
   }
+  observeExpiry(records, true);
   return records;
 }
 
@@ -144,6 +192,7 @@ async function createAssessment(
   serializeAssessment(record);
   await writeAtomicJSON(location(record.id), record);
   active.add(location(record.id));
+  assessmentChanged();
   return record;
 }
 export async function beginAssessment(context: AssessmentAuditContext): Promise<AssessmentRecord> {
@@ -207,6 +256,7 @@ export async function finishAssessment(
   recommendation?: ReviewIntakeAdvisory,
 ): Promise<void> {
   return serialized(async () => {
+    let committed = false;
     try {
       const completed: AssessmentRecord = {
         ...record,
@@ -217,8 +267,10 @@ export async function finishAssessment(
       };
       serializeAssessment(completed);
       await writeAtomicJSON(location(record.id), completed);
+      committed = true;
     } finally {
-      active.delete(location(record.id));
+      // A failed completion also makes the formerly active on-disk row read as interrupted.
+      if (active.delete(location(record.id)) || committed) assessmentChanged();
     }
   });
 }
@@ -302,6 +354,7 @@ export async function recordAssessmentFeedback(
     });
     serializeAssessment(record);
     await writeAtomicJSON(location(record.id), record);
+    assessmentChanged();
     return record;
   });
 }
@@ -314,5 +367,6 @@ export async function assessmentRecord(ownerId: string, id: string): Promise<Ass
   )
     throw new Error('Assessment not found or expired');
   if (record.status === 'started' && !active.has(location(id))) record.status = 'interrupted';
+  observeExpiry([record]);
   return record;
 }

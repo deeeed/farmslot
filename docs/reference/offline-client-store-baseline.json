@@ -1,0 +1,2024 @@
+{
+  "measuredAt": "2026-10-20T16:40:40.125451+00:00",
+  "gatewayVersion": "b69f72931130dc80081b67318f12987b9a5a163c",
+  "runCount": 67,
+  "roadmapItem": "ri_b1bb5ad00e17",
+  "notes": [
+    "Measured on one isolated gateway with a snapshot of 67 real farm runs. A pending gate uses an isolated repository and slot; unavailable legacy artifact references were removed from that gate fixture.",
+    "Run list means the inventory window on Command Center and the first active-run reply on Companion, matching current client bootstrap behavior. Raw observations record row counts and the earlier first reply where present.",
+    "Times end at the successful read reply; browser gate observations additionally include renderedMs and a check of the displayed diff. Bytes count received UTF-8 websocket application frames, excluding framing and HTTP artifact traffic.",
+    "Command Center gate reads the committed branch file diff. Companion currently reads its live workspace diff; the isolated fixture includes a working-tree change for that path.",
+    "Remote HTTP is served by another machine through an SSH tunnel at an insecure test origin. The desktop uses its bundled production assets."
+  ],
+  "clients": {
+    "command-center-browser": {
+      "method": "apps/command-center/scripts/cdp.mjs baseline <route> <cold|reconnect|diff>",
+      "coldStartRunListMs": 500,
+      "coldStartRunListBytes": 7564748,
+      "reconnectRunListMs": 1160,
+      "reconnectRunListBytes": 7564887,
+      "gateDiffOpenMs": 641,
+      "gateDiffOpenBytes": 679439,
+      "samples": [
+        {
+          "coldStartRunListMs": 547,
+          "coldStartRunListBytes": 7564628,
+          "reconnectRunListMs": 1082,
+          "reconnectRunListBytes": 7566101,
+          "gateDiffOpenMs": 847,
+          "gateDiffOpenBytes": 679026,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 547,
+              "requestMs": 291,
+              "receivedBytes": 7564628,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 547,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1082,
+              "requestMs": 61,
+              "receivedBytes": 7566101,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1082,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 847,
+              "requestMs": 195,
+              "receivedBytes": 679026,
+              "responseBytes": 573,
+              "renderedMs": 927,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 929,
+          "coldStartRunListBytes": 7564748,
+          "reconnectRunListMs": 1132,
+          "reconnectRunListBytes": 7565876,
+          "gateDiffOpenMs": 641,
+          "gateDiffOpenBytes": 692411,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 929,
+              "requestMs": 511,
+              "receivedBytes": 7564748,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 929,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1132,
+              "requestMs": 114,
+              "receivedBytes": 7565876,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1132,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 641,
+              "requestMs": 143,
+              "receivedBytes": 692411,
+              "responseBytes": 573,
+              "renderedMs": 750,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 500,
+          "coldStartRunListBytes": 7564628,
+          "reconnectRunListMs": 1467,
+          "reconnectRunListBytes": 7564887,
+          "gateDiffOpenMs": 855,
+          "gateDiffOpenBytes": 679439,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 500,
+              "requestMs": 248,
+              "receivedBytes": 7564628,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 500,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1467,
+              "requestMs": 300,
+              "receivedBytes": 7564887,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1467,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 855,
+              "requestMs": 112,
+              "receivedBytes": 679439,
+              "responseBytes": 573,
+              "renderedMs": 874,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 404,
+          "coldStartRunListBytes": 7564748,
+          "reconnectRunListMs": 1160,
+          "reconnectRunListBytes": 7564887,
+          "gateDiffOpenMs": 568,
+          "gateDiffOpenBytes": 693521,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 404,
+              "requestMs": 164,
+              "receivedBytes": 7564748,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 404,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1160,
+              "requestMs": 150,
+              "receivedBytes": 7564887,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1160,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 568,
+              "requestMs": 110,
+              "receivedBytes": 693521,
+              "responseBytes": 573,
+              "renderedMs": 759,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 480,
+          "coldStartRunListBytes": 7564748,
+          "reconnectRunListMs": 1186,
+          "reconnectRunListBytes": 7564887,
+          "gateDiffOpenMs": 557,
+          "gateDiffOpenBytes": 679105,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 480,
+              "requestMs": 243,
+              "receivedBytes": 7564748,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 480,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1186,
+              "requestMs": 174,
+              "receivedBytes": 7564887,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1186,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 557,
+              "requestMs": 99,
+              "receivedBytes": 679105,
+              "responseBytes": 573,
+              "renderedMs": 565,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        }
+      ]
+    },
+    "command-center-remote-http": {
+      "method": "apps/command-center/scripts/cdp.mjs baseline <route> <cold|reconnect|diff>",
+      "coldStartRunListMs": 797,
+      "coldStartRunListBytes": 7564747,
+      "reconnectRunListMs": 1561,
+      "reconnectRunListBytes": 7564887,
+      "gateDiffOpenMs": 763,
+      "gateDiffOpenBytes": 692641,
+      "samples": [
+        {
+          "coldStartRunListMs": 1088,
+          "coldStartRunListBytes": 7564748,
+          "reconnectRunListMs": 1618,
+          "reconnectRunListBytes": 7564887,
+          "gateDiffOpenMs": 1319,
+          "gateDiffOpenBytes": 677892,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 1088,
+              "requestMs": 376,
+              "receivedBytes": 7564748,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 1088,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1618,
+              "requestMs": 280,
+              "receivedBytes": 7564887,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1618,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 1319,
+              "requestMs": 436,
+              "receivedBytes": 677892,
+              "responseBytes": 573,
+              "renderedMs": 1344,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 1061,
+          "coldStartRunListBytes": 7564628,
+          "reconnectRunListMs": 2445,
+          "reconnectRunListBytes": 7571241,
+          "gateDiffOpenMs": 1409,
+          "gateDiffOpenBytes": 693347,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 1061,
+              "requestMs": 368,
+              "receivedBytes": 7564628,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 1061,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 2445,
+              "requestMs": 827,
+              "receivedBytes": 7571241,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 2445,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 1409,
+              "requestMs": 379,
+              "receivedBytes": 693347,
+              "responseBytes": 573,
+              "renderedMs": 1521,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 797,
+          "coldStartRunListBytes": 7565456,
+          "reconnectRunListMs": 1561,
+          "reconnectRunListBytes": 7564887,
+          "gateDiffOpenMs": 763,
+          "gateDiffOpenBytes": 692641,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 797,
+              "requestMs": 276,
+              "receivedBytes": 7565456,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 797,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1561,
+              "requestMs": 295,
+              "receivedBytes": 7564887,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1561,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 763,
+              "requestMs": 171,
+              "receivedBytes": 692641,
+              "responseBytes": 572,
+              "renderedMs": 847,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 702,
+          "coldStartRunListBytes": 7564628,
+          "reconnectRunListMs": 1443,
+          "reconnectRunListBytes": 7566268,
+          "gateDiffOpenMs": 547,
+          "gateDiffOpenBytes": 692864,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 702,
+              "requestMs": 211,
+              "receivedBytes": 7564628,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 702,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1443,
+              "requestMs": 288,
+              "receivedBytes": 7566268,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1443,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 547,
+              "requestMs": 163,
+              "receivedBytes": 692864,
+              "responseBytes": 572,
+              "renderedMs": 566,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 785,
+          "coldStartRunListBytes": 7564747,
+          "reconnectRunListMs": 1419,
+          "reconnectRunListBytes": 7564886,
+          "gateDiffOpenMs": 442,
+          "gateDiffOpenBytes": 678080,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 785,
+              "requestMs": 317,
+              "receivedBytes": 7564747,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 785,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1419,
+              "requestMs": 231,
+              "receivedBytes": 7564886,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1419,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 442,
+              "requestMs": 131,
+              "receivedBytes": 678080,
+              "responseBytes": 572,
+              "renderedMs": 467,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        }
+      ]
+    },
+    "desktop": {
+      "method": "apps/command-center/scripts/cdp.mjs baseline <route> <cold|reconnect|diff>",
+      "coldStartRunListMs": 345,
+      "coldStartRunListBytes": 7564746,
+      "reconnectRunListMs": 1178,
+      "reconnectRunListBytes": 7564887,
+      "gateDiffOpenMs": 742,
+      "gateDiffOpenBytes": 693191,
+      "samples": [
+        {
+          "coldStartRunListMs": 711,
+          "coldStartRunListBytes": 7564748,
+          "reconnectRunListMs": 1129,
+          "reconnectRunListBytes": 7564887,
+          "gateDiffOpenMs": 1546,
+          "gateDiffOpenBytes": 694586,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 711,
+              "requestMs": 280,
+              "receivedBytes": 7564748,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 711,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1129,
+              "requestMs": 113,
+              "receivedBytes": 7564887,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1129,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 1546,
+              "requestMs": 143,
+              "receivedBytes": 694586,
+              "responseBytes": 573,
+              "renderedMs": 1567,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 337,
+          "coldStartRunListBytes": 7565480,
+          "reconnectRunListMs": 1119,
+          "reconnectRunListBytes": 7565024,
+          "gateDiffOpenMs": 2898,
+          "gateDiffOpenBytes": 700485,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 337,
+              "requestMs": 142,
+              "receivedBytes": 7565480,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 337,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1119,
+              "requestMs": 103,
+              "receivedBytes": 7565024,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1119,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 2898,
+              "requestMs": 1015,
+              "receivedBytes": 700485,
+              "responseBytes": 573,
+              "renderedMs": 2916,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 749,
+          "coldStartRunListBytes": 7564628,
+          "reconnectRunListMs": 1222,
+          "reconnectRunListBytes": 7564887,
+          "gateDiffOpenMs": 395,
+          "gateDiffOpenBytes": 685632,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 749,
+              "requestMs": 240,
+              "receivedBytes": 7564628,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 749,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1222,
+              "requestMs": 170,
+              "receivedBytes": 7564887,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1222,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 395,
+              "requestMs": 50,
+              "receivedBytes": 685632,
+              "responseBytes": 573,
+              "renderedMs": 411,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 345,
+          "coldStartRunListBytes": 7564628,
+          "reconnectRunListMs": 1178,
+          "reconnectRunListBytes": 7564887,
+          "gateDiffOpenMs": 573,
+          "gateDiffOpenBytes": 693191,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 345,
+              "requestMs": 138,
+              "receivedBytes": 7564628,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 345,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1178,
+              "requestMs": 147,
+              "receivedBytes": 7564887,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1178,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 573,
+              "requestMs": 139,
+              "receivedBytes": 693191,
+              "responseBytes": 573,
+              "renderedMs": 616,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 312,
+          "coldStartRunListBytes": 7564746,
+          "reconnectRunListMs": 1207,
+          "reconnectRunListBytes": 7565023,
+          "gateDiffOpenMs": 742,
+          "gateDiffOpenBytes": 693162,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "method": "run.list",
+              "elapsedMs": 312,
+              "requestMs": 163,
+              "receivedBytes": 7564746,
+              "responseBytes": 7546507,
+              "runCount": 67,
+              "firstRunListMs": 312,
+              "firstRunListResponseBytes": 7546507,
+              "timing": "navigation to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "method": "run.list",
+              "elapsedMs": 1207,
+              "requestMs": 158,
+              "receivedBytes": 7565023,
+              "responseBytes": 7546508,
+              "runCount": 67,
+              "firstRunListMs": 1207,
+              "firstRunListResponseBytes": 7546508,
+              "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            },
+            "diff": {
+              "phase": "diff",
+              "method": "git.diff",
+              "elapsedMs": 742,
+              "requestMs": 211,
+              "receivedBytes": 693162,
+              "responseBytes": 573,
+              "renderedMs": 763,
+              "timing": "navigation to matching diff reply, CDP monotonic timestamps",
+              "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+            }
+          }
+        }
+      ]
+    },
+    "companion": {
+      "method": "apps/companion/scripts/agentic/recipe/recipes/offline-store-baseline.recipe.json",
+      "coldStartRunListMs": 1714,
+      "coldStartRunListBytes": 592211,
+      "reconnectRunListMs": 1158,
+      "reconnectRunListBytes": 592212,
+      "gateDiffOpenMs": 292,
+      "gateDiffOpenBytes": 409,
+      "samples": [
+        {
+          "coldStartRunListMs": 1222,
+          "coldStartRunListBytes": 592211,
+          "reconnectRunListMs": 1158,
+          "reconnectRunListBytes": 592212,
+          "gateDiffOpenMs": 244,
+          "gateDiffOpenBytes": 409,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "timingSource": "native-startup",
+              "method": "run.list",
+              "elapsedMs": 1222,
+              "requestMs": 148,
+              "receivedBytes": 592211,
+              "responseBytes": 574254,
+              "runCount": 4,
+              "timing": "React Native startup startTime to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "timingSource": "socket-close-event",
+              "method": "run.list",
+              "elapsedMs": 1158,
+              "requestMs": 101,
+              "receivedBytes": 592212,
+              "responseBytes": 574255,
+              "runCount": 4,
+              "timing": "socket close event to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "diff": {
+              "phase": "diff",
+              "timingSource": "phase-start",
+              "method": "git.diff",
+              "elapsedMs": 244,
+              "requestMs": 21,
+              "receivedBytes": 409,
+              "responseBytes": 320,
+              "diffCharacters": 254,
+              "timing": "open gate diff to matching git.diff reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 1705,
+          "coldStartRunListBytes": 592211,
+          "reconnectRunListMs": 1161,
+          "reconnectRunListBytes": 592212,
+          "gateDiffOpenMs": 266,
+          "gateDiffOpenBytes": 409,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "timingSource": "native-startup",
+              "method": "run.list",
+              "elapsedMs": 1705,
+              "requestMs": 200,
+              "receivedBytes": 592211,
+              "responseBytes": 574254,
+              "runCount": 4,
+              "timing": "React Native startup startTime to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "timingSource": "socket-close-event",
+              "method": "run.list",
+              "elapsedMs": 1161,
+              "requestMs": 100,
+              "receivedBytes": 592212,
+              "responseBytes": 574255,
+              "runCount": 4,
+              "timing": "socket close event to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "diff": {
+              "phase": "diff",
+              "timingSource": "phase-start",
+              "method": "git.diff",
+              "elapsedMs": 266,
+              "requestMs": 20,
+              "receivedBytes": 409,
+              "responseBytes": 320,
+              "diffCharacters": 254,
+              "timing": "open gate diff to matching git.diff reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 1714,
+          "coldStartRunListBytes": 592211,
+          "reconnectRunListMs": 1167,
+          "reconnectRunListBytes": 592211,
+          "gateDiffOpenMs": 377,
+          "gateDiffOpenBytes": 409,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "timingSource": "native-startup",
+              "method": "run.list",
+              "elapsedMs": 1714,
+              "requestMs": 195,
+              "receivedBytes": 592211,
+              "responseBytes": 574254,
+              "runCount": 4,
+              "timing": "React Native startup startTime to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "timingSource": "socket-close-event",
+              "method": "run.list",
+              "elapsedMs": 1167,
+              "requestMs": 100,
+              "receivedBytes": 592211,
+              "responseBytes": 574254,
+              "runCount": 4,
+              "timing": "socket close event to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "diff": {
+              "phase": "diff",
+              "timingSource": "phase-start",
+              "method": "git.diff",
+              "elapsedMs": 377,
+              "requestMs": 21,
+              "receivedBytes": 409,
+              "responseBytes": 320,
+              "diffCharacters": 254,
+              "timing": "open gate diff to matching git.diff reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 1746,
+          "coldStartRunListBytes": 592211,
+          "reconnectRunListMs": 1157,
+          "reconnectRunListBytes": 592212,
+          "gateDiffOpenMs": 292,
+          "gateDiffOpenBytes": 409,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "timingSource": "native-startup",
+              "method": "run.list",
+              "elapsedMs": 1746,
+              "requestMs": 201,
+              "receivedBytes": 592211,
+              "responseBytes": 574254,
+              "runCount": 4,
+              "timing": "React Native startup startTime to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "timingSource": "socket-close-event",
+              "method": "run.list",
+              "elapsedMs": 1157,
+              "requestMs": 98,
+              "receivedBytes": 592212,
+              "responseBytes": 574255,
+              "runCount": 4,
+              "timing": "socket close event to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "diff": {
+              "phase": "diff",
+              "timingSource": "phase-start",
+              "method": "git.diff",
+              "elapsedMs": 292,
+              "requestMs": 15,
+              "receivedBytes": 409,
+              "responseBytes": 320,
+              "diffCharacters": 254,
+              "timing": "open gate diff to matching git.diff reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            }
+          }
+        },
+        {
+          "coldStartRunListMs": 1733,
+          "coldStartRunListBytes": 592213,
+          "reconnectRunListMs": 1141,
+          "reconnectRunListBytes": 592214,
+          "gateDiffOpenMs": 307,
+          "gateDiffOpenBytes": 409,
+          "observations": {
+            "cold": {
+              "phase": "cold",
+              "timingSource": "native-startup",
+              "method": "run.list",
+              "elapsedMs": 1733,
+              "requestMs": 199,
+              "receivedBytes": 592213,
+              "responseBytes": 574254,
+              "runCount": 4,
+              "timing": "React Native startup startTime to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "reconnect": {
+              "phase": "reconnect",
+              "timingSource": "socket-close-event",
+              "method": "run.list",
+              "elapsedMs": 1141,
+              "requestMs": 98,
+              "receivedBytes": 592214,
+              "responseBytes": 574255,
+              "runCount": 4,
+              "timing": "socket close event to first run.list reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            },
+            "diff": {
+              "phase": "diff",
+              "timingSource": "phase-start",
+              "method": "git.diff",
+              "elapsedMs": 307,
+              "requestMs": 16,
+              "receivedBytes": 409,
+              "responseBytes": 320,
+              "diffCharacters": 254,
+              "timing": "open gate diff to matching git.diff reply after JSON parsing",
+              "bytes": "received UTF-8 gateway application frames through that reply"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "postMigrationMeasurements": [
+    {
+      "head": "83f006e15b01d6b9ffff2717dfdcae428c28a382",
+      "measuredAt": "2026-10-23T11:30:55.314393+00:00",
+      "client": "command-center-browser",
+      "method": "apps/command-center/scripts/cdp.mjs baseline runs reconnect",
+      "runCount": 62,
+      "initialBaselineRunCount": 67,
+      "reconnectRunListMs": 1151,
+      "reconnectRunListBytes": 5585675,
+      "samples": [
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1166,
+          "requestMs": 136,
+          "receivedBytes": 5585669,
+          "responseBytes": 5565308,
+          "runCount": 62,
+          "firstRunListMs": 1166,
+          "firstRunListResponseBytes": 5565308,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1089,
+          "requestMs": 70,
+          "receivedBytes": 5585675,
+          "responseBytes": 5565309,
+          "runCount": 62,
+          "firstRunListMs": 1089,
+          "firstRunListResponseBytes": 5565309,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1178,
+          "requestMs": 148,
+          "receivedBytes": 5585675,
+          "responseBytes": 5565309,
+          "runCount": 62,
+          "firstRunListMs": 1178,
+          "firstRunListResponseBytes": 5565309,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1067,
+          "requestMs": 42,
+          "receivedBytes": 5585675,
+          "responseBytes": 5565309,
+          "runCount": 62,
+          "firstRunListMs": 1067,
+          "firstRunListResponseBytes": 5565309,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1151,
+          "requestMs": 113,
+          "receivedBytes": 5585675,
+          "responseBytes": 5565309,
+          "runCount": 62,
+          "firstRunListMs": 1151,
+          "firstRunListResponseBytes": 5565309,
+          "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+        }
+      ],
+      "notes": [
+        "Same committed CDP measurement method as baseline; isolated read-only saved run copies.",
+        "The current saved inventory differs in row count from the original67rows; report raw figures without claiming a normalized speedup.",
+        "Initial7.56MB threshold keeps step8version lists mandatory.",
+        "Only web/gateway run-list code at83f006e15 is measured; pending native-only edits do not participate."
+      ]
+    },
+    {
+      "head": "bee726ff88afd4442618cae58bf77fd1c450353f",
+      "measuredAt": "2026-10-27T03:53:35.038019+00:00",
+      "client": "command-center-browser",
+      "method": "apps/command-center/scripts/cdp.mjs baseline <tab> gate '#run/<gate>?tab=diff' '{\"runId\":\"<gate>\"}'",
+      "case": "evidence/d10-gate-review-3",
+      "runCount": 4,
+      "initialBaselineRunCount": 67,
+      "gateDiffOpen": {
+        "nothingHeld": {
+          "medianMs": 703,
+          "medianDiffReplyMs": 693,
+          "medianTotalBytes": 100430,
+          "medianFrameBytes": 88948,
+          "medianArtifactBytes": 11482,
+          "samples": [
+            {
+              "phase": "gate",
+              "method": "git.diff",
+              "elapsedMs": 704,
+              "renderedMs": 704,
+              "diffReplyMs": 693,
+              "receivedBytes": 88948,
+              "artifactBytes": 11482,
+              "totalBytes": 100430,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json",
+                  "status": 200,
+                  "bytes": 751
+                },
+                {
+                  "path": "artifacts/diff.txt",
+                  "status": 200,
+                  "bytes": 4164
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json",
+                  "status": 200,
+                  "bytes": 598
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json",
+                  "status": 200,
+                  "bytes": 3936
+                },
+                {
+                  "path": "artifacts/pr-package.md",
+                  "status": 200,
+                  "bytes": 860
+                },
+                {
+                  "path": "artifacts/report.md",
+                  "status": 200,
+                  "bytes": 394
+                },
+                {
+                  "path": "artifacts/validation-summary.md",
+                  "status": 200,
+                  "bytes": 377
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.get": 1,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "run.recipeRunsForRun": 2,
+                "git.branchDiff": 1,
+                "git.diff": 1
+              }
+            },
+            {
+              "phase": "gate",
+              "method": "git.diff",
+              "elapsedMs": 703,
+              "renderedMs": 703,
+              "diffReplyMs": 696,
+              "receivedBytes": 88948,
+              "artifactBytes": 11482,
+              "totalBytes": 100430,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json",
+                  "status": 200,
+                  "bytes": 751
+                },
+                {
+                  "path": "artifacts/diff.txt",
+                  "status": 200,
+                  "bytes": 4164
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json",
+                  "status": 200,
+                  "bytes": 598
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json",
+                  "status": 200,
+                  "bytes": 3936
+                },
+                {
+                  "path": "artifacts/pr-package.md",
+                  "status": 200,
+                  "bytes": 860
+                },
+                {
+                  "path": "artifacts/report.md",
+                  "status": 200,
+                  "bytes": 394
+                },
+                {
+                  "path": "artifacts/validation-summary.md",
+                  "status": 200,
+                  "bytes": 377
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.get": 1,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "run.recipeRunsForRun": 2,
+                "git.branchDiff": 1,
+                "git.diff": 1
+              }
+            },
+            {
+              "phase": "gate",
+              "method": "git.diff",
+              "elapsedMs": 581,
+              "renderedMs": 581,
+              "diffReplyMs": 560,
+              "receivedBytes": 88948,
+              "artifactBytes": 11482,
+              "totalBytes": 100430,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json",
+                  "status": 200,
+                  "bytes": 751
+                },
+                {
+                  "path": "artifacts/diff.txt",
+                  "status": 200,
+                  "bytes": 4164
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json",
+                  "status": 200,
+                  "bytes": 598
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json",
+                  "status": 200,
+                  "bytes": 3936
+                },
+                {
+                  "path": "artifacts/pr-package.md",
+                  "status": 200,
+                  "bytes": 860
+                },
+                {
+                  "path": "artifacts/report.md",
+                  "status": 200,
+                  "bytes": 394
+                },
+                {
+                  "path": "artifacts/validation-summary.md",
+                  "status": 200,
+                  "bytes": 377
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.get": 1,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "run.recipeRunsForRun": 2,
+                "git.branchDiff": 1,
+                "git.diff": 1
+              }
+            },
+            {
+              "phase": "gate",
+              "method": "git.diff",
+              "elapsedMs": 796,
+              "renderedMs": 796,
+              "diffReplyMs": 779,
+              "receivedBytes": 88948,
+              "artifactBytes": 11482,
+              "totalBytes": 100430,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json",
+                  "status": 200,
+                  "bytes": 751
+                },
+                {
+                  "path": "artifacts/diff.txt",
+                  "status": 200,
+                  "bytes": 4164
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json",
+                  "status": 200,
+                  "bytes": 598
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json",
+                  "status": 200,
+                  "bytes": 3936
+                },
+                {
+                  "path": "artifacts/pr-package.md",
+                  "status": 200,
+                  "bytes": 860
+                },
+                {
+                  "path": "artifacts/report.md",
+                  "status": 200,
+                  "bytes": 394
+                },
+                {
+                  "path": "artifacts/validation-summary.md",
+                  "status": 200,
+                  "bytes": 377
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.get": 1,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "run.recipeRunsForRun": 2,
+                "git.branchDiff": 1,
+                "git.diff": 1
+              }
+            },
+            {
+              "phase": "gate",
+              "method": "git.diff",
+              "elapsedMs": 652,
+              "renderedMs": 652,
+              "diffReplyMs": 630,
+              "receivedBytes": 91290,
+              "artifactBytes": 11482,
+              "totalBytes": 102772,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json",
+                  "status": 200,
+                  "bytes": 751
+                },
+                {
+                  "path": "artifacts/diff.txt",
+                  "status": 200,
+                  "bytes": 4164
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json",
+                  "status": 200,
+                  "bytes": 598
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json",
+                  "status": 200,
+                  "bytes": 3936
+                },
+                {
+                  "path": "artifacts/pr-package.md",
+                  "status": 200,
+                  "bytes": 860
+                },
+                {
+                  "path": "artifacts/report.md",
+                  "status": 200,
+                  "bytes": 394
+                },
+                {
+                  "path": "artifacts/validation-summary.md",
+                  "status": 200,
+                  "bytes": 377
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.get": 1,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "copilot.status": 1,
+                "run.recipeRunsForRun": 2,
+                "git.branchDiff": 1,
+                "git.diff": 1
+              }
+            }
+          ]
+        },
+        "afterPrefetch": {
+          "medianMs": 67,
+          "medianTotalBytes": 59854,
+          "medianFrameBytes": 48372,
+          "medianArtifactBytes": 11482,
+          "samples": [
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 48,
+              "renderedMs": 48,
+              "receivedBytes": 20379,
+              "artifactBytes": 402,
+              "totalBytes": 20781,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json"
+                },
+                {
+                  "path": "artifacts/diff.txt"
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json"
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json"
+                },
+                {
+                  "path": "artifacts/pr-package.md"
+                },
+                {
+                  "path": "artifacts/report.md"
+                },
+                {
+                  "path": "artifacts/validation-summary.md"
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.recipeRunsForRun": 2,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "git.branchDiff": 1
+              }
+            },
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 88,
+              "renderedMs": 88,
+              "receivedBytes": 48372,
+              "artifactBytes": 11482,
+              "totalBytes": 59854,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json",
+                  "status": 200,
+                  "bytes": 751
+                },
+                {
+                  "path": "artifacts/diff.txt",
+                  "status": 200,
+                  "bytes": 4164
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json",
+                  "status": 200,
+                  "bytes": 598
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json",
+                  "status": 200,
+                  "bytes": 3936
+                },
+                {
+                  "path": "artifacts/pr-package.md",
+                  "status": 200,
+                  "bytes": 860
+                },
+                {
+                  "path": "artifacts/report.md",
+                  "status": 200,
+                  "bytes": 394
+                },
+                {
+                  "path": "artifacts/validation-summary.md",
+                  "status": 200,
+                  "bytes": 377
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.recipeRunsForRun": 2,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "git.branchDiff": 1
+              }
+            },
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 67,
+              "renderedMs": 67,
+              "receivedBytes": 48372,
+              "artifactBytes": 11482,
+              "totalBytes": 59854,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json",
+                  "status": 200,
+                  "bytes": 751
+                },
+                {
+                  "path": "artifacts/diff.txt",
+                  "status": 200,
+                  "bytes": 4164
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json",
+                  "status": 200,
+                  "bytes": 598
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json",
+                  "status": 200,
+                  "bytes": 3936
+                },
+                {
+                  "path": "artifacts/pr-package.md",
+                  "status": 200,
+                  "bytes": 860
+                },
+                {
+                  "path": "artifacts/report.md",
+                  "status": 200,
+                  "bytes": 394
+                },
+                {
+                  "path": "artifacts/validation-summary.md",
+                  "status": 200,
+                  "bytes": 377
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.recipeRunsForRun": 2,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "git.branchDiff": 1
+              }
+            },
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 49,
+              "renderedMs": 49,
+              "receivedBytes": 20379,
+              "artifactBytes": 402,
+              "totalBytes": 20781,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json"
+                },
+                {
+                  "path": "artifacts/diff.txt"
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json"
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json"
+                },
+                {
+                  "path": "artifacts/pr-package.md"
+                },
+                {
+                  "path": "artifacts/report.md"
+                },
+                {
+                  "path": "artifacts/validation-summary.md"
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.recipeRunsForRun": 2,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "git.branchDiff": 1
+              }
+            },
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 86,
+              "renderedMs": 86,
+              "receivedBytes": 48372,
+              "artifactBytes": 11482,
+              "totalBytes": 59854,
+              "artifactReads": [
+                {
+                  "path": "artifacts/diff-stat.json",
+                  "status": 200,
+                  "bytes": 751
+                },
+                {
+                  "path": "artifacts/diff.txt",
+                  "status": 200,
+                  "bytes": 4164
+                },
+                {
+                  "path": "artifacts/evidence-manifest.json",
+                  "status": 200,
+                  "bytes": 598
+                },
+                {
+                  "path": "artifacts/pr-description.md",
+                  "status": 200,
+                  "bytes": 402
+                },
+                {
+                  "path": "artifacts/pr-package.json",
+                  "status": 200,
+                  "bytes": 3936
+                },
+                {
+                  "path": "artifacts/pr-package.md",
+                  "status": 200,
+                  "bytes": 860
+                },
+                {
+                  "path": "artifacts/report.md",
+                  "status": 200,
+                  "bytes": 394
+                },
+                {
+                  "path": "artifacts/validation-summary.md",
+                  "status": 200,
+                  "bytes": 377
+                }
+              ],
+              "gatewayRequests": {
+                "runtime.posture.status": 1,
+                "run.recipeRunsForRun": 2,
+                "task.progress": 1,
+                "run.list": 1,
+                "sources.status": 1,
+                "git.branchDiff": 1
+              }
+            }
+          ]
+        },
+        "offlineHeld": {
+          "medianMs": 42,
+          "medianTotalBytes": 0,
+          "medianFrameBytes": 0,
+          "medianArtifactBytes": 0,
+          "samples": [
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 59,
+              "renderedMs": 59,
+              "receivedBytes": 0,
+              "artifactBytes": 0,
+              "totalBytes": 0,
+              "artifactReads": [],
+              "gatewayRequests": {}
+            },
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 37,
+              "renderedMs": 37,
+              "receivedBytes": 0,
+              "artifactBytes": 0,
+              "totalBytes": 0,
+              "artifactReads": [],
+              "gatewayRequests": {}
+            },
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 40,
+              "renderedMs": 40,
+              "receivedBytes": 0,
+              "artifactBytes": 0,
+              "totalBytes": 0,
+              "artifactReads": [],
+              "gatewayRequests": {}
+            },
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 42,
+              "renderedMs": 42,
+              "receivedBytes": 0,
+              "artifactBytes": 0,
+              "totalBytes": 0,
+              "artifactReads": [],
+              "gatewayRequests": {}
+            },
+            {
+              "phase": "gate",
+              "method": "local",
+              "elapsedMs": 55,
+              "renderedMs": 55,
+              "receivedBytes": 0,
+              "artifactBytes": 0,
+              "totalBytes": 0,
+              "artifactReads": [],
+              "gatewayRequests": {}
+            }
+          ]
+        }
+      },
+      "firstPrefetch": {
+        "sentBytes": 345,
+        "receivedBytes": 24441,
+        "httpBytes": 5419,
+        "totalBytes": 30205
+      },
+      "fixLoopRefetch": {
+        "sentBytes": 658,
+        "receivedBytes": 78068,
+        "httpBytes": 4163,
+        "totalBytes": 82889,
+        "reads": [
+          {
+            "method": "run.get",
+            "replyBytes": 38730
+          },
+          {
+            "http": "artifacts/publication-packages/diff-1b2763105039c31ffa3d7ba8ce5628ebb4b91261175bb61435141498a2ee749f.diff",
+            "status": 200,
+            "bytes": 4163
+          },
+          {
+            "method": "run.get",
+            "replyBytes": 38733
+          },
+          {
+            "method": "git.show",
+            "replyBytes": 605
+          }
+        ],
+        "gitShow": [
+          {
+            "paths": [
+              "data/large.txt",
+              "docs/guide.md",
+              "docs/old.md",
+              "src/alpha.ts",
+              "src/beta.ts"
+            ],
+            "have": [
+              "06b5bd7a5400b33e9881df17184b8e2df94a6a2d",
+              "c532cad87f477717c867d66ded4d7b3165dd9795",
+              "8ea111d35e051e7135c01e862d0f27cda1dd776b",
+              "e7542737342db197611a008dd6b780bd2b97377a"
+            ],
+            "replyBytes": 605,
+            "entries": [
+              {
+                "path": "data/large.txt",
+                "status": "too-large",
+                "id": "144da7cedafd85472f263592944ddb603c10aaf7",
+                "size": 1218894,
+                "hasContent": false,
+                "contentLength": 0
+              },
+              {
+                "path": "docs/guide.md",
+                "status": "held",
+                "id": "06b5bd7a5400b33e9881df17184b8e2df94a6a2d",
+                "size": 751,
+                "hasContent": false,
+                "contentLength": 0
+              },
+              {
+                "path": "docs/old.md",
+                "status": "held",
+                "id": "c532cad87f477717c867d66ded4d7b3165dd9795",
+                "size": 175,
+                "hasContent": false,
+                "contentLength": 0
+              },
+              {
+                "path": "src/alpha.ts",
+                "status": "held",
+                "id": "8ea111d35e051e7135c01e862d0f27cda1dd776b",
+                "size": 1511,
+                "hasContent": false,
+                "contentLength": 0
+              },
+              {
+                "path": "src/beta.ts",
+                "status": "held",
+                "id": "e7542737342db197611a008dd6b780bd2b97377a",
+                "size": 1101,
+                "hasContent": false,
+                "contentLength": 0
+              }
+            ]
+          }
+        ]
+      },
+      "notes": [
+        "Gate open timing runs from navigation to the rendered diff table (CDP monotonic). Bytes are received gateway application frames plus /api/run-artifact HTTP transfer bytes (encodedDataLength); the earlier baseline counted frames only.",
+        "Each sample is a new document. nothingHeld is a second visible window with memory storage; afterPrefetch is the owner tab after its prefetch pass; offlineHeld is the owner tab with the gateway stopped.",
+        "A connected gate open reads its file diff with git.diff (method git.diff) or shows it from held content (method local); the package diff travels over /api/run-artifact only in prefetch or when held content and the live slot diff are both unavailable. The HTTP bytes on a connected open are other package files.",
+        "Fixture: one isolated gateway, one pending ready gate on a real package and three active runs, not the 67-run baseline snapshot; raw figures only, no normalized speedup claim.",
+        "Fix-loop figures are the gate prefetch reads after a new package for the same gate: requests, their replies and HTTP artifact bytes; held bases answer \"held\" and the over-cap base \"too-large\", none with content.",
+        "Step order: the offline check and the offlineHeld samples run right after the first prefetch, on the first package and before any connected gate open; the fix loop follows, then nothingHeld and afterPrefetch on the second package. This replaces the d10-gate-review-2 entry, which measured offline after the connected opens."
+      ]
+    },
+    {
+      "head": "d5ead634c5a0a21b8b33e5a479f7f4fae1090e23",
+      "measuredAt": "2026-10-28T09:59:29.068Z",
+      "client": "command-center-browser",
+      "method": "apps/command-center/scripts/cdp.mjs baseline <tab> reconnect",
+      "runCount": 65,
+      "initialBaselineRunCount": 67,
+      "versionLists": true,
+      "reconnectRunListMs": 1124,
+      "reconnectRunListBytes": 235166,
+      "catchUpPages": 0,
+      "catchUpBytes": 0,
+      "gate": {
+        "metric": "reconnectRunListBytes",
+        "limit": 5000000,
+        "under": true
+      },
+      "control": {
+        "versionLists": false,
+        "how": "lane-side preload reports capabilities.resourceChanges.versionLists false; same build, data and page",
+        "reconnectRunListMs": 1077,
+        "reconnectRunListBytes": 7467566,
+        "samples": [
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1115,
+            "requestMs": 76,
+            "receivedBytes": 7628870,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1115,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          },
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1077,
+            "requestMs": 52,
+            "receivedBytes": 7467566,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1077,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          },
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1075,
+            "requestMs": 54,
+            "receivedBytes": 7628663,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1075,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          },
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1079,
+            "requestMs": 55,
+            "receivedBytes": 7467566,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1079,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          },
+          {
+            "phase": "reconnect",
+            "method": "run.list",
+            "elapsedMs": 1073,
+            "requestMs": 48,
+            "receivedBytes": 7467566,
+            "responseBytes": 7465662,
+            "runCount": 65,
+            "firstRunListMs": 1073,
+            "firstRunListResponseBytes": 7465662,
+            "timing": "socket close to inventory run.list reply, CDP monotonic timestamps",
+            "bytes": "received UTF-8 gateway application frames through that reply; excludes Vite and websocket framing"
+          }
+        ]
+      },
+      "hostLoad": {
+        "cpus": 18,
+        "start": [9.71875, 11.05078125, 12.46435546875],
+        "startGate": {
+          "idlePercent": 82.3,
+          "load1": 9.71875
+        },
+        "end": [11.27197265625, 11.76806640625, 12.58349609375]
+      },
+      "samples": [
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1128,
+          "requestMs": 60,
+          "receivedBytes": 234828,
+          "responseBytes": 36386,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1086,
+          "firstRunListResponseBytes": 36386,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1116,
+          "requestMs": 68,
+          "receivedBytes": 235166,
+          "responseBytes": 36386,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1089,
+          "firstRunListResponseBytes": 36386,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1124,
+          "requestMs": 71,
+          "receivedBytes": 235166,
+          "responseBytes": 36386,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1092,
+          "firstRunListResponseBytes": 36386,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1123,
+          "requestMs": 63,
+          "receivedBytes": 235174,
+          "responseBytes": 36387,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1091,
+          "firstRunListResponseBytes": 36387,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        },
+        {
+          "phase": "reconnect",
+          "method": "run.list",
+          "elapsedMs": 1153,
+          "requestMs": 82,
+          "receivedBytes": 234841,
+          "responseBytes": 36387,
+          "catchUpPages": 0,
+          "catchUpBytes": 0,
+          "runCount": 65,
+          "firstRunListMs": 1121,
+          "firstRunListResponseBytes": 36387,
+          "timing": "socket close to the run list's merged ready state (the cache's observedAt for the catch-up merge), CDP monotonic timestamps",
+          "bytes": "received UTF-8 gateway application frames through that state; excludes Vite and websocket framing"
+        }
+      ]
+    }
+  ]
+}

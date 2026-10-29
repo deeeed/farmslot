@@ -29,8 +29,6 @@ export function resetSlotViewRecipePanelState(view: SlotViewRecipePresenter): vo
   view._lastLinkedRunId = null;
   view._lastLinkedRunActiveTaskFile = null;
   view._lastLinkedRunReviewProgress = null;
-  view._linkedRunRefreshToken = Symbol('linked-run-refresh');
-  view._recipeRunsRefreshToken = Symbol('recipe-runs-refresh');
   resetSlotViewRecipeLoadTokens(view);
   view._recipeRuns = [];
   view._selectedRecipeRunId = '';
@@ -46,87 +44,72 @@ export function resetSlotViewRecipePanelState(view: SlotViewRecipePresenter): vo
   view._selectedRecipeArtifactError = '';
   view._recipeRunsLoading = false;
   view._recipeRunsError = '';
-  view._recipeExecutionOpen = false;
-  view._recipeExecutionLabel = '';
-  view._recipeExecutionArtifactPath = '';
-  view._recipeExecutionRecipeRunId = '';
+  retireSlotViewRunCommands(view);
   view._selectedRecipeEvidenceManifest = [];
   view._recipeEvidenceCache = null;
 }
 
+export function retireSlotViewRunCommands(view: SlotViewRecipePresenter): void {
+  view._recipeExecutionOpen = false;
+  view._recipeExecutionLabel = '';
+  view._recipeExecutionArtifactPath = '';
+  view._recipeExecutionRecipeRunId = '';
+  view._pendingRecipeRunSelectionId = '';
+  view._recipeCommandFeedback = '';
+  view._mirrorRequest = undefined;
+  view._mirrorRefreshing = false;
+  view._mirrorRefreshFeedback = '';
+  view._tmuxRestoreRequest = undefined;
+  view._tmuxRestoreRunning = false;
+  view._tmuxRestoreFeedback = '';
+  view._tmuxRestoreError = '';
+  view._runCommandError = '';
+}
+
 export async function refreshSlotViewArtifactMirror(view: SlotViewRecipePresenter): Promise<void> {
-  if (!view._linkedRun?.id || view._mirrorRefreshing) return;
+  if (
+    !view._linkedRun?.id ||
+    view._mirrorRequest ||
+    view._runActionsBlocked ||
+    !view._recipeRunsCurrent
+  )
+    return;
+  const request = Symbol('mirror-sync');
+  view._mirrorRequest = request;
   view._mirrorRefreshing = true;
   view._mirrorRefreshFeedback = '';
+  let current = () => view.isConnected;
   try {
+    const run = view._requireCurrentRecipes();
+    current = view._captureRunScope();
     const result = await gateway.request<{ ok: boolean; copied?: number; reason?: string }>(
       Methods.RUN_REFRESH_MIRROR,
-      { runId: view._linkedRun.id },
-      transferBoundRequestOptions(view._linkedRun.id),
+      { runId: run.id },
+      transferBoundRequestOptions(run.id),
     );
-    if (result.ok) {
-      view._mirrorRefreshFeedback = result.copied ? `Synced ${result.copied}` : 'Up to date';
-      view._artifactMirrorEpoch += 1;
-      await view._refreshLinkedRun(view._linkedRun.status ?? null);
-    } else {
-      view._mirrorRefreshFeedback = result.reason ?? 'Failed';
-    }
-  } finally {
-    view._mirrorRefreshing = false;
-    setTimeout(() => {
-      view._mirrorRefreshFeedback = '';
-    }, 2500);
-  }
-}
-
-/** Kick off recipe-runs fetch with loading state set synchronously (avoids a paint where the terminal gate hides the drawer). */
-export function scheduleSlotViewRecipeRunsRefresh(
-  view: SlotViewRecipePresenter,
-  run: Run | null,
-): void {
-  if (!run) {
-    clearSlotViewRecipeRuns(view);
-    return;
-  }
-  view._recipeRunsRefreshToken = Symbol('recipe-runs-refresh');
-  view._recipeRunsLoading = true;
-  view._recipeRunsError = '';
-  void refreshSlotViewRecipeRuns(view, run);
-}
-
-export async function refreshSlotViewRecipeRuns(
-  view: SlotViewRecipePresenter,
-  run: Run | null,
-): Promise<void> {
-  if (!run) return;
-
-  const refreshToken = view._recipeRunsRefreshToken;
-  try {
-    const result = await gateway.request<{
-      recipeRuns: RecipeRunArtifactGroup[];
-      selectedRecipeRunId: string | null;
-    }>(Methods.RUN_RECIPE_RUNS_FOR_RUN, { runId: run.id });
-    if (refreshToken !== view._recipeRunsRefreshToken) return;
-    applySlotViewRecipeRunsResult(view, run, result);
+    if (!current()) return;
+    view._mirrorRefreshFeedback = result.ok
+      ? result.copied
+        ? `Synced ${result.copied}`
+        : 'Up to date'
+      : (result.reason ?? 'Artifact sync failed');
+    if (result.ok) view._artifactMirrorEpoch += 1;
   } catch (error) {
-    if (refreshToken !== view._recipeRunsRefreshToken) return;
-    view._recipeRuns = [];
-    view._selectedRecipeRunId = '';
-    resetSlotViewRecipeLoadTokens(view);
-    view._recipeRunsError = error instanceof Error ? error.message : String(error);
-    view._recipeEvidenceCache = null;
+    if (current())
+      view._mirrorRefreshFeedback = error instanceof Error ? error.message : String(error);
   } finally {
-    if (refreshToken === view._recipeRunsRefreshToken) view._recipeRunsLoading = false;
+    if (view._mirrorRequest === request) {
+      view._mirrorRequest = undefined;
+      view._mirrorRefreshing = false;
+    }
   }
 }
 
-function clearSlotViewRecipeRuns(view: SlotViewRecipePresenter): void {
+export function clearSlotViewRecipeRuns(view: SlotViewRecipePresenter): void {
   view._recipeRuns = [];
   view._selectedRecipeRunId = '';
   view._selectedRecipeArtifactPath = null;
   resetSlotViewRecipeLoadTokens(view);
-  view._recipeRunsLoading = false;
-  view._recipeRunsError = '';
   view._recipeEvidenceCache = null;
 }
 
@@ -136,7 +119,7 @@ function resetSlotViewRecipeLoadTokens(view: SlotViewRecipePresenter): void {
   view._selectedRecipeArtifactPreviewLoadToken = Symbol('recipe-artifact-preview-load');
 }
 
-function applySlotViewRecipeRunsResult(
+export function applySlotViewRecipeRunsResult(
   view: SlotViewRecipePresenter,
   run: Run,
   result: { recipeRuns: RecipeRunArtifactGroup[]; selectedRecipeRunId: string | null },

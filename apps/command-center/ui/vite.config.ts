@@ -33,8 +33,11 @@ export default defineConfig({
       '@farmslot/protocol': resolve(__dirname, '../../../packages/protocol/src'),
       '@farmslot/review-dispatch': resolve(__dirname, '../../../packages/review-dispatch/src'),
       '@farmslot/theme': resolve(__dirname, '../../../packages/theme/src'),
+      '@farmslot/local-store': resolve(__dirname, '../../../packages/local-store/src'),
     },
   },
+  optimizeDeps: { exclude: ['@sqlite.org/sqlite-wasm'] },
+  worker: { format: 'es' },
   server: {
     port: vitePort,
     strictPort: true,

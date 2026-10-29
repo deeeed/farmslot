@@ -5,25 +5,7 @@ import type { Run } from '@farmslot/protocol';
 
 import type { SlotView } from './slot-view.js';
 
-const requests: Array<{
-  method: string;
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-}> = [];
-let cachedRun: Run | null = null;
 let contextId = 'unknown';
-mock.module('../../gateway-client.js', {
-  namedExports: {
-    gateway: {
-      connectionState: 'connected',
-      request: (method: string) =>
-        new Promise((resolve, reject) => requests.push({ method, resolve, reject })),
-    },
-  },
-});
-mock.module('../../state.js', {
-  namedExports: { getRunForSlot: () => cachedRun, getState: () => ({ fleet: { slots: [] } }) },
-});
 mock.module('../../utils/reconnect.js', {
   namedExports: { isRecoveryEpochCurrent: () => false },
 });
@@ -33,8 +15,7 @@ mock.module('./slot-view-live-effects.js', {
 mock.module('./slot-view-url-state.js', {
   namedExports: { requestedRunFromHash: () => 'active', getSlotViewHashParam: () => contextId },
 });
-const { applySlotViewLinkedRun, refreshSlotViewLinkedRun } =
-  await import('./slot-view-linked-run-effects.js');
+const { applySlotViewLinkedRun } = await import('./slot-view-linked-run-effects.js');
 
 function nativeRun(): Run {
   return {
@@ -77,21 +58,4 @@ test('cache hydration cannot retain a mounted native run under an unknown same-r
   assert.equal(applySlotViewLinkedRun(view, null, 'running', 'cache'), null);
   assert.equal(view._linkedRun, null);
   assert.equal(view._lastLinkedRunId, null);
-});
-
-test('cached and direct native publication stays cleared while slot lookup waits and fails', async () => {
-  cachedRun = nativeRun();
-  const view = mountedView(cachedRun);
-  const refresh = refreshSlotViewLinkedRun(view, 'running');
-  assert.equal(view._linkedRun, null, 'cache must validate before publishing');
-  const direct = requests.shift();
-  assert.equal(direct?.method, 'run.get');
-  direct?.resolve({ run: cachedRun });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(view._linkedRun, null, 'direct hydration must validate before publishing');
-  const slot = requests.shift();
-  assert.equal(slot?.method, 'run.forSlot');
-  slot?.reject(new Error('slot lookup unavailable'));
-  await refresh;
-  assert.equal(view._linkedRun, null, 'slot failure must not leave a fallback mounted');
 });

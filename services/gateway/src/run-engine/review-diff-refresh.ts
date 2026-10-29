@@ -2,12 +2,16 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ReviewDiffSnapshot, ReviewStatus, Run } from '@farmslot/protocol';
+import {
+  type ReviewDiffSnapshot,
+  reviewSnapshotIdentityText,
+  type ReviewStatus,
+  type Run,
+  verifiedReviewDiffHash,
+} from '@farmslot/protocol';
 
 import { loadSlotVars, SlotConfigError } from '../core/config.js';
-import { verifiedReviewDiffHash } from '../core/review-diff-identity.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
-import { reviewSnapshotIdentityText } from '../review/snapshots.js';
 import { resolveWorkerTaskDir } from '../review/templates.js';
 
 async function readSnapshotDiff(
@@ -51,17 +55,18 @@ export async function refreshReviewDiffSnapshot(
   capturedSnapshots: readonly ReviewDiffSnapshot[] = [],
 ): Promise<ReviewDiffSnapshot> {
   if (!snapshot.diffHash) return snapshot;
-  // Package captures have no diffPath. A review of the same immutable range can
-  // supply the bytes, but they must verify against the package's own digest.
-  const candidates = snapshot.diffPath
-    ? [snapshot]
-    : capturedSnapshots.filter(
-        (candidate) =>
-          candidate.source === snapshot.source &&
-          candidate.baseSha === snapshot.baseSha &&
-          candidate.headSha === snapshot.headSha &&
-          candidate.diffPath,
-      );
+  // Older package captures have no diffPath. A review of the same immutable range
+  // can supply the bytes, but they must verify against the package's own digest.
+  const candidates = [
+    ...(snapshot.diffPath ? [snapshot] : []),
+    ...capturedSnapshots.filter(
+      (candidate) =>
+        candidate.source === snapshot.source &&
+        candidate.baseSha === snapshot.baseSha &&
+        candidate.headSha === snapshot.headSha &&
+        candidate.diffPath,
+    ),
+  ];
   for (const candidate of candidates) {
     const diff = await readSnapshotDiff(run, candidate);
     if (diff === undefined) continue;

@@ -3,13 +3,14 @@ import { Redirect, useLocalSearchParams } from 'expo-router';
 import { NativeConversation } from '../features/native-conversation/NativeConversation';
 import { type NativeConversationParams } from '../features/native-conversation/use-native-conversation-controller';
 import { routeParamString } from '../features/workspace-shared/route-params';
+import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
 import { canOpenNativeConversation, workspaceHome } from '../lib/workspace-access';
 import { useConnectionStore } from '../store/connection';
 
 export default function NativeConversationRoute() {
   const route = useLocalSearchParams();
   const profile = useConnectionStore((state) => state.activeProfileId);
-  const access = useConnectionStore((state) => state.workspaceAccess);
+  const access = useWorkspaceRenderAccess();
   const principalId = useConnectionStore((state) => state.principalId);
   const authorityEpoch = useConnectionStore((state) => state.authorityEpoch);
   const connection = useConnectionStore((state) => state.status);
@@ -41,7 +42,12 @@ export default function NativeConversationRoute() {
         gatewayUrl,
         principalId,
         authorityEpoch,
-        ...(selectedConversation ? [connection, client?.connectionGeneration] : []),
+        ...(selectedConversation
+          ? [
+              connection === 'connected',
+              connection === 'connected' ? client?.connectionGeneration : undefined,
+            ]
+          : []),
         params,
       ])}
       params={params}

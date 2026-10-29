@@ -2,7 +2,6 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -46,6 +45,8 @@ import {
 } from '../lib/text-preview';
 import { colors, fonts } from '../lib/theme';
 import { videoSourceLoadDurationMs } from '../lib/video-source-load';
+
+import { ArtifactImage } from './ArtifactImage';
 
 export interface MediaViewerItem {
   uri: string;
@@ -279,6 +280,7 @@ function MediaSlide({
   return (
     <ZoomableImage
       uri={item.uri}
+      artifact={{ path: item.path ?? '', sha256: item.sha256 }}
       width={width}
       height={height}
       authHeaders={item.authHeaders}
@@ -291,6 +293,7 @@ function MediaSlide({
 
 function ZoomableImage({
   uri,
+  artifact,
   width,
   height,
   authHeaders,
@@ -299,6 +302,7 @@ function ZoomableImage({
   onZoomChange,
 }: {
   uri: string;
+  artifact: { path: string; sha256?: string };
   width: number;
   height: number;
   authHeaders?: ArtifactHttpHeaders;
@@ -404,8 +408,10 @@ function ZoomableImage({
   return (
     <GestureDetector gesture={gesture}>
       <Animated.View style={[styles.media, { width, height }, animatedStyle]}>
-        <Image
-          source={artifactSource(uri, authHeaders)}
+        <ArtifactImage
+          artifact={artifact}
+          uri={uri}
+          authHeaders={authHeaders}
           style={[styles.media, { width, height }]}
           resizeMode="contain"
         />

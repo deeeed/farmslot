@@ -21,6 +21,7 @@ interface NativeSessionHeaderContext {
   requestCount: number;
   sessionChoice(session: Pick<NativeSessionInfo, 'id' | 'executionNodeId'>): string;
   select(id: string, node?: string): void;
+  readError?: string;
   refresh(): void;
   toggleWorkspace(): void;
 }
@@ -75,9 +76,15 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
             <button data-testid="native-new" ?disabled=${ctx.busy} @click=${() => ctx.select('')}>
               New session
             </button>
-            <button data-testid="native-refresh" ?disabled=${!ctx.connected} @click=${ctx.refresh}>
-              Refresh sessions
-            </button>`}
+            ${ctx.readError
+              ? html`<button
+                  data-testid="native-refresh"
+                  ?disabled=${!ctx.connected}
+                  @click=${ctx.refresh}
+                >
+                  Retry reading sessions
+                </button>`
+              : nothing}`}
       ${session && ctx.workspaceAllowed
         ? html`<button
             aria-pressed=${ctx.workspace}

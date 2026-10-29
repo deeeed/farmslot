@@ -1,19 +1,23 @@
 import { LitElement } from 'lit';
 import { property, state } from 'lit/decorators.js';
 
+import type { Draft, DraftStore } from '@farmslot/local-store/drafts';
 import type {
   ArtifactRef,
   Diagnostic,
   EvidenceManifestStandalone,
   GitBranchDiffFile,
+  NodesListResult,
   PRReviewThread,
   RecipeRunArtifactGroup,
   Run,
   SlotActionSummary,
   SlotResource,
   SlotStatus,
+  TaskProgressResult,
   TaskProgressStructured,
 } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 import type { ChecklistProgressStep } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
@@ -21,11 +25,13 @@ import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
+import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 import {
   type RecipeRunnerUiOptions,
   recipeRunnerUiOptions,
 } from '../workspace/recipe-runner-options-model.js';
+import { WorkspaceReads } from '../workspace/workspace-reads.js';
 
 import { type CheckResult, type EditorId, type GitData, type OpenFile } from './slot-view-model.js';
 import type { SlotViewRecipeEvidenceResult } from './slot-view-recipe-helpers.js';
@@ -54,6 +60,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _taskSteps: ChecklistProgressStep[] = [];
   @state() _taskProgress = 0;
   @state() _structuredProgress?: TaskProgressStructured;
+  @state() _progressObservation: ResourceQueryState<TaskProgressResult> = { status: 'loading' };
   @state() _selectedAgentContextId = 'primary';
   @state() _tmuxSessionSelection: string | null = null;
   @state() _selectedAgentContextIds: Record<string, string> = {};
@@ -69,6 +76,8 @@ export abstract class SlotViewState extends LitElement {
   @state() _liveEntries: FileEntry[] = [];
   @state() _liveGitData: GitData | null = null;
   @state() _liveFileContents = new Map<string, string>();
+  /** The hash each file's current `fs.read` reported; absent when the host sends none. */
+  @state() _liveFileHashes = new Map<string, string | undefined>();
   @state() _liveDiffContents = new Map<string, string>();
   @state() _wsLoading = false;
   @state() _wsError = '';
@@ -109,6 +118,37 @@ export abstract class SlotViewState extends LitElement {
   @state() _fileIndex: string[] = [];
   @state() _fileSearchResults: string[] = [];
   @state() _saveFeedback: '' | 'saving' | 'saved' = '';
+
+  // --- Editing (ADR-009 Amendment 1) ---
+  _draftStore?: DraftStore;
+  /** This slot's drafts the user may see: current ones, and read-only ones for an older run. */
+  @state() _slotDrafts: Draft[] = [];
+  /** Current-run drafts by path; the editor shows their edited content. */
+  @state() _fileDrafts = new Map<string, Draft>();
+  _draftRefresh = 0;
+  /** The connection a draft may autosave on; restored and reconnected drafts are absent. */
+  _autosaveArmed = new Map<string, number>();
+  _autosaveTimer?: ReturnType<typeof setTimeout>;
+  /** What the user last saved per draft identity, to tell a worker's later write apart. */
+  _userSaves = new Map<string, { hash: string; content: string }>();
+  @state() _saveConflict?: {
+    path: string;
+    mine: string;
+    theirs?: string;
+    theirsHash: string | null;
+  };
+  @state() _editNotice = '';
+  /** The draft identity whose last save was refused for its run, its host or an error. */
+  @state() _saveRefused = '';
+  /** The draft identity of a saved file a worker then changed; the user's version is kept. */
+  @state() _fileChangedNotice = '';
+  /** Bumped to replace the editor's text, such as after keeping the file's own version. */
+  @state() _editorRevision = 0;
+  /** Slots whose node refused a conditional write, each with the node as it was then. */
+  @state() _conditionalWritesRefused: ReadonlySet<string> = new Set();
+  readonly _nodesQuery = new ResourceQueryController<NodesListResult>(this, () =>
+    this.requestUpdate(),
+  );
   @state() _newFilePrompt = false;
   @state() _newFilePath = '';
   @state() _showIgnored = true;
@@ -139,7 +179,13 @@ export abstract class SlotViewState extends LitElement {
   @state() _revealLine = 0;
   @state() _showInlineComments = false;
   @state() _linkedRun: Run | null = null;
+  @state() _linkedRunCurrent = false;
+  @state() _linkedRunReadError = '';
+  @state() _runCommandError = '';
+  @state() _linkedRunObservedAt?: number;
+  @state() _recipeRunsCurrent = false;
   @state() _tmuxRestoreRunning = false;
+  _tmuxRestoreRequest?: symbol;
   @state() _tmuxRestoreFeedback = '';
   @state() _tmuxRestoreError = '';
   @state() _recipeRunnerUiOptions: RecipeRunnerUiOptions = recipeRunnerUiOptions(null);
@@ -152,8 +198,6 @@ export abstract class SlotViewState extends LitElement {
   @state() _sidebarOpen = true;
   @state() _terminalOpen = true;
   @state() _sidebarWidth = 260;
-  _linkedRunRefreshToken = Symbol('linked-run-refresh');
-  _recipeRunsRefreshToken = Symbol('recipe-runs-refresh');
   @state() _terminalHeight = 250;
   /** Live height of `.sv-right-col` — used to clamp persisted terminal height. */
   @state() _rightColHeight = 0;
@@ -204,6 +248,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _recipeLightboxScopeLabel = '';
   @state() _selectedRecipeEvidenceManifestDroppedVideoCount = 0;
   @state() _mirrorRefreshing = false;
+  _mirrorRequest?: symbol;
   @state() _mirrorRefreshFeedback = '';
   @state() _artifactMirrorEpoch = 0;
   _selectedRecipeDependencyLoadToken = Symbol('recipe-library-load');
@@ -225,13 +270,9 @@ export abstract class SlotViewState extends LitElement {
   _resizeStartValue = 0;
 
   // --- Subscriptions ---
-  _unsubSlot?: () => void;
   _unsubState?: () => void;
+  _unsubDrafts?: () => void;
   _unsubConn?: () => void;
-  _unsubRunUpdated?: () => void;
-  _unsubRunCreated?: () => void;
-  _unsubStateChange?: () => void;
-  _unsubTaskProgress?: () => void;
   _unsubResourceStatus?: () => void;
   _unsubPrepareTracker?: () => void;
   _liveInitPending = false;
@@ -248,8 +289,25 @@ export abstract class SlotViewState extends LitElement {
       this._copiedSlotActionId = key;
     },
   });
-  _gitPollTimer: ReturnType<typeof setInterval> | null = null;
-  _fileRestoreRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  readonly _workspaceReads: WorkspaceReads = new WorkspaceReads(
+    this,
+    () => {
+      if (this._workspaceReads?.ready) {
+        this._recoveryPhase = 'live';
+        this._recoveryMessage = '';
+        this._wsError = '';
+      }
+    },
+    () => this._linkedRun?.id,
+    () => {
+      this._liveEntries = [];
+      this._pinnedEntries = [];
+      this._liveGitData = null;
+      this._liveFileContents = new Map();
+      this._liveFileHashes = new Map();
+      this._liveDiffContents = new Map();
+    },
+  );
   _resourceRestoreRetryTimer: ReturnType<typeof setTimeout> | null = null;
   _prevSlotId = '';
   _slotSwitcherSignature = '';
@@ -300,7 +358,16 @@ export abstract class SlotViewState extends LitElement {
   }
 
   get _isRecoveryBlocked(): boolean {
-    return this._isLive && this._recoveryPhase !== 'live';
+    return this._isLive && !this._workspaceReads.hasData && this._recoveryPhase !== 'live';
+  }
+
+  get _runActionsBlocked(): boolean {
+    return (
+      this._isRecoveryBlocked ||
+      !this._workspaceReads.ready ||
+      !this._linkedRunCurrent ||
+      gateway.connectionState !== 'connected'
+    );
   }
 
   get _canRetryRecovery(): boolean {

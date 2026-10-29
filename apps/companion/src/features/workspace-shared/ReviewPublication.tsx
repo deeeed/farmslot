@@ -7,6 +7,7 @@ import { runReviewerView } from '@farmslot/review-dispatch';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { MobileDiffViewer } from '../../components/MobileDiffViewer';
+import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { PRButton, PRToggle } from '../pr-automation/components/PRControls';
 import { styles } from '../pr-automation/styles/pr-automation-styles';
 
@@ -30,14 +31,14 @@ export function ReviewPublicationPanel({
   report,
   saved,
   savedLoading,
-  savedOffline,
+  observation,
   savedError,
   readSaved,
   context,
   viewIdentity,
 }: ReturnType<typeof useReviewPublication>) {
   const [reportOpen, setReportOpen] = useState<string | null>(null);
-  if (!vm && !curation && !saved && !savedLoading && !savedOffline && !savedError) return null;
+  if (!vm && !curation && !saved && !savedLoading && !savedError) return null;
   return (
     <View
       style={styles.card}
@@ -46,7 +47,7 @@ export function ReviewPublicationPanel({
       <Text style={styles.title}>
         {curation
           ? 'Review findings before posting'
-          : saved || savedLoading || savedOffline || savedError
+          : saved || savedLoading || savedError
             ? 'Saved review'
             : vm?.label}
       </Text>
@@ -57,7 +58,7 @@ export function ReviewPublicationPanel({
       )}
       {(error || vm?.error) && <Text style={styles.error}>{error || vm?.error}</Text>}
       {savedLoading && <Text style={styles.muted}>Loading full saved review…</Text>}
-      {savedOffline && <Text style={styles.muted}>Connect to load the saved review.</Text>}
+      <ResourceReadStatus observation={observation} label="review" />
       {savedError && <Text style={styles.muted}>Saved review unavailable: {savedError}</Text>}
       {saved && (
         <>
@@ -94,9 +95,9 @@ export function ReviewPublicationPanel({
           )}
         </>
       )}
-      {(saved || savedError) && (
+      {savedError && (
         <PRButton
-          label="Refresh saved review"
+          label="Retry saved review"
           testID="companion-saved-review-refresh"
           onPress={readSaved}
           disabled={disabled || savedLoading}
@@ -227,7 +228,7 @@ export function ReviewPublication({
   run: Run;
   context?: ReviewPublicationContext;
 }) {
-  const controller = useReviewPublication(run, undefined, undefined, context);
+  const controller = useReviewPublication(run, undefined, context);
   return <ReviewPublicationPanel {...controller} />;
 }
 

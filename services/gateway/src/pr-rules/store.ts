@@ -21,6 +21,8 @@ import {
 } from '@farmslot/protocol';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { GatewayMethodError } from '../core/method-error.js';
+import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
 import {
   matchesPrincipalOwner,
   principalIdentityKey,
@@ -74,6 +76,7 @@ export class PRRuleStore {
     });
   }
   private pending: Promise<unknown> = Promise.resolve();
+  private sourceUnavailable = false;
   private writesPending = 0;
   get admissionPending(): boolean {
     return this.writesPending > 0;
@@ -95,7 +98,45 @@ export class PRRuleStore {
     return new PRRuleStore(file, decodePRRuleStore(JSON.parse(contents)));
   }
 
+  /** Existing source watchers call this after an external atomic configuration write. */
+  reloadFromFile(): Promise<boolean> {
+    this.writesPending += 1;
+    const operation = async () => {
+      // Decode inside the mutation queue so an earlier commit cannot be replaced by an old read.
+      try {
+        const data = decodePRRuleStore(JSON.parse(await readFile(this.file, 'utf8')));
+        const changed = this.sourceUnavailable || !isDeepStrictEqual(data, this.data);
+        this.data = data;
+        this.sourceUnavailable = false;
+        if (changed) publishPRAutomationResources();
+        return changed;
+      } catch (error) {
+        if (!this.sourceUnavailable) {
+          this.sourceUnavailable = true;
+          publishPRAutomationResources();
+        }
+        // Preserve the actual observer failure. Protocol reads refuse retained old memory.
+        throw error;
+      }
+    };
+    const result = this.pending.then(operation, operation).finally(() => {
+      this.writesPending -= 1;
+    });
+    // Retain bytes for diagnostics, but refuse reads/actions until a valid reload clears the latch.
+    this.pending = result;
+    return result;
+  }
+
+  private assertReadable(): void {
+    if (this.sourceUnavailable)
+      throw new GatewayMethodError(
+        'SOURCE_UNAVAILABLE',
+        'PR rule source is unavailable; repair it before reading or acting',
+      );
+  }
+
   snapshot(): PRRuleStoreData {
+    this.assertReadable();
     return structuredClone(this.data);
   }
 
@@ -121,6 +162,7 @@ export class PRRuleStore {
     });
   }
   list(ownerId: string): PRRuleStoreData {
+    this.assertReadable();
     return structuredClone({
       version: 1,
       teams: this.data.teams.filter((item) => matchesPrincipalOwner(item, ownerId)),
@@ -140,6 +182,7 @@ export class PRRuleStore {
     });
   }
   team(id: string, ownerId: string): PRTeamProfile {
+    this.assertReadable();
     const team = this.data.teams.find(
       (item) => item.id === id && matchesPrincipalOwner(item, ownerId),
     );
@@ -147,6 +190,7 @@ export class PRRuleStore {
     return structuredClone(team);
   }
   rule(id: string, ownerId: string): PRTriggerRule {
+    this.assertReadable();
     const rule = this.data.rules.find(
       (item) => item.id === id && matchesPrincipalOwner(item, ownerId),
     );
@@ -155,14 +199,17 @@ export class PRRuleStore {
   }
 
   intent(id: string): PRReviewIntent | undefined {
+    this.assertReadable();
     return structuredClone(this.data.intents.find((item) => item.id === id));
   }
 
   action(id: string): PRRuleActionRecord | undefined {
+    this.assertReadable();
     return structuredClone(this.data.actions?.find((item) => item.id === id));
   }
 
   actionIsCurrent(id: string): boolean {
+    this.assertReadable();
     const action = this.data.actions?.find((item) => item.id === id);
     if (!action?.current || action.status !== 'pending') return false;
     const rule = this.data.rules.find((item) => item.id === action.ruleId);
@@ -243,6 +290,7 @@ export class PRRuleStore {
   }
 
   submission(id: string, ownerId: string): PRReviewSubmission {
+    this.assertReadable();
     const found = this.data.submissions?.find(
       (item) => item.id === id && matchesPrincipalOwner(item, ownerId),
     );
@@ -827,11 +875,14 @@ export class PRRuleStore {
   private change<T>(mutate: (data: PRRuleStoreData) => T | Promise<T>): Promise<T> {
     this.writesPending += 1;
     const operation = async () => {
+      this.assertReadable();
       const draft = structuredClone(this.data);
       const result = await mutate(draft);
       decodePRRuleStore(draft);
+      const changed = !isDeepStrictEqual(draft, this.data);
       await writeAtomicJSON(this.file, draft);
       this.data = draft;
+      if (changed) publishPRAutomationResources();
       return structuredClone(result);
     };
     // Each failure reaches its caller without publishing a partial transaction; later calls can retry.

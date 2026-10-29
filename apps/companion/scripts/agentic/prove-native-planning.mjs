@@ -1,0 +1,1027 @@
+import assert from 'node:assert/strict';
+import { readFile, realpath } from 'node:fs/promises';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import {
+  digest,
+  exclusiveJson,
+  forbiddenPlanningMethods,
+  observedMemoryMethods,
+  persistedQueries,
+  planningSourceMutation,
+  resolveNativePlanningInputs,
+  verifyNativePlanningSource,
+  writePlanningSource,
+} from './native-planning-fixture.mjs';
+import { nativeScrollViewGesture, renderedNativeDisabledTarget } from './native-store-fixture.mjs';
+
+const source = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+const helpers = [
+  'apps/companion/scripts/agentic/prove-native-planning.mjs',
+  'apps/companion/scripts/agentic/native-planning-fixture.mjs',
+  'apps/companion/scripts/agentic/prepare-native-planning-inputs.mjs',
+  'apps/companion/scripts/agentic/prove-native-store.mjs',
+  'apps/companion/scripts/agentic/simulator-dev-client.mjs',
+  'apps/companion/scripts/agentic/prepare-dev-client.mjs',
+  'apps/companion/scripts/agentic/recognize-simulator-prompt.jxa',
+  'apps/command-center/scripts/owned-gateway-outage.mjs',
+  'apps/companion/scripts/agentic/native-store-fixture.mjs',
+  'apps/companion/src/farmslot/run-collections-proof.ts',
+  'apps/companion/scripts/agentic/recipe/recipes/offline-cold-start.recipe.json',
+];
+
+export async function authorizePlanningProof() {
+  assert(
+    process.env.FARMSLOT_D07_NATIVE_AUTHORIZATION,
+    'A future exact-hash runtime disposition is required',
+  );
+  const a = JSON.parse(await readFile(process.env.FARMSLOT_D07_NATIVE_AUTHORIZATION, 'utf8'));
+  assert.equal(a.executionAuthorized, true);
+  await verifyNativePlanningSource(source, a.sourceHead);
+  assert.equal(a.purpose, 'D07-native-planning');
+  assert.equal(a.oneBoot, true);
+  assert.equal(a.deliberateColdRestart, true);
+  for (const name of helpers)
+    assert.equal(
+      digest(await readFile(path.join(source, name))),
+      a.driverHashes[name],
+      `Unapproved helper: ${name}`,
+    );
+  return a;
+}
+
+export function retainedPlanningRows(result) {
+  assert.equal(result.integrity, 'ok');
+  const rows = Object.fromEntries(
+    Object.entries(persistedQueries).map(([name, id]) => {
+      const matches = result.rows.filter((row) => row.id === id);
+      assert.equal(matches.length, 1, `Actual UI did not persist ${id}`);
+      assert(matches[0].observedAt > 0 && matches[0].bytes > 0);
+      return [name, matches[0]];
+    }),
+  );
+  for (const method of [
+    'backlog.list',
+    'dispatch.queue.list',
+    'workGraph.list',
+    'roadmap.list',
+    'config.projects',
+  ]) {
+    const cohort = result.rows.filter((row) => row.id.startsWith(`${method}:`));
+    assert(
+      cohort.reduce((sum, row) => sum + row.bytes, 0) <= 2 * 1024 * 1024,
+      `${method} aggregate exceeds 2MiB`,
+    );
+  }
+  for (const method of observedMemoryMethods)
+    assert(
+      !result.rows.some((row) => row.id.startsWith(`${method}:`)),
+      `Observed memory-only ${method} was persisted`,
+    );
+  return rows;
+}
+
+function assertExpectedPlanningValues(plan, retained) {
+  assert(
+    retained.backlog.data.items.some(
+      (item) =>
+        item.id === plan.expected.backlog.id &&
+        item.title === plan.expected.backlog.after &&
+        item.status === 'candidate',
+    ),
+  );
+  assert(
+    retained.roadmap.data.items.some(
+      (item) => item.id === plan.expected.roadmap.id && item.title === plan.expected.roadmap.after,
+    ),
+  );
+  assert(retained.projects.data.projects.some((project) => project.name === plan.addedProject));
+  assert(
+    retained.queue.data.items.some(
+      (item) =>
+        item.id === plan.expected.queue.id && item.priority === plan.expected.queue.afterPriority,
+    ),
+  );
+  assert(
+    retained.graph.data.graphs.some(
+      ({ graph }) =>
+        graph.id === plan.expected.graph.id &&
+        graph.title === plan.expected.graph.title &&
+        graph.status === plan.expected.graph.afterStatus,
+    ),
+  );
+}
+
+/** Current reads may include server defaults absent from the earlier retained representation. */
+export function assertRecoveredPlanningRows(plan, warm, recovery, coldStartedAt, priorWire, wire) {
+  assert(coldStartedAt > warm.state.startedAt, 'Require an actual cold runtime');
+  assert.equal(recovery.state.startedAt, coldStartedAt, 'Recovery cannot relaunch the app');
+  assert.equal(recovery.state.connectionProfileId, warm.state.connectionProfileId);
+  assert.equal(recovery.state.workspaceKey, warm.state.workspaceKey);
+  assert.equal(recovery.state.online, true);
+  assert.equal(wire.startId, priorWire.startId, 'Recovery proxy changed');
+  const retained = retainedPlanningRows(warm.result);
+  const recovered = retainedPlanningRows(recovery.result);
+  assertPlanningReadsFromRuntime(
+    recovery.state,
+    wire,
+    Object.values(persistedQueries).map((id) => id.slice(0, id.indexOf(':'))),
+  );
+  const epochs = new Set();
+  for (const [kind, row] of Object.entries(recovered)) {
+    const method = row.id.slice(0, row.id.indexOf(':'));
+    const previous = priorWire.lastObservedReads?.[method];
+    const current = wire.lastObservedReads?.[method];
+    assert(typeof previous?.resourceState?.epoch === 'string' && previous.resourceState.epoch);
+    assert(typeof current?.resourceState?.epoch === 'string' && current.resourceState.epoch);
+    assert.notEqual(
+      current.resourceState.epoch,
+      previous.resourceState.epoch,
+      'Require a new gateway epoch',
+    );
+    assert((priorWire.successfulReads?.[method] ?? 0) > 0);
+    assert(
+      wire.successfulReads[method] > priorWire.successfulReads[method],
+      `Require an actual recovery read: ${method}`,
+    );
+    assert(row.observedAt >= retained[kind].observedAt && row.observedAt >= coldStartedAt);
+    assert.equal(
+      digest(JSON.stringify(row.data)),
+      current.payloadSha256,
+      `Recovered ${method} must match its actual current reply`,
+    );
+    epochs.add(current.resourceState.epoch);
+  }
+  assert.equal(epochs.size, 1, 'Recovered rows must belong to the same current gateway epoch');
+  assertExpectedPlanningValues(plan, recovered);
+  return recovered;
+}
+
+export async function waitForPlanningRecovery(
+  observe,
+  coldStartedAt,
+  clock = { now: Date.now, wait: delay },
+) {
+  // The parent allows 75s for gateway readiness; the client backs off up to 30s.
+  // Keep 15s for observation/transport overhead within the existing 480s recipe budget.
+  const deadline = clock.now() + 120000;
+  do {
+    const state = await observe();
+    assert.equal(state.startedAt, coldStartedAt, 'Recovery cannot relaunch the app');
+    assert(
+      clock.now() < deadline,
+      'Controller must recover its exact gateway without an app relaunch',
+    );
+    if (state.online) return state;
+    await clock.wait(250);
+  } while (clock.now() < deadline);
+  assert.fail('Controller must recover its exact gateway without an app relaunch');
+}
+
+export function assertRenderedPlanningAge(ocr, label) {
+  const text = ocr.text.map((entry) => entry.text).join(' ');
+  const prefix = `Saved ${label},`;
+  const index = text.indexOf(prefix);
+  assert(
+    index >= 0 && /^\s*\d+[smhd] old\./.test(text.slice(index + prefix.length)),
+    `The saved ${label} age must be readable in the paired screenshot`,
+  );
+  const caption = ocr.text.find((entry) => entry.text.startsWith(prefix));
+  assert(
+    caption?.maxContrast >= 4.5,
+    `The saved ${label} caption must have sufficient screenshot contrast`,
+  );
+}
+
+/** Bind the gesture to the native touch actually delivered to the rendered disabled control. */
+export function assertNativeBacklogReadyTouch(before, after, press) {
+  assert(Number.isFinite(press.runtimeStartedAt) && press.runtimeStartedAt > 0);
+  for (const key of ['connectionProfileId', 'workspaceKey'])
+    assert(typeof before[key] === 'string' && before[key].length > 0 && before[key] === press[key]);
+  for (const key of ['startedAt', 'connectionProfileId', 'workspaceKey'])
+    assert.equal(after[key], before[key], `Native touch changed app identity: ${key}`);
+  assert.equal(after.startedAt, press.runtimeStartedAt);
+  assert.equal(before.online, false);
+  assert.equal(after.online, false);
+  const baseline = Math.max(
+    0,
+    ...(before.backlogReadyTouches ?? []).map((touch) => touch.sequence),
+  );
+  const touches = (after.backlogReadyTouches ?? []).filter((touch) => touch.sequence > baseline);
+  assert.equal(
+    touches.length,
+    1,
+    'Require one fresh native touch on the actual Mark ready control',
+  );
+  const touch = touches[0];
+  assert(Number.isSafeInteger(touch.sequence) && touch.sequence > 0);
+  assert.equal(touch.kind, 'native-touch-start');
+  assert.equal(touch.testId, press.selector);
+  assert.equal(touch.itemId, press.itemId);
+  assert.equal(touch.disabled, true, 'The rendered action must be disabled when touched');
+  assert(Number.isFinite(touch.nativeTimestamp) && touch.nativeTimestamp > 0);
+  assert(Number.isFinite(touch.receivedAt));
+  assert(touch.receivedAt >= press.startedAt && touch.receivedAt <= press.completedAt);
+  assert(Number.isFinite(touch.pageX) && Number.isFinite(touch.pageY));
+  assert(Math.abs(touch.pageX - press.point.x) <= 1 && Math.abs(touch.pageY - press.point.y) <= 1);
+  const r = press.targetRect;
+  assert(touch.pageX >= r.x && touch.pageX <= r.x + r.width);
+  assert(touch.pageY >= r.y && touch.pageY <= r.y + r.height);
+  return touch;
+}
+
+export function assertObservedMemoryQueries(snapshot, wire, methods) {
+  for (const method of methods) {
+    const state = snapshot.domainObservations?.[method];
+    assert(
+      state && state.status === 'ready' && state.hasData && state.persisted === false,
+      `Actual canonical ${method} must be current; transport counts alone are insufficient`,
+    );
+    assert.equal(state.id, `${method}:{}`);
+    assert.deepEqual(
+      state.resourceState,
+      wire.lastObservedReads?.[method]?.resourceState,
+      `Canonical ${method} must cover its actual observed reply`,
+    );
+  }
+}
+
+/** Startup may legitimately read Backlog before the recipe begins; preboot probes cannot count. */
+export function assertPlanningReadsFromRuntime(snapshot, wire, methods) {
+  assert(Number.isFinite(snapshot.startedAt) && snapshot.startedAt > 0);
+  for (const method of methods) {
+    assert((wire.successfulReads?.[method] ?? 0) > 0, `Missing observed app read: ${method}`);
+    assert(
+      wire.lastObservedReads?.[method]?.completedAt >= snapshot.startedAt,
+      `A pre-app reply cannot prove current ${method}`,
+    );
+  }
+}
+
+/** A mounted change needs its owning revision, actual app read and persisted payload. */
+export function assertMountedPlanningChange(plan, kind, before, after, writer, priorWire, wire) {
+  assert(['graph', 'queue'].includes(kind));
+  const queryId = persistedQueries[kind];
+  const method = queryId.slice(0, queryId.indexOf(':'));
+  const collection = kind === 'graph' ? 'work-graphs' : 'dispatch-queue';
+  const rows = (snapshot) => snapshot.result.rows.filter((row) => row.id === queryId);
+  assert.equal(before.result.integrity, 'ok');
+  assert.equal(after.result.integrity, 'ok');
+  assert.equal(rows(before).length, 1);
+  assert.equal(rows(after).length, 1);
+  assert(
+    Number.isFinite(before.state.startedAt) && Number.isFinite(before.state.connectionGeneration),
+  );
+  assert(typeof before.state.workspaceKey === 'string' && before.state.workspaceKey.length);
+  assert(
+    typeof before.state.connectionProfileId === 'string' && before.state.connectionProfileId.length,
+  );
+  for (const key of ['startedAt', 'connectionGeneration', 'workspaceKey', 'connectionProfileId'])
+    assert.equal(
+      after.state[key],
+      before.state[key],
+      `Mounted writer changed app identity: ${key}`,
+    );
+  assert.equal(before.state.online, true);
+  assert.equal(after.state.online, true);
+  assert.equal(wire.startId, priorWire.startId);
+  assert.equal(writer.kind, kind);
+  assert.equal(writer.method, planningSourceMutation(plan, kind).method);
+  assert.equal(writer.sourceHead, plan.sourceHead);
+  assert.equal(writer.path, plan.files[kind].path);
+  assert.equal(writer.before, plan.files[kind].sha256);
+  assert(Number.isFinite(writer.requestedAt) && writer.requestedAt > 0);
+  assert((wire.successfulReads[method] ?? 0) > (priorWire.successfulReads[method] ?? 0));
+  const previous = priorWire.lastObservedReads[method];
+  const current = wire.lastObservedReads[method];
+  assert(previous?.completedAt >= before.state.startedAt, 'Before row requires an actual app read');
+  assert(
+    current?.completedAt >= writer.requestedAt,
+    'Mounted mutation requires a post-request read',
+  );
+  assert(typeof previous.resourceState.epoch === 'string' && previous.resourceState.epoch.length);
+  assert.equal(current.resourceState.epoch, previous.resourceState.epoch);
+  const revision = (read) =>
+    read.resourceState.dependencies.find(
+      ({ key }) => key.family === 'planning' && key.collection === collection,
+    )?.revision;
+  assert(
+    Number.isSafeInteger(revision(previous)) && revision(current) > revision(previous),
+    'The owning planning revision must advance',
+  );
+  assert.equal(digest(JSON.stringify(rows(before)[0].data)), previous.payloadSha256);
+  assert.equal(digest(JSON.stringify(rows(after)[0].data)), current.payloadSha256);
+  const expected = plan.expected[kind];
+  if (kind === 'graph') {
+    const original = rows(before)[0].data.graphs.find(
+      ({ graph }) => graph.id === expected.id,
+    )?.graph;
+    const updated = rows(after)[0].data.graphs.find(({ graph }) => graph.id === expected.id)?.graph;
+    assert.equal(original?.status, expected.beforeStatus);
+    assert.equal(updated?.status, expected.afterStatus);
+    assert.equal(updated?.title, expected.title);
+    assert.equal(updated?.project, plan.project);
+  } else {
+    const original = rows(before)[0].data.items.find((row) => row.id === expected.id);
+    const updated = rows(after)[0].data.items.find((row) => row.id === expected.id);
+    assert.equal(original?.priority, expected.priority);
+    assert.equal(updated?.priority, expected.afterPriority);
+    assert.equal(updated?.status, 'queued');
+    assert.equal(updated?.project, plan.project);
+  }
+}
+
+async function prove() {
+  const authorization = await authorizePlanningProof();
+  assert.equal(authorization.budgetCase, 'D07-GO-Boot-2');
+  assert.equal(authorization.reuseCuts?.disabledAction, 'accepted');
+  const plan = await resolveNativePlanningInputs(process.env, source);
+  const saved = JSON.parse(await readFile(process.env.FARMSLOT_D07_NATIVE_PLAN, 'utf8'));
+  assert.equal(plan.inputHash, saved.inputHash, 'No stale plan reuse');
+  const artifacts = await realpath(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR);
+  const attemptFile = path.join(artifacts, `d07-native-attempt-${plan.inputHash}.json`);
+  await exclusiveJson(attemptFile, {
+    status: 'consumed',
+    inputHash: plan.inputHash,
+    startedAt: Date.now(),
+  });
+  let samples = 0;
+  const save = (name, value) => exclusiveJson(path.join(artifacts, name), value);
+  try {
+    // Device, subprocess and SDK dependencies are runtime-only; check-import has no actions.
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execute = promisify(execFile);
+    const { createAgentDeviceClient } = await import('agent-device');
+    const { confirmSimulatorURLPrompt, waitForSimulatorRecipeBridge } =
+      await import('./simulator-dev-client.mjs');
+    const { prepareDevClient } = await import('./prepare-dev-client.mjs');
+    const simulator = process.env.IOS_SIMULATOR;
+    assert.equal(process.env.PLATFORM, 'ios');
+    assert(simulator && process.env.SCHEME && process.env.BUNDLE_ID);
+    const scheme = process.env.SCHEME;
+    const device = createAgentDeviceClient({
+      stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR,
+    });
+    const sessions = (await device.sessions.list()).filter(
+      (session) => session.device.id === simulator,
+    );
+    assert.equal(
+      sessions.length,
+      1,
+      'Attach the recipe-owned current session, never open another lease',
+    );
+    const selection = { session: sessions[0].name, platform: 'ios', target: 'mobile' };
+    const receipt = JSON.parse(
+      await readFile(path.join(process.env.FARMSLOT_NATIVE_STORE_PROXY_DIR, 'ready.json'), 'utf8'),
+    );
+    const counts = async () => {
+      const response = await fetch('http://127.0.0.1:7917/native-store-proof-counts', {
+        signal: AbortSignal.timeout(3000),
+      });
+      assert(response.ok);
+      const value = await response.json();
+      assert.equal(value.startId, receipt.startId);
+      assert(!value.failure && !value.stopped);
+      return value;
+    };
+    const observe = async () => {
+      const response = await fetch(
+        `http://127.0.0.1:${process.env.METRO_PORT}/farmslot-recipe/command`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            command: 'observeUi',
+            nodeId: 'd07-native-planning',
+            payload: { refs: ['runs-cache:snapshot'] },
+            timeout_ms: 3000,
+          }),
+          signal: AbortSignal.timeout(6000),
+        },
+      );
+      assert(response.ok, 'Bridge failure is terminal, not a retry/relaunch trigger');
+      const reply = await response.json();
+      assert(reply.ok && reply.observations?.runCollections);
+      const value = reply.observations.runCollections;
+      assert.equal(value.platform, 'ios');
+      await save(`d07-observe-${++samples}.json`, value);
+      return value;
+    };
+    const currentMemory = async (name, methods) => {
+      const deadline = Date.now() + 12000;
+      do {
+        const [snapshot, wire] = await Promise.all([observe(), counts()]);
+        for (const method of methods)
+          assert(
+            !snapshot.domainObservations?.[method]?.errorCode,
+            `Canonical ${method} read failed`,
+          );
+        if (methods.every((method) => snapshot.domainObservations?.[method]?.status === 'ready')) {
+          assertObservedMemoryQueries(snapshot, wire, methods);
+          await save(name, { snapshot, wire });
+          return;
+        }
+        await delay(80);
+      } while (Date.now() < deadline);
+      assert.fail(`Current canonical observations missing: ${methods.join(', ')}`);
+    };
+    const open = async (route) => {
+      await execute('xcrun', ['simctl', 'openurl', simulator, `${scheme}:///${route}`], {
+        timeout: 15000,
+      });
+      await confirmSimulatorURLPrompt(simulator);
+    };
+    const capture = async (name) => {
+      const screen = await device.capture.snapshot({
+        ...selection,
+        interactiveOnly: false,
+        forceFull: true,
+      });
+      await save(`${name}.snapshot.json`, screen);
+      await device.capture.screenshot({
+        ...selection,
+        path: path.join(artifacts, `${name}.png`),
+        stabilize: true,
+      });
+      return screen;
+    };
+    const has = (screen, label) => {
+      const viewport = screen.nodes.find(
+        (node) => ['Application', 'Window'].includes(node.type) && node.rect?.width > 0,
+      )?.rect;
+      return Boolean(
+        viewport &&
+        screen.nodes.some((node) => {
+          const r = node.rect;
+          return (
+            node.visibleToUser !== false &&
+            r?.width > 0 &&
+            r?.height > 0 &&
+            r.x >= viewport.x &&
+            r.y >= viewport.y &&
+            r.x + r.width <= viewport.x + viewport.width &&
+            r.y + r.height <= viewport.y + viewport.height &&
+            `${node.label ?? ''} ${node.value ?? ''}`.includes(label)
+          );
+        }),
+      );
+    };
+    const view = async (name, labels, forbidden = []) => {
+      for (let i = 0; i < 10; i++) {
+        const screen = await capture(`${name}-${i}`);
+        if (
+          labels.every((label) => has(screen, label)) &&
+          forbidden.every((label) => !has(screen, label))
+        )
+          return screen;
+        await delay(250);
+      }
+      assert.fail(`Mounted view failed ${name}; bounded 10 captures, no Refresh/relaunch`);
+    };
+    const sqlite = async (name) => {
+      const state = await observe();
+      assert.equal(state.diagnostics.integrity, 'ok');
+      const directory = await realpath(
+        state.diagnostics.directory.startsWith('file:')
+          ? fileURLToPath(state.diagnostics.directory)
+          : state.diagnostics.directory,
+      );
+      assert(directory.includes(`/CoreSimulator/Devices/${simulator}/`));
+      assert.equal(path.basename(state.diagnostics.filename), state.diagnostics.filename);
+      const scope = JSON.parse(state.workspaceKey).scope;
+      assert(typeof scope === 'string' && scope.length);
+      const program =
+        'import sqlite3,json,sys,pathlib; c=sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+"?mode=ro",uri=True); c.execute("PRAGMA query_only=ON"); rows=c.execute("SELECT q.id,q.observed_at,q.data,q.bytes FROM resource_queries q JOIN resource_stores s ON q.store_id=s.id WHERE s.scope_id=? ORDER BY q.id",(sys.argv[2],)).fetchall(); print(json.dumps({"integrity":c.execute("PRAGMA integrity_check").fetchone()[0],"rows":[dict(id=r[0],observedAt=r[1],data=json.loads(r[2]),bytes=r[3]) for r in rows]})); c.close()';
+      const { stdout } = await execute(
+        'python3',
+        ['-c', program, path.join(directory, state.diagnostics.filename), scope],
+        { timeout: 15000, maxBuffer: 16 * 1024 * 1024 },
+      );
+      const result = JSON.parse(stdout);
+      await save(`${name}.sqlite.json`, result);
+      return { state, result };
+    };
+    const unchangedCommands = (before, after) => {
+      assert.equal(after.startId, before.startId);
+      for (const method of forbiddenPlanningMethods)
+        assert.equal(
+          after.counts[method] ?? 0,
+          before.counts[method] ?? 0,
+          `No command/replay: ${method}`,
+        );
+    };
+    const mountedWriter = async (kind, beforeLabels, afterLabels) => {
+      await view(`${kind}-writer-before`, beforeLabels);
+      const before = await sqlite(`d07-${kind}-writer-before`);
+      const priorWire = await counts();
+      const writer = await writePlanningSource(plan, kind, artifacts);
+      await view(`${kind}-writer-after`, afterLabels);
+      const queryId = persistedQueries[kind];
+      const method = queryId.slice(0, queryId.indexOf(':'));
+      for (let i = 0; i < 10; i++) {
+        const after = await sqlite(`d07-${kind}-writer-after-${i}`);
+        const wire = await counts();
+        const data = after.result.rows.find((row) => row.id === queryId)?.data;
+        const updated =
+          kind === 'graph'
+            ? data?.graphs?.find(({ graph }) => graph.id === plan.expected.graph.id)?.graph
+                .status === plan.expected.graph.afterStatus
+            : data?.items?.find((row) => row.id === plan.expected.queue.id)?.priority ===
+              plan.expected.queue.afterPriority;
+        if (
+          updated &&
+          wire.lastObservedReads?.[method]?.payloadSha256 === digest(JSON.stringify(data))
+        ) {
+          assertMountedPlanningChange(plan, kind, before, after, writer, priorWire, wire);
+          await save(`d07-${kind}-mounted-writer.json`, { before, after, writer, priorWire, wire });
+          return;
+        }
+        await delay(80);
+      }
+      assert.fail(`Mounted ${kind} change was not persisted from its observed reply`);
+    };
+    async function untilNative(read, accepts, label) {
+      const deadline = Date.now() + 15000;
+      do {
+        const value = await read();
+        if (accepts(value)) return value;
+        await delay(100);
+      } while (Date.now() < deadline);
+      assert.fail(label);
+    }
+    async function settledCounts() {
+      let previous;
+      let since = Date.now();
+      return untilNative(
+        counts,
+        (value) => {
+          const signature = JSON.stringify(value.counts);
+          if (signature !== previous) since = Date.now();
+          previous = signature;
+          return Date.now() - since >= 400;
+        },
+        'Actual app read counts must settle before the input',
+      );
+    }
+    async function pullWithoutRefresh(name, method) {
+      const screen = await capture(name + '-before');
+      const scroll = screen.nodes
+        .filter((node) => node.type === 'ScrollView' && node.rect?.height > 120)
+        .sort((a, b) => b.rect.height - a.rect.height)[0];
+      assert(scroll, 'Require the current native list scroll view');
+      const before = await settledCounts();
+      const gesture = nativeScrollViewGesture(
+        {
+          ...screen,
+          nodes: screen.nodes.filter(
+            (node) => node.type !== 'ScrollView' || node.index === scroll.index,
+          ),
+        },
+        'up',
+      );
+      await save(name + '-gesture.json', gesture);
+      await device.interactions.swipe({ ...selection, ...gesture });
+      const deadline = Date.now() + 650;
+      do {
+        assert.equal(
+          (await counts()).counts[method],
+          before.counts[method],
+          'Healthy pull must not force a query read',
+        );
+        await delay(80);
+      } while (Date.now() < deadline);
+      await capture(name + '-after');
+      await save(name + '-counts.json', { before, after: await counts() });
+    }
+    async function finalErrorRetry(kind, method, label, healthyLabel) {
+      const configFile = await realpath(process.env.FARMSLOT_D07_INTEGRATION_CONFIG);
+      assert.equal(digest(await readFile(configFile)), authorization.configSha256);
+      const helper = path.join(path.dirname(configFile), 'source-runtime.mjs');
+      assert.equal(
+        digest(await readFile(helper)),
+        authorization.driverHashes['source-runtime.mjs'],
+      );
+      const write = async (action) => {
+        const result = await execute(
+          process.execPath,
+          ['--import', 'tsx', helper, `integration-write:${action}`, configFile],
+          { cwd: source, env: process.env, timeout: 30000, maxBuffer: 8 * 1024 * 1024 },
+        );
+        const receipt = JSON.parse(result.stdout);
+        await save(`d07-final-${action}.json`, receipt);
+        return receipt;
+      };
+      await write(kind + '-error');
+      const failed = await untilNative(
+        observe,
+        (state) =>
+          !!state.domainObservations[method]?.errorCode &&
+          (kind !== 'pr' || !!state.domainObservations['prPush.list']?.errorCode),
+        'Real source errors must reach the final controls',
+      );
+      const screen = await view(kind + '-final-error', [healthyLabel, label]);
+      const targets = screen.nodes.filter(
+        (node) => node.type === 'Button' && node.label === label && node.enabled !== false,
+      );
+      assert.equal(
+        targets.length,
+        1,
+        'Actual error-only Retry must be enabled on a live transport',
+      );
+      const target = targets[0];
+      assert.equal(
+        target.identifier,
+        kind === 'pr' ? 'companion-pr-retry' : 'companion-copilot-retry',
+      );
+      const viewport = screen.nodes.find(
+        (node) => ['Application', 'Window'].includes(node.type) && node.rect?.height > 0,
+      )?.rect;
+      assert(
+        viewport &&
+          target.rect.x >= viewport.x &&
+          target.rect.y >= viewport.y &&
+          target.rect.x + target.rect.width <= viewport.x + viewport.width &&
+          target.rect.y + target.rect.height <= viewport.y + viewport.height,
+        'Require the actual Retry control fully inside the current native viewport',
+      );
+      const before = await settledCounts();
+      const point = {
+        x: target.rect.x + target.rect.width / 2,
+        y: target.rect.y + target.rect.height / 2,
+      };
+      const press = { target, point, startedAt: Date.now() };
+      press.result = await device.interactions.press({ ...selection, ...point });
+      press.completedAt = Date.now();
+      await save(kind + '-final-retry-press.json', press);
+      const retried = await untilNative(
+        counts,
+        (value) => value.counts[method] > before.counts[method],
+        'Actual Retry must request its failed source',
+      );
+      if (kind === 'pr')
+        for (const healthy of ['prWatch.list', 'dispatch.queue.list', 'config.projects'])
+          assert.equal(
+            retried.counts[healthy],
+            before.counts[healthy],
+            'Error Retry must leave healthy queries alone',
+          );
+      await write(kind + '-repair');
+      const recovered = await untilNative(
+        observe,
+        (state) =>
+          state.domainObservations[method]?.status === 'ready' &&
+          !state.domainObservations[method]?.errorCode,
+        'Final error control must recover after the owning repair',
+      );
+      await view(kind + '-final-recovered', [healthyLabel], [label]);
+      await save(kind + '-final-error-retry.json', { failed, before, retried, recovered });
+    }
+    await waitForSimulatorRecipeBridge({ platform: 'ios', simulator });
+    const initial = await counts();
+    for (const method of forbiddenPlanningMethods)
+      assert.equal(initial.counts[method] ?? 0, 0, `No command during app bootstrap: ${method}`);
+    await open('backlog');
+    const beforeBacklog = await view('backlog-before', [
+      plan.expected.backlog.before,
+      'Mark ready',
+      'Work graphs',
+      'Dispatch queue',
+    ]);
+    const selector = `companion-backlog-${plan.expected.backlog.id}-ready`;
+    assert.equal(beforeBacklog.nodes.find((node) => node.identifier === selector)?.enabled, true);
+    await writePlanningSource(plan, 'backlog', artifacts);
+    await view('backlog-after', [plan.expected.backlog.after], [plan.expected.backlog.before]);
+    await pullWithoutRefresh('backlog-healthy-pull', 'backlog.list');
+    await open(`backlog/${plan.expected.backlog.id}`);
+    await view(
+      'backlog-detail-final',
+      [plan.expected.backlog.after, 'Dispatch configuration'],
+      ['Refresh'],
+    );
+    await open('roadmap');
+    await view('roadmap-before', [plan.expected.roadmap.before]);
+    await writePlanningSource(plan, 'roadmap', artifacts);
+    await view('roadmap-after', [plan.expected.roadmap.after], [plan.expected.roadmap.before]);
+    await pullWithoutRefresh('roadmap-healthy-pull', 'roadmap.list');
+    await open('backlog/create');
+    await view('projects-before', [plan.project]);
+    await writePlanningSource(plan, 'newProject', artifacts);
+    await view('projects-after', [plan.addedProject]);
+    await open('work-graphs');
+    await mountedWriter(
+      'graph',
+      [plan.expected.graph.title, plan.expected.graph.beforeStatus],
+      [plan.expected.graph.title, plan.expected.graph.afterStatus],
+    );
+    await open('dispatch-queue');
+    await mountedWriter(
+      'queue',
+      [plan.expected.queue.label, `Priority ${plan.expected.queue.priority}`],
+      [plan.expected.queue.label, `Priority ${plan.expected.queue.afterPriority}`],
+    );
+    await open('pr-automation');
+    const prScreen = await view(
+      'pr-read-only',
+      ['PR monitoring and reviews', 'Monitors'],
+      ['Reconnect to the gateway', 'Refresh queue', 'Retry queue'],
+    );
+    assert(
+      !prScreen.nodes.some((node) => node.identifier === 'companion-pr-error'),
+      'A PR read error cannot count as proof',
+    );
+    await currentMemory('d07-pr-canonical-readiness.json', [
+      'prWatch.list',
+      'prRules.list',
+      'prPush.list',
+    ]);
+    await finalErrorRetry('pr', 'prRules.list', 'Retry queue', 'PR monitoring and reviews');
+    await open('copilot');
+    await view(
+      'copilot-read-only',
+      ['Operator Co-Pilot', 'Co-Pilot is stopped'],
+      ['Refresh status', 'Retry status'],
+    );
+    await currentMemory('d07-copilot-canonical-readiness.json', ['copilot.status']);
+    await finalErrorRetry('copilot', 'copilot.status', 'Retry status', 'Co-Pilot is stopped');
+    const beforeBackground = await observe();
+    const backgroundStartedAt = Date.now();
+    await execute('xcrun', ['simctl', 'launch', simulator, 'com.apple.Preferences'], {
+      timeout: 15000,
+    });
+    const background = await untilNative(
+      observe,
+      (state) => !state.online && state.appStateHistory.at(-1)?.state === 'background',
+      'Wait for the actual background lifecycle state',
+    );
+    assert.equal((await counts()).connections, 0);
+    await execute(
+      'xcrun',
+      [
+        'simctl',
+        'io',
+        simulator,
+        'screenshot',
+        path.join(artifacts, 'final-actual-background.png'),
+      ],
+      { timeout: 15000 },
+    );
+    await open('backlog');
+    const foreground = await untilNative(
+      observe,
+      (state) => state.online && state.appStateHistory.at(-1)?.state === 'active',
+      'The same process must resume from actual background',
+    );
+    for (const key of ['startedAt', 'workspaceKey', 'connectionProfileId'])
+      assert.equal(foreground[key], beforeBackground[key]);
+    assert(foreground.connectionGeneration > beforeBackground.connectionGeneration);
+    await untilNative(
+      observe,
+      (state) => state.backlogObservation?.status === 'ready',
+      'Foreground Backlog must complete a current read',
+    );
+    await view('final-background-recovered', [plan.expected.backlog.after], ['Saved backlog,']);
+    assert((await counts()).lastObservedReads['backlog.list'].completedAt >= backgroundStartedAt);
+    await save('d07-final-native-background.json', {
+      beforeBackground,
+      backgroundStartedAt,
+      background,
+      foreground,
+      counts: await counts(),
+    });
+    const warmCounts = await counts();
+    const warm = await sqlite('d07-warm');
+    assertPlanningReadsFromRuntime(warm.state, warmCounts, [
+      ...observedMemoryMethods,
+      'dispatch.queue.list',
+      'config.projects',
+      'backlog.list',
+      'roadmap.list',
+      'workGraph.list',
+    ]);
+    unchangedCommands(initial, warmCounts);
+    const retained = retainedPlanningRows(warm.result);
+    for (const row of Object.values(retained)) {
+      const method = row.id.slice(0, row.id.indexOf(':'));
+      assert.equal(
+        digest(JSON.stringify(row.data)),
+        warmCounts.lastObservedReads[method]?.payloadSha256,
+        `Stored ${method} must match the actual app's successful observed reply`,
+      );
+    }
+    assertExpectedPlanningValues(plan, retained);
+    await save('d07-observed-methods.json', {
+      methods: observedMemoryMethods,
+      counts: warmCounts,
+      persistedRowsCheckedOnlyForActuallyObservedMethods: true,
+    });
+    const outage = path.join(process.env.FARMSLOT_NATIVE_STORE_PROXY_DIR, 'outage.json');
+    // The external controller owns marker acquisition, service births/signals and restart.
+    // These are checkpoints, not fabricated liveness or permission receipts.
+    await save('d07-ready-for-outage.json', {
+      startId: receipt.startId,
+      inputHash: plan.inputHash,
+      warmStartedAt: warm.state.startedAt,
+    });
+    let actuallyOffline = false;
+    for (let i = 0; i < 10; i++) {
+      let marker;
+      try {
+        marker = JSON.parse(await readFile(outage, 'utf8'));
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (marker) {
+        assert.equal(marker.startId, receipt.startId);
+        assert.equal(marker.inputHash, plan.inputHash);
+        const current = await observe();
+        if (!current.online) {
+          actuallyOffline = true;
+          break;
+        }
+      }
+      await delay(250);
+    }
+    assert(actuallyOffline, 'Controller must perform a proved-owned outage before restart');
+    let coldStartedAt;
+    {
+      await prepareDevClient('ios', simulator, process.env.BUNDLE_ID); // exactly one deliberate restart
+      await waitForSimulatorRecipeBridge({ platform: 'ios', simulator });
+      await open('backlog');
+      let screen = await view('backlog-cold', [plan.expected.backlog.after, 'Saved backlog,']);
+      const cold = await sqlite('d07-cold-backlog');
+      assert(
+        cold.state.startedAt > warm.state.startedAt,
+        'A genuinely new JS runtime must load saved rows',
+      );
+      assert.equal(cold.state.online, false);
+      assert.equal(cold.state.connectionProfileId, warm.state.connectionProfileId);
+      assert.equal(cold.state.workspaceKey, warm.state.workspaceKey);
+      coldStartedAt = cold.state.startedAt;
+      const afterRestart = retainedPlanningRows(cold.result);
+      assert.deepEqual(
+        afterRestart,
+        retained,
+        'Exact IDs, complete saved data, bytes and original observedAt must survive restart',
+      );
+      const target = screen.nodes.find((node) => node.identifier === selector);
+      assert(target && target.enabled === false, 'Actual stale Mark ready must be AX-disabled');
+      // Capture the actual target and its exact paired image immediately before the press.
+      screen = await capture('d07-disabled-pair');
+      const imageFile = path.join(artifacts, 'd07-disabled-pair.png');
+      const ocr = JSON.parse(
+        (
+          await execute(
+            'osascript',
+            [
+              '-l',
+              'JavaScript',
+              path.join(source, 'apps/companion/scripts/agentic/recognize-simulator-prompt.jxa'),
+              imageFile,
+            ],
+            { timeout: 30000 },
+          )
+        ).stdout,
+      );
+      const point = renderedNativeDisabledTarget(screen, ocr, selector, 'Mark ready');
+      assert(has(screen, 'Saved backlog,'));
+      const pairedTarget = screen.nodes.find((node) => node.identifier === selector);
+      const press = {
+        inputHash: plan.inputHash,
+        screenshotSha256: digest(await readFile(imageFile)),
+        point,
+        selector,
+        itemId: plan.expected.backlog.id,
+        runtimeStartedAt: coldStartedAt,
+        connectionProfileId: cold.state.connectionProfileId,
+        workspaceKey: cold.state.workspaceKey,
+        targetRect: pairedTarget.rect,
+        ocr,
+        pairedImageAuditRequired: true,
+      };
+      await save('d07-disabled-target-state.json', {
+        ...press,
+        actualPressPerformed: false,
+        acceptedReuseAuthority: authorization.authoritySha256,
+        acceptedReference: 'D06 disabled-action/no-replay and boot30 disabled AX/OCR',
+      });
+      unchangedCommands(initial, await counts());
+      await open('roadmap');
+      await view('roadmap-cold', [plan.expected.roadmap.after, 'Saved roadmap,']);
+      await open('backlog/create');
+      await view('projects-cold', [plan.addedProject]);
+      // Existing form's Saved projects caption is below its sections. Bounded observed-viewport navigation.
+      let previous;
+      let ageVisible = false;
+      for (let i = 0; i < 6; i++) {
+        const current = await capture(`projects-cold-age-${i}`);
+        if (has(current, 'Saved projects,')) {
+          const imageFile = path.join(artifacts, `projects-cold-age-${i}.png`);
+          const ocr = JSON.parse(
+            (
+              await execute(
+                'osascript',
+                [
+                  '-l',
+                  'JavaScript',
+                  path.join(
+                    source,
+                    'apps/companion/scripts/agentic/recognize-simulator-prompt.jxa',
+                  ),
+                  imageFile,
+                  'projects',
+                ],
+                { timeout: 30000 },
+              )
+            ).stdout,
+          );
+          await save('d07-projects-age-ocr.json', ocr);
+          assertRenderedPlanningAge(ocr, 'projects');
+          ageVisible = true;
+          break;
+        }
+        const content = JSON.stringify(
+          current.nodes
+            .filter((node) => node.visibleToUser !== false)
+            .map(({ label, rect }) => ({ label, rect })),
+        );
+        assert.notEqual(content, previous, 'No progress during saved-age navigation');
+        previous = content;
+        const gesture = nativeScrollViewGesture(current, 'down');
+        await save(`projects-cold-age-${i}.gesture.json`, gesture);
+        await device.interactions.swipe({ ...selection, ...gesture });
+      }
+      assert(ageVisible, 'Current product must visibly render saved projects age');
+      await open('work-graphs');
+      await view('work-graphs-cold', [
+        plan.expected.graph.title,
+        plan.expected.graph.afterStatus,
+        'Saved work graphs,',
+      ]);
+      await open('dispatch-queue');
+      await view('dispatch-queue-cold', [
+        plan.expected.queue.label,
+        `Priority ${plan.expected.queue.afterPriority}`,
+        'Saved dispatch queue,',
+      ]);
+      const finalCold = await sqlite('d07-cold-final');
+      assert.deepEqual(retainedPlanningRows(finalCold.result), retained);
+      assert.equal(finalCold.state.startedAt, coldStartedAt);
+      unchangedCommands(warmCounts, await counts());
+    }
+    await save('d07-ready-for-recovery.json', {
+      startId: receipt.startId,
+      inputHash: plan.inputHash,
+      coldStartedAt,
+    });
+    await waitForPlanningRecovery(observe, coldStartedAt);
+    // The parent controller keeps the same passive proxy and exact owned outage marker until recovery.
+    await open('backlog');
+    await view(
+      'backlog-recovered',
+      [plan.expected.backlog.after, 'Mark ready'],
+      ['Saved backlog,'],
+    );
+    const recovery = await sqlite('d07-recovery');
+    const commandsAfter = await counts();
+    assertRecoveredPlanningRows(plan, warm, recovery, coldStartedAt, warmCounts, commandsAfter);
+    unchangedCommands(warmCounts, commandsAfter);
+    await delay(1500);
+    unchangedCommands(commandsAfter, await counts());
+    await save('d07-proof-result.json', {
+      status: 'pass',
+      inputHash: plan.inputHash,
+      observedMemoryMethods,
+      workGraphNativeUi: 'warm-and-cold',
+      queueColdUi: 'warm-and-cold',
+      disabledActionProof: 'accepted D06/boot30 reuse; current AX/OCR and command checks retained',
+      healthyControlsRemoved: true,
+      nativeBackground: true,
+      coldStartedAt,
+    });
+    process.stdout.write(
+      `${JSON.stringify({ d07ExternalMountedChanges: true, d07ColdExactRows: true, d07VisibleSavedAge: true, d07DisabledStateNoReplay: true, d07MemoryOnlyObservedQueries: true, d07HealthyControlsRemoved: true, d07NativeBackground: true })}\n`,
+    );
+  } catch (error) {
+    await save('d07-first-failure.json', {
+      name: error.name,
+      message: error.message,
+      at: Date.now(),
+    });
+    throw error; // No retry, relaunch, fixture rehash or source repair after consumption.
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const phase = process.argv[2];
+  if (phase === 'check-import')
+    process.stdout.write('D07_IMPORT_ONLY_PASS zero session/device/service calls\n');
+  else if (phase === 'dry-preflight')
+    process.stdout.write(
+      `${JSON.stringify(await resolveNativePlanningInputs(process.env, source), null, 2)}\n`,
+    );
+  else if (phase === 'prove') await prove();
+  else throw new Error('Use check-import, dry-preflight or prove. None may bootstrap a device.');
+}

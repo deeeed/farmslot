@@ -275,10 +275,29 @@ export interface RunListParams {
   includeFamilySummaries?: boolean;
   /** Include page-scoped, metadata-only per-project analytics summaries for the returned runs. */
   includeProjectAnalytics?: boolean;
+  /**
+   * Version list: every live run's `{ id, version }`, plus totals and summaries, ignoring every
+   * filter, `limit`, `sort` and `ids`. Archived runs are excluded. Summary flags still apply,
+   * computed over every live run.
+   */
+  versions?: true;
+  /**
+   * Catch-up page: these runs' rows in the order asked, skipping ids with no live run, up to 2 MB
+   * of UTF-8 JSON. The first row is always served. Other filters, `limit` and `sort` are ignored.
+   */
+  ids?: string[];
+}
+
+/** A live run's opaque row version: unchanged while its served row is unchanged, across restarts. */
+export interface RunListVersion {
+  id: string;
+  version: string;
 }
 
 export interface RunListResult {
+  /** `[]` in a versions reply. */
   runs: Run[];
+  /** Matching runs before `limit`. Versions reply: every live run. Ids page: the rows it served. */
   totalCount: number;
   /** Summary metadata is present only when a summary flag was requested. */
   summaryMeta?: RunListSummaryMeta;
@@ -286,6 +305,11 @@ export interface RunListResult {
   familySummaries?: RunFamilyReadinessSummary[];
   /** Page-scoped project analytics for the returned runs; absent unless includeProjectAnalytics is true. */
   projectAnalytics?: RunProjectAnalyticsSummary[];
+  /**
+   * Versions reply: every live run, in the gateway's base order, which sort ties follow. That order
+   * can change across a gateway restart. Ids page: the version of each row it served, in `runs` order.
+   */
+  versions?: RunListVersion[];
 }
 
 export interface SlotRunHistoryParams {

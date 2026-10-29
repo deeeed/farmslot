@@ -1,11 +1,40 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { Methods } from '@farmslot/protocol';
 import { FleetRefreshViewModel } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
-import { getState } from '../../state.js';
+import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
+import { fleetQuery, getState, requireCurrentFleet } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+
+/** Inspection rereads the shared fleet observation; release and cancel stay explicit commands. */
+async function fleetRefreshRequest<T>(
+  method: string,
+  params?: unknown,
+  timeout?: number,
+): Promise<T> {
+  if (method === Methods.FLEET_STATUS) {
+    const cache = getResourceCache();
+    const owner = getResourceWorkspaceKey();
+    if (!cache) throw new Error('Offline fleet store is unavailable');
+    const state = await cache.retry(fleetQuery);
+    if (cache !== getResourceCache() || owner !== getResourceWorkspaceKey())
+      throw new Error('Farm connection changed; inspect again');
+    if (state.status !== 'ready' || !state.data)
+      throw new Error(state.error?.message ?? 'Wait for a current fleet read before acting.');
+    return state.data as T;
+  }
+  if (method === Methods.FLEET_REFRESH_SLOTS_CANCEL)
+    return gateway.request<T>(Methods.FLEET_REFRESH_SLOTS_CANCEL, params, timeout);
+  requireCurrentFleet();
+  if (method === Methods.SLOT_REFRESH)
+    return gateway.request<T>(Methods.SLOT_REFRESH, params, timeout);
+  if (method === Methods.FLEET_REFRESH_SLOTS)
+    return gateway.request<T>(Methods.FLEET_REFRESH_SLOTS, params, timeout);
+  throw new Error(`Fleet release does not send ${method}`);
+}
 
 @customElement('fleet-refresh-modal')
 export class FleetRefreshModal extends LitElement {
@@ -126,8 +155,7 @@ export class FleetRefreshModal extends LitElement {
             gateway.credentialGeneration,
             gateway.authenticatedPrincipalId,
           ]),
-        request: <T>(method: string, params?: unknown, timeout?: number) =>
-          gateway.request<T>(method, params, timeout),
+        request: fleetRefreshRequest,
         subscribe: (event, callback) => gateway.subscribe(event, callback),
       },
       () => `fleet-refresh-${crypto.randomUUID()}`,

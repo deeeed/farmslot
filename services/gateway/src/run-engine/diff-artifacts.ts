@@ -12,6 +12,7 @@ import {
   type FamilyDiffProvenance,
   type FamilyInputCommitMetadata,
   isFamilyDiffProvenance,
+  reviewDiffHash,
   type ReviewDiffSnapshot,
   type Run,
 } from '@farmslot/protocol';
@@ -26,7 +27,6 @@ import {
 } from '../core/config.js';
 import { diffKindForFlow } from '../core/diff-kind.js';
 import { execOnSlot } from '../core/exec.js';
-import { reviewDiffHash } from '../core/review-diff-identity.js';
 import {
   buildSourceDiffFilter,
   isSourceCodePath,

@@ -1,4 +1,4 @@
-import { type EvidenceReviewModel, runEvidencePending } from '@farmslot/adapter-sdk/evidence';
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   CiCheckUpdatedPayload,
@@ -27,18 +27,6 @@ import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
 
 import { collectRunEvidenceArtifacts } from './run-utils.js';
-
-type RunEvidenceState = Pick<Run, 'id' | 'status' | 'artifactBundle' | 'output'>;
-
-/** The run just retained its evidence: what the page read while it was pending is stale. */
-export function runEvidenceSettled(
-  previous: RunEvidenceState | null | undefined,
-  next: RunEvidenceState,
-): boolean {
-  return Boolean(
-    previous?.id === next.id && runEvidencePending(previous) && !runEvidencePending(next),
-  );
-}
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -683,34 +671,6 @@ export function persistedCiStatusFromRun(run: Run): CiCheckUpdatedPayload | null
   };
 }
 
-export function currentRunCiStatus(
-  run: Run,
-  liveStatus: CiCheckUpdatedPayload | null,
-): CiCheckUpdatedPayload | null {
-  const persisted = persistedCiStatusFromRun(run);
-  if (!liveStatus) return persisted;
-  if (!persisted) return liveStatus;
-  return {
-    ...persisted,
-    ...liveStatus,
-    phase: persisted.phase ?? liveStatus.phase,
-    fixInProgress: persisted.fixInProgress ?? liveStatus.fixInProgress,
-    fixTrigger: persisted.fixTrigger !== undefined ? persisted.fixTrigger : liveStatus.fixTrigger,
-    fixProgress: persisted.fixProgress ?? liveStatus.fixProgress,
-    activeTaskFile:
-      persisted.activeTaskFile !== undefined ? persisted.activeTaskFile : liveStatus.activeTaskFile,
-    nextPollAt: persisted.nextPollAt !== undefined ? persisted.nextPollAt : liveStatus.nextPollAt,
-    lastSignalAt:
-      persisted.lastSignalAt !== undefined ? persisted.lastSignalAt : liveStatus.lastSignalAt,
-    dedupReason:
-      persisted.dedupReason !== undefined ? persisted.dedupReason : liveStatus.dedupReason,
-    lastFixCommitSha:
-      persisted.lastFixCommitSha !== undefined
-        ? persisted.lastFixCommitSha
-        : liveStatus.lastFixCommitSha,
-  };
-}
-
 /**
  * `run.list` leaves large decision payload values out and names them in
  * `payloadTrimmed`, and omits the output manifest. The run page gets both
@@ -720,84 +680,6 @@ export function runHasTrimmedDetail(run: Pick<Run, 'decisions' | 'output'>): boo
   return (
     Boolean(run.output?.artifactManifestOmitted) ||
     (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0)
-  );
-}
-
-/**
- * The shared (list) run drives status and steps; each trimmed decision takes
- * its payload from the direct copy of the same decision when one is present.
- */
-export function mergeTrimmedRunDetail(shared: Run, direct: Run | null): Run {
-  if (!direct || direct.id !== shared.id || !runHasTrimmedDetail(shared)) return shared;
-  const directById = new Map(direct.decisions.map((decision) => [decision.id, decision]));
-  return {
-    ...shared,
-    output:
-      shared.output?.artifactManifestOmitted &&
-      direct.output &&
-      !direct.output.artifactManifestOmitted &&
-      shared.output.manifestDigest === direct.output.manifestDigest
-        ? {
-            ...shared.output,
-            artifactManifest: direct.output.artifactManifest,
-            artifactManifestOmitted: false,
-          }
-        : shared.output,
-    decisions: shared.decisions.map((decision) => {
-      if (!decision.payloadTrimmed?.length) return decision;
-      const full = directById.get(decision.id);
-      if (!full) return decision;
-      const { payloadTrimmed: _trimmed, ...rest } = decision;
-      const contextRestored =
-        _trimmed.includes('context.checkSnapshot') && full.context?.checkSnapshot !== undefined;
-      const remaining = _trimmed.filter((key) =>
-        key === 'context.checkSnapshot' ? !contextRestored : !full.payload,
-      );
-      return {
-        ...rest,
-        ...(full.payload ? { payload: full.payload } : {}),
-        ...(contextRestored
-          ? { context: { ...rest.context, checkSnapshot: full.context!.checkSnapshot } }
-          : {}),
-        ...(remaining.length ? { payloadTrimmed: remaining } : {}),
-      };
-    }),
-  };
-}
-
-/** How long the run page waits before retrying a failed direct fetch of a trimmed row. */
-export const TRIMMED_RUN_FETCH_RETRY_MS = 5_000;
-
-/**
- * Whether the run page should fetch the full run behind a trimmed list row:
- * no direct copy yet, or the row moved past the copy. A failed fetch is
- * retried after TRIMMED_RUN_FETCH_RETRY_MS instead of pausing the page for
- * good; an in-flight fetch is never doubled.
- */
-export function shouldFetchTrimmedRun(params: {
-  sharedRun: Pick<Run, 'decisions' | 'output' | 'updatedAt'> | null;
-  directRun: Pick<Run, 'updatedAt'> | null;
-  refreshing: boolean;
-  failedAt: number | null;
-  now: number;
-}): boolean {
-  if (!params.sharedRun || params.refreshing) return false;
-  if (!runHasTrimmedDetail(params.sharedRun)) return false;
-  if (params.failedAt !== null && params.now - params.failedAt < TRIMMED_RUN_FETCH_RETRY_MS) {
-    return false;
-  }
-  return !params.directRun || params.directRun.updatedAt < params.sharedRun.updatedAt;
-}
-
-/** A failed bulk run list does not invalidate a direct snapshot from this connection. */
-export function runBootstrapBlocksActions(
-  bootstrapFailed: boolean,
-  runId: string,
-  verified: { runId: string; connectionEpoch: number } | null,
-  connectionEpoch: number,
-): boolean {
-  return (
-    bootstrapFailed && (verified?.runId !== runId || verified.connectionEpoch !== connectionEpoch)
   );
 }
 

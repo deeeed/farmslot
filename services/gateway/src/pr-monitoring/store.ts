@@ -15,6 +15,8 @@ import {
 } from '@farmslot/protocol';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { publishPRAutomationResources } from '../resources/pr-automation-changes.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import {
   matchesPrincipalOwner,
   principalOwnerGeneration,
@@ -632,6 +634,9 @@ export class PRMonitorStore {
       decodeMonitorStore(draft);
       await writeAtomicJSON(this.file, draft);
       this.data = draft;
+      publishPRAutomationResources();
+      // Retrospective inbox and family projections consume the current observations/incidents.
+      resourceRevisions.advance({ family: 'decisions', scope: 'farm' });
       return structuredClone(result);
     };
     // The failed transaction rejects to its caller and leaves memory unchanged.

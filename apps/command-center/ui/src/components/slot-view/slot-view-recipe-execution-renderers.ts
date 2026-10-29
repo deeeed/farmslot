@@ -101,6 +101,13 @@ export function renderRecipeExecutionOverlay(
                   </div>
                   <recipe-output-panel
                     id="sv-recipe-overlay-runner"
+                    .disabled=${view._runActionsBlocked || !view._recipeRunsCurrent}
+                    .beforeRun=${() => {
+                      if (view._requireCurrentRecipes().id !== recipeHost.runId)
+                        throw new Error(
+                          'The recipe selection changed. Review the current evidence before replaying.',
+                        );
+                    }}
                     runId=${recipeHost.runId}
                     slotId=${view.slotId}
                     recipeArtifactPath=${view._recipeExecutionArtifactPath}
@@ -108,11 +115,6 @@ export function renderRecipeExecutionOverlay(
                     .playbackSlowMs=${view._recipeRunnerUiOptions.playbackSlowMs}
                     .recordVideo=${view._recipeRunnerUiOptions.recordVideo}
                     .showArtifactAction=${view._recipeRunnerUiOptions.showArtifactAction}
-                    @running-change=${(event: CustomEvent<boolean>) => {
-                      if (!event.detail) {
-                        void view._refreshLinkedRun(view._linkedRun?.status ?? null);
-                      }
-                    }}
                     @recipe-complete=${(event: CustomEvent<RecipeCompleteDetail>) => {
                       view._handleRecipeExecutionComplete(event.detail);
                     }}

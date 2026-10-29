@@ -515,3 +515,33 @@ export async function observeSlotWorkspaces(slots: readonly SlotStatus[]): Promi
 export async function enrichFleetWorkspaces(fleet: FleetStatus): Promise<FleetStatus> {
   return { ...fleet, slots: await observeSlotWorkspaces(fleet.slots) };
 }
+
+/**
+ * Cached fleet rows: a slot whose last inspection failed still shows the workspace its loaded
+ * row verifies (the overlay), marked unverified, so release stays refused until an inspection
+ * succeeds. `observed` is observedFleetWorkspaces(loaded).
+ */
+export function markFailedWorkspacesUnverified(
+  loaded: FleetStatus,
+  observed: FleetStatus,
+): FleetStatus {
+  return {
+    ...observed,
+    slots: observed.slots.map((slot, index) => {
+      const row = loaded.slots[index];
+      // Only an inspection's own error counts; skipped slots and row errors stay as they are.
+      const failed =
+        !slot.workspace && !!slot.workspaceError && slot.workspaceError !== row?.workspaceError;
+      return failed && row?.workspace
+        ? {
+            ...slot,
+            workspace: {
+              ...row.workspace,
+              publication: 'unknown' as const,
+              error: slot.workspaceError,
+            },
+          }
+        : slot;
+    }),
+  };
+}

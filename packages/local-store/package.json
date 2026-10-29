@@ -1,0 +1,47 @@
+{
+  "name": "@farmslot/local-store",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./native": "./src/native.ts",
+    "./browser": "./src/browser.ts",
+    "./browser-worker": "./src/browser-worker.ts",
+    "./drafts": "./src/drafts.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "quality": "yarn format:check && yarn lint && yarn typecheck && yarn test"
+  },
+  "dependencies": {
+    "@farmslot/protocol": "workspace:*",
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1"
+  },
+  "peerDependencies": {
+    "expo-file-system": "~57.0.1",
+    "expo-sqlite": "~57.0.1"
+  },
+  "peerDependenciesMeta": {
+    "expo-file-system": {
+      "optional": true
+    },
+    "expo-sqlite": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "license": "MIT"
+}

@@ -73,7 +73,7 @@ export function NativeProfilePicker({
       {vm.selected && vm.status && vm.status.account.login !== 'authenticated' ? (
         <>
           <Text style={styles.muted}>
-            Run this on the selected node, then refresh login status.
+            Run this on the selected node. Login status updates automatically.
           </Text>
           <Text testID="companion-native-profile-login-command" selectable style={styles.code}>
             {vm.status.loginCommand}
@@ -84,17 +84,19 @@ export function NativeProfilePicker({
         Profiles select configuration directories. Signing in again in the same directory keeps
         saved conversations.
       </Text>
-      <Pressable
-        testID="companion-native-profile-refresh"
-        accessibilityRole="button"
-        style={styles.button}
-        disabled={disabled}
-        onPress={actions.refresh}
-      >
-        <Text style={styles.buttonText}>
-          {vm.loading ? 'Checking profiles…' : 'Refresh profiles'}
-        </Text>
-      </Pressable>
+      {vm.error ? (
+        <Pressable
+          testID="companion-native-profile-refresh"
+          accessibilityRole="button"
+          style={styles.button}
+          disabled={disabled}
+          onPress={actions.refresh}
+        >
+          <Text style={styles.buttonText}>
+            {vm.loading ? 'Checking profiles…' : 'Retry reading profiles'}
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

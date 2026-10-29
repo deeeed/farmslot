@@ -15,6 +15,7 @@ import {
   refusedCompletionStep,
   type ReviewGatePayload,
   type Run,
+  type RunArtifactBundleRef,
   type RunCreateParams,
   type RunStep,
   type SubStepRecord,
@@ -664,11 +665,13 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                 const pv = await deps.loadProjectVarsOrNull(run.project, 'run recovery', run.id);
                 const ciRepo = readCiRepo(pv?.projectJson) ?? null;
                 let recoveryArtifactManifest: ArtifactRef[] = [];
+                let recoveryArtifactBundle: RunArtifactBundleRef | undefined;
                 if (run.taskFile) {
                   try {
-                    recoveryArtifactManifest = await deps.retainedRunArtifactManifest(
-                      deps.getRun(run.id) ?? run,
-                    );
+                    const retained = deps.getRun(run.id) ?? run;
+                    recoveryArtifactManifest = await deps.retainedRunArtifactManifest(retained);
+                    recoveryArtifactBundle =
+                      retained.artifactBundle ?? retained.output?.artifactBundle;
                   } catch (err) {
                     console.warn(
                       `[run-engine] recovery artifact scan failed for ${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
@@ -687,6 +690,8 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                   lineComments: review.lineComments,
                   artifactManifest:
                     recoveryArtifactManifest.length > 0 ? recoveryArtifactManifest : undefined,
+                  // The manifest and the capture it was read from move together.
+                  artifactBundle: recoveryArtifactBundle,
                   recipeJson: await deps.readTaskArtifactText(run.taskFile, 'recipe.json'),
                 };
                 const recoveredDecisions = run.decisions.map((decision) =>

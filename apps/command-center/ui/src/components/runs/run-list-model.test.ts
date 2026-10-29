@@ -1,16 +1,18 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-import { type Run, runElapsedTimeView } from '@farmslot/protocol';
+import { type Run, runElapsedTimeView, runListProjection } from '@farmslot/protocol';
 import { runActivityView } from '@farmslot/review-dispatch';
 
 import { colors } from '../../styles/theme-tokens.js';
 
 import {
+  countRunListProjections,
   filterRunList,
   isArchivableRun,
   RUN_STALE_AFTER_MS,
   runGradeColor,
+  runListObservationAttributes,
   runProgressSummary,
   showsRunProgress,
 } from './run-list-model.js';
@@ -643,4 +645,85 @@ test('run progress: a held run waits on its decision, not on the output review i
   );
   assert.equal(summary.kind, 'gate');
   assert.equal(summary.text, 'Needs decision');
+});
+
+test('projection counts match what the run list itself selects from the same runs', () => {
+  const runs = [
+    run('a', { status: 'monitoring', tags: ['nightly'], slotId: 'mini-1' }),
+    run('b', { project: 'project-b', flowType: 'qa', familyId: 'family-b' }),
+    run('c', {
+      status: 'failed',
+      lane: 'comparison',
+      familyId: 'family-b',
+      summary: 'flaky login',
+    }),
+    run('d', { status: 'cancelled', archivedAt: '2026-05-15T00:00:00.000Z' }),
+  ];
+  const projections = runs.map(runListProjection);
+  const base = {
+    familyFilter: '',
+    tagFilter: '',
+    globalFilters: { projects: [], machines: [] },
+    slotMachines: new Map([['mini-1', 'mini']]),
+    tab: 'all' as const,
+    statusFilter: 'all' as const,
+    flowFilter: '' as const,
+    laneFilter: '' as const,
+    searchQuery: '',
+  };
+  for (const filters of [
+    base,
+    { ...base, tab: 'active' as const },
+    { ...base, tab: 'history' as const, statusFilter: 'failed' as const },
+    { ...base, familyFilter: 'family-b' },
+    { ...base, tagFilter: 'nightly' },
+    { ...base, globalFilters: { projects: ['project-b'], machines: [] } },
+    { ...base, globalFilters: { projects: [], machines: ['mini'] } },
+    { ...base, flowFilter: 'qa' as const },
+    { ...base, laneFilter: 'comparison' as const },
+    { ...base, searchQuery: 'flaky' },
+  ]) {
+    const rows = filter({ ...filters, runs, familyRuns: filters.familyFilter ? runs : null });
+    assert.deepEqual(
+      countRunListProjections(projections, filters),
+      { total: runs.length, filtered: rows.length },
+      JSON.stringify({ ...filters, slotMachines: undefined }),
+    );
+  }
+});
+
+test('projection counts cover runs whose rows a view does not hold', () => {
+  const runs = [run('a'), run('b'), run('c', { tags: ['nightly'] })];
+  const held = runs.slice(0, 2);
+  const filters = {
+    familyFilter: '',
+    tagFilter: '',
+    globalFilters: { projects: [], machines: [] },
+    slotMachines: new Map<string, string>(),
+    tab: 'all' as const,
+    statusFilter: 'all' as const,
+    flowFilter: '' as const,
+    laneFilter: '' as const,
+    searchQuery: '',
+  };
+  assert.equal(filter({ ...filters, runs: held }).length, 2);
+  assert.deepEqual(countRunListProjections(runs.map(runListProjection), filters), {
+    total: 3,
+    filtered: 3,
+  });
+  assert.deepEqual(
+    countRunListProjections(runs.map(runListProjection), { ...filters, tagFilter: 'nightly' }),
+    { total: 3, filtered: 1 },
+  );
+});
+
+test("the run list's read state is exposed on its host for proofs and the reconnect baseline", () => {
+  assert.deepEqual(runListObservationAttributes({ status: 'ready', observedAt: 1_700_000 }), {
+    'data-runs-status': 'ready',
+    'data-runs-observed-at': '1700000',
+  });
+  assert.deepEqual(runListObservationAttributes({ status: 'loading' }), {
+    'data-runs-status': 'loading',
+    'data-runs-observed-at': '',
+  });
 });

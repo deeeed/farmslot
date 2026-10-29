@@ -2,7 +2,7 @@
 // Handles artifact copy, PR comments (with worker report), PR body sanitization, retrospective curation.
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
@@ -44,6 +44,7 @@ import {
   visualReviewAuthority,
 } from '../run-engine/claim-reviews.js';
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
+import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import { contributionStack } from '../run-engine/diff-artifacts.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { readFrozenPublicationRecipeSources } from '../run-engine/recorded-evidence-sources.js';
@@ -119,6 +120,7 @@ import {
   readReadyGatePreparedPackage,
   refreshPackageStep,
   resolveSelectedEvidenceRef,
+  sha256File,
   sha256Text,
   sortArtifactRefsForComparison,
   stableJson,
@@ -720,6 +722,28 @@ function preserveSelectedEvidenceKeys(
   return preserved.sort();
 }
 
+/** Keep the exact diff a package's diffHash fingerprints, named by its bytes. */
+async function retainPackageDiff(taskDir: string, diffText: string): Promise<ArtifactRef> {
+  const sha256 = sha256Text(diffText);
+  const diff = {
+    path: `artifacts/publication-packages/diff-${sha256}.diff`,
+    purpose: 'diff',
+    sha256,
+    sizeBytes: Buffer.byteLength(diffText),
+  };
+  const file = path.join(taskDir, diff.path);
+  try {
+    if ((await stat(file)).size !== diff.sizeBytes || (await sha256File(file)) !== sha256)
+      throw new Error(`Retained package diff changed: ${diff.path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    // A crash leaves only the temporary file, never a partial diff under this name.
+    await mkdir(path.dirname(file), { recursive: true });
+    await atomicWriteTextFile(file, diffText);
+  }
+  return diff;
+}
+
 /**
  * Pre-gate safe completion phase for fix-bug v1. This copies local artifacts,
  * captures branch/session/package metadata, and writes immutable package files.
@@ -837,6 +861,7 @@ export async function prepareCompletionPackageTransitionLocked(
     throw new Error('Cannot prepare publishable PR package without a workspace HEAD SHA');
   }
   let reviewSnapshot = unavailableReviewSnapshot('missing-slot');
+  let retainedDiff: ArtifactRef | undefined;
   if (run.slotId) {
     let vars: Awaited<ReturnType<typeof loadSlotVars>> | null = null;
     try {
@@ -846,8 +871,14 @@ export async function prepareCompletionPackageTransitionLocked(
       // A removed slot must not make the package impossible to inspect.
       reviewSnapshot = unavailableReviewSnapshot('slot-load-error', (error as Error).message);
     }
-    if (vars)
-      reviewSnapshot = (await captureCurrentReviewSnapshot(vars, { baseRef: baseBranch })).snapshot;
+    if (vars) {
+      const captured = await captureCurrentReviewSnapshot(vars, { baseRef: baseBranch });
+      reviewSnapshot = captured.snapshot;
+      if (taskDir && captured.diffText !== undefined) {
+        retainedDiff = await retainPackageDiff(taskDir, captured.diffText);
+        reviewSnapshot = { ...reviewSnapshot, diffPath: retainedDiff.path };
+      }
+    }
   }
   // The target is captured even when Git cannot supply a diff. This does not
   // make the unavailable snapshot a passing review or bypass its explicit override.
@@ -869,13 +900,16 @@ export async function prepareCompletionPackageTransitionLocked(
   });
   const retentionInventory = [
     ...new Map(
-      [...artifacts, ...evidenceManifest].map((artifact) => [artifact.path, artifact]),
+      [...artifacts, ...evidenceManifest, ...(retainedDiff ? [retainedDiff] : [])].map(
+        (artifact) => [artifact.path, artifact],
+      ),
     ).values(),
   ];
   const retained = await retainCapturedRunArtifacts({
     run,
     artifacts: retentionInventory,
     sourceRef: retainedRunBundleRef(run),
+    ...(retainedDiff ? { gatewayFiles: [retainedDiff.path] } : {}),
     manifestDigest: outputManifestDigest(retentionInventory),
     releaseStagingMedia: true,
     commit: async (ref) => {

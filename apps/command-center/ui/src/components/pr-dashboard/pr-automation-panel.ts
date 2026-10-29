@@ -23,6 +23,7 @@ import {
   type PRTriggerRule,
   type PRTriggerRuleConfig,
 } from '@farmslot/protocol';
+import type { CommandMethod } from '@farmslot/protocol/client-cache';
 
 import '../shared/choice-picker.js';
 import './pr-monitor-form.js';
@@ -253,7 +254,7 @@ export class PRAutomationPanel extends LitElement {
       }
     this.closeEditor();
   }
-  private async mutateEditor<T>(method: string, params: unknown): Promise<T | undefined> {
+  private async mutateEditor<T>(method: CommandMethod, params: unknown): Promise<T | undefined> {
     const version = this.editorVersion;
     const result = await this.controller.mutate<T>(method, params);
     return this.isConnected && version === this.editorVersion ? result : undefined;
@@ -529,7 +530,7 @@ export class PRAutomationPanel extends LitElement {
             .farms=${controller.projectConfigs}
             .accounts=${controller.githubAccounts}
             .accountError=${controller.accountsError}
-            @refresh-accounts=${() => void controller.refreshAccounts(true)}
+            @refresh-accounts=${() => void controller.refreshAccounts()}
             .projects=${controller.projects}
             .slots=${controller.slots}
             .disabled=${disabled}
@@ -596,7 +597,7 @@ export class PRAutomationPanel extends LitElement {
                 .prUrl=${this.editor === 'monitor' && !this.selectedMonitor ? this.selectedUrl : ''}
                 .accounts=${controller.githubAccounts}
                 .accountError=${controller.accountsError}
-                @refresh-accounts=${() => void controller.refreshAccounts(true)}
+                @refresh-accounts=${() => void controller.refreshAccounts()}
                 .initial=${this.initialConfig}
                 .publication=${this.editor === 'policy'}
                 .enabled=${this.selectedPolicy?.enabled ?? false}
@@ -1097,7 +1098,7 @@ export class PRAutomationPanel extends LitElement {
       this.matchesSelected(monitor.config.pr),
     );
     const feedback = html`
-      ${!controller.connected
+      ${gateway.connectionState !== 'connected'
         ? html`<p class="attention">Reconnect to the gateway to load current PR work.</p>`
         : nothing}
       ${[
@@ -1110,6 +1111,15 @@ export class PRAutomationPanel extends LitElement {
       ]
         .filter(Boolean)
         .map((error) => html`<p role="alert" class="error">${error}</p>`)}
+      ${controller.error
+        ? html`<button
+            data-testid="pr-automation-read-retry"
+            ?disabled=${!controller.canRetryRead}
+            @click=${() => void controller.retryReadErrors()}
+          >
+            Retry configuration
+          </button>`
+        : nothing}
       ${keyed(
         `${this.editor ?? ''}:${this.target() ?? ''}:${this.draftId ?? ''}`,
         this.renderEditor(disabled),
@@ -1162,13 +1172,6 @@ export class PRAutomationPanel extends LitElement {
     return html`<section class="automation-management" aria-label="PR automation">
       <div class="row">
         <h2>Automation</h2>
-        <span class="spacer"></span
-        ><button
-          ?disabled=${disabled || controller.loading}
-          @click=${() => void controller.refresh()}
-        >
-          ${controller.loading ? 'Refreshing…' : 'Refresh configuration'}
-        </button>
       </div>
       <div class="row" role="tablist" aria-label="PR automation views">
         ${(['rules', 'policies', 'attention'] as const).map(

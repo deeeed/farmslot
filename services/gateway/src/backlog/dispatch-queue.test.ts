@@ -1756,6 +1756,7 @@ test('loadQueue drops dispatching rows stamped with a terminal Run', async () =>
   updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-stamp-terminal-reconcile',
@@ -1785,6 +1786,7 @@ test('reclaimExpiredClaims drops stamped rows whose Run still exists', async () 
   });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-stamp-expire-drop',
@@ -1816,6 +1818,7 @@ test('loadQueue drops higher-attempt launch row when a live run owns the candida
   });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-attempt-mismatch',
@@ -1850,6 +1853,7 @@ test('loadQueue keeps legacy undefined-attempt launch row against live attempt-b
   });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-legacy-attempt',
@@ -1870,6 +1874,8 @@ test('loadQueue keeps legacy undefined-attempt launch row against live attempt-b
   const reloaded = getQueueSnapshot().find((q) => q.id === item.id);
   assert.ok(reloaded, 'undefined !== 1 must re-queue (restart attempt matrix)');
   assert.equal(reloaded.status, 'queued');
+  // A retry timer from an earlier test would otherwise dispatch this row into a later test.
+  removeQueueItemInternal(item.id, 'test-cleanup');
   await cleanupRun(run.id);
 });
 
@@ -1883,6 +1889,7 @@ test('loadQueue drops queued rows whose handoff is already owned by a live Run',
   });
   const item = addItem(
     {
+      autoDispatch: false,
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: 'PROJ-queued-live-owner',
@@ -1967,7 +1974,8 @@ test('partial create after durable stamp drops the row instead of requeueing', a
   t.after(async () => {
     if (partialRunId && getRun(partialRunId)) await cleanupRun(partialRunId);
   });
-  await tryDispatchNext();
+  // A call that joins a retry already in flight returns before that retry sees this row.
+  for (let attempt = 0; attempt < 3 && !partialRunId; attempt++) await tryDispatchNext();
   assert.ok(partialRunId, 'callback must create a Run before failing');
   assert.ok(getRun(partialRunId));
   assert.ok(
@@ -2010,13 +2018,16 @@ test('memory-only create failure requeues and purges the orphan Run', async (t) 
   t.after(async () => {
     if (orphanId && getRun(orphanId)) await cleanupRun(orphanId);
   });
-  await tryDispatchNext();
+  // A call that joins a retry already in flight returns before that retry sees this row.
+  for (let attempt = 0; attempt < 3 && !orphanId; attempt++) await tryDispatchNext();
   assert.ok(orphanId);
   assert.equal(getRun(orphanId), undefined, 'memory-only orphan must be purged');
   const requeued = getQueueSnapshot().find((q) => q.id === item.id);
   assert.ok(requeued, 'row must be requeued for retry');
   assert.equal(requeued.status, 'queued');
   assert.equal(requeued.runId, undefined);
+  // The requeued row stays: the last test's own rows auto-dispatch through this test's callback
+  // unless an older queued row takes that dispatch first.
 });
 
 test('PR queue prepares cold allowed slots while respecting busy slots and model constraints', async () => {

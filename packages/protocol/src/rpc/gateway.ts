@@ -4,6 +4,8 @@
 // origin's default branch). There is no semver release stream, so "a new version
 // is available" is expressed as the local HEAD being behind origin/<branch>.
 
+import type { UpstreamObservation } from './resource-observers.js';
+
 /** Lightweight authenticated liveness response with no filesystem or network I/O. */
 export interface GatewayPingResult {
   ok: true;
@@ -87,6 +89,8 @@ export interface GitHubQuerySpendSnapshot {
 }
 
 export interface GatewayStatusResult {
+  /** Last successful remote source observation, retained separately from this RPC's read time. */
+  observation?: UpstreamObservation;
   /** `@farmslot/gateway` package version. */
   version: string;
   update: GatewayUpdateStatus;
