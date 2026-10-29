@@ -184,8 +184,8 @@ const brief = (run) => ({
   project: run.project,
   slotId: run.slotId,
   status: run.status,
-  runner: run.runner,
-  model: run.model,
+  runner: run.metrics.runner,
+  model: run.metrics.model,
   transport: run.transport,
   steps: run.steps.map(({ name, status, startedAt, completedAt, durationMs }) => ({
     name,
@@ -265,8 +265,8 @@ try {
   }
   for (const name of ['write-task', 'prepare', 'dispatch'])
     assert.equal(run.steps.find((step) => step.name === name)?.status, 'done', name);
-  assert.equal(run.runner, input.runner);
-  assert.equal(run.model, input.model);
+  assert.equal(run.metrics.runner, input.runner);
+  assert.equal(run.metrics.model, input.model);
   await save('dispatched.json', brief(run));
   console.log(JSON.stringify({ phase: 'dispatched', runId }));
 } catch (error) {

@@ -4,52 +4,33 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.15.1 - 2026-10-29
+
 - Add the conditional-edits browser proof: hashed and run-bound saves, a refused save with both versions, stale-run drafts, worker writes after a save, typing during a save, read-only editors without the capability or on a node that cannot check edits, no draft sent on reconnect, drafts deleted with their count on sign-out and principal change, an untracked file opened offline, and the slot PR, review threads and slot PR recovery paths.
-
 - Add the offline gate-review browser proof: prefetch order and the stop after a refusal, a pending gate opened offline with both sides held, an untracked file prefetched while an ignored `.env` is never read or stored, and fix-loop bytes. The client-store baseline gains a gate phase that counts gateway frames plus run-artifact bytes and names where the diff came from.
-
 - Prove fast fleet bootstrap independently of background workspace completion, retaining admission bounds and release guards.
-
 - Prove criterion confirmation, reversible drafts across reloads, and approval through the browser and existing gate actions.
-
 - Update the fleet recovery proof for automatic published-slot reuse and explicit local-work confirmation.
-
 - Prove progressive gate and fleet reads, package-revision recovery, reduced probe costs, and bounded local fingerprint admission through the browser and gateway.
-
 - Keep the shared gateway running across source edits while preserving watch mode in isolated validation stacks; apply shared gateway updates through deployment.
-
 - Prove fleet release and update through a real browser action followed by unrestricted scored dispatch.
-
 - Prove shared-link deployment binding and exact run, retained file and collection receipt through the existing browser tools.
-
 - Add read-only CI-watch card proof for check counts and live poll/timeout text.
-
 - Add a read-only browser probe for completed checklist durations and live step timing.
-
 - Verify compact source and covered-ticket rows with one and six tickets; show shared total and current-step elapsed time on the existing metadata line.
-
 - Prove Ask reviewer routing and failed-refresh publication blocking through the browser.
-
 - Prove linked-ticket search and pasted additional-ticket keys through the browser.
-
 - Let browser proofs set an exact narrow viewport and system appearance.
-
 - Verify blocked review-fix recovery through the existing Resume control and its rendered active state.
-
 - Prove frozen review finding navigation, review/fix timelines and native session tabs through the connected operator views.
-
 - Restore shared review finding links at their exact file and line, with explicit unavailable-source states.
-
 - Add connected review-history proof for round details and recorded fix diffs.
-
 - Add a connected review-workspace probe for exact line-comment reveal, highlight and inline comment display.
-
 - Add terminal-entry proof for exact reviewer pane navigation and finished-run availability.
 - Add a publication-gate probe for inline finding actions, retained WARM settings and touch-sized controls without submitting a review.
 - Add a live canvas probe for the current actor, elapsed time, completed rounds and bounded labels.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
-
 - Add reproducible client-store measurements and live storage proofs for browser OPFS, reload, cross-tab deletion, remote HTTP fallback and desktop WASM, plus review command, cold-view, slot/branch/node/resource-writer, fleet-freshness and planning/PR/assessment/analytics authority proofs. CDP form fills accept sensitive input through stdin without placing it in process arguments.
 
 ## 0.15.0 - 2026-10-19
