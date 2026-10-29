@@ -71,15 +71,19 @@ export async function prepareNativeWorkerLaunch(input: {
     expandDomainValue: (value) =>
       expandTemplate(value, vars, input.projectVars, { domain: input.domain ?? '' }),
   });
-  // Static reviewers need the selected task home for retained marker commands.
+  // Static reviewers need the selected home and pool for retained marker commands.
   // Unrelated pool tool selections must not change their launch identity.
   const machineHome = vars.machineEnv?.FARMSLOT_HOME;
+  const machinePool = vars.machineEnv?.FARMSLOT_POOL_DIR;
   const machineEnv = machineShellEnv(
     input.role === 'review' && input.reviewValidationDepth === 'static-code'
       ? {
           machine: vars.machine,
           host: vars.host,
-          machineEnv: machineHome === undefined ? undefined : { FARMSLOT_HOME: machineHome },
+          machineEnv: {
+            ...(machineHome === undefined ? {} : { FARMSLOT_HOME: machineHome }),
+            ...(machinePool === undefined ? {} : { FARMSLOT_POOL_DIR: machinePool }),
+          },
         }
       : vars,
   );
