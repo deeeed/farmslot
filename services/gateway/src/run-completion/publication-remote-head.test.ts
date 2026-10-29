@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
@@ -24,6 +24,8 @@ let mergeExit: number | undefined;
 let fetchOk: boolean;
 let probeHead: string;
 let conflictsDuringPush: boolean;
+let workerUsage: RunnerSessionUsage | null;
+let legacyCostOutput: string;
 const commands: string[] = [];
 const mutations: string[] = [];
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
@@ -41,7 +43,8 @@ const execution = await import('../core/exec.js');
 mock.module('../core/exec.js', {
   namedExports: {
     ...execution,
-    execLocal: async () => ok(),
+    execLocal: async (command: string) =>
+      ok(command.includes('scripts/session-usage.sh') ? legacyCostOutput : ''),
     execOnSlot: async (_vars: unknown, command: string) => {
       commands.push(command);
       if (command.includes('CONFLICT_EXIT:'))
@@ -93,7 +96,11 @@ mock.module('../runners/session-process.js', {
 });
 const usage = await import('../runtime/session-usage.js');
 mock.module('../runtime/session-usage.js', {
-  namedExports: { ...usage, extractRunnerSessionUsage: async () => ({}) },
+  namedExports: {
+    ...usage,
+    extractRunnerSessionUsage: async () => ({}),
+    extractRunWorkerSessionUsage: async () => workerUsage,
+  },
 });
 const core = await import('../core/index.js');
 mock.module('../core/index.js', { namedExports: { ...core, markSlotHeld: async () => {} } });
@@ -181,6 +188,8 @@ beforeEach(() => {
   fetchOk = true;
   probeHead = head;
   conflictsDuringPush = false;
+  workerUsage = null;
+  legacyCostOutput = '';
   commands.length = 0;
   mutations.length = 0;
 });
@@ -347,4 +356,30 @@ test('artifact-only finalize does not require branch publication', async () => {
   run.completionPolicy = 'artifact-only';
   await executeFinalizeStep(run.id, context);
   assert.equal(commands.length, 0);
+});
+
+test('Pi completion followed by finalize retains all worker-session tokens and cost', async () => {
+  run.flowType = 'dev';
+  run.completionPolicy = 'artifact-only';
+  run.metrics.runner = 'pi';
+  workerUsage = {
+    runner: 'pi',
+    measuredAt: '2026-10-28T14:57:36.409Z',
+    source: 'runner-transcript',
+    scope: 'session-total',
+    turns: 297,
+    inputTokens: 600,
+    outputTokens: 213914,
+    cacheRead: 49218112,
+    cacheCreation: 1566415,
+    totalTokens: 50999041,
+    costUsd: 31.8,
+  };
+  legacyCostOutput = 'cost_usd=22.6049\n';
+  await runCompletionPipeline(run.id, { skipRetrospective: true });
+  assert.equal(run.metrics.sessionTotalTokens, 50999041);
+  assert.equal(run.metrics.costEstimate, 31.8);
+  await executeFinalizeStep(run.id, context);
+  assert.equal(run.metrics.sessionTotalTokens, 50999041);
+  assert.equal(run.metrics.costEstimate, 31.8);
 });

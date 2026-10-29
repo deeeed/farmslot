@@ -27,8 +27,8 @@ export interface RunnerSessionUsageProvider {
    * happens inside the provider.
    */
   readonly restatesSessionTotals: boolean;
-  /** Recover a missing historical binding from the runner's exact role/session metadata. */
-  recoverSession?(run: Run): Promise<RecoveredUsageSession | null>;
+  /** Unique worker sessions, including fix rounds, from exact role/session metadata. */
+  recoverSessions?(run: Run): Promise<RecoveredUsageSession[]>;
   applyRecord(
     state: IncrementalSessionUsageState,
     record: Record<string, unknown>,
@@ -149,11 +149,11 @@ export const codexSessionUsageProvider: RunnerSessionUsageProvider = {
   applyRecord: codexApplyRecord,
 };
 
-export const piSessionUsageProvider: RunnerSessionUsageProvider = {
+export const piSessionUsageProvider = {
   id: 'pi-jsonl',
   restatesSessionTotals: false,
-  async recoverSession(run) {
-    return (await import('./pi-observability.js')).recoverPiUsageSession(run);
+  async recoverSessions(run) {
+    return (await import('./pi-observability.js')).recoverPiUsageSessions(run);
   },
   applyRecord(state, record) {
     const usage = readPiAssistantUsage(record);
@@ -168,4 +168,4 @@ export const piSessionUsageProvider: RunnerSessionUsageProvider = {
       totalTokens: state.totalTokens + usage.totalTokens,
     };
   },
-};
+} satisfies RunnerSessionUsageProvider;

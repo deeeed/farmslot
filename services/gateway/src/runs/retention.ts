@@ -154,6 +154,7 @@ export async function retiredTaskPins(
   }
   const retired: string[] = [];
   for (const name of names) {
+    if (name.startsWith('.retention-')) continue; // Already staged by this pass, not a new orphan.
     const pin = path.join(pinRoot, name);
     const provenance = path.join(pin, 'provenance.json');
     let taskDir: unknown;

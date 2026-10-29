@@ -436,7 +436,10 @@ The root must already exist and the gateway process must successfully write and
 sync a probe there before any move. Missing/unwritable roots fail the pass loudly;
 there is no deletion fallback. Old retention trash is archived with its restore
 metadata. Gateway startup/capture no longer invoke destructive bundle GC; budget
-admission continues to refuse insufficient capacity. Operators restore storage
+admission continues to refuse insufficient capacity. Inactive reservations and
+abandoned capture scaffolding are archived before admission rather than charged
+forever. Only selection and staging hold admission locks; bulk copying does not.
+Operators restore storage
 using the recorded paths while its run is inactive. Automated restore is outside
 this change.
 
@@ -444,4 +447,6 @@ this change.
 
 One environment setting, `FARMSLOT_RUN_ARCHIVE_ROOT`. The hourly gateway pass and
 read-only retention-plan script remain the consumers. Run records use the existing
-`links` field for a local manifest reference; no protocol, package or RPC change.
+`links` field for a local manifest reference; no public package or RPC change.
+The private `@farmslot/run-bundle` housekeeping selector is consumed by gateway
+admission, capture and hourly archival. No worker protocol changes.

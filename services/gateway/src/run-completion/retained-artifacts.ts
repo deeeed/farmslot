@@ -33,7 +33,9 @@ import {
   readRunBundleAvailability,
   reserveRunBundleMetadata,
   resolveRetainedRunBundleRef as localBundleRef,
+  runBundleHousekeepingPaths,
   runBundleRefs,
+  withRunBundleStoreLock,
 } from '@farmslot/run-bundle';
 
 import { sha256File } from '../core/file-hash.js';
@@ -51,7 +53,9 @@ import { loadContextFromArtifactRoot } from '../live-recipe/context.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import {
   getRun,
+  getRunWithArchived,
   persistRunNow,
+  recordRunStorageArchive,
   runsDirectory,
   shouldUseIsolatedRunsDir,
   updateRun,
@@ -319,10 +323,36 @@ export async function qualifyRetainedRunMetadata(run: Run): Promise<void> {
     await readOptionalRetainedRunText(run, file);
 }
 
+/** Release admission reservations by archiving them, with the package owner selecting safe paths. */
+export async function archiveRunArtifactHousekeeping(): Promise<void> {
+  if (process.env.FARMSLOT_SANDBOX_HOME) return;
+  const {
+    runArchiveRoot,
+    assertArchiveRoot,
+    stageStoragePaths,
+    finishStorageArchive,
+    storageArchiveManifest,
+  } = await import('../runs/storage-archive.js');
+  const root = runArchiveRoot();
+  await assertArchiveRoot(root);
+  const store = await runBundleStore(true);
+  const staged = new Set<string>();
+  await withRunBundleStoreLock(store, async () => {
+    for (const entry of await runBundleHousekeepingPaths(store)) {
+      if (await getRunWithArchived(entry.runId))
+        await recordRunStorageArchive(entry.runId, storageArchiveManifest(root, entry.runId));
+      await stageStoragePaths(root, entry.runId, [{ source: entry.path, store: entry.store }]);
+      staged.add(entry.runId);
+    }
+  });
+  for (const id of staged) await finishStorageArchive(root, id);
+}
+
 export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const store = await runBundleStore(true);
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
+  await archiveRunArtifactHousekeeping();
   await reserveRunBundleMetadata(store, run.id, policy, farmslotRoot);
 }
 
@@ -339,6 +369,7 @@ export async function retainCapturedRunArtifacts(input: {
 }): Promise<MaterializedRunBundle> {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
+  await archiveRunArtifactHousekeeping();
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.
   // The materializer checks containment and hashes each file while copying it.

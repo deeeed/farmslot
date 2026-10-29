@@ -123,7 +123,7 @@ async function pin(roots: RunRetentionRoots, name: string, taskDir: string, writ
   return path.dirname(provenance);
 }
 
-test('retention archives a settled run storage only after48h with nothing open', () => {
+test('retention archives settled run storage only after 48h with nothing open', () => {
   const done: Run = { ...makeRun({ status: 'done' }), updatedAt: settled };
   assert.equal(runRetentionHold(done, context()), undefined);
   assert.equal(runRetentionHold({ ...done, status: 'cancelled' }, context()), undefined);
@@ -278,7 +278,7 @@ const privateDeps = {
   withBundleLock: async <T>(operation: () => Promise<T>) => operation(),
 };
 
-test('a settled untagged48h run keeps both live and archived records while all eligible storage moves', async (t) => {
+test('a settled untagged 48h run keeps both live and archived records while all eligible storage moves', async (t) => {
   const roots = await retentionRoots(t, runsDirectory());
   const runIds: string[] = [];
   const originals: string[] = [];
@@ -398,4 +398,47 @@ test('missing and unwritable archive roots fail before touching run records or s
   }
   assert.equal(await readFile(record, 'utf8'), before);
   assert.equal(await readFile(path.join(task, 'bytes'), 'utf8'), 'x'.repeat(4096));
+});
+
+test('a processed run replayed before the next candidate keeps its shared task', async (t) => {
+  const roots = await retentionRoots(t, runsDirectory());
+  const task = path.join(roots.taskRoots[0], 'shared-replay');
+  await file(path.join(task, 'TASK.md'));
+  const make = () => {
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: 'RETENTION-REPLAY',
+    });
+    updateRun(run.id, {
+      status: 'done',
+      completedAt: settled,
+      taskFile: path.join(task, 'TASK.md'),
+    });
+    return run;
+  };
+  const first = make(),
+    second = make();
+  await persistRunNow(first);
+  await persistRunNow(second);
+  await file(path.join(roots.sessionArchive(first.id), 'session.jsonl'));
+  const calls = new Map<string, number>();
+  await runRetentionPass(
+    { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60000 },
+    {
+      ...privateDeps,
+      holdsSlot: async (run) => {
+        const count = (calls.get(run.id) ?? 0) + 1;
+        calls.set(run.id, count);
+        if (run.id === second.id && count === 2) updateRun(first.id, { status: 'monitoring' });
+        return false;
+      },
+    },
+  );
+  assert.equal((await getRunWithArchived(first.id))?.status, 'monitoring');
+  assert.ok(
+    existsSync(path.join(task, 'TASK.md')),
+    'reactivated processed owners are still owners',
+  );
 });

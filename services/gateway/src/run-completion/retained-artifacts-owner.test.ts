@@ -19,7 +19,7 @@ mock.module('@farmslot/protocol/node/farmslot-home', {
   namedExports: { farmslotHome: () => operatorHome },
 });
 
-const { runBundleStore } = await import('./retained-artifacts.js');
+const { archiveRunArtifactHousekeeping, runBundleStore } = await import('./retained-artifacts.js');
 
 test('runs-only gateway boot owns an isolated bundle root and sandboxes cannot rebind it', async () => {
   await runBundleStore(true);
@@ -33,4 +33,44 @@ test('runs-only gateway boot owns an isolated bundle root and sandboxes cannot r
   await runBundleStore();
   assert.deepEqual(await runBundleStore(), owner);
   assert.equal(await readFile(path.join(owner.runsDir, 'bundle-store.json'), 'utf8'), binding);
+});
+
+test('cancelled pre-capture reservations archive instead of exhausting new admission', async () => {
+  delete process.env.FARMSLOT_SANDBOX_HOME;
+  const archive = path.join(root, 'storage-archive');
+  await mkdir(archive);
+  process.env.FARMSLOT_RUN_ARCHIVE_ROOT = archive;
+  const owner = await runBundleStore(true);
+  const { reserveRunBundleMetadata, DEFAULT_RUN_BUNDLE_RETENTION } =
+    await import('@farmslot/run-bundle');
+  const { createRun, updateRun, persistRunNow, getRunWithArchived } =
+    await import('../runs/store.js');
+  const first = createRun({
+    flowType: 'fix-bug',
+    project: 'fixture',
+    mode: 'autonomous',
+    ticketOrPr: 'META-1',
+  });
+  await persistRunNow(first);
+  const policy = { ...DEFAULT_RUN_BUNDLE_RETENTION, metadataReserveBytes: 1024 ** 2 };
+  await reserveRunBundleMetadata(owner, first.id, policy);
+  updateRun(first.id, { status: 'cancelled' });
+  await persistRunNow(first);
+  await archiveRunArtifactHousekeeping();
+  const next = createRun({
+    flowType: 'fix-bug',
+    project: 'fixture',
+    mode: 'autonomous',
+    ticketOrPr: 'META-2',
+  });
+  await persistRunNow(next);
+  await reserveRunBundleMetadata(owner, next.id, policy);
+  assert.ok(
+    (await getRunWithArchived(first.id))?.links?.some((link) => link.label === 'Storage archive'),
+  );
+  const manifest = JSON.parse(
+    await readFile(path.join(archive, first.id, 'manifest.json'), 'utf8'),
+  );
+  assert.equal(manifest.entries[0].store, 'bundle-reservations');
+  assert.equal(JSON.parse(await readFile(manifest.entries[0].destination, 'utf8')).runId, first.id);
 });

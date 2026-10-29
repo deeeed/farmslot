@@ -1749,38 +1749,16 @@ export async function getRunWithArchived(id: string): Promise<Run | undefined> {
 
 /** Retention records the restore manifest without evicting live or archived history. */
 export async function recordRunStorageArchive(id: string, manifest: string): Promise<void> {
-  await enqueueRunWrite(id, async () => {
-    const run = await getRunWithArchived(id);
-    if (!run) throw new Error(`Cannot archive storage without run record ${id}`);
-    const url = pathToFileURL(manifest).href;
-    if (run.links?.some((link) => link.url === url)) return;
-    const snapshot = {
-      ...run,
-      links: [...(run.links ?? []), { label: 'Storage archive', url }],
-    };
-    if (getRun(id) === run) {
-      await persistBody(run, snapshot, true);
-      run.links = snapshot.links;
-    } else {
-      const file = path.join(ARCHIVE_DIR, `${id}.json`);
-      const temporary = `${file}.tmp.${randomUUID()}`;
-      await writeFile(temporary, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
-      const output = await open(temporary, 'r');
-      try {
-        await output.sync();
-      } finally {
-        await output.close();
-      }
-      await rename(temporary, file);
-      const directory = await open(ARCHIVE_DIR, 'r');
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
-      invalidateArchivedRunsCache();
-    }
-  });
+  const url = pathToFileURL(manifest).href;
+  await commitRetainedRunMutation(
+    id,
+    (run) =>
+      run.links?.some((link) => link.url === url)
+        ? run
+        : { ...run, links: [...(run.links ?? []), { label: 'Storage archive', url }] },
+    // A descriptive link grants no lifecycle authority; staging checks ownership separately.
+    () => undefined,
+  );
 }
 
 /** Only follow-up delivery state may change on an archived review. */

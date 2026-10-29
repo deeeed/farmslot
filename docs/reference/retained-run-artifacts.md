@@ -161,27 +161,21 @@ reservation failure refuses admission before new work can rely on that capacity;
 it never evicts an existing report. Historical backfill also retains its report
 before attempting bulk media. Missing media grants no proof or publication waiver.
 
-Apply ADR-062's existing separate lifetimes. Run history pins the report and
-lightweight frozen metadata for its lifetime, not every media payload. Unresolved
-gates and required published references pin their media dependency closures.
-Unpinned completed media defaults to 30-day retention, overridable by Storage
-policy. Storage may prune eligible media without changing the immutable manifest,
-recorded verdicts or ranges. Availability and retention revision MUST separately
-record `pruned`; readers do not claim that those payload bytes still exist.
-Complete export/publication cannot pass missing required media off as complete;
-reuse the existing missing-data/refusal rules, without re-reading a source slot.
+The gateway follows ADR-039 Amendment 3: history stays permanently and storage
+moves to the configured archive, never to a deletion sweep. It does not invoke
+destructive bundle/media GC at startup, admission or capture. Older
+`mediaRetentionDays` configuration does not authorize gateway payload deletion.
+An artifact already unavailable before this policy remains explicit missing data;
+archival does not fabricate it or waive publication/proof requirements.
 
-GC rechecks all existing dependency pins and the owning store binding under the
-same commit lock. It may delete wholly unreferenced bundles, eligible unpinned
-media, and abandoned staging older than 24 hours. It MUST preserve active capture
-reservations and history metadata. Deleting one Run does not delete objects
-referenced elsewhere. After retention changes, update the existing Storage
-footprint/availability projection; do not create a separate statistics store.
-
-If GC cannot make room for media, report explicit capacity/missing-media status
-while the report remains readable. Do not truncate video, silently drop selected
-files, or evict pinned snapshots to admit a new capture. Operators can change the
-server-owned limits or release history/pins through existing lifecycle operations.
+The package owner selects inactive metadata reservations and abandoned intents or
+staging older than 24 hours. The gateway archives these paths before admission
+and capture, and during the hourly pass, so abandoned reservations do not exhaust
+capacity. Active captures remain protected. Selection and synchronous staging use
+the bundle lock; cross-volume copying, verification and source cleanup happen
+after admission locks are released. A missing/unwritable archive refuses the
+operation without deletion. Budget admission continues to enforce capacity and
+report explicit missing-media status; it never evicts history to make room.
 
 ### Settled-run retention
 
@@ -261,7 +255,7 @@ unpacked archive; imported references never keep a source-store root binding.
   forbidden; verify report open under two seconds on a backfilled retained run.
 - Fail interrupted/concurrent captures safely; verify shared Run-store/sandbox
   root pairing, stale/foreign references, imports, partial backfill, idempotent
-  retries and GC during publish/reference commit.
+  retries and archival during publish/reference commit.
 - Fill the media budget: a new report remains readable; pinned media survives,
-  eligible media becomes pruned and metadata/history hashes stay unchanged.
+  eligible storage becomes archived and metadata/history stays visible.
 - Stale reports open with a warning while proof and publication still refuse.

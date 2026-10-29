@@ -139,37 +139,85 @@ export function runnerUsageMetrics(usage: RunnerSessionUsage): Partial<Run['metr
   };
 }
 
+/** Completion and family reads share the same worker-only multi-session accounting. */
+export async function extractRunWorkerSessionUsage(
+  run: Run,
+  vars?: SlotVars,
+): Promise<RunnerSessionUsage | null> {
+  const slotId = run.slotId;
+  if (!slotId || usesReviewChainSessionTotal(run)) return null;
+  const sessions = await getRunnerSessionUsageProvider(run.metrics.runner)?.recoverSessions?.(run);
+  if (!sessions?.length) return null;
+  const unique = [
+    ...new Map(sessions.map((session) => [session.runnerSessionPath, session])).values(),
+  ];
+  const slotVars = vars ?? (await loadSlotVars(slotId));
+  const usages = await Promise.all(
+    unique.map((session) =>
+      extractRunnerSessionUsage({
+        slotId,
+        vars: slotVars,
+        runner: run.metrics.runner,
+        ...session,
+      }),
+    ),
+  );
+  const failed = usages.find((usage) => usage.error || usage.totalTokens == null);
+  if (failed)
+    return unavailableRunnerSessionUsage({
+      runner: run.metrics.runner,
+      error: failed.error ?? 'Worker session usage is unavailable',
+    });
+  const total = (field: keyof RunnerSessionUsage): number | null => {
+    const values = usages.map((usage) => usage[field]);
+    return values.every((value) => typeof value === 'number')
+      ? values.reduce((sum, value) => sum + value, 0)
+      : null;
+  };
+  const cost = total('costUsd');
+  return {
+    ...usages[0],
+    turns: total('turns'),
+    inputTokens: total('inputTokens'),
+    outputTokens: total('outputTokens'),
+    cacheCreation: total('cacheCreation'),
+    cacheRead: total('cacheRead'),
+    totalTokens: total('totalTokens'),
+    costUsd: cost == null ? null : Number(cost.toFixed(4)),
+  };
+}
+
 /** Recover only verified retained native usage, without rewriting stored runs. */
 export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
-  if (run.metrics.sessionTotalTokens != null && run.metrics.sessionTurns != null) return run;
   try {
+    let workerUsage: RunnerSessionUsage | null;
+    try {
+      workerUsage = await extractRunWorkerSessionUsage(run);
+    } catch (error) {
+      // A recycled/offline slot cannot replace known totals or a verified archive.
+      workerUsage = unavailableRunnerSessionUsage({
+        runner: run.metrics.runner,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (workerUsage && !workerUsage.error)
+      return {
+        ...run,
+        metrics: {
+          ...run.metrics,
+          ...runnerUsageMetrics(workerUsage),
+          costEstimate: workerUsage.costUsd ?? undefined,
+          sessionUsageError: workerUsage.error,
+        },
+      };
+    if (run.metrics.sessionTotalTokens != null && run.metrics.sessionTurns != null)
+      return workerUsage?.error
+        ? { ...run, metrics: { ...run.metrics, sessionUsageError: workerUsage.error } }
+        : run;
     const archived = await verifiedRunnerSessionArchivePath(run);
     if (!archived) {
-      const recovered = await getRunnerSessionUsageProvider(run.metrics.runner)?.recoverSession?.(
-        run,
-      );
-      if (recovered && run.slotId && !usesReviewChainSessionTotal(run)) {
-        const { contextId, ...binding } = recovered;
-        const usage = await extractRunnerSessionUsage({
-          slotId: run.slotId,
-          vars: await loadSlotVars(run.slotId),
-          runner: run.metrics.runner,
-          ...binding,
-        });
-        return {
-          ...run,
-          agentContexts: run.agentContexts?.map((context) =>
-            context.id === contextId ? { ...context, ...binding } : context,
-          ),
-          metrics: {
-            ...run.metrics,
-            ...binding,
-            ...runnerUsageMetrics(usage),
-            sessionUsageError: usage.error,
-          },
-        };
-      }
       const reason =
+        workerUsage?.error ??
         run.metrics.sessionUsageError ??
         run.metrics.runnerSessionArchive?.reason ??
         'runner did not report usage and no verified transcript was retained';
@@ -187,7 +235,11 @@ export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
     if (usesReviewChainSessionTotal(run)) return run;
     return {
       ...run,
-      metrics: { ...runnerUsageMetrics(usage), ...run.metrics, sessionUsageError: usage.error },
+      metrics: {
+        ...runnerUsageMetrics(usage),
+        ...run.metrics,
+        sessionUsageError: workerUsage?.error ?? usage.error,
+      },
     };
   } catch (error) {
     return { ...run, metrics: { ...run.metrics, sessionUsageError: (error as Error).message } };
