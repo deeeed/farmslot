@@ -216,15 +216,59 @@ test('a retry reads at once during the wait, and a returning observer reads when
     stop();
     stop = gateway.cache.observe(query, () => {});
     await gateway.flush();
-    t.mock.timers.tick(2_000);
+    t.mock.timers.tick(1_999);
     await gateway.flush();
-    assert.equal(gateway.reads(), 3, 'A returning observer of a failed read still reads');
+    assert.equal(gateway.reads(), 2, 'A returning observer waits out the failed read');
+    t.mock.timers.tick(1);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 3, 'and then reads');
     gateway.pending.shift()!.answer();
     await gateway.flush();
     assert.equal(gateway.cache.read(query).status, 'ready');
-    t.mock.timers.tick(RESOURCE_RETRY_MAX_WAIT_MS);
+    gateway.change();
     await gateway.flush();
-    assert.equal(gateway.reads(), 3, 'An answered read leaves no retry behind');
+    assert.equal(gateway.reads(), 4);
+    gateway.change();
+    t.mock.timers.tick(3_000);
+    gateway.pending.shift()!.fail(new Error('Request decision.list timed out'));
+    await gateway.flush();
+    t.mock.timers.tick(2_999);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 4);
+    t.mock.timers.tick(1);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 5, 'An answer resets the wait to the failed read length');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+  } finally {
+    stop();
+  }
+});
+
+test('a slot change cannot postpone a reread already due for another reason', async (t) => {
+  const query = resourceQuery('fleet.status', {});
+  const gateway = pacedGateway(t, query);
+  let stop = gateway.cache.observe(query, () => {});
+  try {
+    await gateway.flush();
+    t.mock.timers.tick(1_000);
+    gateway.pending.shift()!.fail(new Error('Request fleet.status failed'));
+    await gateway.flush();
+    assert.equal(gateway.reads(), 1, 'An unchanged source is not reread after a failure');
+    stop();
+    stop = gateway.cache.observe(query, () => {});
+    await gateway.flush();
+    t.mock.timers.tick(500);
+    gateway.change();
+    await gateway.flush();
+    t.mock.timers.tick(499);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 1);
+    t.mock.timers.tick(1);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 2, 'The returning observer reads when the failure wait ends');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
   } finally {
     stop();
   }

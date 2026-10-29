@@ -761,9 +761,12 @@ export function createGatewayResourceCache(
           : undefined;
       return entry.pending.promise;
     }
+    // A read already wanted for another reason (an observer, a failed read, an unpaced change) is
+    // not held back by slot changes that come after it.
+    entry.rereadFloor ??= 0;
     const interval = entry.query.dependencies.reduce(
       (maximum, key) => Math.max(maximum, RESOURCE_PUBLISH_INTERVAL_MS[key.family] ?? 0),
-      entry.rereadFloor ?? 0,
+      entry.rereadFloor,
     );
     const wait = Math.max(
       interval - (performance.now() - (entry.lastRequestedAt ?? -Infinity)),
