@@ -366,6 +366,14 @@ export async function readSlotRow(
   return slots.find((s) => s.slot === slotId) ?? null;
 }
 
+/** A reserved successor may write its task before worker ownership transfers. */
+export function ownsRunTaskWrite(
+  row: Readonly<Record<string, unknown>> | null,
+  runId: string,
+): boolean {
+  return Boolean(row && (row.current_run_id === runId || row.handoff_run_id === runId));
+}
+
 /** A deferred teardown retains its identity without retaining run occupancy. */
 export function ownsRunSlotCleanup(
   row: Readonly<Record<string, unknown>> | null,
