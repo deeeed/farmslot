@@ -4,52 +4,32 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Add run list version lists (Version lists rules 1-6). `run.list` takes `versions` and `ids` and returns `versions`, with `RunListVersion`. On gateways with `capabilities.resourceChanges.versionLists`, the cache answers every run.list view from one shared collection: a runs change is one versions read, and only changed and missing ids are read, in pages. Rows are stored with `ResourceStore.getRows` and `mergeRows`, full bodies active runs first, then newest, up to the run list's bound. `runListPage`, `matchesRunList`, `sortRunList`, `runListLimit` and `RunListProjection` share the gateway's filters, a `limit` of `RUN_LIST_UNLIMITED` lists every matching run, `selectRunList` accepts projections, and `GatewayResourceCache.runListProjections` lists every live run's projection.
-
-- Add conditional file edits (ADR-009 Amendment 1). `fs.read` returns `hash`, the SHA-256 of the raw bytes, on hosts that support them. `fs.write`, `fs.rename` and `fs.delete` take `expectedHash` and `runId`, and a failed precondition returns `FS_CONFLICT` with `FsConflictDetails`. `capabilities.conditionalFileWrites`, `NodeInfo.conditionalWrites` and `FS_PRECONDITION_UNSUPPORTED` mark support.
-
-- Review gate payloads carry `artifactBundle`, and `decisionArtifactBundleRef` reads it. Add `activeRunDiffQuery` and `activeRunDiffBase` (stack target, then the project default branch, then main); the prefetcher takes a `defaultBranch` option. A prefetch refresh of an opened snapshot keeps it opened and evicts as a prefetch write. Sign-out skips observer withdrawal when the socket is already closed.
-
-- `GatewayResourceCache.retry` accepts an abort signal; an aborted retry sends nothing and writes no result. An authorization refusal settles its callers before the eviction is written, so prefetch stops before another read leaves the cache.
-
-- Add content by identity to the resource store and cache (verified diffs, git blobs and artifacts, size caps, one byte budget shared with workspace snapshots, fetch-time write tokens and aliases) and `createContentPrefetcher`, which prefetches pending gates and active runs with an exact unified-diff applier. Observed `git.diff` accepts `includeUntracked`.
-
-- Export the review-diff identity functions (`reviewDiffHash`, `verifiedReviewDiffHash`, `reviewSnapshotIdentityText`) for clients and the gateway, and add `GitShowResult.id`, batched `git.show` types, `GitDiffParams.includeUntracked` and `GitDiffResult.mergeBaseSha`/`headSha`.
-
-- Persist only approved gateway-status update fields with fixed error text, and accept explicit local or unsupported answers from upstream collectors without inventing a source time.
-
-- Register PR detail, slot PR, review-thread, runner-seat and runner model catalog reads as upstream collectors and runner visible models as an owner-scoped observation, with pure normalizers, sanitized stored-data projections and `observation` on their results.
-
-- Add `CommandMethod` and `PersonSessionMethod`. `releaseCancelledRunSlot` and cache-backed source clients take command-only transports; those source clients read status only from the shared cache.
-
-- Advertise passive PR list and GitHub account observations; observer identities refuse forced checks and persist only verified account fields.
-
-- Add shared upstream collector admission, source observation age/error metadata and an aggregate offline retention limit, with mixed-version refusal instead of client polling.
-
-- Register memory-only PR automation, assessment, analytics and shared copilot observations with canonical selectors and scoped change dependencies.
-
-- Allow combined findings approval and evidence attestation when every review reason explicitly permits accepting findings.
-
-- Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
-
-- Expose slot workspace publication, ownership and recovery identity with shared eligibility for guarded fleet release and update.
-
-- Expose current CI-watch progress and total deadlines so clients use the monitor’s configured windows.
-
-- Expose checklist timing in task progress and per-step worker durations in monthly analytics.
-
-- Add experimental verified node observation admission for shared, nonpersisted worker inventory reads, with mixed-version refusal and structured producer failures.
-
-- Share source-first, deduplicated run reference links between Command Center and Companion; show shared total and current-step elapsed time on the existing metadata line.
-
-- Add shared linked-ticket lookup and operator ticket metadata on runs without changing frozen task inputs.
-
-- Register source-linked PR-completion criteria without replacing original obligations, and bind readiness to acceptance and proof-contract revisions.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-- Add the opt-in node file-watch observation contract for explicit deletion and read failures, retaining the existing content-event shape for coordinated node and gateway upgrades.
+## 0.74.1 - 2026-10-29
 
+- Add run list version lists (Version lists rules 1-6). `run.list` takes `versions` and `ids` and returns `versions`, with `RunListVersion`. On gateways with `capabilities.resourceChanges.versionLists`, the cache answers every run.list view from one shared collection: a runs change is one versions read, and only changed and missing ids are read, in pages. Rows are stored with `ResourceStore.getRows` and `mergeRows`, full bodies active runs first, then newest, up to the run list's bound. `runListPage`, `matchesRunList`, `sortRunList`, `runListLimit` and `RunListProjection` share the gateway's filters, a `limit` of `RUN_LIST_UNLIMITED` lists every matching run, `selectRunList` accepts projections, and `GatewayResourceCache.runListProjections` lists every live run's projection.
+- Add conditional file edits (ADR-009 Amendment 1). `fs.read` returns `hash`, the SHA-256 of the raw bytes, on hosts that support them. `fs.write`, `fs.rename` and `fs.delete` take `expectedHash` and `runId`, and a failed precondition returns `FS_CONFLICT` with `FsConflictDetails`. `capabilities.conditionalFileWrites`, `NodeInfo.conditionalWrites` and `FS_PRECONDITION_UNSUPPORTED` mark support.
+- Review gate payloads carry `artifactBundle`, and `decisionArtifactBundleRef` reads it. Add `activeRunDiffQuery` and `activeRunDiffBase` (stack target, then the project default branch, then main); the prefetcher takes a `defaultBranch` option. A prefetch refresh of an opened snapshot keeps it opened and evicts as a prefetch write. Sign-out skips observer withdrawal when the socket is already closed.
+- `GatewayResourceCache.retry` accepts an abort signal; an aborted retry sends nothing and writes no result. An authorization refusal settles its callers before the eviction is written, so prefetch stops before another read leaves the cache.
+- Add content by identity to the resource store and cache (verified diffs, git blobs and artifacts, size caps, one byte budget shared with workspace snapshots, fetch-time write tokens and aliases) and `createContentPrefetcher`, which prefetches pending gates and active runs with an exact unified-diff applier. Observed `git.diff` accepts `includeUntracked`.
+- Export the review-diff identity functions (`reviewDiffHash`, `verifiedReviewDiffHash`, `reviewSnapshotIdentityText`) for clients and the gateway, and add `GitShowResult.id`, batched `git.show` types, `GitDiffParams.includeUntracked` and `GitDiffResult.mergeBaseSha`/`headSha`.
+- Persist only approved gateway-status update fields with fixed error text, and accept explicit local or unsupported answers from upstream collectors without inventing a source time.
+- Register PR detail, slot PR, review-thread, runner-seat and runner model catalog reads as upstream collectors and runner visible models as an owner-scoped observation, with pure normalizers, sanitized stored-data projections and `observation` on their results.
+- Add `CommandMethod` and `PersonSessionMethod`. `releaseCancelledRunSlot` and cache-backed source clients take command-only transports; those source clients read status only from the shared cache.
+- Advertise passive PR list and GitHub account observations; observer identities refuse forced checks and persist only verified account fields.
+- Add shared upstream collector admission, source observation age/error metadata and an aggregate offline retention limit, with mixed-version refusal instead of client polling.
+- Register memory-only PR automation, assessment, analytics and shared copilot observations with canonical selectors and scoped change dependencies.
+- Allow combined findings approval and evidence attestation when every review reason explicitly permits accepting findings.
+- Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
+- Expose slot workspace publication, ownership and recovery identity with shared eligibility for guarded fleet release and update.
+- Expose current CI-watch progress and total deadlines so clients use the monitor’s configured windows.
+- Expose checklist timing in task progress and per-step worker durations in monthly analytics.
+- Add experimental verified node observation admission for shared, nonpersisted worker inventory reads, with mixed-version refusal and structured producer failures.
+- Share source-first, deduplicated run reference links between Command Center and Companion; show shared total and current-step elapsed time on the existing metadata line.
+- Add shared linked-ticket lookup and operator ticket metadata on runs without changing frozen task inputs.
+- Register source-linked PR-completion criteria without replacing original obligations, and bind readiness to acceptance and proof-contract revisions.
+- Add the opt-in node file-watch observation contract for explicit deletion and read failures, retaining the existing content-event shape for coordinated node and gateway upgrades.
 - Add the experimental ADR-071 resource query cache and store seam, persisted Sources/run/decision/fleet/node/capability/progress observations with shared retention bounds, bounded native history with mobile-compatible cancellation and reader-private native keys, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases. Accepted observations remain saved when a connection pauses or a view closes. Automatic refetches respect declared family publish intervals even across slow replies; deferred reads retire with their observers and connection. Saved facts hydrate through offline reconnect attempts, while authority changes fence pending storage reads. Fleet observations share one 2 MB query and leave force-refresh commands outside the cache. Read errors survive disconnects, and saved-data refreshes retain the last failure until a successful replacement arrives. A source change during a failed read schedules one replacement read; authority and not-found refusals remain final. Register bounded backlog, roadmap, work-graph, dispatch-queue and project collections with canonical planning/configuration keys. Project configuration persists within one aggregate 2 MiB bound; previews and registration metadata stay in memory, and commands stay outside cached queries.
 
 ## 0.74.0 - 2026-10-28

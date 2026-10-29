@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/command-center",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "private": true,
   "scripts": {
     "dev": "concurrently \"bash ../../scripts/dev-gateway.sh\" \"yarn --cwd ui dev\" \"yarn workspace @farmslot/node dev\"",

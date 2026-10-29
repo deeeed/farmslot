@@ -2,21 +2,17 @@
 
 ## Unreleased
 
-- The sign-out confirmation states how many unsaved edits on this device it deletes.
-
-- Share fleet workspace rows, safe bulk release, discard confirmation and recovery progress between both operator apps.
-
-- Share plain CI-watch check counts, failing names, next poll and timeout countdown between both clients.
-
-- Show completed checklist durations and live current-step elapsed time in both operator apps.
-
-- Share publication blocking while a review refresh is pending or failed.
-
-- Share current-checklist counts, item labels and attempt identity for run progress in both clients.
-
-- Show original and derived acceptance, source links, inherited proof, pending instructions and exclusions consistently in both clients.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.21.2 - 2026-10-29
+
+- The sign-out confirmation states how many unsaved edits on this device it deletes.
+- Share fleet workspace rows, safe bulk release, discard confirmation and recovery progress between both operator apps.
+- Share plain CI-watch check counts, failing names, next poll and timeout countdown between both clients.
+- Show completed checklist durations and live current-step elapsed time in both operator apps.
+- Share publication blocking while a review refresh is pending or failed.
+- Share current-checklist counts, item labels and attempt identity for run progress in both clients.
+- Show original and derived acceptance, source links, inherited proof, pending instructions and exclusions consistently in both clients.
 
 ## 0.21.1 - 2026-10-28
 
