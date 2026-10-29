@@ -233,3 +233,33 @@ test('artifact reads carry the bundle digest and auth headers, and refusals are 
   );
   assert.equal(seen[0]!.headers.Authorization, 'Bearer token');
 });
+
+test('an open reports each step it waits on, in order', async () => {
+  const { cache } = harness();
+  try {
+    const stages: string[] = [];
+    const onStage = (stage: string) => stages.push(stage);
+    await openHeldContent({
+      cache,
+      key: diffKey,
+      cohort: 'gate',
+      read: async () => new TextEncoder().encode(DIFF),
+      onStage,
+    });
+    assert.deepEqual(stages, ['open-held', 'fetch', 'verify', 'store']);
+    stages.length = 0;
+    await openHeldContent({ cache, key: diffKey, cohort: 'gate', onStage });
+    assert.deepEqual(stages, ['open-held'], 'held bytes need no read');
+    stages.length = 0;
+    await openHeldContent({
+      cache,
+      key: imageKey,
+      cohort: 'gate',
+      read: () => Promise.reject(new Error('503')),
+      onStage,
+    });
+    assert.deepEqual(stages, ['open-held', 'fetch']);
+  } finally {
+    await cache.dispose();
+  }
+});

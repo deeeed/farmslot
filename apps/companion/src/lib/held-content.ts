@@ -25,6 +25,9 @@ export interface GateDiffSource extends ContentPrefetchArtifact {
   untrackedFiles?: ReviewDiffSnapshot['untrackedFiles'];
 }
 
+/** The steps of `openHeldContent`, in order. */
+export type HeldContentStage = 'open-held' | 'fetch' | 'verify' | 'store';
+
 /** `mismatch`: bytes this client fetched failed verification; they are never shown. */
 export type HeldContentResult =
   | { status: 'ready'; data: Uint8Array }
@@ -99,6 +102,7 @@ export async function openHeldContent({
   cohort,
   untrackedFiles,
   read,
+  onStage,
 }: {
   cache:
     | Pick<GatewayResourceCache, 'openContent' | 'storeContent' | 'contentWriteToken'>
@@ -107,14 +111,20 @@ export async function openHeldContent({
   cohort: ResourceContentCohort;
   untrackedFiles?: ReviewDiffSnapshot['untrackedFiles'];
   read?: () => Promise<Uint8Array>;
+  /** Dev-only recipe evidence: the step the open is waiting on. */
+  onStage?: (stage: HeldContentStage) => void;
 }): Promise<HeldContentResult> {
+  onStage?.('open-held');
   const held = await cache?.openContent(key);
   if (held) return { status: 'ready', data: held };
   if (!read) return { status: 'unavailable' };
   const token = cache?.contentWriteToken();
+  onStage?.('fetch');
   const data = await read().catch(() => undefined);
   if (!data) return { status: 'unavailable' };
+  onStage?.('verify');
   if (!verifyResourceContent(key, data, untrackedFiles)) return { status: 'mismatch' };
+  onStage?.('store');
   await cache?.storeContent({
     key,
     data,

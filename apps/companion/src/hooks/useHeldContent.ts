@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ImageSourcePropType } from 'react-native';
 
 import type { GitDiffResult, Run } from '@farmslot/protocol';
@@ -15,6 +15,7 @@ import {
   gateDiffContent,
   gateDiffSource,
   type HeldContentResult,
+  type HeldContentStage,
   openHeldContent,
 } from '../lib/held-content';
 import { getResourceCache, subscribeResourceCache } from '../lib/resource-cache';
@@ -46,6 +47,27 @@ const NONE: GateDiffContent = { status: 'none' };
 const LOADING: GateDiffContent = { status: 'loading' };
 const UNAVAILABLE: GateDiffContent = { status: 'unavailable' };
 
+/** Header contents, by sorted entries. */
+function headersKey(headers: ArtifactHttpHeaders | undefined): string {
+  return JSON.stringify(
+    Object.entries(headers ?? {}).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    ),
+  );
+}
+
+/**
+ * The previous headers object while its contents are equal. Every connection callback stores a
+ * new one, so reads and image sources depend on this: equal headers set again never abort a read
+ * in flight or rebuild a source, and changed values restart the read.
+ */
+function useStableHeaders<T extends ArtifactHttpHeaders | undefined>(headers: T): T {
+  const key = headersKey(headers);
+  const stable = useRef({ key, headers });
+  if (stable.current.key !== key) stable.current = { key, headers };
+  return stable.current.headers;
+}
+
 /**
  * The open gate's retained diff, verified by `diffHash`: held content first, then a live read
  * while connected. Unavailable leaves the screen on today's diff path; a mismatch is final.
@@ -54,7 +76,7 @@ export function useGateDiffContent(run: Run | null): GateDiffContent {
   const cache = useSyncExternalStore(subscribeResourceCache, getResourceCache, getResourceCache);
   const connected = useConnectedTransport() !== null;
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
-  const headers = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
+  const headers = useStableHeaders(useConnectionStore((s) => s.activeProfileHttpAuthHeaders));
   const source = useMemo(() => gateDiffSource(run), [run]);
   const identity = source ? `${source.runId}\n${source.path}\n${source.key.id}` : '';
   const [resolved, setResolved] = useState<{
@@ -103,6 +125,8 @@ export function useGateDiffContent(run: Run | null): GateDiffContent {
 
 /** `url` for an image without a `sha256`, else where its verified read stands. */
 export type ArtifactImageRead = 'url' | 'reading' | HeldContentResult['status'];
+/** Where an image's current read stands: a step of the open, then its result or its abort. */
+export type ArtifactReadStage = HeldContentStage | 'committed' | 'aborted';
 
 /**
  * An evidence image from held content by manifest `sha256`, or read live while connected and
@@ -114,7 +138,17 @@ export function useArtifactImageSource(
   uri: string,
   headers: ArtifactHttpHeaders | undefined,
   artifact: { path: string; sha256?: string },
+  /** Dev-only recipe evidence: each read, numbered from 1, its stages and its fetch outcome. */
+  trace?: (
+    run: number,
+    stage: ArtifactReadStage,
+    fetch?: { bytes: number } | { error: string },
+  ) => void,
 ): { source: ImageSourcePropType | undefined; read: ArtifactImageRead } {
+  const traceRef = useRef(trace);
+  traceRef.current = trace;
+  const runs = useRef(0);
+  const stableHeaders = useStableHeaders(headers);
   const cache = useSyncExternalStore(subscribeResourceCache, getResourceCache, getResourceCache);
   const connected = useConnectedTransport() !== null;
   const keyId = artifactImageKey(artifact)?.id;
@@ -133,25 +167,47 @@ export function useArtifactImageSource(
   useEffect(() => {
     if (!keyId || settled) return;
     let active = true;
+    let done = false;
+    const run = ++runs.current;
+    const note = (stage: ArtifactReadStage) => {
+      if (active) traceRef.current?.(run, stage);
+    };
     const controller = new AbortController();
     openHeldContent({
       cache,
       key: { kind: 'artifact', id: keyId },
       cohort: 'gate',
-      read: connected ? () => fetchArtifactBytes(uri, headers ?? {}, controller.signal) : undefined,
+      read: connected
+        ? () =>
+            fetchArtifactBytes(uri, stableHeaders ?? {}, controller.signal).then(
+              (bytes) => {
+                traceRef.current?.(run, 'fetch', { bytes: bytes.byteLength });
+                return bytes;
+              },
+              (error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                traceRef.current?.(run, 'fetch', { error: message });
+                throw error;
+              },
+            )
+        : undefined,
+      onStage: note,
     })
       .catch(() => ({ status: 'unavailable' as const }))
       .then((next) => {
+        done = true;
+        note('committed');
         if (active) setResolved({ cache, identity: `${keyId}\n${uri}`, result: next });
       });
     return () => {
       active = false;
+      if (!done) traceRef.current?.(run, 'aborted');
       controller.abort();
     };
-  }, [cache, connected, headers, keyId, settled, uri]);
+  }, [cache, connected, keyId, settled, stableHeaders, uri]);
   const source = useMemo(
-    () => artifactImageSource(keyId, result, artifactSource(uri, headers)),
-    [headers, keyId, result, uri],
+    () => artifactImageSource(keyId, result, artifactSource(uri, stableHeaders)),
+    [keyId, result, stableHeaders, uri],
   );
   return { source, read: keyId ? (result?.status ?? 'reading') : 'url' };
 }
