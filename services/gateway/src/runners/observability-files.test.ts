@@ -468,3 +468,32 @@ test('a bound terminal hook exposes the native turn failure to its monitor', () 
   };
   assert.equal(deriveRunnerSessionDeliveryState(record, 'pi-task')?.failure, record.failure);
 });
+
+test('session delivery retains structured tool progress separately from active-turn observations', () => {
+  const reading = deriveRunnerSessionDeliveryState(
+    {
+      session_id: 'progress-session',
+      event: 'Notification',
+      observedAt: NOW,
+      turnActive: true,
+      turnStartedAt: NOW - 700_000,
+      lastToolProgressAt: NOW - 650_000,
+    },
+    'progress-session',
+  );
+  assert.equal(reading?.value, 'active');
+  assert.equal(reading?.lastToolProgressAt, NOW - 650_000);
+  assert.equal(
+    deriveRunnerSessionDeliveryState(
+      {
+        session_id: 'progress-session',
+        event: 'UserPromptSubmit',
+        observedAt: NOW,
+        turnActive: true,
+        lastToolProgressAt: null,
+      },
+      'progress-session',
+    )?.lastToolProgressAt,
+    null,
+  );
+});

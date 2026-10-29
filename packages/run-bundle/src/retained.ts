@@ -294,27 +294,54 @@ export function isRunBundleMedia(file: string): boolean {
   return /\.(?:png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|wav)$/iu.test(file);
 }
 
-async function physicalBytes(root: string): Promise<number> {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if (hasCode(error, 'ENOENT')) return 0;
-    throw error;
-  }
-  let total = 0;
-  for (const entry of entries) {
-    const file = path.join(root, entry.name);
-    if (entry.isDirectory()) total += await physicalBytes(file);
-    else if (entry.isFile()) {
-      try {
-        total += (await stat(file)).size;
-      } catch (error) {
-        if (!hasCode(error, 'ENOENT')) throw error;
-      }
+// One awaited stat at a time cost ~5 ms each inside a busy gateway, so a walk over
+// ~50k historical task files held run completion for 30+ minutes. Keep a bounded
+// number of filesystem calls in flight instead.
+const PHYSICAL_SCAN_CONCURRENCY = 64;
+
+function concurrencyLimit(max: number) {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    // A released slot passes straight to the next waiter, so `active` never exceeds max.
+    if (active >= max) await new Promise<void>((resolve) => waiting.push(resolve));
+    else active++;
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
     }
-  }
-  return total;
+  };
+}
+
+async function physicalBytes(root: string): Promise<number> {
+  const limit = concurrencyLimit(PHYSICAL_SCAN_CONCURRENCY);
+  const walk = async (directory: string): Promise<number> => {
+    let entries;
+    try {
+      entries = await limit(() => readdir(directory, { withFileTypes: true }));
+    } catch (error) {
+      if (hasCode(error, 'ENOENT')) return 0;
+      throw error;
+    }
+    const sizes = await Promise.all(
+      entries.map(async (entry) => {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) return walk(file);
+        if (!entry.isFile()) return 0;
+        try {
+          return (await limit(() => stat(file))).size;
+        } catch (error) {
+          if (!hasCode(error, 'ENOENT')) throw error;
+          return 0;
+        }
+      }),
+    );
+    return sizes.reduce((total, size) => total + size, 0);
+  };
+  return walk(root);
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */

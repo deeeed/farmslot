@@ -4,8 +4,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Wait through a bounded cold dev-server compile during prepare, and fail timed-out terminal cleanup visibly instead of blocking replay indefinitely.
+- Limit the pending-decision scan to task folders and share one scan between concurrent decision lists, so historical artifact trees no longer stall gateway file I/O.
+
 - Resume monitoring dispatched workers without repeating retained-artifact admission, so waiting completion signals can advance after restart.
+- Cap inherited worker prompt hooks without changing user settings, and escalate active inline CI fixes without tool progress, including tools with no completion for ten minutes.
+
+- Wait through a bounded cold dev-server compile during prepare, and fail timed-out terminal cleanup visibly instead of blocking replay indefinitely.
 - Deduplicate Claude message usage and count initial and fix sessions once, excluding reviewers from historical and completion totals.
 
 ## 0.30.1 - 2026-10-29
