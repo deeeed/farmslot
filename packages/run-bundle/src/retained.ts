@@ -444,9 +444,28 @@ export async function reserveRunBundleMetadata(
   await assertStorePairing(store);
   assertSafeBundleSegment(runId, 'run id');
   assertPolicy(policy);
-  const acquisitionSize = farmslotRoot ? await acquisitionBytes(farmslotRoot) : 0;
+  const file = path.join(store.root, 'reservations', `${runId}.json`);
+  // Replay/resume does not admit new work. Do not rescan historical task inputs for it.
+  if (await readOptional(file)) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const acquisitionSize = farmslotRoot
+    ? await Promise.race([
+        acquisitionBytes(farmslotRoot),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Retention admission acquisition scan timed out after 30000ms for run ${runId}`,
+                ),
+              ),
+            30_000,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer))
+    : 0;
+  // Only the read-only scan is raced. A timed-out scan cannot later reserve or start work.
   return withRunBundleStoreLock(store, async () => {
-    const file = path.join(store.root, 'reservations', `${runId}.json`);
     if (await readOptional(file)) return;
     const bytes = Math.min(1024 ** 2, policy.metadataReserveBytes);
     const reserved = await reservedMetadataBytes(store);

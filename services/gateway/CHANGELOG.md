@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Run one task progress read per watched slot at a time; updates that arrive during a read fold into one rerun. A due gateway-update check publishes its result once instead of reporting a stale state for the length of the check.
+- Resume monitoring dispatched workers without repeating retained-artifact admission, so waiting completion signals can advance after restart.
+
 - Deduplicate Claude message usage and count initial and fix sessions once, excluding reviewers from historical and completion totals.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

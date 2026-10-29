@@ -483,7 +483,9 @@ rsync -a --exclude='deploy-node.sh' "$REPO_ROOT/scripts/" "${RSYNC_PREFIX}$REMOT
 # Pool configs needed by lib/slot-common.sh (load_slot_vars)
 echo "[deploy] syncing pool configs..."
 run "mkdir -p $REMOTE_DIR/pool"
-rsync -a "$REPO_ROOT/pool/" "${RSYNC_PREFIX}$REMOTE_DIR/pool/"
+# Release checkouts stage the gateway pool through symlinks. Copy their contents,
+# never links that could resolve into a stale checkout on the execution node.
+rsync -aL "$REPO_ROOT/pool/" "${RSYNC_PREFIX}$REMOTE_DIR/pool/"
 
 # Project dirs referenced by hooks via {{farmslot_dir}}/projects/<name>/
 # Syncs project.json, task templates and hook helper dirs used through {{farmslot_dir}}.
