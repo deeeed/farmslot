@@ -109,6 +109,13 @@ export interface MaterializedRunBundle {
   ref: RunArtifactBundleRef;
   manifest: RunBundleManifest;
   missingData: string[];
+  acquisitionScan: AcquisitionScan;
+}
+
+interface AcquisitionScan {
+  bytes: number;
+  fileCount: number;
+  durationMs: number;
 }
 
 export interface RunBundleAvailability {
@@ -316,7 +323,7 @@ function concurrencyLimit(max: number) {
   };
 }
 
-async function physicalBytes(root: string): Promise<number> {
+async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<number> {
   const limit = concurrencyLimit(PHYSICAL_SCAN_CONCURRENCY);
   const walk = async (directory: string): Promise<number> => {
     let entries;
@@ -332,7 +339,12 @@ async function physicalBytes(root: string): Promise<number> {
         if (entry.isDirectory()) return walk(file);
         if (!entry.isFile()) return 0;
         try {
-          return (await limit(() => stat(file))).size;
+          return (
+            await limit(() => {
+              if (scan) scan.fileCount++;
+              return stat(file);
+            })
+          ).size;
         } catch (error) {
           if (!hasCode(error, 'ENOENT')) throw error;
           return 0;
@@ -368,10 +380,10 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
   return bytes;
 }
 
-const acquisitionScans = new Map<string, Promise<number>>();
+const acquisitionScans = new Map<string, Promise<AcquisitionScan>>();
 
 /** Share only an in-flight scan, never a stale footprint or a separate accounting store. */
-async function acquisitionBytes(root: string): Promise<number> {
+async function acquisitionBytes(root: string): Promise<AcquisitionScan> {
   let scan = acquisitionScans.get(root);
   if (!scan) {
     scan = scanAcquisitionBytes(root).finally(() => acquisitionScans.delete(root));
@@ -381,18 +393,20 @@ async function acquisitionBytes(root: string): Promise<number> {
 }
 
 /** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
-async function scanAcquisitionBytes(root: string): Promise<number> {
+async function scanAcquisitionBytes(root: string): Promise<AcquisitionScan> {
+  const started = performance.now();
+  const scan: AcquisitionScan = { bytes: 0, fileCount: 0, durationMs: 0 };
   let bytes = 0;
   const layout = { farmslotRoot: root, projectsDir: resolveProjectsDir(root) };
   // A projects dir inside .sandbox (desktop validation) is charged once, not again below.
   const counted = new Set<string>();
   for (const { root: taskRoot } of await listProjectTaskRoots(layout)) {
     counted.add(path.resolve(taskRoot));
-    bytes += await physicalBytes(taskRoot);
+    bytes += await physicalBytes(taskRoot, scan);
   }
   const sandbox = async (directory: string): Promise<number> => {
     if (path.basename(directory) === ORCHESTRATOR_TASK_DIR)
-      return counted.has(path.resolve(directory)) ? 0 : physicalBytes(directory);
+      return counted.has(path.resolve(directory)) ? 0 : physicalBytes(directory, scan);
     let sum = 0;
     try {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -404,7 +418,9 @@ async function scanAcquisitionBytes(root: string): Promise<number> {
     }
     return sum;
   };
-  return bytes + (await sandbox(path.join(root, '.sandbox')));
+  scan.bytes = bytes + (await sandbox(path.join(root, '.sandbox')));
+  scan.durationMs = performance.now() - started;
+  return scan;
 }
 
 async function chargedCaptureBytes(
@@ -477,7 +493,7 @@ export async function reserveRunBundleMetadata(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const acquisitionSize = farmslotRoot
     ? await Promise.race([
-        acquisitionBytes(farmslotRoot),
+        acquisitionBytes(farmslotRoot).then((scan) => scan.bytes),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
             () =>
@@ -1025,7 +1041,8 @@ export async function materializeRunBundle(
   await assertStorePairing(store);
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   assertPolicy(policy);
-  const acquisitionSize = await acquisitionBytes(request.farmslotRoot);
+  const acquisitionScan = await acquisitionBytes(request.farmslotRoot);
+  const acquisitionSize = acquisitionScan.bytes;
   const captured = await withRunBundleStoreLock(store, async () => {
     const taskKey = run.id;
     const intentPath = path.join(
@@ -1263,7 +1280,7 @@ export async function materializeRunBundle(
       intent.committed = true;
       intent.runJson = '';
       await atomicJson(intentPath, intent);
-      return { ...captured, missingData };
+      return { ...captured, missingData, acquisitionScan };
     });
   });
 }

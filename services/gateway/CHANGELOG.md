@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Log the acquisition scan's file count and duration for each output completion capture.
+
 - Hold reviewer model-capacity refusals for an operator retry, preserving the run and slot instead of failing the run.
 - Limit the pending-decision scan to task folders and share one scan between concurrent decision lists, so historical artifact trees no longer stall gateway file I/O.
 
