@@ -951,11 +951,11 @@ export async function assertRunGateReady(
   actionId?: string,
 ): Promise<RunGateReadiness> {
   const readiness = await collectRunGateReadiness(run, preparedPackage);
-  // Artifact-only QA completion presents its unresolved claims for review.
+  // Artifact-only QA and eval completion retain unresolved claims as output.
   // This defers only their verdict policy, never package or execution integrity.
   const outputCompletion =
     actionId === 'complete' &&
-    run.flowType === 'qa' &&
+    (run.flowType === 'qa' || Boolean(run.engineState?.evalExperiment)) &&
     isArtifactOnlyRun(run) &&
     !preparedPackage &&
     !readiness.identity.packageHash;
