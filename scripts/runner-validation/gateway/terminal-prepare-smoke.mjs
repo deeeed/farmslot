@@ -22,6 +22,7 @@ assert.equal(owner.purpose, 'terminal-prepare-smoke');
 assert.equal(os.hostname().split('.')[0], input.machine);
 assert.equal((await lstat(root)).mode & 0o077, 0);
 assert.notEqual(root, source);
+assert((await realpath(input.cli)).startsWith(root + path.sep));
 assert((await realpath(input.repo)).startsWith(root + path.sep));
 assert(out.startsWith(root + path.sep));
 assert.match(input.slotId, /^[a-z0-9][a-z0-9_-]*$/);
