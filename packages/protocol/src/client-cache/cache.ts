@@ -9,7 +9,14 @@ import {
   resourceContentWithinLimits,
   verifyResourceContent,
 } from './content.js';
-import { RESOURCE_PUBLISH_INTERVAL_MS, resourceKeyId, type ResourceReadStamp } from './keys.js';
+import {
+  isKnownResourceFamily,
+  RESOURCE_PUBLISH_INTERVAL_MS,
+  RESOURCE_REREAD_INTERVAL_MS,
+  RESOURCE_RETRY_MAX_WAIT_MS,
+  resourceKeyId,
+  type ResourceReadStamp,
+} from './keys.js';
 import {
   nativeHistoryStorageId,
   readNativeHistory,
@@ -76,6 +83,11 @@ interface QueryEntry {
   pending?: PendingRead;
   dirty: boolean;
   lastRequestedAt?: number;
+  /** Failed reads since the last answer, and the earliest an automatic reread may follow them. */
+  failures: number;
+  retryAt?: number;
+  /** How long after the last read the changes since it may wait; any unpaced key lifts it. */
+  rereadFloor?: number;
   readTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -224,7 +236,11 @@ export function createGatewayResourceCache(
 
   function invalidate(entry: QueryEntry, clear = false): void {
     cancelScheduledRead(entry);
-    if (clear) entry.lastRequestedAt = undefined;
+    entry.rereadFloor = undefined;
+    if (clear) {
+      entry.lastRequestedAt = undefined;
+      entry.retryAt = undefined;
+    }
     entry.serial++;
     entry.pending?.controller.abort();
     entry.pending = undefined;
@@ -379,6 +395,7 @@ export function createGatewayResourceCache(
     revisions.clear();
     for (const entry of entries.values()) {
       entry.lastRequestedAt = undefined;
+      entry.retryAt = undefined;
       invalidate(entry, revoke || scopeChanged || authorityChanged);
     }
     barrier = barrier
@@ -506,9 +523,19 @@ export function createGatewayResourceCache(
       const affected = [...entries.values()].filter((entry) =>
         entry.query.dependencies.some((key) => resourceKeyId(key) === id),
       );
+      // Coverage counts declared dependencies only, so a known key that no entry declares (another
+      // slot, an unopened workspace) changes nothing held. Only a family this client cannot name might.
+      if (!affected.length && isKnownResourceFamily(change.key?.family)) continue;
       const targets = affected.length ? affected : [...entries.values()];
       for (const entry of targets) {
         if (!affected.length) entry.unknownGeneration++;
+        const floor =
+          entry.query.rereadIntervalMs?.[change.key.family] ??
+          RESOURCE_REREAD_INTERVAL_MS[change.key.family];
+        entry.rereadFloor = Math.min(
+          entry.rereadFloor ?? Infinity,
+          (affected.length && floor) || 0,
+        );
         entry.dirty = true;
         entry.state = { ...entry.state, status: 'stale' };
         notify(entry);
@@ -540,6 +567,7 @@ export function createGatewayResourceCache(
       unknownGeneration: 0,
       lastUsed: ++lastUsed,
       dirty: true,
+      failures: 0,
     };
     entries.set(query.id, entry);
     hydrateEntry(entry);
@@ -743,15 +771,23 @@ export function createGatewayResourceCache(
           : undefined;
       return entry.pending.promise;
     }
+    // A read already wanted for another reason (an observer, a failed read, an unpaced change) is
+    // not held back by slot changes that come after it.
+    entry.rereadFloor ??= 0;
     const interval = entry.query.dependencies.reduce(
       (maximum, key) => Math.max(maximum, RESOURCE_PUBLISH_INTERVAL_MS[key.family] ?? 0),
-      0,
+      entry.rereadFloor,
     );
-    const wait = interval - (performance.now() - (entry.lastRequestedAt ?? -Infinity));
+    const wait = Math.max(
+      interval - (performance.now() - (entry.lastRequestedAt ?? -Infinity)),
+      (entry.retryAt ?? -Infinity) - performance.now(),
+    );
     if (observedOnly && wait > 0) {
       // A slow read's follow-up can finish just before the next producer notice.
       // Coalesce that automatic read too, rather than exceeding the family's bound.
-      entry.readTimer ??= setTimeout(() => {
+      // The wait only shortens until the next read, so the timer follows the latest one.
+      cancelScheduledRead(entry);
+      entry.readTimer = setTimeout(() => {
         entry.readTimer = undefined;
         if (entry.dirty || entry.state.status !== 'ready') schedule(entry);
       }, wait);
@@ -767,6 +803,7 @@ export function createGatewayResourceCache(
     };
     entry.pending = pending;
     entry.dirty = false;
+    entry.rereadFloor = undefined;
     const unknownGeneration = entry.unknownGeneration;
     entry.state = {
       ...entry.state,
@@ -868,6 +905,8 @@ export function createGatewayResourceCache(
         };
         // Only a real intervening invalidation needs a follow-up; missing metadata is not a retry loop.
         entry.dirty = supported && !covered && entry.dirty;
+        entry.failures = 0;
+        entry.retryAt = undefined;
         entry.lastUsed = ++lastUsed;
         // Version-list views are derived from the run collection, which is stored on its own.
         const persistResult =
@@ -985,6 +1024,15 @@ export function createGatewayResourceCache(
         )
           return;
         const failure = queryError(error);
+        // A gateway too slow to answer may still be working on the read, so asking again at once
+        // piles the same work up there. The wait starts at the failed read's length and doubles.
+        const failedAt = performance.now();
+        entry.retryAt =
+          failedAt +
+          Math.min(
+            (failedAt - (entry.lastRequestedAt ?? failedAt)) * 2 ** entry.failures++,
+            RESOURCE_RETRY_MAX_WAIT_MS,
+          );
         // An intervening write still needs one read after failed I/O. Terminal
         // refusals retire that work; an unchanged failed source never retries.
         entry.dirty &&=

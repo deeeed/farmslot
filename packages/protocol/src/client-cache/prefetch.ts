@@ -9,7 +9,6 @@ import type { ResourceChangedPayload } from '../transport/events.js';
 
 import { gitBlobHash, RESOURCE_CONTENT_LIMITS, resourceContentWithinLimits } from './content.js';
 import { applyUnifiedDiff, parseUnifiedDiff, type UnifiedDiffFile } from './diff-apply.js';
-import { RESOURCE_PUBLISH_INTERVAL_MS } from './keys.js';
 import { type ResourceQuery, resourceQuery } from './registry.js';
 import type { ContentKey, ResourceContentCohort } from './store.js';
 import type {
@@ -62,6 +61,11 @@ export interface ContentPrefetcher {
 
 /** Prefetch rule 1 (initial). */
 const MAX_PREFETCH_RUNS = 2;
+/**
+ * A busy worktree changes every few seconds, but only a new head rereads its diff. Checking the
+ * head once a minute keeps a busy farm from asking every working slot for its log continuously.
+ */
+const SLOT_HEAD_CHECK_INTERVAL_MS = 60_000;
 const GITLINK_MODE = '160000';
 
 type PrefetchPlan = 'gate' | 'slot' | 'frozen';
@@ -262,7 +266,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     pump();
   }
 
-  /** Prefetch rule 3: one check in flight per run, and slot checks at the workspace cadence. */
+  /** Prefetch rule 3: one check in flight per run, and slot checks at most once a minute. */
   function check(state: PrefetchRunState): void {
     const pending = state.check;
     if (!enabled || refused || disposed || (state.plan !== 'gate' && state.plan !== 'slot')) return;
@@ -271,7 +275,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       return;
     }
     if (pending.timer !== undefined) return;
-    const interval = state.plan === 'slot' ? (RESOURCE_PUBLISH_INTERVAL_MS.workspace ?? 0) : 0;
+    const interval = state.plan === 'slot' ? SLOT_HEAD_CHECK_INTERVAL_MS : 0;
     const wait = pending.lastAt + interval - Date.now();
     if (wait > 0) {
       pending.timer = setTimeout(() => {
@@ -309,7 +313,10 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       { slotId: state.slotId, limit: 1 },
       signal,
     );
-    if (!signal.aborted && log.entries[0]?.hash !== state.head) refetch(state);
+    const head = log.entries[0]?.hash;
+    // Only a diff read successfully sets the head, so one that failed is tried at the next check.
+    if (signal.aborted || head === state.head) return;
+    refetch(state);
   }
 
   async function readRun(runId: string, signal: AbortSignal): Promise<Run> {

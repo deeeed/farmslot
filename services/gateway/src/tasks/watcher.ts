@@ -123,6 +123,8 @@ interface SlotWatch {
   acceptanceSyncError?: string;
   acceptanceSyncPending?: boolean;
   acceptanceSyncQueued?: boolean;
+  progressRead?: Promise<void>;
+  progressRerun?: { options: ComputeAndEmitOptions; done: Promise<void>; resolve(): void };
   /** `artifacts/acceptance-status.json` beside this context's checklist — the AC ledger. */
   acceptanceStatusFilePath: string;
   acceptanceStatusWatcher?: FSWatcher; // chokidar watcher for local (acceptance-status.json)
@@ -1225,6 +1227,44 @@ async function computeAndEmit(
   // read even when parsing cannot produce a legacy progress payload.
   publishProgressResources(sw.slotId, sw.runId, sw.contextId);
 
+  // One progress read per watch at a time. On a loaded node a read outlasts the 5 s operation
+  // heartbeat, and overlapping reads only queue behind each other; later calls fold into one rerun.
+  // A caller waits for the read that covers its call, never for the reruns queued after it.
+  if (sw.progressRead) {
+    if (!sw.progressRerun) {
+      let resolve!: () => void;
+      const done = new Promise<void>((settle) => (resolve = settle));
+      sw.progressRerun = { options: { skipAcceptanceSync: true }, done, resolve };
+    }
+    const queued = sw.progressRerun.options;
+    sw.progressRerun.options = {
+      fromSubtask: queued.fromSubtask || options.fromSubtask,
+      fromAcceptance: queued.fromAcceptance || options.fromAcceptance,
+      skipAcceptanceSync: queued.skipAcceptanceSync && options.skipAcceptanceSync,
+    };
+    return sw.progressRerun.done;
+  }
+  const first = readAndEmitProgress(key, sw, content, options);
+  sw.progressRead = (async () => {
+    await first;
+    for (let rerun = sw.progressRerun; rerun; rerun = sw.progressRerun) {
+      sw.progressRerun = undefined;
+      if (activeWatches.get(key) === sw)
+        await readAndEmitProgress(key, sw, undefined, rerun.options);
+      rerun.resolve();
+    }
+  })().finally(() => {
+    sw.progressRead = undefined;
+  });
+  return first;
+}
+
+async function readAndEmitProgress(
+  key: string,
+  sw: SlotWatch,
+  content: string | undefined,
+  options: ComputeAndEmitOptions,
+): Promise<void> {
   try {
     if (!options.skipAcceptanceSync) scheduleAcceptanceSync(key, sw);
     if (!options.fromSubtask && !options.fromAcceptance) {

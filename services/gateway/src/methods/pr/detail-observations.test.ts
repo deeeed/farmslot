@@ -11,6 +11,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   createGatewayResourceCache,
+  RESOURCE_REREAD_INTERVAL_MS,
   type ResourceCacheConnection,
   type ResourceCacheTransport,
   resourceQuery,
@@ -372,7 +373,7 @@ describe('observations through the shared cache', { concurrency: 1 }, () => {
     'pr.forSlot': (params: unknown) => readPRForSlot(params as PRForSlotParams, managed),
   };
 
-  test('a slot moving to its default branch replaces its PR with an explicit local answer', async () => {
+  test('a slot moving to its default branch replaces its PR with an explicit local answer', async (t) => {
     slot.slot = 's-cache';
     slot.branch = 'feat/a';
     const cache = cacheThrough(slotHandler);
@@ -383,6 +384,9 @@ describe('observations through the shared cache', { concurrency: 1 }, () => {
       assert.equal(cache.read(query).data?.pr, 7);
       assert.equal(cache.read(query).sourceObservation?.status, 'ready');
       slot.branch = 'main';
+      // Automatic rereads of farm slot keys are paced; this change comes a full interval later.
+      const now = performance.now.bind(performance);
+      t.mock.method(performance, 'now', () => now() + RESOURCE_REREAD_INTERVAL_MS.slots!);
       resourceRevisions.advance({ family: 'slots', scope: 'farm' });
       await until(() => cache.read(query).data?.pr === null);
       const local = cache.read(query);
