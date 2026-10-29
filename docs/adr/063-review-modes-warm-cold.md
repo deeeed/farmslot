@@ -541,3 +541,26 @@ the existing review path. Restart recovery applies the same limits.
 Repeated empty cycles and small rechecks consumed reviewer rounds without new
 findings. These limits remove automatic launches without another reviewer
 verdict or round admission. There is no new public API or package field.
+
+## Amendment 9: independent review-pr request budgets, 2026-10-29
+
+**Status:** Proposed for the requested review-pr budget repair.
+**Specification:** [Review-pr budget](../reference/review-modes-warm-cold.md#review-pr-budget).
+
+Each `review-pr` run has its own five-round budget, independent of other runs
+for the same repository/PR, including archived requests and feature work.
+Admissions, settlements, no-verdict accounting and the admission lock are scoped
+to that run. Replay, restart and reattachment retain its spent rounds; a new
+review request receives a new budget. Review-pr remains ineligible for extensions.
+
+A requested review of core#10693 could not dispatch because earlier archived
+review-pr requests had spent the PR-wide budget. That cap governs convergence
+within one request, not whether a PR can ever be reviewed again. Feature PR
+budgets and the two-round update-branch budget retain their existing accounting.
+
+### Public surface
+
+This changes gateway budget selection only. Existing admission records and
+budget projections remain authoritative; no record, RPC, CLI flag, SDK export,
+harness setting or worker-loaded package changes. WARM lineage and review
+publication requirements remain unchanged.

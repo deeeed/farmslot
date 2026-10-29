@@ -71,7 +71,7 @@ use the same limits.
 
 ## Round budget
 
-Except for the update-branch budget below, the gateway MUST default to at most
+Except for the review-pr and update-branch scopes below, the gateway MUST default to at most
 five reviewer rounds for a repository/PR. Before
 a PR identity exists, admission is scoped to its canonical run. Initial, retry,
 WARM/COLD, pipeline, standalone and publish-gate reviewer attempts MUST spend
@@ -92,6 +92,22 @@ or starting a reviewer. The refusal MUST tell the operator to stop and diagnose
 a design problem or scope creep, then narrow the scope or redesign. Spending all
 five rounds MUST NOT prevent publication when all existing approval conditions
 are satisfied.
+
+### Review-pr budget
+
+**Status:** Proposed under ADR-063 Amendment 9.
+
+Each `review-pr` run MUST have its own five-round budget. Its admission lock,
+admissions, settlements and no-verdict cap MUST exclude every other run,
+including archived review requests and feature runs for the same repository/PR.
+Other runs MUST NOT inherit its admissions, settlements or extensions.
+Review-pr remains ineligible for budget extensions.
+
+Replay, restart and reattachment MUST retain that run's admissions and reuse
+an existing receipt. A sixth counted attempt in the same run MUST still refuse;
+a new review-pr request starts with its own budget. Feature PR budgets and
+update-branch accounting remain unchanged. WARM lineage and publication checks
+MUST NOT change with budget scope.
 
 ### Update-branch budget
 
@@ -144,7 +160,7 @@ returns the original receipt; reuse of its key for different inputs refuses.
 Existing admissions MUST remain unchanged. Restart, replay and a copied result
 MUST NOT refund attempts by themselves or apply the same extension twice.
 
-The effective limit and used count MUST come from the existing admission owner.
+For extension-eligible feature runs, the effective limit and used count MUST come from the existing admission owner.
 Before a PR exists, the receipt applies only to its canonical run. Once the run
 has a verified repository/PR identity, the existing shared scope MUST preserve
 that receipt and its admissions across active and archived history. A different
