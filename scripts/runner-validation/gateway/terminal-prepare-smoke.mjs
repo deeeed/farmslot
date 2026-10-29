@@ -75,8 +75,10 @@ const selected = {
   TMUX_TMPDIR: path.join(root, 'tm'),
   FARMSLOT_TMUX_SANDBOX: socket,
   SCREEN_CONTROL_SOCKET: path.join(root, 'screen.sock'),
+  TMPDIR: path.join(root, 'tmp'),
 };
 Object.assign(process.env, selected);
+await mkdir(selected.TMPDIR, { recursive: true, mode: 0o700 });
 await mkdir(path.dirname(socket), { recursive: true, mode: 0o700 });
 const bin = path.join(root, 'proof-bin');
 const tmux = (
@@ -111,10 +113,12 @@ assert.equal(runsDirectory(), selected.FARMSLOT_RUNS_DIR);
 const { loadSlotVars, loadProjectVars } = await load('services/gateway/src/core/config.ts');
 const vars = await loadSlotVars(input.slotId);
 assert.equal(vars.host, 'localhost');
+assert.equal(typeof vars.sshUser, 'string');
 assert.equal(await realpath(vars.remoteRepo), await realpath(input.repo));
 assert.equal(vars.session, input.session);
 assert.equal(vars.projectName, input.project);
-const { projectJson } = await loadProjectVars(input.project);
+const projectVars = await loadProjectVars(input.project);
+const { projectJson } = projectVars;
 assert.equal(projectJson.prepare?.default, 'full');
 assert.deepEqual(projectJson.prepare.profiles.full.phases, [
   'git',
@@ -141,6 +145,12 @@ if (process.argv[3] === '--preflight') {
     (error) => error.code === 1 && error.stderr.includes('Foreign tmux socket refused'),
   );
   await exec(input.cli, ['--help'], { timeout: 30_000 });
+  await exec(input.cli, ['internal', 'slot-vars', input.slotId, '--shell'], { timeout: 30_000 });
+  const { checkProjectPrerequisites } = await load(
+    'services/gateway/src/methods/slot/prerequisites.ts',
+  );
+  const requirements = await checkProjectPrerequisites(vars, projectJson, projectVars);
+  assert.equal(requirements?.status, 'pass', requirements?.detail);
   await save('preflight.json', {
     status: 'PASS',
     ...fingerprint,
