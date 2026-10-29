@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resume monitoring dispatched workers without repeating retained-artifact admission, so waiting completion signals can advance after restart.
+
 - Deduplicate Claude message usage and count initial and fix sessions once, excluding reviewers from historical and completion totals.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
