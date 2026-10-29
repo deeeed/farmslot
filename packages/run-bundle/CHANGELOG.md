@@ -4,6 +4,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- Reuse existing admission reservations before scanning acquisition trees, and fail new admission scans after 30 seconds without creating a late reservation.
+
 - Repair a missing gateway-written payload from its own directory.
 
 - Retain gateway-written files from their own directory through `gatewayFiles`, so a package can freeze a file the gateway wrote after its source bundle.
