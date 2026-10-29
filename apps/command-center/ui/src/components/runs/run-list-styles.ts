@@ -336,8 +336,7 @@ export const runListStyles = css`
     font-size: 10px;
     max-width: 100%;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
   }
   .run-row-affordances .run-progress.gate {
     color: ${unsafeCSS(colors.accent)};

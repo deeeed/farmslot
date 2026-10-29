@@ -2,6 +2,13 @@
 // cdp.mjs eval 'dev/runs?f212=1' --file scripts/probes/stale-worker-completion.js
 if (!location.hash.startsWith('#dev/runs?f212=1'))
   throw new Error('Open the isolated F212 dev page');
+if (!document.querySelector('dev-harness')) {
+  await import('/src/dev/dev-harness.ts');
+  document.querySelector('farm-app')?.remove();
+  const harness = document.createElement('dev-harness');
+  document.body.append(harness);
+  await harness.updateComplete;
+}
 const list = document.querySelector('run-list');
 if (!list?.shadowRoot) throw new Error('Mount the run list dev harness first');
 const { updateRuns } = await import('/src/state.ts');
@@ -61,14 +68,18 @@ for (const status of ['ready', 'stale', 'error']) {
   list.requestUpdate();
   await list.updateComplete;
   const row = list.shadowRoot.querySelector('[data-row-id="f212-ui-fixture"]');
-  const label = row?.querySelector('.run-progress')?.textContent.trim();
+  const progressLabel = row?.querySelector('.run-progress');
+  const label = progressLabel?.textContent.trim();
   const expected =
     status === 'ready' ? 'Worker finished; monitor has not advanced' : 'Stale: no progress for';
   if (!label?.includes(expected) || label.includes('nothing pending'))
     throw new Error(`${status} progress label: ${label}`);
+  if (getComputedStyle(progressLabel).whiteSpace === 'nowrap')
+    throw new Error('The progress reason must remain readable in a narrow row');
   results.push({ status, label, visible: !!row.getClientRects().length });
 }
 observation.status = 'ready';
 list.requestUpdate();
 await list.updateComplete;
+list.scrollIntoView({ block: 'start' });
 return { kind: 'isolated-ui-fixture', results, gatewayWrites: false };
