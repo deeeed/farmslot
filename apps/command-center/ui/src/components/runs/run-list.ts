@@ -936,7 +936,16 @@ export class RunList extends RunListState {
     const runnerLabel = engine.model
       ? `${engine.runner ?? 'runner'}/${engine.model}`
       : (engine.runner ?? '—');
-    const progress = showsRunProgress(run) ? runProgressSummary(run) : null;
+    const taskObservation = this.progressQueries.get(
+      runChecklistProgressTarget(run)?.key ?? '',
+    )?.state;
+    const progress = showsRunProgress(run)
+      ? runProgressSummary(
+          run,
+          Date.now(),
+          taskObservation?.status === 'ready' ? taskObservation.data?.structured : undefined,
+        )
+      : null;
     const cells = [
       ...(showCheckbox
         ? [

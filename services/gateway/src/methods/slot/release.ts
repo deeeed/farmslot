@@ -22,6 +22,7 @@ import {
   WORKER_ARTIFACT_COPY_EXCLUDES,
   WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
 } from '../../core/artifact-copy-policy.js';
+import { assertCleanupCurrent, withoutCleanupSignal } from '../../core/cleanup-scope.js';
 import {
   execOnSlot,
   expandHook,
@@ -39,6 +40,7 @@ import {
   readSlotRow,
   resetSlotIf,
   resolveProjectTaskDirName,
+  SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASING_SINCE,
   slotReleasingFenceFields,
@@ -60,8 +62,8 @@ import {
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import {
-  beginTerminalTeardown,
-  endTerminalTeardown,
+  TerminalTeardownTimeoutError,
+  withTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
 import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
@@ -205,9 +207,27 @@ export async function slotRelease(
   // The reconciler's only view of a live teardown is the registry. Without
   // this, a release that outlived the stale-fence bound would be reclaimed
   // mid-teardown, now that refresh keeps the fence stamp it ages.
-  beginTerminalTeardown(params.slotId);
-  const teardown = slotReleaseImpl(params, emit, options)
-    .catch((error: unknown) => {
+  let recoverTimeout: ((confirmed: boolean) => Promise<void>) | undefined;
+  const teardown = withTerminalTeardown(
+    params.slotId,
+    () =>
+      slotReleaseImpl(params, emit, options, (recover) => {
+        recoverTimeout = recover;
+      }),
+    params.keepWarm ? null : undefined,
+  )
+    .catch(async (error: unknown) => {
+      if (error instanceof TerminalTeardownTimeoutError && recoverTimeout) {
+        const recover = recoverTimeout;
+        try {
+          await withoutCleanupSignal(() => recover(error.closeoutConfirmed));
+        } catch (recoveryError) {
+          throw new AggregateError(
+            [error, recoveryError],
+            'Terminal timeout and release-fence settlement failed',
+          );
+        }
+      }
       // A bound teardown losing its claim is an expected no-op for archive and
       // replay rollback. The new owner's workspace has already been left alone.
       if (error instanceof BoundReleaseClaimLostError)
@@ -215,7 +235,6 @@ export async function slotRelease(
       throw error;
     })
     .finally(() => {
-      endTerminalTeardown(params.slotId);
       if (inflightReleases.get(params.slotId)?.promise === teardown) {
         inflightReleases.delete(params.slotId);
       }
@@ -419,6 +438,7 @@ async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
   options?: SlotReleaseOptions,
+  registerTimeoutRecovery?: (recover: (confirmed: boolean) => Promise<void>) => void,
 ): Promise<SlotReleaseResult> {
   const preflight = await releasePreflight(params, options);
   if ('skipped' in preflight) return { released: false, reason: preflight.skipped };
@@ -460,6 +480,7 @@ async function slotReleaseImpl(
   // the teardown is refused unless that exact run still holds the claim.
   // The owner the releasing fence actually lands on: an unbound release takes
   // whoever holds the slot then, which may be a claim made after the preflight.
+  const releaseFence = slotReleasingFenceFields();
   let releasedOwner: string | null = options?.workspaceRecovery ? boundOwner : null;
   let releaseRefusal: string | null = null;
   let claimSkip = `Slot ${params.slotId} could not be claimed for release`;
@@ -510,10 +531,42 @@ async function slotReleaseImpl(
             phase: slot.phase,
             [SLOT_RELEASING_SINCE]: slot[SLOT_RELEASING_SINCE] ?? null,
           };
+          const epoch = Number(slot.slot_epoch) || 0;
+          const priorCleanupOwner = slot.cleanup_run_id ?? null;
+          // Register before the marker commit: its await can finish after the deadline.
+          registerTimeoutRecovery?.(async (confirmed) => {
+            await updateSlotStatusIf(
+              params.slotId,
+              (current) =>
+                (Number(current.slot_epoch) || 0) === epoch &&
+                current.phase === SLOT_PHASE_RELEASING &&
+                current[SLOT_RELEASING_SINCE] === releaseFence[SLOT_RELEASING_SINCE] &&
+                !current.workspace_recovery &&
+                !current.handoff_run_id &&
+                ((current.current_run_id ?? null) === owner || current.current_run_id == null) &&
+                ((current.cleanup_run_id ?? null) === priorCleanupOwner ||
+                  current.cleanup_run_id == null),
+              {
+                lifecycle: 'held',
+                phase: 'occupied',
+                current_run_id: confirmed ? (params.expectedRunId ?? owner) : null,
+                ...(!confirmed
+                  ? {
+                      cleanup_run_id: params.expectedRunId ?? owner,
+                      [SLOT_CLEANUP_STOP_UNCONFIRMED]: true,
+                    }
+                  : {}),
+                held_reason: confirmed
+                  ? 'Cleanup timed out; retry release or replay the run.'
+                  : 'Cleanup stop is unconfirmed; inspect the slot and retry release.',
+                [SLOT_RELEASING_SINCE]: null,
+              },
+            );
+          });
           // Unbound release may take only an unowned or terminal workspace.
           return true;
         },
-        slotReleasingFenceFields(),
+        releaseFence,
       );
   if (!mark.applied) {
     if (releaseRefusal) throw new Error(releaseRefusal);
@@ -523,6 +576,7 @@ async function slotReleaseImpl(
   }
   const entryEpoch = mark.epoch ?? 0;
   const assertReleaseClaim = async (): Promise<void> => {
+    assertCleanupCurrent();
     const row = await readSlotRow(params.slotId);
     const owner = (row?.current_run_id as string | null | undefined) ?? null;
     const refusal = releaseOwnerRefusal(

@@ -12,6 +12,7 @@ import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slo
 import { getNode } from '../fleet/machine-registry.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 
+import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
 
 export type { ExecResult };
@@ -81,139 +82,147 @@ export function execFileArgv(argv: string[], opts?: ExecOptions): Promise<ExecRe
   return execSpawn(argv[0], argv.slice(1), opts);
 }
 
-function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
+async function execSpawn(
+  executable: string,
+  argv: string[],
+  opts?: ExecOptions,
+): Promise<ExecResult> {
+  assertCleanupCurrent();
+  opts = { ...opts, signal: cleanupSignal(opts?.signal) };
   if (opts?.signal?.aborted)
     return Promise.resolve({
       stdout: '',
       stderr: 'Command cancelled before execution.',
       exitCode: 130,
     });
-  return new Promise((resolve) => {
-    const useProcessGroup = opts?.signal != null || opts?.timeout != null;
-    const proc = spawn(executable, argv, {
-      cwd: opts?.cwd,
-      env: LOCAL_ENV,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: useProcessGroup,
-    });
+  return trackCleanupCommand(
+    new Promise((resolve) => {
+      const useProcessGroup = opts?.signal != null || opts?.timeout != null;
+      const proc = spawn(executable, argv, {
+        cwd: opts?.cwd,
+        env: LOCAL_ENV,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: useProcessGroup,
+      });
 
-    let stdout = '';
-    let stderr = '';
-    let outputBytes = 0;
-    let maxBufferExceeded = false;
-    let timedOut = false;
-    let aborted = false;
-    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+      let stdout = '';
+      let stderr = '';
+      let outputBytes = 0;
+      let maxBufferExceeded = false;
+      let timedOut = false;
+      let aborted = false;
+      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const killProcessTree = (sig: NodeJS.Signals) => {
-      if (useProcessGroup && proc.pid) {
-        try {
-          process.kill(-proc.pid, sig);
-          return;
-        } catch (groupError) {
+      const killProcessTree = (sig: NodeJS.Signals) => {
+        if (useProcessGroup && proc.pid) {
           try {
-            proc.kill(sig);
+            process.kill(-proc.pid, sig);
             return;
-          } catch (processError) {
-            console.warn(
-              `[execSpawn] ${sig} after process exit: group=${(groupError as Error).message}; process=${(processError as Error).message}`,
-            );
-            return;
+          } catch (groupError) {
+            try {
+              proc.kill(sig);
+              return;
+            } catch (processError) {
+              console.warn(
+                `[execSpawn] ${sig} after process exit: group=${(groupError as Error).message}; process=${(processError as Error).message}`,
+              );
+              return;
+            }
           }
         }
-      }
-      proc.kill(sig);
-    };
-    const closeout = createNodeExecCloseout(killProcessTree, opts?.closeoutTimeoutMs);
-    const terminateWithEscalation = closeout.terminate;
-    const appendOutput = (stream: 'stdout' | 'stderr', data: Buffer) => {
-      const next = outputBytes + data.byteLength;
-      let chunk = data;
-      if (opts?.maxBuffer != null && next > opts.maxBuffer) {
-        const remaining = Math.max(0, opts.maxBuffer - outputBytes);
-        chunk = remaining > 0 ? data.subarray(0, remaining) : Buffer.alloc(0);
-        outputBytes = opts.maxBuffer;
-        if (!maxBufferExceeded) {
-          maxBufferExceeded = true;
-          stderr += `\nmaxBuffer exceeded after ${next} bytes`;
-          terminateWithEscalation();
+        proc.kill(sig);
+      };
+      const closeout = createNodeExecCloseout(killProcessTree, opts?.closeoutTimeoutMs);
+      const terminateWithEscalation = closeout.terminate;
+      const appendOutput = (stream: 'stdout' | 'stderr', data: Buffer) => {
+        const next = outputBytes + data.byteLength;
+        let chunk = data;
+        if (opts?.maxBuffer != null && next > opts.maxBuffer) {
+          const remaining = Math.max(0, opts.maxBuffer - outputBytes);
+          chunk = remaining > 0 ? data.subarray(0, remaining) : Buffer.alloc(0);
+          outputBytes = opts.maxBuffer;
+          if (!maxBufferExceeded) {
+            maxBufferExceeded = true;
+            stderr += `\nmaxBuffer exceeded after ${next} bytes`;
+            terminateWithEscalation();
+          }
+        } else {
+          outputBytes = next;
         }
-      } else {
-        outputBytes = next;
-      }
-      if (chunk.byteLength === 0) return;
-      const text = chunk.toString();
-      if (stream === 'stdout') stdout += text;
-      else stderr += text;
-      opts?.onOutput?.(stream, text);
-    };
-    let stdoutEnded = false;
-    let stderrEnded = false;
-    let processClosed = false;
-    let resolved = false;
-    let exitCode = 1;
-    const tryResolve = () => {
-      if (resolved || !processClosed || !stdoutEnded || !stderrEnded) return;
-      resolved = true;
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      closeout.dispose();
-      resolve({
-        stdout,
-        stderr,
-        exitCode: timedOut
-          ? EXEC_TIMEOUT_EXIT_CODE
-          : aborted
-            ? 130
-            : maxBufferExceeded
-              ? 1
-              : exitCode,
+        if (chunk.byteLength === 0) return;
+        const text = chunk.toString();
+        if (stream === 'stdout') stdout += text;
+        else stderr += text;
+        opts?.onOutput?.(stream, text);
+      };
+      let stdoutEnded = false;
+      let stderrEnded = false;
+      let processClosed = false;
+      let resolved = false;
+      let exitCode = 1;
+      const tryResolve = () => {
+        if (resolved || !processClosed || !stdoutEnded || !stderrEnded) return;
+        resolved = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        closeout.dispose();
+        resolve({
+          stdout,
+          stderr,
+          exitCode: timedOut
+            ? EXEC_TIMEOUT_EXIT_CODE
+            : aborted
+              ? 130
+              : maxBufferExceeded
+                ? 1
+                : exitCode,
+        });
+      };
+      const closeStream = (stream: 'stdout' | 'stderr') => {
+        if (stream === 'stdout') stdoutEnded = true;
+        else stderrEnded = true;
+        tryResolve();
+      };
+      proc.stdout.on('data', (data: Buffer) => appendOutput('stdout', data));
+      proc.stdout.on('end', () => closeStream('stdout'));
+      proc.stdout.on('close', () => closeStream('stdout'));
+      proc.stdout.on('error', (err) => {
+        stderr += `\nstdout stream error: ${err.message}`;
+        closeStream('stdout');
       });
-    };
-    const closeStream = (stream: 'stdout' | 'stderr') => {
-      if (stream === 'stdout') stdoutEnded = true;
-      else stderrEnded = true;
-      tryResolve();
-    };
-    proc.stdout.on('data', (data: Buffer) => appendOutput('stdout', data));
-    proc.stdout.on('end', () => closeStream('stdout'));
-    proc.stdout.on('close', () => closeStream('stdout'));
-    proc.stdout.on('error', (err) => {
-      stderr += `\nstdout stream error: ${err.message}`;
-      closeStream('stdout');
-    });
-    proc.stderr.on('data', (data: Buffer) => appendOutput('stderr', data));
-    proc.stderr.on('end', () => closeStream('stderr'));
-    proc.stderr.on('close', () => closeStream('stderr'));
-    proc.stderr.on('error', (err) => {
-      stderr += `\nstderr stream error: ${err.message}`;
-      closeStream('stderr');
-    });
-    proc.on('close', (code) => {
-      exitCode = code ?? 1;
-      processClosed = true;
-      tryResolve();
-    });
-    proc.on('error', (err) => {
-      resolved = true;
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      closeout.dispose();
-      resolve({ stdout, stderr: `${stderr}\nspawn error: ${err.message}`, exitCode: 1 });
-    });
-    if (opts?.timeout != null) {
-      timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        stderr += `\ncommand timed out after ${opts.timeout}ms`;
+      proc.stderr.on('data', (data: Buffer) => appendOutput('stderr', data));
+      proc.stderr.on('end', () => closeStream('stderr'));
+      proc.stderr.on('close', () => closeStream('stderr'));
+      proc.stderr.on('error', (err) => {
+        stderr += `\nstderr stream error: ${err.message}`;
+        closeStream('stderr');
+      });
+      proc.on('close', (code) => {
+        exitCode = code ?? 1;
+        processClosed = true;
+        tryResolve();
+      });
+      proc.on('error', (err) => {
+        resolved = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        closeout.dispose();
+        resolve({ stdout, stderr: `${stderr}\nspawn error: ${err.message}`, exitCode: 1 });
+      });
+      if (opts?.timeout != null) {
+        timeoutTimer = setTimeout(() => {
+          timedOut = true;
+          stderr += `\ncommand timed out after ${opts.timeout}ms`;
+          terminateWithEscalation();
+        }, opts.timeout);
+        timeoutTimer.unref();
+      }
+      const stopObservingAbort = observeNodeExecAbort(opts?.signal, () => {
+        aborted = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         terminateWithEscalation();
-      }, opts.timeout);
-      timeoutTimer.unref();
-    }
-    const stopObservingAbort = observeNodeExecAbort(opts?.signal, () => {
-      aborted = true;
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      terminateWithEscalation();
-    });
-    proc.on('close', stopObservingAbort);
-  });
+      });
+      proc.on('close', stopObservingAbort);
+    }),
+  );
 }
 
 // ─── ExecOnSlotOptions ───
@@ -233,9 +242,11 @@ export async function execOnSlot(
   cmd: string,
   optsOrCwd?: string | ExecOnSlotOptions,
 ): Promise<ExecResult> {
+  assertCleanupCurrent();
   const opts: ExecOnSlotOptions =
     typeof optsOrCwd === 'string' ? { cwd: optsOrCwd } : (optsOrCwd ?? {});
   const cwd = opts.cwd ?? slotVars.remoteRepo;
+  const signal = cleanupSignal(opts.signal);
   const sources = currentProjectSources();
   if (sources) {
     const execution = sources.execution ?? sources.materialization;
@@ -253,7 +264,7 @@ export async function execOnSlot(
       cwd,
       timeout: opts.timeout,
       onOutput: opts.onOutput,
-      signal: opts.signal,
+      signal,
       closeoutTimeoutMs: opts.closeoutTimeoutMs,
       maxBuffer: opts.maxBuffer,
     });
@@ -280,14 +291,17 @@ export async function execOnSlot(
   // The timeout belongs to the command after its support bundle is ready,
   // just as execLocal starts its timer at spawn. Resolution has its own
   // bounded delivery wait; a slow local hash must not turn a hook into a 1ms exec.
-  return nodeExec(slotVars.machine, cmd, cwd, {
-    timeout,
-    onOutput: opts.onOutput,
-    maxBuffer: opts.maxBuffer,
-    noRetry: opts.noRetry,
-    signal: opts.signal,
-    closeoutTimeoutMs: opts.closeoutTimeoutMs,
-  });
+  assertCleanupCurrent();
+  return trackCleanupCommand(
+    nodeExec(slotVars.machine, cmd, cwd, {
+      timeout,
+      onOutput: opts.onOutput,
+      maxBuffer: opts.maxBuffer,
+      noRetry: opts.noRetry,
+      signal,
+      closeoutTimeoutMs: opts.closeoutTimeoutMs,
+    }),
+  );
 }
 
 export async function execArgvOnSlot(
@@ -295,16 +309,20 @@ export async function execArgvOnSlot(
   argv: string[],
   opts: ExecOnSlotOptions = {},
 ): Promise<ExecResult> {
+  assertCleanupCurrent();
+  const signal = cleanupSignal(opts.signal);
   const cwd = opts.cwd ?? slotVars.remoteRepo;
   if (isLocal(slotVars.host, slotVars.machine)) {
-    return execFileArgv(argv, { ...opts, cwd });
+    return execFileArgv(argv, { ...opts, cwd, signal });
   }
-  return nodeExecArgv(slotVars.machine, argv, cwd, {
-    timeout: opts.timeout,
-    onOutput: opts.onOutput,
-    maxBuffer: opts.maxBuffer,
-    noRetry: opts.noRetry,
-    signal: opts.signal,
-    closeoutTimeoutMs: opts.closeoutTimeoutMs,
-  });
+  return trackCleanupCommand(
+    nodeExecArgv(slotVars.machine, argv, cwd, {
+      timeout: opts.timeout,
+      onOutput: opts.onOutput,
+      maxBuffer: opts.maxBuffer,
+      noRetry: opts.noRetry,
+      signal,
+      closeoutTimeoutMs: opts.closeoutTimeoutMs,
+    }),
+  );
 }

@@ -23,6 +23,7 @@ import {
 
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { scheduledGraphOf } from '../run-engine/stack-base.js';
+import { withTerminalTeardown } from '../run-engine/terminal-teardown-registry.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { schedulerTick } from '../work-graph/store.js';
 
@@ -119,7 +120,8 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
       // the terminal state was already published through `onMutated`, so no
       // client waits on it.
       apply: async ({ run }) => {
-        if (!collaborators.cleanupSlot) {
+        const cleanupSlot = collaborators.cleanupSlot;
+        if (!cleanupSlot) {
           return { status: 'skipped' as const, detail: 'this transition owes no slot teardown' };
         }
         if (!run.slotId) return 'skipped';
@@ -132,7 +134,7 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
             detail: 'park already released slot ownership; the slot is free',
           };
         }
-        await collaborators.cleanupSlot(run);
+        await withTerminalTeardown(run.slotId, () => cleanupSlot(run));
         return 'ok';
       },
     },

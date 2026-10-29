@@ -344,6 +344,13 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
 }
 
 export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResult> {
+  const { withTerminalTeardown } = await import('../../run-engine/terminal-teardown-registry.js');
+  return run.slotId
+    ? withTerminalTeardown(run.slotId, () => releaseCompletedRunSlotOnce(run))
+    : releaseCompletedRunSlotOnce(run);
+}
+
+async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult> {
   if (run.reviewWorkspace) {
     const { teardownReviewWorkspace } = await import('../../review-workspaces/pipeline.js');
     await teardownReviewWorkspace(run.id);

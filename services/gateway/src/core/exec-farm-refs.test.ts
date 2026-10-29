@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import { withCleanupSignal } from './cleanup-scope.js';
+import type { SlotVars } from './config.js';
+
 // execOnSlot is the seam every hook goes through on a remote slot. These pin
 // its wiring to the bundle resolver (ledger F15); the resolver itself is
 // covered in node-support/remote-command.test.ts.
@@ -10,7 +13,7 @@ const resolved: Array<{ cmd: string; budgetMs: number | undefined }> = [];
 let resolveElapsedMs = 0;
 let now = 0;
 let pending = false;
-const sent: Array<{ cmd: string; timeout: number | undefined }> = [];
+const sent: Array<{ cmd: string; timeout: number | undefined; signal?: AbortSignal }> = [];
 
 mock.module('../node-support/remote-command.js', {
   namedExports: {
@@ -29,8 +32,13 @@ mock.module('../node-support/remote-command.js', {
 });
 mock.module('../fleet/node-rpc.js', {
   namedExports: {
-    nodeExec: async (_machine: string, cmd: string, _cwd: string, opts: { timeout?: number }) => {
-      sent.push({ cmd, timeout: opts.timeout });
+    nodeExec: async (
+      _machine: string,
+      cmd: string,
+      _cwd: string,
+      opts: { timeout?: number; signal?: AbortSignal },
+    ) => {
+      sent.push({ cmd, timeout: opts.timeout, signal: opts.signal });
       return { exitCode: 0, stdout: '', stderr: '' };
     },
     nodeExecArgv: async () => assert.fail('argv exec is not under test'),
@@ -40,12 +48,29 @@ mock.module('../fleet/node-rpc.js', {
 
 const { EXEC_TIMEOUT_EXIT_CODE, execOnSlot } = await import('./exec.js');
 
-const remote = {
-  slotId: 'mini-mm-1',
-  host: 'mini.local',
-  machine: 'mini',
-  remoteRepo: '/r',
-} as unknown as Parameters<typeof execOnSlot>[0];
+const remote: SlotVars = {
+  slotId: 'cleanup-remote',
+  machine: 'proof-remote',
+  host: 'proof-remote.invalid',
+  platform: 'cli',
+  sshUser: 'proof',
+  osType: 'darwin',
+  remoteRepo: '/owned/repo',
+  repo: '/owned/repo',
+  session: 'cleanup-remote',
+  slotMode: 'dispatch',
+  slotEnabled: true,
+  sshTarget: 'proof@proof-remote.invalid',
+  projectName: 'proof',
+  resourceVars: {},
+  claudePath: '',
+  codexPath: '',
+  opencodePath: '',
+  cursorPath: '',
+  grokPath: '',
+  dispatchCmd: '',
+  recycleCmd: '',
+};
 
 function reset(): void {
   resolved.length = 0;
@@ -99,4 +124,23 @@ test('commands without a farm reference skip the resolver', async () => {
     sent.map((call) => call.cmd),
     ['git status'],
   );
+});
+
+test('remote cleanup is cancellable while independent requests retain their transport policy', async () => {
+  reset();
+  const controller = new AbortController();
+  await withCleanupSignal(controller.signal, () => execOnSlot(remote, 'cleanup'));
+  await execOnSlot(remote, 'independent');
+  assert.equal(
+    sent[0]?.signal,
+    controller.signal,
+    'node RPC requires cancellation and refuses reconnect replay',
+  );
+  assert.equal(sent[1]?.signal, undefined, 'ordinary requests keep the existing retry behavior');
+  const reason = new Error('cleanup expired');
+  controller.abort(reason);
+  await withCleanupSignal(controller.signal, () =>
+    assert.rejects(execOnSlot(remote, 'late'), reason),
+  );
+  assert.equal(sent.length, 2, 'expired cleanup cannot send another command');
 });
