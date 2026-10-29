@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show finished workers waiting for their monitor from current checklist timing, keep unavailable progress neutral, and wrap the reason.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.1 - 2026-10-29
