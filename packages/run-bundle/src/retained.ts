@@ -294,26 +294,53 @@ export function isRunBundleMedia(file: string): boolean {
   return /\.(?:png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|wav)$/iu.test(file);
 }
 
+const BYTE_SCAN_CONCURRENCY = 16;
+
 async function physicalBytes(root: string): Promise<number> {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if (hasCode(error, 'ENOENT')) return 0;
-    throw error;
-  }
+  const pending = [{ file: root, directory: true }];
+  const waiters: Array<() => void> = [];
+  let active = 0;
+  let failed = false;
   let total = 0;
-  for (const entry of entries) {
-    const file = path.join(root, entry.name);
-    if (entry.isDirectory()) total += await physicalBytes(file);
-    else if (entry.isFile()) {
+  const visit = async (entry: (typeof pending)[number]): Promise<void> => {
+    try {
+      if (!entry.directory) {
+        const info = await stat(entry.file);
+        total += info.size;
+        return;
+      }
+      for (const child of await readdir(entry.file, { withFileTypes: true })) {
+        if (child.isDirectory() || child.isFile())
+          pending.push({ file: path.join(entry.file, child.name), directory: child.isDirectory() });
+      }
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT')) throw error;
+    }
+  };
+  const worker = async (): Promise<void> => {
+    while (!failed) {
+      const entry = pending.pop();
+      if (!entry) {
+        if (!active) return;
+        await new Promise<void>((resolve) => waiters.push(resolve));
+        continue;
+      }
+      active++;
       try {
-        total += (await stat(file)).size;
+        await visit(entry);
       } catch (error) {
-        if (!hasCode(error, 'ENOENT')) throw error;
+        failed = true;
+        throw error;
+      } finally {
+        active--;
+        for (const wake of waiters.splice(0)) wake();
       }
     }
-  }
+  };
+  // Drain reads already started on failure; no detached accounting work or lost errors.
+  const results = await Promise.allSettled(Array.from({ length: BYTE_SCAN_CONCURRENCY }, worker));
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
   return total;
 }
 
@@ -344,13 +371,37 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
 const acquisitionScans = new Map<string, Promise<number>>();
 
 /** Share only an in-flight scan, never a stale footprint or a separate accounting store. */
-async function acquisitionBytes(root: string): Promise<number> {
+async function acquisitionBytes(
+  root: string,
+  runId: string,
+  phase: 'admission' | 'capture',
+): Promise<number> {
   let scan = acquisitionScans.get(root);
   if (!scan) {
     scan = scanAcquisitionBytes(root).finally(() => acquisitionScans.delete(root));
     acquisitionScans.set(root, scan);
   }
-  return scan;
+  const timeoutMs = 30_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    // Only read-only accounting is raced. Expiry cannot later reserve or capture bytes.
+    return await Promise.race([
+      scan,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Retention ${phase} acquisition scan timed out after ${timeoutMs}ms for run ${runId}`,
+              ),
+            ),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
@@ -447,22 +498,8 @@ export async function reserveRunBundleMetadata(
   const file = path.join(store.root, 'reservations', `${runId}.json`);
   // Replay/resume does not admit new work. Do not rescan historical task inputs for it.
   if (await readOptional(file)) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   const acquisitionSize = farmslotRoot
-    ? await Promise.race([
-        acquisitionBytes(farmslotRoot),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `Retention admission acquisition scan timed out after 30000ms for run ${runId}`,
-                ),
-              ),
-            30_000,
-          );
-        }),
-      ]).finally(() => clearTimeout(timer))
+    ? await acquisitionBytes(farmslotRoot, runId, 'admission')
     : 0;
   // Only the read-only scan is raced. A timed-out scan cannot later reserve or start work.
   return withRunBundleStoreLock(store, async () => {
@@ -998,7 +1035,7 @@ export async function materializeRunBundle(
   await assertStorePairing(store);
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   assertPolicy(policy);
-  const acquisitionSize = await acquisitionBytes(request.farmslotRoot);
+  const acquisitionSize = await acquisitionBytes(request.farmslotRoot, run.id, 'capture');
   const captured = await withRunBundleStoreLock(store, async () => {
     const taskKey = run.id;
     const intentPath = path.join(
