@@ -734,6 +734,13 @@ test('a slot head is checked only while a view reads that slot', async (t) => {
   await flush();
   assert.equal(calls('git.log').length, 1, 'An open view of the slot checks its head');
   assert.equal(calls('git.diff').length, 2, 'and rereads the diff for the new head');
+  change({ family: 'workspace', slotId: 'slot-s' });
+  await flush();
+  assert.equal(calls('git.log').length, 1, 'A second change within the minute waits for it');
+  world.viewed.delete('slot-s');
+  t.mock.timers.tick(60_000);
+  await flush();
+  assert.equal(calls('git.log').length, 1, 'A check queued while the view was open drops with it');
 });
 
 test('a failed patch or check reads the file by path once and keeps only a matching blob', async () => {

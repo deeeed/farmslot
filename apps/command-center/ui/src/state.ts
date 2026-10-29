@@ -892,6 +892,21 @@ export function initState(): void {
     }
   });
 
+  // Run writes reread the inbox at most every 30 s; a decision raised, answered or changed is read
+  // at once.
+  for (const event of [
+    Events.DECISION_NEW,
+    Events.DECISION_RESOLVED,
+    Events.DECISION_UPDATED,
+    Events.RUN_DECISION_NEW,
+    Events.RUN_DECISION_RESOLVED,
+    Events.RUN_DECISION_UPDATED,
+  ])
+    gateway.subscribe(event, () => {
+      if (collectionCache && collectionFarm)
+        void collectionCache.retry(decisionsQuery).catch(() => undefined);
+    });
+
   // GitHub API rate-limit telemetry (github-client.ts emits after each call).
   gateway.subscribe<GitHubRateLimitPayload>(Events.GITHUB_RATE_LIMIT, (p) => {
     updateGitHubQuota(p);

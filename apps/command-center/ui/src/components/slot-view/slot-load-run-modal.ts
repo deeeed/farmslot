@@ -19,7 +19,7 @@ import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { formatCreatedAt, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import {
   navigateToPreparedSlot,
@@ -88,7 +88,7 @@ export class SlotLoadRunModal extends LitElement {
   }
   private get _commandsReady(): boolean {
     // Fixtures describe the controls. Mutation handlers still require a canonical read.
-    return !this.disabled && Boolean(this.runsOverride || this.runsQuery.ready);
+    return !this.disabled && Boolean(this.runsOverride || this.runsQuery.actable);
   }
 
   private _clearConfirmation(): void {
@@ -108,7 +108,7 @@ export class SlotLoadRunModal extends LitElement {
       this._actionError = '';
       this._prepareState = null;
     }
-    if (!this.runsQuery.ready) this._clearConfirmation();
+    if (!this.runsQuery.actable) this._clearConfirmation();
     const saved = this.open && this.runsQuery.state.status !== 'ready' && this.runsQuery.state.data;
     if (saved && !this._savedAgeClock)
       this._savedAgeClock = window.setInterval(() => this.requestUpdate(), 1000);
@@ -118,10 +118,13 @@ export class SlotLoadRunModal extends LitElement {
     }
   }
 
-  private _currentRun(expected: Run): Run {
-    if (!this.isConnected || !this.open || this.disabled)
-      throw new Error('The load dialog changed. Open it again before acting.');
-    const run = this.runsQuery.requireReady().runs.find(({ id }) => id === expected.id);
+  private async _currentRun(expected: Run): Promise<Run> {
+    const changed = () => !this.isConnected || !this.open || this.disabled;
+    if (changed()) throw new Error('The load dialog changed. Open it again before acting.');
+    // Run writes reread the list at most every 30 s; a load reads it first.
+    const { runs } = await this.runsQuery.requireCurrent();
+    if (changed()) throw new Error('The load dialog changed. Open it again before acting.');
+    const run = runs.find(({ id }) => id === expected.id);
     if (
       !run ||
       (this.project && run.project !== this.project) ||
@@ -423,7 +426,7 @@ export class SlotLoadRunModal extends LitElement {
     this._actionError = '';
     this._actionBusy = true;
     try {
-      const run = this._currentRun(expected);
+      const run = await this._currentRun(expected);
       await runSlotPrepareForRun({
         slotId,
         runId: run.id,
@@ -499,7 +502,7 @@ export class SlotLoadRunModal extends LitElement {
   private async _onLoadClick(run: Run) {
     if (this._loadReason(run) || this._actionBusy || this._actionRequest) return;
     try {
-      this._currentRun(run);
+      await this._currentRun(run);
       if (this._pendingConfirm === run.id && this._confirmScope === this._scope) {
         if (this._confirmTimer) clearTimeout(this._confirmTimer);
         await this._executeLoad(run);
@@ -637,8 +640,7 @@ export class SlotLoadRunModal extends LitElement {
               ? html`<div class="slrm-state error">${this._actionError}</div>`
               : nothing}
             ${!this.runsOverride &&
-            this.runsQuery.state.status !== 'ready' &&
-            this.runsQuery.state.data &&
+            heldDataIsSaved(this.runsQuery.state) &&
             this.runsQuery.state.observedAt !== undefined
               ? html`<div class="slrm-state" data-load-run-freshness="stale">
                   Saved runs, ${sourceObservationAge(this.runsQuery.state.observedAt)}. Actions wait

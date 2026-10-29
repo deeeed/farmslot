@@ -267,10 +267,14 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     pump();
   }
 
-  /** Prefetch rule 3: one check in flight per run, and slot checks at most once a minute. */
+  /**
+   * Prefetch rule 3: one check in flight per run, and slot checks at most once a minute, only while
+   * a view reads that slot. A check queued while the view was open is dropped once it closes.
+   */
   function check(state: PrefetchRunState): void {
     const pending = state.check;
     if (!enabled || refused || disposed || (state.plan !== 'gate' && state.plan !== 'slot')) return;
+    if (state.plan === 'slot' && !(state.slotId && viewed(state.slotId))) return;
     if (pending.controller) {
       pending.again = true;
       return;
@@ -617,7 +621,7 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
         // Every run write changes its package key; only a gate plan reads the package.
         const state = runs.get(key.runId);
         if (state?.plan === 'gate') changed.add(state);
-      } else if (key.family === 'workspace' && 'slotId' in key && viewed(key.slotId))
+      } else if (key.family === 'workspace' && 'slotId' in key)
         for (const state of runs.values())
           if (
             state.plan === 'slot' &&

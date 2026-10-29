@@ -112,3 +112,45 @@ for (const scenario of [
     }
   });
 }
+
+test('archive selection reads a paced list at once before the next archive', async () => {
+  const transport = new ResourceCacheConformanceTransport({
+    gatewayUrl: 'ws://archive.invalid/',
+    principalId: 'owner',
+    principalGeneration: 0,
+  });
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  // Paced like the run lists: a change within 30 s of the last read waits for the floor.
+  const query = {
+    ...resourceQuery<RunListResult>('sources.status'),
+    rereadIntervalMs: { sources: 30_000 },
+  };
+  const stop = cache.observe(query, () => {});
+  const writes: string[] = [];
+  try {
+    const ready = cache.retry(query);
+    const initial = { value: 'initial', runs: [row('first'), row('second')], totalCount: 2 };
+    (await transport.nextRead()).resolve(initial);
+    await ready;
+    const done = archiveRunSelection(['first', 'second'], {
+      cache,
+      queries: [query],
+      isCurrent: () => true,
+      archive: async (id) => {
+        writes.push(id);
+        if (id === 'first') transport.advance(1);
+      },
+    });
+    for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(transport.requestCount, 2, 'The next archive does not wait out the floor');
+    assert.deepEqual(writes, ['first']);
+    const remaining = { value: 'remaining', runs: [row('second')], totalCount: 1 };
+    (await transport.nextRead()).resolve(remaining, 1);
+    assert.equal((await done).size, 0);
+    assert.deepEqual(writes, ['first', 'second']);
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
