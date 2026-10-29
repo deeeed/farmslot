@@ -61,6 +61,11 @@ export function isTerminalReviewArtifactError(
   return error instanceof TerminalReviewArtifactError;
 }
 
+/** A provider capacity refusal has no review verdict; the operator can request it again. */
+export function isReviewerCapacityError(error: unknown): boolean {
+  return error instanceof Error && /\bselected model is at capacity\b/iu.test(error.message);
+}
+
 export function isSuccessfulTerminalReviewSignal(
   signal: { status: string } | null | undefined,
 ): boolean {
