@@ -1337,8 +1337,8 @@ export function resolveDispatchPreviewFromFleet(
     releasableBranchHolderIds: options?.releasableBranchHolderIds,
     projectConfigs,
     pressureRejectedMachines,
-    ...(!params.slotId && pressureDecisions
-      ? { automaticLoads: automaticSlotLoads(pressureDecisions) }
+    ...(pressureDecisions
+      ? { automaticLoads: automaticSlotLoads(pressureDecisions, undefined, params) }
       : {}),
     parkPreservedSlotIds: options?.parkPreservedSlotIds,
     plans: options?.plans,

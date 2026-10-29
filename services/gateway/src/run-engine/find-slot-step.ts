@@ -1049,7 +1049,7 @@ async function findSlotAttempt(
       fleet.slots.filter((slot) => slot.project === run.project).map((slot) => slot.machine),
     ),
   ]);
-  const automaticLoads = run.slotId ? undefined : automaticSlotLoads(pressureDecisions);
+  const automaticLoads = automaticSlotLoads(pressureDecisions, undefined, run);
   if (automaticLoads?.size) {
     inputs.hostLoadSelection = Object.fromEntries(automaticLoads);
     // Persist exclusions before waiting when every allowed node is overloaded.
@@ -1803,6 +1803,8 @@ async function findSlotAttempt(
       selectionReason: result.pressureAdmission
         ? automaticSlotLoads(
             new Map([[result.pressureAdmission.machine, result.pressureAdmission]]),
+            undefined,
+            run,
           ).get(result.pressureAdmission.machine)?.reason
         : selectionReason(fleet.slots.find((slot) => slot.slot === slotId)!.machine),
       candidateCount: freeSlots.length,

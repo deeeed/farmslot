@@ -421,12 +421,20 @@ separate, also-default-off switch: `dispatch.pressureAdmission.setEnabled`, with
 `FARMSLOT_DISPATCH_PRESSURE_ADMISSION=off|refuse` overriding it per gateway
 process.
 
-Automatic slot placement uses the latest live load-per-core sample even when dispatch
-pressure refusal is off. It skips nodes at or above `FARMSLOT_PRESSURE_LOAD1_CRITICAL`
-(default 1.5) and retains red-headroom priority, then ranks eligible allowed nodes by lower load
-before branch or CDP preference. Unknown or stale load falls back to existing slot ranking after nodes
-with current samples. FIND_SLOT records each node's sample and exclusion reason in
-the run before binding. Explicit slot selections retain the opt-in pressure gate.
+Automatic slot placement uses the latest live sampled CPU idle percentage,
+`100 - cpuPercent`, even when dispatch pressure refusal is off. It skips machines
+with idle below 15%. Gateway setting
+`FARMSLOT_AUTOMATIC_CPU_IDLE_MIN_PERCENT_BY_MACHINE` is a JSON map, for example
+`{"machine-a": 10, "machine-b": 20}`. Values must be numbers in [0, 100]; omitted
+machines use 15. Invalid configuration refuses gateway startup. Load average
+remains diagnostic and does not decide automatic placement.
+
+Eligible machines retain red-headroom priority, then rank by higher idle before
+branch or CDP preference. Unknown or stale CPU samples fall back to existing slot
+ranking after machines with current samples. FIND_SLOT records samples and reasons
+in `hostLoadSelection` before binding. An explicit `slotId`/`--slot` or a one-slot
+`allowedSlots` bypasses this automatic gate and records a warning in
+`selectionReason` when below the minimum. Other dispatch admission checks apply.
 
 ### Affected resources
 

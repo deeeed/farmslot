@@ -1155,7 +1155,10 @@ export function queueItemHeldByPressure(
       !validateSlotForDispatch(slot, slots, affinityOptions),
   );
   if (freeProjectSlots.length === 0) return false;
-  const loads = automaticSlotLoads(pressureDecisions);
+  const loads = automaticSlotLoads(pressureDecisions, undefined, {
+    ...previewParams,
+    allowedSlots: allowedSlots ? [...allowedSlots] : null,
+  });
   return freeProjectSlots.every(
     (slot) =>
       pressureDecisions.get(slot.machine)?.outcome === 'rejected' ||

@@ -12,6 +12,7 @@
 
 import {
   DEFAULT_PRESSURE_STALE_AFTER_MS,
+  isRecord,
   type NodePressureHistorySample,
   type PressureAdmissionCause,
   type PressureAdmissionDecision,
@@ -20,6 +21,7 @@ import {
   type PressureAdmissionSample,
   type PressureDispatchOverride,
   type ResourcePressureMachine,
+  type Run,
 } from '@farmslot/protocol';
 
 import {
@@ -144,6 +146,7 @@ export function assertPressureAdmissionConfigValid(env: NodeJS.ProcessEnv = proc
     envNumberProblem(env, 'FARMSLOT_PRESSURE_STALE_AFTER_MS'),
   ].filter((problem): problem is string => problem !== null);
   if (problems.length > 0) throw new Error(problems.join('; '));
+  resolveAutomaticSlotIdleMinimums(env);
 }
 
 /** Centralized, env-overridable thresholds. Resolved per evaluation batch. */
@@ -685,9 +688,28 @@ export function capturePressureAdmissionDecisionsLightweight(
   return captureInMemoryPressureAdmissionDecisions(machines, options);
 }
 
-/** Current load used for automatic placement, independent of opt-in dispatch refusal. */
+const CPU_IDLE_CONFIG_KEY = 'FARMSLOT_AUTOMATIC_CPU_IDLE_MIN_PERCENT_BY_MACHINE';
+
+/** Gateway-owned per-machine placement configuration, separate from opt-in refusal. */
+export function resolveAutomaticSlotIdleMinimums(
+  env: NodeJS.ProcessEnv = process.env,
+): Readonly<Record<string, number>> {
+  const raw = env[CPU_IDLE_CONFIG_KEY]?.trim();
+  if (!raw) return {};
+  const value: unknown = JSON.parse(raw);
+  if (!isRecord(value)) throw new Error(`${CPU_IDLE_CONFIG_KEY} must be a JSON object`);
+  return Object.fromEntries(
+    Object.entries(value).map(([machine, minimum]) => {
+      if (typeof minimum !== 'number' || !Number.isFinite(minimum) || minimum < 0 || minimum > 100)
+        throw new Error(`${CPU_IDLE_CONFIG_KEY}.${machine} must be a percentage in [0, 100]`);
+      return [machine, minimum];
+    }),
+  );
+}
+
+/** Current CPU idle used for placement, independent of opt-in dispatch refusal. */
 export interface AutomaticSlotLoad {
-  load1: number | null;
+  cpuIdlePercent: number | null;
   sampledAt: string | null;
   threshold: number;
   skipped: boolean;
@@ -696,27 +718,34 @@ export interface AutomaticSlotLoad {
 
 export function automaticSlotLoads(
   decisions: ReadonlyMap<string, PressureAdmissionDecision>,
-  config: Pick<PressureAdmissionConfig, 'load1Critical'> = resolvePressureAdmissionConfig(),
+  minimums: Readonly<Record<string, number>> = resolveAutomaticSlotIdleMinimums(),
+  selection: Partial<Pick<Run, 'slotId' | 'allowedSlots'>> = {},
 ): ReadonlyMap<string, AutomaticSlotLoad> {
+  const pinned = Boolean(selection.slotId) || selection.allowedSlots?.length === 1;
   return new Map(
     [...decisions].map(([machine, decision]) => {
       const sample = decision.evidence.samples.at(-1);
       const code = decision.outcome === 'rejected' ? decision.code : decision.advisory?.code;
       // Restored/offline/stale history remains charts-only even when refusal is disabled.
       const usable = code !== 'PRESSURE_EVIDENCE_UNAVAILABLE' && code !== 'PRESSURE_EVIDENCE_STALE';
-      const load1 = usable && sample?.load1 !== undefined ? sample.load1 : null;
-      const skipped = load1 !== null && load1 >= config.load1Critical;
+      const cpuIdlePercent = usable && sample ? 100 - sample.cpu * 100 : null;
+      const threshold = minimums[machine] ?? 15;
+      const busy = cpuIdlePercent !== null && cpuIdlePercent < threshold;
+      const skipped = busy && !pinned;
+      const summary = `Machine ${machine} CPU idle ${cpuIdlePercent?.toFixed(2)}% ${busy ? '<' : '>='} ${threshold.toFixed(2)}%`;
       return [
         machine,
         {
-          load1,
-          sampledAt: load1 !== null ? sample!.collectedAt : null,
-          threshold: config.load1Critical,
+          cpuIdlePercent,
+          sampledAt: cpuIdlePercent !== null ? sample!.collectedAt : null,
+          threshold,
           skipped,
           reason:
-            load1 === null
-              ? `Machine ${machine} has no current load-per-core sample; use existing slot ranking.`
-              : `Machine ${machine} load/core ${load1.toFixed(2)} ${skipped ? '>=' : '<'} ${config.load1Critical.toFixed(2)}${skipped ? '; skipped for automatic selection' : '; eligible, prefer lower load'}.`,
+            cpuIdlePercent === null
+              ? `Machine ${machine} has no current CPU-idle sample; use existing slot ranking.`
+              : busy && pinned
+                ? `Warning: ${summary}; explicitly pinned slot, dispatch continues.`
+                : `${summary}${skipped ? '; skipped for automatic selection' : '; eligible, prefer higher idle'}.`,
         },
       ];
     }),
