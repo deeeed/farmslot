@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
@@ -143,13 +143,16 @@ Object.assign(process.env, {
   PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
 });
 after(() => rmSync(root, { recursive: true, force: true }));
+await import('../runtime/mock-pty.test-support.js');
 const { constrainDirectWorkflowExecution, resolveDirectWorkflowDefaults } =
   await import('./direct-defaults.js');
 const { loadProjectConfig } = await import('../fleet/state.js');
-const { createRun, deleteRun } = await import('../runs/store.js');
+const { invalidateProjectVarsCache } = await import('../core/config.js');
+const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 const { dispatchPreview } = await import('../methods/dispatch/preview.js');
 const { dispatchQueueAdd } = await import('../methods/dispatch/queue.js');
 const { runCreate, planRunCreation } = await import('../methods/run.js');
+const { resolveWorkspaceReviewContext } = await import('./continuity.js');
 const { runWithSessionOriginator } = await import('../security/work-originator.js');
 const queue = await import('../backlog/dispatch-queue.js');
 const owner: Principal = {
@@ -452,6 +455,7 @@ test('delayed queue dispatch uses frozen alternatives when farm defaults change'
     await deleteRun(busy.id);
     await queue.removeQueueItemInternalNow(queued.item.id, 'test-cleanup');
     writeFileSync(projectPath, JSON.stringify(raw));
+    invalidateProjectVarsCache('farm');
   });
   writeFileSync(
     projectPath,
@@ -684,4 +688,150 @@ test('automatic native review skips unhealthy machines across run, queue and mon
     'one',
     'explicit direct placement permits a verified operator retry',
   );
+});
+
+test('CLI-style bare PR WARM admission discovers its own prior review without context', async (t) => {
+  const before = readFileSync(projectPath, 'utf8');
+  const project = JSON.parse(before);
+  project.workflow_defaults['review-pr'].execution.transport = 'tmux';
+  writeFileSync(projectPath, JSON.stringify(project));
+  t.after(() => {
+    writeFileSync(projectPath, before);
+    invalidateProjectVarsCache('farm');
+  });
+  const prior = asOwner(() =>
+    createRun(
+      {
+        ...request,
+        runner: 'codex',
+        model: 'gpt-6-astra',
+        effort: 'high',
+        transport: 'tmux',
+        reviewWorkspaceTarget: { machine: 'one' },
+      },
+      { deferBackgroundPersist: true },
+    ),
+  );
+  const now = new Date().toISOString();
+  updateRun(prior.id, {
+    status: 'done',
+    completedAt: now,
+    createdByPrincipalId: owner.id,
+    nativeOwnerPrincipalId: owner.id,
+    reviewWorkspace: {
+      workspaceId: 'old-review',
+      machine: 'one',
+      executionNodeId: 'local',
+      checkoutPath: path.join(root, 'old-review/source'),
+      taskPath: path.join(root, 'old-review/task'),
+      artifactPath: path.join(root, 'old-review/task/artifacts'),
+      cleanedAt: now,
+    },
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Review',
+        status: 'complete',
+        runId: prior.id,
+        slotId: null,
+        runner: 'codex',
+        model: 'gpt-6-astra',
+        reviewId: 'retained-lineage',
+        runnerSessionId: 'retained-thread',
+        runnerSessionPath: path.join(root, 'retained-thread.jsonl'),
+      },
+    ],
+    decisions: [
+      {
+        id: 'prior-posting',
+        type: 'engine_review_posting',
+        title: 'Review',
+        description: '',
+        actions: [],
+        createdAt: now,
+        payload: {
+          kind: 'review',
+          repo: 'example/app',
+          prNumber: 42,
+          recommendation: 'APPROVE',
+          reviewMd: 'artifacts/review.md',
+          lineComments: [],
+          reviewSnapshot: { source: 'github-pr', capturedAt: now, headSha: 'a'.repeat(40) },
+        },
+      },
+    ],
+  });
+  t.after(() => deleteRun(prior.id));
+  const plan = await asOwner(() =>
+    planRunCreation({
+      ...request,
+      ticketOrPr: '42',
+      reviewMode: 'warm',
+      runner: 'codex',
+      model: 'gpt-6-astra',
+      effort: 'high',
+      transport: 'tmux',
+      reviewWorkspaceTarget: { machine: 'one' },
+    }),
+  );
+  const moved = await asOwner(() =>
+    planRunCreation({
+      ...request,
+      ticketOrPr: '42',
+      reviewMode: 'warm',
+      runner: 'codex',
+      model: 'gpt-6-astra',
+      effort: 'high',
+      transport: 'tmux',
+      reviewWorkspaceTarget: { machine: 'two' },
+    }),
+  );
+  assert.deepEqual(moved.params.reviewContext, plan.params.reviewContext);
+  for (const status of ['blocked', 'failed', 'idle'] as const) {
+    const latest = getRun(prior.id)!.agentContexts!.map((context) => ({ ...context, status }));
+    updateRun(prior.id, {
+      status: status === 'blocked' ? 'blocked' : 'cancelled',
+      agentContexts: latest,
+    });
+    if (status === 'blocked') {
+      // A pending blocked run still owns admission; its validated lineage remains discoverable.
+      assert.deepEqual(
+        resolveWorkspaceReviewContext(
+          {
+            ...request,
+            ticketOrPr: 'example/app#42',
+            reviewMode: 'warm',
+            runner: 'codex',
+            model: 'gpt-6-astra',
+            effort: 'high',
+            transport: 'tmux',
+            reviewWorkspaceTarget: { machine: 'two' },
+          },
+          { ownerId: owner.id },
+          [getRun(prior.id)!],
+        ),
+        plan.params.reviewContext,
+      );
+      continue;
+    }
+    const recovered = await asOwner(() =>
+      planRunCreation({
+        ...request,
+        ticketOrPr: '42',
+        reviewMode: 'warm',
+        runner: 'codex',
+        model: 'gpt-6-astra',
+        effort: 'high',
+        transport: 'tmux',
+        reviewWorkspaceTarget: { machine: 'two' },
+      }),
+    );
+    assert.deepEqual(recovered.params.reviewContext, plan.params.reviewContext, status);
+  }
+  assert.equal(plan.params.ticketOrPr, 'example/app#42');
+  assert.equal(plan.params.reviewMode, 'warm');
+  assert.deepEqual(plan.params.reviewContext, {
+    reviewLineages: [{ repository: 'example/app', prNumber: 42, reviewId: 'retained-lineage' }],
+  });
 });

@@ -43,6 +43,7 @@ import {
 } from '../runners/review-tmux.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
+import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 
 import { preflightReviewWorkspaceAccount } from './account-preflight.js';
@@ -259,7 +260,11 @@ async function freezeSubject(
     }
     const savedPrior = getRun(prior.id);
     if (!savedPrior) throw new Error('The prior review was removed during session recovery');
-    configureWorkspaceContinuity(run, savedPrior, context);
+    configureWorkspaceContinuity(run, savedPrior, context, getAllRuns());
+    if (context.session?.fallback)
+      console.warn(
+        `[review-workspace] ${runId.slice(0, 8)}: fresh delta review: ${context.session.fallback.detail}`,
+      );
   }
   await persistRunNow(
     updateRun(runId, {
@@ -578,6 +583,22 @@ async function executeOwnedReviewWorkspaceStep(
       await preflightReviewWorkspaceAccount(run, check);
       await ensureReviewWorkspaceSupport(runId, check);
       check();
+      if (!currentWorkspaceRun(runId, generation).executionTemplate) {
+        const admission = await admittedRun(runId, generation);
+        const project = await loadProjectVars(run.project);
+        const selected = resolveConfiguredExecutionTemplateForSlot(project, {
+          flow: 'review-pr',
+          platform: admission.pool.platform,
+          runMode: run.mode ?? 'autonomous',
+          explicitDomain: run.domain,
+          explicitId: run.executionTemplateId ?? admission.project.staticReview!.templateId,
+        });
+        check();
+        await persistRunNow(
+          updateRun(runId, { executionTemplate: selected.reference }),
+          'reselect replayed workspace review template',
+        );
+      }
       const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
       check();
       await persistRunNow(

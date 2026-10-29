@@ -503,7 +503,7 @@ export function assertPrimaryReviewContext(
   if (!raw)
     throw new WarmReviewRefusal(
       'missing-session',
-      'WARM requires explicit reviewId lineage context',
+      'WARM requires explicit reviewId lineage context: reviewContext.reviewLineages[0] is missing and no validated prior review was found',
     );
   const context = parseReviewRequestContext(raw);
   const bindings = context.reviewLineages.filter(
@@ -515,6 +515,11 @@ export function assertPrimaryReviewContext(
       'the requested primary review lineage is missing or ambiguous',
     );
   if (input.flowType !== 'review-pr') return;
+  if (bindings.some((binding) => !binding.repository || !binding.prNumber))
+    throw new WarmReviewRefusal(
+      'missing-session',
+      'reviewContext.reviewLineages[0].repository and prNumber are missing; no matching validated lineage was found',
+    );
   const pr = input.prWork?.pr ?? parseGitHubRef(input.ticketOrPr);
   if (
     !pr ||

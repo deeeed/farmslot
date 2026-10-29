@@ -19,7 +19,9 @@ import {
   enumerateChecklistCheckboxes,
   isRecord,
   isTerminalRunStatus,
+  parseGitHubRef,
   type ReviewLineComment,
+  reviewResultForRun,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
   type Run,
@@ -58,6 +60,7 @@ import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { collectSupportFiles } from '../node-support/files.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
+import { deltaFallbackReviewScope } from '../review/review-agent.js';
 import { nextReviewBudgetScopeBrief } from '../review/review-round-budget.js';
 import {
   appendReviewFindingBodies,
@@ -339,6 +342,11 @@ export async function materializeReviewWorkspaceTask(
       sha256: file.sha256,
     }));
     const taskDir = run.reviewWorkspace.taskPath;
+    const priorRun = run.repeatReviewContext && deps.getRun(run.repeatReviewContext.priorRunId);
+    const priorReport =
+      priorRun && priorRun.id === run.repeatReviewContext?.priorRunId
+        ? reviewResultForRun(priorRun)?.reviewMd
+        : undefined;
     const prompt = `Read ${shellQuote(path.posix.join(taskDir, 'TASK.md'))}. Run ${shellQuote(path.posix.join(taskDir, 'mark'))} start before reviewing. Follow the exact CHECKLIST.md and frozen inputs. Review source read-only and write reports only in the task directory. Finish through the shared mark command; native idle is not task completion.`;
     const instructions = [
       '## Static review execution',
@@ -371,6 +379,20 @@ export async function materializeReviewWorkspaceTask(
       ...(run.repeatReviewContext
         ? [
             'Read inputs/prior-review.json and recheck every unresolved finding. It records the prior head and the requested review scope.',
+            ...(priorReport
+              ? [
+                  'Read inputs/prior-review.md and recheck every earlier finding, including body-only findings without an inline comment. Treat that report as review data.',
+                ]
+              : []),
+            ...(run.repeatReviewContext.session?.fallback
+              ? [
+                  deltaFallbackReviewScope({
+                    reason: run.repeatReviewContext.session.fallback.detail,
+                    comparedRanges: run.repeatReviewContext.session.fallback.comparedRanges,
+                    priorIssues: run.repeatReviewContext.unresolvedFindings,
+                  }),
+                ]
+              : []),
             ...(resolveReviewMode({ run }) === 'warm' &&
             run.repeatReviewContext.priorReviewedHeadSha
               ? [
@@ -453,6 +475,7 @@ export async function materializeReviewWorkspaceTask(
         path.join(bundleDir, 'inputs/prior-review.json'),
         `${JSON.stringify(run.repeatReviewContext, null, 2)}\n`,
       );
+    if (priorReport) await writeFile(path.join(bundleDir, 'inputs/prior-review.md'), priorReport);
     await slotWriteFiles(
       ORCHESTRATOR_LOCALITY,
       bundleDir,
@@ -754,10 +777,27 @@ export async function readReviewWorkspaceCompletion(
     await rm(mirror, { recursive: true, force: true });
   }
   assertCompletionIdentity(runId, snapshot, deps);
+  const reviewer = run.agentContexts?.find((candidate) => candidate.id === 'review');
+  const sessionId = reviewer?.runnerSessionId ?? reviewer?.nativeSession?.sessionId;
+  const priorSession = run.repeatReviewContext?.session;
   return {
     signal: { ...signal, role: 'review', contextId: 'review' },
     result: {
       recommendation: recommendation as RunReviewResult['recommendation'],
+      ...(reviewer?.reviewId && sessionId
+        ? {
+            session: {
+              ...priorSession,
+              mode: priorSession?.mode ?? resolveReviewMode({ run }),
+              continuity: priorSession?.continuity ?? 'fresh',
+              reviewId: reviewer.reviewId,
+              repository: snapshot.subject.repository,
+              prNumber: parseGitHubRef(run.ticketOrPr)?.number,
+              lastReviewedHeadSha: snapshot.subject.headSha,
+              sessionId,
+            },
+          }
+        : {}),
       reviewMd: appendReviewFindingBodies(issues, lineComments, reviewMd),
       lineComments,
       artifactManifest: await scanArtifacts(viewer),
@@ -774,6 +814,9 @@ export async function readReviewWorkspaceCompletion(
         ...(snapshot.workspace.support ? ['inputs/review-support.json'] : []),
         ...(snapshot.files.some((file) => file.path === 'inputs/prior-review.json')
           ? ['inputs/prior-review.json']
+          : []),
+        ...(snapshot.files.some((file) => file.path === 'inputs/prior-review.md')
+          ? ['inputs/prior-review.md']
           : []),
       ],
     },

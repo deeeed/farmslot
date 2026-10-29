@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Discover the latest owned PR-review lineage, retain earlier findings for fresh delta fallback, and reselect the template cleared by static-review task replay.
+
 - Recover unsent review-fix prompts after restart, verify relaunched worker processes, and surface unconfirmed delivery within the launch budget while preserving findings.
 
 - Log the acquisition scan's file count and duration for each output completion capture.

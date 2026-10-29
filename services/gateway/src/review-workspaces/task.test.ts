@@ -244,6 +244,17 @@ test('tmux startup requires a fresh signal belonging to its reviewer attempt', a
 
 test('the copied shared marker works offline; completion rejects wrong SHA, stale attempts and missing required evidence', async () => {
   await withFixture(async (f) => {
+    f.run.reviewMode = 'cold';
+    f.run.repeatReviewContext!.session = {
+      mode: 'cold',
+      continuity: 'fresh',
+      reviewId: 'original-lineage',
+      fallback: {
+        reason: 'slot-mismatch',
+        detail: 'The prior machine is unavailable',
+        comparedRanges: [`${'c'.repeat(40)}..${f.subject.headSha}`],
+      },
+    };
     await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
     const startedAt = new Date().toISOString();
     f.run.agentContexts = [
@@ -254,6 +265,7 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
         slotId: null,
         runId: f.run.id,
         status: 'working',
+        reviewId: 'original-lineage',
         nativeSession: {
           sessionId: 'session',
           leaseId: 'lease',
@@ -300,6 +312,13 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
     const completion = await readReviewWorkspaceCompletion(f.run.id, f.deps);
     assert.equal(completion?.result?.recommendation, 'APPROVE');
     assert.equal(completion?.result?.reviewSnapshot?.headSha, f.subject.headSha);
+    assert.equal(completion?.result?.session?.reviewId, 'original-lineage');
+    assert.equal(completion?.result?.session?.sessionId, 'session');
+    assert.equal(completion?.result?.session?.lastReviewedHeadSha, f.subject.headSha);
+    assert.deepEqual(
+      completion?.result?.session?.fallback,
+      f.run.repeatReviewContext!.session.fallback,
+    );
     assert.equal(
       await readFile(
         path.join(f.deps.snapshotRoot(), f.run.id, 'view/artifacts/review.md'),
@@ -499,4 +518,53 @@ test('static inline comments retain canonical severities and permit body-only fi
     () => resolveStaticReviewLineComments('issues', blocking, comments),
     /line comments disagree/,
   );
+});
+
+test('a fresh fallback task keeps the prior findings and the exact delta as its review scope', async () => {
+  await withFixture(async (f) => {
+    const range = `${'c'.repeat(40)}..${f.subject.headSha}`;
+    f.run.reviewMode = 'cold';
+    f.run.repeatReviewContext!.session = {
+      mode: 'cold',
+      continuity: 'fresh',
+      reviewId: 'original-lineage',
+      fallback: {
+        reason: 'slot-mismatch',
+        detail: 'Prior machine differs',
+        comparedRanges: [range],
+      },
+    };
+    const earlierReport =
+      'VERDICT: REQUEST_CHANGES\nA body-only major outside the inline diff remains unresolved.\n';
+    const priorRun: Run = {
+      ...f.run,
+      id: 'previous',
+      status: 'done',
+      reviewResult: {
+        recommendation: 'REQUEST_CHANGES',
+        reviewMd: earlierReport,
+        lineComments: [],
+        reviewSnapshot: {
+          source: 'github-pr',
+          headSha: 'c'.repeat(40),
+          capturedAt: f.subject.capturedAt,
+        },
+      },
+    };
+    const deps = { ...f.deps, getRun: (id: string) => (id === 'previous' ? priorRun : f.run) };
+    const task = await materializeReviewWorkspaceTask(f.run.id, f.subject, deps);
+    assert.equal(
+      await readFile(path.join(f.task, 'inputs/prior-review.md'), 'utf8'),
+      earlierReport,
+    );
+    const document = await readFile(task.taskFile, 'utf8');
+    assert.match(document, /including body-only findings/);
+    assert.match(document, /Delta-scoped review in a fresh session/);
+    assert.match(document, /Earlier finding/);
+    assert.ok(document.includes(range));
+    assert.match(document, /overrides generic full-branch diff instructions/);
+    const prior = JSON.parse(await readFile(path.join(f.task, 'inputs/prior-review.json'), 'utf8'));
+    assert.equal(prior.session.reviewId, 'original-lineage');
+    assert.deepEqual(prior.session.fallback.comparedRanges, [range]);
+  });
 });
