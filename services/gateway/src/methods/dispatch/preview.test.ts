@@ -17,9 +17,12 @@ import {
 import { runWithSessionOriginator } from '../../security/work-originator.js';
 
 import {
+  assertPressureAdmissionConfigValid,
   automaticSlotLoads,
   evaluatePressureAdmission,
+  isPinnedSlotSelection,
   type PressureAdmissionConfig,
+  resolveAutomaticSlotIdleMinimums,
 } from './pressure-admission.js';
 import {
   resetPressureAdmissionControlCacheForTest,
@@ -249,7 +252,11 @@ const decisions = new Map<string, PressureAdmissionDecision>([
 
 const selectionArtifact: Record<string, unknown> = {};
 
-function loadDecision(machine: string, load1: number): PressureAdmissionDecision {
+function loadDecision(
+  machine: string,
+  cpuIdlePercent: number,
+  load1 = 2.11,
+): PressureAdmissionDecision {
   const original = decisionFor(machine, 'green');
   return {
     outcome: 'admitted',
@@ -258,7 +265,11 @@ function loadDecision(machine: string, load1: number): PressureAdmissionDecision
     enforced: false,
     evidence: {
       ...original.evidence,
-      samples: original.evidence.samples.map((sample) => ({ ...sample, load1 })),
+      samples: original.evidence.samples.map((sample) => ({
+        ...sample,
+        cpu: 1 - cpuIdlePercent / 100,
+        load1,
+      })),
     },
   };
 }
@@ -266,7 +277,7 @@ function loadDecision(machine: string, load1: number): PressureAdmissionDecision
 test('only load-only automatic preview refusals carry an engine wait', () => {
   const hot = slot({ slot: 'hot', machine: 'hot' });
   const params = { project: 'demo-farm', flowType: 'dev' as const, ticketOrPr: 'TASK-1' };
-  const overload = new Map([['hot', loadDecision('hot', 1.72)]]);
+  const overload = new Map([['hot', loadDecision('hot', 10)]]);
   const resolve = (candidate: SlotStatus, pressureDecisions = overload) =>
     resolveDispatchPreviewFromFleet(params, [candidate], undefined, { pressureDecisions });
   assert.throws(
@@ -274,7 +285,7 @@ test('only load-only automatic preview refusals carry an engine wait', () => {
     (error: unknown) => {
       assert.ok(error instanceof AutomaticSlotLoadWaitError);
       assert.equal(error.wait.slotId, 'hot');
-      assert.match(error.wait.reason, /Waiting for node load.*1\.72 >= 1\.50/);
+      assert.match(error.wait.reason, /Waiting for node load.*CPU idle 10\.00% < 15\.00%/);
       return true;
     },
   );
@@ -314,7 +325,7 @@ test('only load-only automatic preview refusals carry an engine wait', () => {
   );
 });
 
-test('automatic placement skips load 83/16 with refusal disabled and ranks allowed nodes by load/core', () => {
+test('automatic placement uses sampled CPU idle rather than load average', () => {
   const slots = [
     slot({ slot: 'hot', machine: 'hot', branch: 'fix/TASK-1' }),
     slot({ slot: 'medium', machine: 'medium' }),
@@ -325,9 +336,9 @@ test('automatic placement skips load 83/16 with refusal disabled and ranks allow
     }),
   ];
   const decisions = new Map([
-    ['hot', loadDecision('hot', 83 / 16)],
-    ['medium', loadDecision('medium', 6 / 16)],
-    ['light', loadDecision('light', 1.4 / 8)],
+    ['hot', loadDecision('hot', 5)],
+    ['medium', loadDecision('medium', 40)],
+    ['light', loadDecision('light', 80)],
   ]);
   const params = {
     project: 'demo-farm',
@@ -339,14 +350,19 @@ test('automatic placement skips load 83/16 with refusal disabled and ranks allow
     resolveDispatchPreviewFromFleet({ ...params, allowedSlots }, slots, undefined, {
       pressureDecisions: decisions,
     });
-  assert.equal(resolve().preview.slotId, 'light', 'lower load wins over branch and CDP preference');
+  assert.equal(
+    resolve().preview.slotId,
+    'light',
+    'higher CPU idle wins over branch and CDP preference',
+  );
   assert.equal(
     resolve(['hot', 'medium']).preview.slotId,
     'medium',
     'allowlist excludes lighter node',
   );
-  assert.throws(() => resolve(['hot']), /load\/core 5.19 >= 1.50.*skipped/);
-  assert.equal(queueItemHeldByPressure(slots, 'demo-farm', decisions, ['hot']), true);
+  assert.equal(resolve(['hot']).preview.slotId, 'hot', 'single-slot pin bypasses idle gate');
+  assert.equal(queueItemHeldByPressure(slots, 'demo-farm', decisions, ['hot']), false);
+  assert.equal(queueItemHeldByPressure(slots, 'demo-farm', decisions, ['hot', 'light']), false);
   assert.equal(queueItemHeldByPressure(slots, 'demo-farm', decisions), false);
   assert.equal(
     resolveDispatchPreviewFromFleet({ ...params, slotId: 'hot' }, slots, undefined, {
@@ -366,7 +382,7 @@ test('automatic placement skips load 83/16 with refusal disabled and ranks allow
     'medium',
     'held affinity cannot bypass overload exclusion',
   );
-  decisions.set('hot', loadDecision('hot', 1));
+  decisions.set('hot', loadDecision('hot', 20));
   assert.equal(
     resolveDispatchPreviewFromFleet(
       { ...params, flowType: 'pr-complete', ticketOrPr: 'owner/repo#42' },
@@ -379,14 +395,17 @@ test('automatic placement skips load 83/16 with refusal disabled and ranks allow
   );
 });
 
-test('automatic load policy uses its existing threshold override and ignores stale evidence', () => {
-  const decision = loadDecision('node', 2);
+test('CPU idle minimum is per machine, defaults to 15, and excludes stale evidence', () => {
+  const decision = loadDecision('node', 12);
   const decisions = new Map([['node', decision]]);
   assert.equal(automaticSlotLoads(decisions).get('node')?.skipped, true);
-  assert.equal(automaticSlotLoads(decisions, { load1Critical: 3 }).get('node')?.skipped, false);
+  assert.equal(automaticSlotLoads(decisions, { node: 10 }).get('node')?.skipped, false);
+  assert.equal(automaticSlotLoads(decisions, { other: 10 }).get('node')?.skipped, true);
+  const boundary = new Map([['node', loadDecision('node', 15)]]);
+  assert.equal(automaticSlotLoads(boundary).get('node')?.skipped, false);
   for (const code of ['PRESSURE_EVIDENCE_STALE', 'PRESSURE_EVIDENCE_UNAVAILABLE'] as const) {
     const stale = { ...decision, advisory: { code, reason: 'No live evidence', causes: [] } };
-    assert.equal(automaticSlotLoads(new Map([['node', stale]])).get('node')?.load1, null);
+    assert.equal(automaticSlotLoads(new Map([['node', stale]])).get('node')?.cpuIdlePercent, null);
   }
   assert.equal(
     resolveDispatchPreviewFromFleet(
@@ -397,6 +416,42 @@ test('automatic load policy uses its existing threshold override and ignores sta
     ).preview.slotId,
     'unknown',
   );
+});
+
+test('single-slot and explicit-slot pins warn without skipping a busy host', () => {
+  const decisions = new Map([['hot', loadDecision('hot', 5)]]);
+  for (const pin of [{ allowedSlots: ['hot'] }, { slotId: 'hot' }]) {
+    const load = automaticSlotLoads(decisions, undefined, isPinnedSlotSelection(pin)).get('hot')!;
+    assert.equal(load.skipped, false);
+    assert.match(
+      load.reason,
+      /Warning:.*CPU idle 5\.00% < 15\.00%.*explicitly pinned slot, dispatch continues/,
+    );
+  }
+  assert.equal(
+    automaticSlotLoads(
+      decisions,
+      undefined,
+      isPinnedSlotSelection({ allowedSlots: ['hot', 'other'] }),
+    ).get('hot')?.skipped,
+    true,
+  );
+  const busySlots = [
+    slot({ slot: 'hot', machine: 'hot' }),
+    slot({ slot: 'other', machine: 'hot' }),
+  ];
+  assert.equal(queueItemHeldByPressure(busySlots, 'demo-farm', decisions, ['hot', 'other']), true);
+});
+
+test('per-machine CPU-idle gateway config accepts percentages and rejects malformed values at startup', () => {
+  const key = 'FARMSLOT_AUTOMATIC_CPU_IDLE_MIN_PERCENT_BY_MACHINE';
+  assert.deepEqual(
+    resolveAutomaticSlotIdleMinimums({ [key]: '{"one":0,"two":100,"three":12.5}' }),
+    { one: 0, two: 100, three: 12.5 },
+  );
+  assert.deepEqual(resolveAutomaticSlotIdleMinimums({}), {});
+  for (const value of ['[]', 'null', '{"one":-1}', '{"one":101}', '{"one":"15"}', 'invalid'])
+    assert.throws(() => assertPressureAdmissionConfigValid({ [key]: value }));
 });
 
 test('automatic selection excludes pressure-rejected machines', () => {
@@ -643,8 +698,8 @@ test('automatic placement preserves red headroom ahead of lower load', () => {
   });
   const healthy = slot({ slot: 'healthy', machine: 'healthy' });
   const pressureDecisions = new Map([
-    ['light', loadDecision('light', 0.1)],
-    ['healthy', loadDecision('healthy', 0.4)],
+    ['light', loadDecision('light', 90)],
+    ['healthy', loadDecision('healthy', 60)],
   ]);
   const params = { project: 'demo-farm', flowType: 'dev' as const, ticketOrPr: 'TASK-1' };
   assert.equal(
@@ -669,8 +724,8 @@ test('queue load hold includes held PR affinity, including a spread subset', asy
     slot({ slot: 'held', machine: 'light', lifecycle: 'held', branch: 'owner-repo-42' }),
   ];
   const pressureDecisions = new Map([
-    ['hot', loadDecision('hot', 83 / 16)],
-    ['light', loadDecision('light', 0.2)],
+    ['hot', loadDecision('hot', 5)],
+    ['light', loadDecision('light', 80)],
   ]);
   const item: QueueItem = {
     id: 'load-held',
@@ -705,6 +760,25 @@ test('queue load hold includes held PR affinity, including a spread subset', asy
       ),
       'held',
     );
+    store.updateRun(sibling.id, { slotId: 'held' });
+    assert.equal(
+      await selectQueueDispatchSlot(
+        slots,
+        { ...item, launchSlotPolicy: 'spread', launchGroupId: 'load-group' },
+        { capturePressure },
+      ),
+      null,
+      'spread narrowing a two-slot operator scope to one busy slot is not a pin',
+    );
+    assert.equal(
+      await selectQueueDispatchSlot(
+        slots,
+        { ...item, allowedSlots: ['hot'], launchSlotPolicy: 'spread', launchGroupId: 'load-group' },
+        { capturePressure },
+      ),
+      'hot',
+      'an actual one-slot operator pin still bypasses the automatic CPU gate',
+    );
   } finally {
     store.updateRun(sibling.id, { status: 'done' });
     await store.deleteRun(sibling.id);
@@ -720,8 +794,10 @@ test('queue load hold includes held PR affinity, including a spread subset', asy
     true,
   );
   pressureDecisions.set('light', loadDecision('light', 4));
+  assert.equal(await selectQueueDispatchSlot(slots, item, { capturePressure }), null);
   assert.equal(
     await selectQueueDispatchSlot(slots, { ...item, allowedSlots: ['held'] }, { capturePressure }),
-    null,
+    'held',
+    'a single-slot queue pin warns and proceeds even when the machine is busy',
   );
 });

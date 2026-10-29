@@ -98,6 +98,7 @@ const originalSlots = structuredClone(slots);
 const reclaims: string[] = [];
 let prHead = branch;
 const claims: string[] = [];
+const freshTeardowns: string[] = [];
 let pools: PoolConfig[] = [];
 let candidateSourcePlans: (() => RunSlotSourcePlans) | undefined;
 const sourceAdmissions: string[] = [];
@@ -152,10 +153,18 @@ mock.module('../sources/runtime.js', {
     withRunSources,
   },
 });
-const claim: typeof core.claimSlotStatusIf = async (id, predicate) => {
-  assert.equal(predicate({ slot: id, lifecycle: 'ready', phase: null }), true);
+const claim: typeof core.claimSlotStatusIf = async (id, predicate, fields) => {
+  const row: Record<string, unknown> = {
+    slot: id,
+    lifecycle: 'ready',
+    phase: null,
+    ...liveRows.get(id),
+  };
+  assert.equal(predicate(row), true);
   claims.push(id);
-  return { claimed: true, epoch: 1 };
+  const epoch = (Number(row.slot_epoch) || 0) + 1;
+  liveRows.set(id, { ...row, ...fields, slot_epoch: epoch });
+  return { claimed: true, epoch };
 };
 mock.module('../core/index.js', {
   namedExports: {
@@ -201,7 +210,8 @@ mock.module('../methods/pr/raw-cache.js', {
   },
 });
 const scoring = await import('../methods/dispatch/slot-scoring.js');
-const { automaticSlotLoads } = await import('../methods/dispatch/pressure-admission.js');
+const { automaticSlotLoads, isPinnedSlotSelection } =
+  await import('../methods/dispatch/pressure-admission.js');
 let freshPreview = false;
 mock.module('../methods/dispatch.js', {
   namedExports: {
@@ -232,8 +242,9 @@ mock.module('../methods/dispatch.js', {
       assert.equal(decision?.state, 'disabled');
       return {};
     },
-    prepareSlotForFreshReuse: () => {
-      throw new Error('unexpected worker teardown');
+    prepareSlotForFreshReuse: async (id: string) => {
+      assert.equal(run.engineState?.flags?.freshReuse, true);
+      freshTeardowns.push(id);
     },
     verifyBranchAffinityNudgeStillEligible: () => {
       throw new Error('unexpected worker reuse');
@@ -241,7 +252,7 @@ mock.module('../methods/dispatch.js', {
     PressureAdmissionRejectedError: class extends Error {},
     dispatchPreview: async (
       params: import('@farmslot/protocol').DispatchPreviewParams,
-      _options: object,
+      options: Parameters<typeof import('../methods/dispatch/preview.js').dispatchPreview>[1],
     ) => {
       if (!run.slotId) assert.equal(params.targetBranch, expectedTarget);
       if (freshPreview)
@@ -249,13 +260,17 @@ mock.module('../methods/dispatch.js', {
           { ...params, runner: 'codex', model: 'gpt-6.1-sol' },
           slots,
           undefined,
-          { pressureDecisions },
+          { pressureDecisions, automaticLoadPinned: options?.automaticLoadPinned },
         );
       const selected = run.slotId
         ? slots.find((slot) => slot.slot === run.slotId)
         : scoring.findBestSlot(slots, project, {
             ...params,
-            automaticLoads: automaticSlotLoads(pressureDecisions),
+            automaticLoads: automaticSlotLoads(
+              pressureDecisions,
+              undefined,
+              options?.automaticLoadPinned ?? isPinnedSlotSelection(params),
+            ),
           });
       assert.equal(selected?.slot, expectedSlot);
       return {
@@ -331,6 +346,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
     steps: [{ name: 'find-slot', status: 'running' }],
   });
   claims.length = 0;
+  freshTeardowns.length = 0;
   pools = [];
   candidateSourcePlans = undefined;
   sourceAdmissions.length = 0;
@@ -459,7 +475,7 @@ test('skip-prepare retains its selected checkout without finished-run release', 
   assert.deepEqual(claims, [run.slotId]);
 });
 
-function loadDecision(machine: string, load1: number): PressureAdmissionDecision {
+function loadDecision(machine: string, cpu: number): PressureAdmissionDecision {
   const collectedAt = new Date().toISOString();
   return {
     outcome: 'admitted',
@@ -470,7 +486,7 @@ function loadDecision(machine: string, load1: number): PressureAdmissionDecision
       machine,
       generation: 'current',
       evaluatedAt: collectedAt,
-      samples: [{ collectedAt, cpu: 0.2, memory: 0.4, disk: 0.4, load1, critical: false }],
+      samples: [{ collectedAt, cpu, memory: 0.4, disk: 0.4, load1: 2.11, critical: false }],
       consecutiveCriticalSamples: 0,
       requiredConsecutiveCriticalSamples: 3,
       staleAfterMs: 150000,
@@ -488,18 +504,18 @@ test('find-slot avoids overloaded allowed nodes and records the load decision be
   }
   slots[0]!.branch = branch;
   pressureDecisions = new Map([
-    ['macpro', loadDecision('macpro', 83 / 16)],
-    ['macwork', loadDecision('macwork', 6 / 16)],
-    ['mini', loadDecision('mini', 1.4 / 8)],
+    ['macpro', loadDecision('macpro', 0.95)],
+    ['macwork', loadDecision('macwork', 0.6)],
+    ['mini', loadDecision('mini', 0.2)],
   ]);
   expectedSlot = 'macwork-mmt-1';
   run.allowedSlots = ['macpro-mmt-1', expectedSlot];
   const result = await executeFindSlotStep(run.id, run, 0, context);
   assert.equal(result.outputs?.selectedSlot, expectedSlot);
-  assert.match(String(result.outputs?.selectionReason), /0.38 < 1.50/);
+  assert.match(String(result.outputs?.selectionReason), /CPU idle 40\.00% >= 15\.00%/);
   assert.match(
     JSON.stringify(run.steps.find((step) => step.name === 'find-slot')?.inputs),
-    /5.19 >= 1.50.*skipped/,
+    /CPU idle 5\.00% < 15\.00%.*skipped/,
   );
   assert.deepEqual(refreshedSlots, [expectedSlot], 'do not probe overloaded or disallowed slots');
   assert.deepEqual(claims, [expectedSlot]);
@@ -510,12 +526,12 @@ test('find-slot queues an all-overloaded allowlist until an allowed node cools',
   reset('fix-bug', 'TAT-4137');
   let now = Date.now();
   t.mock.method(Date, 'now', () => now);
-  pressureDecisions = new Map([['macpro', loadDecision('macpro', 83 / 16)]]);
-  run.allowedSlots = ['macpro-mmt-1'];
+  pressureDecisions = new Map([['macpro', loadDecision('macpro', 0.95)]]);
+  run.allowedSlots = ['macpro-mmt-1', 'macpro-mmt-2'];
   afterLoadWait = () => {
     const step = run.steps.find((step) => step.name === 'find-slot')!;
     assert.ok(step.queuedSince);
-    assert.match(String(step.inputs?.hostLoadWaitReason), /5.19 >= 1.50/);
+    assert.match(String(step.inputs?.hostLoadWaitReason), /CPU idle 5\.00% < 15\.00%/);
     assert.deepEqual(claims, []);
     assert.deepEqual(refreshedSlots, []);
     assert.equal(run.taskFile, null);
@@ -533,8 +549,8 @@ test('find-slot queues an all-overloaded allowlist until an allowed node cools',
 for (const change of ['cancel', 'pause', 'replay'] as const) {
   test(`find-slot stops its load wait after ${change} without claiming a slot`, async () => {
     reset('fix-bug', 'TAT-4137');
-    pressureDecisions = new Map([['macpro', loadDecision('macpro', 83 / 16)]]);
-    run.allowedSlots = ['macpro-mmt-1'];
+    pressureDecisions = new Map([['macpro', loadDecision('macpro', 0.95)]]);
+    run.allowedSlots = ['macpro-mmt-1', 'macpro-mmt-2'];
     afterLoadWait = () => {
       if (change === 'replay') run.engineState!.generation = 1;
       else run.status = change === 'cancel' ? 'cancelled' : 'paused';
@@ -553,7 +569,7 @@ test('find-slot wakes when a cool allowed slot becomes free while the original n
   newlyFree.agent = 'working';
   newlyFree.branch = 'main';
   pressureDecisions = new Map([
-    ['macpro', loadDecision('macpro', 83 / 16)],
+    ['macpro', loadDecision('macpro', 0.95)],
     ['macwork', loadDecision('macwork', 0.4)],
   ]);
   run.allowedSlots = [slots[0]!.slot, newlyFree.slot];
@@ -590,9 +606,9 @@ for (const alternateStaysCool of [true, false]) {
     afterReuse = () => {
       afterReuse = undefined;
       // Safe reuse awaits remote checks; load may cross the limit before final preview.
-      pressureDecisions.set(first.machine, loadDecision(first.machine, 1.72));
+      pressureDecisions.set(first.machine, loadDecision(first.machine, 0.95));
       if (!alternateStaysCool)
-        pressureDecisions.set(alternate.machine, loadDecision(alternate.machine, 1.8));
+        pressureDecisions.set(alternate.machine, loadDecision(alternate.machine, 0.97));
     };
     afterLoadWait = () => {
       assert.equal(loadWaits.length, 1);
@@ -618,7 +634,7 @@ test('find-slot replans a recovered same-ref source while the original node stay
   run.allowedSlots = [hot.slot, cool.slot];
   expectedSlot = cool.slot;
   pressureDecisions = new Map([
-    [hot.machine, loadDecision(hot.machine, 83 / 16)],
+    [hot.machine, loadDecision(hot.machine, 0.95)],
     [cool.machine, loadDecision(cool.machine, 0.4)],
   ]);
   const lockFor = (nodeId?: string) => {
@@ -697,7 +713,7 @@ test('find-slot replans a recovered same-ref source while the original node stay
     originalPlan,
     'recovery does not require selecting a new source',
   );
-  assert.match(String(result.inputs?.hostLoadWaitReason), /5.19 >= 1.50/);
+  assert.match(String(result.inputs?.hostLoadWaitReason), /CPU idle 5\.00% < 15\.00%/);
 });
 
 test('an operator affinity-card pick retains explicit pressure policy on an overloaded alternative', async () => {
@@ -709,7 +725,7 @@ test('an operator affinity-card pick retains explicit pressure policy on an over
   const hot = slots[0]!;
   hot.branch = 'main';
   pressureDecisions = new Map([
-    ['macpro', loadDecision('macpro', 83 / 16)],
+    ['macpro', loadDecision('macpro', 0.95)],
     ['macwork', loadDecision('macwork', 0.4)],
   ]);
   pickedSlot = hot.slot;
@@ -782,7 +798,7 @@ test('the stale-slot picker still permits an explicit node-load override', async
   const hot = candidate('hot', 'macpro', 'fix/hot');
   slots.splice(0, slots.length, cold, hot);
   pressureDecisions.set('mini', loadDecision('mini', 0.2));
-  pressureDecisions.set('macpro', loadDecision('macpro', 6));
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.95));
   expectedSlot = pickedSlot = hot.slot;
   await executeFindSlotStep(run.id, run, 0, context);
   assert.equal(pickerPayload?.kind, 'slot_picker');
@@ -883,4 +899,25 @@ test('unknown evidence with no safe candidate refuses with reasons without a pic
   );
   assert.equal(pickerPayload, undefined);
   assert.deepEqual(claims, []);
+});
+
+test('an explicit wizard fresh dispatch records the CPU-idle bypass warning before returning', async () => {
+  reset('dev', 'TAT-9003');
+  expectedTarget = undefined;
+  const selected = slots[0]!;
+  selected.branch = 'main';
+  run.slotId = selected.slot;
+  run.allowedSlots = [selected.slot];
+  run.engineState!.flags = { freshReuse: true };
+  pressureDecisions.set(selected.machine, loadDecision(selected.machine, 0.95));
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.via, 'wizard-fresh-reuse');
+  assert.equal(result.outputs?.selectionMethod, 'human-override');
+  assert.match(
+    String(result.outputs?.selectionReason),
+    /Warning:.*CPU idle 5\.00%.*explicitly pinned slot/,
+  );
+  assert.match(JSON.stringify(result.inputs?.hostLoadSelection), /"skipped":false/);
+  assert.deepEqual(freshTeardowns, [selected.slot]);
+  assert.deepEqual(loadWaits, []);
 });

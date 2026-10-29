@@ -1,7 +1,7 @@
 // Private authenticated selection proof. No task, worker or provider is started.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -54,10 +54,10 @@ await writeFile(
   }),
 );
 const nodes = [
-  { machine: 'load-hot', slot: 'hot-slot', load: 83, cores: 16 },
-  { machine: 'load-medium', slot: 'medium-slot', load: 6, cores: 16 },
-  { machine: 'load-light', slot: 'light-slot', load: 1.4, cores: 8 },
-  { machine: 'load-manual', slot: 'manual-slot', load: 6, cores: 16 },
+  { machine: 'load-hot', slot: 'hot-slot', load: 83, cores: 16, cpu: 95 },
+  { machine: 'load-medium', slot: 'medium-slot', load: 6, cores: 16, cpu: 60 },
+  { machine: 'load-light', slot: 'light-slot', load: 1.4, cores: 8, cpu: 20 },
+  { machine: 'load-manual', slot: 'manual-slot', load: 6, cores: 16, cpu: 60 },
 ];
 const rows = [];
 for (const node of nodes) {
@@ -76,6 +76,10 @@ for (const node of nodes) {
     '-qm',
     'test: fixture source',
   ]);
+  const remote = path.join(root, `${node.slot}-remote.git`);
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', remote]);
+  execFileSync('git', ['-C', repo, 'push', '-q', 'origin', 'main']);
   await writeFile(
     path.join(workspace, 'pool', `${node.machine}.json`),
     JSON.stringify({
@@ -112,10 +116,29 @@ mock.module('../../../services/gateway/src/external/github.js', {
   },
 });
 const store = await import('../../../services/gateway/src/runs/store.js');
+const { updateSlotStatus } = await import('../../../services/gateway/src/core/state.js');
+async function resetFixtureSlots() {
+  for (const row of rows)
+    await updateSlotStatus(row.slot, {
+      ...row,
+      current_run_id: null,
+      cleanup_run_id: null,
+      handoff_run_id: null,
+      task_id: null,
+      task_file: null,
+    });
+}
+
 const { updateMachineMetrics } = await import('../../../services/gateway/src/fleet/node-health.js');
-function sample(machine: string, loadAvg1: number, cpuCores: number, diskPercent = 40) {
+function sample(
+  machine: string,
+  loadAvg1: number,
+  cpuCores: number,
+  diskPercent = 40,
+  cpuPercent = 20,
+) {
   updateMachineMetrics(machine, {
-    cpuPercent: 20,
+    cpuPercent,
     memoryPercent: 40,
     memoryUsedGb: 4,
     memoryTotalGb: 10,
@@ -126,7 +149,19 @@ function sample(machine: string, loadAvg1: number, cpuCores: number, diskPercent
     collectedAt: new Date().toISOString(),
   });
 }
-for (const node of nodes) sample(node.machine, node.load, node.cores);
+for (const node of nodes) sample(node.machine, node.load, node.cores, 40, node.cpu);
+const safeIdle = await import('../../../services/gateway/src/run-lifecycle/safe-idle-slot.js');
+let afterRecovery: (() => void) | undefined;
+mock.module('../../../services/gateway/src/run-lifecycle/safe-idle-slot.js', {
+  namedExports: {
+    ...safeIdle,
+    reuseSafeIdleSlot: async (...args: Parameters<typeof safeIdle.reuseSafeIdleSlot>) => {
+      const outcome = await safeIdle.reuseSafeIdleSlot(...args);
+      afterRecovery?.();
+      return outcome;
+    },
+  },
+});
 const { executeFindSlotStep } =
   await import('../../../services/gateway/src/run-engine/find-slot-step.js');
 const policy = await import('../../../services/gateway/src/run-engine/dispatch-policy.js');
@@ -211,37 +246,109 @@ try {
   await store.persistRunNow(store.getRun(current.id)!, 'load selection proof');
   const readback = await client.call<RunGetResult>('run.get', { runId: current.id });
   const step = readback.run.steps.find((step) => step.name === 'find-slot')!;
-  assert.match(JSON.stringify(step.inputs?.hostLoadSelection), /5.19 >= 1.50.*skipped/);
-  assert.match(String(step.outputs?.selectionReason), /0.38 < 1.50/);
+  assert.match(
+    JSON.stringify(step.inputs?.hostLoadSelection),
+    /CPU idle 5\.00% < 15\.00%.*skipped/,
+  );
+  assert.match(String(step.outputs?.selectionReason), /CPU idle 40\.00% >= 15\.00%/);
   assert.equal(readback.run.taskFile, null);
   store.updateRun(current.id, { status: 'done' });
   await store.deleteRun(current.id);
-  const blocked = await client.call<RunCreateResult>('run.create', {
+  // Each selection case starts with fresh owned fixture leases.
+  await resetFixtureSlots();
+  const pinned = await client.call<RunCreateResult>('run.create', {
     ...params,
     ticketOrPr: 'example/proof#140',
     allowedSlots: ['hot-slot'],
   });
-  await assert.rejects(
-    executeFindSlotStep(blocked.run.id, store.getRun(blocked.run.id)!, 0, context),
-    /No allowed free slot below.*5.19 >= 1.50/,
+  const pinSelection = await executeFindSlotStep(
+    pinned.run.id,
+    store.getRun(pinned.run.id)!,
+    0,
+    context,
   );
-  const blockedReadback = await client.call<RunGetResult>('run.get', { runId: blocked.run.id });
+  assert.equal(pinSelection.outputs?.selectedSlot, 'hot-slot');
   assert.match(
-    JSON.stringify(blockedReadback.run.steps.find((step) => step.name === 'find-slot')?.inputs),
-    /skipped for automatic selection/,
+    String(pinSelection.outputs?.selectionReason),
+    /Warning:.*CPU idle 5\.00%.*explicitly pinned slot, dispatch continues/,
   );
-  assert.equal(blockedReadback.run.slotId, null);
-  sample('load-hot', 1, 16);
+  assert.match(JSON.stringify(pinSelection.inputs?.hostLoadSelection), /"skipped":false/);
+  store.updateRun(pinned.run.id, { status: 'done' });
+  await store.deleteRun(pinned.run.id);
+  await resetFixtureSlots();
+  // A normal node heartbeat can change CPU during actual repository recovery.
+  sample('load-hot', 83, 16, 40, 10);
+  sample('load-medium', 6, 16, 40, 60);
+  const recovering = await client.call<RunCreateResult>('run.create', {
+    ...params,
+    ticketOrPr: 'example/proof#145',
+    allowedSlots: ['hot-slot', 'medium-slot'],
+  });
+  afterRecovery = () => {
+    afterRecovery = undefined;
+    sample('load-hot', 83, 16, 40, 95);
+    sample('load-medium', 6, 16, 40, 95);
+  };
+  let recoverySettled = false;
+  const recovery = executeFindSlotStep(
+    recovering.run.id,
+    store.getRun(recovering.run.id)!,
+    0,
+    context,
+  )
+    .then(
+      (result) => ({ result }),
+      (error: unknown) => ({ error }),
+    )
+    .then((outcome) => {
+      recoverySettled = true;
+      return outcome;
+    });
+  const recoveryDeadline = Date.now() + 30000;
+  while (
+    !store.getRun(recovering.run.id)!.steps.find((step) => step.name === 'find-slot')?.inputs
+      ?.hostLoadWaitReason
+  ) {
+    assert(!recoverySettled, 'Internal one-candidate recovery became an implicit operator pin');
+    assert(Date.now() < recoveryDeadline, 'Recovery load wait was not recorded');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const recoveryWaiting = await client.call<RunGetResult>('run.get', { runId: recovering.run.id });
+  assert.equal(recoveryWaiting.run.slotId, null);
+  sample('load-hot', 83, 16, 40, 10);
+  sample('load-medium', 6, 16, 40, 60);
+  const recoveryOutcome = await recovery;
+  if ('error' in recoveryOutcome) throw recoveryOutcome.error;
+  assert.equal(recoveryOutcome.result.outputs?.selectedSlot, 'hot-slot');
+  const recoveryWaitObserved = recoveryWaiting.run.steps.find((step) => step.name === 'find-slot')!
+    .inputs!.hostLoadWaitReason;
+  store.updateRun(recovering.run.id, { status: 'done' });
+  await store.deleteRun(recovering.run.id);
+  await resetFixtureSlots();
+  sample('load-hot', 83, 16, 40, 95);
+  sample('load-medium', 6, 16, 40, 95);
+  let overloadRefusal: string | null = null;
+  await assert.rejects(
+    client.call('dispatch.preview', { ...params, allowedSlots: ['hot-slot', 'medium-slot'] }),
+    (error: unknown) => {
+      assert(error instanceof Error);
+      overloadRefusal = error.message;
+      assert.match(error.message, /CPU idle 5\.00% < 15\.00%.*skipped/);
+      return true;
+    },
+  );
+  sample('load-hot', 1, 16, 40, 10);
+  sample('load-medium', 6, 16, 40, 60);
   const recovered = await client.call<DispatchPreviewResult>('dispatch.preview', {
     ...params,
     allowedSlots: ['hot-slot', 'medium-slot'],
   });
   assert.equal(recovered.preview.slotId, 'hot-slot');
-  sample('load-hot', 8, 16);
+  sample('load-hot', 8, 16, 40, 70);
   execFileSync('git', ['-C', path.join(root, 'hot-slot'), 'checkout', '-qb', 'example-proof-139']);
   rows[0]!.lifecycle = 'held';
   rows[0]!.branch = 'example-proof-139';
-  await writeFile(path.join(root, 'status.json'), JSON.stringify({ slots: rows }));
+  await resetFixtureSlots();
   const affinity = await client.call<DispatchPreviewResult>('dispatch.preview', {
     ...params,
     flowType: 'pr-complete',
@@ -254,15 +361,15 @@ try {
     'lighter node wins over held branch affinity',
   );
   // A quiet red-disk host must still lose to a healthy allowed host.
-  sample('load-light', 0.8, 8, 97);
+  sample('load-light', 0.8, 8, 97, 10);
   const red = await client.call<DispatchPreviewResult>('dispatch.preview', params);
   assert.equal(red.preview.slotId, 'medium-slot');
   const { selectQueueDispatchSlot } =
     await import('../../../services/gateway/src/backlog/dispatch-queue.js');
   const { capturePressureAdmissionDecisionsLightweight } =
     await import('../../../services/gateway/src/methods/dispatch/pressure-admission.js');
-  sample('load-hot', 4, 16);
-  sample('load-medium', 83, 16);
+  sample('load-hot', 4, 16, 40, 40);
+  sample('load-medium', 83, 16, 40, 95);
   const item: QueueItem = {
     id: 'held-queue-proof',
     flowType: 'pr-complete',
@@ -290,18 +397,34 @@ try {
   execFileSync('git', ['-C', path.join(root, 'medium-slot'), 'checkout', '-qb', 'previous-task']);
   rows[1]!.branch = 'previous-task';
   rows[1]!.lifecycle = 'released';
-  await writeFile(
-    path.join(root, 'status.json'),
-    JSON.stringify({
-      slots: rows.map((row) =>
-        row.slot === 'medium-slot'
-          ? Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'phase'))
-          : row,
-      ),
-    }),
-  );
-  sample('load-hot', 83, 16);
-  sample('load-medium', 6, 16);
+  await resetFixtureSlots();
+  const legacyStatus = JSON.parse(await readFile(path.join(root, 'status.json'), 'utf8'));
+  for (const row of legacyStatus.slots) if (row.slot === 'medium-slot') delete row.phase;
+  await writeFile(path.join(root, 'status.json'), JSON.stringify(legacyStatus));
+  sample('load-hot', 83, 16, 40, 95);
+  sample('load-medium', 6, 16, 40, 60);
+  const legacyPreview = await client.call<DispatchPreviewResult>('dispatch.preview', {
+    ...params,
+    allowedSlots: ['medium-slot'],
+  });
+  assert.equal(legacyPreview.preview.slotId, 'medium-slot');
+  await updateSlotStatus('medium-slot', { lifecycle: 'ready', phase: null });
+  // Current safe reuse handles published stale branches automatically. The
+  // operator picker is for retained local work, which both fixture repos own.
+  for (const id of ['hot-slot', 'medium-slot'])
+    execFileSync('git', [
+      '-C',
+      path.join(root, id),
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '--no-gpg-sign',
+      '--allow-empty',
+      '-qm',
+      'test: retain owned unpublished work',
+    ]);
   const picker = await client.call<RunCreateResult>('run.create', {
     ...params,
     ticketOrPr: 'example/proof#141',
@@ -400,18 +523,21 @@ try {
     heldQueueSelection: queueSelection,
     operatorPickerSelection: pickedReadback.run.slotId,
     manualSlotExcludedFromPicker: true,
-    legacyReleasedSlotRemainsEligible: true,
+    legacyReleasedPreviewEligible: legacyPreview.preview.slotId,
     emptyNoFreeAndMissingResourceMessagesVerified: true,
     staleBranchHumanDecisionPreserved: true,
     lowestLoadPreview: preview.preview.slotId,
     allowlistSelection: readback.run.slotId,
     storedSelection: step,
     lighterThanHeldAffinity: affinity.preview.slotId,
-    allOverloadedReasonsPersisted: true,
+    overloadRefusal,
+    automaticExclusionPersisted: true,
+    recoveryWaitObserved,
     explicitPickPreserved: true,
+    singleSlotPinWarning: pinSelection.outputs?.selectionReason,
     recoveredSelection: recovered.preview.slotId,
     boundary:
-      'Authenticated production preview/create/get and FIND_SLOT over disposable local pools and real private Git checkouts. Existing metrics ingestion seeded with synthetic loads; optional ticket metadata substituted, with companion-full admission seeded only for the missing-resource fixture. Scheduler disabled; no task writing, worker/model/provider/app or live slot operation.',
+      'Authenticated production preview/create/get and FIND_SLOT over disposable local pools and real private Git checkouts. Existing metrics ingestion seeded with synthetic CPU and diagnostic loads; optional ticket metadata substituted, with companion-full admission seeded only for the missing-resource fixture. Scheduler disabled; no task writing, worker/model/provider/app or live slot operation.',
   };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result));

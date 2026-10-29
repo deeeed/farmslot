@@ -475,3 +475,23 @@ and matching source is live, run one disposable proof per Extension, Mobile and
 Terminal project, including cold runtime health/boot and configured-root reopen.
 Preserve other sessions/resources and clean only proof-owned resources. No
 recurring/scheduled smoke infrastructure or additional pre-merge canary runs.
+
+## Amendment: CPU-idle placement and explicit pins (2026-10-29)
+
+**Status:** Proposed, requested by Arthur.
+
+Automatic placement uses sampled CPU idle, not load average. macOS load includes
+short-lived and background work that does not establish CPU saturation. Skip a
+machine below 15% idle by default; gateway configuration may override the minimum
+per machine. Prefer more idle CPU among eligible machines.
+
+An explicit slot or a one-slot operator allowlist bypasses this placement gate.
+Internal recovery or queue-spread narrowing is not an explicit pin. Record a
+warning in the step detail when its machine is below the minimum. Ownership,
+prepare, availability and the separate opt-in pressure policy still apply.
+
+**Public surface:** No new RPC, CLI flag, SDK export or worker contract. Gateway
+placement reads `FARMSLOT_AUTOMATIC_CPU_IDLE_MIN_PERCENT_BY_MACHINE`, a JSON map
+from machine ID to minimum idle percentage in [0, 100]. Omitted machines use 15.
+The existing `hostLoadSelection` inputs and `selectionReason` output record the
+CPU sample, threshold and bypass warning for clients and harnesses.
