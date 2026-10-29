@@ -311,7 +311,7 @@ try {
     try {
       const health = connection.call(
         'slot.prepare',
-        { slotId: input.slotId, profile: input.coldHealthProfile, requestId },
+        { slotId: input.slotId, prepareProfile: input.coldHealthProfile, requestId },
         { timeoutMs: 330_000 },
       );
       await Promise.race([
@@ -323,6 +323,7 @@ try {
       // The owning recycle hook clears its own build cache and starts the real cold server.
       const [observed] = await Promise.all([health, projectHook('recycle', stopping.signal)]);
       assert.equal(observed.prepared, true);
+      assert.equal(observed.profile?.selected, input.coldHealthProfile);
       await save('cold-health.json', {
         status: 'PASS',
         ...fingerprint,
