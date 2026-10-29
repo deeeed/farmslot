@@ -185,50 +185,37 @@ server-owned limits or release history/pins through existing lifecycle operation
 
 ### Settled-run retention
 
-ADR-039 Amendment 2. The gateway MUST run a retention pass 10 minutes after it
-starts and then every hour. A run is removable only when all of these hold:
+ADR-039 Amendment 3 supersedes Amendment 2's deletion policy. The gateway MUST
+run the pass 10 minutes after startup and hourly. It MUST keep `.runs/<id>.json`
+and `.runs/archive/<id>.json` in place permanently. It MUST NOT emit `RUN_DELETED`
+or release backlog/history links during retention.
 
-- it is `done` or `cancelled`, or archived;
-- its completion or archive time, or its last update when it has neither, is at
-  least 48 hours old;
-- it has no open decision, uncleaned review workspace, pending closeout or held
-  native worker, and holds no slot;
-- it has no pending backlog reconciliation and no operator tags;
-- it has no PR, or its PR is merged or closed.
+Storage is eligible only when the run is done/cancelled/archived, settled at least
+48 hours, holds no slot or native worker, has no open decision, uncleaned review
+workspace, pending closeout/backlog reconciliation or operator tag, and its PR is
+absent or confirmed closed/merged. Unreadable/ambiguous PR state keeps storage.
+Shared paths and admitted task directories MUST remain available to their owners.
 
-A PR not recorded as merged or closed is checked under every identity the run has:
-the review-session identity (adopted target, PR work, PR link or `owner/repo#N`
-ticket) and the run's PR number in the project's `ci.repo`. The pass reads each
-repository's open PRs once. Any open PR keeps the run, and so do an unresolvable
-identity, an unreadable repository or a possibly truncated list.
+Eligible task directories, task pins, session archives, local review workspaces,
+local native sessions and run bundles MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT`.
+The default is `<farm-home>/run-archive`. The configured directory MUST already
+exist. The gateway MUST write and sync a probe using its own process permissions
+before moving anything. A missing/unwritable root MUST fail loudly and MUST NOT
+fall back to deleting. A dry-run changes nothing.
 
-The pass MUST recheck each run immediately before deleting it. In the same
-synchronous step it MUST move into the run store's retention trash the directories
-no other live or archived run references, and no run being admitted holds:
+Each run's `Storage archive` link points at `<archive-root>/<run-id>/manifest.json`.
+The manifest journals the original absolute source, staging path, archive
+destination, store and completion time. Destinations retain the original path
+below a unique generation, so restoring a run means moving its archived paths
+back to their recorded sources while it is inactive. New generations MUST NOT
+overwrite old archive copies. A cross-volume move MUST compare bytes, modes and
+symlink targets before removing its source copy. Interrupted staged moves resume;
+unstarted moves MUST be rechecked against current ownership. Old retention trash
+MUST be archived intact, including its restoration metadata, never purged.
 
-- the run's task directory under a farm task root (`projects/<project>/tasks`,
-  `.runs/review-workspace-tasks`);
-- its review-workspace directory on the gateway's own node;
-- native worker state on the gateway's own node: its agents' sessions and its
-  review workspace's own.
-
-Run creation holds a task directory from validation until the run is registered or
-refused. Each moved directory is recorded in the trash with its run and original
-path before it moves. A directory that cannot be moved reversibly (another volume)
-keeps the whole run for this pass. The pass MUST NOT remove another node's storage
-or a slot checkout.
-
-It then deletes the record and session archive. If that is refused, the directories
-move back. After a deletion it releases the run's backlog link without requeueing
-the item, then announces `RUN_DELETED`. The pass holds review-workspace reclamation
-while it moves directories, and purges them after. Before it plans, it finishes an
-interrupted pass: a recorded directory whose run still exists goes back; one whose
-run is gone is purged.
-
-Bundles then follow GC above: deleting the run releases its history pin. Task pins
-whose task directory no longer exists are removed once their provenance is 48
-hours old. A dry run reports the same selection, with entries and bytes per store,
-and changes nothing.
+Gateway startup and capture MUST NOT invoke destructive bundle/media GC. Capacity
+admission retains its current budget checks. Another node's storage and slot
+checkouts remain outside this pass. Automated restore is not part of this change.
 
 ## Public surface and backfill
 

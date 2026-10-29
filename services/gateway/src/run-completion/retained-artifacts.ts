@@ -22,7 +22,6 @@ import {
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
 import {
-  collectRunBundleGarbage,
   DEFAULT_RUN_BUNDLE_RETENTION,
   isRunBundleMedia,
   type MaterializedRunBundle,
@@ -320,16 +319,10 @@ export async function qualifyRetainedRunMetadata(run: Run): Promise<void> {
     await readOptionalRetainedRunText(run, file);
 }
 
-export async function collectRunArtifactGarbage(): Promise<void> {
-  if (process.env.FARMSLOT_SANDBOX_HOME) return;
-  await collectRunBundleGarbage(await runBundleStore(true), await retentionPolicy());
-}
-
 export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const store = await runBundleStore(true);
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
-  await collectRunBundleGarbage(store, policy);
   await reserveRunBundleMetadata(store, run.id, policy, farmslotRoot);
 }
 
@@ -346,7 +339,6 @@ export async function retainCapturedRunArtifacts(input: {
 }): Promise<MaterializedRunBundle> {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
-  await collectRunBundleGarbage(store, await retentionPolicy());
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.
   // The materializer checks containment and hashes each file while copying it.

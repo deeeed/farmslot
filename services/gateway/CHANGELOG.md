@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep run history forever and move settled storage into a verified, configurable archive instead of deleting it.
+
 - Capture Pi worker session paths and recover their exact tokens and reported cost in family views.
 
 - Warn about selected CLI and protocol package version differences during worker launch, while continuing retained-source and wire checks.

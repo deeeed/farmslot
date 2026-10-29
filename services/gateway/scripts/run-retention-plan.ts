@@ -1,5 +1,5 @@
-// Read-only dry run of the engine's run retention pass (ADR-039 Amendment 2): what the
-// next pass would remove now, per store. It reads run records directly and changes nothing.
+// Read-only dry run of the engine's run retention pass (ADR-039 Amendment 3): what the
+// next pass would archive now, per store. It reads run records directly and changes nothing.
 // Run it with the gateway's FARMSLOT_ROOT and FARMSLOT_HOME so it reads the same stores.
 import path from 'node:path';
 
@@ -24,7 +24,7 @@ for (const run of loadAllRunRecords(roots.runsDir)) byId.set(run.id, run);
 const runs = [...byId.values()];
 const { plan } = await planRunRetention(runs, await retentionContext(runs), roots, runHoldsSlot);
 
-console.log(`Runs removable: ${plan.runs.length} of ${byId.size}`);
+console.log(`Runs with archivable storage: ${plan.runs.length} of ${byId.size}`);
 let total = 0;
 for (const [store, { entries, bytes }] of Object.entries(plan.stores)) {
   total += bytes;

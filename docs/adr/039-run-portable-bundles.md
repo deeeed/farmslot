@@ -418,3 +418,30 @@ No RPC or protocol change. `@farmslot/run-bundle` exports `runBundleRefs`, the o
 list of a run's bundle references that GC, readers and retention share.
 `services/gateway/scripts/run-retention-plan.ts` is a read-only dry run of the pass
 that lists entries and GB per store.
+
+## Amendment 3: 2026-10-29 permanent run history and movable storage
+
+**Status:** Proposed, explicitly requested by Arthur, 2026-10-29. Supersedes Amendment 2's deletion policy.
+
+Retention never deletes run records. Active and archived JSON records remain in
+place and visible in Command Center forever. The existing settled/48-hour,
+PR, tag, ownership and admission guards select storage for archival only.
+Storage moves into `FARMSLOT_RUN_ARCHIVE_ROOT`, defaulting to `run-archive` under
+the farm home. A run's existing links record its restore manifest. The manifest
+journals original paths and archive destinations, preserving relative paths,
+bytes, modes and symlinks. Repeated/interrupted moves retain every generation.
+Cross-volume moves verify the copy before removing the source copy.
+
+The root must already exist and the gateway process must successfully write and
+sync a probe there before any move. Missing/unwritable roots fail the pass loudly;
+there is no deletion fallback. Old retention trash is archived with its restore
+metadata. Gateway startup/capture no longer invoke destructive bundle GC; budget
+admission continues to refuse insufficient capacity. Operators restore storage
+using the recorded paths while its run is inactive. Automated restore is outside
+this change.
+
+### Public surface
+
+One environment setting, `FARMSLOT_RUN_ARCHIVE_ROOT`. The hourly gateway pass and
+read-only retention-plan script remain the consumers. Run records use the existing
+`links` field for a local manifest reference; no protocol, package or RPC change.
