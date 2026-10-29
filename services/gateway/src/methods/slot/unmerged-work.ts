@@ -1,4 +1,4 @@
-import { DEFAULT_BRANCH } from '@farmslot/protocol';
+import { DEFAULT_BRANCH, remoteBranchRefspec } from '@farmslot/protocol';
 import { isRecord } from '@farmslot/protocol/recipe';
 
 import { execOnSlot, type RawProjectJson, type SlotVars } from '../../core/index.js';
@@ -31,6 +31,7 @@ type ReadMergedPreparePullRequests = (
   headSha: string,
   timeoutMs?: number,
   force?: boolean,
+  headBranch?: string,
 ) => Promise<readonly MergedPreparePullRequest[]>;
 
 export const readMergedPreparePullRequests: ReadMergedPreparePullRequests = async (
@@ -38,11 +39,16 @@ export const readMergedPreparePullRequests: ReadMergedPreparePullRequests = asyn
   headSha,
   timeoutMs = 15_000,
   force = true,
+  headBranch,
 ) => {
-  const { stdout } = await ghRequest(
-    ['api', `repos/${repo}/commits/${headSha}/pulls?per_page=100`],
-    { force, caller: 'slot.prepare-publication', signal: AbortSignal.timeout(timeoutMs) },
-  );
+  const endpoint = headBranch
+    ? `repos/${repo}/pulls?state=closed&head=${encodeURIComponent(`${repo.split('/')[0]}:${headBranch}`)}&per_page=100`
+    : `repos/${repo}/commits/${headSha}/pulls?per_page=100`;
+  const { stdout } = await ghRequest(['api', endpoint], {
+    force,
+    caller: 'slot.prepare-publication',
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   const data: unknown = JSON.parse(stdout);
   if (!Array.isArray(data))
     throw new Error('Cannot verify merged pull requests: expected an array');
@@ -62,6 +68,15 @@ export const readMergedPreparePullRequests: ReadMergedPreparePullRequests = asyn
       !/^[a-f0-9]{40,64}$/.test(pr.merge_commit_sha)
     )
       throw new Error('Cannot verify merged pull request identity');
+    if (
+      headBranch &&
+      (pr.state !== 'closed' ||
+        pr.head.ref !== headBranch ||
+        !isRecord(pr.head.repo) ||
+        typeof pr.head.repo.full_name !== 'string' ||
+        pr.head.repo.full_name.toLowerCase() !== repo.toLowerCase())
+    )
+      continue;
     merged.push({
       number: pr.number,
       baseBranch: pr.base.ref,
@@ -243,10 +258,77 @@ export async function assertPrepareCommitsPublished(
   // Keep last-published tips reachable after upstream deletion/squash merge.
   // Already-pruned squash merges are verified by patch or merged-PR identity below.
   const fetch = await exec(vars, `${git} fetch --all --no-prune --no-tags`, { timeout: 120_000 });
-  if (fetch.exitCode !== 0)
-    throw new Error(
+  let acceptedMergedWork = false;
+  if (fetch.exitCode !== 0) {
+    const refusal = new Error(
       `Cannot verify remote commits on ${vars.slotId}; prepare left branches untouched. ${fetch.stderr || fetch.stdout}`,
     );
+    if (!options.githubRepo) throw refusal;
+    // Slot clones retain explicit fetch refspecs for PR heads GitHub later deletes.
+    // Recover that exact configuration, not arbitrary transport/refspec failures.
+    const configured = await exec(vars, `${git} config --get-all remote.origin.fetch`);
+    const refspecs = configured.stdout.trim().split('\n');
+    const missingBranches: string[] = [];
+    const retainedRefspecs: string[] = [];
+    if (configured.exitCode !== 0) throw refusal;
+    for (const refspec of refspecs) {
+      const headBranch = /^\+?refs\/heads\/([^\s:]+):/.exec(refspec)?.[1];
+      if (!headBranch || refspec.replace(/^\+?/, '+') !== remoteBranchRefspec(headBranch))
+        throw refusal;
+      const advertised = await exec(
+        vars,
+        `${git} ls-remote --exit-code --heads origin ${shellQuote(`refs/heads/${headBranch}`)}`,
+        { timeout: 30_000 },
+      );
+      if (advertised.exitCode === 0) retainedRefspecs.push(refspec);
+      else if (advertised.exitCode === 2 && !headBranch.includes('*'))
+        missingBranches.push(headBranch);
+      else throw refusal;
+    }
+    if (!missingBranches.length) throw refusal;
+    const remotes = await exec(vars, `${git} remote`);
+    if (remotes.exitCode !== 0) throw refusal;
+    for (const remote of remotes.stdout
+      .trim()
+      .split('\n')
+      .filter((name) => name !== 'origin')) {
+      const refreshed = await exec(
+        vars,
+        `${git} fetch --no-prune --no-tags ${shellQuote(remote)}`,
+        { timeout: 120_000 },
+      );
+      if (refreshed.exitCode !== 0) throw refusal;
+    }
+    const refreshed = await exec(
+      vars,
+      `${git} fetch --no-prune --no-tags origin ${[...retainedRefspecs, remoteBranchRefspec(defaultBranch)].map(shellQuote).join(' ')}`,
+      { timeout: 120_000 },
+    );
+    if (refreshed.exitCode !== 0) throw refusal;
+    for (const headBranch of missingBranches) {
+      let merged: boolean;
+      try {
+        merged = await refIncludedInMergedPullRequest(
+          vars,
+          `refs/heads/${headBranch}`,
+          defaultBranch,
+          options.githubRepo,
+          exec,
+          (repo, sha) => readMerged(repo, sha, 15_000, true, headBranch),
+        );
+      } catch (error) {
+        throw new Error(
+          `${refusal.message} Merged PR verification failed: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
+      if (!merged)
+        throw new Error(
+          `${refusal.message} No merged PR into ${defaultBranch} contains refs/heads/${headBranch}.`,
+        );
+    }
+    acceptedMergedWork = true;
+  }
   const head = await exec(vars, `${git} symbolic-ref --quiet --short HEAD`);
   if (head.exitCode !== 0 && head.exitCode !== 1)
     throw new Error(
@@ -264,7 +346,6 @@ export async function assertPrepareCommitsPublished(
         `Cannot inspect run branch ${branch}; prepare left branches untouched. ${exists.stderr || exists.stdout}`,
       );
   }
-  let acceptedMergedWork = false;
   for (const ref of refs) {
     // Detaching/resetting HEAD cannot lose commits retained by a named branch.
     // The requested branch is checked separately because prepare can move it.

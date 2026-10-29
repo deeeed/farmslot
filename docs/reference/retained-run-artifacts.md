@@ -161,74 +161,55 @@ reservation failure refuses admission before new work can rely on that capacity;
 it never evicts an existing report. Historical backfill also retains its report
 before attempting bulk media. Missing media grants no proof or publication waiver.
 
-Apply ADR-062's existing separate lifetimes. Run history pins the report and
-lightweight frozen metadata for its lifetime, not every media payload. Unresolved
-gates and required published references pin their media dependency closures.
-Unpinned completed media defaults to 30-day retention, overridable by Storage
-policy. Storage may prune eligible media without changing the immutable manifest,
-recorded verdicts or ranges. Availability and retention revision MUST separately
-record `pruned`; readers do not claim that those payload bytes still exist.
-Complete export/publication cannot pass missing required media off as complete;
-reuse the existing missing-data/refusal rules, without re-reading a source slot.
+The gateway follows ADR-039 Amendment 3: history stays permanently and storage
+moves to the configured archive, never to a deletion sweep. It does not invoke
+destructive bundle/media GC at startup, admission or capture. Older
+`mediaRetentionDays` configuration does not authorize gateway payload deletion.
+An artifact already unavailable before this policy remains explicit missing data;
+archival does not fabricate it or waive publication/proof requirements.
 
-GC rechecks all existing dependency pins and the owning store binding under the
-same commit lock. It may delete wholly unreferenced bundles, eligible unpinned
-media, and abandoned staging older than 24 hours. It MUST preserve active capture
-reservations and history metadata. Deleting one Run does not delete objects
-referenced elsewhere. After retention changes, update the existing Storage
-footprint/availability projection; do not create a separate statistics store.
-
-If GC cannot make room for media, report explicit capacity/missing-media status
-while the report remains readable. Do not truncate video, silently drop selected
-files, or evict pinned snapshots to admit a new capture. Operators can change the
-server-owned limits or release history/pins through existing lifecycle operations.
+The package owner selects inactive metadata reservations and abandoned intents or
+staging older than 24 hours. The gateway archives these paths before admission
+and capture, and during the hourly pass, so abandoned reservations do not exhaust
+capacity. Active captures remain protected. Selection and synchronous staging use
+the bundle lock; cross-volume copying, verification and source cleanup happen
+after admission locks are released. A missing/unwritable archive refuses the
+operation without deletion. Budget admission continues to enforce capacity and
+report explicit missing-media status; it never evicts history to make room.
 
 ### Settled-run retention
 
-ADR-039 Amendment 2. The gateway MUST run a retention pass 10 minutes after it
-starts and then every hour. A run is removable only when all of these hold:
+ADR-039 Amendment 3 supersedes Amendment 2's deletion policy. The gateway MUST
+run the pass 10 minutes after startup and hourly. It MUST keep `.runs/<id>.json`
+and `.runs/archive/<id>.json` in place permanently. It MUST NOT emit `RUN_DELETED`
+or release backlog/history links during retention.
 
-- it is `done` or `cancelled`, or archived;
-- its completion or archive time, or its last update when it has neither, is at
-  least 48 hours old;
-- it has no open decision, uncleaned review workspace, pending closeout or held
-  native worker, and holds no slot;
-- it has no pending backlog reconciliation and no operator tags;
-- it has no PR, or its PR is merged or closed.
+Storage is eligible only when the run is done/cancelled/archived, settled at least
+48 hours, holds no slot or native worker, has no open decision, uncleaned review
+workspace, pending closeout/backlog reconciliation or operator tag, and its PR is
+absent or confirmed closed/merged. Unreadable/ambiguous PR state keeps storage.
+Shared paths and admitted task directories MUST remain available to their owners.
 
-A PR not recorded as merged or closed is checked under every identity the run has:
-the review-session identity (adopted target, PR work, PR link or `owner/repo#N`
-ticket) and the run's PR number in the project's `ci.repo`. The pass reads each
-repository's open PRs once. Any open PR keeps the run, and so do an unresolvable
-identity, an unreadable repository or a possibly truncated list.
+Eligible task directories, task pins, session archives, local review workspaces,
+local native sessions and run bundles MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT`.
+The default is `<farm-home>/run-archive`. The configured directory MUST already
+exist. The gateway MUST write and sync a probe using its own process permissions
+before moving anything. A missing/unwritable root MUST fail loudly and MUST NOT
+fall back to deleting. A dry-run changes nothing.
 
-The pass MUST recheck each run immediately before deleting it. In the same
-synchronous step it MUST move into the run store's retention trash the directories
-no other live or archived run references, and no run being admitted holds:
+Each run's `Storage archive` link points at `<archive-root>/<run-id>/manifest.json`.
+The manifest journals the original absolute source, staging path, archive
+destination, store and completion time. Destinations retain the original path
+below a unique generation, so restoring a run means moving its archived paths
+back to their recorded sources while it is inactive. New generations MUST NOT
+overwrite old archive copies. A cross-volume move MUST compare bytes, modes and
+symlink targets before removing its source copy. Interrupted staged moves resume;
+unstarted moves MUST be rechecked against current ownership. Old retention trash
+MUST be archived intact, including its restoration metadata, never purged.
 
-- the run's task directory under a farm task root (`projects/<project>/tasks`,
-  `.runs/review-workspace-tasks`);
-- its review-workspace directory on the gateway's own node;
-- native worker state on the gateway's own node: its agents' sessions and its
-  review workspace's own.
-
-Run creation holds a task directory from validation until the run is registered or
-refused. Each moved directory is recorded in the trash with its run and original
-path before it moves. A directory that cannot be moved reversibly (another volume)
-keeps the whole run for this pass. The pass MUST NOT remove another node's storage
-or a slot checkout.
-
-It then deletes the record and session archive. If that is refused, the directories
-move back. After a deletion it releases the run's backlog link without requeueing
-the item, then announces `RUN_DELETED`. The pass holds review-workspace reclamation
-while it moves directories, and purges them after. Before it plans, it finishes an
-interrupted pass: a recorded directory whose run still exists goes back; one whose
-run is gone is purged.
-
-Bundles then follow GC above: deleting the run releases its history pin. Task pins
-whose task directory no longer exists are removed once their provenance is 48
-hours old. A dry run reports the same selection, with entries and bytes per store,
-and changes nothing.
+Gateway startup and capture MUST NOT invoke destructive bundle/media GC. Capacity
+admission retains its current budget checks. Another node's storage and slot
+checkouts remain outside this pass. Automated restore is not part of this change.
 
 ## Public surface and backfill
 
@@ -274,7 +255,7 @@ unpacked archive; imported references never keep a source-store root binding.
   forbidden; verify report open under two seconds on a backfilled retained run.
 - Fail interrupted/concurrent captures safely; verify shared Run-store/sandbox
   root pairing, stale/foreign references, imports, partial backfill, idempotent
-  retries and GC during publish/reference commit.
+  retries and archival during publish/reference commit.
 - Fill the media budget: a new report remains readable; pinned media survives,
-  eligible media becomes pruned and metadata/history hashes stay unchanged.
+  eligible storage becomes archived and metadata/history stays visible.
 - Stale reports open with a warning while proof and publication still refuse.

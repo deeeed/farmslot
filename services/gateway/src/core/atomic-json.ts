@@ -14,6 +14,12 @@ export async function writeAtomicJSON(file: string, data: unknown): Promise<void
       await handle.close();
     }
     await rename(temporary, file);
+    const directory = await open(dirname(file), 'r');
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
   } finally {
     await rm(temporary, { force: true });
   }

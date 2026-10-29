@@ -13,6 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
@@ -1687,6 +1688,20 @@ export async function getRunWithArchived(id: string): Promise<Run | undefined> {
   if (live) return live;
   const archived = (await getArchivedRuns()).find((run) => run.id === id);
   return getRun(id) ?? archived;
+}
+
+/** Retention records the restore manifest without evicting live or archived history. */
+export async function recordRunStorageArchive(id: string, manifest: string): Promise<void> {
+  const url = pathToFileURL(manifest).href;
+  await commitRetainedRunMutation(
+    id,
+    (run) =>
+      run.links?.some((link) => link.url === url)
+        ? run
+        : { ...run, links: [...(run.links ?? []), { label: 'Storage archive', url }] },
+    // A descriptive link grants no lifecycle authority; staging checks ownership separately.
+    () => undefined,
+  );
 }
 
 /** Only follow-up delivery state may change on an archived review. */

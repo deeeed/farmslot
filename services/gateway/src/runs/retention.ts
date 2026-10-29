@@ -12,7 +12,6 @@ import { runTaskDirectories } from './store.js';
 export const RUN_RETENTION_AGE_MS = 48 * 60 * 60 * 1000;
 
 export type RunRetentionStore =
-  | 'run-records'
   | 'session-archives'
   | 'task-dirs'
   | 'task-pins'
@@ -21,6 +20,7 @@ export type RunRetentionStore =
   | 'run-bundles';
 
 export interface RunRetentionRoots {
+  archiveRoot: string;
   runsDir: string;
   sessionArchive: (runId: string) => string;
   /** Farm-owned task roots; task directories elsewhere (slot checkouts) are never removed. */
@@ -117,10 +117,6 @@ export function runOwnedPaths(
   };
   const bundles = roots.bundles;
   return {
-    'run-records': removed.flatMap((run) => [
-      path.join(roots.runsDir, `${run.id}.json`),
-      path.join(roots.runsDir, 'archive', `${run.id}.json`),
-    ]),
     'session-archives': removed.map((run) => roots.sessionArchive(run.id)),
     'task-dirs': owned(runTaskDirectories, (dir) =>
       roots.taskRoots.some((root) => inside(root, dir)),
@@ -158,6 +154,7 @@ export async function retiredTaskPins(
   }
   const retired: string[] = [];
   for (const name of names) {
+    if (name.startsWith('.retention-')) continue; // Already staged by this pass, not a new orphan.
     const pin = path.join(pinRoot, name);
     const provenance = path.join(pin, 'provenance.json');
     let taskDir: unknown;
@@ -218,7 +215,7 @@ export async function measureRetention(
       bytes += await diskBytes(file);
     }
     paths[store] = present;
-    stores[store] = { entries: store === 'run-records' ? runs.length : present.length, bytes };
+    stores[store] = { entries: present.length, bytes };
   }
   return { runs: runs.map((run) => run.id), held, paths, stores };
 }
