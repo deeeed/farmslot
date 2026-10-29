@@ -7,19 +7,19 @@
     "properties": {
       "remote_host": {
         "type": "string",
-        "minLength": 1
+        "pattern": "^[A-Za-z0-9_.@-]+$"
       },
       "remote_source": {
         "type": "string",
-        "minLength": 1
+        "pattern": "^[A-Za-z0-9_./-]+$"
       },
       "gateway_host": {
         "type": "string",
-        "minLength": 1
+        "pattern": "^[A-Za-z0-9_.-]+$"
       },
       "proof_root": {
         "type": "string",
-        "minLength": 1
+        "pattern": "^[A-Za-z0-9_./-]+$"
       }
     },
     "required": ["remote_host", "remote_source", "gateway_host", "proof_root"],
@@ -32,7 +32,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-input-order.mts --remote-host \"{{params.remote_host}}\" --remote-source \"{{params.remote_source}}\" --gateway-host \"{{params.gateway_host}}\" --output \"{{params.proof_root}}\"",
         "timeout_ms": 120000,
-        "intent": "Burst fast keystrokes from two real clients and Companion batching into an owned remote terminal; compare exact stdin bytes and retain observed load and scoped teardown.",
+        "intent": "Keep fast typing and Enter in order at the remote terminal, then stop only the owned proof processes.",
         "next": "done"
       },
       "done": {
