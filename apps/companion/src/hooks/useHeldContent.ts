@@ -169,8 +169,9 @@ export function useArtifactImageSource(
     let active = true;
     let done = false;
     const run = ++runs.current;
-    const note = (stage: ArtifactReadStage) => {
-      if (active) traceRef.current?.(run, stage);
+    // A cleaned-up read reports nothing later, its aborted fetch included.
+    const note = (stage: ArtifactReadStage, fetch?: { bytes: number } | { error: string }) => {
+      if (active) traceRef.current?.(run, stage, fetch);
     };
     const controller = new AbortController();
     openHeldContent({
@@ -181,12 +182,12 @@ export function useArtifactImageSource(
         ? () =>
             fetchArtifactBytes(uri, stableHeaders ?? {}, controller.signal).then(
               (bytes) => {
-                traceRef.current?.(run, 'fetch', { bytes: bytes.byteLength });
+                note('fetch', { bytes: bytes.byteLength });
                 return bytes;
               },
               (error: unknown) => {
                 const message = error instanceof Error ? error.message : String(error);
-                traceRef.current?.(run, 'fetch', { error: message });
+                note('fetch', { error: message });
                 throw error;
               },
             )

@@ -268,6 +268,7 @@ test('each mount reports its reads: stage, effect runs, fetch outcome, result ti
   proof.traceArtifactImage(40, 1, 'aborted');
   proof.traceArtifactImage(40, 1, 'fetch', { error: 'late' });
   // A mount that traced a read but never reported still shows.
+  proof.traceArtifactImage(41, 1, 'open-held');
   proof.traceArtifactImage(41, 1, 'store');
   const observed = (await proof.observeD12Native('d12-native')).observations.d12Native;
   const big = observed.imageMounts.find((frame) => frame.mountId === 40)!;
@@ -291,4 +292,36 @@ test('each mount reports its reads: stage, effect runs, fetch outcome, result ti
     after.some((frame) => frame.mountId === 40 || frame.mountId === 41),
     false,
   );
+});
+
+test('an image unmounted mid-fetch stays gone when its aborted read reports late', async () => {
+  const proof = await load();
+  connection = { status: 'connected', client: { offlineBaseline: undefined } };
+  proof.reportArtifactImage({ id: 'gone', state: 'loading', mountId: 50, read: 'reading' });
+  proof.traceArtifactImage(50, 1, 'open-held');
+  proof.traceArtifactImage(50, 1, 'fetch');
+  proof.traceArtifactImage(50, 1, 'aborted');
+  proof.forgetArtifactImage(50);
+  // The aborted fetch's rejection and the read's result arrive after the unmount.
+  proof.traceArtifactImage(50, 1, 'fetch', { error: 'Aborted' });
+  proof.traceArtifactImage(50, 1, 'committed');
+  const observed = (await proof.observeD12Native('d12-native')).observations.d12Native;
+  assert.equal(
+    observed.imageMounts.some((frame) => frame.mountId === 50),
+    false,
+  );
+});
+
+test('report order keeps counting after a mount is forgotten', async () => {
+  const proof = await load();
+  connection = { status: 'connected', client: { offlineBaseline: undefined } };
+  proof.reportArtifactImage({ id: 'first', state: 'loading', mountId: 60 });
+  proof.reportArtifactImage({ id: 'second', state: 'loading', mountId: 61 });
+  proof.forgetArtifactImage(60);
+  proof.reportArtifactImage({ id: 'third', state: 'loading', mountId: 62 });
+  const mounts = (await proof.observeD12Native('d12-native')).observations.d12Native.imageMounts;
+  const order = (mountId: number) => mounts.find((frame) => frame.mountId === mountId)?.firstReport;
+  assert(order(62)! > order(61)!, 'a later mount reports after an earlier one');
+  proof.forgetArtifactImage(61);
+  proof.forgetArtifactImage(62);
 });

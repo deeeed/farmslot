@@ -32,14 +32,15 @@ interface Read {
   respond(status: number, body?: Uint8Array<ArrayBuffer>): void;
 }
 
-/** Every fetch a hook starts, answered by the test. */
+/** Every fetch a hook starts, answered by the test; an abort rejects it, as `fetch` does. */
 function fakeFetch(t: TestContext): Read[] {
   const reads: Read[] = [];
   t.mock.method(
     globalThis,
     'fetch',
     (_uri: string, init: RequestInit) =>
-      new Promise<Response>((resolve) => {
+      new Promise<Response>((resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new Error('Aborted')));
         reads.push({
           headers: init.headers as Record<string, string>,
           signal: init.signal as AbortSignal,
@@ -175,4 +176,20 @@ test('a ready image keeps its source object when equal headers are set again', a
   live.headers = { ...live.headers };
   // A new source re-encodes the bytes and resets ArtifactImage's loaded state.
   assert.equal(render().source, ready.source, 'the same data URI source');
+});
+
+test('an image unmounted mid-fetch reports nothing after its cleanup, not even the abort', async (t) => {
+  const reads = fakeFetch(t);
+  const { live, hook } = mount('useArtifactImageSource');
+  const events: string[] = [];
+  hook.render(IMAGE_URI, live.headers, IMAGE, (run: number, stage: string, fetch?: object) =>
+    events.push(`${run} ${stage}${fetch ? ` ${JSON.stringify(fetch)}` : ''}`),
+  );
+  await flush();
+  assert.equal(reads.length, 1);
+  hook.cleanup();
+  // The aborted fetch rejects after the cleanup.
+  await flush();
+  assert.equal(reads[0]?.signal.aborted, true);
+  assert.deepEqual(events, ['1 open-held', '1 fetch', '1 aborted']);
 });

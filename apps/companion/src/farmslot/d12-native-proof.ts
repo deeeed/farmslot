@@ -69,8 +69,9 @@ export interface RunDiffFrame {
 
 const images = new Map<number, ArtifactImageFrame>();
 const traces = new Map<number, ArtifactReadTrace>();
-/** The order mounts first reported in; `lastMounted` is the latest of them. */
+/** The order mounted images first reported in; `lastMounted` is the latest of them. */
 const firstReports = new Map<number, number>();
+let reports = 0;
 let lastFailed: number | undefined;
 let lastMounted: number | undefined;
 const gateScreens = new Set<() => GateReviewFrame>();
@@ -79,7 +80,7 @@ const diffScreens = new Set<() => RunDiffFrame>();
 export function reportArtifactImage(frame: ArtifactImageFrame): void {
   if (!images.has(frame.mountId)) {
     lastMounted = frame.mountId;
-    firstReports.set(frame.mountId, firstReports.size + 1);
+    firstReports.set(frame.mountId, ++reports);
   }
   if (frame.state === 'failed') lastFailed = frame.mountId;
   images.set(frame.mountId, frame);
@@ -87,10 +88,12 @@ export function reportArtifactImage(frame: ArtifactImageFrame): void {
 export function forgetArtifactImage(mountId: number): void {
   images.delete(mountId);
   traces.delete(mountId);
+  firstReports.delete(mountId);
 }
 /**
  * One read event of a mount: a stage, or its fetch outcome. An event from a read that a newer read
- * replaced is ignored, so the trace always describes the latest read.
+ * replaced is ignored, so the trace always describes the latest read. Only a read's first stage
+ * starts a trace: a forgotten mount opens no more reads, so a late event never brings it back.
  */
 export function traceArtifactImage(
   mountId: number,
@@ -99,7 +102,7 @@ export function traceArtifactImage(
   fetch?: ArtifactFetchOutcome,
 ): void {
   const previous = traces.get(mountId);
-  if (previous && run < previous.effectRuns) return;
+  if (previous ? run < previous.effectRuns : stage !== 'open-held') return;
   const at = Date.now();
   traces.set(mountId, {
     stage,
