@@ -147,8 +147,8 @@ import {
   type XtermTerminalViewHandle,
 } from './components/terminal-history-viewer';
 import { slotTerminalStyles as styles } from './styles/slot-terminal.styles';
-import { useTerminalProof, useTerminalRunContext } from './use-terminal-run-context';
 import { useTerminalInput } from './use-terminal-input';
+import { useTerminalProof, useTerminalRunContext } from './use-terminal-run-context';
 
 const LINE_COUNT_OPTIONS = [25, 50, 100, 200] as const;
 const TERMINAL_DATA_EVENT = 'terminal.data';
