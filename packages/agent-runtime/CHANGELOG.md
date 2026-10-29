@@ -8,6 +8,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.8 - 2026-10-29
+
+- Align protocol 0.74.0 and adapter-sdk 0.25.2 in packaged task tooling.
+
 ## 0.39.7 - 2026-10-28
 
 - Wait for Codex review folder consent before completing terminal startup; provisional startup frames no longer bypass Open restricted.
