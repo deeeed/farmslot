@@ -1,4 +1,4 @@
-import { setTimeout as delay } from 'node:timers/promises';
+import timers from 'node:timers/promises';
 
 import type { SlotVars } from '../../core/config.js';
 
@@ -49,9 +49,13 @@ export async function verifyPrepareHealth(
       healthValue = await readHealth();
     }
     while (healthValue !== readyIndicator && Date.now() < deadline) {
-      await delay(Math.min(options.pollMs ?? HEALTH_POLL_MS, deadline - Date.now()), undefined, {
-        signal: options.signal,
-      });
+      await timers.setTimeout(
+        Math.min(options.pollMs ?? HEALTH_POLL_MS, deadline - Date.now()),
+        undefined,
+        {
+          signal: options.signal,
+        },
+      );
       if (Date.now() >= deadline) break;
       healthValue = await readHealth();
     }

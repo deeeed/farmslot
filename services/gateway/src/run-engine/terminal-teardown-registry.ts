@@ -49,12 +49,28 @@ export function terminalTeardownSlots(): string[] {
 /** Includes the existing three-minute wait for an aborted prepare to settle. */
 export const TERMINAL_TEARDOWN_TIMEOUT_MS = 5 * 60_000;
 
+export class TerminalTeardownTimeoutError extends Error {
+  constructor(slotId: string, timeoutMs: number) {
+    super(`Terminal teardown for ${slotId} timed out after ${timeoutMs}ms`);
+    this.name = 'TerminalTeardownTimeoutError';
+  }
+}
+
 /** Bound the awaited teardown, not just its marker. A late result owns no new work. */
 export async function withTerminalTeardown<T>(
   slotId: string,
   operation: () => Promise<T>,
-  timeoutMs = TERMINAL_TEARDOWN_TIMEOUT_MS,
+  timeoutMs: number | null = TERMINAL_TEARDOWN_TIMEOUT_MS,
 ): Promise<T> {
+  // A warm recycle re-prepares under its existing phase budgets.
+  if (timeoutMs === null) {
+    beginTerminalTeardown(slotId);
+    try {
+      return await operation();
+    } finally {
+      endTerminalTeardown(slotId);
+    }
+  }
   const controller = new AbortController();
   const signal = cleanupSignal(controller.signal)!;
   let rejectAborted: () => void = () => {};
@@ -63,7 +79,7 @@ export async function withTerminalTeardown<T>(
   });
   signal.addEventListener('abort', rejectAborted, { once: true });
   const timer = setTimeout(() => {
-    const error = new Error(`Terminal teardown for ${slotId} timed out after ${timeoutMs}ms`);
+    const error = new TerminalTeardownTimeoutError(slotId, timeoutMs);
     console.warn(`[teardown] ${error.message}`);
     controller.abort(error);
   }, timeoutMs);

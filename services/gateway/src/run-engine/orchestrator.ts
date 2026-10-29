@@ -21,6 +21,7 @@ import {
 
 import { reconcileRunAgentRuntime } from '../agents/runtime-recovery.js';
 import { markBacklogRunObserved } from '../backlog/store.js';
+import { withoutCleanupSignal } from '../core/cleanup-scope.js';
 import {
   getProjectField,
   getProjectFieldRaw,
@@ -767,6 +768,10 @@ export interface StartRunOptions {
 const drivenGenerations = new Map<string, number>();
 
 export async function startRun(runId: string, options: StartRunOptions = {}): Promise<void> {
+  return withoutCleanupSignal(() => startRunGeneration(runId, options));
+}
+
+async function startRunGeneration(runId: string, options: StartRunOptions): Promise<void> {
   const generation = options.expectedGeneration ?? getRunGeneration(runId);
   // A second loop on the same generation passes every stale-loop check: both
   // monitors see the worker's signal, and the one whose monitor was replaced

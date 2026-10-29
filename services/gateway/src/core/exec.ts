@@ -82,7 +82,11 @@ export function execFileArgv(argv: string[], opts?: ExecOptions): Promise<ExecRe
   return execSpawn(argv[0], argv.slice(1), opts);
 }
 
-function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
+async function execSpawn(
+  executable: string,
+  argv: string[],
+  opts?: ExecOptions,
+): Promise<ExecResult> {
   assertCleanupCurrent();
   opts = { ...opts, signal: cleanupSignal(opts?.signal) };
   if (opts?.signal?.aborted)

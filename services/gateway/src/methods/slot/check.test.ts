@@ -260,11 +260,26 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
       assert.deepEqual(steps, ['Trying unlock...']);
     }
   });
+});
 
-  test('prepare health reports the unlock failure when health stays down', async (t) => {
+// This virtual clock must stay outside the concurrent unlock suite.
+test(
+  'prepare health reports the unlock failure when health stays down',
+  { timeout: 4000 },
+  async (t) => {
     const vars = await lockedSlot(t);
     const steps: string[] = [];
-    await assert.rejects(
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    let reachedSecondRead!: () => void;
+    const secondRead = new Promise<void>((resolve) => {
+      reachedSecondRead = resolve;
+    });
+    let reads = 0;
+    t.mock.method(console, 'log', (message: unknown) => {
+      if (String(message).startsWith('[prepare] health check:') && ++reads === 2)
+        reachedSecondRead();
+    });
+    const rejected = assert.rejects(
       verifyPrepareHealth(
         vars,
         {
@@ -275,7 +290,7 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
         },
         'OK',
         (_name, detail) => steps.push(detail),
-        { timeoutMs: 1000, pollMs: 25 },
+        { timeoutMs: 1000, pollMs: 1 },
       ),
       {
         message:
@@ -283,13 +298,16 @@ describe('unlock hook and health re-check', { concurrency: true }, () => {
         failedCommand: HEALTH_HOOK,
       },
     );
+    await secondRead;
+    t.mock.timers.tick(1000);
+    await rejected;
     assert.ok(
       steps.includes(
         'Unlock failed — unlock hook exited 1: unlock failed (exit 1, APP_LOGIC_FAILURE): Timed out',
       ),
     );
-  });
-});
+  },
+);
 
 test('isOptionalFixtureAbsence tolerates optional entries and unresolved placeholders', () => {
   assert.equal(

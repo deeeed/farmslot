@@ -22,8 +22,57 @@ after(async () => {
 });
 await import('../runtime/mock-pty.test-support.js');
 const { execFileArgv } = await import('./exec.js');
-const { statusFile, updateSlotStatus } = await import('./state.js');
+const { statusFile, updateSlotStatus, onStatusCommit, setSlotUpdateHook } =
+  await import('./state.js');
 assert.equal(statusFile, selected);
+
+for (const notification of ['commit', 'debounce'] as const) {
+  test(
+    `new work from a ${notification} notification survives its originating cleanup`,
+    { timeout: 4000 },
+    async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const slot = 'fresh-dispatch';
+      await writeFile(selected, JSON.stringify({ slots: [{ slot, current_run_id: 'successor' }] }));
+      const controller = new AbortController();
+      let resolveFresh!: () => void;
+      let rejectFresh!: (error: unknown) => void;
+      const completed = new Promise<void>((resolve, reject) => {
+        resolveFresh = resolve;
+        rejectFresh = reject;
+      });
+      const freshWork = async () => {
+        const command = await execFileArgv([
+          process.execPath,
+          '-e',
+          "process.stdout.write('fresh')",
+        ]);
+        assert.equal(command.exitCode, 0);
+        assert.equal(command.stdout, 'fresh');
+        await updateSlotStatus(slot, { phase: 'working' });
+      };
+      let listening = true;
+      const notify = () => {
+        if (!listening) return;
+        listening = false;
+        freshWork().then(resolveFresh, rejectFresh);
+      };
+      if (notification === 'commit') onStatusCommit(notify);
+      else setSlotUpdateHook(notify);
+      t.after(() => {
+        listening = false;
+        setSlotUpdateHook(() => {});
+      });
+      await withCleanupSignal(controller.signal, () => updateSlotStatus(slot, { phase: 'queued' }));
+      controller.abort(new Error('the old cleanup expired'));
+      t.mock.timers.tick(50);
+      await completed;
+      const stored = JSON.parse(await readFile(selected, 'utf8'));
+      assert.equal(stored.slots[0].current_run_id, 'successor');
+      assert.equal(stored.slots[0].phase, 'working');
+    },
+  );
+}
 
 test('an expired cleanup cannot start a late command or overwrite a new slot owner', async () => {
   const controller = new AbortController();
@@ -33,7 +82,7 @@ test('an expired cleanup cannot start a late command or overwrite a new slot own
   await writeFile(selected, bytes);
   controller.abort(reason);
   await withCleanupSignal(controller.signal, async () => {
-    assert.throws(() => execFileArgv([process.execPath, '-e', 'process.exit(0)']), reason);
+    await assert.rejects(execFileArgv([process.execPath, '-e', 'process.exit(0)']), reason);
     await assert.rejects(updateSlotStatus(slot.slot, { current_run_id: 'old-run' }), reason);
   });
   assert.equal(await readFile(selected, 'utf8'), bytes);

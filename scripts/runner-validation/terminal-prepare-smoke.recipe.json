@@ -1,6 +1,6 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Terminal prepares a cold server and releases its worker",
+  "title": "Terminal waits for cold health and releases bounded cleanup",
   "description": "Use a prepared private farm, real Terminal hooks and one cheap-model validation run. Retain the consumed input and failed run for in-place diagnosis. Never target an operator pool or an original product run.",
   "paramsSchema": {
     "type": "object",
@@ -11,12 +11,26 @@
     "additionalProperties": false
   },
   "workflow": {
-    "entry": "terminal-dispatch",
+    "entry": "release-timeout",
     "nodes": {
+      "release-timeout": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/terminal-release-timeout.mjs",
+        "timeout_ms": 180000,
+        "intent": "Recover the timed-out release claim and preserve a successor through real RPC.",
+        "next": "cold-health"
+      },
+      "cold-health": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-prepare-smoke.mjs '{{params.input}}' --cold-health-only",
+        "timeout_ms": 1500000,
+        "intent": "Keep Terminal stopped until health waiting, then restart its cold server.",
+        "next": "terminal-dispatch"
+      },
       "terminal-dispatch": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/terminal-prepare-smoke.mjs '{{params.input}}'",
-        "timeout_ms": 1200000,
+        "timeout_ms": 1500000,
         "intent": "Prepare Terminal, confirm dispatch, then release the owned worker.",
         "next": "done"
       },

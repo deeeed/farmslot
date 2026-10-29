@@ -7,7 +7,7 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
-import { assertCleanupCurrent } from './cleanup-scope.js';
+import { assertCleanupCurrent, withoutCleanupSignal } from './cleanup-scope.js';
 import { farmslotRoot } from './config.js';
 
 const statusFile = resolveStatusFilePath(farmslotRoot);
@@ -47,7 +47,7 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
     }
     throw error;
   }
-  for (const listener of statusCommitListeners) listener(data);
+  for (const listener of statusCommitListeners) withoutCleanupSignal(() => listener(data));
 }
 
 // ─── Broadcast hook ───
@@ -64,10 +64,12 @@ export function setSlotUpdateHook(hook: () => void): void {
 function triggerSlotUpdateHook(): void {
   if (!onSlotUpdated) return;
   if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    debounceTimer = null;
-    onSlotUpdated?.();
-  }, DEBOUNCE_MS);
+  debounceTimer = withoutCleanupSignal(() =>
+    setTimeout(() => {
+      debounceTimer = null;
+      onSlotUpdated?.();
+    }, DEBOUNCE_MS),
+  );
 }
 
 // ─── updateSlotStatus ───

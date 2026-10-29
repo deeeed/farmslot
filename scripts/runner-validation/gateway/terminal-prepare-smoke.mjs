@@ -10,12 +10,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
-const exec = promisify(execFile);
+const execAsync = promisify(execFile);
+const exec = (file, args, options = {}) => execAsync(file, args, { timeout: 10_000, ...options });
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const inputBytes = await readFile(process.argv[2]);
 const input = JSON.parse(inputBytes);
+const coldHealthOnly = process.argv.includes('--cold-health-only');
 const root = await realpath(input.root);
-const out = path.resolve(input.output);
+const out = path.resolve(input.output + (coldHealthOnly ? '-cold-health' : ''));
 const owner = JSON.parse(await readFile(path.join(root, 'proof-owned.json'), 'utf8'));
 assert.equal(owner.id, input.id);
 assert.equal(owner.purpose, 'terminal-prepare-smoke');
@@ -92,7 +94,9 @@ const tmux = (
     },
   })
 ).stdout.trim();
-const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+const { quoteRunnerArgValue: quote } = await import(
+  pathToFileURL(path.join(source, 'packages/slot-config/src/hooks.ts')).href
+);
 await mkdir(bin, { recursive: true, mode: 0o700 });
 const wrapper = path.join(bin, 'tmux');
 const wrapperBytes = `#!/usr/bin/env bash
@@ -108,9 +112,31 @@ else await writeFile(wrapper, wrapperBytes, { flag: 'wx', mode: 0o700 });
 process.env.PATH = bin + path.delimiter + process.env.PATH;
 const load = (relative) => import(pathToFileURL(path.join(source, relative)).href);
 const { statusFile } = await load('services/gateway/src/core/state.ts');
-const { runsDirectory } = await load('services/gateway/src/runs/store.ts');
+const { runsDirectory, loadAllRuns, getAllRuns } = await load('services/gateway/src/runs/store.ts');
 assert.equal(statusFile, selected.FARMSLOT_TEST_STATUS_FILE);
 assert.equal(runsDirectory(), selected.FARMSLOT_RUNS_DIR);
+await loadAllRuns();
+const existingRuns = getAllRuns();
+if (input.existingRunId) {
+  assert.equal(existingRuns.length, 1);
+  assert.equal(existingRuns[0].id, input.existingRunId);
+  assert.equal(existingRuns[0].project, input.project);
+  assert.equal(existingRuns[0].metrics.runner, input.runner);
+  assert.equal(existingRuns[0].metrics.model, input.model);
+  assert.notEqual(existingRuns[0].transport, 'native');
+  assert(!existingRuns[0].nativeProfile);
+  assert(['failed', 'cancelled'].includes(existingRuns[0].status));
+  assert((await realpath(input.originalOutput)).startsWith(root + path.sep));
+  const original = JSON.parse(
+    await readFile(path.join(input.originalOutput, 'created.json'), 'utf8'),
+  );
+  const originalInvocation = JSON.parse(
+    await readFile(path.join(input.originalOutput, 'invocation.json'), 'utf8'),
+  );
+  assert.equal(original.id, input.existingRunId);
+  assert.equal(originalInvocation.inputHash, input.parentInputHash);
+} else assert.equal(existingRuns.length, 0, 'fresh proof input must not reuse a prior case');
+
 const { loadSlotVars, loadProjectVars } = await load('services/gateway/src/core/config.ts');
 const vars = await loadSlotVars(input.slotId);
 assert.equal(vars.host, 'localhost');
@@ -141,7 +167,9 @@ const fingerprint = {
   inputHash: digest(inputBytes),
   driverHash: digest(await readFile(fileURLToPath(import.meta.url))),
 };
-if (process.argv[3] === '--preflight') {
+if (process.argv.includes('--preflight')) {
+  if (coldHealthOnly)
+    assert.deepEqual(projectJson.prepare.profiles[input.coldHealthProfile]?.phases, ['health']);
   await assert.rejects(
     exec(wrapper, ['-S', defaults.tmux, 'display-message', '-p', '#{pid}']),
     (error) => error.code === 1 && error.stderr.includes('Foreign tmux socket refused'),
@@ -170,6 +198,26 @@ assert.equal(preflight.driverHash, fingerprint.driverHash);
 await save('invocation.json', { ...fingerprint, source, selected, at: new Date().toISOString() });
 
 let server, wss, connection, runId, primaryError, socketIdentity, serverPid, serverBirth;
+let gatewayUrl,
+  credential,
+  interrupted,
+  cleaning = false,
+  creatingRun = false;
+const stopping = new AbortController();
+const stop = (reason) => {
+  interrupted ??= new Error(reason);
+  stopping.abort(interrupted);
+  // Preserve the create reply when the request has not yet returned its run ID.
+  if (!creatingRun && !cleaning) connection?.close();
+};
+const terminate = () => stop('Terminal proof interrupted by SIGTERM');
+const interrupt = () => stop('Terminal proof interrupted by SIGINT');
+process.on('SIGTERM', terminate);
+process.on('SIGINT', interrupt);
+const workTimer = setTimeout(
+  () => stop('Terminal proof exceeded its ten-minute work budget'),
+  600_000,
+);
 const cleanup = [];
 const attempt = async (label, operation) => {
   try {
@@ -195,6 +243,21 @@ const brief = (run) => ({
     durationMs,
   })),
 });
+const projectHook = async (name, signal) => {
+  const core = await load('services/gateway/src/core/index.ts');
+  const current = await core.loadSlotVars(input.slotId);
+  assert.equal(await realpath(current.remoteRepo), await realpath(input.repo));
+  const project = await core.loadProjectVars(input.project);
+  const command = core.expandHook(name, project.projectJson, current, project);
+  assert(command, `the configured ${name} hook is required`);
+  const result = await core.execOnSlot(
+    current,
+    core.withProjectMachineEnv(command, current, project.projectJson, project),
+    { timeout: name === 'teardown' ? 60_000 : 330_000, signal },
+  );
+  assert.equal(result.exitCode, 0, `owned ${name} hook failed`);
+  return result;
+};
 try {
   await exec(wrapper, ['new-session', '-d', '-s', input.session, '-c', input.repo]);
   socketIdentity = await identity(socket);
@@ -206,77 +269,162 @@ try {
     server.listen(0, '127.0.0.1', resolve);
   });
   const url = `ws://127.0.0.1:${server.address().port}/ws`;
+  gatewayUrl = url;
   Object.assign(process.env, { GW_URL: url, GATEWAY_URL: url, FARMSLOT_GATEWAY: url });
   const { testGatewayIdentity } = await load('scripts/lib/test-gateway-identity-source.mts');
   const token = testGatewayIdentity(selected.FARMSLOT_HOME, url);
+  credential = { token };
   wss = createWebSocketServer(
     server,
     createGatewayAuthRuntime({ FARMSLOT_HOME: selected.FARMSLOT_HOME }),
   );
   initRunEngine(broadcastEvent, broadcastEvent);
-  connection = await new GatewayClient({ url, timeout: 600_000, credential: { token } }).connect();
-  const created = await connection.call('run.create', {
-    project: input.project,
-    slotId: input.slotId,
-    branch: input.branch,
-    flowType: 'dev',
-    mode: 'validation',
-    transport: 'tmux',
-    runner: input.runner,
-    model: input.model,
-    executionTemplateId: 'dev/default',
-    ticketOrPr: 'F203-1',
-    ticketData: {
-      source: 'manual',
-      title: 'Terminal prepare validation',
-      description:
-        'Acknowledge this dispatch, then wait. Do not edit files, install, run commands, launch applications or place trades.',
-      affectedArea: 'prepare',
-      acceptanceCriteria: ['Acknowledge and wait without changing files'],
-      stepsToReproduce: [],
-      screenshots: [],
-      labels: [],
-    },
-    initialContext: 'Proof worker only. Reply ACK and wait; no tool calls or product changes.',
-  });
-  runId = created.run.id;
-  await save('created.json', brief(created.run));
-  console.log(JSON.stringify({ phase: 'created', runId }));
-  const deadline = Date.now() + (input.timeoutMs ?? 900_000);
-  let run = created.run;
-  let lastPhase;
-  for (;;) {
-    run = (await connection.call('run.get', { runId, view: 'snapshot' })).run;
-    const phase = run.steps.find((step) => step.status === 'running')?.name ?? run.status;
-    if (phase !== lastPhase) {
-      console.log(JSON.stringify({ phase, runId }));
-      lastPhase = phase;
-    }
-    if (['failed', 'blocked', 'cancelled', 'done'].includes(run.status)) {
-      await save('first-failure.json', { ...brief(run), error: run.error });
-      throw new Error(`Proof run ${runId} stopped at ${phase}: ${run.error ?? run.status}`);
-    }
-    if (run.steps.find((step) => step.name === 'dispatch')?.status === 'done') break;
-    assert(
-      Date.now() < deadline,
-      `Proof timed out on ${phase}; preserve ${runId} for in-place diagnosis`,
+  connection = await new GatewayClient({ url, timeout: 30_000, credential }).connect();
+  if (coldHealthOnly) {
+    assert.deepEqual(projectJson.prepare.profiles[input.coldHealthProfile]?.phases, ['health']);
+    const full = await connection.call(
+      'slot.prepare',
+      { slotId: input.slotId },
+      { timeoutMs: 330_000 },
     );
-    await delay(500);
+    assert.equal(full.prepared, true);
+    await projectHook('teardown', stopping.signal);
+    const requestId = `${input.id}-cold-health`;
+    const events = [];
+    let waiting;
+    const waitForHeartbeat = new Promise((resolve) => {
+      waiting = resolve;
+    });
+    const unsubscribe = connection.onEvent((frame) => {
+      const p = frame.payload;
+      if (
+        frame.event !== 'slot.prepare.step' ||
+        p?.slotId !== input.slotId ||
+        p.requestId !== requestId
+      )
+        return;
+      events.push(p);
+      if (p.name === 'health' && p.detail.startsWith('Waiting for health (')) waiting();
+    });
+    try {
+      const health = connection.call(
+        'slot.prepare',
+        { slotId: input.slotId, profile: input.coldHealthProfile, requestId },
+        { timeoutMs: 330_000 },
+      );
+      await Promise.race([
+        waitForHeartbeat,
+        health.then(() => {
+          throw new Error('health finished while Terminal was intentionally stopped');
+        }),
+      ]);
+      // The owning recycle hook clears its own build cache and starts the real cold server.
+      const [observed] = await Promise.all([health, projectHook('recycle', stopping.signal)]);
+      assert.equal(observed.prepared, true);
+      await save('cold-health.json', {
+        status: 'PASS',
+        ...fingerprint,
+        full,
+        events,
+        observed,
+        scope:
+          'Actual stopped Terminal, gateway health waiting, owning cold restart and observed readiness.',
+      });
+    } finally {
+      unsubscribe();
+    }
+  } else {
+    const cold = JSON.parse(await readFile(input.output + '-cold-health/cold-health.json', 'utf8'));
+    assert.equal(cold.status, 'PASS');
+    assert.equal(cold.inputHash, fingerprint.inputHash);
+    assert.equal(cold.driverHash, fingerprint.driverHash);
+    creatingRun = true;
+    const created = input.existingRunId
+      ? await connection.call('run.replayStep', {
+          runId: input.existingRunId,
+          stepName: 'find-slot',
+        })
+      : await connection.call('run.create', {
+          project: input.project,
+          slotId: input.slotId,
+          branch: input.branch,
+          flowType: 'dev',
+          mode: 'validation',
+          transport: 'tmux',
+          runner: input.runner,
+          model: input.model,
+          executionTemplateId: 'dev/default',
+          ticketOrPr: 'F203-1',
+          ticketData: {
+            source: 'manual',
+            title: 'Terminal prepare validation',
+            description:
+              'Acknowledge this dispatch, then wait. Do not edit files, install, run commands, launch applications or place trades.',
+            affectedArea: 'prepare',
+            acceptanceCriteria: ['Acknowledge and wait without changing files'],
+            stepsToReproduce: [],
+            screenshots: [],
+            labels: [],
+          },
+          initialContext:
+            'Proof worker only. Reply ACK and wait; no tool calls or product changes.',
+        });
+    runId = created.run.id;
+    creatingRun = false;
+    if (interrupted) throw interrupted;
+    await save(input.existingRunId ? 'continued.json' : 'created.json', brief(created.run));
+    console.log(JSON.stringify({ phase: input.existingRunId ? 'continued' : 'created', runId }));
+    const deadline = Date.now() + Math.min(input.timeoutMs ?? 600_000, 600_000);
+    let run = created.run;
+    let lastPhase;
+    for (;;) {
+      if (interrupted) throw interrupted;
+      run = (await connection.call('run.get', { runId, view: 'snapshot' })).run;
+      const phase = run.steps.find((step) => step.status === 'running')?.name ?? run.status;
+      if (phase !== lastPhase) {
+        console.log(JSON.stringify({ phase, runId }));
+        lastPhase = phase;
+      }
+      if (['failed', 'blocked', 'cancelled', 'done'].includes(run.status)) {
+        await save('first-failure.json', { ...brief(run), error: run.error });
+        throw new Error(`Proof run ${runId} stopped at ${phase}: ${run.error ?? run.status}`);
+      }
+      if (run.steps.find((step) => step.name === 'dispatch')?.status === 'done') break;
+      assert(
+        Date.now() < deadline,
+        `Proof timed out on ${phase}; preserve ${runId} for in-place diagnosis`,
+      );
+      await delay(500, undefined, { signal: stopping.signal });
+    }
+    for (const name of ['write-task', 'prepare', 'dispatch'])
+      assert.equal(run.steps.find((step) => step.name === name)?.status, 'done', name);
+    assert.equal(run.metrics.runner, input.runner);
+    assert.equal(run.metrics.model, input.model);
+    await save('dispatched.json', brief(run));
+    console.log(JSON.stringify({ phase: 'dispatched', runId }));
   }
-  for (const name of ['write-task', 'prepare', 'dispatch'])
-    assert.equal(run.steps.find((step) => step.name === name)?.status, 'done', name);
-  assert.equal(run.metrics.runner, input.runner);
-  assert.equal(run.metrics.model, input.model);
-  await save('dispatched.json', brief(run));
-  console.log(JSON.stringify({ phase: 'dispatched', runId }));
 } catch (error) {
-  primaryError = error;
+  primaryError = interrupted ?? error;
 } finally {
+  cleaning = true;
+  clearTimeout(workTimer);
+  if (interrupted && runId && gatewayUrl && credential && server?.listening)
+    await attempt('reconnect for owned cancellation after interruption', async () => {
+      connection = await new GatewayClient({
+        url: gatewayUrl,
+        timeout: 30_000,
+        credential,
+      }).connect();
+    });
   if (connection && runId)
     await attempt('cancel only the owned run', async () => {
       const run = (await connection.call('run.get', { runId, view: 'snapshot' })).run;
       if (!['failed', 'done', 'cancelled'].includes(run.status))
-        await connection.call('run.cancel', { runId, reason: 'Terminal prepare smoke finished' });
+        await connection.call(
+          'run.cancel',
+          { runId, reason: interrupted?.message ?? 'Terminal prepare smoke finished' },
+          { timeoutMs: 330_000 },
+        );
       await save(
         'final-run.json',
         brief((await connection.call('run.get', { runId, view: 'snapshot' })).run),
@@ -298,19 +446,25 @@ try {
         inFlight: false,
       });
     });
+  await attempt('join only this proof slot prepare', async () => {
+    const { activePrepareAborts } = await load('services/gateway/src/methods/slot/shared.ts');
+    const active = activePrepareAborts.get(input.slotId);
+    if (!active) return;
+    active.abort();
+    let timer;
+    try {
+      await Promise.race([
+        active.settled,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('owned prepare did not stop')), 30_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
   await attempt('stop only this slot runtime', async () => {
-    const core = await load('services/gateway/src/core/index.ts');
-    const vars = await core.loadSlotVars(input.slotId);
-    assert.equal(await realpath(vars.remoteRepo), await realpath(input.repo));
-    const { projectJson, ...project } = await core.loadProjectVars(input.project);
-    const command = core.expandHook('teardown', projectJson, vars, { ...project, projectJson });
-    assert(command, 'the real Terminal teardown hook is required');
-    const result = await core.execOnSlot(
-      vars,
-      core.withProjectMachineEnv(command, vars, projectJson, { ...project, projectJson }),
-      { timeout: 60_000 },
-    );
-    assert.equal(result.exitCode, 0, 'owned Terminal teardown failed');
+    await projectHook('teardown');
   });
   if (connection) await attempt('close client', async () => connection.close());
   if (wss)
@@ -344,8 +498,10 @@ try {
     status: cleanup.every((row) => row.status === 'PASS') ? 'PASS' : 'FAIL',
     cleanup,
   });
+  process.off('SIGTERM', terminate);
+  process.off('SIGINT', interrupt);
 }
-if (primaryError) throw primaryError;
+if (primaryError ?? interrupted) throw primaryError ?? interrupted;
 assert(
   cleanup.every((row) => row.status === 'PASS'),
   'scoped cleanup failed',

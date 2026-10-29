@@ -15,3 +15,8 @@ export function assertCleanupCurrent(): void {
 export function withCleanupSignal<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
   return cleanup.run(signal, operation);
 }
+
+/** Independent work and recovery under a captured claim must leave the old cleanup. */
+export function withoutCleanupSignal<T>(operation: () => T): T {
+  return cleanup.exit(operation);
+}

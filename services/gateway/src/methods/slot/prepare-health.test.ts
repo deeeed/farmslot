@@ -65,7 +65,7 @@ test('prepare waits for a cold server that becomes healthy three minutes later',
   assert.equal(settled, false, 'the first compile must not fail before it finishes');
   t.mock.timers.tick(2_000);
   assert.equal(await result, 'OK');
-  assert.ok(reads > 1);
+  assert.ok(reads > 2, 'exercise repeated probes across the virtual cold compile');
   assert.ok(budgets.every((budget) => budget > 0 && budget <= PREPARE_HEALTH_TIMEOUT_MS));
   assert.ok(steps.some((step) => step.includes('Waiting for health')));
   const previous = { reads, steps: steps.length };

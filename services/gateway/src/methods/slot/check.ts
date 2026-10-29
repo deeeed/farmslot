@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DEFAULT_BRANCH, type SlotCheckParams, type SlotCheckResult } from '@farmslot/protocol';
 import { isMissingProjectConfigError } from '@farmslot/slot-config';
 
+import { assertCleanupCurrent } from '../../core/cleanup-scope.js';
 import {
   execOnSlot,
   type ExecResult,
@@ -933,6 +934,7 @@ export async function runHealthCheck(
     options.signal?.throwIfAborted();
     return parsed.exitCode === 0 ? parsed.stdout.trim() : '';
   } catch {
+    assertCleanupCurrent();
     options.signal?.throwIfAborted();
     return '';
   }
