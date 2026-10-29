@@ -355,25 +355,30 @@ export async function retainCapturedRunArtifacts(input: {
   const taskDir = input.sourceRef
     ? await retainedRunTaskDirectory(input.run, input.sourceRef)
     : path.dirname(input.run.taskFile);
-  try {
-    for (const entry of await readdir(path.join(taskDir, 'inputs'), {
-      recursive: true,
-      withFileTypes: true,
-    })) {
-      if (!entry.isFile()) continue;
-      const file = path
-        .relative(taskDir, path.join(entry.parentPath, entry.name))
-        .split(path.sep)
-        .join('/');
-      if (!artifacts.some((artifact) => artifact.path === file))
-        artifacts.push({
-          path: file,
-          purpose: 'task-input',
-          sizeBytes: (await stat(path.join(taskDir, file))).size,
-        });
+  for (const directory of ['inputs', 'task-actions']) {
+    try {
+      for (const entry of await readdir(path.join(taskDir, directory), {
+        recursive: true,
+        withFileTypes: true,
+      })) {
+        if (!entry.isFile()) continue;
+        const file = path
+          .relative(taskDir, path.join(entry.parentPath, entry.name))
+          .split(path.sep)
+          .join('/');
+        if (!artifacts.some((artifact) => artifact.path === file))
+          artifacts.push({
+            path: file,
+            purpose: 'task-input',
+            ...(directory === 'task-actions'
+              ? { sha256: await sha256File(path.join(taskDir, file)) }
+              : {}),
+            sizeBytes: (await stat(path.join(taskDir, file))).size,
+          });
+      }
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
-  } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
   for (const file of [path.basename(input.run.taskFile), 'CHECKLIST.md', ...RETAINED_TASK_INPUTS]) {
     if (artifacts.some((artifact) => artifact.path === file)) continue;
@@ -404,6 +409,10 @@ export async function retainCapturedRunArtifacts(input: {
       input.run.taskFile,
       input.run.engineState?.generation,
       input.manifestDigest,
+      ...artifacts
+        .filter((artifact) => artifact.path.startsWith('task-actions/'))
+        .sort((a, b) => a.path.localeCompare(b.path))
+        .map(({ path, sha256 }) => [path, sha256]),
     ]),
     policy: await retentionPolicy(),
     allowChanged: input.allowChanged,
@@ -517,13 +526,16 @@ export async function retainRunArtifacts(runId: string): Promise<RunBundleRetain
   return { ref: result.ref, missingData: result.missingData };
 }
 
-/** Group discovery uses only the immutable manifest and lightweight execution metadata. */
-export async function retainedRecipeRunGroups(
-  run: Run,
-  ref = retainedRunBundleRef(run),
-): Promise<RecipeRunArtifactGroup[]> {
+interface RetainedRecipeRunSummary {
+  root: string;
+  raw: unknown;
+  recipeRunId: string | null;
+  promoted: boolean;
+}
+
+/** One metadata selection policy for retained reports and inherited recipe inputs. */
+export async function retainedRecipeRunSummaries(run: Run, ref = retainedRunBundleRef(run)) {
   const inventory = await retainedRunArtifactManifest(run, ref);
-  const taskDir = await retainedRunTaskDirectory(run, ref);
   const paths = new Set(inventory.map(({ path }) => path));
   const pointer = paths.has('artifacts/latest-valid-recipe-run.json')
     ? sanitizeLatestValidRecipeRunPointer(
@@ -537,7 +549,7 @@ export async function retainedRecipeRunGroups(
         .map(({ path: file }) => path.posix.dirname(file)),
     ),
   ];
-  const groups: RecipeRunArtifactGroup[] = [];
+  const summaries: RetainedRecipeRunSummary[] = [];
   for (const root of ['artifacts', ...roots.filter((root) => root !== 'artifacts')]) {
     let raw: unknown = null;
     if (paths.has(`${root}/summary.json`)) {
@@ -552,6 +564,21 @@ export async function retainedRecipeRunGroups(
     const recipeRunId =
       isRecord(raw) && typeof raw.recipeRunId === 'string' ? raw.recipeRunId : null;
     const promoted = Boolean(pointer && root === `artifacts/${pointer.relativeArtifactRoot}`);
+    summaries.push({ root, raw, recipeRunId, promoted });
+  }
+  return { inventory, summaries };
+}
+
+/** Group discovery uses only the immutable manifest and lightweight execution metadata. */
+export async function retainedRecipeRunGroups(
+  run: Run,
+  ref = retainedRunBundleRef(run),
+): Promise<RecipeRunArtifactGroup[]> {
+  const { inventory, summaries } = await retainedRecipeRunSummaries(run, ref);
+  const taskDir = await retainedRunTaskDirectory(run, ref);
+  const paths = new Set(inventory.map(({ path }) => path));
+  const groups: RecipeRunArtifactGroup[] = [];
+  for (const { root, raw, recipeRunId, promoted } of summaries) {
     const artifacts = inventory
       .filter(({ path: file }) => file.startsWith(`${root}/`))
       .map((artifact) => ({

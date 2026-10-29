@@ -54,6 +54,7 @@ import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
+  extractRunWorkerSessionUsage,
   runnerUsageMetrics,
   usesReviewChainSessionTotal,
 } from '../runtime/session-usage.js';
@@ -315,13 +316,16 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     const resolved = await resolveRunnerSessionForRun(run, vars);
     const runnerSessionPath = resolved?.runnerSessionPath ?? run.metrics.runnerSessionPath;
     const runnerSessionId = resolved?.runnerSessionId ?? run.metrics.runnerSessionId;
-    const usage = await extractRunnerSessionUsage({
-      slotId: run.slotId,
-      vars,
-      runner: run.metrics.runner,
-      runnerSessionId,
-      runnerSessionPath,
-    });
+    const workerUsage = await extractRunWorkerSessionUsage(run, vars);
+    const usage =
+      workerUsage ??
+      (await extractRunnerSessionUsage({
+        slotId: run.slotId,
+        vars,
+        runner: run.metrics.runner,
+        runnerSessionId,
+        runnerSessionPath,
+      }));
     const costUsd = usage.costUsd ?? null;
     const inputTokens = usage.inputTokens ?? null;
     const outputTokens = usage.outputTokens ?? null;
@@ -334,6 +338,8 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     const actualModel = usage.actualModel ?? null;
     const chainSessionTotal = usesReviewChainSessionTotal(run);
     const metricsPatch: Partial<typeof run.metrics> = { sessionUsageError: usage.error };
+    if (workerUsage && !workerUsage.error)
+      metricsPatch.costEstimate = workerUsage.costUsd ?? undefined;
     let accounted = {
       costUsd,
       turns,
@@ -1154,10 +1160,7 @@ export async function runCompletionPipeline(
   //    rest of the pipeline (cost extraction, report generation) is not
   //    blocked. The explicit run.refreshMirror capture returns a failure to the
   //    client instead of continuing when the mirror is incomplete.
-  const reviewedCapture = run.acceptanceProofHold?.state === 'reviewed';
-  if (reviewedCapture && !run.output?.artifactBundle)
-    throw new Error('Reviewed completion proof has no retained capture');
-  if (!isReviewPR && !reviewedCapture) {
+  if (!isReviewPR) {
     try {
       await captureRunOutput(runId, true, true, {
         requireSourceArtifacts: options?.requireArtifactMirror,

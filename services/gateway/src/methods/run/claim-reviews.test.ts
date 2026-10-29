@@ -140,7 +140,7 @@ export async function fixture(t: TestContext) {
   return { run, decision, params, dependencies, input, prepared, directory, person, inventory };
 }
 
-test('PR completion consumes the parent visual review without rewriting its awaiting-review ledger', async (t) => {
+test('PR completion records parent visual evidence without requiring review or rewriting its ledger', async (t) => {
   const f = await fixture(t);
   const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
   const result = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
@@ -186,7 +186,7 @@ test('PR completion consumes the parent visual review without rewriting its awai
   const receipts = f.run.visualJudgmentReceipts;
   f.run.visualJudgmentReceipts = [];
   const unreviewed = await collectRunGateReadiness(child, null, sources);
-  assert.equal(unreviewed.state, 'not-ready');
+  assert.equal(unreviewed.state, 'ready');
   f.run.visualJudgmentReceipts = receipts;
   const fresh = { ...f.run, flowType: 'pr-complete' as const, decisions: [], engineState: {} };
   const ownSources = {
@@ -205,7 +205,7 @@ test('PR completion consumes the parent visual review without rewriting its awai
     null,
     ownSources,
   );
-  assert.equal(foreignNamespace.state, 'not-ready');
+  assert.equal(foreignNamespace.state, 'ready');
   await runReviewVisualClaim(
     {
       ...f.params,
@@ -218,14 +218,14 @@ test('PR completion consumes the parent visual review without rewriting its awai
   );
   assert.equal(
     (await collectRunGateReadiness(child, null, sources)).state,
-    'not-ready',
-    'A later issue must be reconciled before inheriting the captured proof',
+    'ready',
+    'Parent review verdicts remain evidence only for PR completion',
   );
   fresh.visualJudgmentReceipts = f.run.visualJudgmentReceipts;
   assert.equal(
     (await collectRunGateReadiness(fresh, null, ownSources)).state,
-    'not-ready',
-    'Fresh proof still consumes the current issue',
+    'ready',
+    'Recorded visual issues do not add a PR-completion reviewer gate',
   );
   assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
 });

@@ -313,7 +313,6 @@ test('hosted tasks without derived acceptance keep their configured policies', a
       configured,
     );
     assert.equal(projected.acceptanceContractVersion, undefined);
-    assert.equal(projected.claimReviewSupported, undefined);
     assert.equal(projected.requireSignal, configured.requireSignal);
     assert.deepEqual(projected.commands, configured.commands);
   }
@@ -323,11 +322,10 @@ test('hosted PR completion preserves run acceptance projections without weakenin
   const { builtinTerminalContract } = await import('@farmslot/agent-runtime');
   const { hostedTerminalPolicy } = await import('./hosted-task-init.js');
   const configured = builtinTerminalContract('pr-complete');
-  for (const claimReviewSupported of [true, false]) {
+  {
     const terminalContract = {
       ...configured,
       acceptanceContractVersion: 1 as const,
-      claimReviewSupported,
     };
     const task = { ...request().task, flow: 'pr-complete', terminalContract };
     const projected = hostedTerminalPolicy(
@@ -335,7 +333,6 @@ test('hosted PR completion preserves run acceptance projections without weakenin
       configured,
     );
     assert.equal(projected.acceptanceContractVersion, 1);
-    assert.equal(projected.claimReviewSupported, claimReviewSupported);
     assert.equal(projected.requireSignal, configured.requireSignal);
     assert.deepEqual(projected.commands, configured.commands);
     assert.throws(
@@ -347,7 +344,7 @@ test('hosted PR completion preserves run acceptance projections without weakenin
       /differs from the node configuration/,
     );
   }
-  for (const invalid of [{ acceptanceContractVersion: 2 }, { claimReviewSupported: 'true' }]) {
+  for (const invalid of [{ acceptanceContractVersion: 2 }]) {
     assert.throws(
       () =>
         parseHostedTaskInitRequest({

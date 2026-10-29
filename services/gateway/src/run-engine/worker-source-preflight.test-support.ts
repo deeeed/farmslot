@@ -29,9 +29,9 @@ export async function expected(): Promise<WorkerSourceExpectation> {
     taskDir: null,
   };
 }
-export async function probe(value: WorkerSourceExpectation) {
+export async function probe(value: WorkerSourceExpectation, cliPath = cli) {
   const result = await execute('/bin/sh', ['-c', workerSourceProbeCommand(value)], {
-    env: { ...process.env, FARMSLOT_CLI: cli },
+    env: { ...process.env, FARMSLOT_CLI: cliPath },
     timeout: 4000,
   });
   return JSON.parse(result.stdout);

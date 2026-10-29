@@ -56,22 +56,10 @@ export function outputManifestDigest(artifacts: ArtifactRef[]): string {
 export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[] {
   const decisions = structuredClone(run.decisions);
   const prior = decisions.filter((decision) => decision.payload?.kind === 'output-review');
-  const hold = run.acceptanceProofHold;
-  const completionProof = hold
-    ? {
-        registrationRevision: hold.registrationRevision,
-        contractRevision: hold.contractRevision,
-        headSha: hold.headSha,
-      }
-    : undefined;
   const sameCapture = (decision: RunDecision) =>
     decision.payload?.kind === 'output-review' &&
     decision.payload.manifestDigest === output.manifestDigest &&
-    decision.payload.reportPath === output.reportPath &&
-    decision.payload.completionProof?.headSha === completionProof?.headSha &&
-    decision.payload.completionProof?.registrationRevision ===
-      completionProof?.registrationRevision &&
-    decision.payload.completionProof?.contractRevision === completionProof?.contractRevision;
+    decision.payload.reportPath === output.reportPath;
   const eligible =
     !output.closedAt &&
     output.workerFinished &&
@@ -103,14 +91,9 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
   decisions.push({
     id: randomUUID(),
     type: 'engine_output_review',
-    title: completionProof
-      ? 'Review completion proof'
-      : reviewed
-        ? 'Close reviewed run output'
-        : 'Review run output',
-    description: completionProof
-      ? 'Review the captured claims. Mark reviewed resumes completion only after every current criterion qualifies. Close run preserves the gaps without successful PR completion.'
-      : 'The worker has produced a report. Review its findings, gaps and evidence. Marking it reviewed does not approve a release, publish anything or change the worker outcome.',
+    title: reviewed ? 'Close reviewed run output' : 'Review run output',
+    description:
+      'The worker has produced a report. Review its findings, gaps and evidence. Marking it reviewed does not approve a release, publish anything or change the worker outcome.',
     actions: [
       {
         id: 'close-run',
@@ -125,9 +108,8 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
               id: 'mark-reviewed',
               label: 'Mark reviewed',
               style: 'secondary' as const,
-              description: completionProof
-                ? 'Confirm this captured proof and resume PR completion after every current criterion qualifies.'
-                : 'Acknowledge this exact report and evidence snapshot. The recorded verdict stays unchanged.',
+              description:
+                'Acknowledge this exact report and evidence snapshot. The recorded verdict stays unchanged.',
             },
           ]
         : []),
@@ -135,7 +117,6 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
     createdAt: new Date().toISOString(),
     payload: {
       kind: 'output-review',
-      ...(completionProof ? { completionProof } : {}),
       ...(output.artifactBundle ? { artifactBundle: output.artifactBundle } : {}),
       manifestDigest: output.manifestDigest,
       reportPath: output.reportPath,
@@ -392,17 +373,8 @@ export async function acknowledgeRunOutput(
   runId: string,
   decisionId: string,
   expectedOverrideSnapshot?: string,
-  emit: (event: string, payload: unknown) => void = () => {},
 ): Promise<Run> {
   const expected = expectedOverrideSnapshot ?? outputOverrideSnapshot(runId, decisionId);
-  const decision = getRun(runId)?.decisions.find(({ id }) => id === decisionId);
-  if (decision?.payload?.kind === 'output-review' && decision.payload.completionProof)
-    return (await import('./pr-completion-proof.js')).acknowledgePRCompletionProof(
-      runId,
-      decisionId,
-      expected,
-      emit,
-    );
   const current = await verifyRunOutputReview(runId, decisionId, false, expected);
   assertOutputOverrideSnapshot(current, decisionId, expected);
   const decisions = current.decisions.map((entry) =>

@@ -39,17 +39,13 @@ import { findingsDigest } from '../core/findings-digest.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { assertQaCompletion } from '../qa/completion.js';
-import {
-  codeReviewCertifiesPRCompletion,
-  readPRCompletionHead,
-} from '../review/acceptance-coverage.js';
 import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import {
   reviewBudgetExtensionRefusal,
   runReviewRoundBudget,
 } from '../review/review-round-budget.js';
-import { readReviewedInputs, reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
+import { reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
 import {
   acceptedReviewFixPredecessor,
   reviewResultArtifactPath,
@@ -121,8 +117,6 @@ import { readTaskArtifactText } from './task-artifacts.js';
 import { visualRepairEvidenceReasons } from './visual-repair.js';
 
 export interface GatePrerequisiteReaders {
-  prCompletionHead?(run: Run): Promise<string | undefined>;
-  prCompletionInputs?: typeof readReviewedInputs;
   deterministic(run: Run): Promise<unknown>;
   acceptance(run: Run): Promise<GateAcceptanceRead>;
   progress(run: Run): Promise<RunProgressObservation>;
@@ -282,7 +276,7 @@ export async function readGateRecordedEvidence(
   qa?: Awaited<ReturnType<typeof assertQaCompletion>>,
   headSha?: string,
 ): Promise<RecordedEvidencePackageInput[]> {
-  if (!preparedPackage && run.flowType === 'pr-complete' && !run.acceptanceProofHold) {
+  if (!preparedPackage && run.flowType === 'pr-complete') {
     const inventory = await retainedRunArtifactManifest(run);
     const sources = await readFrozenPublicationRecipeSources(
       run,
@@ -297,7 +291,7 @@ export async function readGateRecordedEvidence(
     }
     return sources.map(({ input }) => input);
   }
-  if (preparedPackage || (!isArtifactOnlyRun(run) && !run.acceptanceProofHold))
+  if (preparedPackage || !isArtifactOnlyRun(run))
     return (await readGateRecordedEvidenceSources(run, preparedPackage)).map(({ input }) => input);
   if (isArtifactOnlyRun(run) && !runOutputReviewEnabled(run)) {
     const output = run.output;
@@ -327,22 +321,12 @@ export async function readGateRecordedEvidence(
     throw new Error(
       'A required QA case is absent from the captured output. Refresh the artifact mirror.',
     );
-  const sources = run.acceptanceProofHold
-    ? await readFrozenPublicationRecipeSources(
-        captured,
-        inventory,
-        [],
-        captured.output?.artifactBundle,
-        run.acceptanceProofHold.headSha,
-      )
-    : await readFrozenRecordedEvidenceSources(
-        captured,
-        inventory,
-        [],
-        captured.output?.artifactBundle,
-      );
-  if (run.acceptanceProofHold)
-    assertRecordedEvidenceRevision(sources, { headSha: run.acceptanceProofHold.headSha });
+  const sources = await readFrozenRecordedEvidenceSources(
+    captured,
+    inventory,
+    [],
+    captured.output?.artifactBundle,
+  );
   let applicable = sources;
   if (run.flowType === 'qa') {
     // QA owns case selection and revision checks. Retained failed attempts are
@@ -368,8 +352,6 @@ export async function readGateRecordedEvidence(
 }
 
 const readers: GatePrerequisiteReaders = {
-  prCompletionHead: readPRCompletionHead,
-  prCompletionInputs: readReviewedInputs,
   reviewedInputsAwaitingReview,
   deterministic: validateDeterministicChecksForRun,
   acceptance: readGateAcceptance,
@@ -556,7 +538,7 @@ export async function collectRunGateAssessment(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
   overrides: Partial<GatePrerequisiteReaders> = {},
-  phase: 'publication' | 'post-publication' | 'completion-proof' = 'publication',
+  phase: 'publication' | 'post-publication' = 'publication',
 ): Promise<{
   readiness: RunGateReadiness;
   acceptance?: AcceptanceStatusLedger;
@@ -581,19 +563,9 @@ export async function collectRunGateAssessment(
   if (phase === 'post-publication' && !publicationFulfilled)
     throw new Error('Post-publication readiness requires a durable human publication receipt');
   const generation = run.engineState?.generation ?? 0;
-  const completionProofReview =
-    phase === 'completion-proof' &&
-    run.flowType === 'pr-complete' &&
-    run.acceptanceContractVersion === 1 &&
-    Boolean(run.acceptanceProofHold) &&
-    run.status === 'paused';
-  if (phase === 'completion-proof' && !completionProofReview)
-    throw new Error('Completion proof review requires its paused PR-completion hold');
   const acceptanceRevision = run.acceptanceRegistration?.revision ?? 0;
   const acceptanceContractRevision = run.acceptanceExecutionContract?.revision ?? 0;
-  let completionHead: string | undefined;
-  const outputDigest =
-    isArtifactOnlyRun(run) || run.acceptanceProofHold ? run.output?.manifestDigest : undefined;
+  const outputDigest = isArtifactOnlyRun(run) ? run.output?.manifestDigest : undefined;
   const outputDecision = outputDigest ? capturedOutputReviewDecision(run) : undefined;
   const source = { ...readers, ...overrides };
   const reasons: RunGatePrerequisiteReason[] = [];
@@ -689,7 +661,11 @@ export async function collectRunGateAssessment(
 
   const hasSelectedMedia = preparedPackage?.selectedEvidenceKeys?.length;
   const qaOutput = run.flowType === 'qa' && isArtifactOnlyRun(run) && !preparedPackage;
-  if (!publicationFulfilled && (acceptance.criteria.length || hasSelectedMedia)) {
+  if (
+    !publicationFulfilled &&
+    run.flowType !== 'pr-complete' &&
+    (acceptance.criteria.length || hasSelectedMedia)
+  ) {
     if (!source.recordedEvidence) {
       reasons.push({
         code: 'evidence-validation-unavailable',
@@ -702,16 +678,7 @@ export async function collectRunGateAssessment(
         const qa = qaOutput ? await source.qaCompletion(artifactRun) : undefined;
         const evidenceRun = acceptance.inheritedSource?.run ?? run;
         const evidencePackage = acceptance.inheritedSource?.prPackage ?? preparedPackage;
-        if (run.flowType === 'pr-complete' && run.acceptanceContractVersion === 1)
-          completionHead = await source.prCompletionHead?.(run);
-        if (run.acceptanceProofHold && completionHead !== run.acceptanceProofHold.headSha)
-          throw new Error('Captured completion proof belongs to another pushed PR head');
-        const inputs = await source.recordedEvidence(
-          evidenceRun,
-          evidencePackage,
-          qa,
-          completionHead,
-        );
+        const inputs = await source.recordedEvidence(evidenceRun, evidencePackage, qa);
         if (!acceptance.inheritedSource && preparedPackage?.headSha) {
           const projection = projectClaimFindingSettlements(
             run,
@@ -745,24 +712,13 @@ export async function collectRunGateAssessment(
           }
         }
         const visualPolicy = await readVisualReviewPolicy(evidenceRun);
-        const completionReview =
-          !preparedPackage &&
-          run.flowType === 'pr-complete' &&
-          run.acceptanceContractVersion === 1 &&
-          run.acceptanceExecutionContract?.publicationReview;
-        if (completionReview && !completionHead)
-          completionHead = await source.prCompletionHead?.(run);
         const assessed = assessRecordedAcceptance({
           run: evidenceRun,
           acceptance,
           inputs,
           visualPolicy,
           qaOutput,
-          reviewBinding: acceptance.inheritedSource
-            ? 'approved'
-            : run.flowType === 'pr-complete' && !evidencePackage && !outputDecision
-              ? 'current'
-              : 'captured',
+          reviewBinding: acceptance.inheritedSource ? 'approved' : 'captured',
           claimOverrideReceiptIds:
             evidencePackage?.claimOverrideReceiptIds ??
             (outputDecision?.payload?.kind === 'output-review'
@@ -776,13 +732,7 @@ export async function collectRunGateAssessment(
           // Inherited proof uses the approved parent package and its recorded reviews.
           codeReviewCertified: acceptance.inheritedSource
             ? codeReviewCertifiesPackage(evidenceRun, evidencePackage)
-            : codeReviewCertifiesPackage(run, preparedPackage, validInputs) ||
-              (Boolean(completionReview) &&
-                codeReviewCertifiesPRCompletion(
-                  run,
-                  completionHead,
-                  (await source.prCompletionInputs?.(run))?.fingerprint,
-                )),
+            : codeReviewCertifiesPackage(run, preparedPackage, validInputs),
         });
         acceptance = assessed.acceptance;
         // An inherited ledger names the parent's execution; the payload keeps its own.
@@ -906,7 +856,7 @@ export async function collectRunGateAssessment(
         current.taskFile !== run.taskFile ||
         (current.engineState?.generation ?? 0) !== generation ||
         isTerminalRunStatus(current.status) ||
-        (current.status === 'paused' && !completionProofReview);
+        current.status === 'paused';
     } catch {
       // Failed recapture preserves the digest but retires its decision. The
       // owning snapshot verifier must refuse it before completion can advance.
@@ -919,7 +869,7 @@ export async function collectRunGateAssessment(
   }
   if (
     isTerminalRunStatus(run.status) ||
-    (run.status === 'paused' && !completionProofReview) ||
+    run.status === 'paused' ||
     (run.engineState?.generation ?? 0) !== generation ||
     outputInvalidated ||
     (getRun(run.id) ?? run).acceptanceRegistration?.revision !==
@@ -960,7 +910,6 @@ export async function collectRunGateAssessment(
           ? {
               acceptanceRevision,
               acceptanceContractRevision,
-              ...(completionHead ? { headSha: completionHead } : {}),
             }
           : {}),
         packageHash: preparedPackage?.packageHash,

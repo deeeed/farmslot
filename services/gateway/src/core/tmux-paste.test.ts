@@ -40,6 +40,38 @@ test('empty semantic input submits without allocating a paste buffer', async () 
   assert.match(trace.commands[1], /send-keys -t '%701' Enter/);
 });
 
+test('guarded input receives the resolved pane for paste and submit, while cleanup stays available', async () => {
+  const trace = executor();
+  const inputs: string[] = [];
+  await pasteTmuxText(vars, 'session:worker', 'Read the complete task path.', {
+    execute: trace.execute,
+    submitKey: 'Enter',
+    executeInput: async (paneId, command) => {
+      assert.equal(paneId, '%701');
+      inputs.push(command);
+      return success;
+    },
+  });
+  assert.equal(trace.commands.length, 2, 'only resolution and buffer creation bypass input guard');
+  assert.match(inputs[0]!, /paste-buffer -d -p.*-t '%701'/);
+  assert.match(inputs[1]!, /send-keys -t '%701' Enter/);
+
+  const failure = new Error('runner exited before paste');
+  await assert.rejects(
+    pasteTmuxText(vars, 'session:worker', 'do not send', {
+      execute: trace.execute,
+      executeInput: async () => {
+        throw failure;
+      },
+    }),
+    (error) => error === failure,
+  );
+  assert.ok(
+    trace.commands.at(-1)?.includes('delete-buffer'),
+    'buffer cleanup does not require a live runner',
+  );
+});
+
 test('paste without submit never sends an Enter key', async () => {
   const trace = executor();
   await pasteTmuxText(vars, '%701', 'draft', { execute: trace.execute });

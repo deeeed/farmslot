@@ -327,7 +327,6 @@ export async function syncTerminalContractForFlowOnSlot(
       ...(parent.acceptanceContractVersion === 1
         ? {
             acceptanceContractVersion: 1,
-            claimReviewSupported: parent.claimReviewSupported,
             acceptanceParentContract: WORKER_TERMINAL_CONTRACT_INPUT,
           }
         : {}),

@@ -202,9 +202,19 @@ mock.module('../methods/pr/raw-cache.js', {
 });
 const scoring = await import('../methods/dispatch/slot-scoring.js');
 const { automaticSlotLoads } = await import('../methods/dispatch/pressure-admission.js');
+let freshPreview = false;
 mock.module('../methods/dispatch.js', {
   namedExports: {
     ...scoring,
+    dispatchExecute: () => {
+      throw new Error('unexpected worker dispatch');
+    },
+    nudgeDispatch: () => {
+      throw new Error('unexpected nudge dispatch');
+    },
+    warmSessionHandoffDispatch: () => {
+      throw new Error('unexpected warm dispatch');
+    },
     resolveDispatchPreviewFromFleet: () => {
       throw new Error('unexpected dispatch queue');
     },
@@ -234,6 +244,13 @@ mock.module('../methods/dispatch.js', {
       _options: object,
     ) => {
       if (!run.slotId) assert.equal(params.targetBranch, expectedTarget);
+      if (freshPreview)
+        return resolveDispatchPreviewFromFleet(
+          { ...params, runner: 'codex', model: 'gpt-6.1-sol' },
+          slots,
+          undefined,
+          { pressureDecisions },
+        );
       const selected = run.slotId
         ? slots.find((slot) => slot.slot === run.slotId)
         : scoring.findBestSlot(slots, project, {
@@ -280,15 +297,18 @@ const safeIdle = await import('../run-lifecycle/safe-idle-slot.js');
 const reuseOutcomes = new Map<string, SafeIdleSlotResult>();
 const reuseCalls: string[] = [];
 let defaultReuseOutcome: SafeIdleSlotResult = { kind: 'ready' };
+let afterReuse: ((slotId: string) => void) | undefined;
 mock.module('../run-lifecycle/safe-idle-slot.js', {
   namedExports: {
     ...safeIdle,
     reuseSafeIdleSlot: async (slotId: string) => {
       reuseCalls.push(slotId);
+      afterReuse?.(slotId);
       return reuseOutcomes.get(slotId) ?? defaultReuseOutcome;
     },
   },
 });
+const { resolveDispatchPreviewFromFleet } = await import('../methods/dispatch/preview.js');
 const { executeFindSlotStep } = await import('./find-slot-step.js');
 
 function reset(flowType: Run['flowType'], ticketOrPr: string): void {
@@ -327,6 +347,8 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   reuseOutcomes.clear();
   defaultReuseOutcome = { kind: 'ready' };
   reuseCalls.length = 0;
+  freshPreview = false;
+  afterReuse = undefined;
   liveRows.clear();
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
@@ -548,6 +570,44 @@ test('find-slot wakes when a cool allowed slot becomes free while the original n
   assert.deepEqual(loadWaits, [5_000]);
   assert.deepEqual(refreshedSlots, [newlyFree.slot]);
 });
+
+for (const alternateStaysCool of [true, false]) {
+  test(`find-slot queues a final-preview load change and ${alternateStaysCool ? 'reselects a cool allowed slot' : 'waits until an allowed node cools'}`, async () => {
+    reset('dev', 'TAT-3216');
+    const first = slots[0]!;
+    const alternate = slots[2]!;
+    first.branch = alternate.branch = 'main';
+    alternate.lifecycle = 'ready';
+    alternate.agent = 'idle';
+    run.allowedSlots = [first.slot, alternate.slot];
+    expectedTarget = undefined;
+    expectedSlot = alternateStaysCool ? alternate.slot : first.slot;
+    freshPreview = true;
+    pressureDecisions = new Map([
+      [first.machine, loadDecision(first.machine, 0.2)],
+      [alternate.machine, loadDecision(alternate.machine, 0.4)],
+    ]);
+    afterReuse = () => {
+      afterReuse = undefined;
+      // Safe reuse awaits remote checks; load may cross the limit before final preview.
+      pressureDecisions.set(first.machine, loadDecision(first.machine, 1.72));
+      if (!alternateStaysCool)
+        pressureDecisions.set(alternate.machine, loadDecision(alternate.machine, 1.8));
+    };
+    afterLoadWait = () => {
+      assert.equal(loadWaits.length, 1);
+      assert.deepEqual(claims, [], 'overloaded selection must never claim a slot');
+      if (!alternateStaysCool)
+        pressureDecisions.set(first.machine, loadDecision(first.machine, 0.2));
+    };
+    const result = await executeFindSlotStep(run.id, run, 0, context);
+    assert.equal(result.outputs?.selectedSlot, expectedSlot);
+    assert.deepEqual(loadWaits, [5_000]);
+    assert.deepEqual(reuseCalls, [first.slot, expectedSlot]);
+    assert.deepEqual(claims, [expectedSlot]);
+    assert.deepEqual(run.allowedSlots, [first.slot, alternate.slot]);
+  });
+}
 
 test('find-slot replans a recovered same-ref source while the original node stays hot', async () => {
   reset('fix-bug', 'TAT-4137');

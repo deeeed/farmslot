@@ -6,6 +6,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 - Verify shared source trees once per status read while retaining every receipt and fresh drift checks on later reads and executions.
 
+- Extract exact Pi assistant tokens and runner-reported session cost.
+
 - Resolve remote reopen, resource hooks and directory fixtures through the slot pool workspace while preserving captured sources and local repo roots.
 
 - Validate dynamic project approvalPolicy overrides.

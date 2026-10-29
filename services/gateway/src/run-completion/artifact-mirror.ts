@@ -24,7 +24,7 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
-import { execArgvOnSlot } from '../core/exec.js';
+import { execArgvOnSlot, isLocal } from '../core/exec.js';
 import {
   type LatestValidRecipeRunPointer,
   sanitizeLatestValidRecipeRunPointer,
@@ -658,6 +658,24 @@ export async function refreshArtifactMirror(
     invalidateArtifactTextCache(localArtifactsDir, run.slotId);
     invalidateArtifactTextCache(workerArtifactsDir, run.slotId);
     invalidateLiveRecipeContextMemo(run.id);
+
+    const workerActionsDir = path.join(workerTaskDir, 'task-actions');
+    const localActionsDir = path.join(taskDir, 'task-actions');
+    // A dedicated mirror must reflect deletions, but a local self-copy is already current.
+    if (
+      !isLocal(vars.host, vars.machine) ||
+      path.resolve(workerActionsDir) !== path.resolve(localActionsDir)
+    ) {
+      await rm(localActionsDir, { recursive: true, force: true });
+      if (await slotFileExists(vars, workerActionsDir)) {
+        copied += await slotCopyDir(vars, workerActionsDir, localActionsDir, {
+          skipUnchanged: true,
+          phase: 'mirror',
+          ...transferMeta,
+          labelPrefix: 'task-actions',
+        });
+      }
+    }
 
     // Copy TASK.md and CHECKLIST.md back (worker may have updated status or checkboxes)
     for (const document of ['TASK.md', 'CHECKLIST.md']) {

@@ -28,7 +28,13 @@ export const TASK_ROOT_SIDECARS = [
  * warm-session handoff. One list so the three cannot drift — `subtasks/`
  * (ADR-060) was the copy a fourth hand-maintained array would have missed.
  */
-export const TASK_DIR_COPIED_SUBDIRS = ['assets', 'inputs', 'artifacts', SUBTASKS_DIR] as const;
+export const TASK_DIR_COPIED_SUBDIRS = [
+  'assets',
+  'inputs',
+  'artifacts',
+  SUBTASKS_DIR,
+  'task-actions',
+] as const;
 
 /**
  * Suffix of the orchestrator-side worker mirror (`CHECKLIST.md.worker`,

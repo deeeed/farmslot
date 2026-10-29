@@ -314,7 +314,8 @@ test('capture follows the existing narrative report names for every flow', async
     await captureRunOutput(run.id, false);
     const captured = getRun(run.id)!;
     assert.equal(captured.output?.reportPath, `artifacts/${name}`, flowType);
-    assert.equal(captured.decisions[0].payload?.kind, 'output-review', flowType);
+    if (flowType === 'pr-complete') assert.equal(captured.decisions.length, 0);
+    else assert.equal(captured.decisions[0].payload?.kind, 'output-review', flowType);
     if (name !== 'report.md') {
       await writeFile(path.join(dir, 'artifacts', name), '  \n');
       await captureRunOutput(run.id, false);

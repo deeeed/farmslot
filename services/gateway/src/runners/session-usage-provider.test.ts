@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { emptyIncrementalSessionUsageState } from '@farmslot/slot-config';
@@ -44,4 +45,23 @@ test('Codex provider uses cumulative token events and assistant turns', () => {
 test('unsupported runners have no session-usage provider', () => {
   assert.equal(getRunnerSessionUsageProvider('grok'), null);
   assert.equal(getRunnerSessionUsageProvider('scripted'), null);
+});
+
+test('Pi provider counts per-message usage from a sanitized real session without double-counting caches', () => {
+  const provider = getRunnerSessionUsageProvider('pi');
+  assert.ok(provider);
+  assert.equal(provider.restatesSessionTotals, false);
+  let state = emptyIncrementalSessionUsageState();
+  const fixture = readFileSync(
+    new URL('../../../../packages/slot-config/test/fixtures/pi-session.jsonl', import.meta.url),
+    'utf8',
+  );
+  for (const line of fixture.trim().split('\n'))
+    state = provider.applyRecord(state, JSON.parse(line));
+  assert.equal(state.turns, 3);
+  assert.equal(state.inputTokens, 8);
+  assert.equal(state.outputTokens, 742);
+  assert.equal(state.cacheRead, 58613);
+  assert.equal(state.cacheCreation, 38822);
+  assert.equal(state.totalTokens, 98185);
 });

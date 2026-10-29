@@ -28,8 +28,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Register memory-only PR automation, assessment, analytics and shared copilot observations with canonical selectors and scoped change dependencies.
 
-- Allow a stored run snapshot for progressive display without verifying live action readiness, and keep workspace inspections fresh through slow fleet reads with a shared two-minute bound.
-
 - Allow combined findings approval and evidence attestation when every review reason explicitly permits accepting findings.
 
 - Share one navigation-only current-view link model across Companion and Command Center, with explicit HTTPS deployment bindings and unavailable reasons.
@@ -53,6 +51,16 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Add the opt-in node file-watch observation contract for explicit deletion and read failures, retaining the existing content-event shape for coordinated node and gateway upgrades.
 
 - Add the experimental ADR-071 resource query cache and store seam, persisted Sources/run/decision/fleet/node/capability/progress observations with shared retention bounds, bounded native history with mobile-compatible cancellation and reader-private native keys, revision stamps, change event, and principal-generation capability contract for coordinated client and gateway releases. Accepted observations remain saved when a connection pauses or a view closes. Automatic refetches respect declared family publish intervals even across slow replies; deferred reads retire with their observers and connection. Saved facts hydrate through offline reconnect attempts, while authority changes fence pending storage reads. Fleet observations share one 2 MB query and leave force-refresh commands outside the cache. Read errors survive disconnects, and saved-data refreshes retain the last failure until a successful replacement arrives. A source change during a failed read schedules one replacement read; authority and not-found refusals remain final. Register bounded backlog, roadmap, work-graph, dispatch-queue and project collections with canonical planning/configuration keys. Project configuration persists within one aggregate 2 MiB bound; previews and registration metadata stay in memory, and commands stay outside cached queries.
+
+## 0.74.0 - 2026-10-28
+
+- PR completion retains evidence without adding reviewer or captured-output holds.
+
+## 0.73.2 - 2026-10-28
+
+- Show only explicit run ticket references; headings and acceptance criteria no longer add tickets.
+
+- Allow a stored run snapshot for progressive display without verifying live action readiness, and keep workspace inspections fresh through slow fleet reads with a shared two-minute bound.
 
 ## 0.73.1 - 2026-10-26
 

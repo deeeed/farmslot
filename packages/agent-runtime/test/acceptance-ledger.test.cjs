@@ -76,7 +76,7 @@ test('per-flow acceptance overrides inherit unspecified contract keys', () => {
   );
 });
 
-test('follow-up closeout accepts a matching parent reference without manufacturing a task ledger', (t) => {
+test('PR completion keeps original criteria as evidence without requiring parent qualification', (t) => {
   const dir = taskFixture(t, {
     attemptId: 'child-run',
     flow: 'pr-complete',
@@ -111,7 +111,7 @@ test('follow-up closeout accepts a matching parent reference without manufacturi
     { childRunId: undefined },
   ]) {
     writeFileSync(file, JSON.stringify({ ...reference, ...patch }));
-    assert.match(acceptanceContractIssues(dir).join(' '), /does not match/);
+    assert.deepEqual(acceptanceContractIssues(dir), []);
   }
   writeFileSync(file, JSON.stringify(reference));
   writeFileSync(
@@ -121,8 +121,7 @@ test('follow-up closeout accepts a matching parent reference without manufacturi
     ),
   );
   const fresh = check(dir, '--contract', contract, '--terminal', 'complete');
-  assert.equal(fresh.status, 1);
-  assert.match(fresh.stderr, /acceptance-status.json is missing/);
+  assert.equal(fresh.status, 0, fresh.stderr);
 });
 
 test('read commands retain the registered order and unassessed rows', (t) => {
@@ -408,4 +407,147 @@ test('unreadable handoffs and ledgers fail completion with their original cause'
   assert.ok(acceptanceContractIssues(dir).some((issue) => /invalid JSON/.test(issue)));
   const none = taskFixture(t, { task: { title: 'No registered criteria' } });
   assert.deepEqual(acceptanceContractIssues(none), []);
+});
+
+test('PR completion never blocks on unbound original visual evidence', (t) => {
+  const dir = taskFixture(t, { flow: 'pr-complete', task: { acceptanceCriteria: CRITERIA } });
+  assert.deepEqual(acceptanceContractIssues(dir), []);
+  const ledger = engineClaims(CRITERIA, ['missing', 'awaiting-review', 'failed']);
+  ledger.criteria.forEach((row) => {
+    row.proofMode = 'visual';
+  });
+  writeFileSync(ledgerFile(dir), JSON.stringify(ledger));
+  assert.deepEqual(acceptanceContractIssues(dir), []);
+  assert.deepEqual(
+    acceptanceStatusList(dir).map(({ verdict }) => verdict),
+    ['missing', 'awaiting-review', 'failed'],
+  );
+});
+
+test('PR completion still requires worker proof for derived requirements without waiting on reviewers', (t) => {
+  const dir = taskFixture(t, {
+    attemptId: 'completion',
+    flow: 'pr-complete',
+    task: { acceptanceCriteria: ['Original visual AC'] },
+  });
+  writeFileSync(
+    path.join(dir, 'inputs/acceptance-registration.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      generation: 0,
+      registration: {
+        schemaVersion: 1,
+        runId: 'completion',
+        revision: 1,
+        original: [{ id: 'AC-1', text: 'Original visual AC' }],
+        derived: [
+          {
+            id: 'AC-2',
+            text: 'Fix the reported finding',
+            proofMode: 'state',
+            source: {
+              kind: 'review-comment',
+              sourceId: 'comment:1',
+              sourceVersion: '1',
+              obligationIndex: 0,
+            },
+          },
+        ],
+        units: [],
+      },
+    }),
+  );
+  assert.match(acceptanceContractIssues(dir).join(';'), /acceptance-status.json is missing/);
+  const ledger = engineClaims(
+    ['Original visual AC', 'Fix the reported finding'],
+    ['missing', 'failed'],
+  );
+  writeFileSync(ledgerFile(dir), JSON.stringify(ledger));
+  assert.match(acceptanceContractIssues(dir).join(';'), /AC-2 is failed/);
+  assert.match(
+    acceptanceContractIssues(dir, { deferClaimVerdicts: true }).join(';'),
+    /AC-2 is failed/,
+  );
+  ledger.criteria[1].verdict = 'proven';
+  writeFileSync(ledgerFile(dir), JSON.stringify(ledger));
+  assert.deepEqual(acceptanceContractIssues(dir), []);
+  for (const mode of ['visual', 'mixed', 'review']) {
+    const projection = JSON.parse(
+      readFileSync(path.join(dir, 'inputs/acceptance-registration.json'), 'utf8'),
+    );
+    projection.registration.derived[0].proofMode = mode;
+    writeFileSync(
+      path.join(dir, 'inputs/acceptance-registration.json'),
+      JSON.stringify(projection),
+    );
+    ledger.criteria[1].proofMode = mode;
+    ledger.criteria[1].verdict = 'awaiting-review';
+    writeFileSync(ledgerFile(dir), JSON.stringify(ledger));
+    assert.deepEqual(acceptanceContractIssues(dir), [], mode);
+  }
+});
+
+test('PR completion CI-fix checks its own report without requiring reviews of shared criteria', (t) => {
+  const dir = taskFixture(t, {
+    attemptId: 'completion',
+    flow: 'pr-complete',
+    task: { acceptanceCriteria: ['Original review AC'] },
+  });
+  writeFileSync(
+    path.join(dir, 'inputs/acceptance-registration.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      generation: 0,
+      registration: {
+        schemaVersion: 1,
+        runId: 'completion',
+        revision: 1,
+        original: [{ id: 'AC-1', text: 'Original review AC' }],
+        derived: [
+          {
+            id: 'AC-2',
+            text: 'Fix review',
+            proofMode: 'review',
+            source: {
+              kind: 'review-comment',
+              sourceId: 'comment:1',
+              sourceVersion: '1',
+              obligationIndex: 0,
+            },
+          },
+        ],
+        units: [],
+      },
+    }),
+  );
+  const ledger = engineClaims(
+    ['Original review AC', 'Fix review'],
+    ['awaiting-review', 'awaiting-review'],
+  );
+  ledger.criteria.forEach((row) => {
+    row.proofMode = 'review';
+  });
+  writeFileSync(ledgerFile(dir), JSON.stringify(ledger));
+  const contract = path.join(dir, 'inputs/ci-fix-worker-terminal-contract.json');
+  writeFileSync(
+    contract,
+    JSON.stringify({
+      schemaVersion: 1,
+      flowType: 'ci-fix',
+      publicationReview: false,
+      commands: {
+        complete: {
+          report: 'artifacts/ci-fix-report.md',
+          artifacts: ['artifacts/ci-fix-report.md'],
+        },
+      },
+    }),
+  );
+  const refused = check(dir, '--contract', contract, '--terminal', 'complete');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /ci-fix-report.md/);
+  assert.doesNotMatch(refused.stderr, /no code review/);
+  writeFileSync(path.join(dir, 'artifacts/ci-fix-report.md'), 'Scoped fix checks passed.');
+  const completed = check(dir, '--contract', contract, '--terminal', 'complete');
+  assert.equal(completed.status, 0, completed.stderr);
 });

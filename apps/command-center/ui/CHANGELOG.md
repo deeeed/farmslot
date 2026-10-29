@@ -30,6 +30,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Keep the last 200 conversation messages for ten sessions in the shared offline store, with saved age, read retries and disabled stale controls. Restore both workspace types offline and keep conversation controls visible beside a scrolling transcript.
 
+- Keep the run Tickets row for ticket references; the PR link remains in Links.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.0 - 2026-10-27

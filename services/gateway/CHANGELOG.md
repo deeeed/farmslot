@@ -18,6 +18,19 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Cached fleet reads return completed workspace observations at once, publish each background change, and show a failed inspection's last workspace as unverified.
 
+- Include every Pi worker session and fix round once in run token and cost totals, excluding reviewers.
+
+- Capture Pi worker session paths and recover their exact tokens and reported cost in family views.
+
+- Warn about selected CLI and protocol package version differences during worker launch, while continuing retained-source and wire checks.
+- Complete PR follow-ups without visual or reviewer holds, retaining linked criteria and evidence.
+- Initialize and verify hosted tasks with the slot's selected provider environment, so a stale gateway provider cannot override the pool selection.
+- Keep run ticket lists tied to explicit references instead of inferring Jira keys from PR body text.
+- Preserve long Codex task paths with a task-local dispatch prompt and guarded bracketed paste for post-launch delivery and recovery, retaining exact acknowledgement checks.
+- Keep automatic placement queued when node load rises during safe slot reuse, and reconsider the originally allowed slots.
+- Retain task-local recipe actions with run artifacts and restore them when a follow-up inherits the recipe, including on another node; reject inheritance when required action files are unavailable.
+- Check the repository's declared or lockfile-selected npm, Yarn or pnpm during worker launch, so npm Terminal checkouts do not require unrelated Yarn shims.
+
 - Refuse worker launch when a declared toolchain command exits unsuccessfully, including an installed Yarn shim with no version for the pinned Node.
 
 - Send refused completion feedback to the retained worker and wait for a new signal before checking completion again.

@@ -51,6 +51,8 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
   await writeFile(taskFile, '# mirror test\n');
   await writeFile(path.join(workerTaskDir, 'TASK.md'), '# mirror test\n');
+  await mkdir(path.join(workerTaskDir, 'task-actions/actions'), { recursive: true });
+  await writeFile(path.join(workerTaskDir, 'task-actions/actions/probe.cjs'), 'worker action\n');
   await writeFile(path.join(workerTaskDir, 'artifacts/report.md'), 'worker report\n');
   await writeFile(path.join(workerTaskDir, 'artifacts/after.png'), 'fresh worker image\n');
   await mkdir(path.join(workerTaskDir, 'artifacts/publication-packages'), { recursive: true });
@@ -130,6 +132,10 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   );
   assert.equal(copied >= 2, true);
   assert.equal(existsSync(path.join(taskDir, 'artifacts/after.png')), true);
+  assert.equal(
+    await readFile(path.join(taskDir, 'task-actions/actions/probe.cjs'), 'utf8'),
+    'worker action\n',
+  );
   assert.equal(existsSync(path.join(taskDir, 'artifacts/review-2.json')), true);
   assert.equal(existsSync(path.join(taskDir, 'artifacts/review-2.md')), true);
   assert.equal(
@@ -238,6 +244,14 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
     await readFile(path.join(taskDir, 'artifacts/pr-package.json'), 'utf8'),
     '{"gateway":true}\n',
   );
+  const refresh = () =>
+    refreshArtifactMirror(makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile }));
+  await rm(path.join(workerTaskDir, 'task-actions/actions/probe.cjs'));
+  await refresh();
+  assert.equal(existsSync(path.join(taskDir, 'task-actions/actions/probe.cjs')), false);
+  await rm(path.join(workerTaskDir, 'task-actions'), { recursive: true });
+  await refresh();
+  assert.equal(existsSync(path.join(taskDir, 'task-actions')), false);
 });
 
 // Local-branch integrity for refreshArtifactMirror (fs.copyFile). Remote multi-chunk

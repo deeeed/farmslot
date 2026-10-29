@@ -466,6 +466,63 @@ async function summarizeCodex(filePath: string): Promise<SessionTotals> {
   return totals;
 }
 
+export interface PiAssistantUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreation: number;
+  cacheRead: number;
+  totalTokens: number;
+  costUsd: number | null;
+  model: string | null;
+}
+
+/** Pi reports separate, per-message token categories and its own dollar cost. */
+export function readPiAssistantUsage(record: Record<string, unknown>): PiAssistantUsage | null {
+  const message = record.message;
+  if (record.type !== 'message' || !message || typeof message !== 'object') return null;
+  if (!('role' in message) || message.role !== 'assistant' || !('usage' in message)) return null;
+  const usage = message.usage;
+  if (!usage || typeof usage !== 'object') return null;
+  const number = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const inputTokens = number('input' in usage ? usage.input : null) ?? 0;
+  const outputTokens = number('output' in usage ? usage.output : null) ?? 0;
+  const cacheCreation = number('cacheWrite' in usage ? usage.cacheWrite : null) ?? 0;
+  const cacheRead = number('cacheRead' in usage ? usage.cacheRead : null) ?? 0;
+  const cost = 'cost' in usage ? usage.cost : null;
+  return {
+    inputTokens,
+    outputTokens,
+    cacheCreation,
+    cacheRead,
+    totalTokens: inputTokens + outputTokens + cacheCreation + cacheRead,
+    costUsd: cost && typeof cost === 'object' && 'total' in cost ? number(cost.total) : null,
+    model: 'model' in message && typeof message.model === 'string' ? message.model : null,
+  };
+}
+
+async function summarizePi(filePath: string): Promise<SessionTotals> {
+  const totals = emptyTotals();
+  let cost = 0;
+  let completeCost = true;
+  for await (const record of safeJsonLines(filePath)) {
+    const usage = readPiAssistantUsage(record);
+    if (!usage) continue;
+    totals.turns += 1;
+    totals.input_tokens += usage.inputTokens;
+    totals.output_tokens += usage.outputTokens;
+    totals.cache_creation += usage.cacheCreation;
+    totals.cache_read += usage.cacheRead;
+    totals.total_tokens += usage.totalTokens;
+    if (usage.model) totals.model = usage.model;
+    if (usage.costUsd === null) completeCost = false;
+    else cost += usage.costUsd;
+  }
+  if (totals.turns === 0) throw new Error('ERROR: Pi transcript contains no assistant usage');
+  totals.cost_usd = completeCost ? cost : null;
+  return totals;
+}
+
 // ─── Grok summarizer ──────────────────────────────────────────────────────────
 
 async function summarizeGrok(sessionPath: string, home: string): Promise<SessionTotals> {
@@ -573,6 +630,7 @@ async function summarize(
 ): Promise<SessionTotals> {
   if (runner === 'claude') return summarizeClaude(sessionPath);
   if (runner === 'codex') return summarizeCodex(sessionPath);
+  if (runner === 'pi') return summarizePi(sessionPath);
   if (runner === 'grok') return summarizeGrok(sessionPath, home);
   if (runner === 'cursor') return summarizeCursor(sessionPath);
   throw new Error(`ERROR: Unsupported runner for usage extraction: ${runner}`);

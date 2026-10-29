@@ -19,7 +19,6 @@ import {
   acceptAcceptanceDerivation,
   AcceptanceDerivationRefusal,
   acceptanceInstructionPrompt,
-  acceptanceProofDestinations,
   parseAcceptanceDerivationResult,
 } from './acceptance-registration.js';
 import { readSubtaskIndex } from './subtasks.js';
@@ -101,12 +100,6 @@ export async function syncAcceptanceRegistration(
             'Acceptance derivation child identity or first step differs',
           );
         const result = parseAcceptanceDerivationResult(signal.acceptanceDerivation);
-        acceptanceProofDestinations(
-          result.classifications.flatMap(({ obligations }) =>
-            obligations.map(({ proofMode }) => proofMode),
-          ),
-          run,
-        );
         if (result.unitId !== unit.id)
           throw new AcceptanceDerivationRefusal(
             'Acceptance derivation result names a different child',

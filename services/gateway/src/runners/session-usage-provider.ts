@@ -1,4 +1,11 @@
-import type { IncrementalSessionUsageState } from '@farmslot/slot-config';
+import type { Run } from '@farmslot/protocol';
+import { type IncrementalSessionUsageState, readPiAssistantUsage } from '@farmslot/slot-config';
+
+export interface RecoveredUsageSession {
+  contextId: string;
+  runnerSessionId: string;
+  runnerSessionPath: string;
+}
 
 /**
  * Runner-specific transcript accounting.
@@ -20,6 +27,8 @@ export interface RunnerSessionUsageProvider {
    * happens inside the provider.
    */
   readonly restatesSessionTotals: boolean;
+  /** Unique worker sessions, including fix rounds, from exact role/session metadata. */
+  recoverSessions?(run: Run): Promise<RecoveredUsageSession[]>;
   applyRecord(
     state: IncrementalSessionUsageState,
     record: Record<string, unknown>,
@@ -139,3 +148,24 @@ export const codexSessionUsageProvider: RunnerSessionUsageProvider = {
   restatesSessionTotals: true,
   applyRecord: codexApplyRecord,
 };
+
+export const piSessionUsageProvider = {
+  id: 'pi-jsonl',
+  restatesSessionTotals: false,
+  async recoverSessions(run) {
+    return (await import('./pi-observability.js')).recoverPiUsageSessions(run);
+  },
+  applyRecord(state, record) {
+    const usage = readPiAssistantUsage(record);
+    if (!usage) return state;
+    return {
+      ...state,
+      turns: state.turns + 1,
+      inputTokens: state.inputTokens + usage.inputTokens,
+      outputTokens: state.outputTokens + usage.outputTokens,
+      cacheCreation: state.cacheCreation + usage.cacheCreation,
+      cacheRead: state.cacheRead + usage.cacheRead,
+      totalTokens: state.totalTokens + usage.totalTokens,
+    };
+  },
+} satisfies RunnerSessionUsageProvider;

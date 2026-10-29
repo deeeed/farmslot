@@ -15,13 +15,6 @@ export interface AcceptanceExecutionContract {
   baseContractHash: string;
   proofModes: Array<AcceptanceCriterionRef & { proofMode: AcceptanceProofMode }>;
   inheritedCriterionIds: string[];
-  claimReviewGate: boolean;
-  publicationReview: boolean;
-}
-
-export interface AcceptanceReviewCriterion extends AcceptanceCriterionRef {
-  proofMode: 'review';
-  definitionHash: string;
 }
 
 export interface AcceptanceDerivationSource {

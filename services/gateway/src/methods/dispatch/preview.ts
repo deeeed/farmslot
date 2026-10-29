@@ -76,6 +76,8 @@ import {
   activeRunIds,
   activeRunSlotIds,
   automaticSlotLoadBlocker,
+  automaticSlotLoadWait,
+  AutomaticSlotLoadWaitError,
   companionResourceBlocker,
   compareSlotLoads,
   findBestSlot,
@@ -1476,9 +1478,13 @@ export function resolveDispatchPreviewFromFleet(
               : (validateSlotForDispatch(s, slots, scoped) ?? 'unknown blocker');
         return `${s.slot}: ${blocker} (lifecycle=${s.lifecycle}, phase=${s.phase}, agent=${s.agent})`;
       });
-      throw new Error(
-        `No dispatchable slots for project ${params.project}:\n${reasons.join('\n')}`,
-      );
+      const message = `No dispatchable slots for project ${params.project}:\n${reasons.join('\n')}`;
+      for (const slot of projectSlots) {
+        const scoped = slotSelectionOptionsFor(slot, selectionOptions);
+        const wait = scoped ? automaticSlotLoadWait(slot, slots, scoped) : null;
+        if (wait) throw new AutomaticSlotLoadWaitError(message, wait);
+      }
+      throw new Error(message);
     }
     slotInfo = best;
   }
