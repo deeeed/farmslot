@@ -43,6 +43,9 @@ test('Pi discovery and role recovery separate the real worker and later fix sess
   }
   const worker = session('worker', '2026-10-28T12:56:59.228Z');
   const fix = session('fix', '2026-10-28T14:04:59.046Z');
+  const secondFix = session('second-fix', '2026-10-28T14:45:39.189Z');
+  session('pi-reviewer', '2026-10-28T14:42:00.000Z');
+  session('next-task', '2026-10-28T16:00:00.000Z');
   session('foreign', '2026-10-28T12:57:00.000Z', path.join(home, 'other-repo'));
   session('other-pane', '2026-10-28T12:57:01.000Z', repo, '%8');
   const run = (scope: Parameters<typeof buildPiSessionDiscoveryCommand>[1]) =>
@@ -70,5 +73,19 @@ test('Pi discovery and role recovery separate the real worker and later fix sess
       endedAt: Date.parse('2026-10-28T14:10:00Z'),
     }),
     [fix],
+  );
+  assert.deepEqual(
+    run({
+      ...scope,
+      startedAt: Date.parse('2026-10-28T14:04:57.484Z'),
+      endedAt: Date.parse('2026-10-28T14:57:36.409Z'),
+      reviewerIntervals: [
+        {
+          startedAt: Date.parse('2026-10-28T14:40:45.947Z'),
+          endedAt: Date.parse('2026-10-28T14:45:36.284Z'),
+        },
+      ],
+    }),
+    [fix, secondFix],
   );
 });

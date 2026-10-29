@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Include every Pi worker session and fix round once in run token and cost totals, excluding reviewers.
+
 - Capture Pi worker session paths and recover their exact tokens and reported cost in family views.
 
 - Warn about selected CLI and protocol package version differences during worker launch, while continuing retained-source and wire checks.

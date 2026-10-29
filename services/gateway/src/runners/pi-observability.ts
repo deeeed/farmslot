@@ -1,6 +1,5 @@
 import { primaryRoleForFlow, type Run } from '@farmslot/protocol';
 
-import { selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 
@@ -19,6 +18,7 @@ interface PiSessionScope {
   slotId?: string;
   startedAt?: number;
   endedAt?: number;
+  reviewerIntervals?: Array<{ startedAt: number; endedAt: number }>;
 }
 
 /** Read only Pi-owned session headers and, for recovery, the exact pane/session snapshot. */
@@ -40,6 +40,8 @@ for file in (home / '.pi' / 'agent' / 'sessions').glob('*/*.jsonl'):
         if scope.get('observabilityDir'):
             started = datetime.datetime.fromisoformat(header['timestamp'].replace('Z', '+00:00')).timestamp() * 1000
             if started < scope['startedAt'] or started >= scope['endedAt']:
+                continue
+            if any(interval['startedAt'] <= started < interval['endedAt'] for interval in scope.get('reviewerIntervals', [])):
                 continue
             session = file.stem
             snapshot = json.loads((Path(scope['observabilityDir']) / 'sessions' / (quote(session, safe='') + '.json')).read_text())
@@ -69,39 +71,56 @@ export function createPiHookObservability(): RunnerObservability {
   };
 }
 
-/** Old Pi hooks omitted transcript_path. Recover only one session in the owning role's interval. */
-export async function recoverPiUsageSession(run: Run): Promise<RecoveredUsageSession | null> {
-  const context = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
-  if (!context) return null;
-  const retained = resolveRunRetainedSessionBinding(run, context);
-  if (retained.binding) return { contextId: context.id, ...retained.binding };
-  if (retained.incompleteBinding) return null;
-  const paneId = context?.target && contextPaneId(context.target);
-  const startedAt = Date.parse(context?.startedAt ?? '');
-  if (!run.slotId || !context || !paneId || !Number.isFinite(startedAt)) return null;
-  const endedAt = Math.min(
-    Date.now(),
-    ...(run.agentContexts ?? [])
-      .filter((peer) => peer.id !== context.id)
-      .map((peer) => Date.parse(peer.startedAt ?? ''))
-      .filter((time) => time > startedAt),
-  );
+/** A reused fix context can own several Pi sessions. Reviewers never enter its rollup. */
+export async function recoverPiUsageSessions(run: Run): Promise<RecoveredUsageSession[]> {
+  if (!run.slotId) return [];
+  const primaryRole = primaryRoleForFlow(run.flowType);
+  const contexts = run.agentContexts ?? [];
+  const runEnd = Math.min(Date.now(), Date.parse(run.completedAt ?? '') || Infinity);
+  const reviewerIntervals = contexts
+    .filter((context) => context.role === 'review' && primaryRole !== 'review')
+    .map((context) => ({
+      startedAt: Date.parse(context.startedAt ?? ''),
+      endedAt: Date.parse(context.completedAt ?? '') || runEnd,
+    }))
+    .filter((interval) => Number.isFinite(interval.startedAt));
+  const sessions = new Map<string, RecoveredUsageSession>();
   const vars = await loadSlotVars(run.slotId);
-  const result = await execOnSlot(
-    vars,
-    buildPiSessionDiscoveryCommand(vars.remoteRepo, {
-      observabilityDir: await runnerObservabilityDirForSlot(vars),
-      paneId,
-      slotId: run.slotId,
-      startedAt,
-      endedAt,
-    }),
-    { timeout: 10_000, selectNodeSupport: false },
-  );
-  if (result.exitCode !== 0) throw new Error('Pi usage session recovery failed');
-  const paths: string[] = JSON.parse(result.stdout);
-  if (paths.length !== 1) return null;
-  const runnerSessionPath = paths[0];
-  const runnerSessionId = runnerSessionIdForPath(runnerSessionPath);
-  return { contextId: context.id, runnerSessionId, runnerSessionPath };
+  for (const context of contexts) {
+    if (context.runner !== 'pi' || ![primaryRole, 'review-fix', 'ci-fix'].includes(context.role))
+      continue;
+    const retained = resolveRunRetainedSessionBinding(run, context);
+    if (retained.binding) {
+      sessions.set(retained.binding.runnerSessionPath, {
+        contextId: context.id,
+        ...retained.binding,
+      });
+    }
+    const paneId = context.target && contextPaneId(context.target);
+    const startedAt = Date.parse(context.startedAt ?? '');
+    if (retained.incompleteBinding || !paneId || !Number.isFinite(startedAt)) continue;
+    const endedAt = Math.min(runEnd, Date.parse(context.completedAt ?? '') || Infinity);
+    const result = await execOnSlot(
+      vars,
+      buildPiSessionDiscoveryCommand(vars.remoteRepo, {
+        observabilityDir: await runnerObservabilityDirForSlot(vars),
+        paneId,
+        slotId: run.slotId,
+        startedAt,
+        endedAt,
+        reviewerIntervals,
+      }),
+      { timeout: 10_000, selectNodeSupport: false },
+    );
+    if (result.exitCode !== 0) throw new Error('Pi usage session recovery failed');
+    const paths: string[] = JSON.parse(result.stdout);
+    for (const runnerSessionPath of paths) {
+      sessions.set(runnerSessionPath, {
+        contextId: context.id,
+        runnerSessionId: runnerSessionIdForPath(runnerSessionPath),
+        runnerSessionPath,
+      });
+    }
+  }
+  return [...sessions.values()];
 }

@@ -22,6 +22,7 @@ import { ghRequest } from '../integrations/github-client.js';
 import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
 import {
   assertReadyGatePackageInputsCurrent,
+  extractAndPersistSessionCost,
   isArtifactOnlyRun,
   publicationStatusForRun,
   publishCompletionPackage,
@@ -38,6 +39,7 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import { rerequestChangesRequestedReviewers } from '../run-completion/review-rerequest.js';
+import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { commitRunPublication, getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -206,41 +208,54 @@ export async function executeFinalizeStep(
   let session: Record<string, unknown> | undefined;
   try {
     const vars = await loadSlotVars(current.slotId);
-    const runner = current.metrics.runner;
-    const resolved = runner && current ? await resolveRunnerSessionForRun(current, vars) : null;
-    let runnerSessionPath = resolved?.runnerSessionPath ?? current.metrics.runnerSessionPath;
-    if (resolved && runnerSessionPath) {
-      updateRun(runId, {
-        metrics: {
-          ...current.metrics,
-          runnerSessionPath,
-          runnerSessionId: resolved.runnerSessionId,
-        },
-      });
-    }
-    const usageEnv = runnerSessionPath
-      ? `RUNNER_SESSION_PATH='${runnerSessionPath.replace(/'/g, `'\\''`)}' RUNNER_SESSION_RUNNER='${(runner ?? '').replace(/'/g, `'\\''`)}' `
-      : '';
-    const cmd = `${usageEnv}bash "${farmslotRoot}/scripts/session-usage.sh" '${current.slotId}' total 2>/dev/null`;
-    const result = isLocal(vars.host, vars.machine)
-      ? await execLocal(cmd, { timeout: 15000 })
-      : await execLocal(`ssh ${SSH_CONNECT_SHELL_OPTIONS} ${vars.sshTarget} "${cmd}"`, {
-          timeout: 15000,
+    if (getRunnerSessionUsageProvider(current.metrics.runner)?.recoverSessions) {
+      const usage = await extractAndPersistSessionCost(runId);
+      session = {
+        cost_usd: usage.costUsd,
+        total_tokens: usage.totalTokens,
+        input_tokens: usage.inputTokens,
+        output_tokens: usage.outputTokens,
+        cache_read: usage.cacheRead,
+        cache_creation: usage.cacheCreation,
+        turns: usage.turns,
+      };
+    } else {
+      const runner = current.metrics.runner;
+      const resolved = runner && current ? await resolveRunnerSessionForRun(current, vars) : null;
+      let runnerSessionPath = resolved?.runnerSessionPath ?? current.metrics.runnerSessionPath;
+      if (resolved && runnerSessionPath) {
+        updateRun(runId, {
+          metrics: {
+            ...current.metrics,
+            runnerSessionPath,
+            runnerSessionId: resolved.runnerSessionId,
+          },
         });
-    if (result.stdout.trim()) {
-      const metricsLines = result.stdout.trim().split('\n');
-      session = Object.fromEntries(
-        metricsLines.filter(Boolean).map((line) => {
-          const [k, ...rest] = line.split('=');
-          return [k, rest.join('=')];
-        }),
-      );
-      const costRaw = session.cost_usd ?? session.costUsd;
-      const cost = costRaw ? Number(costRaw) : current.metrics.costEstimate;
-      const latestMetrics = getRun(runId)?.metrics ?? current.metrics;
-      updateRun(runId, {
-        metrics: { ...latestMetrics, costEstimate: cost, sessionUsageScope: 'session-total' },
-      });
+      }
+      const usageEnv = runnerSessionPath
+        ? `RUNNER_SESSION_PATH='${runnerSessionPath.replace(/'/g, `'\\''`)}' RUNNER_SESSION_RUNNER='${(runner ?? '').replace(/'/g, `'\\''`)}' `
+        : '';
+      const cmd = `${usageEnv}bash "${farmslotRoot}/scripts/session-usage.sh" '${current.slotId}' total 2>/dev/null`;
+      const result = isLocal(vars.host, vars.machine)
+        ? await execLocal(cmd, { timeout: 15000 })
+        : await execLocal(`ssh ${SSH_CONNECT_SHELL_OPTIONS} ${vars.sshTarget} "${cmd}"`, {
+            timeout: 15000,
+          });
+      if (result.stdout.trim()) {
+        const metricsLines = result.stdout.trim().split('\n');
+        session = Object.fromEntries(
+          metricsLines.filter(Boolean).map((line) => {
+            const [k, ...rest] = line.split('=');
+            return [k, rest.join('=')];
+          }),
+        );
+        const costRaw = session.cost_usd ?? session.costUsd;
+        const cost = costRaw ? Number(costRaw) : current.metrics.costEstimate;
+        const latestMetrics = getRun(runId)?.metrics ?? current.metrics;
+        updateRun(runId, {
+          metrics: { ...latestMetrics, costEstimate: cost, sessionUsageScope: 'session-total' },
+        });
+      }
     }
   } catch (err) {
     console.warn(
