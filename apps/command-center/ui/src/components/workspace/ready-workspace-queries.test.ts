@@ -126,6 +126,17 @@ test('gate observers share frozen reads, invalidate confirmations and retire own
   await queries.evidence.retry();
   await flush();
   assert.equal(queries.requireDecision().payload?.kind, 'ready');
+  await t.test('retained resolved metadata cannot reopen command authority', () => {
+    first.decision = {
+      ...decision(),
+      resolvedAt: '2026-10-30T00:00:00Z',
+      resolvedAction: 'approve-publish',
+    };
+    assert.equal(queries.decision?.resolvedAt, first.decision.resolvedAt);
+    assert.equal(queries.run.requireReady().run.decisions[0].resolvedAt, undefined);
+    assert.throws(() => queries.requireDecision(), /gate changed/);
+    first.decision = decision();
+  });
   first.runId = 'run-b';
   assert.equal(captured.current(), false);
   assert.equal(captured.ownsView(), false);

@@ -15,7 +15,8 @@ import {
   resourceCollectorReadMethods,
   resourceDependenciesForRead,
 } from '../../../packages/protocol/src/client-cache/registry.ts';
-import { mockRuns } from '../ui/src/dev/mock-data.ts';
+import { mockPipelineRuns, mockRuns } from '../ui/src/dev/mock-data.ts';
+import { proveRefetchNotices } from './stable-layout-refetch-proof.mjs';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const output = process.env.FARMSLOT_LAYOUT_EVIDENCE;
@@ -27,9 +28,16 @@ assert(process.env.FARMSLOT_CDP_PORT, 'Select Agent Chrome CDP');
 await mkdir(output, { recursive: true });
 const execute = promisify(execFile);
 const frames = [];
+const heldReplies = [];
+let holdingReplies = false;
+const releaseReplies = () => {
+  holdingReplies = false;
+  for (const send of heldReplies.splice(0)) send();
+};
 const epoch = `layout-fixture-${randomUUID()}`;
 let revision = 0;
 let mode = 'empty';
+const refetchProof = process.env.FARMSLOT_LAYOUT_REFETCH === '1';
 const now = Date.now();
 const decision = {
   id: 'layout-decision',
@@ -56,9 +64,52 @@ const fixtureRun = {
   taskFile: null,
   decisions: [],
 };
+// A resolved gate from the checked-in sample, served through the ordinary run APIs.
+const gateRun = structuredClone(
+  mockPipelineRuns().find((run) => run.decisions.some((item) => item.payload?.kind === 'ready')),
+);
+assert(gateRun, 'The presentation fixture needs a real ready-package shape');
+gateRun.id = 'layout-run';
+gateRun.familyId = 'layout-run';
+gateRun.status = 'done';
+gateRun.slotId = null;
+gateRun.taskFile = null;
+gateRun.decisions = gateRun.decisions.filter((item) => item.payload?.kind === 'ready');
+for (const item of gateRun.decisions) {
+  item.resolvedAt = new Date(now).toISOString();
+  item.resolvedAction = 'approve-publish';
+  item.payload.headSha = 'a'.repeat(40);
+  item.payload.artifactManifest = [];
+  item.payload.prPackage = {
+    id: 'layout-package',
+    gatePolicy: { owner: 'human', publishAuthority: 'human' },
+    publicationTarget: 'draft',
+    publicationStatus: 'not_published',
+    packageHash: 'b'.repeat(64),
+    artifactPath: 'artifacts/pr-package.json',
+    branch: 'layout-fixture',
+    headSha: 'a'.repeat(40),
+    diffStat: { files: 0, additions: 0, deletions: 0 },
+    draftTitle: 'Layout proof',
+    draftBody: '',
+    reviewArtifactIds: [],
+    createdAt: new Date(now).toISOString(),
+  };
+}
+function observedRun(params) {
+  if (!refetchProof) return fixtureRun;
+  const run = structuredClone(gateRun);
+  // The parent retains its snapshot while an ordinary refetch omits resolution metadata.
+  if (mode === 'refetch-gap' && params?.view !== 'snapshot')
+    for (const item of run.decisions) delete item.resolvedAt;
+  return run;
+}
 const values = {
-  'run.list': () => ({ runs: [fixtureRun] }),
-  'run.get': () => ({ run: fixtureRun }),
+  'run.list': () => ({ runs: [refetchProof ? gateRun : fixtureRun] }),
+  'run.get': (params) => ({ run: observedRun(params) }),
+  'run.recipeRunsForRun': () => ({ recipeRuns: [], selectedRecipeRunId: null }),
+  'config.templateOptions': () => ({ options: [] }),
+  'runner.visibleModels.get': () => ({ runners: [] }),
   'task.progress': () => ({ markdown: '', structured: null }),
   'decision.list': () => ({
     decisions: mode === 'decision' ? [decision, { ...decision, id: 'same-subject' }] : [],
@@ -151,13 +202,24 @@ wss.on('connection', (socket) =>
     else if (mode === 'error' && request.method === 'run.list' && !request.params?.active) {
       reply.ok = false;
       reply.error = { code: 'UNAVAILABLE', message: 'Fixture read is unavailable' };
+    } else if (
+      refetchProof &&
+      mode === 'refetch-error' &&
+      request.method === 'config.templateOptions'
+    ) {
+      reply.ok = false;
+      reply.error = {
+        code: 'UNAVAILABLE',
+        message:
+          'Project template versions could not be refreshed. Saved choices are still available while the project source reconnects.',
+      };
     } else if (values[request.method]) {
-      reply.payload = values[request.method]();
+      reply.payload = values[request.method](request.params);
       reply.resourceState = {
         epoch,
-        dependencies: (resourceDependenciesForRead(request.method, request.params) ?? []).map(
-          (key) => ({ key, revision }),
-        ),
+        dependencies: (
+          resourceDependenciesForRead(request.method, request.params, 'layout-fixture') ?? []
+        ).map((key) => ({ key, revision })),
       };
     } else {
       reply.ok = false;
@@ -166,7 +228,11 @@ wss.on('connection', (socket) =>
         message: `Fixture does not supply ${request.method}`,
       };
     }
-    socket.send(JSON.stringify(reply));
+    if (refetchProof && holdingReplies)
+      heldReplies.push(() => {
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
+      });
+    else socket.send(JSON.stringify(reply));
   }),
 );
 const cdp = async (...args) =>
@@ -248,11 +314,18 @@ async function until(accept, label) {
 }
 function transition(next) {
   mode = next;
+  holdingReplies = next === 'refetch-gap';
   revision++;
   const changes = [
     { family: 'decisions', scope: 'farm' },
     { family: 'runs', scope: 'farm' },
     { family: 'gateway-update', scope: 'gateway' },
+    ...(refetchProof
+      ? [
+          { family: 'run', runId: 'layout-run' },
+          { family: 'configuration', scope: 'farm' },
+        ]
+      : []),
   ].map((key) => ({ key, revision, kind: 'updated' }));
   for (const socket of wss.clients)
     if (socket.readyState === WebSocket.OPEN)
@@ -309,98 +382,117 @@ try {
   assert(ready, viteLog);
   const opened = await cdp('goto', `http://127.0.0.1:${uiPort}/#runs`, '--new');
   target = '@' + opened.id;
-  const baseline = await until(
-    (value) => value.connected && value.stripHeight === 44 && value.rowTop !== undefined,
-    'initial',
-  );
-  for (const { width, expanded } of [
-    { width: 1280, expanded: false },
-    { width: 414, expanded: false },
-    { width: 414, expanded: true },
-  ]) {
-    const name = `${width}${expanded ? '-expanded' : ''}`;
-    await viewport(width);
-    if ((await inspect()).sidebarExpanded !== expanded) await press('.fa-nav-toggle');
-    const before = await inspect();
-    assert.equal(before.width, width, 'The browser must use the requested CSS viewport');
-    const authBefore = frames.filter((frame) => frame.method === 'auth.connect').length;
-    for (const socket of wss.clients) socket.close(1012, 'Owned presentation fixture reconnect');
-    await until(
-      (value) =>
-        value.connected &&
-        frames.filter((frame) => frame.method === 'auth.connect').length > authBefore,
-      'reconnect',
+  if (refetchProof) {
+    await viewport(1280);
+    await proveRefetchNotices({
+      cdp,
+      target,
+      browserCall,
+      emulation,
+      transition,
+      output,
+      save,
+      frames,
+      viewport,
+      releaseReplies,
+    });
+  } else {
+    const baseline = await until(
+      (value) => value.connected && value.stripHeight === 44 && value.rowTop !== undefined,
+      'initial',
     );
-    assert.equal(
-      (await inspect()).contentTop,
-      before.contentTop,
-      'Reconnect cannot move the content',
-    );
-    for (const phase of ['decision', 'decision', 'empty', 'error', 'empty', 'update', 'empty']) {
-      transition(phase);
-      const current = await until(
+    for (const { width, expanded } of [
+      { width: 1280, expanded: false },
+      { width: 414, expanded: false },
+      { width: 414, expanded: true },
+    ]) {
+      const name = `${width}${expanded ? '-expanded' : ''}`;
+      await viewport(width);
+      if ((await inspect()).sidebarExpanded !== expanded) await press('.fa-nav-toggle');
+      const before = await inspect();
+      assert.equal(before.width, width, 'The browser must use the requested CSS viewport');
+      const authBefore = frames.filter((frame) => frame.method === 'auth.connect').length;
+      for (const socket of wss.clients) socket.close(1012, 'Owned presentation fixture reconnect');
+      await until(
         (value) =>
-          phase === 'decision'
-            ? value.top === decision.title
-            : phase === 'error'
-              ? value.items.some((item) => item.includes('Could not refresh runs'))
-              : phase === 'update'
-                ? value.items.includes('Farmslot update available')
-                : !value.top &&
-                  !value.items.includes('Could not refresh runs') &&
-                  !value.items.includes('Farmslot update available'),
-        phase,
+          value.connected &&
+          frames.filter((frame) => frame.method === 'auth.connect').length > authBefore,
+        'reconnect',
       );
-      assert.equal(current.contentTop, before.contentTop, 'A notice cannot move the content');
-      assert.equal(current.stripHeight, 44);
-      assert.equal(current.rowTop, before.rowTop, 'A read notice cannot move a retained run row');
-      await save(`${name}-${phase}-${revision}`, current);
-    }
-    transition('decision');
-    await until((value) => value.top === decision.title, 'recurrence');
-    await press('farm-notification-tray >>> .bell');
-    const open = await until((value) => value.panel !== null, 'opened-tray');
-    await save(`${name}-open`, open);
-    await cdp('screenshot', target, path.join(output, `${name}-tray.png`));
-    assert.equal(open.contentTop, before.contentTop);
-    assert(open.panel && open.panel.left >= 0 && open.panel.right <= width, JSON.stringify(open));
-    assert.equal(open.items.filter((title) => title === decision.title).length, 1);
+      assert.equal(
+        (await inspect()).contentTop,
+        before.contentTop,
+        'Reconnect cannot move the content',
+      );
+      for (const phase of ['decision', 'decision', 'empty', 'error', 'empty', 'update', 'empty']) {
+        transition(phase);
+        const current = await until(
+          (value) =>
+            phase === 'decision'
+              ? value.top === decision.title
+              : phase === 'error'
+                ? value.items.some((item) => item.includes('Could not refresh runs'))
+                : phase === 'update'
+                  ? value.items.includes('Farmslot update available')
+                  : !value.top &&
+                    !value.items.includes('Could not refresh runs') &&
+                    !value.items.includes('Farmslot update available'),
+          phase,
+        );
+        assert.equal(current.contentTop, before.contentTop, 'A notice cannot move the content');
+        assert.equal(current.stripHeight, 44);
+        assert.equal(current.rowTop, before.rowTop, 'A read notice cannot move a retained run row');
+        await save(`${name}-${phase}-${revision}`, current);
+      }
+      transition('decision');
+      await until((value) => value.top === decision.title, 'recurrence');
+      await press('farm-notification-tray >>> .bell');
+      const open = await until((value) => value.panel !== null, 'opened-tray');
+      await save(`${name}-open`, open);
+      await cdp('screenshot', target, path.join(output, `${name}-tray.png`));
+      assert.equal(open.contentTop, before.contentTop);
+      assert(open.panel && open.panel.left >= 0 && open.panel.right <= width, JSON.stringify(open));
+      assert.equal(open.items.filter((title) => title === decision.title).length, 1);
 
-    await escape();
-    assert.equal((await inspect()).panel, null);
-    transition('empty');
-    await until((value) => !value.top, 'cleared');
-    transition('update-complete');
-    await until((value) => value.items.includes('Farmslot update complete'), 'completion-guidance');
-    await press('farm-notification-tray >>> .bell');
-    await press('farm-notification-tray >>> [data-notice-id="gateway-update"] a');
-    const guidance = await until(
-      (value) =>
-        value.updateVisible &&
-        value.updateText.includes('packaged gateway needs a restart') &&
-        value.updateText.includes('Rebuild and replace'),
-      'visible-follow-up',
-    );
-    assert.equal(guidance.rowTop, before.rowTop);
-    await cdp('screenshot', target, path.join(output, `${name}-update-guidance.png`));
-    await press('update-banner >>> .dismiss');
-    await until((value) => !value.items.includes('Farmslot update complete'), 'acknowledged');
-    await escape();
-    await until((value) => value.panel === null, 'closed-after-dismissal');
-    transition('empty');
+      await escape();
+      assert.equal((await inspect()).panel, null);
+      transition('empty');
+      await until((value) => !value.top, 'cleared');
+      transition('update-complete');
+      await until(
+        (value) => value.items.includes('Farmslot update complete'),
+        'completion-guidance',
+      );
+      await press('farm-notification-tray >>> .bell');
+      await press('farm-notification-tray >>> [data-notice-id="gateway-update"] a');
+      const guidance = await until(
+        (value) =>
+          value.updateVisible &&
+          value.updateText.includes('packaged gateway needs a restart') &&
+          value.updateText.includes('Rebuild and replace'),
+        'visible-follow-up',
+      );
+      assert.equal(guidance.rowTop, before.rowTop);
+      await cdp('screenshot', target, path.join(output, `${name}-update-guidance.png`));
+      await press('update-banner >>> .dismiss');
+      await until((value) => !value.items.includes('Farmslot update complete'), 'acknowledged');
+      await escape();
+      await until((value) => value.panel === null, 'closed-after-dismissal');
+      transition('empty');
+    }
+    const reads = frames.filter((frame) => frame.method === 'run.list').length;
+    assert(reads >= 8, 'Repeated observed reads reached the real client adapter');
+    await save('result', {
+      result: 'PASS',
+      baseline,
+      browserEnvironment:
+        'Owned target with viewport and focus emulation; no application-state injection',
+      requests: frames,
+      presses,
+      limit:
+        'Protocol fixture presentation only. No production gateway, native or worker acceptance.',
+    });
   }
-  const reads = frames.filter((frame) => frame.method === 'run.list').length;
-  assert(reads >= 8, 'Repeated observed reads reached the real client adapter');
-  await save('result', {
-    result: 'PASS',
-    baseline,
-    browserEnvironment:
-      'Owned target with viewport and focus emulation; no application-state injection',
-    requests: frames,
-    presses,
-    limit:
-      'Protocol fixture presentation only. No production gateway, native or worker acceptance.',
-  });
 } catch (error) {
   failure = error;
 } finally {
@@ -434,7 +526,7 @@ if (failure || cleanupFailures.length)
 console.log(
   JSON.stringify({
     result: 'PASS',
-    widths: [1280, 414],
+    widths: refetchProof && process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1' ? [1280] : [1280, 414],
     observationRequests: frames.length,
     scope: 'isolated protocol fixture presentation',
   }),

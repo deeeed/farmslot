@@ -796,6 +796,12 @@ export const evalCockpitStyles = css`
     background: ${unsafeCSS(colors.statusFail)}0d;
     font-size: 12px;
   }
+  .eval-notice-slot {
+    height: 44px;
+    min-height: 44px;
+    box-sizing: border-box;
+    overflow: auto;
+  }
   .eval-error.slim {
     padding: 6px;
   }

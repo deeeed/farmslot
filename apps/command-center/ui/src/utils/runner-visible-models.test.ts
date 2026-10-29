@@ -50,17 +50,20 @@ test('views share one owner-scoped observation that follows the gateway owner ke
   fake.resourceEpoch = 'visible-model-epoch';
   let revision = 0;
   let models = ['sonnet'];
+  let holdRead = false;
   fake.responseForRequest = ({ method }) =>
     method === 'runner.visibleModels.get'
-      ? {
-          payload: { runners: [state('claude', models, models[0])] },
-          resourceState: {
-            epoch: fake.resourceEpoch,
-            dependencies: [
-              { key: { family: 'profiles', scope: 'owner', ownerId: 'operator' }, revision },
-            ],
-          },
-        }
+      ? holdRead
+        ? undefined
+        : {
+            payload: { runners: [state('claude', models, models[0])] },
+            resourceState: {
+              epoch: fake.resourceEpoch,
+              dependencies: [
+                { key: { family: 'profiles', scope: 'owner', ownerId: 'operator' }, revision },
+              ],
+            },
+          }
       : { payload: {} };
   const { gateway } = await import('../gateway-client.js');
   const { initState } = await import('../state.js');
@@ -107,6 +110,49 @@ test('views share one owner-scoped observation that follows the gateway owner ke
   assert.equal(reads().length, 2);
   assert.deepEqual(visibleModelIds('claude'), ['haiku']);
   assert.equal(visibleDefaultModel('claude'), 'haiku');
+  const change = () => {
+    revision++;
+    socket.event('resource.changed', {
+      version: 1,
+      epoch: fake.resourceEpoch,
+      changes: [
+        {
+          key: { family: 'profiles', scope: 'owner', ownerId: 'operator' },
+          revision,
+          kind: 'updated',
+        },
+      ],
+    });
+  };
+  await t.test('retry keeps the last failure until a successful current observation', async () => {
+    holdRead = true;
+    change();
+    await flush();
+    socket.failure(reads().at(-1)!.id, {
+      code: 'UNAVAILABLE',
+      message: 'Visible models unavailable',
+    });
+    await flush();
+    assert.equal(errors.at(-1), 'Visible models unavailable');
+    holdRead = true;
+    change();
+    await flush();
+    assert.equal(errors.at(-1), 'Visible models unavailable');
+    holdRead = false;
+    const pending = reads().at(-1)!;
+    socket.response(
+      pending.id,
+      { runners: [state('claude', models, models[0])] },
+      {
+        epoch: fake.resourceEpoch,
+        dependencies: [
+          { key: { family: 'profiles', scope: 'owner', ownerId: 'operator' }, revision },
+        ],
+      },
+    );
+    await flush();
+    assert.equal(errors.at(-1), '');
+  });
   first();
   second();
 });

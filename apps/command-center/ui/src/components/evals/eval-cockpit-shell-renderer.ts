@@ -30,8 +30,13 @@ export function renderEvalCockpitShell(options: EvalCockpitShellRenderOptions) {
           </p>
         </div>
       </div>
-      ${options.busy ? html`<div class="eval-status">${options.busy}…</div>` : nothing}
-      ${options.error ? html`<div class="eval-error">${options.error}</div>` : nothing}
+      <div
+        class="eval-notice-slot ${options.error ? 'eval-error' : 'eval-status'}"
+        role="status"
+        data-testid="eval-operation-status"
+      >
+        ${options.error || (options.busy ? `${options.busy}…` : '')}
+      </div>
       <div class="eval-status">
         Replay plan ${options.selectedCaseCount}
         Reference${options.selectedCaseCount === 1 ? '' : 's'} · ${options.enabledCandidateCount}

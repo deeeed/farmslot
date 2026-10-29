@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Stable layout and current notification conditions",
-  "description": "Run from the repository root with private VITE_PORT/GATEWAY_PORT, an isolated Agent Chrome FARMSLOT_CDP_PORT and FARMSLOT_LAYOUT_EVIDENCE. The helper starts only a protocol fixture and its own Vite process, then closes both and its own tab. It proves presentation, not gateway derivation or native acceptance.",
+  "description": "Run from the repository root with private VITE_PORT/GATEWAY_PORT, an isolated Agent Chrome FARMSLOT_CDP_PORT and FARMSLOT_LAYOUT_EVIDENCE. The helper starts only a protocol fixture and its own Vite process, then closes both and its own tab. It proves presentation, not gateway derivation or native acceptance. Refetch-notice recording also requires ffmpeg on PATH.",
   "workflow": {
     "entry": "prove",
     "nodes": {
@@ -10,7 +10,7 @@
         "cmd": "node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
         "timeout_ms": 600000,
         "intent": "Consume fixture snapshots through the real socket/query adapter, require fixed content positions through repeated reads, reconnect and notice changes, and check the opened tray at 1280px and 414px.",
-        "next": "result"
+        "next": "refetch"
       },
       "result": {
         "action": "assert_output",
@@ -20,7 +20,25 @@
         "intent": "Require all layout assertions and owned teardown to pass.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "refetch": {
+        "action": "command",
+        "cmd": "FARMSLOT_LAYOUT_REFETCH=1 FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/refetch\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 600000,
+        "intent": "On mounted run detail and Evals, retain last-known notice text through held replies and require exact stable content positions across success/error/refetch at 1280px and 414px. Save actual CDP before/after frames and recordings. No gate action or trial launches.",
+        "next": "refetch-result"
+      },
+      "refetch-result": {
+        "action": "assert_output",
+        "source": "refetch",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "next": "result",
+        "intent": "Require both mounted views and owned teardown to pass."
+      }
     }
   }
 }

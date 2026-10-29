@@ -6,7 +6,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Alert only for current needs-you conditions. Completed dispatches stay in their current slot/run views and monitor violations stay in history; neither produces an informational browser alert.
 
-- Keep read errors and saved ages in one notification tray with a fixed-height attention strip; current decisions clear and recur without repeated alerts or moving the page.
+- Keep read errors and saved ages in one notification tray with a fixed-height attention strip; current decisions clear and recur without repeated alerts or moving the page. Retain saved-gate resolution notices and reserve Evals status space through refetches.
 
 - Show finished workers waiting for their monitor from current checklist timing, keep unavailable progress neutral, and wrap the reason.
 - Active-development baseline; add user-facing changes here before release or package publication.

@@ -55,6 +55,7 @@ import {
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import { RetainedNotice } from '../shared/retained-notice.js';
 
 import { ReadyWorkspaceActionPresenter } from './ready-workspace-action-presenter.js';
 import {
@@ -76,6 +77,7 @@ import {
   renderReadyReviewRequestModal,
 } from './ready-workspace-modal-renderers.js';
 import {
+  readyResolvedNotice,
   renderReadyPackagePanel,
   renderReadyPackageSkeleton,
   renderReadyResolvedBanner,
@@ -561,19 +563,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   override render() {
     const payload = this._payload;
     if (!payload) return renderReadyWorkspaceEmpty();
-    const ordinary = this._queries.run.state;
-    return html` ${!this._queries.run.ready && (ordinary.observedAt || this._queries.showsSnapshot)
-      ? html`<p class="rdy-saved-state" role="status">
-          ${ordinary.observedAt
-            ? `Saved gate · ${sourceObservationAge(ordinary.observedAt)}`
-            : ordinary.error
-              ? 'Stored gate'
-              : 'Stored gate · checking current readiness'}${ordinary.error
-            ? ` · ${ordinary.error.message}`
-            : ''}
-        </p>`
-      : nothing}
-    ${renderReadyWorkspaceFrame({
+    return html` ${renderReadyWorkspaceFrame({
       payload,
       renderReview: () =>
         this._review && this._evidenceModel
@@ -768,8 +758,31 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     this._syncViewStateToHash();
   }
 
+  private readonly _resolvedNotice = new RetainedNotice();
   private _renderResolvedBanner(payload: ReadyGatePayload) {
-    return renderReadyResolvedBanner({ payload, resolvedAt: this._gateDecision?.resolvedAt });
+    const ordinary = this._queries.run.state;
+    const savedMessage =
+      !this._queries.run.ready && (ordinary.observedAt || this._queries.showsSnapshot)
+        ? `${
+            ordinary.observedAt
+              ? `Saved gate · ${sourceObservationAge(ordinary.observedAt)}`
+              : ordinary.error
+                ? 'Stored gate'
+                : 'Stored gate · checking current readiness'
+          }${ordinary.error ? ` · ${ordinary.error.message}` : ''}`
+        : undefined;
+    const owner = this._usesMockData ? 'mock' : getResourceWorkspaceKey();
+    const scope = owner ? JSON.stringify([owner, this.runId, this.decision?.id]) : undefined;
+    const observed = this._usesMockData ? this.decision : this._queries.observedDecision;
+    const currentMessage = readyResolvedNotice(payload, observed?.resolvedAt);
+    const provisional = observed?.resolvedAction === 'superseded';
+    const retained = this._resolvedNotice.read(
+      scope,
+      provisional ? undefined : currentMessage,
+      !provisional,
+    );
+    const message = provisional ? currentMessage : retained;
+    return renderReadyResolvedBanner({ message, savedMessage });
   }
 
   /** Media may arrive through the recorded-source read after the light gate payload. */
