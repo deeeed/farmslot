@@ -165,6 +165,14 @@ test('an unavailable workspace session keeps its lineage and findings in a fresh
     configureWorkspaceContinuity(variant, prior, result);
     assert.equal(result.mode, 'cold');
     assert.equal(result.session?.continuity, 'fresh');
+    assert.equal(
+      result.session?.fallback?.reason,
+      variant.transport === 'native'
+        ? 'unsupported-runner'
+        : variant.metrics.model === 'other'
+          ? 'model-mismatch'
+          : 'slot-mismatch',
+    );
     assert.equal(result.session?.reviewId, 'lineage');
     assert.equal(result.session?.priorRunId, prior.id);
     assert.deepEqual(result.session?.fallback?.comparedRanges, [
@@ -198,24 +206,26 @@ test('another active reviewer holding the session receives no resumed prompt', (
   assert.equal(result.session?.sessionId, undefined);
 });
 
-test('a removed prior workspace falls back without changing its lineage', () => {
+test('Cursor resumes its retained chat after cleanup of the previous checkout', () => {
   const result = context();
   configureWorkspaceContinuity(
     current,
     { ...prior, reviewWorkspace: { ...prior.reviewWorkspace!, cleanedAt: '2026-10-29T21:00:00Z' } },
     result,
   );
-  assert.equal(result.session?.fallback?.reason, 'session-unavailable');
+  assert.equal(result.session?.continuity, 'resumed');
+  assert.equal(result.session?.fallback, undefined);
   assert.equal(result.session?.reviewId, 'lineage');
 });
 
-test('a Codex session reload capability can continue the same owned workspace lineage', () => {
+test('a runner without workspace-session resume uses a recorded fresh delta', () => {
   const result = context();
   configureWorkspaceContinuity(
     { ...current, metrics: { runner: 'codex', model: 'model' } },
     { ...prior, agentContexts: [{ ...prior.agentContexts![0], runner: 'codex' }] },
     result,
   );
-  assert.equal(result.session?.continuity, 'resumed');
-  assert.equal(result.session?.sessionId, 'chat');
+  assert.equal(result.session?.continuity, 'fresh');
+  assert.equal(result.session?.fallback?.reason, 'unsupported-runner');
+  assert.equal(result.session?.sessionId, undefined);
 });

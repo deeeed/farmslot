@@ -534,8 +534,31 @@ test('a fresh fallback task keeps the prior findings and the exact delta as its 
         comparedRanges: [range],
       },
     };
-    const task = await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    const earlierReport =
+      'VERDICT: REQUEST_CHANGES\nA body-only major outside the inline diff remains unresolved.\n';
+    const priorRun: Run = {
+      ...f.run,
+      id: 'previous',
+      status: 'done',
+      reviewResult: {
+        recommendation: 'REQUEST_CHANGES',
+        reviewMd: earlierReport,
+        lineComments: [],
+        reviewSnapshot: {
+          source: 'github-pr',
+          headSha: 'c'.repeat(40),
+          capturedAt: f.subject.capturedAt,
+        },
+      },
+    };
+    const deps = { ...f.deps, getRun: (id: string) => (id === 'previous' ? priorRun : f.run) };
+    const task = await materializeReviewWorkspaceTask(f.run.id, f.subject, deps);
+    assert.equal(
+      await readFile(path.join(f.task, 'inputs/prior-review.md'), 'utf8'),
+      earlierReport,
+    );
     const document = await readFile(task.taskFile, 'utf8');
+    assert.match(document, /including body-only findings/);
     assert.match(document, /Delta-scoped review in a fresh session/);
     assert.match(document, /Earlier finding/);
     assert.ok(document.includes(range));

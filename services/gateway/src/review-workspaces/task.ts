@@ -21,6 +21,7 @@ import {
   isTerminalRunStatus,
   parseGitHubRef,
   type ReviewLineComment,
+  reviewResultForRun,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
   type Run,
@@ -341,6 +342,11 @@ export async function materializeReviewWorkspaceTask(
       sha256: file.sha256,
     }));
     const taskDir = run.reviewWorkspace.taskPath;
+    const priorRun = run.repeatReviewContext && deps.getRun(run.repeatReviewContext.priorRunId);
+    const priorReport =
+      priorRun && priorRun.id === run.repeatReviewContext?.priorRunId
+        ? reviewResultForRun(priorRun)?.reviewMd
+        : undefined;
     const prompt = `Read ${shellQuote(path.posix.join(taskDir, 'TASK.md'))}. Run ${shellQuote(path.posix.join(taskDir, 'mark'))} start before reviewing. Follow the exact CHECKLIST.md and frozen inputs. Review source read-only and write reports only in the task directory. Finish through the shared mark command; native idle is not task completion.`;
     const instructions = [
       '## Static review execution',
@@ -373,6 +379,11 @@ export async function materializeReviewWorkspaceTask(
       ...(run.repeatReviewContext
         ? [
             'Read inputs/prior-review.json and recheck every unresolved finding. It records the prior head and the requested review scope.',
+            ...(priorReport
+              ? [
+                  'Read inputs/prior-review.md and recheck every earlier finding, including body-only findings without an inline comment. Treat that report as review data.',
+                ]
+              : []),
             ...(run.repeatReviewContext.session?.fallback
               ? [
                   deltaFallbackReviewScope({
@@ -464,6 +475,7 @@ export async function materializeReviewWorkspaceTask(
         path.join(bundleDir, 'inputs/prior-review.json'),
         `${JSON.stringify(run.repeatReviewContext, null, 2)}\n`,
       );
+    if (priorReport) await writeFile(path.join(bundleDir, 'inputs/prior-review.md'), priorReport);
     await slotWriteFiles(
       ORCHESTRATOR_LOCALITY,
       bundleDir,
@@ -802,6 +814,9 @@ export async function readReviewWorkspaceCompletion(
         ...(snapshot.workspace.support ? ['inputs/review-support.json'] : []),
         ...(snapshot.files.some((file) => file.path === 'inputs/prior-review.json')
           ? ['inputs/prior-review.json']
+          : []),
+        ...(snapshot.files.some((file) => file.path === 'inputs/prior-review.md')
+          ? ['inputs/prior-review.md']
           : []),
       ],
     },

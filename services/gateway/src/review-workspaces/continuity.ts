@@ -1,9 +1,11 @@
 import {
+  type AgentContext,
   isTerminalRunStatus,
   parseGitHubRef,
   type RepeatReviewContext,
   type ReviewRequestContext,
   reviewResultForRun,
+  type ReviewSessionFallback,
   type Run,
   type RunCreateParams,
 } from '@farmslot/protocol';
@@ -14,7 +16,6 @@ import {
   findLatestPriorReviewRun,
   incrementalReviewAvailable,
 } from '../run-engine/engine-decisions.js';
-import { runnerSupportsSessionReload } from '../runners/launch-command.js';
 import { getRunnerDefinition } from '../runners/registry.js';
 import {
   type PrincipalOwner,
@@ -50,26 +51,51 @@ function ownedWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
     sameOwner &&
     run.project === prior.project &&
     reviewer?.role === 'review' &&
-    reviewer.status === 'complete' &&
     reviewer.runner === run.metrics.runner
     ? reviewer
     : undefined;
 }
 
-/** Session reuse has stricter placement and capability requirements than lineage discovery. */
+function workspaceSessionFailure(
+  run: WorkspaceReviewerRun,
+  prior: Run,
+  reviewer: AgentContext,
+): Pick<ReviewSessionFallback, 'reason' | 'detail'> | undefined {
+  if (
+    run.transport !== 'tmux' ||
+    prior.transport !== 'tmux' ||
+    !getRunnerDefinition(run.metrics.runner).workspaceTerminalSession
+  )
+    return {
+      reason: 'unsupported-runner',
+      detail: 'The selected runner/transport has no retained workspace-session launch',
+    };
+  if (reviewer.status !== 'complete')
+    return {
+      reason: 'session-unavailable',
+      detail: `Prior reviewer status is ${reviewer.status}; its validated result remains available`,
+    };
+  if (prior.reviewWorkspace?.machine !== run.reviewWorkspaceTarget?.machine)
+    return {
+      reason: 'slot-mismatch',
+      detail: `Prior review machine ${prior.reviewWorkspace?.machine ?? 'unknown'} differs from selected machine ${run.reviewWorkspaceTarget?.machine ?? 'unknown'}`,
+    };
+  if (reviewer.model !== run.metrics.model)
+    return {
+      reason: 'model-mismatch',
+      detail: 'Selected model differs from the retained reviewer model',
+    };
+  if ((reviewer.effort ?? prior.effort ?? null) !== (run.effort ?? null))
+    return {
+      reason: 'effort-mismatch',
+      detail: 'Selected effort differs from the retained reviewer effort',
+    };
+}
+
+/** Cursor's chat identity survives cleanup of the old source checkout. */
 export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
   const reviewer = ownedWorkspaceReviewer(run, prior);
-  const compatible =
-    reviewer &&
-    run.transport === 'tmux' &&
-    prior.transport === 'tmux' &&
-    (Boolean(getRunnerDefinition(run.metrics.runner).workspaceTerminalSession) ||
-      runnerSupportsSessionReload(run.metrics.runner ?? '')) &&
-    (reviewer.effort ?? prior.effort ?? null) === (run.effort ?? null) &&
-    prior.reviewWorkspace?.machine === run.reviewWorkspaceTarget?.machine &&
-    !prior.reviewWorkspace?.cleanedAt &&
-    reviewer.model === run.metrics.model;
-  return compatible ? reviewer : undefined;
+  return reviewer && !workspaceSessionFailure(run, prior, reviewer) ? reviewer : undefined;
 }
 
 /** Resolve an omitted or legacy family-only context from the same owner's completed review. */
@@ -156,20 +182,12 @@ export function configureWorkspaceContinuity(
     throw new Error('WARM review unavailable: missing or foreign reviewId lineage');
   const sessionId = reviewer.runnerSessionId ?? undefined;
   const holder = sessionId && activeReviewerHolding(sessionId, runs);
-  const reason = !compatibleWorkspaceReviewer(run, prior)
-    ? 'session-unavailable'
-    : !sessionId
-      ? 'missing-session'
-      : holder
-        ? 'session-busy'
-        : undefined;
-  if (reason) {
-    const detail =
-      reason === 'missing-session'
-        ? 'runnerSessionId is missing from the prior reviewer'
-        : reason === 'session-busy'
-          ? 'the retained reviewer is active in another run'
-          : 'the retained reviewer cannot resume on the selected machine, transport, model or effort';
+  const unavailable: Pick<ReviewSessionFallback, 'reason' | 'detail'> | undefined = !sessionId
+    ? { reason: 'missing-session', detail: 'runnerSessionId is missing from the prior reviewer' }
+    : holder
+      ? { reason: 'session-busy', detail: 'The retained reviewer is active in another run' }
+      : workspaceSessionFailure(run, prior, reviewer);
+  if (unavailable) {
     context.mode = 'cold';
     context.session = {
       mode: 'cold',
@@ -181,8 +199,7 @@ export function configureWorkspaceContinuity(
       priorRunId: prior.id,
       priorSessionId: sessionId,
       fallback: {
-        reason,
-        detail,
+        ...unavailable,
         comparedRanges: [`${context.priorReviewedHeadSha}..${context.currentHeadSha}`],
       },
     };
