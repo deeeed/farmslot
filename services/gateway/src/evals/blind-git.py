@@ -95,6 +95,25 @@ def prepare_boundary(spec, capsule):
         raise RuntimeError(SANDBOX_REQUIRED + ': ' + checked.stderr.decode(errors='replace').strip())
 
 
+def refused_git_transport(trace):
+    # Git refuses the isolated repository's transports before any stand-in runs;
+    # its trace records the refusal and the command that tried, whichever git ran.
+    if not trace.exists():
+        return ''
+    argv = {}
+    with trace.open(errors='replace') as lines:
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get('event') == 'start':
+                argv[event.get('sid')] = ' '.join(event.get('argv') or ['git'])
+            elif event.get('event') == 'error' and event.get('fmt') == "transport '%s' not allowed":
+                return argv.get(event.get('sid'), 'git') + ': ' + str(event.get('msg'))
+    return ''
+
+
 def boundary(spec):
     prepare_boundary(spec, Path(spec['capsule']))
     return verify(spec)
@@ -121,6 +140,7 @@ def verify(spec, worker_boundary=True):
         raise RuntimeError('Blind trial worker boundary is missing')
     attempts = root / 'attempts.log'
     attempt = attempts.read_text(errors='replace').strip().split('\n')[0] if attempts.exists() else ''
+    attempt = attempt or refused_git_transport(root / 'git-trace.jsonl')
     receipt = {'status': 'isolated', 'baseSha': spec['baseSha'], 'runId': spec['runId']}
     return {**receipt, 'githubAttempt': attempt[:500]} if attempt else receipt
 

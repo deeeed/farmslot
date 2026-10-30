@@ -37,7 +37,7 @@ const GITHUB_TOKEN_NAMES = [
 /**
  * Start a blind worker without GitHub credentials, under the capsule's sandbox
  * profile (blind-git.py). Its gh, credential-helper and SSH-transport calls
- * reach the capsule's recording stand-ins instead.
+ * reach the capsule's recording stand-ins, and Git's trace records refused transports.
  */
 export function withBlindTrialBoundary(command: string, capsule: string): string {
   const boundary = `${capsule}/boundary`;
@@ -47,6 +47,8 @@ export function withBlindTrialBoundary(command: string, capsule: string): string
     `export GH_CONFIG_DIR=${shSingleQuote(`${boundary}/gh-config`)}`,
     `export PATH=${shSingleQuote(`${boundary}/bin`)}:"$PATH"`,
     'export GIT_TERMINAL_PROMPT=0',
+    // Records transports the isolated repository refuses, for any git binary.
+    `export GIT_TRACE2_EVENT=${shSingleQuote(`${boundary}/git-trace.jsonl`)} GIT_TRACE2_EVENT_NESTING=1`,
     `export GIT_SSH_COMMAND=${shSingleQuote(`${deny} ssh`)}`,
     // An empty helper clears inherited helpers such as a keychain.
     'export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= GIT_CONFIG_KEY_1=credential.helper',

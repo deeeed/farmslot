@@ -112,6 +112,27 @@ module['boundary'](json.loads(sys.argv[2]))
     assert.notEqual(spawnSync('git', ['-C', repo, 'fetch', 'origin'], { env }).status, 0);
     git(repo, 'fsck', '--full', '--no-reflogs');
     assert.equal(command('verify', spec).githubAttempt, undefined);
+    // A transport the isolated repository refuses is recorded on its own, by any git binary.
+    const fetched = spawnSync(
+      'bash',
+      [
+        '-c',
+        withBlindTrialBoundary(
+          '! /usr/bin/env git fetch https://github.com/owner/reference.git main',
+          spec.capsule,
+        ),
+      ],
+      { cwd: repo, env, encoding: 'utf8' },
+    );
+    assert.equal(fetched.status, 0, fetched.stderr);
+    assert.match(fetched.stderr, /transport 'https' not allowed/);
+    assert.equal(existsSync(path.join(spec.capsule, 'boundary/attempts.log')), false);
+    assert.equal(
+      command('verify', spec).githubAttempt,
+      "git fetch https://github.com/owner/reference.git main: transport 'https' not allowed",
+    );
+    rmSync(path.join(spec.capsule, 'boundary/git-trace.jsonl'));
+    assert.equal(command('verify', spec).githubAttempt, undefined);
     // The worker has no token, gh login or credential helper, and its sandbox
     // cannot read sibling checkouts or retained Git metadata. GitHub calls are recorded.
     const q = (value: string) => `'${value}'`;

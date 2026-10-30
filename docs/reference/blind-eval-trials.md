@@ -20,7 +20,8 @@ Normative reference for [ADR-030 Amendments 1 to 3](../adr/030-replay-provenance
 ## Worker boundary
 
 - The worker starts without source-host credentials: no GitHub token variables, an empty GitHub CLI configuration, no Git credential helper and no Git SSH transport.
-- Recording stand-ins in the trial capsule refuse the GitHub CLI on the worker's path and Git's credential and SSH-transport calls. A recorded attempt makes the trial invalid at first-output capture. A call that bypasses them, such as an absolute GitHub CLI path or a transport the isolated repository already refuses, still fails without credentials but is not recorded.
+- Recording stand-ins in the trial capsule refuse the GitHub CLI on the worker's path and Git's credential and SSH-transport calls. Git's trace in the capsule records transports the isolated repository refuses, whichever git binary ran. A recorded attempt makes the trial invalid at first-output capture.
+- A GitHub CLI call by absolute path fails without credentials but is not recorded.
 - The worker runs under a macOS `sandbox-exec` profile generated from the pool at preparation. It cannot read the node's other slot checkouts, the original checkout a linked-worktree slot shares objects with, blind capsules other than its own boundary, or the GitHub CLI login.
 - Worker session reloads (recovery, parking and operator resume) start under the same boundary.
 - The network stays open. A blind trial on a source repository readable without credentials is not isolated by this boundary.
