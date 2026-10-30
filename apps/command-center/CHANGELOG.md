@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add the isolated stable-layout browser recipe and blocking UI review checklist rule.
+
 - Add a rendered-row probe for finished workers waiting for their monitor and for stale or unavailable checklist observations.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

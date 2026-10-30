@@ -1032,11 +1032,13 @@ export default function DecisionDetailScreen({
 
   return (
     <View style={baseStyles.container}>
-      <ResourceReadStatus observation={decisionsObservation} label="decisions" />
-      {sourceRunId ? <ResourceReadStatus observation={sourceObservation} label="run" /> : null}
-      {progressQuery ? (
-        <ResourceReadStatus observation={progressObservation} label="task progress" />
-      ) : null}
+      <ResourceReadStatus
+        observations={[
+          { observation: decisionsObservation, label: 'decisions' },
+          ...(sourceRunId ? [{ observation: sourceObservation, label: 'run' }] : []),
+          ...(progressQuery ? [{ observation: progressObservation, label: 'task progress' }] : []),
+        ]}
+      />
       {!embedded ? (
         <Stack.Screen
           options={{

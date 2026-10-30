@@ -107,12 +107,6 @@ export default function SlotDiffViewerScreen() {
   const diffObservation = useResourceQuery(diffQuery);
   const diffText = diffObservation.data?.diff ?? '';
   const loading = diffObservation.status === 'loading';
-  const error = diffObservation.error?.message;
-  const readError =
-    diffObservation.error?.message ??
-    slotRunObservation.error?.message ??
-    runObservation.error?.message ??
-    recipeObservation.error?.message;
   const retryRead = async () => {
     const cache = getResourceCache();
     const queries: Array<ResourceQuery<unknown> | undefined> = [
@@ -251,17 +245,15 @@ export default function SlotDiffViewerScreen() {
         </View>
       ) : null}
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-        <ResourceReadStatus observation={runObservation} label="slot diff run" />
-        <ResourceReadStatus observation={recipeObservation} label="slot diff recipe inventory" />
-        {readError ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Retry slot diff reads"
-            onPress={() => void retryRead()}
-          >
-            <Text style={baseStyles.textSecondary}>Retry</Text>
-          </Pressable>
-        ) : null}
+        <ResourceReadStatus
+          observations={[
+            { observation: slotRunObservation, label: 'slot context' },
+            { observation: runObservation, label: 'slot diff run' },
+            { observation: recipeObservation, label: 'slot diff recipe inventory' },
+          ]}
+          onRetry={() => void retryRead()}
+          retryLabel="Retry slot diff reads"
+        />
         <RunWorkspaceNav
           current="diff"
           dense
@@ -328,10 +320,13 @@ export default function SlotDiffViewerScreen() {
             />
           </View>
         ) : null}
-        <ResourceReadStatus observation={diffObservation} label="workspace diff" />
-        {pathParamError || error ? (
-          <Text style={styles.errorText}>{pathParamError ?? error}</Text>
-        ) : null}
+        <ResourceReadStatus
+          observation={diffObservation}
+          label="workspace diff"
+          onRetry={() => void retryRead()}
+          retryLabel="Retry slot diff reads"
+        />
+        {pathParamError ? <Text style={styles.errorText}>{pathParamError}</Text> : null}
         {diffText ? (
           <MobileDiffViewer
             title={requestedPath ? `${requestedPath} · workspace` : 'Workspace diff'}

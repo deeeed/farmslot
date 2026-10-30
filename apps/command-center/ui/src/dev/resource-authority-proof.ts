@@ -6,6 +6,7 @@ import {
   type ResourceQuery,
   type ResourceQueryState,
   type ResourceStoreScope,
+  RUN_LIST_COLLECTION_ID,
 } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../gateway-client.js';
@@ -41,6 +42,7 @@ export async function inspectResourceAuthority(
   let storedObservedAt: number | undefined;
   let storedBytes: number | undefined;
   let storedData: unknown;
+  let storedQueryId: string | undefined;
   let storedQueryIds: string[] = [];
   if (inspectedScope) {
     if (
@@ -51,7 +53,11 @@ export async function inspectResourceAuthority(
     const store = await createBrowserSqliteResourceStore({ scope: inspectedScope });
     try {
       persistent = store.persistent;
-      const stored = await store.getQuery(query.id);
+      // Version-list views derive from the shared collection, not a second saved filtered list.
+      const stored =
+        (await store.getQuery(query.id)) ??
+        (query.method === 'run.list' ? await store.getQuery(RUN_LIST_COLLECTION_ID) : undefined);
+      storedQueryId = stored?.id;
       storedObservedAt = stored?.observedAt;
       storedBytes = stored?.bytes;
       storedData = stored?.data;
@@ -77,6 +83,7 @@ export async function inspectResourceAuthority(
     inspectedScope,
     persistent,
     storedObservedAt,
+    storedQueryId,
     storedBytes,
     storedDataSha256: await hashData(storedData),
     storedQueryIds,

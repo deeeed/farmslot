@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 
 import {
   SOURCE_VIEW_ACTION_LABELS,
@@ -109,105 +109,181 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
     viewModel: snapshot,
     controller,
     visible,
+    viewKey,
   } = useSourceStatusController(
     props.context,
     props.onSelectionsChange,
     props.onSelectionStateChange,
   );
   const [details, setDetails] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [now, setNow] = useState(Date.now());
   const view = snapshot.view;
-  if (!visible || snapshot.hidden) return null;
+  useEffect(() => {
+    setOpen(false);
+    setDetails(false);
+  }, [controller, viewKey, props.context.target?.scope, props.context.target?.targetId]);
+  useEffect(() => {
+    if (!visible || snapshot.hidden) setOpen(false);
+  }, [visible, snapshot.hidden]);
+  const saved = visible && Boolean(view) && snapshot.freshness !== 'ready';
+  useEffect(() => {
+    if (!saved) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [saved]);
+  if (!visible) return <View style={styles.disclosureSlot} />;
   return (
-    <View style={styles.panel} testID="sources-panel">
-      <View style={styles.header}>
+    <View style={styles.disclosureSlot}>
+      <Pressable
+        style={styles.disclosure}
+        disabled={snapshot.hidden}
+        accessibilityRole="button"
+        accessibilityLabel="Sources"
+        accessibilityState={{ disabled: snapshot.hidden, expanded: open }}
+        testID="sources-open"
+        onPress={() => setOpen(true)}
+      >
         <Text style={baseStyles.textPrimary}>Sources</Text>
-        {view && (
-          <Text style={styles.facts} testID="sources-line">
-            {view.line}
-          </Text>
-        )}
-      </View>
-      {view && snapshot.freshness !== 'ready' && (
-        <Text style={baseStyles.textSecondary} testID="sources-stale">
-          Stale · {sourceObservationAge(snapshot.observedAt)}
+        <Text
+          style={styles.disclosureSummary}
+          numberOfLines={1}
+          testID={open ? undefined : 'sources-line'}
+        >
+          {snapshot.loading
+            ? 'Loading…'
+            : snapshot.error
+              ? 'Could not refresh'
+              : snapshot.hidden
+                ? ''
+                : view?.line}
+          {saved ? (
+            <Text testID={open ? undefined : 'sources-stale'}>
+              {' '}
+              · Saved {sourceObservationAge(snapshot.observedAt, now)}
+            </Text>
+          ) : null}
         </Text>
-      )}
-      {snapshot.unsupported && (
-        <Text style={baseStyles.textSecondary} testID="sources-unsupported">
-          Live updates unavailable on this gateway.
-        </Text>
-      )}
-      {snapshot.error && (
-        <>
-          <Text style={styles.error} accessibilityRole="alert">
-            {snapshot.error}
-          </Text>
-          <Pressable
-            testID="sources-read-retry"
-            style={styles.button}
-            onPress={() => void controller.refresh()}
-          >
-            <Text style={baseStyles.textPrimary}>Retry</Text>
-          </Pressable>
-        </>
-      )}
-      {snapshot.operationError && (
-        <Text style={styles.error} accessibilityRole="alert" testID="sources-operation-error">
-          {snapshot.operationError}
-        </Text>
-      )}
-      {snapshot.notice && <Text style={baseStyles.textPrimary}>{snapshot.notice}</Text>}
-      {snapshot.pending && (
-        <>
-          <Text style={baseStyles.textPrimary}>{snapshot.pendingLabel}</Text>
-          <Pressable
-            testID="sources-retry"
-            disabled={!snapshot.canRetry}
-            style={styles.button}
-            onPress={() => void controller.retry()}
-          >
-            <Text style={baseStyles.textPrimary}>Retry this request</Text>
-          </Pressable>
-        </>
-      )}
-      {view?.errors.map((error, index) => (
-        <Text key={index} style={styles.error} testID="sources-status-error">
-          {error.nodeId ?? error.sourceId ?? error.project}: {error.reason}
-        </Text>
-      ))}
-      {view &&
-        snapshot.controls &&
-        view.rows.map((row) => (
-          <SourceRow
-            key={row.declaration.id}
-            row={row}
-            snapshot={snapshot}
-            controller={controller}
-          />
-        ))}
-      {view && view.rows.length > 0 && (
-        <>
-          <Pressable
-            testID="sources-details-toggle"
-            accessibilityRole="button"
-            style={styles.button}
-            onPress={() => setDetails(!details)}
-          >
-            <Text style={baseStyles.textSecondary}>{details ? 'Hide details' : 'Details'}</Text>
-          </Pressable>
-          {details &&
-            view.rows.map((row) => (
-              <View key={row.declaration.id} style={styles.row}>
-                <Text style={styles.facts}>{row.summary}</Text>
-                {row.details.map((line, index) => (
-                  <Text key={index} style={styles.facts}>
-                    {line}
+      </Pressable>
+      <Modal
+        visible={open && !snapshot.hidden && visible}
+        transparent
+        animationType="none"
+        onRequestClose={() => setOpen(false)}
+      >
+        <View style={styles.backdrop}>
+          <View style={styles.dialog}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close sources"
+              style={styles.close}
+              onPress={() => setOpen(false)}
+            >
+              <Text style={baseStyles.textPrimary}>Close</Text>
+            </Pressable>
+            <ScrollView>
+              <View style={styles.panel} testID="sources-panel">
+                <View style={styles.header}>
+                  <Text style={baseStyles.textPrimary}>Sources</Text>
+                  {view && (
+                    <Text style={styles.facts} testID="sources-line">
+                      {view.line}
+                    </Text>
+                  )}
+                </View>
+                {view && snapshot.freshness !== 'ready' && (
+                  <Text style={baseStyles.textSecondary} testID="sources-stale">
+                    Stale · {sourceObservationAge(snapshot.observedAt, now)}
+                  </Text>
+                )}
+                {snapshot.unsupported && (
+                  <Text style={baseStyles.textSecondary} testID="sources-unsupported">
+                    Live updates unavailable on this gateway.
+                  </Text>
+                )}
+                {snapshot.error && (
+                  <>
+                    <Text style={styles.error} accessibilityRole="alert">
+                      {snapshot.error}
+                    </Text>
+                    <Pressable
+                      testID="sources-read-retry"
+                      style={styles.button}
+                      onPress={() => void controller.refresh()}
+                    >
+                      <Text style={baseStyles.textPrimary}>Retry</Text>
+                    </Pressable>
+                  </>
+                )}
+                {snapshot.operationError && (
+                  <Text
+                    style={styles.error}
+                    accessibilityRole="alert"
+                    testID="sources-operation-error"
+                  >
+                    {snapshot.operationError}
+                  </Text>
+                )}
+                {snapshot.notice && <Text style={baseStyles.textPrimary}>{snapshot.notice}</Text>}
+                {snapshot.pending && (
+                  <>
+                    <Text style={baseStyles.textPrimary}>{snapshot.pendingLabel}</Text>
+                    <Pressable
+                      testID="sources-retry"
+                      disabled={!snapshot.canRetry}
+                      style={styles.button}
+                      onPress={() => void controller.retry()}
+                    >
+                      <Text style={baseStyles.textPrimary}>Retry this request</Text>
+                    </Pressable>
+                  </>
+                )}
+                {view?.errors.map((error, index) => (
+                  <Text key={index} style={styles.error} testID="sources-status-error">
+                    {error.nodeId ?? error.sourceId ?? error.project}: {error.reason}
                   </Text>
                 ))}
+                {view &&
+                  snapshot.controls &&
+                  view.rows.map((row) => (
+                    <SourceRow
+                      key={row.declaration.id}
+                      row={row}
+                      snapshot={snapshot}
+                      controller={controller}
+                    />
+                  ))}
+                {view && view.rows.length > 0 && (
+                  <>
+                    <Pressable
+                      testID="sources-details-toggle"
+                      accessibilityRole="button"
+                      style={styles.button}
+                      onPress={() => setDetails(!details)}
+                    >
+                      <Text style={baseStyles.textSecondary}>
+                        {details ? 'Hide details' : 'Details'}
+                      </Text>
+                    </Pressable>
+                    {details &&
+                      view.rows.map((row) => (
+                        <View key={row.declaration.id} style={styles.row}>
+                          <Text style={styles.facts}>{row.summary}</Text>
+                          {row.details.map((line, index) => (
+                            <Text key={index} style={styles.facts}>
+                              {line}
+                            </Text>
+                          ))}
+                        </View>
+                      ))}
+                  </>
+                )}
               </View>
-            ))}
-        </>
-      )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

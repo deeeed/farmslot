@@ -2,6 +2,10 @@
 
 This document records the Command Center quality guardrails and the current large-file breakup inventory. The latest cleanup PR keeps the repo-wide formatting/lint/type ratchets in place while moving more state/payload/recovery logic out of mega-files behind tested helper modules.
 
+## UI review checklist
+
+- A visible layout jump during load, polling, error, reconnect or notice changes is a blocking finding in Command Center and Companion.
+
 ## Automated checks
 
 Run the aggregate command from the repository root for the full Command Center quality gate:
