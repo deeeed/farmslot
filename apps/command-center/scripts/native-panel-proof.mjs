@@ -222,6 +222,7 @@ export async function proveNativePanel({
             if (mode === 'native-error') {
               assert.equal(value.observedAt, ready.observedAt);
               assert(value.age.includes('Saved conversation history'));
+              assert(value.age.includes('Actions wait for a current read'));
               assert(value.inputDisabled, 'Failed reads must keep input disabled');
             }
           }
