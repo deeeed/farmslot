@@ -49,7 +49,10 @@ Media selection references original attempt paths rather than overwriting copies
 The Node `@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs` helper owns
 task selection IO for the CLI and wrappers. Its read/write exports use that
 version-1 contract and are versioned with the runtime package; they grant no
-publication admission.
+publication admission. Re-selecting a retained attempt (`selectRecipeAttempt`,
+or the helper run with the task and attempt directories) first moves the task
+acceptance ledger to that attempt's engine-selected claims, so the selection and
+the verdicts always name the same execution.
 
 ## Claim registration and verdicts
 

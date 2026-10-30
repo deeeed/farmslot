@@ -4,6 +4,8 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Re-selecting a retained recipe attempt also moves the task acceptance ledger to that attempt's claims, so the gate no longer shows another execution's verdicts.
+
 ## 0.39.11 - 2026-10-30
 
 - Refuse completion of recipe-backed tasks without a selected passing attempt, before review and publication.

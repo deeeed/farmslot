@@ -1,5 +1,4 @@
 // Task transport only. The engine derives verdicts; the task ledger has no reducer.
-import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -8,14 +7,18 @@ import {
   normalizeRecipeClaimId,
   type RecipeClaimDeclaration,
   type RecipeClaimEvidence,
-  type RecipeClaimLedger,
 } from '@farmslot/protocol';
 
 import { harnessContext } from './context-state.js';
 
 interface AcceptanceLedgerModule {
   handoffAcceptanceCriteria(taskDir: string): Array<{ id: string; text: string }>;
-  setDerivedClaims(taskDir: string, claims: RecipeClaimLedger): unknown;
+  transferEngineClaims(
+    taskDir: string,
+    claimsPath: string,
+    tracePath: string,
+    selectedClaims?: RecipeClaimEvidence[],
+  ): RecipeClaimEvidence[];
 }
 const require = createRequire(import.meta.url);
 const ledger =
@@ -68,31 +71,11 @@ export function recordRecipeAcceptance(
   },
 ): RecipeAcceptanceRecord {
   if (!result.claimsPath) throw new Error('The engine returned no derived claim package.');
-  const claims = JSON.parse(fs.readFileSync(result.claimsPath, 'utf8')) as RecipeClaimLedger;
-  const root = path.dirname(result.claimsPath);
-  const realTask = fs.realpathSync(taskDir);
-  // A repair transports the engine selection; retained rows keep their original verdicts.
-  const criteria = (result.selectedClaims ?? claims.criteria).map((claim) => ({
-    ...claim,
-    evidence: [
-      ...new Set([result.tracePath, ...claim.evidence.map((file) => path.resolve(root, file))]),
-    ]
-      .map((file) => taskRelative(realTask, file))
-      .filter((file): file is string => file !== null),
-  }));
-  ledger.setDerivedClaims(taskDir, { ...claims, criteria });
-  return { recorded: criteria, refused: [] };
-}
-
-function taskRelative(realTask: string, file: string): string | null {
-  if (!fs.existsSync(file)) return null;
-  const relative = path.relative(realTask, fs.realpathSync(file));
-  if (
-    !relative ||
-    relative === '..' ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
-  )
-    return null;
-  return relative.split(path.sep).join('/');
+  const recorded = ledger.transferEngineClaims(
+    taskDir,
+    result.claimsPath,
+    result.tracePath,
+    result.selectedClaims,
+  );
+  return { recorded, refused: [] };
 }
