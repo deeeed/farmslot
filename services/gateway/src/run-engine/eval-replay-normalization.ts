@@ -98,6 +98,8 @@ export async function normalizeEvalReplayForTaskWrite(runId: string, current: Ru
   const evalState = current.engineState?.evalExperiment;
   if (!evalState || current.completionPolicy !== 'artifact-only' || current.lane !== 'comparison')
     return current;
+  // Blind trials already carry frozen problem/base inputs. Never inherit reference ticket data.
+  if (evalState.blind) return current;
   const experiment = await readEvalExperimentManifest(evalState.experimentManifestPath);
   const referencePackage = await readResultPackageManifest(experiment.case.referencePackagePath);
   const taskProfile = experiment.case.taskProfile;

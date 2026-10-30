@@ -116,6 +116,10 @@ export async function launchEvalCockpitLocalSuite(
     options.setError('Add at least one case to the basket');
     return;
   }
+  if (options.selectedCases.some((item) => !item.objective.trim())) {
+    options.setError('Add the ticket problem text for each case before launching.');
+    return;
+  }
   if (!options.rows.length) {
     options.setError('Enable at least one candidate strategy');
     return;

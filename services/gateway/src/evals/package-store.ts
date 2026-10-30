@@ -26,6 +26,8 @@ import {
 
 import { inferArtifactPurpose } from '../core/index.js';
 
+import { blindTrialEligibility } from './blind-inputs.js';
+
 export const EXPERIMENT_MANIFEST_FILENAME = 'experiment-manifest.json';
 export const RESULT_PACKAGE_DIR = 'packages';
 export const REFERENCE_PACKAGE_FILENAME = 'reference.result-package.json';
@@ -587,38 +589,42 @@ export async function finalizeEvalResultPackageForRun(
     : currentPackage.templateProvenance
       ? portableTemplateProvenance(currentPackage.templateProvenance)
       : undefined;
-  const finalized = await writeResultPackageManifest(link.packagePath, {
-    ...currentPackage,
-    status: 'final',
-    finalizedAt: new Date().toISOString(),
-    runId: run.id,
-    familyId: run.familyId,
-    diff,
-    axes: portableProvenance
-      ? {
-          ...currentPackage.axes,
-          template: {
-            ...currentPackage.axes.template,
-            path: portableProvenance.templatePath,
-            name:
-              currentPackage.axes.template?.name ??
-              portableProvenance.templateName.replace(/\.md$/, ''),
-            hash: portableProvenance.contentHash,
-            ref: portableProvenance.projectRepoHeadSha ?? currentPackage.axes.template?.ref,
-          },
-        }
-      : currentPackage.axes,
-    templateProvenance: portableProvenance,
-    visualEvidence,
-    validationEvidence,
-    evidenceRequirements: finalizeEvidenceRequirements(currentPackage.evidenceRequirements, {
-      diff,
-      validationEvidence,
-      visualEvidence,
-    }),
-    metrics: metricsForRun(run),
-    missingData: [...new Set(missingData)],
-  });
+  const finalized =
+    currentPackage.status === 'final'
+      ? currentPackage
+      : await writeResultPackageManifest(link.packagePath, {
+          ...currentPackage,
+          comparisonEligibility: blindTrialEligibility(link.blind),
+          status: 'final',
+          finalizedAt: new Date().toISOString(),
+          runId: run.id,
+          familyId: run.familyId,
+          diff,
+          axes: portableProvenance
+            ? {
+                ...currentPackage.axes,
+                template: {
+                  ...currentPackage.axes.template,
+                  path: portableProvenance.templatePath,
+                  name:
+                    currentPackage.axes.template?.name ??
+                    portableProvenance.templateName.replace(/\.md$/, ''),
+                  hash: portableProvenance.contentHash,
+                  ref: portableProvenance.projectRepoHeadSha ?? currentPackage.axes.template?.ref,
+                },
+              }
+            : currentPackage.axes,
+          templateProvenance: portableProvenance,
+          visualEvidence,
+          validationEvidence,
+          evidenceRequirements: finalizeEvidenceRequirements(currentPackage.evidenceRequirements, {
+            diff,
+            validationEvidence,
+            visualEvidence,
+          }),
+          metrics: metricsForRun(run),
+          missingData: [...new Set(missingData)],
+        });
 
   const experimentManifest = await readEvalExperimentManifest(link.experimentManifestPath);
   const updatedTrials = experimentManifest.trials.map((trial) => {
@@ -630,6 +636,7 @@ export async function finalizeEvalResultPackageForRun(
           ? ('failed' as const)
           : ('final' as const),
       packageHash: finalized.packageHash,
+      comparisonEligibility: finalized.comparisonEligibility,
       packagePath: link.packagePath,
       completedAt: new Date().toISOString(),
       missingData: finalized.missingData,
@@ -640,19 +647,6 @@ export async function finalizeEvalResultPackageForRun(
     updatedAt: new Date().toISOString(),
     trials: updatedTrials,
   });
-
-  const refreshedEvalExperimentManifest = await readEvalExperimentManifest(
-    link.experimentManifestPath,
-  );
-  const taskEvalExperimentManifestPath = path.join(
-    taskDir,
-    'artifacts',
-    EXPERIMENT_MANIFEST_FILENAME,
-  );
-  await writeEvalExperimentManifest(
-    taskEvalExperimentManifestPath,
-    refreshedEvalExperimentManifest,
-  );
 
   return finalized;
 }

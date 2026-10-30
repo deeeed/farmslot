@@ -3167,6 +3167,7 @@ export interface RunEngineState {
   };
   /** Artifact-first experiment trial linkage for artifact-only reference/template regression candidates. */
   evalExperiment?: {
+    blind?: import('./evals.js').EvalBlindTrial;
     /** Matrix/suite-wide cap group for eval queue accounting across per-case experiments. */
     capGroupId?: string;
     suiteId?: string;

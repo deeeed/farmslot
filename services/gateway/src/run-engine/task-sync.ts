@@ -8,6 +8,7 @@ import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { execLocal, isLocal } from '../core/exec.js';
 import { RSYNC_SSH_SHELL_OPTION, SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
+import { auditBlindTrialTask } from '../evals/blind-trial.js';
 import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
@@ -27,6 +28,7 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
     const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
 
     const taskDir = path.dirname(run.taskFile);
+    await auditBlindTrialTask(run, taskDir);
     const taskFolderId = path.basename(taskDir);
     const flowSubdir = path.basename(path.dirname(taskDir));
     const workerTaskAbs = path.join(vars.remoteRepo, taskDirName, flowSubdir, taskFolderId);

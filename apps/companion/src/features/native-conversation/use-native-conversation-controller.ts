@@ -11,21 +11,19 @@ import {
   type RunGetResult,
 } from '@farmslot/protocol';
 import {
+  nativeCommandLockSettled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
   nativeObservationQuery,
+  nativeTimeline,
+  type NativeTranscript,
   resourceQuery,
 } from '@farmslot/protocol/client-cache';
 
 import { observeNativeConversation } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
-import {
-  nativeCommandLockSettled,
-  nativeConversationWritable,
-  nativeTimeline,
-  type NativeTranscript,
-} from '../../lib/native-conversation';
+import { nativeConversationWritable } from '../../lib/native-conversation';
 import {
   createNativeConversationStorage,
   nativeConversationStorageKey,

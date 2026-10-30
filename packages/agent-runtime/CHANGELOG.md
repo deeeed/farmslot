@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refuse completion of recipe-backed tasks without a selected passing attempt, before review and publication.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.39.10 - 2026-10-30
