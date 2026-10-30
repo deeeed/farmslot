@@ -308,6 +308,14 @@ function validateRecipeDocumentArtifact() {
       return;
     }
     packageRoot = path.posix.dirname(smokeRecipe);
+  } else if (
+    terminalContract?.recordedEvidenceContractVersion === 1 &&
+    pointerValue === undefined
+  ) {
+    issues.push(
+      'artifacts/latest-valid-recipe-run.json is missing: run the proof with RECIPE_TASK_DIR in the same command and output under artifacts/recipe-runs/<attempt> before completing.',
+    );
+    return;
   }
   const recipe = readJsonArtifact(`${packageRoot}/recipe.json`, 'recipe-run/recipe.json');
   if (recipe === undefined) {
