@@ -8,6 +8,8 @@
 
 - Re-selecting a retained recipe attempt also moves the task acceptance ledger to that attempt's claims, so the gate no longer shows another execution's verdicts.
 
+- Task instructions say to mark complete with criteria awaiting human review, so the run gate can collect that review instead of the worker waiting for it.
+
 ## 0.39.11 - 2026-10-30
 
 - Refuse completion of recipe-backed tasks without a selected passing attempt, before review and publication.
