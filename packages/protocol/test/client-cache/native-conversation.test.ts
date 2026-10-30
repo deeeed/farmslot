@@ -256,7 +256,7 @@ test('a command card shows what it ran and the end of its output', () => {
     command: 'npm test',
     output: `${lines}\n`,
   });
-  assert.equal(text?.split('\n').slice(0, 3).join('|'), '$ npm test|… 5 earlier lines|line 6');
+  assert.equal(text?.split('\n').slice(0, 3).join('|'), '$ npm test|… 35 earlier lines|line 36');
   assert.equal(text?.split('\n').at(-1), 'line 45');
   // Text blocks, as Claude and ACP return them.
   assert.equal(

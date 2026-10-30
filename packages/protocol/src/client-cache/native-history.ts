@@ -576,7 +576,8 @@ function nativeElapsed(ms: number): string {
 
 const NATIVE_TOOL_LABEL_CHARS = 120;
 const NATIVE_TOOL_LABEL_FILES = 3;
-const NATIVE_TOOL_OUTPUT_LINES = 40;
+// Fits a tool card's box without scrolling, so the end of the output is what the reader sees.
+const NATIVE_TOOL_OUTPUT_LINES = 10;
 // Colour and title escapes a terminal would interpret; as text they are noise.
 const NATIVE_TERMINAL_ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const NATIVE_TOOL_VERBS: Partial<Record<NativeToolKind, string>> = {
@@ -610,8 +611,9 @@ export function nativeToolLabel(tool: NativeSessionTool | undefined): string {
 }
 
 /**
- * A command card's text: "$ npm test", then the last 40 lines it printed, with "… 12 earlier lines"
- * above them. Undefined for any other tool, whose card shows its raw input and output.
+ * A command card's text: "$ npm test", then the last 10 lines it printed, with "… 12 earlier lines"
+ * above them; its raw input and output stay one tap away. Undefined for any other tool, whose card
+ * shows its raw input and output.
  */
 export function nativeCommandText(tool: NativeSessionTool | undefined): string | undefined {
   if (tool?.kind !== 'command' || !tool.command) return undefined;

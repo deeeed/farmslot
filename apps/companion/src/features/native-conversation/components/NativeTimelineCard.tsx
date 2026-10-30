@@ -22,11 +22,13 @@ export function NativeTimelineCard({
   hidden?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [raw, setRaw] = useState(false);
   const toggle = () => {
     onDisclosure();
     setExpanded(!expanded);
   };
   const preview = nativeEntryPreview(entry);
+  const command = nativeCommandText(entry.event.tool);
   return (
     <View style={[styles.card, entry.kind === 'user' && styles.user, hidden && styles.hidden]}>
       <Text style={styles.muted}>
@@ -48,10 +50,30 @@ export function NativeTimelineCard({
               · {expanded ? 'Hide' : 'Details'}
             </Text>
           </Pressable>
-          {expanded ? (
+          {expanded && command ? (
+            <>
+              <Text selectable style={styles.code}>
+                {command}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: raw }}
+                style={styles.messageToggle}
+                onPress={() => {
+                  onDisclosure();
+                  setRaw(!raw);
+                }}
+              >
+                <Text style={styles.buttonText}>
+                  {raw ? 'Hide raw input and output' : 'Raw input and output'}
+                </Text>
+              </Pressable>
+            </>
+          ) : null}
+          {expanded && (!command || raw) ? (
             <ScrollView nestedScrollEnabled style={styles.detail}>
               <Text selectable style={styles.code}>
-                {nativeCommandText(entry.event.tool) ?? JSON.stringify(entry.event.tool, null, 2)}
+                {JSON.stringify(entry.event.tool, null, 2)}
               </Text>
             </ScrollView>
           ) : null}

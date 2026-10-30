@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- A native conversation names tool calls by what they do, "Run npm test", "Edit a.ts, b.ts" or "Read a.ts", in the tool row and the working status, instead of runner names such as `commandExecution`. A command's details show the command and the last 40 lines it printed.
+- A native conversation names tool calls by what they do, "Run npm test", "Edit a.ts, b.ts" or "Read a.ts", in the tool row and the working status, instead of runner names such as `commandExecution`. A command's details show the command and the last 10 lines it printed, with its raw input and output one tap away.
 - Collapsing a long message (Show less) or a turn's tool calls in a native conversation keeps its button where you saw it, instead of the content above shrinking it out of view.
 - A family with no runs, such as a reference-only eval, shows no "Open latest run" link.
 - A finished turn's tool calls in a native conversation fold behind one row at the end of the turn, "Worked for 4m 12s · 6 tools", that opens them in place. A turn you watched run stays open, with any tool you opened still open.
