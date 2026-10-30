@@ -387,7 +387,8 @@ for (const malformed of [
 
 test('signing a device out refreshes its saved login, connects, then revokes the session', async () => {
   const OriginalWebSocket = globalThis.WebSocket;
-  const sentMethods: string[] = [];
+  let sentMethods: string[] = [];
+  let answerRevoke = true;
   const now = new Date();
   const session = {
     id: 'a'.repeat(32),
@@ -400,10 +401,11 @@ test('signing a device out refreshes its saved login, connects, then revokes the
     refreshExpiresAt: new Date(now.getTime() + 30 * 86400_000).toISOString(),
     revokedAt: null,
   };
-  let saved: PersonSessionAuth | null = {
+  const signedIn: PersonSessionAuth = {
     session,
     refreshToken: `fsr_${'a'.repeat(32)}_${'r'.repeat(43)}`,
   };
+  let saved: PersonSessionAuth | null = signedIn;
 
   class TestWebSocket {
     static readonly CONNECTING = 0;
@@ -425,6 +427,14 @@ test('signing a device out refreshes its saved login, connects, then revokes the
     send(data: string): void {
       const request = JSON.parse(data) as RequestFrame;
       sentMethods.push(request.method);
+      if (request.method === Methods.AUTH_SESSION_REVOKE) {
+        // The gateway closes a revoked session's sockets right after it answers the revoke.
+        setImmediate(() => {
+          this.readyState = 3;
+          this.onclose?.();
+        });
+        if (!answerRevoke) return;
+      }
       const payload =
         request.method === Methods.AUTH_SESSION_REFRESH
           ? {
@@ -460,27 +470,38 @@ test('signing a device out refreshes its saved login, connects, then revokes the
     }
   }
 
-  globalThis.WebSocket = TestWebSocket as unknown as typeof WebSocket;
-  try {
-    await signOutGatewayDevice(
+  const signOut = () =>
+    signOutGatewayDevice(
       'ws://gateway.test/ws',
       {
         personSessionRequired: true,
         sessionStorage: {
           load: async () => saved,
           save: async (value) => {
+            // A keystore write takes longer than the gateway takes to close the socket.
+            await new Promise((resolve) => setTimeout(resolve, 5));
             saved = value;
           },
         },
       },
       { connectMs: 50, pingMs: 50 },
     );
+  globalThis.WebSocket = TestWebSocket as unknown as typeof WebSocket;
+  try {
+    await signOut();
     assert.deepEqual(sentMethods, [
       Methods.AUTH_SESSION_REFRESH,
       Methods.AUTH_CONNECT,
       Methods.AUTH_SESSION_REVOKE,
     ]);
     assert.equal(saved, null);
+
+    // A close before the gateway answers the revoke is not a confirmed sign-out.
+    answerRevoke = false;
+    sentMethods = [];
+    saved = signedIn;
+    await assert.rejects(signOut(), /closed before confirming the sign-out/);
+    assert.equal(sentMethods.at(-1), Methods.AUTH_SESSION_REVOKE);
   } finally {
     globalThis.WebSocket = OriginalWebSocket;
   }
