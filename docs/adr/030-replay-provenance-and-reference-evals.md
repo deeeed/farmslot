@@ -357,3 +357,17 @@ This conflates publication safety with evaluation methodology. Bugfix-style eval
 7. Revisit generalized eval-review policy separately from bugfix publication gates.
 8. Make the artifact-only/comparison replay delta portable across slots. Those work branches are kept local-only by `services/gateway/src/projects/start-ref-policy.ts` (`assertStartRefWorkBranchIsLocalOnly`), and only the ≤50MB evidence diff artifact reaches the gateway, so such a run cannot be hydrated onto another slot. Persist a complete, re-appliable contribution patch as a package payload (tracked + untracked + binary), or push to a gateway-owned ref namespace (`refs/farmslot/runs/<runId>`), recorded on `ResultPackageManifest`, so any slot can fetch-and-apply. Enables the ADR-024 activate-on-slot swap for comparison runs without polluting PR remotes.
 9. Cross-gateway reference seeding for worktree sandboxes — see [ADR-039](039-run-portable-bundles.md) (`farmrun` bundle export/import). Complements package-based eval references; does not replace slot-level replay delta in item 8.
+
+## Amendment 1: blind trial inputs and comparison eligibility (2026-10-30)
+
+**Status:** Accepted, lead-approved amendment.
+
+**Decision.** A candidate receives the problem statement and a frozen base commit. Reference packages, PR descriptions, reference identities and experiment manifests stay in gateway storage. The candidate uses an independent, shallow Git object store containing the base snapshot and its own work, with no reference objects, remote URLs or fetch access. Slot teardown restores the original Git metadata and retains the candidate work under the existing ownership guards.
+
+Freeze the first worker output before review can change it. Compare its stable patch identity with the reference on the gateway. A matching output is contaminated and excluded from comparisons. Missing blind-input or isolation proof makes a trial invalid for comparison. Package finality and comparison eligibility remain separate facts; historical output bytes are retained.
+
+**Rationale.** Giving a candidate the reference answer measures its ability to copy that answer. Moving a branch to the base while retaining later Git objects does not make the trial blind.
+
+**Consequences.** Existing trials without blind provenance cannot supply valid comparison results. An experiment needs explicit problem text before a new candidate can launch. Production runs keep their current checkout and publication behavior.
+
+**Public surface.** The existing `eval.experiment.create`, `eval.trial.start` and `eval.trial.result.get` methods remain the entry points. Protocol-owned case, trial and result-package records carry the problem statement and comparison eligibility for gateway execution and Command Center readers. Optional wire fields require the normal protocol patch release and matching readers. No new worker command, harness API or dispatch flag is introduced. The normative contract is [Blind eval trials](../reference/blind-eval-trials.md).

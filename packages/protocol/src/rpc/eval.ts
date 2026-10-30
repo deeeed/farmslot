@@ -1,4 +1,5 @@
 import type {
+  EvalComparisonEligibility,
   EvalExperimentManifest,
   EvalPackageAxes,
   EvalTaskProfile,
@@ -106,6 +107,7 @@ export interface EvalTrialResultGetResult {
   candidatePackage: ResultPackageManifest;
   candidatePackagePath: string;
   experimentManifest?: EvalExperimentManifest;
+  comparisonEligibility?: EvalComparisonEligibility;
 }
 
 export interface EvalSuiteCapGetParams {

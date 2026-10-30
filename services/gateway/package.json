@@ -11,6 +11,7 @@
     "test": "yarn workspace @farmslot/protocol build && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json --workers 4 src",
     "quality": "yarn typecheck && yarn test",
     "postinstall": "node scripts/fix-node-pty-spawn-helper.mjs",
+    "test:blind-eval-git-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --test src/evals/blind-git.live.ts",
     "test:acceptance-watch-live": "node --import tsx --experimental-test-module-mocks src/tasks/watcher-acceptance.live.ts",
     "test:decision-advice-live": "node --import tsx src/methods/decision-advice.rpc.live.ts",
     "test:claude-hookless-progress": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/runners/claude-hookless-progress.live.ts",

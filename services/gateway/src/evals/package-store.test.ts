@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  evalComparisonEligibility,
   type EvalExperimentManifest,
   isResultPackageManifest,
   type ResultPackageManifest,
@@ -357,7 +358,7 @@ test('package hashes ignore volatile source paths and capture timestamps', () =>
   assert.equal(computePackageHash(first), computePackageHash(second));
 });
 
-test('finalizeEvalResultPackageForRun hashes artifacts and updates experiment trial package hash', async () => {
+test('finalizeEvalResultPackageForRun hashes artifacts and updates experiment trial package hash', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-package-'));
   try {
     await mkdir(path.join(root, 'artifacts', 'packages'), { recursive: true });
@@ -555,6 +556,28 @@ test('finalizeEvalResultPackageForRun hashes artifacts and updates experiment tr
           entry.artifact.path === 'artifacts/notes-before-fix.png' && entry.role === 'eval-after',
       ),
       true,
+    );
+    await t.test(
+      'finalized legacy package bytes and hash survive changed artifacts on retry',
+      async () => {
+        const legacy = { ...finalized };
+        delete legacy.comparisonEligibility;
+        const original = await writeResultPackageManifest(packagePath, legacy);
+        const bytes = await readFile(packagePath);
+        await writeFile(path.join(root, 'artifacts', 'report.md'), 'changed after finalization\n');
+        const retried = await finalizeEvalResultPackageForRun(run);
+        assert(retried);
+        assert.deepEqual(await readFile(packagePath), bytes);
+        assert.equal(retried.packageHash, original.packageHash);
+        assert.equal(
+          (await readResultPackageManifest(packagePath)).packageHash,
+          original.packageHash,
+        );
+        assert.equal(
+          evalComparisonEligibility(await readResultPackageManifest(packagePath)).status,
+          'invalid',
+        );
+      },
     );
   } finally {
     await rm(root, { recursive: true, force: true });
