@@ -33,6 +33,8 @@ import {
   nativeObservationQuery,
   nativeTimeline,
   type NativeTranscript,
+  type NativeWork,
+  nativeWork,
   type ResourceQuery,
   type ResourceQueryState,
   SUPERSEDED_READ_GRACE_MS,
@@ -180,12 +182,23 @@ export class NativeSessionView extends LitElement {
   /** The selection the timeline DOM was last rendered for. */
   private renderedRevision = -1;
 
+  private workEvents?: NativeSessionEvent[];
+  private workState?: NativeWork;
+
   private timeline() {
     if (this.timelineEvents !== this.transcript.events) {
       this.timelineEvents = this.transcript.events;
       this.timelineEntries = nativeTimeline(this.transcript.events);
     }
     return this.timelineEntries;
+  }
+
+  private work() {
+    if (this.workEvents !== this.transcript.events) {
+      this.workEvents = this.transcript.events;
+      this.workState = nativeWork(this.transcript.events);
+    }
+    return this.workState;
   }
 
   static styles = nativeSessionStyles;
@@ -991,6 +1004,7 @@ export class NativeSessionView extends LitElement {
         connected: this.connected,
         caughtUp: this.caughtUp,
         refreshingHistory: isSupersededRead(this.historyObservation.error),
+        work: this.work(),
         busy: this.busy,
         workspace: this.workspace,
         workspaceAllowed: this.workspaceAllowed,

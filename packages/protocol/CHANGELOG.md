@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `nativeWork` finds the turn a native session is running, when it started and its current tool; `nativeWorkLabel` gives "Working · 1m 12s · Bash".
 - `NativeFollow`, `NATIVE_FOLLOW_LATEST`, `nativeFollowScrolled`, `nativeFollowGrew` and `nativeFollowLabel` track whether a native conversation reader follows new output and how many entries arrived while they read further up.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

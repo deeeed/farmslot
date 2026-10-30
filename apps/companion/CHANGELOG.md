@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- A native conversation shows its state on its own line; while a turn runs, how long it has worked and the tool it runs now ("Working · 1m 12s · Bash").
 - Scrolled up in a native conversation, a "Latest · N new" button jumps back to the end and follows new output again.
 - Deleting a gateway profile that still holds a sign-in no longer stops at "Sign out this device before deleting its profile.", which no control on Settings could do for a profile that was not the active one. One confirmation says the delete signs this device out of that gateway; the gateway revokes the device when it answers, the sign-in is forgotten on the phone either way, and Companion says when the gateway did not answer, so the device can be revoked from Command Center.
 - A pair link, `farmslot://pair?payload=<pairing QR payload>` (`farmslot-preview://` and `farmslot-development://` for those builds), opens the connection screen, shows the addresses it would pair with and any saved sign-in it would replace, and pairs only after you confirm, with the same single exchange, single-use code and expiry as the QR. `farmslot://connection?payload=…` does the same. One pairing runs at a time across screens, each payload is handled once, and pairing data larger than a QR can hold, or with more than 16 addresses, is refused before any exchange.

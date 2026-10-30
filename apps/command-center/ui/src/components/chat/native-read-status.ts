@@ -1,4 +1,5 @@
 import { type NativeSessionInfo, sourceObservationAge } from '@farmslot/protocol';
+import { type NativeWork, nativeWorkLabel } from '@farmslot/protocol/client-cache';
 
 export interface NativeReadStatusContext {
   connected: boolean;
@@ -12,6 +13,8 @@ export interface NativeReadStatusContext {
   saved?: boolean;
   unsupported?: boolean;
   sessionState?: NativeSessionInfo['state'];
+  /** The turn a running session is working on. */
+  work?: NativeWork;
   now: number;
 }
 
@@ -44,9 +47,11 @@ export function nativeReadStatus(ctx: NativeReadStatusContext) {
               ? 'Loading history'
               : ctx.taskHistory
                 ? 'Task history'
-                : ctx.selected
-                  ? `Live${ctx.sessionState ? ` · ${ctx.sessionState}` : ''}`
-                  : 'Ready';
+                : ctx.selected && ctx.sessionState === 'running' && ctx.work
+                  ? nativeWorkLabel(ctx.work, ctx.now)
+                  : ctx.selected
+                    ? `Live${ctx.sessionState ? ` · ${ctx.sessionState}` : ''}`
+                    : 'Ready';
   const age =
     ctx.observedAt === undefined
       ? ctx.selected

@@ -69,7 +69,9 @@ export class NativeReadStatusView extends LitElement {
   protected updated() {
     const needed =
       this.isConnected &&
-      (this.context.observedAt !== undefined || this.context.unavailableSince !== undefined);
+      (this.context.observedAt !== undefined ||
+        this.context.unavailableSince !== undefined ||
+        this.context.work !== undefined);
     if (needed && !this.timer) this.timer = setInterval(() => (this.now = Date.now()), 1000);
     if (!needed) {
       clearInterval(this.timer);

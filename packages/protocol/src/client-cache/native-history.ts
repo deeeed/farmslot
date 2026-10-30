@@ -471,3 +471,42 @@ export function nativeFollowLabel(state: NativeFollow): string | undefined {
   if (state.following) return undefined;
   return state.unseen ? `Latest · ${state.unseen} new` : 'Latest';
 }
+
+export interface NativeWork {
+  /** When the open turn started, in ms. */
+  since: number;
+  /** The tool the turn is running now. */
+  tool?: string;
+}
+
+/** The turn in progress, if any: when it started and the tool it is running now. */
+export function nativeWork(events: NativeSessionEvent[]): NativeWork | undefined {
+  let since: number | undefined;
+  const tools = new Map<string, string>();
+  for (const event of events) {
+    if (event.type === 'turn.started') {
+      since = Date.parse(event.at);
+      tools.clear();
+    } else if (event.type === 'turn.completed' || event.type === 'session.closed') {
+      since = undefined;
+      tools.clear();
+    } else if (since !== undefined && event.nativeId && event.tool) {
+      if (event.type === 'tool.started') tools.set(event.nativeId, event.tool.name);
+      else if (event.type === 'tool.completed') tools.delete(event.nativeId);
+    }
+  }
+  return since === undefined ? undefined : { since, tool: [...tools.values()].at(-1) };
+}
+
+/** "Working · 1m 12s · Bash": how long the turn has run, and its current tool. */
+export function nativeWorkLabel(work: NativeWork, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - work.since) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const elapsed =
+    minutes >= 60
+      ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+      : minutes
+        ? `${minutes}m ${seconds % 60}s`
+        : `${seconds}s`;
+  return `Working · ${elapsed}${work.tool ? ` · ${work.tool}` : ''}`;
+}
