@@ -1,4 +1,5 @@
-import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import { isTerminalRunStatus, type Run, type RunGetResult } from '@farmslot/protocol';
+import { canActOn, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { nativeWorkerTargets, type NativeWorkerViewTarget } from '@farmslot/review-dispatch';
 
 export {
@@ -33,6 +34,22 @@ export function nativeWorkerViewForRun(
   );
   if (matches.length !== 1) return;
   return { ...matches[0], readOnly: matches[0].readOnly || isTerminalRunStatus(run.status) };
+}
+
+/**
+ * The worker an action targets. Its run follows the same held-data rule as the message field:
+ * current, or only waiting for the reread a run write called for. A saved run refuses.
+ */
+export function nativeWorkerForAction(
+  run: ResourceQueryState<RunGetResult> | undefined,
+  selection: NativeWorkerViewSelection,
+  connected: boolean,
+  now = Date.now(),
+): NativeWorkerViewTarget | undefined {
+  if (!run?.data || !canActOn(run, connected, now)) return;
+  const target = nativeWorkerViewForRun(run.data.run, selection);
+  if (!target) throw new Error('This run no longer contains the selected worker conversation.');
+  return target;
 }
 
 /** Metadata changes do not rebind a transcript; task/session ownership changes do. */

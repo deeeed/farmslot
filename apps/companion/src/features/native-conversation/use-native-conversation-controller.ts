@@ -31,6 +31,7 @@ import {
   nativeConversationStorageKey,
 } from '../../lib/native-conversation-storage';
 import {
+  nativeWorkerForAction,
   nativeWorkerViewControl,
   nativeWorkerViewForRun,
   type NativeWorkerViewSelection,
@@ -119,14 +120,16 @@ export function useNativeConversationController(params: NativeConversationParams
         : undefined,
     [runObservation.data, runQuery, selection],
   );
-  const currentWorker = useCallback((): NativeWorkerViewTarget | undefined => {
-    if (!runQuery) return;
-    const observed = getResourceCache()?.read(runQuery);
-    if (observed?.status !== 'ready' || !observed.data) return;
-    const target = nativeWorkerViewForRun(observed.data.run, selection);
-    if (!target) throw new Error('This run no longer contains the selected worker conversation.');
-    return target;
-  }, [runQuery, selection]);
+  const currentWorker = useCallback(
+    (): NativeWorkerViewTarget | undefined =>
+      runQuery &&
+      nativeWorkerForAction(
+        getResourceCache()?.read(runQuery),
+        selection,
+        useConnectionStore.getState().status === 'connected',
+      ),
+    [runQuery, selection],
+  );
   const generation = client?.connectionGeneration;
   const farmConnection = useMemo(
     () =>
