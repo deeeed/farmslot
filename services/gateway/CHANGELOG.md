@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Redispatching a ticket whose earlier attempts failed or were cancelled before dispatch takes a new task dir without asking; the collision is recorded as resolved automatically. An earlier attempt that reached dispatch or is still live, or a dir without an owner stamp, still asks.
 - Launch and resume Codex workers without the startup update check, so a worker never self-updates inside its pane and misses its ready window.
 - Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
 - Allow a requested re-review at the same HEAD when a package refresh changed only the run artifacts its open findings cite.

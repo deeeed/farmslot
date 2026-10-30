@@ -8,6 +8,7 @@ import {
   type EvidenceManifestEntry,
   isPrerequisiteGatePayload,
   isTerminalRunStatus,
+  PipelineSteps,
   type PRReviewOptions,
   prReviewWorkflow,
   type RepeatReviewContext,
@@ -32,7 +33,7 @@ import {
   runDecisionWaitingStatus,
   type RunProgressObservation,
 } from '../runners/run-progress.js';
-import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, getRunWithArchived, listRuns, updateRun, updateRunStep } from '../runs/store.js';
 import { samePrincipalOwner } from '../security/work-originator.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
@@ -576,6 +577,37 @@ export function buildCollisionSuccessorParams(
   };
 }
 
+/** A run that failed or was cancelled before its dispatch step started never ran a worker. */
+function endedBeforeDispatch(run: Run): boolean {
+  if (run.status !== 'failed' && run.status !== 'cancelled') return false;
+  const dispatch = run.steps.find((step) => step.name === PipelineSteps.DISPATCH);
+  return (
+    dispatch !== undefined &&
+    !dispatch.startedAt &&
+    (dispatch.status === 'pending' || dispatch.status === 'skipped')
+  );
+}
+
+/**
+ * Every colliding dir was written by an earlier attempt of this project that ended before
+ * dispatch, so none holds work and a new dir needs no operator choice. An unstamped dir,
+ * an owner that is still live or one that reached dispatch keeps the decision.
+ */
+async function collisionOnlyFromAttemptsBeforeDispatch(
+  current: Run,
+  existingDirs: string[],
+): Promise<boolean> {
+  // Lazy import keeps the task writer out of this module's load cycle.
+  const { readTaskDirOwners } = await import('../tasks/writer.js');
+  const owners = await readTaskDirOwners(current, existingDirs);
+  for (const owner of owners) {
+    if (!owner || owner === current.id) return false;
+    const prior = await getRunWithArchived(owner);
+    if (!prior || prior.project !== current.project || !endedBeforeDispatch(prior)) return false;
+  }
+  return owners.length > 0;
+}
+
 /**
  * Shared collision-decision handler. Emits engine_collision with a list of prior runs
  * that own the colliding task dirs, and processes the operator's chosen action:
@@ -633,13 +665,24 @@ export async function handleCollisionDecision(
   // ambiguous when multiple prior runs collide; the panel makes the choice explicit.
   const actions = collisionDecisionActions(current);
 
+  let autoAction: 'create-new' | undefined;
+  try {
+    if (await collisionOnlyFromAttemptsBeforeDispatch(current, existingDirs))
+      autoAction = 'create-new';
+  } catch (err) {
+    // Unproven ownership keeps today's behaviour: the operator chooses.
+    console.warn(
+      `[run-engine] collision owner check failed for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
+  }
+
   const actionId = await createEngineDecision(
     runId,
     'collision',
     `Task dir collision for ${ticketSlug}: ${existingDirs.join(', ')}`,
     actions,
     { kind: 'collision', ticketSlug, existingDirs, priorRunIds, dirOwners },
-    { canReplay: (prior) => canReplayCollisionDecision(prior, existingDirs) },
+    { canReplay: (prior) => canReplayCollisionDecision(prior, existingDirs), autoAction },
   );
 
   if (actionId === 'abort') throw new Error('Aborted: task dir collision');
@@ -711,6 +754,8 @@ export async function createEngineDecision(
      * reason+resolvedAt only and silently replays the prior action against new data. */
     canReplay?: (existing: RunDecision) => boolean;
     readProgress?: (run: Run) => Promise<RunProgressObservation>;
+    /** The caller already established which action applies; record it without waiting. */
+    autoAction?: string;
   },
 ): Promise<string> {
   const run = getRun(runId);
@@ -810,10 +855,10 @@ export async function createEngineDecision(
   });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 
-  const autoAction = autoResolveEngineDecision(run, reason, actions);
+  const autoAction = autoResolveEngineDecision(run, reason, actions) ?? options?.autoAction;
   if (autoAction) {
     console.warn(
-      `[run-engine] validation mode auto-resolved ${reason} for run ${runId.slice(0, 8)} -> ${autoAction}`,
+      `[run-engine] auto-resolved ${reason} for run ${runId.slice(0, 8)} -> ${autoAction}`,
     );
   }
   const actionId =
