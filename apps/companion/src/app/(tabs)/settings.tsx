@@ -465,7 +465,7 @@ export default function SettingsScreen() {
     if (profile.readonly) return;
     const isActive = profile.id === activeProfile?.id;
     // A profile that holds a person login is signed out as part of the delete, unless another
-    // address from the same pairing still uses that sign-in.
+    // address from the same pairing may still use that sign-in.
     const signedIn = (await readGatewayProfilePersonSession(profile).catch(() => null)) !== null;
     const sharedWith = signedIn
       ? await profilesSharingPersonLogin(profile, profiles).catch(() => [])
@@ -475,7 +475,7 @@ export default function SettingsScreen() {
       ? [`Signs this device out of ${profile.name} and removes the profile.`]
       : signedIn
         ? [
-            `Removes the profile. This device stays signed in through ${sharedWith.map((other) => other.name).join(', ')}, which uses the same sign-in.`,
+            `Removes the profile. This device stays signed in to the gateway, because ${sharedWith.map((other) => other.name).join(', ')} may use the same sign-in.`,
           ]
         : isActive
           ? []
@@ -495,7 +495,7 @@ export default function SettingsScreen() {
               if (deviceStillListed)
                 Alert.alert(
                   'Profile deleted',
-                  `${profile.name} did not answer, so it may still list this device. Its sign-in is gone from this device; revoke the device in Command Center to end it there too.`,
+                  `${profile.name} did not confirm the sign-out, so it may still list this device. Its sign-in is gone from this device; revoke the device in Command Center to end it there too.`,
                 );
               connect();
             })

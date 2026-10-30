@@ -58,7 +58,6 @@ import {
   prepareGatewayProfileLogin,
   profileIdForUrl,
   profileSecretStorageKey,
-  profilesSharingPersonLogin,
   readGatewayProfilePersonSession,
 } from '../lib/gateway-profiles';
 import { notifyRunCompleted, notifyViolation } from '../lib/notifications';
@@ -447,18 +446,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   deleteProfile: async (profileId: string) => {
     const profile = get().profiles.find((candidate) => candidate.id === profileId);
     if (!profile || profile.readonly) return { deviceStillListed: false };
-    // The gateway revokes the session when it answers, unless another saved profile still uses it.
-    // The login stored for this profile ends either way.
-    const sharedWith = await profilesSharingPersonLogin(profile, get().profiles);
-    const deviceStillListed =
-      (await readGatewayProfilePersonSession(profile)) !== null &&
-      !(await endGatewayProfilePersonLogin(
-        profile,
-        sharedWith.length > 0
-          ? undefined
-          : (credentials) =>
-              signOutGatewayDevice(profile.url, credentials, PROFILE_SIGN_OUT_TIMEOUTS),
-      ));
+    // The gateway revokes the session when it answers, unless another saved profile may still use
+    // it. The login stored for this profile ends either way.
+    const deviceStillListed = !(await endGatewayProfilePersonLogin(
+      profile,
+      get().profiles,
+      (credentials) => signOutGatewayDevice(profile.url, credentials, PROFILE_SIGN_OUT_TIMEOUTS),
+    ));
     const profiles = mergeGatewayProfiles(
       get().profiles.filter((candidate) => candidate.id !== profileId),
     );

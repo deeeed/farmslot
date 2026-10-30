@@ -182,12 +182,16 @@ test('deleting a profile that holds a person login signs it out on its gateway, 
   // Not the running client's profile: nothing else holds this login.
   await signIn('a');
   let signedOutSession: string | undefined;
-  const confirmed = await api.endGatewayProfilePersonLogin(profile, async (credentials) => {
-    // As signOutGatewayDevice does once the gateway confirms the revoke.
-    signedOutSession = ((await credentials.sessionStorage.load()) as PersonSessionAuth | null)
-      ?.session.id;
-    await credentials.sessionStorage.save(null);
-  });
+  const confirmed = await api.endGatewayProfilePersonLogin(
+    profile,
+    [profile],
+    async (credentials) => {
+      // As signOutGatewayDevice does once the gateway confirms the revoke.
+      signedOutSession = ((await credentials.sessionStorage.load()) as PersonSessionAuth | null)
+        ?.session.id;
+      await credentials.sessionStorage.save(null);
+    },
+  );
   assert.equal(confirmed, true);
   assert.equal(signedOutSession, 'a'.repeat(32));
   assert.equal(await api.readGatewayProfilePersonSession(profile), null);
@@ -197,7 +201,7 @@ test('deleting a profile that holds a person login signs it out on its gateway, 
 
 test('a profile whose gateway does not answer still loses its login here, and says so', async () => {
   await signIn('a');
-  const confirmed = await api.endGatewayProfilePersonLogin(profile, async () => {
+  const confirmed = await api.endGatewayProfilePersonLogin(profile, [profile], async () => {
     throw new Error('Gateway did not connect and authenticate within 5000ms');
   });
   assert.equal(confirmed, false);
@@ -207,7 +211,7 @@ test('a profile whose gateway does not answer still loses its login here, and sa
   // A session the gateway already ended needs no sign-out there.
   await signIn('b');
   assert.equal(
-    await api.endGatewayProfilePersonLogin(profile, async () => {
+    await api.endGatewayProfilePersonLogin(profile, [profile], async () => {
       throw new PersonSessionEndedError();
     }),
     true,
@@ -233,9 +237,76 @@ test('a sign-in another address of the same pairing still uses is only forgotten
     ['tailnet'],
   );
 
-  // No sign-out callback: the store passes none while another profile uses the session.
-  assert.equal(await api.endGatewayProfilePersonLogin(profile), true);
+  let revoked = false;
+  const confirmed = await api.endGatewayProfilePersonLogin(
+    profile,
+    [profile, tailnet],
+    async () => {
+      revoked = true;
+    },
+  );
+  assert.equal(confirmed, true);
+  assert.equal(revoked, false);
   assert.equal(await api.readGatewayProfilePersonSession(profile), null);
   assert.equal((await api.readGatewayProfilePersonSession(tailnet))?.session.id, 'a'.repeat(32));
   assert.deepEqual(await api.profilesSharingPersonLogin(tailnet, [profile, tailnet]), []);
+});
+
+test('a profile whose login cannot be read may share the session, so it is not revoked', async () => {
+  await signIn('a');
+  const tailnet: GatewayProfile = {
+    ...profile,
+    id: 'tailnet',
+    name: 'Tailnet',
+    url: 'ws://macwork.tail73dab7.ts.net:7801/ws',
+    secretStorageKey: 'tailnet-secret',
+  };
+  const tailnetLogin = await api.prepareGatewayProfileLogin(tailnet, 'fixture-person-input');
+  await tailnetLogin.credentials.sessionStorage.save(saved('a'));
+  await tailnetLogin.commitVerifiedCredential(verified('person'));
+  // Its saved login now belongs to another URL, so reading it fails.
+  const unreadable = { ...tailnet, url: 'ws://moved.example:7801/ws' };
+  await assert.rejects(api.readGatewayProfilePersonSession(unreadable));
+  assert.deepEqual(
+    (await api.profilesSharingPersonLogin(profile, [profile, unreadable])).map(({ id }) => id),
+    ['tailnet'],
+  );
+
+  let revoked = false;
+  const confirmed = await api.endGatewayProfilePersonLogin(
+    profile,
+    [profile, unreadable],
+    async () => {
+      revoked = true;
+    },
+  );
+  assert.equal(confirmed, true);
+  assert.equal(revoked, false);
+  assert.equal(await api.readGatewayProfilePersonSession(profile), null);
+  assert.equal((await api.readGatewayProfilePersonSession(tailnet))?.session.id, 'a'.repeat(32));
+});
+
+test('a sign-in saved to the profile while it is being deleted stays, and the delete stops', async () => {
+  await signIn('a');
+  let revoked: string | undefined;
+  await assert.rejects(
+    api.endGatewayProfilePersonLogin(profile, [profile], async (credentials) => {
+      revoked = ((await credentials.sessionStorage.load()) as PersonSessionAuth | null)?.session.id;
+      // A pairing saves a new sign-in to this profile while the revoke is in flight.
+      const pairing = await api.prepareGatewayProfileLogin(
+        profile,
+        'fixture-person-input',
+        undefined,
+        { replacePersonLogin: true },
+      );
+      await pairing.credentials.sessionStorage.save(saved('b'));
+      await pairing.commitVerifiedCredential(verified('person'));
+      // The revoked client then clears its login: refused, the stored login changed.
+      await credentials.sessionStorage.save(null);
+    }),
+    /signed in again during the delete/,
+  );
+  assert.equal(revoked, 'a'.repeat(32));
+  assert.equal((await api.readGatewayProfilePersonSession(profile))?.session.id, 'b'.repeat(32));
+  await assert.rejects(api.forgetGatewayProfileSecret(profile));
 });

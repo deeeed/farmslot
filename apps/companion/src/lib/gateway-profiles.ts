@@ -302,34 +302,49 @@ export async function prepareGatewayProfileLogin(
   };
 }
 
-/** Other saved profiles that hold this profile's device sign-in: a pairing saves it on each address. */
+/**
+ * Other saved profiles that may hold this profile's device sign-in: a pairing saves it on each
+ * address. A profile whose login cannot be read counts, so its session is never revoked unseen.
+ */
 export async function profilesSharingPersonLogin(
   profile: GatewayProfile,
   profiles: readonly GatewayProfile[],
+  sessionId?: string,
 ): Promise<GatewayProfile[]> {
-  const own = await readGatewayProfilePersonSession(profile);
+  const own = sessionId ?? (await readGatewayProfilePersonSession(profile))?.session.id;
   if (!own) return [];
   const others = profiles.filter((candidate) => candidate.id !== profile.id);
   const logins = await Promise.all(
-    others.map((candidate) => readGatewayProfilePersonSession(candidate).catch(() => null)),
+    others.map((candidate) =>
+      readGatewayProfilePersonSession(candidate).then(
+        (login) => login?.session.id,
+        () => own,
+      ),
+    ),
   );
-  return others.filter((_, index) => logins[index]?.session.id === own.session.id);
+  return others.filter((_, index) => logins[index] === own);
 }
 
 /**
  * Ends this device's person login for a profile it is deleting. `signOut` revokes the device session
- * on the gateway with the saved login; without it (another profile still uses the session) nothing
- * is revoked. Either way the login stored for this profile ends. Resolves false when the gateway did
- * not confirm a sign-out, so it may still list this device.
+ * on the gateway with the saved login, unless another saved profile may still use it. Only the
+ * session read here ends: a sign-in saved to the profile meanwhile stays, and this rejects. Resolves
+ * false when the gateway did not confirm a sign-out, so it may still list this device.
  */
 export async function endGatewayProfilePersonLogin(
   profile: GatewayProfile,
-  signOut?: (credentials: GatewayProfileLogin['credentials']) => Promise<void>,
+  profiles: readonly GatewayProfile[],
+  signOut: (credentials: GatewayProfileLogin['credentials']) => Promise<void>,
 ): Promise<boolean> {
+  const own = await readGatewayProfilePersonSession(profile);
+  if (!own) return true;
   let confirmed = true;
-  if (signOut) {
+  if ((await profilesSharingPersonLogin(profile, profiles, own.session.id)).length === 0) {
     try {
-      await signOut((await prepareGatewayProfileLogin(profile)).credentials);
+      const { credentials } = await prepareGatewayProfileLogin(profile);
+      const prepared = (await credentials.sessionStorage.load()) as PersonSessionAuth | null;
+      if (prepared?.session.id !== own.session.id) throw new PersonSessionChangedError();
+      await signOut(credentials);
     } catch (error) {
       // A session the gateway already ended needs no sign-out there.
       confirmed = error instanceof PersonSessionEndedError;
@@ -339,6 +354,10 @@ export async function endGatewayProfilePersonLogin(
   await serializeProfileWrite(key, async () => {
     const current = await storedLogin(profile);
     if (current.kind !== 'person' || !current.auth) return;
+    if (current.auth.session.id !== own.session.id)
+      throw new Error(
+        'This profile was signed in again during the delete, so it was kept. Delete it again to sign that out too.',
+      );
     await SecureStore.setItemAsync(
       key,
       JSON.stringify({
