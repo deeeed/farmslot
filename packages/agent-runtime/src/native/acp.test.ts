@@ -34,6 +34,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='malformed')return result(prompt,{});
   if(text==='error')return send({id:prompt,error:{code:-32000,message:'fixture failure'}});
   if(text==='silent')return;
+  if(text==='shell'){
+   update({sessionUpdate:'tool_call',toolCallId:'shell1',title:'Run command',kind:'execute',status:'pending',rawInput:{}});
+   update({sessionUpdate:'tool_call_update',toolCallId:'shell1',title:'Run npm test',rawInput:{command:'npm test'}});
+   update({sessionUpdate:'tool_call_update',toolCallId:'shell1',status:'completed',rawOutput:{exitCode:0,stdout:'ok\\n',stderr:''}});
+   return result(prompt,{stopReason:'end_turn'});
+  }
   send({method:'session/update',params:{sessionId:'other-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'FOREIGN'}}}});
   if(text==='permission')return send({id:71,method:'session/request_permission',params:{sessionId:session,toolCall:{title:'Write fixture',rawInput:{path:'fixture'}},options:[{optionId:'allow-once',kind:'allow_once'},{optionId:'deny-once',kind:'reject_once'}]}});
   if(text==='unknown')return send({id:72,method:'fs/read_text_file',params:{path:'/private'}});
@@ -120,6 +126,24 @@ for (const [runner, adapter] of [
     }
   });
 }
+
+test('a Cursor shell call keeps its kind when an update adds the command', async () => {
+  const f = setup();
+  const events: NativeEventInput[] = [];
+  const session = await cursorNativeAdapter.start(f, (event) => events.push(event));
+  try {
+    await session.send('shell', 'c1');
+    await until(() => events.some((e) => e.type === 'turn.completed'));
+    const tool = events.find((e) => e.type === 'tool.completed')?.tool;
+    assert.deepEqual(
+      [tool?.kind, tool?.command, tool?.output],
+      ['command', 'npm test', { exitCode: 0, stdout: 'ok\n', stderr: '' }],
+    );
+  } finally {
+    await session.close();
+    f.cleanup();
+  }
+});
 
 test('ACP permission ownership, one-time denial and unsupported host operations', async () => {
   const f = setup();

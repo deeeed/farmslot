@@ -217,17 +217,18 @@ test('a typed tool reads as what it does; an untyped one keeps the runner name',
   );
   assert.equal(
     nativeToolLabel({ name: 'Edit', kind: 'file-edit', paths: ['src/a.ts', 'src/b.ts'] }),
-    'Edit a.ts, b.ts',
+    'Change a.ts, b.ts',
   );
   assert.equal(
     nativeToolLabel({ name: 'fileChange', kind: 'file-edit', paths: ['a', 'b', 'c', 'd', 'e'] }),
-    'Edit a, b, c and 2 more',
+    'Change a, b, c and 2 more',
   );
   assert.equal(
     nativeToolLabel({ name: 'Read', kind: 'file-read', paths: ['/w/x.md'] }),
     'Read x.md',
   );
   assert.equal(nativeToolLabel({ name: 'Grep', kind: 'search', paths: ['src'] }), 'Search src');
+  assert.equal(nativeToolLabel({ name: 'Glob', kind: 'search', paths: ['/w/src/'] }), 'Search src');
   // No subject, no kind, or a kind without a verb: the runner's own name.
   assert.equal(nativeToolLabel({ name: 'Bash', kind: 'command' }), 'Bash');
   assert.equal(nativeToolLabel({ name: 'WebFetch', kind: 'web' }), 'WebFetch');
@@ -241,6 +242,15 @@ test('a typed tool reads as what it does; an untyped one keeps the runner name',
   const started = { ...event(1, 'tool.started'), nativeId: 'tool' };
   const command = { name: 'Bash', kind: 'command' as const, command: 'npm test' };
   assert.equal(nativeTimeline([{ ...started, tool: command }])[0].text, 'Run npm test');
+  // The command arrives only with the completion (Cursor): the row reads it then, same key.
+  const late = nativeTimeline([
+    { ...started, tool: { name: 'Run command', kind: 'command' } },
+    { ...event(2, 'tool.completed'), nativeId: 'tool', tool: { ...command, name: 'Run command' } },
+  ]);
+  assert.deepEqual(
+    late.map(({ key, text }) => [key, text]),
+    [[1, 'Run npm test']],
+  );
   const work = nativeWork([event(0, 'turn.started'), { ...started, tool: command }]);
   assert.equal(
     work && nativeWorkLabel(work, Date.parse('2026-09-12T00:00:05Z')),
@@ -278,6 +288,16 @@ test('a command card shows what it ran and the end of its output', () => {
     '$ ls\na',
   );
   assert.equal(nativeCommandText({ name: 'Bash', kind: 'command', command: 'true' }), '$ true');
+  // A process result, as Cursor returns it.
+  assert.equal(
+    nativeCommandText({
+      name: 'Run npm test',
+      kind: 'command',
+      command: 'npm test',
+      output: { exitCode: 1, stdout: 'ran 3\n', stderr: '1 failed\n' },
+    }),
+    '$ npm test\nran 3\n1 failed',
+  );
   assert.equal(
     nativeCommandText({
       name: 'Bash',
@@ -286,6 +306,40 @@ test('a command card shows what it ran and the end of its output', () => {
       output: '\x1b]0;title\x07\x1b[32m✔ passed\x1b[0m',
     }),
     '$ npm test\n✔ passed',
+  );
+  // A progress meter's carriage returns start lines, as on the terminal screen.
+  assert.equal(
+    nativeCommandText({
+      name: 'Bash',
+      kind: 'command',
+      command: 'curl -o a.tgz x',
+      output: ' 10%\r 60%\r100%\r\n',
+    }),
+    '$ curl -o a.tgz x\n 10%\n 60%\n100%',
+  );
+  // A heredoc shows its first line; the whole command is in the raw card.
+  assert.equal(
+    nativeCommandText({
+      name: 'Bash',
+      kind: 'command',
+      command: "cat <<'EOF'\nhi\nEOF",
+      output: 'hi',
+    }),
+    "$ cat <<'EOF' …\nhi",
+  );
+  // Output that is not text keeps the raw card, rather than looking like no output.
+  assert.equal(
+    nativeCommandText({ name: 'x', kind: 'command', command: 'ls', output: [{ type: 'image' }] }),
+    undefined,
+  );
+  assert.equal(
+    nativeCommandText({
+      name: 'x',
+      kind: 'command',
+      command: 'ls',
+      output: { stdout: '', stderr: '' },
+    }),
+    '$ ls',
   );
   // Any other tool keeps its raw card.
   assert.equal(nativeCommandText({ name: 'Edit', kind: 'file-edit', paths: ['a'] }), undefined);

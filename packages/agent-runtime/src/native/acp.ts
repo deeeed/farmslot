@@ -16,8 +16,14 @@ const ACP_TOOL_KINDS: Record<string, NativeToolKind> = {
   fetch: 'web',
 };
 
-/** What an ACP tool call does. An update that omits a field keeps the call's earlier value. */
-function acpToolKind(update: AcpObject): Pick<NativeSessionTool, 'kind' | 'command' | 'paths'> {
+/**
+ * What an ACP tool call does. An update that omits a field keeps the call's earlier value: Cursor
+ * refreshes a shell call's input with its command without repeating the call's kind.
+ */
+function acpToolKind(
+  update: AcpObject,
+  previous: Pick<NativeSessionTool, 'kind'> | undefined,
+): Pick<NativeSessionTool, 'kind' | 'command' | 'paths'> {
   const kind =
     typeof update.kind === 'string'
       ? Object.hasOwn(ACP_TOOL_KINDS, update.kind)
@@ -39,7 +45,9 @@ function acpToolKind(update: AcpObject): Pick<NativeSessionTool, 'kind' | 'comma
   );
   return {
     ...(kind ? { kind } : {}),
-    ...(kind === 'command' && typeof input.command === 'string' ? { command: input.command } : {}),
+    ...((kind ?? previous?.kind) === 'command' && typeof input.command === 'string'
+      ? { command: input.command }
+      : {}),
     ...(paths.length ? { paths } : {}),
   };
 }
@@ -161,7 +169,7 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
               ...previous,
               name:
                 typeof update.title === 'string' ? update.title : (previous?.name ?? 'Runner tool'),
-              ...acpToolKind(update),
+              ...acpToolKind(update, previous),
               ...(update.rawInput !== undefined ? { input: update.rawInput } : {}),
               ...(update.rawOutput !== undefined || update.content !== undefined
                 ? { output: update.rawOutput ?? update.content }

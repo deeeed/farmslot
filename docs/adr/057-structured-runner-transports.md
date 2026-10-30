@@ -305,9 +305,9 @@ One optional field, `NativeSessionEvent.response`, in `@farmslot/protocol`. No R
 
 ### Decision
 
-`NativeSessionEvent.tool` gains three optional fields, set by each runner adapter: `kind` (`command`, `file-edit`, `file-read`, `search`, `web` or `other`), `command` (the command line a `command` tool runs) and `paths` (the files a tool reads, edits or searches). `name` stays the runner's own tool name. An adapter that cannot tell leaves `kind` out, and clients treat it like `other`.
+`NativeSessionEvent.tool` gains three optional fields, set by each runner adapter: `kind` (`command`, `file-edit`, `file-read`, `search`, `web` or `other`), `command` (the command line a `command` tool runs) and `paths` (the files or directories a tool reads, changes or searches). `name` stays the runner's own tool name. An adapter that cannot tell leaves `kind` out, and clients treat it like `other`.
 
-Clients read tool calls through these fields: "Run npm test", "Edit a.ts, b.ts", "Read a.ts" or "Search src" in the tool row and the working status. A command's card shows what it ran and the last lines it printed. Any other tool keeps the runner's name and its raw input and output.
+Clients read tool calls through these fields: "Run npm test", "Change a.ts, b.ts", "Read a.ts" or "Search src" in the tool row and the working status. A command's card shows what it ran and the last lines it printed, with its raw input and output one tap away. A tool without a kind or subject keeps the runner's name, and every tool but a command keeps its raw input and output as its card.
 
 ### Rationale and consequences
 
