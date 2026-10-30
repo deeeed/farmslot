@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A blind eval judge that re-runs the recipe no longer blocks package finalization: the harness execution record it rewrites is not frozen worker evidence.
 - Prepare retries its remote fetch when another slot sharing the same repository moved a tracking ref first, instead of failing with "cannot lock ref".
 - Task files tell workers to mark complete with criteria awaiting human review; the run gate collects that review.
 - Blind eval trials check their commit signatures from the frozen trial base, so a finished worker no longer fails MONITOR on the removed `origin/main`.
