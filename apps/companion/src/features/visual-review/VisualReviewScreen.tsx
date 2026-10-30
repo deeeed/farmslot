@@ -22,24 +22,17 @@ export function VisualReviewScreen({ route }: { route: VisualReviewRouteParams }
   const screen = useVisualReviewController(route);
   const { state, exportMessage, actions } = screen;
   const observations = (
-    <>
-      <ResourceReadStatus observation={screen.runObservation} label="visual review run" />
-      <ResourceReadStatus observation={screen.recipeObservation} label="visual review inventory" />
-      {state.status === 'ready' && state.targetRunId !== screen.runObservation.data?.run.id ? (
-        <ResourceReadStatus observation={screen.targetObservation} label="feedback target" />
-      ) : null}
-      {screen.runObservation.error ||
-      screen.recipeObservation.error ||
-      screen.targetObservation.error ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Retry visual review"
-          onPress={actions.retry}
-        >
-          <Text style={styles.body}>Retry</Text>
-        </Pressable>
-      ) : null}
-    </>
+    <ResourceReadStatus
+      observations={[
+        { observation: screen.runObservation, label: 'visual review run' },
+        { observation: screen.recipeObservation, label: 'visual review inventory' },
+        ...(state.status === 'ready' && state.targetRunId !== screen.runObservation.data?.run.id
+          ? [{ observation: screen.targetObservation, label: 'feedback target' }]
+          : []),
+      ]}
+      onRetry={actions.retry}
+      retryLabel="Retry visual review"
+    />
   );
 
   if (state.status === 'loading') {

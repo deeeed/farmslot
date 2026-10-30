@@ -49,7 +49,8 @@ function bind(): void {
       (state) => {
         if (current !== version) return;
         if (state.data) setObservedVisibleModels(state.data.runners);
-        error = state.error?.message ?? '';
+        // Retry must not blank the last failure before a current reply settles it.
+        error = state.error?.message ?? (state.status === 'ready' ? '' : error);
         notify();
       },
     );

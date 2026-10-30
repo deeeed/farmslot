@@ -23,6 +23,18 @@ import { withOwnedGatewayOffline } from './owned-gateway-outage.mjs';
 import { proveProgressHistory } from './prove-progress-history.mjs';
 
 const execute = promisify(execFile);
+
+// A read-age proof opens the actual disclosure with real CDP input before reading its caption.
+async function openReadNotices(cdp, route, observation) {
+  if (!observation?.readNoticesNeeded || !observation.noticesClosed) return false;
+  await cdp('click', route, 'farm-notification-tray >>> .bell');
+  return true;
+}
+
+async function closeReadNotices(cdp, route, observation) {
+  if (observation?.noticesClosed === false) await cdp('key', route, 'Escape');
+}
+
 const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
 const phase = process.argv[2];
 assert(
@@ -224,7 +236,11 @@ if (phase === 'inbox-web') {
     let value;
     do {
       value = await snapshot();
-      if (ready(value)) return value;
+      if (await openReadNotices(cdp, route, value)) continue;
+      if (ready(value)) {
+        await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -384,7 +400,11 @@ if (phase === 'list-web') {
     let value;
     do {
       value = await cdp('eval', route, '--file', probePath);
-      if (ready(value)) return value;
+      if (await openReadNotices(cdp, route, value)) continue;
+      if (ready(value)) {
+        await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -729,7 +749,11 @@ async function detailBrowser(runId) {
     let value;
     do {
       value = await snapshot();
-      if (ready(value)) return value;
+      if (await openReadNotices(cdp, route, value)) continue;
+      if (ready(value)) {
+        await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -761,7 +785,8 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
   assert.equal(await realpath(process.env.FARMSLOT_ROOT), await realpath(fixture.root));
   const repo = await realpath(fixture.repo);
   assert(repo.startsWith(`${home}/`));
-  const statusFile = path.join(fixture.root, '.farm-status.json');
+  const statusFile =
+    process.env.FARMSLOT_TEST_STATUS_FILE ?? path.join(fixture.root, '.farm-status.json');
   const original = await readFile(statusFile);
   const originalMode = (await stat(statusFile)).mode & 0o777;
   const raw = JSON.parse(original);
@@ -866,7 +891,11 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
     let value;
     do {
       value = await cdp('eval', route, '--file', probe);
-      if (ready(value)) return value;
+      if (await openReadNotices(cdp, route, value)) continue;
+      if (ready(value)) {
+        await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -908,7 +937,14 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
       },
       async ({ runId, runFile, observed }) => {
         if (!remote && process.env.FARMSLOT_PROGRESS_HISTORY_CONTROL) {
-          await proveProgressHistory({ fixture, projects, runId, runFile, observeResources });
+          await proveProgressHistory({
+            fixture,
+            projects,
+            runId,
+            runFile,
+            statusFile,
+            observeResources,
+          });
           assert.fail('The focused progress control unexpectedly succeeded');
         }
         const proveRegistry = async () => {
@@ -922,7 +958,10 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
           );
           // Drain duplicate events before deletion is the only new filesystem write.
           await delay(2500);
-          const failed = await cdp('eval', route, '--file', probe);
+          const failed = await until(
+            (value) => value.errorRendered && value.freshness === 'stale',
+            'The failed projection must remain visible before its source is repaired',
+          );
           assert(failed.errorRendered && failed.freshness === 'stale');
           await observed.barrier();
           const failedRevision = Math.max(
@@ -1166,6 +1205,7 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
               projects,
               runId,
               runFile,
+              statusFile,
               observeResources,
               ...(detail
                 ? {
@@ -3112,7 +3152,7 @@ if (phase === 'detail-web') {
   const tag = `offline-detail-${randomUUID().slice(0, 20)}`;
   const browser = await detailBrowser(fixture.runId);
   const { until, cdp, route, artifacts } = browser;
-  let cold, age;
+  let cold, age, failure;
   try {
     const initial = await until(
       (value) =>
@@ -3200,11 +3240,19 @@ if (phase === 'detail-web') {
         screenshots: artifacts,
       }),
     );
-  } finally {
+  } catch (error) {
+    failure = error;
+  }
+  try {
     const current = (await rpc('run.get', { runId: fixture.runId })).run;
     if (current.tags?.includes(tag))
       await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+  } catch (error) {
+    if (failure)
+      throw new AggregateError([failure, error], 'Detail proof and fixture restoration failed');
+    throw error;
   }
+  if (failure) throw failure;
   process.exit(0);
 }
 
@@ -3282,7 +3330,11 @@ if (phase === 'family-web') {
     let value;
     do {
       value = await cdp('eval', 'family/', '--file', probePath);
-      if (ready(value)) return value;
+      if (await openReadNotices(cdp, 'family/', value)) continue;
+      if (ready(value)) {
+        await closeReadNotices(cdp, 'family/', value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -4180,12 +4232,16 @@ if (phase === 'dispatch-runs-web') {
     path.join(home, 'dispatch-runs-proof', randomUUID());
   await mkdir(artifacts, { recursive: true });
   const snapshot = () => cdp('eval', route, '--file', probe);
-  const until = async (ready, label) => {
+  const until = async (ready, label, inspectNotices = true) => {
     const deadline = Date.now() + 45000;
     let value;
     do {
       value = await snapshot();
-      if (ready(value)) return value;
+      if (inspectNotices && (await openReadNotices(cdp, route, value))) continue;
+      if (ready(value)) {
+        if (inspectNotices) await closeReadNotices(cdp, route, value);
+        return value;
+      }
       await delay(100);
     } while (Date.now() < deadline);
     assert.fail(`${label}: ${JSON.stringify(value)}`);
@@ -4254,11 +4310,13 @@ if (phase === 'dispatch-runs-web') {
             row(value)?.visible &&
             row(value).disabled,
           'Saved comparison cards must disable selection after disconnect',
+          false,
         );
         pickerObservedAt = stale.picker.observedAt;
         assert(pickerObservedAt >= changed.picker.observedAt);
         await cdp('key', route, 'Enter');
         const refused = await snapshot();
+        assert.equal(refused.activeCard, runId, 'Enter must target the actual stale baseline card');
         assert.equal(
           refused.selectedBaseline,
           '',

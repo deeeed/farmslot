@@ -1,10 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
+  assertNativeSourceCurrent,
   NativeHostObservation,
   type NativeSourceReceipt,
   NativeSourceUnavailable,
-  sameNativeSource,
 } from '@farmslot/agent-runtime/native/observation';
 import type { NativeSessionInfo, Principal } from '@farmslot/protocol';
 import type { ResourceKey } from '@farmslot/protocol/client-cache';
@@ -545,8 +545,8 @@ export class GatewayNativeObservations {
         }
         checkedSources.add(node);
         const before = sources.get(node);
-        if (!before || !sameNativeSource(before, this.fence(node, authority.ownerId)))
-          throw new NativeSourceUnavailable();
+        if (!before) throw new NativeSourceUnavailable('gateway-read-receipt-missing');
+        assertNativeSourceCurrent(before, this.fence(node, authority.ownerId), 'gateway-read');
       }
     }
     if (!rejected && admitted) validatePartialNativeList(payload, admitted, skipped, reader.id);
@@ -589,7 +589,7 @@ export class GatewayNativeObservations {
       throw new NativeSourceUnavailable();
     const receipt = envelope.nativeSource as NativeSourceReceipt;
     validateReceipt(receipt);
-    if (!sameNativeSource(source.receipt, receipt)) throw new NativeSourceUnavailable();
+    assertNativeSourceCurrent(receipt, source.receipt, 'remote-envelope');
     return envelope.value as T;
   }
   dispose(): void {

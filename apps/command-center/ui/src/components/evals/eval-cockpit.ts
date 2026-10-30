@@ -17,6 +17,7 @@ import { defaultModelForRunner } from '@farmslot/review-dispatch';
 import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import {
   visibleDefaultModel,
@@ -24,6 +25,7 @@ import {
 } from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { RetainedNotice } from '../shared/retained-notice.js';
 
 import { renderEvalCockpitCandidateMatrix } from './eval-cockpit-candidate-renderer.js';
 import { renderEvalCockpitCaseBrowser } from './eval-cockpit-case-renderer.js';
@@ -530,11 +532,25 @@ export class EvalCockpit extends EvalCockpitState {
     return candidateTemplateChoices(taskProfile, this._candidateTemplateOptions);
   }
 
+  private readonly _templateNotice = new RetainedNotice();
   private readonly _candidateConfiguration =
     new ResourceQueryController<ConfigTemplateOptionsResult>(this, (state) => {
       this._candidateTemplateOptions = state.data?.options ?? [];
       this._candidateTemplateOptionsLoading = state.status === 'loading';
-      this._candidateTemplateOptionsError = state.error?.message ?? '';
+      const owner = getResourceWorkspaceKey();
+      const primary = this._selectedCases[0];
+      this._candidateTemplateOptionsError =
+        this._templateNotice.read(
+          owner
+            ? JSON.stringify([
+                owner,
+                primary?.project || this._project.trim(),
+                primary?.taskProfile ?? 'fix-bug',
+              ])
+            : undefined,
+          state.error?.message,
+          state.status !== 'ready',
+        ) ?? '';
       const res = state.data;
       if (!res) return;
       const taskProfile = this._selectedCases[0]?.taskProfile ?? 'fix-bug';

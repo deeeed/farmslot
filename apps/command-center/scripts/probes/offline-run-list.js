@@ -19,8 +19,17 @@ const commands = [...root.querySelectorAll('.new-run-btn, .action-btn.cleanup, .
 const tagEditors = [...root.querySelectorAll('run-tag-editor')].filter(
   (editor) => typeof editor.saveTags === 'function',
 );
+const tray = document.querySelector('farm-notification-tray')?.shadowRoot;
+const noticesClosed = tray?.querySelector('.bell')?.getAttribute('aria-expanded') === 'false';
+const readNotice = (id) =>
+  [...(tray?.querySelectorAll('[data-notice-id]') ?? [])].find(
+    (item) => item.getAttribute('data-notice-id') === `read:${id}`,
+  );
+const noticeText = (item) => item?.querySelector('p')?.textContent.trim();
 return {
   mounted: true,
+  noticesClosed,
+  readNoticesNeeded: state.runsObservation.status === 'stale',
   storage: (await document.querySelector('farm-resource-store-notice')?.resourceStoreDiagnostics())
     ?.storage,
   freshness: state.runsObservation.status,
@@ -36,7 +45,13 @@ return {
     id: row.getAttribute('data-row-id'),
     visible: Boolean(row.getClientRects().length),
   })),
-  stale: root.querySelector('[data-run-freshness="stale"]')?.textContent?.trim(),
+  stale: noticeText(
+    [...(tray?.querySelectorAll('[data-notice-id]') ?? [])].find(
+      (item) =>
+        item.getAttribute('data-notice-id')?.startsWith('read:run.list:') &&
+        item.querySelector('strong')?.textContent.startsWith('Saved'),
+    ),
+  ),
   actionsDisabled:
     commands.length > 0 &&
     tagEditors.length > 0 &&

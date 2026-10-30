@@ -375,6 +375,23 @@ export const dispatchWizardStyles = css`
     padding: 24px;
   }
 
+  .compare-modal-status {
+    height: 44px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .compare-modal-status-text {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .compare-modal-retry {
+    min-height: 44px;
+    flex: none;
+  }
   .compare-modal {
     width: min(820px, calc(100vw - 48px));
     max-height: min(720px, calc(100vh - 48px));

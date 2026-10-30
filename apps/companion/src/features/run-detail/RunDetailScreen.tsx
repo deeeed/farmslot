@@ -540,11 +540,13 @@ export default function RunDetailScreen() {
 
   return (
     <View style={baseStyles.container}>
-      <ResourceReadStatus observation={runObservation} label="run" />
-      <ResourceReadStatus observation={recipeObservation} label="run evidence" />
-      {progressQuery ? (
-        <ResourceReadStatus observation={progressObservation} label="task progress" />
-      ) : null}
+      <ResourceReadStatus
+        observations={[
+          { observation: runObservation, label: 'run' },
+          { observation: recipeObservation, label: 'run evidence' },
+          ...(progressQuery ? [{ observation: progressObservation, label: 'task progress' }] : []),
+        ]}
+      />
       <Animated.ScrollView
         testID="companion-screen-run-detail"
         collapsable={false}

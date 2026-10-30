@@ -122,6 +122,7 @@ export async function nativeSessionRoute(
         'NATIVE_SESSION_ERROR',
         'NOT_FOUND',
         'NATIVE_SOURCE_UNAVAILABLE',
+        'RESOURCE_OBSERVATION_CHANGED',
       ].includes(nodeCode)
     )
       throw new GatewayMethodError(nodeCode, (error as Error).message);

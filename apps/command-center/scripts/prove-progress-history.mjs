@@ -11,12 +11,12 @@ export async function proveProgressHistory({
   projects,
   runId,
   runFile,
+  statusFile,
   observeResources,
   proveSelection,
 }) {
   const control = process.env.FARMSLOT_PROGRESS_HISTORY_CONTROL;
   assert([undefined, 'missing', 'retained'].includes(control));
-  const statusFile = path.join(fixture.root, '.farm-status.json');
   const statusBytes = await readFile(statusFile);
   const runBytes = await readFile(runFile);
   const run = JSON.parse(runBytes);

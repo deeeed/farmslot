@@ -28,8 +28,15 @@ const row = [...list.shadowRoot.querySelectorAll('[data-row-id]')].find(
 const pipeline = row?.querySelector('run-pipeline-mini');
 const strip = pipeline?.shadowRoot?.querySelector('run-checklist-progress');
 const text = strip?.shadowRoot?.textContent ?? '';
+const tray = document.querySelector('farm-notification-tray')?.shadowRoot;
+const notice = [...(tray?.querySelectorAll('[data-notice-id]') ?? [])].find(
+  (item) => item.getAttribute('data-notice-id') === `read:${query.id}`,
+);
+const errorText = notice?.querySelector('p')?.textContent ?? '';
 return {
   mounted: true,
+  noticesClosed: tray?.querySelector('.bell')?.getAttribute('aria-expanded') === 'false',
+  readNoticesNeeded: Boolean(controller.state.error),
   connectionId: gateway.resourceConnectionId,
   connectionState: gateway.connectionState,
   runId,
@@ -42,7 +49,9 @@ return {
   completed: controller.state.data?.structured?.completedSteps,
   total: controller.state.data?.structured?.totalSteps,
   error: controller.state.error?.message,
-  errorRendered: Boolean(controller.state.error && text.includes(controller.state.error.message)),
+  errorRendered: Boolean(
+    controller.state.error && errorText.includes(controller.state.error.message),
+  ),
   staleRendered: Boolean(strip?.stale && text.includes('Saved checklist,')),
   rendered: Boolean(row?.getClientRects().length && strip?.getClientRects().length),
   text,

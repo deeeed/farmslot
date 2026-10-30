@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { ResourceCacheConformanceTransport } from '../../src/client-cache/conformance.js';
+import {
+  createGatewayResourceCache,
+  type ResourceReadMethod,
+  type ResourceReadResult,
+} from '../../src/client-cache/index.js';
 import {
   nativeHistoryParams,
   nativeHistoryQuery,
@@ -69,6 +75,66 @@ const basicController = () => {
   });
   return controller;
 };
+
+test('a superseded native history page retains loaded messages and retries without a change notice', async () => {
+  const query = nativeHistoryQuery(target, 'owner-a');
+  class NativeTransport extends ResourceCacheConformanceTransport {
+    override async request<T>(
+      method: ResourceReadMethod,
+      params: unknown,
+      signal: AbortSignal,
+    ): Promise<ResourceReadResult<T>> {
+      const result = await super.request<T>(method, params, signal);
+      return {
+        ...result,
+        resourceState: {
+          epoch: 'conformance-epoch',
+          dependencies: query.dependencies.map((key) => ({ key, revision: 0 })),
+        },
+      };
+    }
+  }
+  const transport = new NativeTransport({
+    gatewayUrl: 'ws://native-history.test',
+    principalId: 'owner-a',
+    principalGeneration: 0,
+  });
+  const capabilities = transport.connection.capabilities;
+  assert(capabilities?.resourceChanges);
+  transport.setConnection({
+    connected: true,
+    id: 1,
+    capabilities: {
+      ...capabilities,
+      resourceChanges: { ...capabilities.resourceChanges, observedReads: 1 },
+    },
+  });
+  const cache = createGatewayResourceCache({ transport });
+  const stop = cache.observe(query, () => {});
+  try {
+    const warm = cache.retry(query);
+    const saved = { ...page([event(1, 'loaded')]), value: 'saved' };
+    (await transport.nextRead()).resolve(saved);
+    assert.equal((await warm).status, 'ready');
+    const superseded = cache.retry(query);
+    (await transport.nextRead()).reject('RESOURCE_OBSERVATION_CHANGED');
+    await superseded;
+    assert.equal(cache.read(query).status, 'stale');
+    assert.equal(cache.read(query).error?.code, 'RESOURCE_OBSERVATION_CHANGED');
+    assert.equal(cache.read(query).data?.cursor, 1);
+    assert.equal(cache.read(query).data?.events[0].text, 'loaded');
+    const followup = await transport.nextRead();
+    assert.equal(transport.requestCount, 3);
+    followup.resolve({ ...page([event(2, ' fresh')]), value: 'fresh' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(cache.read(query).status, 'ready');
+    assert.equal(cache.read(query).data?.cursor, 2);
+    assert.equal(nativeTimeline(cache.read(query).data!.events)[0].text, 'loaded fresh');
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
 
 test('200 logical messages retain every fragment of the newest message', () => {
   const events = Array.from({ length: 205 }, (_, i) =>
@@ -323,7 +389,7 @@ import type { ResourceReadResult } from '../../src/client-cache/types.js';
 interface HeldNativeRead {
   params: unknown;
   signal: AbortSignal;
-  resolve(value: NativeSessionReadResult): void;
+  resolve(value: NativeSessionReadResult, revision?: number): void;
   reject(code: string): void;
 }
 class NativeTransport extends ResourceCacheConformanceTransport {
@@ -350,7 +416,7 @@ class NativeTransport extends ResourceCacheConformanceTransport {
       const read: HeldNativeRead = {
         params,
         signal,
-        resolve: (data) =>
+        resolve: (data, revision = 0) =>
           resolve({
             data: data as T,
             resourceState: {
@@ -359,7 +425,7 @@ class NativeTransport extends ResourceCacheConformanceTransport {
                 Methods.NATIVE_SESSION_READ,
                 params,
                 this.connection.scope.principalId!,
-              ).map((key) => ({ key, revision: 0 })),
+              ).map((key) => ({ key, revision })),
             },
           }),
         reject: (code) => reject(Object.assign(new Error(code), { code })),
@@ -414,6 +480,67 @@ test('several observers share the history read and reconnect performs no command
   }
 });
 
+test('history stays actionable while a change rereads it; failed and offline history waits', async () => {
+  const transport = new NativeTransport(storeScope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  const query = nativeHistoryQuery(target, 'owner-a');
+  const stop = cache.observe(query, () => {});
+  const change = (revision: number) =>
+    transport.publish({
+      version: 1,
+      epoch: 'conformance-epoch',
+      changes: [{ key: query.dependencies[0], revision, kind: 'updated' }],
+    });
+  const canAct = () => {
+    const state = cache.read(query);
+    return nativeHistoryCanAct(state, state.data, transport.connection.connected);
+  };
+  const reread = async (settle: (read: HeldNativeRead) => void) => {
+    const read = await transport.nextNative();
+    const settled = cache.retry(query);
+    settle(read);
+    await settled;
+  };
+  try {
+    await reread((read) => read.resolve(page([event(1, 'first')])));
+    assert(canAct());
+
+    change(1);
+    assert.equal(cache.read(query).status, 'stale');
+    assert(canAct(), 'a change notice keeps current history actionable');
+    await reread((read) => {
+      change(2);
+      read.resolve(page([event(2, 'second')]), 1);
+    });
+    assert.equal(cache.read(query).status, 'stale');
+    assert(canAct(), 'a reply that trails a write made during its read stays actionable');
+    await reread((read) => read.resolve(page([event(3, 'third')]), 2));
+    assert.equal(cache.read(query).status, 'ready');
+
+    change(3);
+    await reread((read) => read.reject('RESOURCE_OBSERVATION_CHANGED'));
+    assert(canAct(), 'a read superseded by a newer write still trails only that write');
+
+    change(4);
+    await reread((read) => read.reject('NATIVE_SOURCE_UNAVAILABLE'));
+    assert.equal(cache.read(query).status, 'stale');
+    assert(!canAct(), 'a failed reread waits for a current read');
+
+    const recovered = cache.retry(query);
+    (await transport.nextNative()).resolve(page([event(4, 'fourth')]), 4);
+    assert.equal((await recovered).status, 'ready');
+    transport.setConnection({ connected: false }, 'network');
+    assert.equal(cache.read(query).status, 'stale');
+    assert(!canAct(), 'offline history waits for a current read');
+    transport.setConnection({ connected: true, id: 2 });
+    assert(canAct(), 'after reconnecting, the due reread does not lock input, as for held lists');
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
+
 test('eleven opened sessions persist ten canonical histories; cold data keeps original age', async () => {
   const transport = new NativeTransport(storeScope);
   transport.setConnection({ connected: true, id: 1 });
@@ -446,6 +573,10 @@ test('eleven opened sessions persist ten canonical histories; cold data keeps or
     try {
       const restored = await cold.retry(lastQuery);
       assert.equal(restored.status, 'stale');
+      assert(
+        !nativeHistoryCanAct(restored, restored.data, true),
+        'saved history waits for a live read',
+      );
       assert.equal(restored.observedAt, original.observedAt);
       assert.deepEqual(restored.data, original.data);
       assert.equal(offline.requestCount, 0);
@@ -513,13 +644,29 @@ test('lease variants share one durable session entry but cannot hydrate each oth
 });
 
 import { nativeHistoryCanAct } from '../../src/client-cache/native-history.js';
-test('cold, stale, unsupported and replaced rendered snapshots disable real command eligibility', () => {
+test('cold, saved, unsupported and replaced rendered snapshots disable real command eligibility', () => {
   const saved = page([event(1, 'saved')]);
-  for (const status of ['loading', 'stale', 'error', 'unsupported'])
-    assert(!nativeHistoryCanAct({ status, data: saved }, saved, true));
-  assert(!nativeHistoryCanAct({ status: 'ready', data: saved }, saved, false));
-  assert(!nativeHistoryCanAct({ status: 'ready', data: { ...saved } }, saved, true));
-  assert(nativeHistoryCanAct({ status: 'ready', data: saved }, saved, true));
+  const now = Date.parse('2026-10-30T00:00:00Z');
+  const resourceState = { epoch: 'epoch', dependencies: [] };
+  for (const status of ['loading', 'error', 'unsupported'] as const)
+    assert(!nativeHistoryCanAct({ status, data: saved, resourceState }, saved, true, now));
+  const ready = { status: 'ready' as const, data: saved, resourceState };
+  assert(!nativeHistoryCanAct(ready, saved, false, now));
+  assert(!nativeHistoryCanAct({ ...ready, data: { ...saved } }, saved, true, now));
+  assert(nativeHistoryCanAct(ready, saved, true, now));
+  // A reread that is only due keeps input usable; saved data does not.
+  const due = { status: 'stale' as const, data: saved, resourceState, observedAt: now };
+  assert(nativeHistoryCanAct(due, saved, true, now));
+  assert(!nativeHistoryCanAct(due, saved, false, now));
+  assert(!nativeHistoryCanAct({ status: 'stale', data: saved }, saved, true, now), 'restored');
+  const failed = { code: 'NATIVE_SOURCE_UNAVAILABLE', message: 'unavailable' };
+  assert(!nativeHistoryCanAct({ ...due, error: failed }, saved, true, now));
+  const superseded = {
+    ...due,
+    error: { code: 'RESOURCE_OBSERVATION_CHANGED', message: 'changed' },
+  };
+  assert(nativeHistoryCanAct(superseded, saved, true, now + 59_999));
+  assert(!nativeHistoryCanAct(superseded, saved, true, now + 60_000));
 });
 
 test('turn status records do not consume the 200 logical message allowance', () => {
