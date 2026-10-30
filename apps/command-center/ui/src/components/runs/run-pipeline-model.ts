@@ -1,6 +1,7 @@
 import {
   type FlowType,
   isBlockedAtOpenHumanGate,
+  isTerminalRunStatus,
   type Run,
   type RunStep,
   type TaskProgressStructured,
@@ -21,6 +22,32 @@ import {
 type UnknownRecord = Record<string, unknown>;
 type PublishGate = NonNullable<NonNullable<Run['engineState']>['publishGate']>;
 type PublicationReviewStatus = NonNullable<PublishGate['reviews']>[number];
+
+/** Criteria come from the task file write-task records, for slot runs and slot-free reviews alike. */
+export function runHasTaskSource(run: Pick<Run, 'taskFile'> | null | undefined) {
+  return Boolean(run?.taskFile);
+}
+
+/** A live run whose write-task step has yet to record the task its criteria come from. */
+export function runAwaitsTaskSource(run: Pick<Run, 'taskFile' | 'status' | 'steps'>): boolean {
+  if (runHasTaskSource(run) || isTerminalRunStatus(run.status)) return false;
+  const status = run.steps.find((step) => step.name === 'write-task')?.status;
+  return status === 'pending' || status === 'running';
+}
+
+/**
+ * Run detail holds the collapsed criteria row from write-task until that run's first task read
+ * settles, so the criteria arrive in place. A run opened after its task exists holds nothing.
+ * Returns the id of the run whose row is held.
+ */
+export function acceptanceRowHeldRunId(
+  run: Pick<Run, 'id' | 'taskFile' | 'status' | 'steps'> | null | undefined,
+  heldRunId: string | null,
+  loading: boolean,
+): string | null {
+  if (!run) return null;
+  return runAwaitsTaskSource(run) || (heldRunId === run.id && loading) ? run.id : null;
+}
 
 function recordValue(value: unknown): UnknownRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value)

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Acceptance criteria wait for a written task",
+  "description": "Use private GATEWAY_PORT/VITE_PORT, owned headless FARMSLOT_CDP_PORT, FARMSLOT_LAYOUT_EVIDENCE and ffmpeg. The observed-WebSocket fixture drives the mounted run page. No actual gateway, task writer, native host or worker is started. An archived FARMSLOT_LAYOUT_UI_ROOT with FARMSLOT_LAYOUT_EXPECT_SHIFT=1 reproduces the old false error.",
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 FARMSLOT_AC_PANEL_WIDTH=1280 FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/1280\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 300000,
+        "intent": "Before a task file exists, require no AC panel and no task.progress read while write-task runs. Publish the written task through fixture snapshots, keep the row held while its first read is in flight, and require the criterion to arrive in that row without changing the pipeline height. Keep a real ledger read error visible after the task exists, then recover; a task without criteria leaves no row; a run opened after its task exists holds no row while its first read loads. Record 1280px; the next nodes own distinct 414px and slot-free review runs.",
+        "next": "prove414"
+      },
+      "result": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require all mounted protocol/presentation assertions and scoped teardown.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "prove414": {
+        "action": "command",
+        "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 FARMSLOT_AC_PANEL_WIDTH=414 FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/414\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 300000,
+        "intent": "Repeat with a distinct fresh 414px run lifecycle; no written task is rewound.",
+        "next": "result414"
+      },
+      "result414": {
+        "action": "assert_output",
+        "source": "prove414",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require all mounted protocol/presentation assertions and scoped teardown.",
+        "next": "proveReview"
+      },
+      "proveReview": {
+        "action": "command",
+        "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 FARMSLOT_AC_PANEL_WIDTH=1280 FARMSLOT_AC_PANEL_SUBJECT=review FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/1280-review\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 300000,
+        "intent": "Repeat for a slot-free review: its workspace exists before write-task records the task file, and nothing is read or shown until it does.",
+        "next": "resultReview"
+      },
+      "resultReview": {
+        "action": "assert_output",
+        "source": "proveReview",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require all mounted protocol/presentation assertions and scoped teardown.",
+        "next": "result"
+      }
+    }
+  }
+}

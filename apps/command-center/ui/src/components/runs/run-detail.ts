@@ -161,7 +161,11 @@ import {
   selectedStepNameFromRunDetailHash,
   STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
-import { publicationReviewStepForName } from './run-pipeline-model.js';
+import {
+  acceptanceRowHeldRunId,
+  publicationReviewStepForName,
+  runHasTaskSource,
+} from './run-pipeline-model.js';
 import { collectRunInteractivePacketArtifacts } from './run-utils.js';
 import {
   rememberRunWorkerPanel,
@@ -225,6 +229,7 @@ export class RunDetail extends RunDetailState {
   private _evidenceGroupId: string | null = null;
   private _evidenceTaskRelative = true;
   private _sharedPanelFocusKey = '';
+  private _acceptanceRowRunId: string | null = null;
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (
@@ -237,6 +242,11 @@ export class RunDetail extends RunDetailState {
     if (changed.has('_recipeObservation')) this._acceptRecipeObservation(this._recipeObservation);
     if (changed.has('_progressObservation')) this._acceptProgressObservation();
     if (changed.has('_selectedProgressObservation')) this._acceptSelectedProgressObservation();
+    this._acceptanceRowRunId = acceptanceRowHeldRunId(
+      this.run,
+      this._acceptanceRowRunId,
+      this._taskProgressLoading,
+    );
     if (
       [
         'run',
@@ -1115,7 +1125,7 @@ export class RunDetail extends RunDetailState {
   private _bindTaskProgress(): void {
     const run = this.run;
     this.progressQuery.setQuery(
-      run && (run.slotId || run.reviewWorkspace)
+      run && runHasTaskSource(run) && (run.slotId || run.reviewWorkspace)
         ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
             slotId: run.slotId ?? '',
             runId: run.id,
@@ -1141,6 +1151,7 @@ export class RunDetail extends RunDetailState {
     this.acceptanceEvidenceLinksError = data?.acceptanceEvidenceLinksError ?? null;
     this._taskProgressLoading = Boolean(
       this.run &&
+      runHasTaskSource(this.run) &&
       (this.run.slotId || this.run.reviewWorkspace) &&
       !data &&
       !observation?.error &&
@@ -1677,6 +1688,7 @@ export class RunDetail extends RunDetailState {
       acceptanceStatus: this.acceptanceStatus,
       acceptanceCriteria: this.acceptanceCriteria,
       acceptanceStatusError: this.acceptanceStatusError,
+      acceptanceRowHeld: this._acceptanceRowRunId !== null,
       acceptanceEvidenceLinks: this.acceptanceEvidenceLinks,
       acceptanceEvidenceLinksError: this.acceptanceEvidenceLinksError,
       acceptanceEvidenceHref: this._acceptanceEvidenceHref,

@@ -50,6 +50,7 @@ import {
   NODE_H,
   pipelineDetachedProgressVisible,
   type PipelineLayout,
+  runHasTaskSource,
 } from './run-pipeline-model.js';
 import {
   renderPipelineControls,
@@ -100,6 +101,8 @@ export class RunPipeline extends LitElement {
   /** Opens a clicked acceptance evidence file in the host's viewer. */
   @property({ attribute: false }) acceptanceEvidenceOpen?: (open: AcceptanceEvidenceOpen) => void;
   @property() selectedStepName?: string;
+  /** Set by a host that holds the collapsed criteria row while they are on their way. */
+  @property({ attribute: false }) acceptanceRowHeld?: boolean;
   /** Run detail's header already shows a blocked run's reason, so the status row leaves it out. */
   @property({ type: Boolean, attribute: 'reason-in-header' }) reasonInHeader = false;
   @state() private monitorExpanded = false;
@@ -246,7 +249,11 @@ export class RunPipeline extends LitElement {
         pipelineDetachedProgressVisible(this.run, this.selectedStepName, this._activeTaskProgress())
           ? this.renderProgressPanel()
           : nothing}
-        ${this.renderAcceptancePanel()}
+        ${this.acceptanceRowHeld === undefined
+          ? this.renderAcceptancePanel()
+          : html`<div class="acceptance-slot" ?data-held=${this.acceptanceRowHeld}>
+              ${this.renderAcceptancePanel()}
+            </div>`}
       </div>
     `;
   }
@@ -347,6 +354,7 @@ export class RunPipeline extends LitElement {
    * operator opens run detail to answer.
    */
   private renderAcceptancePanel() {
+    if (!runHasTaskSource(this.run)) return nothing;
     const inputs = acceptancePanelInputs(this);
     if (!inputs) return nothing;
     const { ledger, ...options } = inputs;
