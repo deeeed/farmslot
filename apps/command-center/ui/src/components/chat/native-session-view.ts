@@ -19,7 +19,6 @@ import {
   type NativeSessionSendResult,
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
-import { sourceObservationAge } from '@farmslot/protocol';
 import {
   appendNativePage,
   NATIVE_FOLLOW_LATEST,
@@ -36,6 +35,7 @@ import {
   type NativeTranscript,
   type ResourceQuery,
   type ResourceQueryState,
+  SUPERSEDED_READ_GRACE_MS,
 } from '@farmslot/protocol/client-cache';
 import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
@@ -158,6 +158,11 @@ export class NativeSessionView extends LitElement {
   @state() private invalidDelivery = false;
   private revision = 0;
   private timer?: ReturnType<typeof setTimeout>;
+  private readUnavailableSince?: number;
+  private savedHistoryBoundary?: ReturnType<typeof setTimeout>;
+  private inventoryCurrent = false;
+  @state() private inventoryUnsupported = false;
+  @state() private catalogUnsupported = false;
   private unsubscribe?: () => void;
   private inventoryRevision = 0;
   private storageScope = '';
@@ -184,6 +189,38 @@ export class NativeSessionView extends LitElement {
   }
 
   static styles = nativeSessionStyles;
+
+  protected willUpdate() {
+    if (!this.connected || this.pollError || this.inventoryError || this.catalogError)
+      this.readUnavailableSince ??= Date.now();
+    else if (
+      isSupersededRead(this.historyObservation.error) ||
+      (this.worker
+        ? this.historyObservation.status === 'ready'
+        : this.inventoryCurrent &&
+          this.catalogCurrent &&
+          (!this.selectedId || this.historyObservation.status === 'ready'))
+    )
+      this.readUnavailableSince = undefined;
+    clearTimeout(this.savedHistoryBoundary);
+    const observation = this.historyObservation;
+    if (
+      this.connected &&
+      observation.status === 'stale' &&
+      observation.data !== undefined &&
+      observation.observedAt !== undefined &&
+      isSupersededRead(observation.error) &&
+      !heldDataIsSaved(observation, this.connected)
+    ) {
+      // Re-evaluate action controls once when held history becomes saved. Age ticks stay in the row.
+      this.savedHistoryBoundary = setTimeout(
+        () => {
+          if (this.isConnected) this.requestUpdate();
+        },
+        observation.observedAt + SUPERSEDED_READ_GRACE_MS - Date.now(),
+      );
+    }
+  }
 
   protected updated(changed: PropertyValues) {
     this.renderedRevision = this.revision;
@@ -378,6 +415,7 @@ export class NativeSessionView extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    clearTimeout(this.savedHistoryBoundary);
     document.removeEventListener('fullscreenchange', this.fullscreenChanged);
     this.revision++;
     clearTimeout(this.timer);
@@ -417,6 +455,10 @@ export class NativeSessionView extends LitElement {
     const scope = this.fixture ? 'fixture' : (getResourceWorkspaceKey() ?? '');
     if (scope !== this.storageScope) {
       this.storageScope = scope;
+      this.readUnavailableSince = undefined;
+      this.inventoryCurrent = false;
+      this.inventoryUnsupported = false;
+      this.catalogUnsupported = false;
       this.revision++;
       this.selectedId = safeLsGet(this.key('selected')) ?? '';
       this.selectedNodeId = safeLsGet(this.key('selected-node')) ?? 'local';
@@ -496,6 +538,8 @@ export class NativeSessionView extends LitElement {
         observeNativeResource(
           nativeObservationQuery<NativeSessionListResult>(Methods.NATIVE_SESSION_LIST, {}, owner),
           (state) => {
+            this.inventoryCurrent = state.status === 'ready';
+            this.inventoryUnsupported = state.status === 'unsupported';
             this.inventoryError = state.error?.message ?? '';
             const sessions = state.data?.sessions ?? [];
             this.sessions = sessions
@@ -525,6 +569,7 @@ export class NativeSessionView extends LitElement {
             owner,
           ),
           (state) => {
+            this.catalogUnsupported = state.status === 'unsupported';
             this.catalogError = state.error?.message ?? '';
             this.catalog = state.data;
             this.catalogCurrent = state.status === 'ready';
@@ -712,6 +757,7 @@ export class NativeSessionView extends LitElement {
     this.caughtUp = false;
     this.error = '';
     this.pollError = '';
+    this.readUnavailableSince = undefined;
     this.busy = false;
     if (!this.worker) {
       safeLsSet(this.key('selected'), id);
@@ -936,21 +982,6 @@ export class NativeSessionView extends LitElement {
       ['closed', 'failed'].includes(session.state) &&
       (!session.processPid || session.processStopped);
     return html`
-      ${heldDataIsSaved(this.historyObservation, this.connected) &&
-      this.historyObservation.observedAt !== undefined
-        ? html`<p
-            role="status"
-            data-testid="native-history-saved"
-            data-observed-at=${this.historyObservation.observedAt}
-          >
-            Saved conversation history,
-            ${sourceObservationAge(this.historyObservation.observedAt, Date.now())}. Actions wait
-            for a current read.
-          </p>`
-        : nothing}
-      ${this.historyObservation.status === 'unsupported'
-        ? html`<p role="status">Live conversation updates are unavailable on this gateway.</p>`
-        : nothing}
       ${renderNativeSessionHeader({
         worker: this.worker,
         sessions: this.sessions,
@@ -984,6 +1015,13 @@ export class NativeSessionView extends LitElement {
           history.replaceState(null, '', buildHash('native', params));
         },
         readError: this.pollError || this.inventoryError || this.catalogError,
+        unavailableSince: this.readUnavailableSince,
+        observedAt: this.historyObservation.observedAt,
+        historyObservation: this.historyObservation,
+        unsupported:
+          this.historyObservation.status === 'unsupported' ||
+          this.inventoryUnsupported ||
+          this.catalogUnsupported,
         refresh: () => {
           const cache = getResourceCache();
           const owner = getResourceNativeOwnerId();
@@ -1005,14 +1043,7 @@ export class NativeSessionView extends LitElement {
         },
       })}
       ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
-      ${this.pollError ? html`<div class="error" role="alert">${this.pollError}</div>` : nothing}
-      ${this.inventoryError
-        ? html`<div class="error" role="alert">${this.inventoryError}</div>`
-        : nothing}
-      ${this.catalogError
-        ? html`<div class="error" role="alert">${this.catalogError}</div>`
-        : nothing}
-      ${this.worker && !this.inputAllowed
+      ${this.worker && (this.taskHistory || (this.session && !this.workerControl))
         ? html`<p class="meta" data-testid="native-worker-read-only">
             ${this.taskHistory
               ? 'This task history is read-only. Slot files reflect the current workspace.'

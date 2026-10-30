@@ -15,6 +15,7 @@ import {
 @customElement('native-worker-history')
 export class NativeWorkerHistory extends LitElement {
   @property({ attribute: false }) contexts: AgentContext[] = [];
+  @property({ type: Boolean }) expanded = true;
   @state() private selected = '';
 
   static styles = css`
@@ -47,6 +48,7 @@ export class NativeWorkerHistory extends LitElement {
   `;
 
   render() {
+    if (!this.expanded) return nothing;
     const attempts = nativeWorkerTargets(this.contexts);
     if (!attempts.length) return nothing;
     const selected = selectedNativeWorkerTarget(attempts, this.selected);

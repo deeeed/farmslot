@@ -507,6 +507,9 @@ export const runDetailStyles = css`
     color: ${unsafeCSS(colors.statusWarn)} !important;
     animation: gate-pulse 0.6s ease-in-out infinite alternate;
   }
+  .worker-panel-toggle {
+    min-height: 44px;
+  }
   .terminal-toggle {
     display: inline-flex;
     align-items: center;
