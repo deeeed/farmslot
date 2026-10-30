@@ -11,6 +11,11 @@ export const runPipelineStyles = css`
   .pipeline-wrap {
     position: relative;
   }
+  .acceptance-slot {
+    display: flow-root;
+    /* The existing collapsed AC summary, its border and vertical margins. */
+    min-height: 70px;
+  }
   .review-recovery {
     margin: 0 0 ${unsafeCSS(spacing.sm)};
     padding: 6px 8px;

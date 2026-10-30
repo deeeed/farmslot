@@ -1,0 +1,26 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Acceptance criteria wait for a written task",
+  "description": "Use private GATEWAY_PORT/VITE_PORT, owned headless FARMSLOT_CDP_PORT, FARMSLOT_LAYOUT_EVIDENCE and ffmpeg. The observed-WebSocket fixture drives the mounted run page. No actual gateway, task writer, native host or worker is started. An archived FARMSLOT_LAYOUT_UI_ROOT with FARMSLOT_LAYOUT_EXPECT_SHIFT=1 reproduces the old false error.",
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 300000,
+        "intent": "Before a task source exists, require no AC panel and no task.progress read. Publish the written task through fixture snapshots and require the criterion to appear without moving the following control. Preserve a real ledger read error after the task exists, then recover. Record both widths1280 and414.",
+        "next": "result"
+      },
+      "result": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require all mounted protocol/presentation assertions and scoped teardown.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -11,6 +11,7 @@ import {
   isPublicationReviewProgressActive,
   pipelineDetachedProgressVisible,
   publicationReviewStepForName,
+  runHasTaskSource,
   selectedStepShowsLiveTaskProgress,
   stepInspectorTaskProgress,
 } from './run-pipeline-model.js';
@@ -36,6 +37,34 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     ...overrides,
   };
 }
+
+test('a selected slot alone is not a written task; the assigned task path admits progress', () => {
+  const waiting = makeRun({
+    taskFile: null,
+    status: 'preparing',
+    steps: [{ name: 'write-task', status: 'running' }],
+  });
+  assert.equal(runHasTaskSource(waiting), false);
+  assert.equal(runHasTaskSource({ ...waiting, taskFile: 'tasks/example/TASK.md' }), true);
+  assert.equal(runHasTaskSource(null), false);
+});
+
+test('a slot-free review retains its workspace/checklist source path', () => {
+  const review = makeRun({
+    slotId: null,
+    taskFile: null,
+    reviewWorkspace: {
+      workspaceId: 'review-1',
+      machine: 'fixture-node',
+      executionNodeId: 'fixture-node',
+      checkoutPath: '/workspace/source',
+      taskPath: '/workspace/task',
+      artifactPath: '/workspace/task/artifacts',
+    },
+  });
+  assert.equal(runHasTaskSource(review), true);
+  assert.equal(runHasTaskSource({ ...review, reviewWorkspace: undefined }), false);
+});
 
 test('a publication fix has one current worker node instead of the enclosing gate', () => {
   const run = makeRun({

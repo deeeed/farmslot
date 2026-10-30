@@ -161,7 +161,7 @@ import {
   selectedStepNameFromRunDetailHash,
   STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
-import { publicationReviewStepForName } from './run-pipeline-model.js';
+import { publicationReviewStepForName, runHasTaskSource } from './run-pipeline-model.js';
 import { collectRunInteractivePacketArtifacts } from './run-utils.js';
 import {
   rememberRunWorkerPanel,
@@ -1115,7 +1115,7 @@ export class RunDetail extends RunDetailState {
   private _bindTaskProgress(): void {
     const run = this.run;
     this.progressQuery.setQuery(
-      run && (run.slotId || run.reviewWorkspace)
+      run && runHasTaskSource(run) && (run.slotId || run.reviewWorkspace)
         ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
             slotId: run.slotId ?? '',
             runId: run.id,
@@ -1141,6 +1141,7 @@ export class RunDetail extends RunDetailState {
     this.acceptanceEvidenceLinksError = data?.acceptanceEvidenceLinksError ?? null;
     this._taskProgressLoading = Boolean(
       this.run &&
+      runHasTaskSource(this.run) &&
       (this.run.slotId || this.run.reviewWorkspace) &&
       !data &&
       !observation?.error &&

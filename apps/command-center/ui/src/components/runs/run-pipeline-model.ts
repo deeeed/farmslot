@@ -22,6 +22,13 @@ type UnknownRecord = Record<string, unknown>;
 type PublishGate = NonNullable<NonNullable<Run['engineState']>['publishGate']>;
 type PublicationReviewStatus = NonNullable<PublishGate['reviews']>[number];
 
+/** Slot-free reviews retain their separate workspace/checklist read path. */
+export function runHasTaskSource(
+  run: Pick<Run, 'taskFile' | 'reviewWorkspace'> | null | undefined,
+) {
+  return Boolean(run?.taskFile || run?.reviewWorkspace);
+}
+
 function recordValue(value: unknown): UnknownRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as UnknownRecord)

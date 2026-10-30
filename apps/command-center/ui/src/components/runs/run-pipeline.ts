@@ -50,6 +50,7 @@ import {
   NODE_H,
   pipelineDetachedProgressVisible,
   type PipelineLayout,
+  runHasTaskSource,
 } from './run-pipeline-model.js';
 import {
   renderPipelineControls,
@@ -246,7 +247,9 @@ export class RunPipeline extends LitElement {
         pipelineDetachedProgressVisible(this.run, this.selectedStepName, this._activeTaskProgress())
           ? this.renderProgressPanel()
           : nothing}
-        ${this.renderAcceptancePanel()}
+        ${this.run.steps.some((step) => step.name === 'write-task')
+          ? html`<div class="acceptance-slot">${this.renderAcceptancePanel()}</div>`
+          : this.renderAcceptancePanel()}
       </div>
     `;
   }
@@ -347,6 +350,7 @@ export class RunPipeline extends LitElement {
    * operator opens run detail to answer.
    */
   private renderAcceptancePanel() {
+    if (!runHasTaskSource(this.run)) return nothing;
     const inputs = acceptancePanelInputs(this);
     if (!inputs) return nothing;
     const { ledger, ...options } = inputs;

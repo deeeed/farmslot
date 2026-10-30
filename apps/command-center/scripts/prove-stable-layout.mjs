@@ -21,6 +21,7 @@ import {
   mockRuns,
 } from '../ui/src/dev/mock-data.ts';
 
+import { acPanelProgress, acPanelRun, proveAcPanel } from './ac-panel-proof.mjs';
 import { nativePanelFixture, proveNativePanel } from './native-panel-proof.mjs';
 import { proveRefetchNotices, recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
@@ -46,6 +47,7 @@ let revision = 0;
 let mode = 'empty';
 const refetchProof = process.env.FARMSLOT_LAYOUT_REFETCH === '1';
 const nativePanelProof = process.env.FARMSLOT_LAYOUT_NATIVE_PANEL === '1';
+const acPanelProof = process.env.FARMSLOT_LAYOUT_AC_PANEL === '1';
 const legacyProof = process.env.FARMSLOT_LAYOUT_BEFORE === '1';
 const uiRoot = process.env.FARMSLOT_LAYOUT_UI_ROOT ?? path.join(source, 'apps/command-center/ui');
 assert(
@@ -129,10 +131,26 @@ for (const item of gateRun.decisions) {
   };
 }
 function observedRun() {
+  if (acPanelProof) return acPanelRun(mode, fixtureRun);
   if (!refetchProof) return fixtureRun;
   return structuredClone(gateRun);
 }
 const values = {
+  ...(acPanelProof
+    ? {
+        'runtime.posture.status': () => ({
+          runId: 'layout-run',
+          slotId: 'fixture-task-slot',
+          state: {
+            posture: 'active',
+            policySource: 'framework-default',
+            capabilities: [],
+            workerRetained: false,
+            updatedAt: new Date(now).toISOString(),
+          },
+        }),
+      }
+    : {}),
   ...(nativePanelProof
     ? {
         'native.session.read': nativeFixture.page,
@@ -157,7 +175,8 @@ const values = {
   'run.recipeRunsForRun': () => ({ recipeRuns: [], selectedRecipeRunId: null }),
   'config.templateOptions': () => ({ options: [] }),
   'runner.visibleModels.get': () => ({ runners: [] }),
-  'task.progress': () => ({ markdown: '', structured: null }),
+  'task.progress': () =>
+    acPanelProof ? acPanelProgress(mode) : { markdown: '', structured: null },
   'decision.list': () => ({
     decisions: mode === 'decision' ? [decision, { ...decision, id: 'same-subject' }] : [],
   }),
@@ -217,7 +236,7 @@ wss.on('connection', (socket) =>
     const frame = {
       at: Date.now(),
       method: request.method,
-      ...(nativePanelProof ? { mode, revision } : {}),
+      ...(nativePanelProof || acPanelProof ? { mode, revision } : {}),
       ...(request.method === 'run.get'
         ? { params: { runId: request.params?.runId, view: request.params?.view } }
         : {}),
@@ -254,7 +273,10 @@ wss.on('connection', (socket) =>
     else if (request.method === 'resource.observers.replace')
       reply.payload = { version: 1, sequence: request.params.sequence, applied: true };
     else if (request.method === 'gateway.ping') reply.payload = { ok: true };
-    else if (
+    else if (acPanelProof && request.method === 'task.progress' && !mode.startsWith('ac-written')) {
+      reply.ok = false;
+      reply.error = { code: 'INTERNAL_ERROR', message: 'No task file for slot fixture-task-slot' };
+    } else if (
       nativePanelProof &&
       request.method === 'native.session.read' &&
       ['native-error', 'native-changed', 'native-quiet-changed'].includes(mode)
@@ -424,6 +446,16 @@ function transition(next) {
           { family: 'configuration', scope: 'farm' },
         ]
       : []),
+    ...(acPanelProof
+      ? [
+          { family: 'run', runId: 'layout-run' },
+          ...(resourceDependenciesForRead(
+            'task.progress',
+            { slotId: 'fixture-task-slot', runId: 'layout-run' },
+            'layout-fixture',
+          ) ?? []),
+        ]
+      : []),
     ...(nativePanelProof
       ? [
           { family: 'run', runId: 'layout-run' },
@@ -531,6 +563,18 @@ try {
       expected: 'original layout jump',
       shift,
       samples,
+    });
+  } else if (acPanelProof) {
+    await proveAcPanel({
+      cdp,
+      target,
+      browserCall,
+      emulation,
+      transition,
+      output,
+      save,
+      frames,
+      viewport,
     });
   } else if (nativePanelProof) {
     await proveNativePanel({
