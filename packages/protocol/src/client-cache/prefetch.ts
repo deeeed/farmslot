@@ -9,7 +9,6 @@ import type { ResourceChangedPayload } from '../transport/events.js';
 
 import { gitBlobHash, RESOURCE_CONTENT_LIMITS, resourceContentWithinLimits } from './content.js';
 import { applyUnifiedDiff, parseUnifiedDiff, type UnifiedDiffFile } from './diff-apply.js';
-import { RESOURCE_PUBLISH_INTERVAL_MS } from './keys.js';
 import { type ResourceQuery, resourceQuery } from './registry.js';
 import type { ContentKey, ResourceContentCohort } from './store.js';
 import type {
@@ -44,7 +43,7 @@ export interface ContentPrefetchOptions {
   >;
   cache: Pick<
     GatewayResourceCache,
-    'retry' | 'readContent' | 'storeContent' | 'retainContent' | 'contentWriteToken'
+    'retry' | 'readContent' | 'storeContent' | 'retainContent' | 'contentWriteToken' | 'observedKey'
   >;
   /** Plain RPC for reads that are not stored queries: `git.show`, `git.log` and frozen `git.diff`. */
   request<T>(method: string, params: unknown, signal: AbortSignal): Promise<T>;
@@ -62,6 +61,12 @@ export interface ContentPrefetcher {
 
 /** Prefetch rule 1 (initial). */
 const MAX_PREFETCH_RUNS = 2;
+/**
+ * A busy worktree changes every few seconds, but only a new head rereads its diff. Its head is
+ * checked only while a view reads that slot, and then once a minute, so a busy farm's working
+ * slots are not asked for their log in the background.
+ */
+const SLOT_HEAD_CHECK_INTERVAL_MS = 60_000;
 const GITLINK_MODE = '160000';
 
 type PrefetchPlan = 'gate' | 'slot' | 'frozen';
@@ -262,16 +267,20 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     pump();
   }
 
-  /** Prefetch rule 3: one check in flight per run, and slot checks at the workspace cadence. */
+  /**
+   * Prefetch rule 3: one check in flight per run, and slot checks at most once a minute, only while
+   * a view reads that slot. A check queued while the view was open is dropped once it closes.
+   */
   function check(state: PrefetchRunState): void {
     const pending = state.check;
     if (!enabled || refused || disposed || (state.plan !== 'gate' && state.plan !== 'slot')) return;
+    if (state.plan === 'slot' && !(state.slotId && viewed(state.slotId))) return;
     if (pending.controller) {
       pending.again = true;
       return;
     }
     if (pending.timer !== undefined) return;
-    const interval = state.plan === 'slot' ? (RESOURCE_PUBLISH_INTERVAL_MS.workspace ?? 0) : 0;
+    const interval = state.plan === 'slot' ? SLOT_HEAD_CHECK_INTERVAL_MS : 0;
     const wait = pending.lastAt + interval - Date.now();
     if (wait > 0) {
       pending.timer = setTimeout(() => {
@@ -309,7 +318,10 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
       { slotId: state.slotId, limit: 1 },
       signal,
     );
-    if (!signal.aborted && log.entries[0]?.hash !== state.head) refetch(state);
+    const head = log.entries[0]?.hash;
+    // Only a diff read successfully sets the head, so one that failed is tried at the next check.
+    if (signal.aborted || head === state.head) return;
+    refetch(state);
   }
 
   async function readRun(runId: string, signal: AbortSignal): Promise<Run> {
@@ -593,13 +605,22 @@ export function createContentPrefetcher(options: ContentPrefetchOptions): Conten
     pump();
   }
 
+  function viewed(slotId: string): boolean {
+    return (
+      cache.observedKey?.(
+        (key) => key.family === 'workspace' && 'slotId' in key && key.slotId === slotId,
+      ) === true
+    );
+  }
+
   function resourceChanged(payload: ResourceChangedPayload): void {
     if (!enabled || refused || disposed) return;
     const changed = new Set<PrefetchRunState>();
     for (const { key } of payload.changes) {
       if (key.family === 'package') {
+        // Every run write changes its package key; only a gate plan reads the package.
         const state = runs.get(key.runId);
-        if (state) changed.add(state);
+        if (state?.plan === 'gate') changed.add(state);
       } else if (key.family === 'workspace' && 'slotId' in key)
         for (const state of runs.values())
           if (

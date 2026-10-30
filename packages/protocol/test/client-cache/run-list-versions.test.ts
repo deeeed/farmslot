@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import { createGatewayResourceCache } from '../../src/client-cache/cache.js';
 import type { ResourceReadStamp } from '../../src/client-cache/keys.js';
@@ -27,6 +27,11 @@ import {
   runListProjection,
 } from '../../src/runs/run-list-filter.js';
 import type { ResourceChangedPayload } from '../../src/transport/events.js';
+
+// Each runs change here comes after the run list's 30 s reread floor; reread-pacing tests the floor.
+let clockOffset = 0;
+const now = performance.now.bind(performance);
+mock.method(performance, 'now', () => now() + clockOffset);
 
 function run(id: string, day: number, fields: Record<string, unknown> = {}): Run {
   return {
@@ -170,18 +175,19 @@ function gateway(runs: Run[], versionLists = true) {
       connection = { ...connection, id: ++counter, connected };
       for (const listener of connectionListeners) listener(connection);
     },
-    /** A run write: a new version and one runs change. */
-    write(value: Run) {
+    /** A run write: a new version and one runs change, `advance` ms after the last. */
+    write(value: Run, advance?: number) {
       live.set(value.id, value);
       versions.set(value.id, `v${++counter}`);
-      this.changed();
+      this.changed(advance);
     },
     remove(id: string) {
       live.delete(id);
       versions.delete(id);
       this.changed();
     },
-    changed() {
+    changed(advance = 30_000) {
+      clockOffset += advance;
       revision++;
       for (const listener of changeListeners)
         listener({
@@ -434,6 +440,39 @@ test('one runs change is one versions read for every run.list view, reading only
   await cache.dispose();
 });
 
+test('views opened apart each reread the collection at most once per 30 s of run writes', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fake = gateway([run('a', 1, { tags: ['ux'] }), run('b', 2)]);
+  const cache = createGatewayResourceCache({
+    transport: fake.transport,
+    store: createMemoryResourceStore(),
+  });
+  const second = async () => {
+    clockOffset += 1000;
+    t.mock.timers.tick(1000);
+    await flush();
+  };
+  const history = observe<RunListResult>(cache, { limit: 1000 });
+  await flush();
+  for (let elapsed = 0; elapsed < 10; elapsed++) await second();
+  const tagged = observe<RunListResult>(cache, { tags: ['ux'] });
+  await flush();
+  assert.deepEqual(reads(fake.calls), { versions: 1, ids: [['a', 'b']], full: 0 });
+  fake.calls.length = 0;
+  // A write every second from 10 s to 64 s.
+  for (let elapsed = 10; elapsed < 65; elapsed++) {
+    fake.write(run('b', 2, { tags: ['ux'], summary: `write ${elapsed}` }), 0);
+    await second();
+  }
+  // History, read at 0 s, rereads at 30 s and 60 s; the tagged view, opened at 10 s, at 40 s.
+  assert.deepEqual(reads(fake.calls), { versions: 3, ids: [['b'], ['b'], ['b']], full: 0 });
+  assert.deepEqual(ids(tagged.last()), ['b', 'a']);
+  assert.equal(history.last()?.status, 'stale', 'The writes after 60 s wait for the next reread');
+  history.stop();
+  tagged.stop();
+  await cache.dispose();
+});
+
 test('catch-up pages run in asked order after the last served id, missing ids asked once more', async () => {
   const fake = gateway(['a', 'b', 'c', 'd', 'e'].map((id, index) => run(id, index + 1)));
   fake.setPageSize(2);
@@ -569,6 +608,46 @@ test('an empty store fills through pages, and a cold start serves the stored col
   assert.equal(cold.runListProjections?.()?.length, 3);
   assert.deepEqual(offline.calls, []);
   active.stop();
+  await cold.dispose();
+});
+
+test('a live view carries the run collection observation time, as a cold start does', async (t) => {
+  // Every clock read differs, so a view stamped on its own would not match its collection.
+  let clock = 1_000;
+  t.mock.method(Date, 'now', () => ++clock);
+  const fake = gateway([run('a', 1), run('b', 2)]);
+  const store = createMemoryResourceStore();
+  const live = createGatewayResourceCache({ transport: fake.transport, store });
+  const history = observe<RunListResult>(live, { limit: 1000 });
+  const tagged = observe<RunListResult>(live, { familyId: 'family-b' });
+  await flush();
+  const saved = await store.getRows!(RUN_LIST_COLLECTION_ID);
+  assert.equal(history.last()?.status, 'ready');
+  assert.equal(history.last()?.observedAt, saved.entry?.observedAt);
+  assert.equal(tagged.last()?.observedAt, saved.entry?.observedAt);
+  history.stop();
+  tagged.stop();
+  await live.dispose();
+
+  const offline = gateway([], true);
+  const copy = createMemoryResourceStore();
+  await copy.mergeRows!(RUN_LIST_COLLECTION_ID, {
+    entry: saved.entry!,
+    upserts: saved.rows,
+    deletes: [],
+  });
+  const cold = createGatewayResourceCache({
+    transport: {
+      ...offline.transport,
+      getConnection: () => ({ ...offline.transport.getConnection(), connected: false }),
+    },
+    store: copy,
+  });
+  const restored = observe<RunListResult>(cold, { familyId: 'family-b' });
+  await flush();
+  assert.equal(restored.last()?.status, 'stale');
+  assert.equal(restored.last()?.observedAt, saved.entry?.observedAt);
+  restored.stop();
   await cold.dispose();
 });
 

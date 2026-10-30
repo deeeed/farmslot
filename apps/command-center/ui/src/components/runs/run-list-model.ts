@@ -9,6 +9,7 @@ import {
   type RunStatus,
   slotMachineMap,
   type SlotStatus,
+  type TaskProgressStructured,
 } from '@farmslot/protocol';
 import { isSettledBlockedRun, selectRunList, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -104,8 +105,15 @@ export function showsRunProgress(run: Pick<Run, 'status' | 'steps' | 'decisions'
 export function runProgressSummary(
   run: ProgressRun,
   nowMs = Date.now(),
+  taskProgress?: TaskProgressStructured,
 ): RunProgressSummary | null {
-  const lastMs = lastProgressMs(run);
+  const step = run.steps.find((item) => item.status === 'running');
+  const finishedMs =
+    step?.name === 'monitor' ? Date.parse(taskProgress?.timing?.finishedAt ?? '') : NaN;
+  const lastMs = Math.max(
+    lastProgressMs(run),
+    Number.isFinite(finishedMs) ? finishedMs : -Infinity,
+  );
   // Every run has createdAt; a record without one valid timestamp has no clock to show.
   if (!Number.isFinite(lastMs)) return null;
   const lastProgressAt = new Date(lastMs).toISOString();
@@ -124,7 +132,6 @@ export function runProgressSummary(
     const action = pending.actions.find((item) => item.style === 'primary') ?? pending.actions[0];
     return summary('gate', action ? `${pending.title} → ${action.label}` : pending.title);
   }
-  const step = run.steps.find((item) => item.status === 'running');
   // A finished interactive worker, or a pause, waits on the operator without a decision.
   if (step?.outputs?.awaitingOperator === true)
     return summary('gate', step.detail ?? 'Waiting for operator action');
@@ -135,11 +142,14 @@ export function runProgressSummary(
     const held = run.steps.find((item) => item.status === 'failed');
     return summary('gate', held?.detail ?? 'Waiting for the operator to reconcile the worker');
   }
-  if (nowMs - lastMs >= RUN_STALE_AFTER_MS)
+  const stale = nowMs - lastMs >= RUN_STALE_AFTER_MS;
+  if (Number.isFinite(finishedMs))
     return summary(
-      'stale',
-      `Stale: no progress for ${lastProgressAgo.replace(/ ago$/u, '')} and nothing pending`,
+      stale ? 'stale' : 'step',
+      `${stale ? 'Stale: ' : ''}Worker finished; monitor has not advanced`,
     );
+  if (stale)
+    return summary('stale', `Stale: no progress for ${lastProgressAgo.replace(/ ago$/u, '')}`);
   return step
     ? summary('step', step.detail ? `${step.name}: ${step.detail}` : step.name)
     : summary('none', '');

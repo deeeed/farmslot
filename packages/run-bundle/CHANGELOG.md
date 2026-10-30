@@ -4,6 +4,12 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- Return the acquisition scan's file count and elapsed time for completion logging, without another tree walk.
+
+- Measure acquisition and store trees with bounded parallel filesystem calls, so run completion no longer waits 30+ minutes on a busy gateway.
+
+- Reuse existing admission reservations before scanning acquisition trees, and fail new admission scans after 30 seconds without creating a late reservation.
+
 - Repair a missing gateway-written payload from its own directory.
 
 - Retain gateway-written files from their own directory through `gatewayFiles`, so a package can freeze a file the gateway wrote after its source bundle.

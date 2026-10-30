@@ -43,6 +43,25 @@ test('refresh preserves the owner and epoch of a running review through idle pro
   assert.equal(refreshed.dispatchable, false);
 });
 
+test('fleet refresh preserves an unconfirmed cleanup stop with its owner and hold', () => {
+  const held = makeRefreshRow({
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: null,
+    cleanup_run_id: 'cleanup-owner',
+    cleanup_stop_unconfirmed: true,
+    slot_epoch: 76,
+    held_reason: 'Cleanup stop is unconfirmed',
+  });
+  const refreshed = buildFleetRefreshSnapshot([held], [makeRefreshRow()], [], 'now').slots[0]!;
+  assert.equal(refreshed.cleanup_stop_unconfirmed, true);
+  assert.equal(refreshed.cleanup_run_id, 'cleanup-owner');
+  assert.equal(refreshed.current_run_id, null);
+  assert.equal(refreshed.slot_epoch, 76);
+  assert.equal(refreshed.lifecycle, 'held');
+  assert.equal(refreshed.phase, 'occupied');
+});
+
 test('lost running leases quarantine only their slots and preserve healthy refresh rows', (t) => {
   t.mock.method(console, 'error', () => {});
   for (const name of ['prepare', 'dispatch', 'monitor', 'review', 'complete'] as const) {

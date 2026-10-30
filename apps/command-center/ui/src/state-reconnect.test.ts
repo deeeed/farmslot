@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { FleetStatus, Run } from '@farmslot/protocol';
+import { RESOURCE_REREAD_INTERVAL_MS } from '@farmslot/protocol/client-cache';
 
 import { installFakeGateway } from './testing/fake-gateway.js';
 
@@ -111,7 +112,10 @@ test('the workspace survives a gateway restart and clears only for another accou
 
   await t.test(
     'fleet payload events cannot replace the shared query; revisions refetch it once and errors retain stale facts',
-    async () => {
+    async (st) => {
+      // Automatic fleet rereads are paced; these notices arrive a full interval after the last read.
+      const now = performance.now.bind(performance);
+      st.mock.method(performance, 'now', () => now() + RESOURCE_REREAD_INTERVAL_MS.slots!);
       const socket = fakeGateway.sockets.at(-1)!;
       const before = socket.sent.filter(({ method }) => method === 'fleet.status').length;
       socket.event('fleet.updated', { fleet: { ...serverFleet, slots: [] } });
@@ -161,7 +165,10 @@ test('the workspace survives a gateway restart and clears only for another accou
 
   await t.test(
     'domain payloads cannot replace collections, while resource changes refetch them once',
-    async () => {
+    async (st) => {
+      // Automatic run list rereads are paced; this notice arrives a full interval after the last read.
+      const now = performance.now.bind(performance);
+      st.mock.method(performance, 'now', () => now() + activeRunsQuery.rereadIntervalMs!.runs!);
       const socket = fakeGateway.sockets.at(-1)!;
       socket.event('run.updated', { run: makeRun({ id: 'untrusted-event-row' }) });
       socket.event('decision.new', {

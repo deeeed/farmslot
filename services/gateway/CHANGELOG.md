@@ -5,8 +5,22 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Preserve acceptance-contract task writes across a CI-watch handoff when the parent releases its slot.
+- Show gate preparation during replay capture and readiness checks; report operator wait only after its decision exists.
+
+- Complete artifact-only eval packages without requiring publication claim approval.
+
+- Recover unsent review-fix prompts after restart, verify relaunched worker processes, and surface unconfirmed delivery within the launch budget while preserving findings.
+- Run one task progress read per watched slot at a time; updates that arrive during a read fold into one rerun. A due gateway-update check publishes its result once instead of reporting a stale state for the length of the check.
+- Log the acquisition scan's file count and duration for each output completion capture.
+
+- Hold reviewer model-capacity refusals for an operator retry, preserving the run and slot instead of failing the run.
+- Limit the pending-decision scan to task folders and share one scan between concurrent decision lists, so historical artifact trees no longer stall gateway file I/O.
+
+- Resume monitoring dispatched workers without repeating retained-artifact admission, so waiting completion signals can advance after restart.
+- Cap inherited worker prompt hooks without changing user settings, and escalate active inline CI fixes without tool progress, including tools with no completion for ten minutes.
+
+- Wait through a bounded cold dev-server compile during prepare, and fail timed-out terminal cleanup visibly instead of blocking replay indefinitely.
 - Deduplicate Claude message usage and count initial and fix sessions once, excluding reviewers from historical and completion totals.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.1 - 2026-10-29
 

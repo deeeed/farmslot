@@ -853,10 +853,11 @@ test('restart recovery preserves a persisted fix prompt delivery boundary when t
       },
     },
   );
-  assert.deepEqual(result, { status: 'blocked' });
+  assert.deepEqual(result, { status: 'relaunch-required' });
 });
 
-test('recovered fix stops polling when the worker has exited', async () => {
+test('recovered fix stops polling when the worker has exited', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
   const run = {
     id: 'run-1',
     project: 'farmslot-farm',
@@ -865,7 +866,7 @@ test('recovered fix stops polling when the worker has exited', async () => {
     agentContexts: [],
   };
   let probes = 0;
-  const result = await reconcileRecoveredFixPromptDelivery(
+  const pending = reconcileRecoveredFixPromptDelivery(
     { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
     'run-1',
     {
@@ -894,7 +895,9 @@ test('recovered fix stops polling when the worker has exited', async () => {
     },
     { retryIntervalMs: 1, retryWindowMs: 100 },
   );
-  assert.deepEqual(result, { status: 'blocked' });
+  t.mock.timers.tick(1);
+  const result = await pending;
+  assert.deepEqual(result, { status: 'relaunch-required' });
   assert.equal(probes, 1);
 });
 
@@ -942,9 +945,10 @@ test('recovered fix re-probes the original prompt without another send', async (
   assert.equal(probes, 2);
 });
 
-test('recovered fix waits for its signal after the acknowledgement window without resending', async () => {
+test('recovered fix stops at the acknowledgement deadline without duplicate delivery', async (t) => {
   let probes = 0;
-  const result = await reconcileRecoveredFixPromptDelivery(
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const pending = reconcileRecoveredFixPromptDelivery(
     { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
     'run-1',
     {
@@ -979,7 +983,12 @@ test('recovered fix waits for its signal after the acknowledgement window withou
     },
     { retryIntervalMs: 1, retryWindowMs: 5 },
   );
-  assert.deepEqual(result, { status: 'deferred' });
+  t.mock.timers.tick(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(4);
+  const result = await pending;
+  assert.equal(result.status, 'blocked');
+  if (result.status === 'blocked') assert.match(result.reason ?? '', /unconfirmed.*launch budget/);
   assert.ok(probes > 0);
 });
 
@@ -1288,24 +1297,29 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: ReviewRetryDeps; calls: C
         ],
       };
     },
-    getRun: () =>
-      ({
-        metrics: { model: 'sonnet' },
-        agentContexts: [
-          {
-            id: 'fix-context',
-            role: 'review-fix',
-            status: 'working',
-            taskFile: 'tasks/foo/REVIEW-FIX.md',
-            signalFile: 'tasks/foo/REVIEW-FIX-SIGNAL.json',
-            runner: 'claude',
-            model: 'sonnet',
-            attemptStartedAt: '2026-08-05T00:00:00.000Z',
-            startedAt: '2026-08-05T00:00:00.000Z',
-            target: { session: 'worker', target: 'worker:dev' },
-          },
-        ],
-      }) as any,
+    getRun: () => ({
+      ...makeRun({
+        id: 'run-12345678',
+        metrics: { model: 'sonnet', runner: 'claude', nudgeCount: 0 },
+      }),
+      agentContexts: [
+        {
+          id: 'fix-context',
+          label: 'Review fix',
+          runId: 'run-12345678',
+          slotId: 'slot-1',
+          role: 'review-fix',
+          status: 'working',
+          taskFile: 'tasks/foo/REVIEW-FIX.md',
+          signalFile: 'tasks/foo/REVIEW-FIX-SIGNAL.json',
+          runner: 'claude',
+          model: 'sonnet',
+          attemptStartedAt: '2026-08-05T00:00:00.000Z',
+          startedAt: '2026-08-05T00:00:00.000Z',
+          target: { session: 'worker', target: 'worker:dev' },
+        },
+      ],
+    }),
   };
   return { deps, calls };
 }
@@ -1756,13 +1770,10 @@ test(
         watcherStopped = true;
       },
     });
-    deps.waitForWorkerSignal = async (_vars, _taskDir, _timeout, baseline, turnActive) => {
+    deps.waitForWorkerSignal = async (_vars, _taskDir, timeout, baseline, turnActive) => {
       assert.equal(baseline, '');
-      assert.equal(
-        typeof turnActive,
-        'function',
-        'the inactivity watch must observe worker activity even without a delivery token',
-      );
+      assert.ok(timeout <= 120_000, 'unconfirmed delivery uses the launch budget');
+      assert.equal(turnActive, undefined, 'unrelated activity cannot extend an unconfirmed send');
       watching();
       return signal;
     };
@@ -2830,4 +2841,31 @@ test('retryDeferredFixDelivery stops immediately after retained delivery becomes
   });
   assert.equal(result.sent, false);
   assert.equal(rediscoverCalls, 1);
+});
+
+test('unconfirmed fresh fix delivery returns continuable findings instead of another signal wait', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: [],
+    feedbackErrors: [new ReviewFixDeliveryError('unacknowledged retained handoff')],
+  });
+  deps.resumeFixPromptDelivery = async () => ({ status: 'deferred' });
+  deps.waitForWorkerSignal = async (_vars, _taskDir, timeout, _baseline, activity) => {
+    assert.ok(timeout <= 120_000);
+    assert.equal(activity, undefined);
+    return undefined;
+  };
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 3,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+  assert.equal(result.verdict, 'issues');
+  assert.deepEqual(result.issues, ISSUES);
+  assert.equal(result.feedbackSent, false);
+  assert.equal(result.recoveryContinuationPending, true);
+  assert.match(result.fixDeliveryFailure ?? '', /unconfirmed/);
+  assert.equal(calls.relaunches, 1);
+  assert.equal(calls.reviewAgent, 0, 'delivery failure does not rerun the reviewer');
 });

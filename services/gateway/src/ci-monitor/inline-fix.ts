@@ -62,7 +62,11 @@ import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { runnerActivityIsBusy } from '../runners/observability-files.js';
 import { isObservabilityReadingAuthoritative } from '../runners/observability-send-decision.js';
-import type { ObservabilityReading, RunnerActivity } from '../runners/observability-types.js';
+import type {
+  ObservabilityReading,
+  RunnerActivity,
+  RunnerSessionDeliveryState,
+} from '../runners/observability-types.js';
 import {
   type LaunchAckSignalSnapshot,
   readLaunchAckSignalSnapshot,
@@ -139,6 +143,35 @@ export function inlineFixRunnerStillBusy(
 const INLINE_FIX_TIMEOUT_MS = 10 * 60_000;
 const INLINE_FIX_HARD_TIMEOUT_MS = 60 * 60_000;
 const INLINE_FIX_FALLBACK_POLL_MS = 30_000;
+
+export interface InlineFixProgress {
+  lastProgressAt: number;
+  toolProgressAt?: number | null;
+  stalled: boolean;
+}
+
+export function advanceInlineFixProgress(
+  previous: InlineFixProgress,
+  turnState: ObservabilityReading<RunnerSessionDeliveryState> | null,
+  now: number,
+): InlineFixProgress {
+  const toolProgressAt =
+    turnState?.lastToolProgressAt !== undefined
+      ? turnState.lastToolProgressAt
+      : previous.toolProgressAt;
+  const advanced =
+    typeof toolProgressAt === 'number' &&
+    (previous.toolProgressAt == null || toolProgressAt > previous.toolProgressAt);
+  const lastProgressAt = advanced ? now : previous.lastProgressAt;
+  return {
+    toolProgressAt,
+    lastProgressAt,
+    stalled:
+      inlineFixRunnerStillBusy(true, turnState, null) &&
+      toolProgressAt !== undefined &&
+      now - lastProgressAt >= INLINE_FIX_TIMEOUT_MS,
+  };
+}
 
 export function resolveCiFixRetainedSession(run: Run | undefined) {
   if (!run) return { binding: null, reason: null };
@@ -1106,7 +1139,20 @@ async function attemptInlineCIFix(
     let deadline = Date.now() + INLINE_FIX_TIMEOUT_MS;
     const hardDeadline = Date.now() + INLINE_FIX_HARD_TIMEOUT_MS;
     let lastInvalidSignalReason: string | null = null;
+    let progress: InlineFixProgress = { lastProgressAt: Date.now(), stalled: false };
     while (Date.now() < hardDeadline && !signal.aborted) {
+      const turnState = await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken);
+      progress = advanceInlineFixProgress(progress, turnState, Date.now());
+      if (progress.stalled) {
+        const blockedReason = `Inline CI fix made no tool progress for ${Math.round((Date.now() - progress.lastProgressAt) / 60_000)} minutes; check worker hooks or a long-running tool before retrying`;
+        console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${blockedReason}`);
+        return blockInlineFix(
+          blockedReason,
+          await getSlotHeadSha(slotId),
+          new Date().toISOString(),
+          await readRemoteCIFixProgress(vars, writeResult.taskPath),
+        );
+      }
       if (Date.now() >= deadline) {
         if (!acceptedTurnToken) {
           // A delivery recovered after a gateway restart carries no turn token;
@@ -1119,7 +1165,6 @@ async function attemptInlineCIFix(
           );
           continue;
         }
-        const turnState = await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken);
         if (!inlineFixRunnerStillBusy(true, turnState, null)) break;
         deadline = Math.min(hardDeadline, Date.now() + INLINE_FIX_TIMEOUT_MS);
         console.log(

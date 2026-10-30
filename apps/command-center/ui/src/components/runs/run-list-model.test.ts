@@ -1,7 +1,12 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-import { type Run, runElapsedTimeView, runListProjection } from '@farmslot/protocol';
+import {
+  type Run,
+  runElapsedTimeView,
+  runListProjection,
+  type TaskProgressStructured,
+} from '@farmslot/protocol';
 import { runActivityView } from '@farmslot/review-dispatch';
 
 import { colors } from '../../styles/theme-tokens.js';
@@ -413,7 +418,7 @@ test('run progress: a pending gate names its primary action, however old', () =>
   assert.equal(summary.lastProgressAgo, '4h ago');
 });
 
-test('run progress: stale only after an hour with nothing pending', () => {
+test('run progress: stale after an hour without claiming nothing is pending', () => {
   const started = Date.parse('2026-05-14T01:00:00.000Z');
   const watching = run('watch', {
     status: 'ci-watching',
@@ -440,7 +445,7 @@ test('run progress: stale only after an hour with nothing pending', () => {
   assert.equal(before.lastProgressAgo, '59m ago');
   const after = summarize(watching, started + RUN_STALE_AFTER_MS);
   assert.equal(after.kind, 'stale');
-  assert.equal(after.text, 'Stale: no progress for 1h and nothing pending');
+  assert.equal(after.text, 'Stale: no progress for 1h');
   const ciProgress = summarize(
     {
       ...watching,
@@ -455,6 +460,49 @@ test('run progress: stale only after an hour with nothing pending', () => {
   );
   assert.equal(ciProgress.kind, 'step', 'CI-watch progress counts');
   assert.equal(ciProgress.lastProgressAgo, '30m ago');
+});
+
+test('run progress: an observed finished worker waits for its monitor to advance', () => {
+  const monitoring = run('signal-waiting', {
+    status: 'monitoring',
+    statusChangedAt: '2026-05-14T10:00:00.000Z',
+    steps: [{ name: 'monitor', status: 'running', startedAt: '2026-05-14T13:19:00.000Z' }],
+  });
+  const taskProgress: TaskProgressStructured = {
+    schema: { flowType: 'fix-bug', title: 'Task', totalSteps: 1, phases: [] },
+    phases: [],
+    completedSteps: 1,
+    totalSteps: 1,
+    currentPhase: null,
+    currentStep: null,
+    timing: {
+      schemaVersion: 1,
+      events: [],
+      startedAt: '2026-05-14T10:00:00.000Z',
+      finishedAt: '2026-05-14T13:14:00.000Z',
+    },
+  };
+  const waiting = summarize(monitoring, Date.parse('2026-05-14T13:36:00.000Z'), taskProgress);
+  assert.equal(waiting.kind, 'step');
+  assert.equal(waiting.text, 'Worker finished; monitor has not advanced');
+  assert.equal(waiting.lastProgressAgo, '22m ago');
+
+  const stalled = summarize(monitoring, Date.parse('2026-05-14T15:14:00.000Z'), taskProgress);
+  assert.equal(stalled.kind, 'stale');
+  assert.equal(stalled.text, 'Stale: Worker finished; monitor has not advanced');
+  assert.equal(stalled.lastProgressAgo, '2h ago');
+
+  const missing = summarize(monitoring, Date.parse('2026-05-14T13:36:00.000Z'));
+  assert.equal(missing.text, 'Stale: no progress for 3h');
+  assert.equal(
+    summarize(
+      { ...monitoring, status: 'reviewing', steps: [{ name: 'review', status: 'running' }] },
+      Date.parse('2026-05-14T13:36:00.000Z'),
+      taskProgress,
+    ).text,
+    'Stale: no progress for 3h',
+    'a completed worker checklist does not describe the subsequent reviewer',
+  );
 });
 
 test('run progress: a restart re-entering a step is not progress; a Resume is', () => {

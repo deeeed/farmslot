@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add a rendered-row probe for finished workers waiting for their monitor and for stale or unavailable checklist observations.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.15.1 - 2026-10-29

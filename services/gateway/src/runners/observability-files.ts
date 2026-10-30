@@ -211,6 +211,9 @@ export function deriveRunnerSessionDeliveryState(
       confidence: 'high',
       observedAt,
       ...(failure ? { failure } : {}),
+      ...(record.lastToolProgressAt === null || typeof record.lastToolProgressAt === 'number'
+        ? { lastToolProgressAt: record.lastToolProgressAt }
+        : {}),
       ...(typeof record.turnStartedAt === 'number'
         ? { turnToken: `${sessionId}:${record.turnStartedAt}` }
         : {}),

@@ -1430,6 +1430,8 @@ async function replayRunStep(
     // continuation instead of a waiter that would swallow the person's choice.
     for (const decision of reopened) resolveEngineDecision(decision.id, 'superseded');
     const run = updateRun(params.runId, { decisions });
+    if (run.steps.some((step) => step.name === PS.HUMAN_GATE && step.status === 'running'))
+      updateRunStep(params.runId, PS.HUMAN_GATE, { detail: 'Waiting for operator decision' });
     await persistRunNow(run, 'replay-rollback-decisions');
     emit(Events.RUN_UPDATED, { run });
     for (const decision of reopened)
@@ -1599,6 +1601,10 @@ async function replayRunStep(
     if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
       updateRun(params.runId, { decisions: existing.decisions });
     }
+    if (replayStepName === PS.HUMAN_GATE)
+      updateRunStep(params.runId, PS.HUMAN_GATE, {
+        detail: 'Preparing operator decision: replaying gate',
+      });
     gateReentry = gateReentries.get(params.runId) ?? {
       decisionIds: new Set(),
       inFlight: 0,
@@ -1865,6 +1871,9 @@ async function replayRunStep(
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
+      updateRunStep(params.runId, PS.HUMAN_GATE, {
+        detail: 'Preparing operator decision: collecting worker artifacts',
+      });
       const copied = await captureRunOutput(params.runId, true, false, {
         forPublication: requiresPublicationApproval(runBeforeGateReplay),
       });
@@ -2231,7 +2240,7 @@ async function replayRunStep(
         ? (activeReviewFixTaskFile(currentBeforeReplayUpdate) ??
           (targetIdx === reviewIdx ? blockedFixTaskFile : undefined))
         : undefined;
-    const engineStateForReplay = freshDispatchEngineStateForReplay(
+    let engineStateForReplay = freshDispatchEngineStateForReplay(
       replaysCompletionOrGate
         ? resetPublishGateApprovalForReplay(
             currentBeforeReplayUpdate.engineState,
@@ -2240,6 +2249,13 @@ async function replayRunStep(
         : currentBeforeReplayUpdate.engineState,
       params.freshDispatch || nativeFreshRestart,
     );
+    // Explicit review retry consumes the operator hold; restart must observe its new reviewer.
+    if (replayStepName === PS.REVIEW && engineStateForReplay?.publishGate?.reviewRecovery) {
+      engineStateForReplay = {
+        ...engineStateForReplay,
+        publishGate: { ...engineStateForReplay.publishGate, reviewRecovery: undefined },
+      };
+    }
     // Soft-lock was taken before long awaits. Re-validate holder+epoch and live
     // ownership before revive: expiry reclaim or concurrent replay may have stolen it.
     if (

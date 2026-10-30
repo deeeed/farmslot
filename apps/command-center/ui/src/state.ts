@@ -34,6 +34,7 @@ import {
 } from '@farmslot/protocol';
 import {
   type GatewayResourceCache,
+  type ResourceQuery,
   resourceQuery,
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
@@ -437,7 +438,12 @@ export const runHistoryQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, {
   includeProjectAnalytics: true,
 });
 export const activeRunsQuery = resourceQuery<RunListResult>(Methods.RUN_LIST, { active: true });
-export const decisionsQuery = resourceQuery<DecisionListResult>(Methods.DECISION_LIST);
+// The gateway changes the farm decisions key at every run write. Decision events reread the inbox
+// at once and every answer rereads it first, so here those writes reread it at most every 30 s.
+export const decisionsQuery: ResourceQuery<DecisionListResult> = {
+  ...resourceQuery<DecisionListResult>(Methods.DECISION_LIST),
+  rereadIntervalMs: { decisions: 30_000 },
+};
 export const fleetQuery = resourceQuery<FleetStatusResult>(Methods.FLEET_STATUS);
 export const backlogQuery = resourceQuery<BacklogListResult>(Methods.BACKLOG_LIST, {
   includeArchived: true,
@@ -891,6 +897,24 @@ export function initState(): void {
       void fetchInitialState(epoch);
     }
   });
+
+  // Run writes reread the inbox at most every 30 s; a decision raised, answered or changed is read
+  // at once, by a read that starts after the event rather than one already in flight.
+  for (const event of [
+    Events.DECISION_NEW,
+    Events.DECISION_RESOLVED,
+    Events.DECISION_UPDATED,
+    Events.RUN_DECISION_NEW,
+    Events.RUN_DECISION_RESOLVED,
+    Events.RUN_DECISION_UPDATED,
+  ])
+    gateway.subscribe(event, () => {
+      if (collectionCache && collectionFarm)
+        void (
+          collectionCache.retryAfterPending?.(decisionsQuery) ??
+          collectionCache.retry(decisionsQuery)
+        ).catch(() => undefined);
+    });
 
   // GitHub API rate-limit telemetry (github-client.ts emits after each call).
   gateway.subscribe<GitHubRateLimitPayload>(Events.GITHUB_RATE_LIMIT, (p) => {

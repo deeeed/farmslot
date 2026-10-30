@@ -21,6 +21,7 @@ import {
 
 import { reconcileRunAgentRuntime } from '../agents/runtime-recovery.js';
 import { markBacklogRunObserved } from '../backlog/store.js';
+import { withoutCleanupSignal } from '../core/cleanup-scope.js';
 import {
   getProjectField,
   getProjectFieldRaw,
@@ -46,6 +47,7 @@ import {
   prepareIdentityPath,
   reapSlotPrepareScope,
 } from '../methods/slot.js';
+import { isReviewerCapacityError } from '../review/terminal-result.js';
 import {
   executeReviewWorkspaceStep,
   reconcileReviewWorkspaceCleanup,
@@ -767,6 +769,10 @@ export interface StartRunOptions {
 const drivenGenerations = new Map<string, number>();
 
 export async function startRun(runId: string, options: StartRunOptions = {}): Promise<void> {
+  return withoutCleanupSignal(() => startRunGeneration(runId, options));
+}
+
+async function startRunGeneration(runId: string, options: StartRunOptions): Promise<void> {
   const generation = options.expectedGeneration ?? getRunGeneration(runId);
   // A second loop on the same generation passes every stale-loop check: both
   // monitors see the worker's signal, and the one whose monitor was replaced
@@ -962,7 +968,8 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         return;
       }
 
-      if (isTerminalReviewArtifactError(err)) {
+      const capacityHold = stepName === S.REVIEW && isReviewerCapacityError(err);
+      if (isTerminalReviewArtifactError(err) || capacityHold) {
         console.warn(
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} requires operator review: ${msg}`,
         );
@@ -976,7 +983,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         );
         if (runSupersededSince(getRun(runId), myGen)) return;
         updateRunStep(runId, stepName, {
-          status: 'done',
+          status: capacityHold ? 'failed' : 'done',
           detail: msg,
           completedAt: new Date().toISOString(),
         });
@@ -984,7 +991,9 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           updateRunStep(runId, steps[j], { status: 'skipped' });
         }
         updateRun(runId, {
-          status: runDecisionWaitingStatus(getRun(runId)!, progress, 'review_artifact'),
+          status: capacityHold
+            ? 'review-failed'
+            : runDecisionWaitingStatus(getRun(runId)!, progress, 'review_artifact'),
           error: msg,
         });
         broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });

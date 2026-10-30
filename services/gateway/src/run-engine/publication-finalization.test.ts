@@ -123,3 +123,28 @@ test('unapproved finalize refuses before any finalization effect and retains act
   await assert.rejects(executeFinalizeStep(run.id, context), /requires approve-publish/);
   assert.deepEqual(getRun(run.id), retained);
 });
+
+test('artifact-only finalize identifies settlement to the canonical gate guard', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'EVAL-F219' });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    status: 'completing',
+    completionPolicy: 'artifact-only',
+    slotId: 'eval-finalize-fixture',
+  });
+  const context: FinalizeStepContext = {
+    assertGatePrerequisites: async (checked, prepared, action) => {
+      assert.equal(checked.id, run.id);
+      assert.equal(prepared, null);
+      assert.equal(action, 'finalize');
+      throw new Error('Stop before finalization effects');
+    },
+    broadcastFn: () => assert.fail('No effects before readiness'),
+    latestResolvedHumanGateDecision,
+    loadProjectVarsOrNull: async () => assert.fail('No slot read before readiness'),
+    readPreparedPackage: async () => assert.fail('No publication package for artifact-only'),
+    refreshRunLinks: async () => assert.fail('No link refresh before readiness'),
+    stepPartialIO: new Map(),
+  };
+  await assert.rejects(executeFinalizeStep(run.id, context), /Stop before finalization effects/);
+});

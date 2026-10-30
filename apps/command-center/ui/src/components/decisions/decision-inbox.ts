@@ -43,6 +43,7 @@ import {
 } from '../runs/family-observability-retrospective-renderers.js';
 import { flowColor, flowLabel } from '../runs/run-utils.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { canActOn, heldDataIsSaved } from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
 import { assertInboxDecisionReady, resolveInboxDecision } from './decision-inbox-actions.js';
@@ -237,11 +238,11 @@ export class DecisionInbox extends LitElement {
   }
 
   private get _canAct(): boolean {
-    return this._observation.status === 'ready' && gateway.connectionState === 'connected';
+    return canActOn(this._observation);
   }
 
-  private _assertReady(decision: PendingDecision): void {
-    assertInboxDecisionReady(decision.id);
+  private _assertReady(decision: PendingDecision): Promise<void> {
+    return assertInboxDecisionReady(decision.id);
   }
 
   private get _filtered(): PendingDecision[] {
@@ -268,15 +269,17 @@ export class DecisionInbox extends LitElement {
 
   private async _resolve(decision: PendingDecision, actionId: string) {
     const decisionId = decision.id;
+    if (this._resolving.has(decisionId)) return;
     this._resolveErrors = new Map([...this._resolveErrors].filter(([id]) => id !== decisionId));
+    // The answer starts busy, since a paced inbox is reread before it is sent.
+    this._resolving = new Set([...this._resolving, decisionId]);
     try {
-      this._assertReady(decision);
+      await this._assertReady(decision);
       if (this._handleRoadmapPromotionAction(decision, actionId)) return;
       if (decision.type === 'improvement' && actionId === 'apply') {
         await this._applyImprovement(decision);
         return;
       }
-      this._resolving = new Set([...this._resolving, decisionId]);
       await resolveInboxDecision(decisionId, actionId);
     } catch (error) {
       this._resolveErrors = new Map([
@@ -326,7 +329,7 @@ export class DecisionInbox extends LitElement {
     const runId = decision.runMeta?.runId;
     this._resolving = new Set([...this._resolving, decisionId]);
     try {
-      this._assertReady(decision);
+      await this._assertReady(decision);
       if (!runId) throw new Error('Improvement decision is missing its run');
       const request = buildRunDecisionActionRequest({ runId, decision, actionId: 'apply' });
       const res = (await gateway.request(request.method, request.params)) as ImprovementApplyResult;
@@ -358,7 +361,7 @@ export class DecisionInbox extends LitElement {
     if (!message.trim()) return;
     this._chatSending = new Set([...this._chatSending, decisionId]);
     try {
-      this._assertReady(decision);
+      await this._assertReady(decision);
       const res = (await gateway.request(Methods.IMPROVEMENT_CHAT, {
         runId,
         decisionId,
@@ -777,7 +780,7 @@ export class DecisionInbox extends LitElement {
         <span class="inbox-title">Decisions</span>
         <span class="inbox-count">${this._filtered.length} pending</span>
       </div>
-      ${this._observation.status === 'stale' && this._observation.data
+      ${heldDataIsSaved(this._observation, gateway.connectionState === 'connected', this._now)
         ? html`<div class="inbox-observation" data-freshness="stale">
             Saved decisions, ${sourceObservationAge(this._observation.observedAt, this._now)}.
             Actions wait for a current read.

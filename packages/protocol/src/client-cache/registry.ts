@@ -70,6 +70,8 @@ export interface ResourceQueryDefinition {
   normalizeParams?(params: unknown): unknown;
   retentionGroups?(params: unknown): string[];
   dependencies(params: unknown, nativeReaderId?: string): ResourceKey[];
+  /** This read's floors in place of RESOURCE_REREAD_INTERVAL_MS for changes to these families. */
+  rereadIntervalMs?: Partial<Record<ResourceKey['family'], number>>;
 }
 
 const mb = 1024 * 1024;
@@ -560,6 +562,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     collector: 'github',
     sourceObservation: upstreamSourceObservation,
     normalizeParams: prListObservationParams,
+    // Runs, slots and workers only place PRs on slots, every run write and worker change advances
+    // them, and each read loads the whole fleet. A GitHub change is still read at once.
+    rereadIntervalMs: { runs: 30_000, slots: 30_000, workers: 30_000 },
     dependencies: (params: unknown) => {
       const project =
         params && typeof params === 'object' ? Reflect.get(params, 'project') : undefined;
@@ -974,6 +979,8 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 20 * mb },
     live: true,
     dependencies: () => [{ family: 'runs', scope: 'farm' }],
+    // Every write to any run changes the farm runs key, several times a minute on a busy farm.
+    rereadIntervalMs: { runs: 30_000 },
   },
   [Methods.RUN_GET]: {
     persisted: true,
@@ -1171,6 +1178,7 @@ export interface ResourceQuery<T = unknown> {
   readonly persistedData?: (data: unknown) => unknown;
   readonly requiresObservedRead?: boolean;
   readonly requiresWorkspaceRead?: boolean;
+  readonly rereadIntervalMs?: Partial<Record<ResourceKey['family'], number>>;
   readonly [queryData]?: T;
 }
 
@@ -1209,6 +1217,7 @@ export function resourceQuery<T = unknown>(
     ...(definition.persistedData ? { persistedData: definition.persistedData } : {}),
     ...(definition.requiresWorkspaceRead ? { requiresWorkspaceRead: true } : {}),
     ...(definition.requiresObservedRead ? { requiresObservedRead: true } : {}),
+    ...(definition.rereadIntervalMs ? { rereadIntervalMs: definition.rereadIntervalMs } : {}),
   };
 }
 

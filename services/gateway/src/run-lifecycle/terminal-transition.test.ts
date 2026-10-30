@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
 import type { Run } from '@farmslot/protocol';
 
+import { isTerminalTeardownInFlight } from '../run-engine/terminal-teardown-registry.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
@@ -80,6 +82,33 @@ const TERMINAL_PATCHES: Record<TerminalTransitionKind, Partial<Run>> = {
   fail: { status: 'failed', completedAt: NOW, error: 'step blew up' },
   block: { status: 'blocked', completedAt: NOW, error: 'worker asked for help' },
 };
+
+test('a hung terminal slot cleanup reports its deadline and releases the replay fence', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const slotId = 'f204-terminal-cleanup-deadline';
+  let finishCleanup!: () => void;
+  const cleanup = new Promise<void>((resolve) => {
+    finishCleanup = resolve;
+  });
+  t.after(() => finishCleanup());
+  const harness = drive(
+    run({ slotId }),
+    { runId: 'run_1', kind: 'fail', actor: 'engine', patch: TERMINAL_PATCHES.fail },
+    { cleanupSlot: () => cleanup },
+  );
+  await setImmediate();
+  assert.equal(harness.stored().status, 'failed', 'failure is published before cleanup');
+  assert.equal(isTerminalTeardownInFlight(slotId), true);
+  t.mock.timers.tick(5 * 60_000);
+  const result = await harness.result;
+  const outcome = result.effects.find((effect) => effect.name === 'slot-cleanup');
+  assert.equal(outcome?.status, 'failed');
+  assert.match(outcome?.detail ?? '', /timed out after 300000ms/);
+  assert.equal(isTerminalTeardownInFlight(slotId), false, 'replay is no longer fenced');
+  finishCleanup();
+  await setImmediate();
+  assert.equal(harness.stored().status, 'failed', 'late cleanup cannot revive the run');
+});
 
 for (const kind of ['complete', 'fail', 'block'] as const) {
   test(`${kind} publishes the terminal status before any slot teardown starts`, async () => {

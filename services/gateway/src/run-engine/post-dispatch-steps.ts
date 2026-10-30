@@ -848,6 +848,11 @@ export async function executeReviewStep(
     };
 
   if (current.mode !== 'interactive') {
+    if (result.fixDeliveryFailure)
+      throw new ResultDecisionHoldError(result.fixDeliveryFailure, inputs, {
+        ...result,
+        cliCommand,
+      });
     const benignSkipReasons = new Set([
       'disabled',
       'disabled-for-project',
@@ -1014,6 +1019,8 @@ export async function executeHumanGateStep(
   } = context;
   const current = getRun(runId)!;
   const generation = current.engineState?.generation ?? 0;
+  if (current.steps.some((step) => step.name === S.HUMAN_GATE && step.status === 'running'))
+    updateRunStep(runId, S.HUMAN_GATE, { detail: 'Preparing operator decision' });
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
       await import('../run-completion/human-publication.js');
@@ -1363,6 +1370,7 @@ export async function executeHumanGateStep(
       }
     }
     const presentReadyGate = async (): Promise<string> => {
+      updateRunStep(runId, S.HUMAN_GATE, { detail: 'Preparing operator decision' });
       // A refused approval reopens only the wait. A later explicit review request
       // or Continue Fixing decision still follows its existing owner below.
       if (publicationApprovalGate && !shouldResumePublicationGate(getRun(runId)!))

@@ -34,6 +34,63 @@ let observe: () => Promise<RunProgressObservation> = async () => ({ kind: 'idle'
 const { createEngineDecision, resolveEngineDecision, setEngineDecisionRuntime } =
   await import('./engine-decisions.js');
 
+for (const reason of ['human_gate', 'review_posting', 'no_change']) {
+  test(`${reason} labels an operator wait only after its decision is published`, async (t) => {
+    const run = store.createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'GATE-PREPARING' });
+    store.updateRun(run.id, {
+      status: 'human-gating',
+      steps: [{ name: 'human-gate', status: 'running', detail: 'Preparing operator decision' }],
+    });
+    let started!: () => void;
+    let release!: (value: RunProgressObservation) => void;
+    let published!: () => void;
+    const observing = new Promise<void>((resolve) => (started = resolve));
+    const observed = new Promise<RunProgressObservation>((resolve) => (release = resolve));
+    const presentation = new Promise<void>((resolve) => (published = resolve));
+    let presented: Run | undefined;
+    setEngineDecisionRuntime({
+      broadcast: (event) => {
+        if (event !== Events.RUN_DECISION_NEW) return;
+        presented = structuredClone(store.getRun(run.id));
+        published();
+      },
+      stepToStatus: { 'human-gate': 'human-gating' },
+    });
+    const waiter = createEngineDecision(
+      run.id,
+      reason,
+      'Ready',
+      [{ id: 'abort', label: 'Abort', style: 'secondary' }],
+      undefined,
+      {
+        readProgress: async () => {
+          started();
+          return observed;
+        },
+      },
+    );
+    t.after(async () => {
+      release({ kind: 'idle' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      for (const decision of store.getRun(run.id)?.decisions ?? [])
+        if (!decision.resolvedAt) resolveEngineDecision(decision.id, 'abort');
+      await waiter;
+      store.updateRun(run.id, { status: 'cancelled' });
+      await store.deleteRun(run.id);
+      setEngineDecisionRuntime({ broadcast: () => {}, stepToStatus: {} });
+    });
+    await observing;
+    assert.deepEqual(store.getRun(run.id)!.decisions, []);
+    assert.equal(store.getRun(run.id)!.steps[0].detail, 'Preparing operator decision');
+    release({ kind: 'idle' });
+    await presentation;
+    assert(presented);
+    assert.equal(presented.decisions.length, 1);
+    assert.equal(presented.decisions[0].resolvedAt, undefined);
+    assert.equal(presented.steps[0].detail, 'Waiting for operator decision');
+  });
+}
+
 test('Fresh approval for A re-prompts when source restart ranks worker B first', async (t) => {
   const run = createObservedRun(t);
   const workerA = createObservedRun(t, 'TASK-A');

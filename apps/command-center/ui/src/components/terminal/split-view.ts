@@ -36,7 +36,7 @@ import { type AppState, getState, isHydrating, subscribe } from '../../state.js'
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { listPinnedSlots, listPinnedWorkspaces } from '../../utils/pinned-slots.js';
 import { hashParams } from '../../utils/url-state.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   filterSlotsByGlobalFilters,
@@ -1179,7 +1179,7 @@ export class TerminalSplitView extends LitElement {
             Could not load worktree reviews: ${this.activeRunsQuery.state.error.message}
           </div>`
         : nothing}
-      ${this.activeRunsQuery.state.status === 'stale' && this.activeRunsQuery.state.data
+      ${heldDataIsSaved(this.activeRunsQuery.state)
         ? html`<div>
             Saved worktree reviews, ${sourceObservationAge(this.activeRunsQuery.state.observedAt)}.
           </div>`

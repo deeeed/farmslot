@@ -6,10 +6,13 @@
 import {
   buildComparisonVariant,
   isActiveListRun,
+  Methods,
   nextFreeComparisonVariant,
   resolveRunSlotId,
   type Run,
+  type RunListResult,
 } from '@farmslot/protocol';
+import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { resolveRunEngine } from '../runs/run-utils.js';
 
@@ -50,6 +53,23 @@ export function sortRunsNewestFirst(runs: ReadonlyArray<Run>): Run[] {
   return [...runs].sort(
     (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
   );
+}
+
+/**
+ * The comparison picker's runs. Run writes reread run lists at most every 30 s, but the picker
+ * selects only from a ready list and closes (dropping this query) on click, so while open it
+ * rereads each change at once.
+ */
+export function comparisonPickerRunsQuery(
+  projects: readonly string[],
+): ResourceQuery<RunListResult> {
+  return {
+    ...resourceQuery<RunListResult>(Methods.RUN_LIST, {
+      limit: 50,
+      ...(projects.length === 1 ? { project: projects[0] } : {}),
+    }),
+    rereadIntervalMs: { runs: 0 },
+  };
 }
 
 /** Restrict comparison picker rows to active global project/machine filters when set. */

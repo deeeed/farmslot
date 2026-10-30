@@ -32,7 +32,7 @@ import {
   runDecisionWaitingStatus,
   type RunProgressObservation,
 } from '../runners/run-progress.js';
-import { getRun, listRuns, updateRun } from '../runs/store.js';
+import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
 import { samePrincipalOwner } from '../security/work-originator.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
@@ -801,6 +801,8 @@ export async function createEngineDecision(
     ),
     decisions: [...current!.decisions, decision],
   });
+  if (current!.steps.some((step) => step.name === 'human-gate' && step.status === 'running'))
+    updateRunStep(runId, 'human-gate', { detail: 'Waiting for operator decision' });
   broadcastFn(Events.RUN_DECISION_NEW, {
     runId,
     decision: pendingDecisionForRun(getRun(runId)!, decision),

@@ -3,10 +3,11 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
+import { assertCleanupCurrent, withoutCleanupSignal } from './cleanup-scope.js';
 import { farmslotRoot } from './config.js';
 
 const statusFile = resolveStatusFilePath(farmslotRoot);
@@ -28,11 +29,25 @@ export function onStatusCommit(listener: (snapshot: unknown) => void): void {
 }
 
 async function atomicWriteStatus(data: unknown): Promise<void> {
+  assertCleanupCurrent();
   assertStatusFileWritable(statusFile);
   const tmp = `${statusFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
-  await rename(tmp, statusFile);
-  for (const listener of statusCommitListeners) listener(data);
+  try {
+    await writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
+    assertCleanupCurrent();
+    await rename(tmp, statusFile);
+  } catch (error) {
+    try {
+      await rm(tmp, { force: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Status write and temporary-file cleanup failed',
+      );
+    }
+    throw error;
+  }
+  for (const listener of statusCommitListeners) withoutCleanupSignal(() => listener(data));
 }
 
 // ─── Broadcast hook ───
@@ -49,10 +64,12 @@ export function setSlotUpdateHook(hook: () => void): void {
 function triggerSlotUpdateHook(): void {
   if (!onSlotUpdated) return;
   if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    debounceTimer = null;
-    onSlotUpdated?.();
-  }, DEBOUNCE_MS);
+  debounceTimer = withoutCleanupSignal(() =>
+    setTimeout(() => {
+      debounceTimer = null;
+      onSlotUpdated?.();
+    }, DEBOUNCE_MS),
+  );
 }
 
 // ─── updateSlotStatus ───
@@ -272,6 +289,9 @@ type HeldPhase = 'ci-watch' | 'pr-watch' | 'occupied';
  */
 export const SLOT_RELEASING_SINCE = 'releasing_since';
 
+/** Automatic retries cannot confirm a command whose stop was not observed. */
+export const SLOT_CLEANUP_STOP_UNCONFIRMED = 'cleanup_stop_unconfirmed';
+
 /** The releasing fence, stamped so a stalled one can be told from a live one. */
 export function slotReleasingFenceFields(now = new Date()): Record<string, unknown> {
   return {
@@ -288,6 +308,7 @@ function slotResetFields(warm: boolean): Record<string, unknown> {
     held_reason: null,
     cleanup_release_token: null,
     cleanup_run_id: null,
+    [SLOT_CLEANUP_STOP_UNCONFIRMED]: null,
     [SLOT_RELEASING_SINCE]: null,
     agent: 'idle',
     warm,

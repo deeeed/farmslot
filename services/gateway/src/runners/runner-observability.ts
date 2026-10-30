@@ -10,6 +10,7 @@ import { farmslotRoot } from '../projects/repo-root.js';
 const REMOTE_AGENT_DIR = '~/farmslot-node';
 export const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
 export const RUNNER_OBSERVABILITY_COPY_PATHS = [
+  'scripts/runners/hook-progress.mjs',
   'scripts/runners/pi-farmslot-observability.ts',
   'scripts/runners/pi-farmslot-hook-writer.mjs',
   'scripts/runners/pi-farmslot-providers.mjs',

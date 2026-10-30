@@ -25,7 +25,7 @@ import {
   sourceObservationAge,
   summarizeRunEvidence,
 } from '@farmslot/protocol';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { type ResourceQuery, resourceQuery } from '@farmslot/protocol/client-cache';
 import { runActivityView, runChecklistProgressTarget } from '@farmslot/review-dispatch';
 import { projectColor } from '@farmslot/theme';
 
@@ -48,7 +48,13 @@ import {
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { readCurrent } from '../shared/read-current.js';
+import {
+  canActOn,
+  heldDataIsSaved,
+  readFailureText,
+  ResourceQueryController,
+} from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import {
   focusWorkInventoryRow,
@@ -288,7 +294,8 @@ export class RunList extends RunListState {
         else progress.delete(key);
         this.taskProgressByRun = progress;
         const errors = new Map(this.taskProgressErrorsByRun);
-        if (state.error) errors.set(key, state.error.message);
+        const failure = readFailureText(query);
+        if (failure) errors.set(key, failure);
         else errors.delete(key);
         this.taskProgressErrorsByRun = errors;
       });
@@ -330,15 +337,32 @@ export class RunList extends RunListState {
     ];
   }
 
+  /** The shared run lists and the open tag or family view, by the same query ids as their reads. */
+  private get runQueries(): ResourceQuery<RunListResult>[] {
+    return [
+      runHistoryQuery,
+      activeRunsQuery,
+      ...(this.tagFilter
+        ? [resourceQuery<RunListResult>(Methods.RUN_LIST, { tags: [this.tagFilter] })]
+        : []),
+      ...(this.familyFilter
+        ? [resourceQuery<RunListResult>(Methods.RUN_LIST, { familyId: this.familyFilter })]
+        : []),
+    ];
+  }
+
   private get canAct(): boolean {
     return (
       gateway.connectionState === 'connected' &&
       gateway.workspaceAccess === 'farm' &&
-      this.readStates.every((state) => state.status === 'ready')
+      this.readStates.every((state) => canActOn(state))
     );
   }
 
-  private assertCurrentRuns(ids: readonly string[] = []): void {
+  private async assertCurrentRuns(ids: readonly string[] = []): Promise<void> {
+    const cache = getResourceCache();
+    // Run writes reread the lists at most every 30 s; an action reads them first.
+    if (cache && this.canAct) await readCurrent(cache, this.runQueries);
     if (!this.canAct || getState().runsObservation.status !== 'ready')
       throw new Error('Wait for current runs before acting.');
     if (this.tagFilter) this.tagQuery.requireReady();
@@ -379,7 +403,7 @@ export class RunList extends RunListState {
     );
     const error = states.find((state) => state.error)?.error;
     return html`
-      ${states.some((state) => state.status === 'stale') && times.length
+      ${states.some((state) => heldDataIsSaved(state)) && times.length
         ? html`<div class="rehydrating-banner" data-run-freshness="stale">
             Saved runs, ${sourceObservationAge(Math.min(...times))}. Actions wait for a current
             read.
@@ -480,7 +504,7 @@ export class RunList extends RunListState {
     if (this.actionInProgress) return;
     this.actionInProgress = true;
     try {
-      this.assertCurrentRuns([runId]);
+      await this.assertCurrentRuns([runId]);
       // findPRNumber retries up to 65s (0+5+15+45) plus 4 gh calls; default
       // 15s RPC timeout would abort before the gateway finishes. Allow 120s.
       const res = await gateway.request<RunRehydratePrNumberResult>(
@@ -510,8 +534,10 @@ export class RunList extends RunListState {
     if (this.selectedIds.size === 0 || this.actionInProgress) return;
     this.actionInProgress = true;
     try {
-      this.assertCurrentRuns([...this.selectedIds]);
-      const ids = [...this.selectedIds].filter((id) => {
+      // The selection can change while the lists are reread; delete what was selected at the click.
+      const selected = [...this.selectedIds];
+      await this.assertCurrentRuns(selected);
+      const ids = selected.filter((id) => {
         const run = this.runById(id);
         return run ? TERMINAL_STATUSES.has(run.status) : false;
       });
@@ -546,16 +572,7 @@ export class RunList extends RunListState {
       if (cache) {
         const failures = await archiveRunSelection([...this.selectedIds], {
           cache,
-          queries: [
-            runHistoryQuery,
-            activeRunsQuery,
-            ...(this.tagFilter
-              ? [resourceQuery<RunListResult>(Methods.RUN_LIST, { tags: [this.tagFilter] })]
-              : []),
-            ...(this.familyFilter
-              ? [resourceQuery<RunListResult>(Methods.RUN_LIST, { familyId: this.familyFilter })]
-              : []),
-          ],
+          queries: this.runQueries,
           isCurrent: () =>
             gateway.connectionState === 'connected' &&
             gateway.workspaceAccess === 'farm' &&
@@ -587,7 +604,7 @@ export class RunList extends RunListState {
     if (this.actionInProgress) return;
     this.actionInProgress = true;
     try {
-      this.assertCurrentRuns();
+      await this.assertCurrentRuns();
       const result = await gateway.request<RunCleanupResult>(Methods.RUN_CLEANUP, { dryRun: true });
       this.cleanupPreview = result;
     } catch (err) {
@@ -599,12 +616,15 @@ export class RunList extends RunListState {
   }
 
   private async confirmCleanup() {
-    if (this.actionInProgress) return;
+    const preview = this.cleanupPreview;
+    if (this.actionInProgress || !preview) return;
     this.actionInProgress = true;
     try {
-      this.assertCurrentRuns();
+      await this.assertCurrentRuns();
+      // Cancel stays live during the reread; a dismissed preview is never executed.
+      if (this.cleanupPreview !== preview) return;
       // Each cancelled run it archives releases the slot its cancel kept, one after another.
-      const archives = this.cleanupPreview?.runsArchived.length ?? 0;
+      const archives = preview.runsArchived.length;
       await gateway.request<RunCleanupResult>(
         Methods.RUN_CLEANUP,
         { dryRun: false },
@@ -872,7 +892,7 @@ export class RunList extends RunListState {
 
   private async _stopAutoRecovery(runId: string) {
     try {
-      this.assertCurrentRuns([runId]);
+      await this.assertCurrentRuns([runId]);
       await gateway.request(Methods.RUN_AUTO_RECOVERY_STOP, { runId });
     } catch (error) {
       alert(error instanceof Error ? error.message : String(error));
@@ -931,7 +951,16 @@ export class RunList extends RunListState {
     const runnerLabel = engine.model
       ? `${engine.runner ?? 'runner'}/${engine.model}`
       : (engine.runner ?? '—');
-    const progress = showsRunProgress(run) ? runProgressSummary(run) : null;
+    const taskObservation = this.progressQueries.get(
+      runChecklistProgressTarget(run)?.key ?? '',
+    )?.state;
+    const progress = showsRunProgress(run)
+      ? runProgressSummary(
+          run,
+          Date.now(),
+          taskObservation?.status === 'ready' ? taskObservation.data?.structured : undefined,
+        )
+      : null;
     const cells = [
       ...(showCheckbox
         ? [
@@ -992,8 +1021,11 @@ export class RunList extends RunListState {
             runChecklistProgressTarget(run)?.key ?? '',
           )}
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
-          .taskProgressStale=${this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')
-            ?.state.status !== 'ready'}
+          .taskProgressStale=${heldDataIsSaved(
+            this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state ?? {
+              status: 'loading',
+            },
+          )}
           .taskProgressAge=${sourceObservationAge(
             this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state.observedAt,
           )}
@@ -1072,7 +1104,7 @@ export class RunList extends RunListState {
   }
 
   private async setRunTags(run: Run, tags: string[]) {
-    this.assertCurrentRuns([run.id]);
+    await this.assertCurrentRuns([run.id]);
     await gateway.request(Methods.RUN_TAGS_SET, { runId: run.id, tags });
   }
 

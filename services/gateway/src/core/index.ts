@@ -89,6 +89,7 @@ export {
   resetSlot,
   resetSlotIf,
   rewriteStatusFile,
+  SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASING_SINCE,
   slotOwnershipReleaseFields,

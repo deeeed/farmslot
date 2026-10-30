@@ -109,6 +109,13 @@ export interface MaterializedRunBundle {
   ref: RunArtifactBundleRef;
   manifest: RunBundleManifest;
   missingData: string[];
+  acquisitionScan: AcquisitionScan;
+}
+
+interface AcquisitionScan {
+  bytes: number;
+  fileCount: number;
+  durationMs: number;
 }
 
 export interface RunBundleAvailability {
@@ -294,27 +301,59 @@ export function isRunBundleMedia(file: string): boolean {
   return /\.(?:png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|wav)$/iu.test(file);
 }
 
-async function physicalBytes(root: string): Promise<number> {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if (hasCode(error, 'ENOENT')) return 0;
-    throw error;
-  }
-  let total = 0;
-  for (const entry of entries) {
-    const file = path.join(root, entry.name);
-    if (entry.isDirectory()) total += await physicalBytes(file);
-    else if (entry.isFile()) {
-      try {
-        total += (await stat(file)).size;
-      } catch (error) {
-        if (!hasCode(error, 'ENOENT')) throw error;
-      }
+// One awaited stat at a time cost ~5 ms each inside a busy gateway, so a walk over
+// ~50k historical task files held run completion for 30+ minutes. Keep a bounded
+// number of filesystem calls in flight instead.
+const PHYSICAL_SCAN_CONCURRENCY = 64;
+
+function concurrencyLimit(max: number) {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    // A released slot passes straight to the next waiter, so `active` never exceeds max.
+    if (active >= max) await new Promise<void>((resolve) => waiting.push(resolve));
+    else active++;
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
     }
-  }
-  return total;
+  };
+}
+
+async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<number> {
+  const limit = concurrencyLimit(PHYSICAL_SCAN_CONCURRENCY);
+  const walk = async (directory: string): Promise<number> => {
+    let entries;
+    try {
+      entries = await limit(() => readdir(directory, { withFileTypes: true }));
+    } catch (error) {
+      if (hasCode(error, 'ENOENT')) return 0;
+      throw error;
+    }
+    const sizes = await Promise.all(
+      entries.map(async (entry) => {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) return walk(file);
+        if (!entry.isFile()) return 0;
+        try {
+          return (
+            await limit(() => {
+              if (scan) scan.fileCount++;
+              return stat(file);
+            })
+          ).size;
+        } catch (error) {
+          if (!hasCode(error, 'ENOENT')) throw error;
+          return 0;
+        }
+      }),
+    );
+    return sizes.reduce((total, size) => total + size, 0);
+  };
+  return walk(root);
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
@@ -341,10 +380,10 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
   return bytes;
 }
 
-const acquisitionScans = new Map<string, Promise<number>>();
+const acquisitionScans = new Map<string, Promise<AcquisitionScan>>();
 
 /** Share only an in-flight scan, never a stale footprint or a separate accounting store. */
-async function acquisitionBytes(root: string): Promise<number> {
+async function acquisitionBytes(root: string): Promise<AcquisitionScan> {
   let scan = acquisitionScans.get(root);
   if (!scan) {
     scan = scanAcquisitionBytes(root).finally(() => acquisitionScans.delete(root));
@@ -354,18 +393,20 @@ async function acquisitionBytes(root: string): Promise<number> {
 }
 
 /** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
-async function scanAcquisitionBytes(root: string): Promise<number> {
+async function scanAcquisitionBytes(root: string): Promise<AcquisitionScan> {
+  const started = performance.now();
+  const scan: AcquisitionScan = { bytes: 0, fileCount: 0, durationMs: 0 };
   let bytes = 0;
   const layout = { farmslotRoot: root, projectsDir: resolveProjectsDir(root) };
   // A projects dir inside .sandbox (desktop validation) is charged once, not again below.
   const counted = new Set<string>();
   for (const { root: taskRoot } of await listProjectTaskRoots(layout)) {
     counted.add(path.resolve(taskRoot));
-    bytes += await physicalBytes(taskRoot);
+    bytes += await physicalBytes(taskRoot, scan);
   }
   const sandbox = async (directory: string): Promise<number> => {
     if (path.basename(directory) === ORCHESTRATOR_TASK_DIR)
-      return counted.has(path.resolve(directory)) ? 0 : physicalBytes(directory);
+      return counted.has(path.resolve(directory)) ? 0 : physicalBytes(directory, scan);
     let sum = 0;
     try {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -377,7 +418,9 @@ async function scanAcquisitionBytes(root: string): Promise<number> {
     }
     return sum;
   };
-  return bytes + (await sandbox(path.join(root, '.sandbox')));
+  scan.bytes = bytes + (await sandbox(path.join(root, '.sandbox')));
+  scan.durationMs = performance.now() - started;
+  return scan;
 }
 
 async function chargedCaptureBytes(
@@ -444,9 +487,28 @@ export async function reserveRunBundleMetadata(
   await assertStorePairing(store);
   assertSafeBundleSegment(runId, 'run id');
   assertPolicy(policy);
-  const acquisitionSize = farmslotRoot ? await acquisitionBytes(farmslotRoot) : 0;
+  const file = path.join(store.root, 'reservations', `${runId}.json`);
+  // Replay/resume does not admit new work. Do not rescan historical task inputs for it.
+  if (await readOptional(file)) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const acquisitionSize = farmslotRoot
+    ? await Promise.race([
+        acquisitionBytes(farmslotRoot).then((scan) => scan.bytes),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Retention admission acquisition scan timed out after 30000ms for run ${runId}`,
+                ),
+              ),
+            30_000,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer))
+    : 0;
+  // Only the read-only scan is raced. A timed-out scan cannot later reserve or start work.
   return withRunBundleStoreLock(store, async () => {
-    const file = path.join(store.root, 'reservations', `${runId}.json`);
     if (await readOptional(file)) return;
     const bytes = Math.min(1024 ** 2, policy.metadataReserveBytes);
     const reserved = await reservedMetadataBytes(store);
@@ -979,7 +1041,8 @@ export async function materializeRunBundle(
   await assertStorePairing(store);
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   assertPolicy(policy);
-  const acquisitionSize = await acquisitionBytes(request.farmslotRoot);
+  const acquisitionScan = await acquisitionBytes(request.farmslotRoot);
+  const acquisitionSize = acquisitionScan.bytes;
   const captured = await withRunBundleStoreLock(store, async () => {
     const taskKey = run.id;
     const intentPath = path.join(
@@ -1217,7 +1280,7 @@ export async function materializeRunBundle(
       intent.committed = true;
       intent.runJson = '';
       await atomicJson(intentPath, intent);
-      return { ...captured, missingData };
+      return { ...captured, missingData, acquisitionScan };
     });
   });
 }

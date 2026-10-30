@@ -5,6 +5,7 @@ import type { CopilotDangerousLaunchBinding } from '@farmslot/protocol';
 
 import {
   copilotRuntimeStatusLabel,
+  copilotStatusQuery,
   dangerousLaunchSummary,
   dangerousStartParams,
 } from './chat-panel-runtime-model.js';
@@ -22,6 +23,11 @@ const binding: CopilotDangerousLaunchBinding = {
   model: 'test-model',
   safetyTier: 'dangerous',
 };
+
+test('only an open panel holds the copilot status read', () => {
+  assert.equal(copilotStatusQuery(false), undefined);
+  assert.equal(copilotStatusQuery(true)?.method, 'copilot.status');
+});
 
 test('runtime display includes status and all launch-binding metadata', () => {
   assert.equal(copilotRuntimeStatusLabel('running'), 'Running');

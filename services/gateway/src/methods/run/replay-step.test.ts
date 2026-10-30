@@ -84,6 +84,34 @@ test('rollback release preserves live posture and binds every replay status to i
   });
 });
 
+test('gate replay exposes preparation before its first post-invalidation await', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'PROJ-216' });
+  t.after(() => evictTestRun(run.id, 'failed'));
+  updateRun(run.id, {
+    status: 'human-gating',
+    steps: run.steps.map((step) => ({
+      ...step,
+      status: step.name === 'human-gate' ? 'running' : 'done',
+      ...(step.name === 'human-gate' ? { detail: 'Waiting for operator decision' } : {}),
+    })),
+  });
+  const stop = new Error('Observed replay preparation before capture');
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'human-gate' }, () => {}, {
+      afterGenerationBump: async () => {
+        const current = getRun(run.id)!;
+        assert.deepEqual(current.decisions, []);
+        assert.equal(
+          current.steps.find((step) => step.name === 'human-gate')!.detail,
+          'Preparing operator decision: replaying gate',
+        );
+        throw stop;
+      },
+    }),
+    (error) => error === stop,
+  );
+});
+
 test('workspace replay rejects launch and runner changes without mutating the attempt', async (context) => {
   const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'replay-test-owner';
@@ -1214,7 +1242,9 @@ test('replaying a cancelled graph run reclaims the node instead of double-dispat
   });
 
   await assert.doesNotReject(() =>
-    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
   );
   assert.equal(getRun(run.id)?.status, 'ci-watching');
   assert.ok(
@@ -1315,7 +1345,9 @@ test('replay revokes a claimed dispatching row and revives the cancelled run', a
   });
 
   await assert.doesNotReject(() =>
-    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
   );
   assert.equal(getRun(run.id)?.status, 'ci-watching');
   assert.ok(
@@ -1490,7 +1522,9 @@ test('replay does not reclaim a sibling launch-plan candidate sharing the node',
   });
 
   await assert.doesNotReject(() =>
-    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
   );
   assert.equal(getRun(run.id)?.status, 'ci-watching');
   assert.ok(
@@ -1789,7 +1823,9 @@ test('runReplayStep allows chained PR-bound replays when prNumber is already lin
   });
 
   await assert.doesNotReject(() =>
-    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
   );
   assert.equal(getRun(run.id)?.status, 'ci-watching');
 });
@@ -2326,6 +2362,10 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
           duringReplay = structuredClone(
             getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-race'),
           );
+          assert.equal(
+            getRun(run.id)!.steps.find((step) => step.name === 'human-gate')!.detail,
+            'Preparing operator decision: replaying gate',
+          );
         },
       }),
     /no longer safely reclaimable/,
@@ -2341,6 +2381,10 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
   assert.equal(after?.status, 'blocked');
   assert.equal(reopened?.resolvedAt, undefined);
   assert.equal(reopened?.context?.supersededBy, undefined);
+  assert.equal(
+    after?.steps.find((step) => step.name === 'human-gate')?.detail,
+    'Waiting for operator decision',
+  );
 });
 
 test('slot activation persists its dispatch baseline and ordinary prepare replay clears the intent', async (t) => {
@@ -3855,5 +3899,60 @@ test('a review replay keeps the fix pass its worker blocked', () => {
   assert.equal(
     blockedReviewFixTaskFile({ ...run, agentContexts: [{ ...fix, status: 'complete' }] }),
     undefined,
+  );
+});
+
+test('review replay clears the capacity hold so restart can observe the retry', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'PROJ-215' });
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  const reviewIndex = run.steps.findIndex((step) => step.name === 'review');
+  const taskFile = path.join(runsDirectory(), 'capacity-task', 'TASK.md');
+  updateRun(run.id, {
+    status: 'review-failed',
+    taskFile,
+    engineState: {
+      publishGate: {
+        reviewRecovery: {
+          status: 'operator-required',
+          attempts: 1,
+          startedAt: '2026-10-29T17:16:58.248Z',
+          updatedAt: '2026-10-29T17:16:58.248Z',
+          lastError: 'Selected model is at capacity. Please try a different model.',
+        },
+      },
+    },
+    steps: run.steps.map((step, index) => ({
+      ...step,
+      status: index < reviewIndex ? 'done' : index === reviewIndex ? 'failed' : 'skipped',
+    })),
+  });
+  const original = getRun(run.id)!;
+  const prepare = structuredClone(original.steps.find((step) => step.name === 'prepare'));
+  const dispatch = structuredClone(original.steps.find((step) => step.name === 'dispatch'));
+  let started = false;
+  await runReplayStep({ runId: run.id, stepName: 'review' }, () => {}, {
+    startEngine: async (id) => {
+      started = true;
+      assert.equal(getRun(id)?.engineState?.publishGate?.reviewRecovery, undefined);
+    },
+  });
+  const retry = getRun(run.id)!;
+  assert.equal(started, true);
+  assert.equal(retry.engineState?.publishGate?.reviewRecovery, undefined);
+  assert.equal(
+    isPublicationReviewRecoveryHeld(retry),
+    false,
+    'restart must not skip the new review',
+  );
+  assert.equal(retry.taskFile, taskFile);
+  assert.deepEqual(
+    retry.steps.find((step) => step.name === 'prepare'),
+    prepare,
+  );
+  assert.deepEqual(
+    retry.steps.find((step) => step.name === 'dispatch'),
+    dispatch,
   );
 });
