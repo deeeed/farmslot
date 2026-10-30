@@ -29,6 +29,7 @@ import {
 import { applyProjectCommandEnv, withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
+import { withBlindTrialBoundary } from '../evals/blind-git.js';
 
 import {
   assertSafeRunnerArgumentValue,
@@ -800,6 +801,8 @@ export interface BuildLaunchOptions {
    * Optional explicit auth.json path override (tests). Prefer codexAccountLabel.
    */
   codexAuthSource?: string | null;
+  /** Capsule of a blind eval trial; its worker starts without GitHub credentials. */
+  blindTrialCapsule?: string;
 }
 
 /**
@@ -840,7 +843,12 @@ export function buildLaunchCommand(
   const withRecipeTrust = (command: string): string =>
     withMachineEnv(
       withTaskRecipeTrustEnvironment(
-        withSourceInputs(command),
+        // Innermost, so neither pool nor project environment restores a credential.
+        withSourceInputs(
+          opts.blindTrialCapsule
+            ? withBlindTrialBoundary(command, opts.blindTrialCapsule)
+            : command,
+        ),
         repo,
         opts.taskDir ?? (opts.taskFile ? path.posix.dirname(opts.taskFile) : undefined),
       ),

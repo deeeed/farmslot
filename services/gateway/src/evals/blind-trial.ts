@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
-import { loadSlotVars, type SlotVars } from '../core/config.js';
+import { loadMachineSlots, loadSlotVars, type SlotVars } from '../core/config.js';
 import { execLocal, execOnSlot } from '../core/exec.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
 import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
@@ -127,10 +127,13 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
       'blind trial isolation intent',
     );
   }
+  const siblingRepos = (await loadMachineSlots(vars.machine))
+    .filter((slot) => slot.id !== vars.slotId)
+    .map((slot) => slot.repo);
   await executeGit(
     'isolate',
     vars,
-    gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
+    { ...gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath), siblingRepos },
     signal,
   );
   await ownedEpoch(run, epoch);
@@ -163,7 +166,8 @@ export async function auditBlindTrialTask(
     );
 }
 
-async function verifyBlindTrialGit(run: Run): Promise<void> {
+/** Resolves to the worker's first recorded GitHub access attempt, if any. */
+async function verifyBlindTrialGit(run: Run): Promise<string | undefined> {
   if (!run.engineState?.evalExperiment) return;
   const blind = blindFor(run);
   const isolation = blind.isolation;
@@ -172,12 +176,13 @@ async function verifyBlindTrialGit(run: Run): Promise<void> {
   // Fence each operation on its current epoch; keep the capsule's creation identity.
   const epoch = await ownedEpoch(run);
   const vars = await loadSlotVars(isolation.slotId);
-  await executeGit(
+  const receipt = await executeGit(
     'verify',
     vars,
     gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
   );
   await ownedEpoch(run, epoch);
+  return typeof receipt.githubAttempt === 'string' ? receipt.githubAttempt : undefined;
 }
 
 export async function verifyBlindTrialForDispatch(run: Run, retained = false): Promise<void> {
@@ -279,7 +284,8 @@ async function captureFirstOutput(runId: string): Promise<void> {
     if (run.steps.some((step) => step.name === 'review' && step.startedAt))
       invalidReason = 'First output was not frozen before review started.';
     try {
-      await verifyBlindTrialGit(run);
+      const attempt = await verifyBlindTrialGit(run);
+      if (attempt) invalidReason ??= `Blind trial worker attempted GitHub access: ${attempt}`;
     } catch (error) {
       // Retain failed isolation as invalid evidence, but never cross an ownership boundary.
       invalidReason ??= (error as Error).message;

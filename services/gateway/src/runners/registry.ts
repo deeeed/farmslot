@@ -262,6 +262,8 @@ export interface RunnerDefinition {
    * the registry lookup picks the right set.
    */
   flagsByTier: Record<SafetyTier, string[]>;
+  /** Tiers in which the runner applies its own macOS sandbox, which cannot start inside another. */
+  ownSandboxTiers?: SafetyTier[];
   /**
    * Runner's fallback safety tier (ADR-023). Consulted only when neither the
    * Run nor the project config specified one. Lives on the registry entry so
@@ -429,6 +431,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
       'full-auto': ['--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
       dangerous: ['--dangerously-bypass-approvals-and-sandbox'],
     },
+    ownSandboxTiers: ['sandboxed', 'full-auto'],
     // ADR-023 §3: safety tier is a policy decision, not a runner capability.
     // The intrinsic fallback is sandboxed (safest posture). Projects opt into
     // higher tiers via project.json `default_safety_tier`.
@@ -503,6 +506,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
       'full-auto': ['--force', '--sandbox', 'enabled'],
       dangerous: ['--force', '--sandbox', 'disabled'],
     },
+    ownSandboxTiers: ['sandboxed', 'full-auto'],
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CURSOR_MODEL,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
@@ -825,6 +829,12 @@ export function runnerDefaultModel(runnerId?: string | null): string | null {
  * back to the runner's default tier when `tier` is omitted. Unknown runners
  * emit no flags — safer default than borrowing Claude's `--dangerously-*`.
  */
+export function runnerAppliesOwnSandbox(runnerId: string, tier?: SafetyTier): boolean {
+  if (!isKnownRunner(runnerId)) return false;
+  const def = getRunnerDefinition(runnerId);
+  return def.ownSandboxTiers?.includes(tier ?? def.defaultSafetyTier) ?? false;
+}
+
 export function runnerFlagsForTier(runnerId: string, tier?: SafetyTier): string[] {
   if (!isKnownRunner(runnerId)) return [];
   const def = getRunnerDefinition(runnerId);

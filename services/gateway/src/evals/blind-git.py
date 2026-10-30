@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -41,8 +42,58 @@ def pack_into(repo, directory, arguments, source_file):
                                    or 'Blind trial object transfer failed')
 
 
+# The worker starts without GitHub credentials, inside a sandbox (blind-git.ts).
+# These stand-ins refuse its gh, credential-helper and SSH-transport calls and record them.
+BOUNDARY_SCRIPT = '''#!/bin/sh
+[ "${0##*/}" = gh ] && set -- gh "$@"
+[ "$1 $2" = 'credential get' ] && set -- "$@" "$(sed -n 's/^host=//p')"
+printf '%s\\n' "$*" >> ATTEMPTS
+echo 'GitHub access is unavailable in this blind eval trial.' >&2
+exit 1
+'''
+SANDBOX = '/usr/bin/sandbox-exec'
+SANDBOX_REQUIRED = 'Blind eval trials need macOS sandbox-exec on the slot node; refusing an unsandboxed worker'
+
+
+def require_sandbox():
+    if not os.access(SANDBOX, os.X_OK):
+        raise RuntimeError(SANDBOX_REQUIRED)
+
+
+def sandbox_profile(spec, boundary):
+    # Deny reads of other slot checkouts, every blind capsule except this
+    # boundary, and the GitHub CLI login. Later rules take precedence.
+    repo = Path(spec['repo']).resolve()
+    denied, capsules = [], {repo.parent / '.farmslot-blind-evals'}
+    for sibling in spec.get('siblingRepos', []):
+        path = Path(os.path.expanduser(sibling)).resolve()
+        capsules.add(path.parent / '.farmslot-blind-evals')
+        if path != repo and path not in repo.parents:
+            denied.append(path)
+    denied += sorted(capsules) + [(Path.home() / '.config' / 'gh').resolve()]
+    quote = lambda path: json.dumps(str(path), ensure_ascii=False)
+    return '\n'.join(['(version 1)', '(allow default)',
+                      '(deny file-read* ' + ' '.join('(subpath %s)' % quote(path) for path in denied) + ')',
+                      '(allow file-read* (subpath %s))' % quote(boundary.resolve()), ''])
+
+
+def prepare_boundary(spec, capsule):
+    require_sandbox()
+    root = capsule / 'boundary'
+    (root / 'gh-config').mkdir(parents=True, exist_ok=True)
+    (root / 'bin').mkdir(exist_ok=True)
+    script = BOUNDARY_SCRIPT.replace('ATTEMPTS', shlex.quote(str(root / 'attempts.log')))
+    for name in ['gh', 'deny']:
+        (root / 'bin' / name).write_text(script)
+        (root / 'bin' / name).chmod(0o700)
+    (root / 'sandbox.sb').write_text(sandbox_profile(spec, root))
+    checked = subprocess.run([SANDBOX, '-f', str(root / 'sandbox.sb'), '/usr/bin/true'], capture_output=True)
+    if checked.returncode:
+        raise RuntimeError(SANDBOX_REQUIRED + ': ' + checked.stderr.decode(errors='replace').strip())
+
+
 def verify(spec):
-    repo = Path(spec['repo'])
+    repo, boundary = Path(spec['repo']), Path(spec['capsule']) / 'boundary'
     if git(repo, 'config', '--get', 'farmslot.blindRun').stdout.decode().strip() != spec['runId']:
         raise RuntimeError('Blind trial Git ownership does not match')
     if (repo / '.git').is_symlink() or not (repo / '.git').is_dir():
@@ -58,7 +109,12 @@ def verify(spec):
     for commit in spec['referenceCommits']:
         if git(repo, 'cat-file', '-e', commit + '^{commit}', check=False).returncode == 0:
             raise RuntimeError('Reference objects are available in the blind trial')
-    return {'status': 'isolated', 'baseSha': spec['baseSha'], 'runId': spec['runId']}
+    if not all((boundary / name).is_file() for name in ['bin/gh', 'bin/deny', 'sandbox.sb']):
+        raise RuntimeError('Blind trial worker boundary is missing')
+    attempts = boundary / 'attempts.log'
+    attempt = attempts.read_text(errors='replace').strip().split('\n')[0] if attempts.exists() else ''
+    return {'status': 'isolated', 'baseSha': spec['baseSha'], 'runId': spec['runId'],
+            'githubAttempt': attempt[:500] or None}
 
 
 def copy_local_commit_settings(repo, source, destination):
@@ -84,6 +140,7 @@ def isolate(spec):
             raise RuntimeError('Blind trial capsule requires restoration before preparation')
         source = capsule / 'original.entry' if state['originalIsDirectory'] else Path(state['originalDirectory'])
         copy_local_commit_settings(repo, source, repo / '.git')
+        prepare_boundary(spec, capsule)
         return verify(spec)
     if not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', spec['baseSha']):
         raise RuntimeError('Blind trial requires a full base commit')
@@ -97,7 +154,9 @@ def isolate(spec):
         if commit == spec['baseSha'] or git(repo, 'merge-base', '--is-ancestor', commit,
                                            spec['baseSha'], check=False).returncode == 0:
             raise RuntimeError('Blind trial base contains the reference answer')
+    require_sandbox()
     capsule.mkdir(parents=True, mode=0o700)
+    prepare_boundary(spec, capsule)
     prepared, original = capsule / 'prepared.git', capsule / 'original.entry'
     original_directory = Path(git(repo, 'rev-parse', '--absolute-git-dir').stdout.decode().strip())
     state = {**spec, 'phase': 'preparing',

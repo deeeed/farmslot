@@ -45,8 +45,9 @@ const diffText =
 let checkout = base;
 let verifyAllowed = true;
 let verifications = 0;
+let githubAttempt: string | null = null;
 mock.module('../core/config.js', {
-  namedExports: { loadSlotVars: async () => vars },
+  namedExports: { loadSlotVars: async () => vars, loadMachineSlots: async () => [] },
 });
 mock.module('../core/state.js', {
   namedExports: {
@@ -62,7 +63,7 @@ mock.module('../core/exec.js', {
       verifications++;
       return {
         exitCode: verifyAllowed ? 0 : 1,
-        stdout: JSON.stringify({ status: 'isolated', runId: run.id, baseSha: base }),
+        stdout: JSON.stringify({ status: 'isolated', runId: run.id, baseSha: base, githubAttempt }),
         stderr: verifyAllowed ? '' : 'isolation changed',
       };
     },
@@ -155,6 +156,7 @@ async function fixture(t: TestContext) {
   checkout = base;
   verifyAllowed = true;
   verifications = 0;
+  githubAttempt = null;
   onCapture = () => {};
   return root;
 }
@@ -217,6 +219,17 @@ test('a completion recovery cannot relabel reviewed output as the first output',
   assert.equal(
     run.engineState!.evalExperiment!.blind!.invalidReason,
     'First output was not frozen before review started.',
+  );
+  assert.equal(captures, 1);
+});
+
+test('a recorded GitHub access attempt makes the frozen first output invalid', async (t) => {
+  await fixture(t);
+  githubAttempt = 'gh pr diff 291';
+  await freezeBlindTrialFirstOutput(run.id);
+  assert.equal(
+    run.engineState!.evalExperiment!.blind!.invalidReason,
+    'Blind trial worker attempted GitHub access: gh pr diff 291',
   );
   assert.equal(captures, 1);
 });

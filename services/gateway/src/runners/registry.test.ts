@@ -61,6 +61,7 @@ import {
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
+  runnerAppliesOwnSandbox,
   runnerContinueCommand,
   runnerDefaultModel,
   runnerIdsMatchingPaneCommand,
@@ -1664,6 +1665,37 @@ describe('buildLaunchCommand', () => {
       buildLaunchCommand(makeVars({ dispatchCmd: '' }), 'claude', 'sonnet', PROMPT),
       /^export /u,
     );
+  });
+
+  it('starts a blind trial worker in its sandbox without GitHub credentials after every inherited environment', () => {
+    const vars = makeVars({ dispatchCmd: '', machineEnv: { GH_TOKEN: 'pool-token' } });
+    for (const runner of ['claude', 'pi', 'codex']) {
+      const launch = buildLaunchCommand(vars, runner, null, PROMPT, {
+        taskDir: TASK_DIR,
+        blindTrialCapsule: '/slots/.farmslot-blind-evals/s/run-1',
+      });
+      const boundary = launch.indexOf('unset GH_TOKEN GITHUB_TOKEN');
+      const sandbox = launch.indexOf(
+        "/usr/bin/sandbox-exec -f '/slots/.farmslot-blind-evals/s/run-1/boundary/sandbox.sb' /bin/sh -c ",
+      );
+      assert.ok(launch.indexOf("export GH_TOKEN='pool-token'") < boundary, runner);
+      assert.ok(boundary < sandbox, runner);
+      assert.ok(sandbox < launch.indexOf('cd '), runner);
+      assert.match(
+        launch,
+        /export GH_CONFIG_DIR='\/slots\/.farmslot-blind-evals\/s\/run-1\/boundary\/gh-config'/u,
+      );
+    }
+  });
+
+  it('knows which runner tiers apply their own sandbox and cannot run inside a blind trial sandbox', () => {
+    assert.equal(runnerAppliesOwnSandbox('codex', 'sandboxed'), true);
+    assert.equal(runnerAppliesOwnSandbox('codex', 'full-auto'), true);
+    assert.equal(runnerAppliesOwnSandbox('codex', 'dangerous'), false);
+    assert.equal(runnerAppliesOwnSandbox('cursor'), true);
+    assert.equal(runnerAppliesOwnSandbox('cursor', 'dangerous'), false);
+    for (const runner of ['claude', 'pi', 'scripted'])
+      assert.equal(runnerAppliesOwnSandbox(runner, 'sandboxed'), false, runner);
   });
 
   it('derives recipe provenance scope from a task file when taskDir is omitted', () => {
