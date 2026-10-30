@@ -38,6 +38,7 @@ import {
   nativeMessagePreview,
   nativeMessageToggleLabel,
   nativeObservationQuery,
+  nativeSendLabel,
   nativeTimeline,
   type NativeTimelineEntry,
   type NativeTimelineRow,
@@ -992,7 +993,7 @@ ${JSON.stringify(
       !this.invalidDelivery &&
       !this.busy &&
       !this.localCommand &&
-      ['idle', 'running', 'waiting'].includes(this.session?.state ?? '')
+      !!nativeSendLabel(this.session?.state)
     );
   }
 
@@ -1489,7 +1490,7 @@ ${JSON.stringify(
                         ?disabled=${!this.canSend || !this.draft.trim()}
                         @click=${this.send}
                       >
-                        ${session.state === 'idle' ? 'Send' : 'Queue message'}
+                        ${nativeSendLabel(session.state) ?? 'Send'}
                       </button>
                       <button
                         data-testid="native-stop"

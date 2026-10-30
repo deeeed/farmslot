@@ -13,8 +13,10 @@ import {
 import {
   nativeCommandLockSettled,
   nativeHistoryCanAct,
+  nativeHistoryCanSend,
   nativeHistoryQuery,
   nativeObservationQuery,
+  nativeSendLabel,
   nativeTimeline,
   nativeTimelineRows,
   type NativeTranscript,
@@ -25,7 +27,7 @@ import {
 import { observeNativeConversation } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
-import { nativeConversationWritable } from '../../lib/native-conversation';
+import { nativeConversationWritable, nativeRetryAvailable } from '../../lib/native-conversation';
 import {
   createNativeConversationStorage,
   nativeConversationStorageKey,
@@ -289,7 +291,8 @@ export function useNativeConversationController(params: NativeConversationParams
     executionNodeId: node,
     ...(workerControl ? { worker: workerControl } : {}),
   };
-  const assertCurrentControls = () => {
+  /** `history`: "exact" for actions on the snapshot on screen; "current" for a new message. */
+  const assertCurrentControls = (history: 'exact' | 'current' = 'exact') => {
     const live = useConnectionStore.getState();
     if (
       !client ||
@@ -303,13 +306,12 @@ export function useNativeConversationController(params: NativeConversationParams
       live.authorityEpoch !== authorityEpoch
     )
       throw new Error('The conversation connection changed. Reopen it before acting.');
+    const observation = historyQuery ? getResourceCache()?.read(historyQuery) : undefined;
     if (
       !historyQuery ||
-      !nativeHistoryCanAct(
-        getResourceCache()?.read(historyQuery),
-        snapshot,
-        live.status === 'connected',
-      )
+      !(history === 'exact'
+        ? nativeHistoryCanAct(observation, snapshot, live.status === 'connected')
+        : nativeHistoryCanSend(observation, snapshot, live.status === 'connected'))
     )
       throw new Error('Wait for current conversation history before acting.');
     if (!params.runId) return;
@@ -328,14 +330,14 @@ export function useNativeConversationController(params: NativeConversationParams
     !params.runId,
     assertCurrentControls,
   );
-  const mutate = async (action: () => Promise<void>) => {
+  const mutate = async (action: () => Promise<void>, history: 'exact' | 'current' = 'exact') => {
     if (!client || !writable || mutation.current) return;
     mutation.current = true;
     setBusy(true);
     setError('');
     try {
       await conversationStorage.transition(storageKey, async () => {
-        assertCurrentControls();
+        assertCurrentControls(history);
         await action();
       });
     } catch (cause) {
@@ -350,7 +352,8 @@ export function useNativeConversationController(params: NativeConversationParams
   };
   const send = () =>
     mutate(async () => {
-      if (!session || session.state !== 'idle' || pendingRef.current || !draft.trim()) return;
+      if (!session || !nativeSendLabel(session.state) || pendingRef.current || !draft.trim())
+        return;
       const command: PendingCommand = {
         ...target,
         generation: session.generation,
@@ -361,20 +364,40 @@ export function useNativeConversationController(params: NativeConversationParams
       setPending(command);
       draftRef.current = '';
       setDraft('');
-      await persist('', command, responsesRef.current);
-      assertCurrentControls();
-      const { generation: _, ...request } = command;
-      await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
-    });
+      let issued = false;
+      try {
+        await persist('', command, responsesRef.current);
+        assertCurrentControls('current');
+        issued = true;
+        const { generation: _, ...request } = command;
+        await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
+      } catch (cause) {
+        // Never sent: the message goes back to the composer instead of waiting on a delivery.
+        if (!issued) {
+          pendingRef.current = undefined;
+          draftRef.current = command.text;
+          if (alive.current) {
+            setPending(undefined);
+            setDraft(command.text);
+          }
+          try {
+            await persist(command.text, undefined, responsesRef.current);
+          } catch (storageFailure) {
+            throw new AggregateError([cause, storageFailure], 'Cannot restore the unsent message.');
+          }
+        }
+        throw cause;
+      }
+    }, 'current');
   const retry = () =>
     mutate(async () => {
       const command = pendingRef.current;
       if (!command || !session || command.generation !== session.generation) return;
       await persist(draftRef.current, command, responsesRef.current);
-      assertCurrentControls();
+      assertCurrentControls('current');
       const { generation: _, ...request } = command;
       await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
-    });
+    }, 'current');
   const respond = (requestId: string, response: NativeSessionResponse) =>
     mutate(async () => {
       const request = snapshot?.pendingRequests.find((item) => item.request?.id === requestId);
@@ -421,7 +444,9 @@ export function useNativeConversationController(params: NativeConversationParams
   const entries = nativeTimeline(transcript.events);
   const rows = nativeTimelineRows(entries);
   const work = nativeWork(transcript.events);
-  const canSend = writable && session?.state === 'idle' && !pending && !busy && !!draft.trim();
+  const sendLabel = nativeSendLabel(session?.state);
+  const receipt = snapshot?.commands.find((item) => item.commandId === pending?.commandId);
+  const canSend = writable && !!sendLabel && !pending && !busy && !!draft.trim();
   const proof = useRef({
     focused,
     observation: runObservation,
@@ -492,13 +517,15 @@ export function useNativeConversationController(params: NativeConversationParams
       responses,
       draft,
       pending,
-      receipt: snapshot?.commands.find((item) => item.commandId === pending?.commandId),
+      receipt,
+      canRetry: nativeRetryAvailable(receipt),
       error: error || pollError || creation.viewModel.error || resume.viewModel.error,
       busy,
       ready,
       connected: connection === 'connected',
       writable,
       canSend,
+      sendLabel: sendLabel ?? 'Send',
       canStop:
         writable &&
         !!session?.capabilities.interrupt &&

@@ -417,23 +417,48 @@ export function storedNativeHistoryMatches(
   );
 }
 
+/** Current, complete history under the shared held-data rule. */
+function nativeHistoryCurrent(
+  observation: ResourceQueryState<NativeSessionReadResult> | undefined,
+  connected: boolean,
+  now: number,
+): observation is ResourceQueryState<NativeSessionReadResult> & { data: NativeSessionReadResult } {
+  return (
+    !!observation?.resourceState &&
+    canActOn(observation, connected, now) &&
+    !!observation.data &&
+    !observation.data.hasMore
+  );
+}
+
 /**
- * The shared held-data action rule, for the exact history snapshot on screen. Native actions do
- * not reread first, so history restored from storage (no read stamp) waits for a live read.
+ * Sending a message: current, complete history of the conversation on screen. A newer read of it,
+ * landing while a turn streams, does not refuse the message; a resumed generation, another worker
+ * lease or a released task scope does. Native actions do not reread first, so history restored from
+ * storage (no read stamp) waits for a live read.
  */
-export function nativeHistoryCanAct(
+export function nativeHistoryCanSend(
   observation: ResourceQueryState<NativeSessionReadResult> | undefined,
   rendered: NativeSessionReadResult | undefined,
   connected: boolean,
   now = Date.now(),
 ): boolean {
   return (
-    !!observation?.resourceState &&
-    canActOn(observation, connected, now) &&
+    nativeHistoryCurrent(observation, connected, now) &&
     !!rendered &&
-    observation.data === rendered &&
-    !rendered.hasMore
+    sameNativeHistoryIdentity(observation.data, rendered) &&
+    !observation.data.scope?.released
   );
+}
+
+/** An answer or stop acts on the exact history snapshot on screen. */
+export function nativeHistoryCanAct(
+  observation: ResourceQueryState<NativeSessionReadResult> | undefined,
+  rendered: NativeSessionReadResult | undefined,
+  connected: boolean,
+  now = Date.now(),
+): boolean {
+  return nativeHistoryCurrent(observation, connected, now) && observation.data === rendered;
 }
 
 export interface NativeTranscript {
@@ -457,6 +482,18 @@ export function appendNativePage(
     cursor = event.sequence;
   }
   return cursor === previous.cursor ? previous : { events, cursor };
+}
+
+/**
+ * The composer's send action for a session in this state: "Send" when it is idle, "Queue message"
+ * for the next turn while a turn runs or waits on a request. Undefined: it takes no input now.
+ */
+export function nativeSendLabel(
+  state: NativeSessionReadResult['session']['state'] | undefined,
+): 'Send' | 'Queue message' | undefined {
+  if (state === 'idle') return 'Send';
+  if (state === 'running' || state === 'waiting') return 'Queue message';
+  return undefined;
 }
 
 export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {
