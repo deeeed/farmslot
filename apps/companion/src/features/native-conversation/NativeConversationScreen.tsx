@@ -11,9 +11,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { NativeSessionInfo } from '@farmslot/protocol';
+import { nativeDeliveryLabel } from '@farmslot/protocol/client-cache';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
-import { nativeDeliveryLabel } from '../../lib/native-conversation';
 
 import { NativeProfilePicker } from './components/NativeProfilePicker';
 import { NativeRequestCard } from './components/NativeRequestCard';

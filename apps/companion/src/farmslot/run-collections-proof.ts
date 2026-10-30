@@ -22,6 +22,7 @@ import type {
 import {
   type NativeHistorySnapshot,
   nativeHistoryStorageId,
+  type NativeTimelineEntry,
   type ResourceQuery,
   resourceQuery,
   type ResourceQueryState,
@@ -34,7 +35,6 @@ import {
   nativeDecisionsQuery,
   nativeFleetQuery,
 } from '../lib/gateway-run-sync';
-import type { NativeTimelineEntry } from '../lib/native-conversation';
 import type {
   NativeWorkerViewSelection,
   NativeWorkerViewTarget,
