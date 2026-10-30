@@ -129,10 +129,12 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   }
   const spec = gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath);
   await executeGit('isolate', vars, spec, signal);
-  // The worker sandbox denies the node's other slot checkouts, read from the pool.
-  const siblingRepos = (await loadMachineSlots(vars.machine))
-    .filter((slot) => slot.id !== vars.slotId)
-    .map((slot) => slot.repo);
+  // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
+  const siblingRepos = await Promise.all(
+    (await loadMachineSlots(vars.machine))
+      .filter((slot) => slot.id !== vars.slotId)
+      .map(async (slot) => (await loadSlotVars(slot.id)).remoteRepo),
+  );
   await executeGit('boundary', vars, { ...spec, siblingRepos }, signal);
   await ownedEpoch(run, epoch);
   await persistRunNow(

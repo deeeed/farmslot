@@ -60,21 +60,24 @@ def require_sandbox():
         raise RuntimeError(SANDBOX_REQUIRED)
 
 
-def sandbox_profile(spec, boundary):
-    # Deny reads of other slot checkouts, every blind capsule except this
-    # boundary, and the GitHub CLI login. Later rules take precedence.
+def sandbox_profile(spec, capsule):
+    # Deny reads of other slot checkouts, the original checkout a linked worktree
+    # shares objects with, every blind capsule except this boundary, and the
+    # GitHub CLI login. Later rules take precedence.
     repo = Path(spec['repo']).resolve()
-    denied, capsules = [], {repo.parent / '.farmslot-blind-evals'}
-    for sibling in spec.get('siblingRepos', []):
-        path = Path(os.path.expanduser(sibling)).resolve()
-        capsules.add(path.parent / '.farmslot-blind-evals')
-        if path != repo and path not in repo.parents:
-            denied.append(path)
+    checkouts = [Path(os.path.expanduser(path)).resolve() for path in spec.get('siblingRepos', [])]
+    state = json.loads((capsule / 'state.json').read_text())
+    if not state['originalIsDirectory']:
+        common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir',
+                          git_dir=state['originalDirectory']).stdout.decode().strip()).resolve()
+        checkouts += [common, common.parent] if common.name == '.git' else [common]
+    denied = [path for path in checkouts if path != repo and path not in repo.parents]
+    capsules = {path.parent / '.farmslot-blind-evals' for path in [repo] + checkouts}
     denied += sorted(capsules) + [(Path.home() / '.config' / 'gh').resolve()]
     quote = lambda path: json.dumps(str(path), ensure_ascii=False)
     return '\n'.join(['(version 1)', '(allow default)',
                       '(deny file-read* ' + ' '.join('(subpath %s)' % quote(path) for path in denied) + ')',
-                      '(allow file-read* (subpath %s))' % quote(boundary.resolve()), ''])
+                      '(allow file-read* (subpath %s))' % quote((capsule / 'boundary').resolve()), ''])
 
 
 def prepare_boundary(spec, capsule):
@@ -86,7 +89,7 @@ def prepare_boundary(spec, capsule):
     for name in ['gh', 'deny']:
         (root / 'bin' / name).write_text(script)
         (root / 'bin' / name).chmod(0o700)
-    (root / 'sandbox.sb').write_text(sandbox_profile(spec, root))
+    (root / 'sandbox.sb').write_text(sandbox_profile(spec, capsule))
     checked = subprocess.run([SANDBOX, '-f', str(root / 'sandbox.sb'), '/usr/bin/true'], capture_output=True)
     if checked.returncode:
         raise RuntimeError(SANDBOX_REQUIRED + ': ' + checked.stderr.decode(errors='replace').strip())

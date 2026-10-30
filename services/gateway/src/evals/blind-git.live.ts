@@ -126,6 +126,9 @@ module['boundary'](json.loads(sys.argv[2]))
             `! cat ${q(path.join(sibling, 'answer.txt'))}`,
             `! ls ${q(path.join(root, '.farmslot-blind-evals'))}`,
             `! git --git-dir=${q(path.join(spec.capsule, 'original.entry'))} cat-file -e ${reference}`,
+            // A linked worktree's original checkout holds the reference objects too.
+            `! git --git-dir=${q(path.join(source, '.git'))} cat-file -e ${reference}`,
+            ...(linked ? [`! cat ${q(path.join(source, 'value.txt'))}`] : []),
             '! gh pr list --repo owner/reference',
             '! printf "protocol=https\\nhost=github.com\\n\\n" | git credential fill',
             '! git ls-remote ssh://git@github.com/owner/reference.git',

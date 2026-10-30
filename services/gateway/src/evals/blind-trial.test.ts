@@ -46,8 +46,17 @@ let checkout = base;
 let verifyAllowed = true;
 let verifications = 0;
 let githubAttempt: string | null = null;
+const slotCommands: string[] = [];
 mock.module('../core/config.js', {
-  namedExports: { loadSlotVars: async () => vars, loadMachineSlots: async () => [] },
+  namedExports: {
+    // A localhost pool may name a sibling checkout relative to the farm root.
+    loadSlotVars: async (slotId: string) =>
+      slotId === 'sibling' ? { ...vars, slotId, remoteRepo: '/farm/slots/sibling' } : vars,
+    loadMachineSlots: async () => [
+      { id: 'owned', repo: '/owned', session: 'owned' },
+      { id: 'sibling', repo: './slots/sibling', session: 'sibling' },
+    ],
+  },
 });
 mock.module('../core/state.js', {
   namedExports: {
@@ -58,6 +67,7 @@ mock.module('../core/state.js', {
 mock.module('../core/exec.js', {
   namedExports: {
     execOnSlot: async (_vars: SlotVars, command: string) => {
+      slotCommands.push(command);
       if (command.includes('git rev-parse HEAD'))
         return { exitCode: 0, stdout: checkout, stderr: '' };
       verifications++;
@@ -102,8 +112,12 @@ mock.module('../runs/store.js', {
 mock.module('./package-store.js', {
   namedExports: { sha256Text: (value: string) => createHash('sha256').update(value).digest('hex') },
 });
-const { freezeBlindTrialFirstOutput, restoreBlindTrialGit, verifyBlindTrialForDispatch } =
-  await import('./blind-trial.js');
+const {
+  freezeBlindTrialFirstOutput,
+  prepareBlindTrialGit,
+  restoreBlindTrialGit,
+  verifyBlindTrialForDispatch,
+} = await import('./blind-trial.js');
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'blind-first-output-'));
@@ -221,6 +235,19 @@ test('a completion recovery cannot relabel reviewed output as the first output',
     'First output was not frozen before review started.',
   );
   assert.equal(captures, 1);
+});
+
+test('the worker boundary denies sibling checkouts at the path their own slot resolves', async (t) => {
+  await fixture(t);
+  slotCommands.length = 0;
+  await prepareBlindTrialGit(run.id);
+  const spec = (action: string) => {
+    const command = slotCommands.find((entry) => entry.includes(`"action":"${action}"`));
+    assert.ok(command, action);
+    return JSON.parse(command.slice(command.indexOf("'") + 1, command.indexOf("' <<")));
+  };
+  assert.equal(spec('isolate').siblingRepos, undefined);
+  assert.deepEqual(spec('boundary').siblingRepos, ['/farm/slots/sibling']);
 });
 
 test('a recorded GitHub access attempt makes the frozen first output invalid', async (t) => {

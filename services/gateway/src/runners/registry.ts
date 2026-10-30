@@ -824,17 +824,17 @@ export function runnerDefaultModel(runnerId?: string | null): string | null {
   return getRunnerDefinition(runnerId).defaultModel;
 }
 
-/**
- * Resolve the CLI flags a runner should launch with for a given tier. Falls
- * back to the runner's default tier when `tier` is omitted. Unknown runners
- * emit no flags — safer default than borrowing Claude's `--dangerously-*`.
- */
 export function runnerAppliesOwnSandbox(runnerId: string, tier?: SafetyTier): boolean {
   if (!isKnownRunner(runnerId)) return false;
   const def = getRunnerDefinition(runnerId);
   return def.ownSandboxTiers?.includes(tier ?? def.defaultSafetyTier) ?? false;
 }
 
+/**
+ * Resolve the CLI flags a runner should launch with for a given tier. Falls
+ * back to the runner's default tier when `tier` is omitted. Unknown runners
+ * emit no flags — safer default than borrowing Claude's `--dangerously-*`.
+ */
 export function runnerFlagsForTier(runnerId: string, tier?: SafetyTier): string[] {
   if (!isKnownRunner(runnerId)) return [];
   const def = getRunnerDefinition(runnerId);

@@ -388,7 +388,7 @@ Freeze the worker's contribution, evidence, native usage, cost and elapsed worke
 
 **Status:** Proposed.
 
-**Decision.** Amendment 1's isolated object store is necessary but not sufficient. A blind worker also starts without source-host credentials and inside an operating-system sandbox. Its launch removes GitHub token variables, uses an empty GitHub CLI configuration, clears Git credential helpers and refuses Git SSH transport. Gateway-owned stand-ins in the trial capsule refuse GitHub CLI, credential and SSH-transport calls and record them. A recorded attempt makes the trial invalid at first-output capture.
+**Decision.** Amendment 1's isolated object store is necessary but not sufficient. A blind worker also starts without source-host credentials and inside an operating-system sandbox. Its launch removes GitHub token variables, uses an empty GitHub CLI configuration, clears Git credential helpers and refuses Git SSH transport. Gateway-owned stand-ins in the trial capsule refuse GitHub CLI, credential and SSH-transport calls and record them. A recorded attempt makes the trial invalid at first-output capture. A call that bypasses the stand-ins still fails without credentials, unrecorded.
 
 The sandbox profile is generated from the pool during preparation. It denies reads of the node's other slot checkouts, the blind capsule roots except this trial's boundary, and the GitHub CLI login. Preparation refuses a node without macOS `sandbox-exec`. Dispatch refuses a runner tier that applies its own sandbox, which cannot nest, and a native worker, which does not carry the boundary. A blind worker never starts unsandboxed.
 
