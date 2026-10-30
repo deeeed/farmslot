@@ -113,11 +113,19 @@ export async function assertRunCommitSignatures(run: Run): Promise<void> {
   if (!run.slotId || !run.branch || !COMMITTING_FLOWS.has(run.flowType) || isInteractiveDevRun(run))
     return;
   const vars = await loadSlotVars(run.slotId);
-  const pv = await loadProjectVars(run.project);
-  const base = await publicationBaseForRun(run, getProjectField(pv.projectJson, 'default_branch'));
+  // A blind eval trial has no remote refs; its contribution starts at the frozen base.
+  let baseRef = run.engineState?.evalExperiment?.blind?.baseSha;
+  if (!baseRef) {
+    const pv = await loadProjectVars(run.project);
+    const base = await publicationBaseForRun(
+      run,
+      getProjectField(pv.projectJson, 'default_branch'),
+    );
+    baseRef = `refs/remotes/origin/${base}`;
+  }
   await assertCommitSignatures(
     vars,
-    `refs/remotes/origin/${base}`,
+    baseRef,
     'HEAD',
     run.prNumber ? (run.worktreeHeadAtDispatch ?? undefined) : undefined,
   );
