@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Task files tell workers to mark complete with criteria awaiting human review; the run gate collects that review.
 - A reference-only eval experiment opens as its family snapshot, with its reference package and no runs, instead of failing with "No runs found".
 - Launch and resume Codex workers without the startup update check, so a worker never self-updates inside its pane and misses its ready window.
 - Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
