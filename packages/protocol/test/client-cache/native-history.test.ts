@@ -12,6 +12,7 @@ import {
   nativeHistoryQuery,
   nativeObservationDependencies,
   nativeTimeline,
+  nativeWork,
   readNativeHistory,
   retainNativeMessages,
   sameNativeHistoryIdentity,
@@ -149,6 +150,48 @@ test('200 logical messages retain every fragment of the newest message', () => {
     'message-204' + Array.from({ length: 500 }, (_, i) => `${i},`).join(''),
   );
   assert.deepEqual(retainNativeMessages(saved), saved);
+});
+
+test('a running turn keeps its start through the cache, so its working time can be shown', async () => {
+  const at = (
+    sequence: number,
+    type: NativeSessionEvent['type'],
+    extra: Partial<NativeSessionEvent> = {},
+  ) => ({
+    ...event(sequence, ''),
+    type,
+    text: undefined,
+    at: `2026-10-23T00:00:0${sequence}Z`,
+    ...extra,
+  });
+  const bash = { nativeId: 'tool-1', tool: { name: 'Bash' } };
+  const running = [
+    at(1, 'command.submitted', { text: 'Run the tests.' }),
+    at(2, 'command.accepted'),
+    at(3, 'turn.started'),
+    at(4, 'tool.started', bash),
+  ];
+  const result = await readNativeHistory(
+    target,
+    undefined,
+    async () => ({ data: page(running) }),
+    signal(),
+  );
+  assert.deepEqual(nativeWork(result.data.events), {
+    since: Date.parse('2026-10-23T00:00:03Z'),
+    tool: 'Bash',
+  });
+  assert.deepEqual(retainNativeMessages(result.data.events), result.data.events);
+  const done = retainNativeMessages([
+    ...running,
+    at(5, 'tool.completed', bash),
+    at(6, 'text.delta', { text: 'Done.' }),
+    at(7, 'turn.completed'),
+  ]);
+  assert.equal(nativeWork(done), undefined);
+  assert(!done.some((item) => item.type === 'turn.started'), 'a finished turn keeps no start');
+  // A host restarted mid-turn cannot continue it.
+  assert.equal(nativeWork([...running, at(5, 'session.started')]), undefined);
 });
 
 test('cursor pages merge into one complete observation and keep the conservative stamp', async () => {

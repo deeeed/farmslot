@@ -136,10 +136,14 @@ export function retainNativeMessages(events: NativeSessionEvent[]): NativeSessio
     .reverse()
     .filter((entry) => entry.kind !== 'status' || ++statuses <= NATIVE_HISTORY_MESSAGES)
     .reverse();
-  return retained.map((entry) => ({
+  const kept = retained.map((entry) => ({
     ...entry.event,
     ...(entry.kind === 'assistant' || entry.kind === 'user' ? { text: entry.text } : {}),
   }));
+  // A running turn's start is not a timeline entry, but its working time is counted from it.
+  const turn = nativeOpenTurn(events);
+  if (!turn || kept.some((item) => item.sequence === turn.sequence)) return kept;
+  return [...kept, turn].sort((a, b) => a.sequence - b.sequence);
 }
 
 export function sameNativeHistoryIdentity(
@@ -514,23 +518,28 @@ export interface NativeWork {
   tool?: string;
 }
 
+/** The start of the turn still running, if any. A restarted host cannot continue a turn. */
+function nativeOpenTurn(events: NativeSessionEvent[]): NativeSessionEvent | undefined {
+  let turn: NativeSessionEvent | undefined;
+  for (const event of events) {
+    if (event.type === 'turn.started') turn = event;
+    else if (['turn.completed', 'session.closed', 'session.started'].includes(event.type))
+      turn = undefined;
+  }
+  return turn;
+}
+
 /** The turn in progress, if any: when it started and the tool it is running now. */
 export function nativeWork(events: NativeSessionEvent[]): NativeWork | undefined {
-  let since: number | undefined;
+  const turn = nativeOpenTurn(events);
+  if (!turn) return undefined;
   const tools = new Map<string, string>();
   for (const event of events) {
-    if (event.type === 'turn.started') {
-      since = Date.parse(event.at);
-      tools.clear();
-    } else if (event.type === 'turn.completed' || event.type === 'session.closed') {
-      since = undefined;
-      tools.clear();
-    } else if (since !== undefined && event.nativeId && event.tool) {
-      if (event.type === 'tool.started') tools.set(event.nativeId, event.tool.name);
-      else if (event.type === 'tool.completed') tools.delete(event.nativeId);
-    }
+    if (event.sequence <= turn.sequence || !event.nativeId || !event.tool) continue;
+    if (event.type === 'tool.started') tools.set(event.nativeId, event.tool.name);
+    else if (event.type === 'tool.completed') tools.delete(event.nativeId);
   }
-  return since === undefined ? undefined : { since, tool: [...tools.values()].at(-1) };
+  return { since: Date.parse(turn.at), tool: [...tools.values()].at(-1) };
 }
 
 /** "Working · 1m 12s · Bash": how long the turn has run, and its current tool. */
