@@ -179,16 +179,26 @@ export function renderReadyPublishEvidenceDetails(
   `;
 }
 
-export function renderReadyResolvedBanner(input: {
-  payload: ReadyGatePayload;
-  resolvedAt?: string;
-}) {
-  if (!input.resolvedAt) return nothing;
-  const shaShort = input.payload.headSha ? input.payload.headSha.slice(0, 7) : null;
-  const message = shaShort
-    ? `Decision resolved ${input.resolvedAt} at commit ${shaShort}. The diff below is the slot's current HEAD — it matches the reviewed snapshot only if the slot hasn't moved since.`
-    : `Decision resolved ${input.resolvedAt}. The diff below is the slot's current HEAD — no snapshot SHA was captured for this gate, so it may differ from what was reviewed.`;
-  return html`<div class="rdy-resolved-banner" role="status">${message}</div>`;
+export function readyResolvedNotice(
+  payload: Pick<ReadyGatePayload, 'headSha'>,
+  resolvedAt?: string,
+): string | undefined {
+  if (!resolvedAt) return undefined;
+  const sha = payload.headSha?.slice(0, 7);
+  return sha
+    ? `Decision resolved ${resolvedAt} at commit ${sha}. The diff below is the slot's current HEAD — it matches the reviewed snapshot only if the slot hasn't moved since.`
+    : `Decision resolved ${resolvedAt}. The diff below is the slot's current HEAD — no snapshot SHA was captured for this gate, so it may differ from what was reviewed.`;
+}
+
+export function renderReadyResolvedBanner(input: { message?: string; savedMessage?: string }) {
+  const message = input.message ?? input.savedMessage;
+  return html`<div
+    class="rdy-notice-slot ${input.message ? 'rdy-resolved-banner' : 'rdy-saved-state'}"
+    role="status"
+    title=${message ?? ''}
+  >
+    ${message ?? ''}
+  </div>`;
 }
 
 export function renderReadyPackageSkeleton() {

@@ -58,8 +58,13 @@ export function readyWorkspaceReviewModalStyles(): string {
         background: ${colors.textMuted}22; color: ${colors.textMuted};
         font-family: ${fonts.mono}; text-transform: uppercase; letter-spacing: 0.04em;
       }
+      ready-workspace .rdy-notice-slot {
+        height: 44px; min-height: 44px; box-sizing: border-box; flex-shrink: 0;
+        overflow: auto; margin: 0; padding: 6px 12px;
+        font-family: ${fonts.mono}; font-size: ${fonts.sizeXs}; line-height: 1.5;
+        color: ${colors.textMuted};
+      }
       ready-workspace .rdy-resolved-banner {
-        padding: 6px 12px; font-family: ${fonts.mono}; font-size: ${fonts.sizeXs};
         color: ${colors.statusWarn}; background: ${colors.statusWarn}15;
         border-bottom: 1px solid ${colors.statusWarn}44;
         line-height: 1.5;

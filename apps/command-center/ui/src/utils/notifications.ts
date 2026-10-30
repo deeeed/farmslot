@@ -2,13 +2,7 @@
 
 let permissionGranted = false;
 const ATTENTION_PREFS_KEY = 'farmslot-attention-alerts';
-export const ATTENTION_ALERT_EVENT = 'farmslot-attention-alert';
-
-export interface AttentionAlertDetail {
-  title: string;
-  body?: string;
-  route?: string;
-}
+export const ATTENTION_PREFERENCES_CHANGED = 'farmslot-attention-preferences-changed';
 
 export interface AttentionAlertPreferences {
   attentionEnabled: boolean;
@@ -47,6 +41,7 @@ export function getAttentionAlertPreferences(): AttentionAlertPreferences {
 
 export function setAttentionAlertPreferences(preferences: AttentionAlertPreferences): void {
   localStorage.setItem(ATTENTION_PREFS_KEY, JSON.stringify(preferences));
+  window.dispatchEvent(new Event(ATTENTION_PREFERENCES_CHANGED));
 }
 
 function playAttentionSound(): void {
@@ -98,6 +93,8 @@ export function notify(
     tag?: string;
     route?: string;
     attention?: boolean;
+    /** Snapshot lifecycle already deduplicates this condition. */
+    dedupe?: boolean;
   },
 ): void {
   const preferences = getAttentionAlertPreferences();
@@ -105,17 +102,12 @@ export function notify(
   // Attention alerts must share the same tag dedupe as browser notifications.
   // Otherwise a repeated gateway event replaces the OS notification but still
   // rings and redraws the in-app banner every time.
-  if (options?.attention && options.tag) {
+  if (options?.attention && options.tag && options.dedupe !== false) {
     const last = recentTags.get(options.tag);
     if (last && Date.now() - last < SUPPRESS_MS) return;
     recentTags.set(options.tag, Date.now());
   }
   if (options?.attention) {
-    window.dispatchEvent(
-      new CustomEvent<AttentionAlertDetail>(ATTENTION_ALERT_EVENT, {
-        detail: { title, body: options.body, route: options.route },
-      }),
-    );
     if (preferences.sound) playAttentionSound();
   }
   if (!preferences.backgroundNotifications || !permissionGranted) return;

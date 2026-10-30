@@ -40,6 +40,7 @@ test('panel observers share reads, refuse stale actions and drop old filters and
   const { gateway } = await import('../../gateway-client.js');
   const { initState } = await import('../../state.js');
   const { disposeResourceCache } = await import('../../resource-cache.js');
+  const { notificationTray } = await import('../../utils/notification-tray.js');
   const { ResourceQueryController } = await import('./resource-query-controller.js');
   fake.beforeRestore = async () => {
     gateway.disconnect();
@@ -116,8 +117,36 @@ test('panel observers share reads, refuse stale actions and drop old filters and
   });
   await flush();
   assert.equal(first.state.status, 'stale');
+  assert.equal(
+    notificationTray.items.filter((item) => item.id === `read:${query.id}`).length,
+    0,
+    'An ordinary current-owner reread stays quiet',
+  );
   assert.throws(() => first.requireReady(), /current read/);
-  const heldReads = socket.sent.slice(readsBefore).filter(({ method }) => method === 'run.list');
+  const retryMark = fake.requests.length;
+  const retry = first.retry();
+  await flush();
+  const heldReads = fake.requests
+    .slice(retryMark)
+    .filter(
+      ({ method, params }) =>
+        method === 'run.list' &&
+        params &&
+        typeof params === 'object' &&
+        Reflect.get(params, 'familyId') === 'old-filter',
+    );
+  assert.equal(heldReads.length, 1, 'Retry starts an actual read before the pacing floor');
+  const failingRead = heldReads.at(-1);
+  assert.ok(failingRead);
+  socket.failure(failingRead.id, { code: 'UNAVAILABLE', message: 'Source unavailable' });
+  await retry;
+  await flush();
+  assert.equal(first.state.error?.message, 'Source unavailable');
+  assert.equal(
+    notificationTray.items.filter((item) => item.id === `read:${query.id}`).length,
+    1,
+    'Mounted observers deduplicate a real failure',
+  );
   hold = false;
   first.setQuery(resourceQuery('run.list', { familyId: 'new-filter' }));
   await flush();
@@ -131,6 +160,11 @@ test('panel observers share reads, refuse stale actions and drop old filters and
     'A previous filter cannot replace the current panel',
   );
   second.setQuery(undefined);
+  assert.equal(
+    notificationTray.items.some((item) => item.id === `read:${query.id}`),
+    false,
+    'Retiring the last observer removes its notice',
+  );
   assert.equal(second.ready, false);
   assert.throws(() => second.requireReady(), /current read/);
   hold = true;

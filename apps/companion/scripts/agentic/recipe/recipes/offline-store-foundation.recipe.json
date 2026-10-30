@@ -25,7 +25,7 @@
         "action": "command",
         "cmd": "node scripts/agentic/prove-offline-client-cache.mjs unpin offline-proof",
         "intent": "Set the isolated proof source to main through a real second client.",
-        "next": "main-visible"
+        "next": "main-open-sources"
       },
       "main-visible": {
         "action": "ui.wait_for",
@@ -128,6 +128,12 @@
         "intent": "Require a deletion notification even when sign-out does not change the disconnected transport state.",
         "proves": ["foundation"],
         "next": "stop"
+      },
+      "main-open-sources": {
+        "action": "ui.press",
+        "test_id": "sources-open",
+        "intent": "Open Sources without changing the surrounding view height.",
+        "next": "main-visible"
       }
     }
   }

@@ -263,16 +263,15 @@ export function useSlotWorkspaceController() {
       ),
     [gatewayUrl, historyRecipeRunIds, historyRuns],
   );
-  const detailError =
-    [
-      historyObservation,
-      runObservation,
-      progressObservation,
-      recipeObservation,
-      familyObservation,
-      ...historyRecipes,
-      ...historyRuns,
-    ].find((read) => read.error)?.error?.message ?? null;
+  const readObservations = [
+    { observation: historyObservation, label: 'slot history' },
+    { observation: runObservation, label: 'slot run' },
+    { observation: progressObservation, label: 'task progress' },
+    { observation: recipeObservation, label: 'slot recipe inventory' },
+    { observation: familyObservation, label: 'family' },
+    ...historyRecipes.map((observation) => ({ observation, label: 'run history evidence' })),
+    ...historyRuns.map((observation) => ({ observation, label: 'history run' })),
+  ];
   const retryRead = async () => {
     const cache = getResourceCache();
     const queries: Array<ResourceQuery<unknown> | undefined> = [
@@ -494,7 +493,7 @@ export function useSlotWorkspaceController() {
     slotHistory,
     historyRecipeEvidence,
     historyRunVisualEvidence,
-    detailError,
+    readObservations,
     navLayout,
     stickyNavVisible,
     scrollRef,

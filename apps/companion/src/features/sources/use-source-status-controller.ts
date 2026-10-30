@@ -89,6 +89,7 @@ export function useSourceStatusController(
     controller.getSnapshot,
   );
   return {
+    viewKey: connectedContext.connectionKey,
     viewModel,
     controller,
     visible:

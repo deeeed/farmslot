@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { RunnerVisibleModelState } from '@farmslot/protocol';
 
@@ -50,17 +51,20 @@ test('views share one owner-scoped observation that follows the gateway owner ke
   fake.resourceEpoch = 'visible-model-epoch';
   let revision = 0;
   let models = ['sonnet'];
+  let holdRead = false;
   fake.responseForRequest = ({ method }) =>
     method === 'runner.visibleModels.get'
-      ? {
-          payload: { runners: [state('claude', models, models[0])] },
-          resourceState: {
-            epoch: fake.resourceEpoch,
-            dependencies: [
-              { key: { family: 'profiles', scope: 'owner', ownerId: 'operator' }, revision },
-            ],
-          },
-        }
+      ? holdRead
+        ? undefined
+        : {
+            payload: { runners: [state('claude', models, models[0])] },
+            resourceState: {
+              epoch: fake.resourceEpoch,
+              dependencies: [
+                { key: { family: 'profiles', scope: 'owner', ownerId: 'operator' }, revision },
+              ],
+            },
+          }
       : { payload: {} };
   const { gateway } = await import('../gateway-client.js');
   const { initState } = await import('../state.js');
@@ -79,6 +83,12 @@ test('views share one owner-scoped observation that follows the gateway owner ke
   gateway.connect();
   await flush();
   const reads = () => fake.requests.filter(({ method }) => method === 'runner.visibleModels.get');
+  const nextRead = async (previousCount: number) => {
+    const deadline = Date.now() + 1000;
+    while (reads().length === previousCount && Date.now() < deadline) await delay(1);
+    assert.ok(reads().length > previousCount, 'Invalidation must start a new current read');
+    return reads().at(-1)!;
+  };
   const errors: string[] = [];
   const first = watchVisibleModels((error) => errors.push(error));
   const second = watchVisibleModels(() => {});
@@ -107,6 +117,50 @@ test('views share one owner-scoped observation that follows the gateway owner ke
   assert.equal(reads().length, 2);
   assert.deepEqual(visibleModelIds('claude'), ['haiku']);
   assert.equal(visibleDefaultModel('claude'), 'haiku');
+  const change = () => {
+    revision++;
+    socket.event('resource.changed', {
+      version: 1,
+      epoch: fake.resourceEpoch,
+      changes: [
+        {
+          key: { family: 'profiles', scope: 'owner', ownerId: 'operator' },
+          revision,
+          kind: 'updated',
+        },
+      ],
+    });
+  };
+  await t.test('retry keeps the last failure until a successful current observation', async () => {
+    holdRead = true;
+    const beforeFailure = reads().length;
+    change();
+    const failed = await nextRead(beforeFailure);
+    socket.failure(failed.id, {
+      code: 'UNAVAILABLE',
+      message: 'Visible models unavailable',
+    });
+    await flush();
+    assert.equal(errors.at(-1), 'Visible models unavailable');
+    holdRead = true;
+    const beforeRetry = reads().length;
+    change();
+    const pending = await nextRead(beforeRetry);
+    assert.equal(errors.at(-1), 'Visible models unavailable');
+    holdRead = false;
+    socket.response(
+      pending.id,
+      { runners: [state('claude', models, models[0])] },
+      {
+        epoch: fake.resourceEpoch,
+        dependencies: [
+          { key: { family: 'profiles', scope: 'owner', ownerId: 'operator' }, revision },
+        ],
+      },
+    );
+    await flush();
+    assert.equal(errors.at(-1), '');
+  });
   first();
   second();
 });

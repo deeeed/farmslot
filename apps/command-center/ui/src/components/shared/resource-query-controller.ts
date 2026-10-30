@@ -4,10 +4,8 @@ import {
   canActOn as canActOnHeldData,
   type GatewayResourceCache,
   heldDataIsSaved as heldDataIsSavedFor,
-  isSupersededRead,
   type ResourceQuery,
   type ResourceQueryState,
-  SUPERSEDED_READ_GRACE_MS,
 } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
@@ -17,10 +15,15 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from '../../resource-cache.js';
+import { notificationTray, publishReadNotice } from '../../utils/notification-tray.js';
 
 import { readCurrent } from './read-current.js';
 
-export { isSupersededRead };
+export {
+  isSupersededRead,
+  readFailureText,
+  readKeepsFailing,
+} from '../../utils/resource-read-status.js';
 
 /** The shared held-data rule for this tab's gateway connection. */
 export function heldDataIsSaved(
@@ -40,32 +43,6 @@ export function canActOn(
   return canActOnHeldData(state, connected, now);
 }
 
-/**
- * Nothing held, and reads have kept failing (superseded or not) for the grace period. The cache
- * clears a cold entry's error while it rereads, so this counts from the query's first failure.
- */
-export function readKeepsFailing<T>(query: ResourceQueryController<T>, now = Date.now()): boolean {
-  return (
-    query.state.data === undefined &&
-    query.failingSince !== undefined &&
-    now - query.failingSince >= SUPERSEDED_READ_GRACE_MS
-  );
-}
-
-/**
- * The read failure a panel names. A superseded read already has its reread scheduled, so it is not
- * named; held data shows as saved once the grace period passes, and with nothing held the panel
- * says it was never read.
- */
-export function readFailureText<T>(
-  query: ResourceQueryController<T>,
-  now = Date.now(),
-): string | undefined {
-  const error = query.state.error;
-  if (error && !isSupersededRead(error)) return error.message;
-  return readKeepsFailing(query, now) ? 'not read yet' : undefined;
-}
-
 /** Binds a panel's query to the current farm owner; the shared cache owns all reads. */
 export class ResourceQueryController<T> implements ReactiveController {
   state: ResourceQueryState<T> = { status: 'loading' };
@@ -75,6 +52,8 @@ export class ResourceQueryController<T> implements ReactiveController {
   private cache?: GatewayResourceCache;
   private workspaceKey?: string;
   private connected = false;
+  private readonly noticeSource = {};
+  private noticeRoute = '#fleet';
   private version = 0;
   private stopQuery?: () => void;
   private stopOwner?: () => void;
@@ -99,6 +78,7 @@ export class ResourceQueryController<T> implements ReactiveController {
 
   hostDisconnected(): void {
     this.connected = false;
+    notificationTray.clear(this.noticeSource);
     this.version++;
     this.stopQuery?.();
     this.stopOwner?.();
@@ -109,7 +89,9 @@ export class ResourceQueryController<T> implements ReactiveController {
 
   setQuery(query?: ResourceQuery<T>): void {
     if (query?.id === this.query?.id) return;
+    notificationTray.clear(this.noticeSource);
     this.query = query;
+    this.noticeRoute = typeof location === 'undefined' ? '#fleet' : location.hash;
     this.bind(true);
   }
 
@@ -160,6 +142,7 @@ export class ResourceQueryController<T> implements ReactiveController {
       (gateway.connectionState === 'connected' && gateway.workspaceAccess === 'farm');
     const cache = farm ? getResourceCache() : undefined;
     const key = getResourceWorkspaceKey();
+    notificationTray.setOwner(farm ? key : undefined);
     if (!force && cache === this.cache && key === this.workspaceKey) return;
     this.stopQuery?.();
     this.stopQuery = undefined;
@@ -184,6 +167,17 @@ export class ResourceQueryController<T> implements ReactiveController {
       this.failingSince = undefined;
     else if (state.error) this.failingSince ??= Date.now();
     this.state = state;
+    if (this.query) {
+      const owner = this.workspaceKey;
+      const query = this.query;
+      publishReadNotice(this.noticeSource, owner, this.query, state, this.noticeRoute, {
+        connected: gateway.connectionState === 'connected',
+        retry: () => {
+          if (owner === this.workspaceKey && query === this.query && this.belongsToWorkspace)
+            void this.retry();
+        },
+      });
+    }
     this.onChange?.(state);
     this.host.requestUpdate();
   }

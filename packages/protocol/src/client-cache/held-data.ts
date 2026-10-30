@@ -19,7 +19,7 @@ export function isSupersededRead(error: ResourceQueryError | undefined): boolean
 export function heldDataIsSaved(
   state: ResourceQueryState<unknown>,
   connected: boolean,
-  now: number,
+  now = Date.now(),
 ): boolean {
   return (
     state.status === 'stale' &&
@@ -39,7 +39,7 @@ export function heldDataIsSaved(
 export function canActOn(
   state: ResourceQueryState<unknown>,
   connected: boolean,
-  now: number,
+  now = Date.now(),
 ): boolean {
   return (
     connected &&

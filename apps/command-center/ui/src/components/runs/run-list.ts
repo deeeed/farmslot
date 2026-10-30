@@ -193,16 +193,11 @@ export class RunList extends RunListState {
   private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
   @state() private taskProgressErrorsByRun = new Map<string, string>();
   private progressClock?: number;
-  private savedAgeClock?: number;
   private readonly tagQuery = new ResourceQueryController<RunListResult>(this, (state) => {
     this.tagRuns = this.tagFilter ? (state.data?.runs ?? []) : null;
-    this.tagRunsError = state.error?.message ?? null;
-    this.syncSavedAgeClock();
   });
   private readonly familyQuery = new ResourceQueryController<RunListResult>(this, (state) => {
     this.familyRuns = this.familyFilter ? (state.data?.runs ?? []) : null;
-    this.familyRunsError = state.error?.message ?? null;
-    this.syncSavedAgeClock();
   });
   private readonly onNarrowChange = () => {
     this.narrowViewport = this.narrowMedia?.matches ?? false;
@@ -230,7 +225,6 @@ export class RunList extends RunListState {
         this.cleanupPreview = null;
         this.archiveErrors = new Map();
       }
-      this.syncSavedAgeClock();
       this.prs = s.prs;
       this.runSummaryMeta = s.runSummaryMeta;
       this.runFamilySummaries = s.runFamilySummaries;
@@ -257,8 +251,6 @@ export class RunList extends RunListState {
   disconnectedCallback() {
     super.disconnectedCallback();
     window.clearInterval(this.progressClock);
-    window.clearInterval(this.savedAgeClock);
-    this.savedAgeClock = undefined;
     this.unsub?.();
     for (const query of this.progressQueries.values()) {
       query.hostDisconnected();
@@ -316,7 +308,6 @@ export class RunList extends RunListState {
     this.tagFilter = tag ?? '';
     this.tagQuery.setQuery(tag ? resourceQuery(Methods.RUN_LIST, { tags: [tag] }) : undefined);
     this.tagRuns = tag ? (this.tagQuery.state.data?.runs ?? []) : null;
-    this.tagRunsError = this.tagQuery.state.error?.message ?? null;
   }
 
   async refreshFamilyFilter() {
@@ -326,7 +317,6 @@ export class RunList extends RunListState {
         : undefined,
     );
     this.familyRuns = this.familyFilter ? (this.familyQuery.state.data?.runs ?? []) : null;
-    this.familyRunsError = this.familyQuery.state.error?.message ?? null;
   }
 
   private get readStates() {
@@ -373,52 +363,6 @@ export class RunList extends RunListState {
 
   private runById(id: string): Run | undefined {
     return this.filteredRuns.find((run) => run.id === id) ?? this.runs.find((run) => run.id === id);
-  }
-
-  private syncSavedAgeClock(): void {
-    const stale = this.readStates.some((state) => state.status === 'stale' && state.data);
-    if (stale && !this.savedAgeClock)
-      this.savedAgeClock = window.setInterval(() => this.requestUpdate(), 1000);
-    else if (!stale && this.savedAgeClock) {
-      window.clearInterval(this.savedAgeClock);
-      this.savedAgeClock = undefined;
-    }
-  }
-
-  private async retryRunReads(): Promise<void> {
-    const cache = getResourceCache();
-    if (!cache) return;
-    await Promise.all([
-      cache.retry(runHistoryQuery),
-      cache.retry(activeRunsQuery),
-      this.tagQuery.retry(),
-      this.familyQuery.retry(),
-    ]);
-  }
-
-  private renderReadStatus() {
-    const states = this.readStates;
-    const times = states.flatMap((state) =>
-      state.data && state.observedAt !== undefined ? [state.observedAt] : [],
-    );
-    const error = states.find((state) => state.error)?.error;
-    return html`
-      ${states.some((state) => heldDataIsSaved(state)) && times.length
-        ? html`<div class="rehydrating-banner" data-run-freshness="stale">
-            Saved runs, ${sourceObservationAge(Math.min(...times))}. Actions wait for a current
-            read.
-          </div>`
-        : nothing}
-      ${states.some((state) => state.status === 'unsupported')
-        ? html`<div class="rehydrating-banner">Run updates are unavailable on this gateway.</div>`
-        : nothing}
-      ${error
-        ? html`<div class="rehydrating-banner" role="alert">
-            Run read failed: ${error.message}
-            <button @click=${() => this.retryRunReads()}>Retry reading runs</button>
-          </div>`
-        : nothing}
-    `;
   }
 
   private get listFilters(): RunListFilters {
@@ -747,14 +691,12 @@ export class RunList extends RunListState {
             clearFamilyFilter: () => {
               this.familyFilter = '';
               this.familyRuns = null;
-              this.familyRunsError = null;
               void this.refreshFamilyFilter();
               this._persistHashState();
             },
             clearTagFilter: () => {
               this.tagFilter = '';
               this.tagRuns = null;
-              this.tagRunsError = null;
               void this.refreshTagFilter();
               this._persistHashState();
             },
@@ -778,22 +720,11 @@ export class RunList extends RunListState {
           })
         : nothing}
       ${this.renderAnalyticsStrip()} ${this.cleanupPreview ? this.renderCleanupPreview() : nothing}
-      ${this.renderReadStatus()}
       ${this.archiveErrors.size
         ? html`<div class="rehydrating-banner" role="alert" data-archive-errors>
             ${[...this.archiveErrors].map(
               ([id, message]) => html`<div>${id.slice(0, 8)}: ${message}</div>`,
             )}
-          </div>`
-        : nothing}
-      ${this.familyRunsError
-        ? html`<div class="rehydrating-banner">
-            Family ${this.familyFilter} fetch failed: ${this.familyRunsError}
-          </div>`
-        : nothing}
-      ${this.tagRunsError
-        ? html`<div class="rehydrating-banner">
-            Tag ${this.tagFilter} fetch failed: ${this.tagRunsError}
           </div>`
         : nothing}
       ${this.bootstrapFailed && this.runs.length === 0
