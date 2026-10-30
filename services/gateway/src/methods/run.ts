@@ -1598,7 +1598,7 @@ export interface RunResolveDecisionDependencies {
     Pick<Awaited<ReturnType<typeof admittedFailureSnapshot>>, 'snapshotHash' | 'sources'>
   >;
   resumeRun?: (runId: string) => Promise<void>;
-  assertReviewLaunchAllowed?: (reviews: readonly ReviewStatus[], slotId: string) => Promise<void>;
+  assertReviewLaunchAllowed?: typeof assertReviewLaunchStateForSlot;
   /**
    * ADR-054 `free-slot`: brings a run whose park freed its slot back before its
    * gate is answered. Injectable so the resolve path's own ordering — restore,
@@ -2203,6 +2203,7 @@ export async function resolveRunDecision(
     await (dependencies.assertReviewLaunchAllowed ?? assertReviewLaunchStateForSlot)(
       normalizedReviews,
       existing.slotId,
+      await readReadyGatePreparedPackage(getRun(existing.id)!).catch(() => undefined),
     );
   }
   const consume = async (): Promise<RunResolveDecisionResult> => {

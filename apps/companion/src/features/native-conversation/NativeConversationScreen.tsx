@@ -24,6 +24,7 @@ import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { NativeProfilePicker } from './components/NativeProfilePicker';
 import { NativeRequestCard } from './components/NativeRequestCard';
 import { NativeSessionSetup } from './components/NativeSessionSetup';
+import { NativeSessionState } from './components/NativeSessionState';
 import { NativeTimelineCard } from './components/NativeTimelineCard';
 import { nativeStyles as styles } from './styles/native-conversation.styles';
 import type { useNativeConversationController } from './use-native-conversation-controller';
@@ -72,7 +73,7 @@ export function NativeConversationScreen({
             {!vm.connected
               ? 'Gateway disconnected'
               : vm.session
-                ? `${vm.session.runner} · ${vm.session.model ?? 'Default model'} · ${vm.session.state}`
+                ? `${vm.session.runner} · ${vm.session.model ?? 'Default model'}`
                 : 'Start a conversation or continue an existing one.'}
           </Text>
           {vm.historyObservation.error || vm.inventoryObservation.error ? (
@@ -86,6 +87,10 @@ export function NativeConversationScreen({
             </Pressable>
           ) : null}
         </View>
+        {/* Kept while disconnected, with the last state and no clock, so the conversation never moves. */}
+        {vm.session ? (
+          <NativeSessionState state={vm.session.state} work={vm.connected ? vm.work : undefined} />
+        ) : null}
         {selected ? (
           <ResourceReadStatus observation={vm.historyObservation} label="conversation history" />
         ) : null}
