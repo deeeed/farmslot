@@ -31,6 +31,18 @@ test('a successful pane census confirms a vanished worker without a rerun', asyn
   }
 });
 
+test('absence needs no saved conversation; a live runner without one stays unknown', async () => {
+  const unbound = { ...context, runnerSessionId: null, runnerSessionPath: null };
+  for (const live of [false, true]) {
+    const actual = await readRetainedWorkerProgressTarget(vars, unbound, {
+      exec: async () => ({ exitCode: 0, stdout: 'owned\t%1\t101\n', stderr: '' }),
+      probe: async () => (live ? { state: 'present', pid: '202' } : { state: 'absent' }),
+      binding: async () => assert.fail('no saved conversation to bind'),
+    });
+    assert.equal(actual.state, live ? 'unknown' : 'absent');
+  }
+});
+
 test('unreadable census, malformed output and a surviving saved pane remain unknown', async () => {
   for (const result of [
     { exitCode: 124, stdout: '', stderr: 'timeout' },

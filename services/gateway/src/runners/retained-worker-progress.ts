@@ -34,8 +34,8 @@ export async function readRetainedWorkerProgressTarget(
   const runner = context.runner;
   const sessionId = context.runnerSessionId;
   const sessionPath = context.runnerSessionPath;
-  if (!target?.paneId || !runner || !sessionId || !sessionPath)
-    return { state: 'unknown', reason: 'Recorded worker pane or session identity is incomplete' };
+  if (!target?.paneId || !runner)
+    return { state: 'unknown', reason: 'Recorded worker pane identity is incomplete' };
   const listed = await readers.exec(
     vars,
     tmuxShellSnippet("list-panes -a -F '#{session_name}\t#{pane_id}\t#{pane_pid}'"),
@@ -68,14 +68,18 @@ export async function readRetainedWorkerProgressTarget(
     if (process.state === 'unknown')
       return { state: 'unknown', reason: process.reason ?? 'Worker process probe is unavailable' };
     if (process.state === 'absent') continue;
-    const binding = await readers.binding(vars, runner, {
-      paneId: pane.paneId!,
-      runnerPid: process.pid,
-      slotId: vars.slotId,
-      expectedSessionId: sessionId,
-      expectedSessionPath: sessionPath,
-    });
-    if (!binding.ok || resumed)
+    // Only a live replacement needs the saved conversation; absence does not.
+    const binding =
+      sessionId && sessionPath
+        ? await readers.binding(vars, runner, {
+            paneId: pane.paneId!,
+            runnerPid: process.pid,
+            slotId: vars.slotId,
+            expectedSessionId: sessionId,
+            expectedSessionPath: sessionPath,
+          })
+        : undefined;
+    if (!binding?.ok || resumed)
       return {
         state: 'unknown',
         reason: 'Replacement worker conversation is unconfirmed or ambiguous',
