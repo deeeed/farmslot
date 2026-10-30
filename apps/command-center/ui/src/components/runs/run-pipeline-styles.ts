@@ -13,8 +13,8 @@ export const runPipelineStyles = css`
   }
   .acceptance-slot {
     display: flow-root;
-    /* The existing collapsed AC summary, its border and vertical margins. */
-    min-height: 70px;
+    /* The collapsed AC panel: 44px summary, its 4px padding, 1px borders and vertical margins. */
+    min-height: calc(44px + 2 * 4px + 2px + 2 * ${unsafeCSS(spacing.sm)});
   }
   .review-recovery {
     margin: 0 0 ${unsafeCSS(spacing.sm)};
