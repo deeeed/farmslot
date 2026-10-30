@@ -14,7 +14,14 @@ import {
 export { exchangeGatewayPairingQr };
 export type { GatewayPairingQrPayload, GatewayPairingQrProfile };
 
+// A pairing QR holds under 3 KB. A pair link has no such bound, so both are held to what a QR carries.
+const MAX_PAIRING_DATA_LENGTH = 4096;
+const MAX_PAIRING_PROFILES = 16;
+
 export function parseGatewayPairingQr(data: string): GatewayPairingQrPayload {
+  if (data.length > MAX_PAIRING_DATA_LENGTH) {
+    throw new Error('Pairing data is larger than any Farmslot pairing QR.');
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
@@ -38,6 +45,11 @@ export function parseGatewayPairingQr(data: string): GatewayPairingQrPayload {
           expiresAt: payload.expiresAt,
         },
       ];
+  if (rawProfiles.length > MAX_PAIRING_PROFILES) {
+    throw new Error(
+      `Pairing QR lists ${rawProfiles.length} addresses; at most ${MAX_PAIRING_PROFILES} are allowed.`,
+    );
+  }
   const profiles = rawProfiles.map((profile, index) => normalizePairingProfile(profile, index));
   if (profiles.length === 0) {
     throw new Error('Pairing QR does not contain any profiles');
@@ -80,7 +92,36 @@ function normalizePairingProfile(profile: unknown, index: number): GatewayPairin
   };
 }
 
-function profileIdForPairedProfile(profile: PairedGatewayProfile): string {
+/** What a pair link would do, for the user to confirm first: any app or web page can open a link. */
+export function pairingLinkPrompt(
+  payload: GatewayPairingQrPayload,
+  savedProfiles: readonly GatewayProfile[],
+): string {
+  const replaced = savedProfiles.filter((saved) =>
+    payload.profiles.some(
+      (profile) =>
+        saved.id ===
+        profileIdForPairedProfile({ name: profile.profileName ?? '', url: profile.url }),
+    ),
+  );
+  return [
+    ...payload.profiles.map((profile) =>
+      profile.profileName ? `${profile.profileName}: ${profile.url}` : profile.url,
+    ),
+    ...(replaced.length > 0
+      ? [
+          '',
+          `Replaces the saved profile and sign-in for ${replaced.map((saved) => saved.name).join(', ')}.`,
+        ]
+      : []),
+    '',
+    'Pair only if you opened this link from your own Command Center.',
+  ].join('\n');
+}
+
+export function profileIdForPairedProfile(
+  profile: Pick<PairedGatewayProfile, 'name' | 'url'>,
+): string {
   try {
     const parsed = new URL(profile.url);
     const protocol = parsed.protocol.replace(':', '');

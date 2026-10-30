@@ -126,6 +126,30 @@ export function buildGatewayPairingQrPayload(
   };
 }
 
+/** URL schemes of the Companion builds; production, preview and development install side by side. */
+export const COMPANION_APP_SCHEMES = [
+  'farmslot',
+  'farmslot-preview',
+  'farmslot-development',
+] as const;
+export type CompanionAppScheme = (typeof COMPANION_APP_SCHEMES)[number];
+
+/**
+ * A link that pairs Companion as if this QR were scanned, with the same single-use code and expiry.
+ * The payload is percent-encoded down to [A-Za-z0-9._~-], so the link passes through a device shell
+ * (`adb shell am start -d`) unchanged.
+ */
+export function buildGatewayPairingLink(
+  payload: GatewayPairingQrPayload,
+  scheme: CompanionAppScheme = 'farmslot',
+): string {
+  const encoded = encodeURIComponent(JSON.stringify(payload)).replace(
+    /[!'()*]/gu,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `${scheme}://pair?payload=${encoded}`;
+}
+
 export interface PairingCandidatesParams {
   port?: number;
 }

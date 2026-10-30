@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve acceptance-contract task writes across a CI-watch handoff when the parent releases its slot.
 - Keep reference answers out of eval workers and exclude contaminated first outputs from comparisons.
 
 - Keep loaded native history while a healthy source change refreshes the read; report real observation failures separately.
