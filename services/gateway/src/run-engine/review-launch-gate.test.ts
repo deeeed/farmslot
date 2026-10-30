@@ -8,13 +8,25 @@ import {
   publicationReviewLaunchRejectionFromError,
 } from './review-launch-gate.js';
 
-function gitExecutor(status: string, headSha: string): (command: string) => Promise<ExecResult> {
+function gitExecutor(
+  status: string,
+  headSha: string,
+  ignoredPaths?: readonly string[],
+): (command: string) => Promise<ExecResult> {
   return async (command) => {
     if (command.includes('status --porcelain')) {
       return { stdout: status, stderr: '', exitCode: 0 };
     }
     if (command.includes('rev-parse HEAD')) {
       return { stdout: `${headSha}\n`, stderr: '', exitCode: 0 };
+    }
+    if (ignoredPaths && command.startsWith('check-ignore -- ')) {
+      const ignored = ignoredPaths.filter((path) => command.includes(`'${path}'`));
+      return {
+        stdout: ignored.map((path) => `${path}\n`).join(''),
+        stderr: '',
+        exitCode: ignored.length ? 0 : 1,
+      };
     }
     throw new Error(`Unexpected git probe: ${command}`);
   };
@@ -78,6 +90,82 @@ test('independent publication re-review refuses the same HEAD after issues', asy
       assert.ok(envelope.details?.priorFeedbackPath);
       return true;
     },
+  );
+});
+
+const EVIDENCE_POINTER = 'temp/tasks/fix/task-1/artifacts/latest-valid-recipe-run.json';
+
+/** The warm delta review shape left at a publish gate after an evidence-only finding. */
+function warmEvidenceFindingReview(file = EVIDENCE_POINTER): ReviewStatus {
+  return {
+    ...issuesReview('abc123'),
+    mode: 'warm',
+    reviewedReviewSubjectHash: 'subject-before-refresh',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha: 'abc123',
+      headSha: 'abc123',
+      diffHash: 'empty-delta',
+      capturedAt: '2026-10-30T08:26:50.252Z',
+    },
+    session: {
+      mode: 'warm',
+      continuity: 'resumed',
+      reviewId: 'review-1',
+      sessionId: 'fixture-session-review-1',
+      lastReviewedHeadSha: 'abc123',
+    },
+    issues: [
+      { file, line: 1, severity: 'minor', description: 'R1: selected run is not canonical' },
+    ],
+  };
+}
+
+function refreshedPackage(reviewSubjectHash = 'subject-after-refresh') {
+  return {
+    headSha: 'abc123',
+    reviewSubjectHash,
+    reviewSnapshot: {
+      source: 'local-git' as const,
+      baseRef: 'origin/main',
+      baseSha: 'base000',
+      headSha: 'abc123',
+      diffHash: 'full-contribution',
+      capturedAt: '2026-10-30T12:10:35.742Z',
+    },
+  };
+}
+
+test('independent publication re-review allows the same HEAD after an evidence-only refresh', async () => {
+  await assert.doesNotReject(
+    assertReviewLaunchState(
+      [warmEvidenceFindingReview()],
+      gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
+      refreshedPackage(),
+    ),
+  );
+});
+
+test('independent publication re-review refuses the same HEAD when a finding names versioned source', async () => {
+  await assert.rejects(
+    assertReviewLaunchState(
+      [warmEvidenceFindingReview('app/components/Perps/usePerpsMemory.ts')],
+      gitExecutor('', 'abc123', [EVIDENCE_POINTER]),
+      refreshedPackage(),
+    ),
+    /prior issues review already examined commit abc123/u,
+  );
+});
+
+test('independent publication re-review refuses the same HEAD when the evidence did not change', async () => {
+  await assert.rejects(
+    assertReviewLaunchState(
+      [warmEvidenceFindingReview()],
+      gitExecutor('', 'abc123'),
+      refreshedPackage('subject-before-refresh'),
+    ),
+    /prior issues review already examined commit abc123/u,
   );
 });
 

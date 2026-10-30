@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
+- Allow a requested re-review at the same HEAD when a package refresh changed only the run artifacts its open findings cite.
 - Recover publication-gate progress after a worker pane disappears; verify a resumed conversation before reading its replacement pane.
 - Keep prepare's support verification and retention inventory out of process arguments, so growing run history cannot fail dispatch with E2BIG.
 
