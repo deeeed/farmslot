@@ -436,6 +436,7 @@ export async function proveNativePanel({
         (v) =>
           v.timeOrigin !== finished.timeOrigin &&
           v.detailText.includes('This run is finished.') &&
+          v.terminalExpanded === 'false' &&
           v.terminalViews === 0,
         'terminal-finished-no-restore',
       )),
