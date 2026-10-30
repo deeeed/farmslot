@@ -4,6 +4,7 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Native Claude, Codex and ACP adapters set `tool.kind`, `tool.command` and `tool.paths` on tool calls, so clients can show what a tool ran or changed without runner names (ADR-057 Amendment 8).
 - `approval.resolved` records the response the host delivered for that request (`response`: the decision or answers), so clients can show what was approved or answered. A resolution the host did not deliver carries none (ADR-057 Amendment 7).
 
 - Re-selecting a retained recipe attempt also moves the task acceptance ledger to that attempt's claims, so the gate no longer shows another execution's verdicts.

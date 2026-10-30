@@ -22,6 +22,8 @@ readline.createInterface({input:process.stdin}).on('line', line => {
  }
  if(m.id===78 && m.result) {
   send({method:'item/completed',params:{threadId:'thread-one',item:{id:'tool-one',type:'commandExecution',status:m.result.decision==='decline'?'declined':'completed'}}});
+  send({method:'item/started',params:{threadId:'thread-one',item:{id:'tool-two',type:'commandExecution',command:'npm test',status:'inProgress'}}});
+  send({method:'item/completed',params:{threadId:'thread-one',item:{id:'tool-two',type:'commandExecution',command:'npm test',aggregatedOutput:'ok',status:'completed'}}});
   send({method:'turn/completed',params:{threadId:'thread-one',turn:{id:'turn-one',status:'completed'}}});
  }
 });`;
@@ -52,6 +54,16 @@ test('Codex correlates structured acceptance and denies only the exact pending r
     await session.respond('78', { decision: 'deny' });
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(events.find((event) => event.type === 'tool.completed')?.tool?.status, 'declined');
+    const started = (id: string) =>
+      events.find((event) => event.type === 'tool.started' && event.nativeId === id)?.tool;
+    assert.deepEqual(
+      [started('tool-one')?.kind, started('tool-one')?.paths],
+      ['file-edit', ['greeting.ts']],
+    );
+    assert.deepEqual(
+      [started('tool-two')?.kind, started('tool-two')?.command],
+      ['command', 'npm test'],
+    );
     assert.equal(events.find((event) => event.type === 'turn.completed')?.status, 'completed');
     await assert.rejects(session.respond('78', { decision: 'approve' }), /stale/);
   } finally {

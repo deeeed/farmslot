@@ -17,12 +17,14 @@ import {
   type NativeSessionReadResult,
   type NativeSessionResponse,
   type NativeSessionSendResult,
+  type NativeSessionTool,
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
 import {
   appendNativePage,
   NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
+  nativeCommandText,
   nativeDeliveryLabel,
   nativeEntryPreview,
   nativeFoldWatched,
@@ -432,20 +434,7 @@ export class NativeSessionView extends LitElement {
                 ? 'Started'
                 : (entry.event.tool?.status ?? 'Finished')}
             </summary>
-            <pre>
-${JSON.stringify(
-                {
-                  ...(entry.event.tool?.input !== undefined
-                    ? { input: entry.event.tool.input }
-                    : {}),
-                  ...(entry.event.tool?.output !== undefined
-                    ? { output: entry.event.tool.output }
-                    : {}),
-                },
-                null,
-                2,
-              )}</pre
-            >
+            ${this.renderToolBody(entry.event.tool)}
           </details>`
         : html`<span class="meta"
               >${entry.kind === 'user'
@@ -477,6 +466,28 @@ ${JSON.stringify(
                 </details>`
               : nothing}`}
     </article>`;
+  }
+
+  /** A command shows what it ran and its last lines, its raw input and output one tap away. */
+  private renderToolBody(tool: NativeSessionTool | undefined) {
+    const raw = html`<pre>
+${JSON.stringify(
+        {
+          ...(tool?.input !== undefined ? { input: tool.input } : {}),
+          ...(tool?.output !== undefined ? { output: tool.output } : {}),
+        },
+        null,
+        2,
+      )}</pre
+    >`;
+    const command = nativeCommandText(tool);
+    return command
+      ? html`<pre>${command}</pre>
+          <details>
+            <summary>Raw input and output</summary>
+            ${raw}
+          </details>`
+      : raw;
   }
 
   private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: string) {
