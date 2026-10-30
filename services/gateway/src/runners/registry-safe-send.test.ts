@@ -338,9 +338,19 @@ test('post-launch paste preserves the full prompt, rechecks both input stages an
   };
   acknowledgePromptInput = true;
   let mutations = 0;
-  await withRunnerPromptMutationBoundary(
-    () => {
+  let entered!: () => void;
+  let release!: () => void;
+  const boundaryEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const boundaryPersisted = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const delivery = withRunnerPromptMutationBoundary(
+    async () => {
       mutations += 1;
+      entered();
+      await boundaryPersisted;
     },
     () =>
       sendRunnerPostLaunchPrompt(vars, target, 'codex', message, 'TASK.md', '[test]', {
@@ -352,6 +362,14 @@ test('post-launch paste preserves the full prompt, rechecks both input stages an
         softAcceptOnHandoffAck: false,
       }),
   );
+  await boundaryEntered;
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(promptInputCommands.length, 0, 'no input before the durable boundary completes');
+  } finally {
+    release();
+    await delivery;
+  }
   assert.equal(mutations, 1);
   assert.equal(promptInputCommands.length, 2);
   assert.match(promptInputCommands[0]!, /paste-buffer -d -p/);
@@ -517,7 +535,9 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
   // Codex owns the pane-fallback decision path (Claude is hook-only per ADR-032 Phase 3): it
   // consults observability first, then the pane.
   const sent = await withRunnerPromptMutationBoundary(
-    () => callOrder.push('mutation:start'),
+    () => {
+      callOrder.push('mutation:start');
+    },
     () =>
       sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 10_000, {
         forceBusyPoll: true,

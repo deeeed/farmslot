@@ -4,6 +4,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recover unsent review-fix prompts after restart, verify relaunched worker processes, and surface unconfirmed delivery within the launch budget while preserving findings.
+- Run one task progress read per watched slot at a time; updates that arrive during a read fold into one rerun. A due gateway-update check publishes its result once instead of reporting a stale state for the length of the check.
+- Log the acquisition scan's file count and duration for each output completion capture.
+
+- Hold reviewer model-capacity refusals for an operator retry, preserving the run and slot instead of failing the run.
 - Limit the pending-decision scan to task folders and share one scan between concurrent decision lists, so historical artifact trees no longer stall gateway file I/O.
 
 - Resume monitoring dispatched workers without repeating retained-artifact admission, so waiting completion signals can advance after restart.

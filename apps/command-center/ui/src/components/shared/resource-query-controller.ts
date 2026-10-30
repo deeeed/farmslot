@@ -14,10 +14,28 @@ import {
   subscribeResourceCache,
 } from '../../resource-cache.js';
 import { notificationTray, publishReadNotice } from '../../utils/notification-tray.js';
+import { heldDataIsSaved as resourceHeldDataIsSaved } from '../../utils/resource-read-status.js';
+
+export {
+  isSupersededRead,
+  readFailureText,
+  readKeepsFailing,
+} from '../../utils/resource-read-status.js';
+
+/** Bind the shared display policy to this client's current connection. */
+export function heldDataIsSaved(
+  state: ResourceQueryState<unknown>,
+  connected = gateway.connectionState === 'connected',
+  now = Date.now(),
+): boolean {
+  return resourceHeldDataIsSaved(state, connected, now);
+}
 
 /** Binds a panel's query to the current farm owner; the shared cache owns all reads. */
 export class ResourceQueryController<T> implements ReactiveController {
   state: ResourceQueryState<T> = { status: 'loading' };
+  /** When the reads of this query started failing with nothing held; cleared by an answer. */
+  failingSince?: number;
   private query?: ResourceQuery<T>;
   private cache?: GatewayResourceCache;
   private workspaceKey?: string;
@@ -109,6 +127,7 @@ export class ResourceQueryController<T> implements ReactiveController {
     const version = ++this.version;
     this.cache = cache;
     this.workspaceKey = key;
+    this.failingSince = undefined;
     this.publish({ status: 'loading' });
     if (cache && this.query && version === this.version && key === getResourceWorkspaceKey()) {
       const stop = cache.observe(this.query, (state) => {
@@ -122,13 +141,19 @@ export class ResourceQueryController<T> implements ReactiveController {
   }
 
   private publish(state: ResourceQueryState<T>): void {
+    if (state.data !== undefined || state.status === 'ready' || state.status === 'unsupported')
+      this.failingSince = undefined;
+    else if (state.error) this.failingSince ??= Date.now();
     this.state = state;
     if (this.query) {
       const owner = this.workspaceKey;
       const query = this.query;
-      publishReadNotice(this.noticeSource, owner, this.query, state, this.noticeRoute, () => {
-        if (owner === this.workspaceKey && query === this.query && this.belongsToWorkspace)
-          void this.retry();
+      publishReadNotice(this.noticeSource, owner, this.query, state, this.noticeRoute, {
+        connected: gateway.connectionState === 'connected',
+        retry: () => {
+          if (owner === this.workspaceKey && query === this.query && this.belongsToWorkspace)
+            void this.retry();
+        },
       });
     }
     this.onChange?.(state);

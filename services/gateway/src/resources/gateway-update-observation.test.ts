@@ -98,6 +98,33 @@ test('only admitted interest schedules passive checks, respecting success and er
   assert.deepEqual(owner.observation, { status: 'ready', observedAt: now });
 });
 
+test('a due check publishes its result once, without a stale notice while it runs', async () => {
+  let now = 1000;
+  let finish!: (value: GatewayUpdateStatus) => void;
+  const published: string[] = [];
+  const owner: GatewayUpdateObservation = new GatewayUpdateObservation({
+    sample: () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    hasInterest: () => true,
+    changed: () => published.push(owner.observation.status),
+    empty: status,
+    now: () => now,
+  });
+  const cold = owner.tick();
+  finish(status());
+  await cold;
+  assert.deepEqual(published, ['ready']);
+  now += GATEWAY_UPDATE_SUCCESS_TTL_MS;
+  const due = owner.tick();
+  assert.deepEqual(published, ['ready'], 'no stale notice while the source check runs');
+  finish(status());
+  await due;
+  assert.deepEqual(published, ['ready', 'ready']);
+  assert.deepEqual(owner.observation, { status: 'ready', observedAt: now });
+});
+
 test('cold source failures report error without manufacturing a successful observation', async () => {
   const owner = new GatewayUpdateObservation({
     sample: async () => {

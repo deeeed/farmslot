@@ -79,8 +79,8 @@ export class RunChecklistProgress extends LitElement {
       <div class="strip" title=${this.error || view.accessibleLabel}>
         <div class="label">
           <span class="counts">${view.counts}</span>
-          <span class="item" role=${this.error ? 'status' : nothing}>
-            ${this.error || (this.stale ? `Saved checklist, ${this.age}` : view.label)}
+          <span class="item" role=${this.error && !this.stale ? 'status' : nothing}>
+            ${this.stale ? `Saved checklist, ${this.age}` : this.error || view.label}
           </span>
         </div>
         <div

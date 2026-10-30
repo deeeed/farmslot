@@ -48,7 +48,11 @@ import {
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import {
+  heldDataIsSaved,
+  readFailureText,
+  ResourceQueryController,
+} from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import {
   focusWorkInventoryRow,
@@ -280,7 +284,8 @@ export class RunList extends RunListState {
         else progress.delete(key);
         this.taskProgressByRun = progress;
         const errors = new Map(this.taskProgressErrorsByRun);
-        if (state.error) errors.set(key, state.error.message);
+        const failure = readFailureText(query);
+        if (failure) errors.set(key, failure);
         else errors.delete(key);
         this.taskProgressErrorsByRun = errors;
       });
@@ -932,8 +937,11 @@ export class RunList extends RunListState {
             runChecklistProgressTarget(run)?.key ?? '',
           )}
           .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
-          .taskProgressStale=${this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')
-            ?.state.status !== 'ready'}
+          .taskProgressStale=${heldDataIsSaved(
+            this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state ?? {
+              status: 'loading',
+            },
+          )}
           .taskProgressAge=${sourceObservationAge(
             this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state.observedAt,
           )}

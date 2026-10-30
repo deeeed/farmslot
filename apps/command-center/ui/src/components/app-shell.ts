@@ -119,7 +119,7 @@ import { hashParams } from '../utils/url-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
 import { runStatusColor } from './runs/run-utils.js';
-import { ResourceQueryController } from './shared/resource-query-controller.js';
+import { heldDataIsSaved, ResourceQueryController } from './shared/resource-query-controller.js';
 import { renderRunTitle } from './shared/run-title.js';
 import {
   activeSidebarRuns,
@@ -485,7 +485,7 @@ export class FarmApp extends LitElement {
       .current=${this.updateQuery.ready &&
       this.updateQuery.state.sourceObservation?.status === 'ready'}
       .checking=${this.versionDetailsLoading}
-      .age=${this.updateQuery.state.status === 'stale'
+      .age=${heldDataIsSaved(this.updateQuery.state)
         ? sourceObservationAge(this.updateQuery.state.sourceObservation?.observedAt)
         : ''}
       .readError=${this.updateQuery.state.error?.message ?? this.versionDetailsError}
@@ -648,7 +648,7 @@ export class FarmApp extends LitElement {
           ${this.nodeQuery.state.status === 'stale' && this.nodeQuery.state.data
             ? html`<p>Saved nodes, ${sourceObservationAge(this.nodeQuery.state.observedAt)}.</p>`
             : nothing}
-          ${this.updateQuery.state.status === 'stale' && this.updateQuery.state.data
+          ${heldDataIsSaved(this.updateQuery.state)
             ? html`<p>
                 Saved gateway update,
                 ${sourceObservationAge(this.updateQuery.state.sourceObservation?.observedAt)}.

@@ -10,6 +10,9 @@ const row = list?.shadowRoot?.querySelector('[data-row-id="layout-run"]');
 const banner = root?.querySelector('update-banner');
 return {
   rowTop: row?.getBoundingClientRect().top,
+  legacyReadStatus: [...(list?.shadowRoot?.querySelectorAll('.rehydrating-banner') ?? [])]
+    .map((element) => element.textContent.trim())
+    .join(' '),
   sidebarExpanded: root?.querySelector('.fa-nav-toggle')?.title === 'Collapse sidebar',
   updateVisible: Boolean(banner?.getClientRects().length),
   updateText: (banner?.shadowRoot?.textContent ?? '').replace(/\s+/g, ' '),

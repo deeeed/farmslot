@@ -3,6 +3,7 @@ import type { ResourceQuery, ResourceQueryState } from '@farmslot/protocol/clien
 
 import { NotificationTrayModel, type TrayItem } from './notification-tray-model.js';
 import { notify } from './notifications.js';
+import { heldDataIsSaved, isSupersededRead } from './resource-read-status.js';
 
 export const notificationTray = new NotificationTrayModel((item) =>
   notify(item.title, {
@@ -39,6 +40,11 @@ function readRoute(query: ResourceQuery, fallback: string): string {
   }
   return fallback;
 }
+interface ReadNoticeContext {
+  connected: boolean;
+  retry?: () => void;
+}
+
 /** One item per canonical query, even when several mounted cards observe it. */
 export function publishReadNotice(
   source: object | string,
@@ -46,14 +52,12 @@ export function publishReadNotice(
   query: ResourceQuery,
   state: ResourceQueryState,
   route: string,
-  retry?: () => void,
+  context: ReadNoticeContext,
 ): void {
+  const retry = context.retry;
   const label = labels[query.method] ?? 'This view';
-  const error = state.error;
-  const stale =
-    state.data !== undefined &&
-    (state.status === 'stale' ||
-      (state.sourceObservation && state.sourceObservation.status !== 'ready'));
+  const error = isSupersededRead(state.error) ? undefined : state.error;
+  const stale = heldDataIsSaved(state, context.connected);
   const target = readRoute(query, route);
   const missing = error?.code === 'RUN_NOT_FOUND';
   const unsupported = state.status === 'unsupported';

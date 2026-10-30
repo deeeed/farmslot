@@ -1,4 +1,4 @@
-import { html } from 'lit';
+import { html, type PropertyValues } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import type {
@@ -49,6 +49,7 @@ import {
 import { applyChatPanelResponse } from './chat-panel-response-model.js';
 import {
   copilotRuntimeStatusLabel,
+  copilotStatusQuery,
   dangerousLaunchSummary,
   dangerousStartParams,
 } from './chat-panel-runtime-model.js';
@@ -114,7 +115,6 @@ export class ChatPanel extends ChatPanelState {
   connectedCallback() {
     super.connectedCallback();
     this.loadHistory();
-    this.runtimeQuery.setQuery(resourceQuery<CopilotStatusResult>(Methods.COPILOT_STATUS, {}));
     void this.loadSessions();
     this.unsubResponse = gateway.subscribe<ChatResponsePayload>(Events.CHAT_RESPONSE, (payload) => {
       this.handleChatResponse(payload);
@@ -135,6 +135,11 @@ export class ChatPanel extends ChatPanelState {
       if (s !== 'connected') return;
       void this.reconcileActionsAfterReconnect();
     });
+  }
+
+  protected override willUpdate(changed: PropertyValues<this>) {
+    super.willUpdate(changed);
+    if (changed.has('open')) this.runtimeQuery.setQuery(copilotStatusQuery(this.open));
   }
 
   disconnectedCallback() {

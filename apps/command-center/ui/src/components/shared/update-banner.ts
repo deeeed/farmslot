@@ -257,7 +257,7 @@ export class UpdateBanner extends LitElement {
             </div>`
           : nothing}
         ${this.error ? html`<div class="details error" role="alert">${this.error}</div>` : nothing}
-        ${this.age
+        ${this.age && s.canUpdate && s.updateAvailable
           ? html`<div class="details">
               Saved gateway update, ${this.age}. Updating waits for a current source check.
             </div>`

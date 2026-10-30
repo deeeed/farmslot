@@ -35,6 +35,15 @@ interface WatchCall {
 let watchCalls: WatchCall[] = [];
 let stopCalls: string[] = [];
 let requestCounter = 0;
+/** While set, parent checklist reads wait on it, standing in for a loaded node. */
+let checklistReadGate: Promise<void> | undefined;
+let checklistReadStarts = 0;
+let checklistReadsInFlight = 0;
+let maxChecklistReadsInFlight = 0;
+/** Every progress computation publishes its resources first, so this counts them. */
+let progressComputations = 0;
+/** While set, the run has an acceptance contract and this stands in for its registration sync. */
+let acceptanceSync: (() => Promise<void>) | undefined;
 
 function taskDirAbs(): string {
   return path.join(repoRoot, '.task', TASK_REL);
@@ -63,6 +72,8 @@ const activeRun = () =>
     steps: [],
     decisions: [],
     metrics: { nudgeCount: 0 },
+    // The watcher syncs registration only for a contract run's primary worker; a qa flow's is.
+    ...(acceptanceSync ? { flowType: 'qa', acceptanceContractVersion: 1 } : {}),
   }) as unknown as Run;
 
 mock.module('../core/config.js', {
@@ -105,7 +116,19 @@ mock.module('../core/slot-io.js', {
   namedExports: {
     ...realSlotIo,
     slotFileExists: async (_ctx: unknown, filePath: string) => existsSync(filePath),
-    slotReadFile: async (_ctx: unknown, filePath: string) => readFileSync(filePath, 'utf-8'),
+    slotReadFile: async (_ctx: unknown, filePath: string) => {
+      if (filePath.endsWith('CHECKLIST.md')) checklistReadStarts += 1;
+      if (checklistReadGate && filePath.endsWith('CHECKLIST.md')) {
+        checklistReadsInFlight += 1;
+        maxChecklistReadsInFlight = Math.max(maxChecklistReadsInFlight, checklistReadsInFlight);
+        try {
+          await checklistReadGate;
+        } finally {
+          checklistReadsInFlight -= 1;
+        }
+      }
+      return readFileSync(filePath, 'utf-8');
+    },
     slotMkdir: async (_ctx: unknown, dirPath: string) => {
       mkdirSync(dirPath, { recursive: true });
     },
@@ -172,6 +195,25 @@ mock.module('../runs/store.js', {
 
 mock.module('../core/state.js', {
   namedExports: { ...realState, updateSlotStatus: async () => {} },
+});
+
+// Loaded only now, so its own imports already resolve to the fixtures above.
+const realRunChanges = await import('../resources/run-changes.js');
+
+mock.module('../resources/run-changes.js', {
+  namedExports: {
+    ...realRunChanges,
+    publishProgressResources: (
+      ...args: Parameters<typeof realRunChanges.publishProgressResources>
+    ) => {
+      progressComputations += 1;
+      return realRunChanges.publishProgressResources(...args);
+    },
+  },
+});
+
+mock.module('./acceptance-registration-sync.js', {
+  namedExports: { syncAcceptanceRegistration: async () => acceptanceSync?.() },
 });
 
 const { handleAgentFsChanged, onTaskProgress, unwatchSlot, watchSlot } =
@@ -449,6 +491,115 @@ test('a remote engine ledger event updates acceptance once, and nothing routes a
     assert.equal(progressUpdates.length, 1);
   } finally {
     console.warn = warn;
+    try {
+      await unwatchSlot(SLOT_ID);
+    } catch (err) {
+      console.error(`[test] teardown unwatch failed for ${SLOT_ID}: ${(err as Error).message}`);
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('operation heartbeats during a slow progress read fold into one rerun', async () => {
+  const root = writeTaskDir();
+  watchCalls = [];
+  stopCalls = [];
+  let release = () => {};
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    const operationCall = watchCalls.find((call) => call.path.endsWith('operations-updated.json'));
+    assert.ok(operationCall);
+    const heartbeat = () =>
+      handleAgentFsChanged({
+        requestId: operationCall.requestId,
+        machine: MACHINE,
+        path: operationCall.path,
+        content: '{}',
+      });
+    progressUpdates.length = 0;
+    checklistReadGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    checklistReadsInFlight = 0;
+    maxChecklistReadsInFlight = 0;
+    const reads = checklistReadStarts;
+
+    // The runner rewrites operations-updated.json every 5 s; a busy node takes longer to answer.
+    heartbeat();
+    await waitFor(() => checklistReadsInFlight === 1);
+    for (let beat = 0; beat < 2; beat++) {
+      const computations = progressComputations;
+      heartbeat();
+      await waitFor(() => progressComputations > computations);
+    }
+    assert.equal(maxChecklistReadsInFlight, 1, 'one progress read per watch at a time');
+    assert.equal(progressUpdates.length, 0);
+
+    checklistReadGate = undefined;
+    release();
+    await waitFor(() => progressUpdates.length === 2);
+    assert.equal(checklistReadStarts - reads, 2, 'three heartbeats: the held read, then one rerun');
+  } finally {
+    checklistReadGate = undefined;
+    release();
+    try {
+      await unwatchSlot(SLOT_ID);
+    } catch (err) {
+      console.error(`[test] teardown unwatch failed for ${SLOT_ID}: ${(err as Error).message}`);
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an acceptance sync waits for its own progress read, not for reruns queued behind it', async () => {
+  const root = writeTaskDir();
+  watchCalls = [];
+  stopCalls = [];
+  let release = () => {};
+  const releaseOneRead = () => {
+    const held = release;
+    checklistReadGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    held();
+  };
+  let syncs = 0;
+  try {
+    // Each sync reports a new error, so each one asks the watcher for a progress read.
+    acceptanceSync = async () => {
+      syncs += 1;
+      throw new Error(`registration attempt ${syncs}`);
+    };
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    const operationCall = watchCalls.find((call) => call.path.endsWith('operations-updated.json'));
+    assert.ok(operationCall);
+    const heartbeat = () =>
+      handleAgentFsChanged({
+        requestId: operationCall.requestId,
+        machine: MACHINE,
+        path: operationCall.path,
+        content: '{}',
+      });
+    checklistReadGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    heartbeat();
+    await waitFor(() => syncs === 1);
+
+    // A loaded node: a heartbeat lands during every read, so a rerun is always queued.
+    for (let cycle = 0; cycle < 6 && syncs < 2; cycle++) {
+      const computations = progressComputations;
+      heartbeat();
+      await waitFor(() => progressComputations > computations);
+      const reads = checklistReadStarts;
+      releaseOneRead();
+      await waitFor(() => checklistReadStarts > reads);
+    }
+    assert.ok(syncs >= 2, 'the first sync finished with its read, so the queued sync ran');
+  } finally {
+    acceptanceSync = undefined;
+    checklistReadGate = undefined;
+    release();
     try {
       await unwatchSlot(SLOT_ID);
     } catch (err) {

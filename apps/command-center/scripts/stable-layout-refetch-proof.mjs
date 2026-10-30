@@ -7,6 +7,68 @@ import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
 
+// Save the CDP frame timestamps as well as the actual captured frames. No DOM mutation.
+export async function recordBrowserProof({ name, run, browserCall, emulation, output, save }) {
+  const captured = [];
+  const acknowledgements = [];
+  const listener = (raw) => {
+    const message = JSON.parse(String(raw));
+    if (message.method === 'Page.screencastFrame') {
+      captured.push(message.params);
+      acknowledgements.push(
+        browserCall('Page.screencastFrameAck', { sessionId: message.params.sessionId }),
+      );
+    }
+  };
+  emulation.on('message', listener);
+  await browserCall('Page.startScreencast', { format: 'jpeg', quality: 85, everyNthFrame: 1 });
+  try {
+    await run();
+  } finally {
+    await browserCall('Page.stopScreencast');
+    emulation.off('message', listener);
+    await Promise.all(acknowledgements);
+    assert(captured.length > 1, 'The recording must contain actual rendered frames');
+    const directory = path.join(output, name + '-frames');
+    await mkdir(directory);
+    const list = [];
+    for (const [index, frame] of captured.entries()) {
+      const file = `frame-${String(index).padStart(5, '0')}.jpg`;
+      await writeFile(path.join(directory, file), Buffer.from(frame.data, 'base64'));
+      list.push(
+        `file '${file}'`,
+        `duration ${Math.max(0.01, (captured[index + 1]?.metadata.timestamp ?? frame.metadata.timestamp + 1) - frame.metadata.timestamp)}`,
+      );
+    }
+    list.push(`file 'frame-${String(captured.length - 1).padStart(5, '0')}.jpg'`);
+    await writeFile(path.join(directory, 'frames.txt'), list.join('\n') + '\n');
+    await save(
+      name + '-timestamps',
+      captured.map(({ metadata }) => metadata),
+    );
+    await execute('ffmpeg', [
+      '-y',
+      '-loglevel',
+      'error',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      path.join(directory, 'frames.txt'),
+      '-vf',
+      'pad=ceil(iw/2)*2:ceil(ih/2)*2',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-movflags',
+      '+faststart',
+      path.join(output, name + '.mp4'),
+    ]);
+  }
+}
+
 /** Real mounted consumers over the presentation fixture, with read-only DOM probes. */
 export async function proveRefetchNotices({
   cdp,
@@ -43,67 +105,8 @@ export async function proveRefetchNotices({
     await save('timeout-' + label, actual);
     assert.fail(label + ': ' + JSON.stringify(actual));
   }
-  // Save the CDP frame timestamps as well as the actual captured frames. No DOM mutation.
-  async function record(name, run) {
-    const captured = [];
-    const acknowledgements = [];
-    const listener = (raw) => {
-      const message = JSON.parse(String(raw));
-      if (message.method === 'Page.screencastFrame') {
-        captured.push(message.params);
-        acknowledgements.push(
-          browserCall('Page.screencastFrameAck', { sessionId: message.params.sessionId }),
-        );
-      }
-    };
-    emulation.on('message', listener);
-    await browserCall('Page.startScreencast', { format: 'jpeg', quality: 85, everyNthFrame: 1 });
-    try {
-      await run();
-    } finally {
-      await browserCall('Page.stopScreencast');
-      emulation.off('message', listener);
-      await Promise.all(acknowledgements);
-      assert(captured.length > 1, 'The recording must contain actual rendered frames');
-      const directory = path.join(output, name + '-frames');
-      await mkdir(directory);
-      const list = [];
-      for (const [index, frame] of captured.entries()) {
-        const file = `frame-${String(index).padStart(5, '0')}.jpg`;
-        await writeFile(path.join(directory, file), Buffer.from(frame.data, 'base64'));
-        list.push(
-          `file '${file}'`,
-          `duration ${Math.max(0.01, (captured[index + 1]?.metadata.timestamp ?? frame.metadata.timestamp + 1) - frame.metadata.timestamp)}`,
-        );
-      }
-      list.push(`file 'frame-${String(captured.length - 1).padStart(5, '0')}.jpg'`);
-      await writeFile(path.join(directory, 'frames.txt'), list.join('\n') + '\n');
-      await save(
-        name + '-timestamps',
-        captured.map(({ metadata }) => metadata),
-      );
-      await execute('ffmpeg', [
-        '-y',
-        '-loglevel',
-        'error',
-        '-f',
-        'concat',
-        '-safe',
-        '0',
-        '-i',
-        path.join(directory, 'frames.txt'),
-        '-vf',
-        'pad=ceil(iw/2)*2:ceil(ih/2)*2',
-        '-c:v',
-        'libx264',
-        '-pix_fmt',
-        'yuv420p',
-        '-movflags',
-        '+faststart',
-        path.join(output, name + '.mp4'),
-      ]);
-    }
-  }
+  const record = (name, run) =>
+    recordBrowserProof({ name, run, browserCall, emulation, output, save });
   const observations = [];
   for (const width of before ? [1280] : [1280, 414]) {
     await viewport(width);

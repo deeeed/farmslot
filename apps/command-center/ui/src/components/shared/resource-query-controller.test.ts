@@ -119,11 +119,21 @@ test('panel observers share reads, refuse stale actions and drop old filters and
   assert.equal(first.state.status, 'stale');
   assert.equal(
     notificationTray.items.filter((item) => item.id === `read:${query.id}`).length,
-    1,
-    'Mounted observers publish one actual query notice',
+    0,
+    'An ordinary current-owner reread stays quiet',
   );
   assert.throws(() => first.requireReady(), /current read/);
   const heldReads = socket.sent.slice(readsBefore).filter(({ method }) => method === 'run.list');
+  const failingRead = heldReads.at(-1);
+  assert.ok(failingRead);
+  socket.failure(failingRead.id, { code: 'UNAVAILABLE', message: 'Source unavailable' });
+  await flush();
+  assert.equal(first.state.error?.message, 'Source unavailable');
+  assert.equal(
+    notificationTray.items.filter((item) => item.id === `read:${query.id}`).length,
+    1,
+    'Mounted observers deduplicate a real failure',
+  );
   hold = false;
   first.setQuery(resourceQuery('run.list', { familyId: 'new-filter' }));
   await flush();

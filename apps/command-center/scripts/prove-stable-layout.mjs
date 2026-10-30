@@ -16,7 +16,7 @@ import {
   resourceDependenciesForRead,
 } from '../../../packages/protocol/src/client-cache/registry.ts';
 import { mockPipelineRuns, mockRuns } from '../ui/src/dev/mock-data.ts';
-import { proveRefetchNotices } from './stable-layout-refetch-proof.mjs';
+import { proveRefetchNotices, recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const output = process.env.FARMSLOT_LAYOUT_EVIDENCE;
@@ -38,6 +38,12 @@ const epoch = `layout-fixture-${randomUUID()}`;
 let revision = 0;
 let mode = 'empty';
 const refetchProof = process.env.FARMSLOT_LAYOUT_REFETCH === '1';
+const legacyProof = process.env.FARMSLOT_LAYOUT_BEFORE === '1';
+const uiRoot = process.env.FARMSLOT_LAYOUT_UI_ROOT ?? path.join(source, 'apps/command-center/ui');
+assert(
+  !legacyProof || process.env.FARMSLOT_LAYOUT_UI_ROOT,
+  'The before proof requires an explicit archived UI',
+);
 const now = Date.now();
 const decision = {
   id: 'layout-decision',
@@ -356,7 +362,7 @@ try {
       '127.0.0.1',
     ],
     {
-      cwd: path.join(source, 'apps/command-center/ui'),
+      cwd: uiRoot,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -382,8 +388,45 @@ try {
   assert(ready, viteLog);
   const opened = await cdp('goto', `http://127.0.0.1:${uiPort}/#runs`, '--new');
   target = '@' + opened.id;
-  if (refetchProof) {
-    await viewport(1280);
+  const record = (name, run) =>
+    recordBrowserProof({ name, run, browserCall, emulation, output, save });
+  await viewport(1280);
+  await until((value) => value.connected, 'connected');
+  const modals = await cdp(
+    'eval',
+    target,
+    "return { open: Boolean(document.querySelector('whats-new-modal')?.shadowRoot?.querySelector('button')) };",
+  );
+  if (modals.open) await press('whats-new-modal >>> button.primary');
+  if (legacyProof) {
+    const samples = [];
+    await until((value) => value.rowTop !== undefined, 'legacy-row');
+    await record('tray-before-1280', async () => {
+      for (const next of ['empty', 'error', 'empty', 'update', 'empty', 'update-complete']) {
+        transition(next);
+        const current = await until(
+          (value) =>
+            next === 'error'
+              ? value.legacyReadStatus.includes('Fixture read is unavailable')
+              : next.startsWith('update')
+                ? value.updateVisible
+                : !value.updateVisible &&
+                  !value.legacyReadStatus.includes('Fixture read is unavailable'),
+          next,
+        );
+        samples.push({ phase: next, ...current });
+      }
+    });
+    const tops = samples.map((value) => value.rowTop);
+    const shift = Math.max(...tops) - Math.min(...tops);
+    assert(shift > 0, 'The original in-flow notices must reproduce a jump');
+    await save('legacy-result', {
+      result: 'PASS',
+      expected: 'original layout jump',
+      shift,
+      samples,
+    });
+  } else if (refetchProof) {
     await proveRefetchNotices({
       cdp,
       target,
@@ -409,76 +452,96 @@ try {
       const name = `${width}${expanded ? '-expanded' : ''}`;
       await viewport(width);
       if ((await inspect()).sidebarExpanded !== expanded) await press('.fa-nav-toggle');
-      const before = await inspect();
-      assert.equal(before.width, width, 'The browser must use the requested CSS viewport');
-      const authBefore = frames.filter((frame) => frame.method === 'auth.connect').length;
-      for (const socket of wss.clients) socket.close(1012, 'Owned presentation fixture reconnect');
-      await until(
-        (value) =>
-          value.connected &&
-          frames.filter((frame) => frame.method === 'auth.connect').length > authBefore,
-        'reconnect',
-      );
-      assert.equal(
-        (await inspect()).contentTop,
-        before.contentTop,
-        'Reconnect cannot move the content',
-      );
-      for (const phase of ['decision', 'decision', 'empty', 'error', 'empty', 'update', 'empty']) {
-        transition(phase);
-        const current = await until(
+      await record(`tray-after-${name}`, async () => {
+        const before = await inspect();
+        assert.equal(before.width, width, 'The browser must use the requested CSS viewport');
+        const authBefore = frames.filter((frame) => frame.method === 'auth.connect').length;
+        for (const socket of wss.clients)
+          socket.close(1012, 'Owned presentation fixture reconnect');
+        await until(
           (value) =>
-            phase === 'decision'
-              ? value.top === decision.title
-              : phase === 'error'
-                ? value.items.some((item) => item.includes('Could not refresh runs'))
-                : phase === 'update'
-                  ? value.items.includes('Farmslot update available')
-                  : !value.top &&
-                    !value.items.includes('Could not refresh runs') &&
-                    !value.items.includes('Farmslot update available'),
-          phase,
+            value.connected &&
+            frames.filter((frame) => frame.method === 'auth.connect').length > authBefore,
+          'reconnect',
         );
-        assert.equal(current.contentTop, before.contentTop, 'A notice cannot move the content');
-        assert.equal(current.stripHeight, 44);
-        assert.equal(current.rowTop, before.rowTop, 'A read notice cannot move a retained run row');
-        await save(`${name}-${phase}-${revision}`, current);
-      }
-      transition('decision');
-      await until((value) => value.top === decision.title, 'recurrence');
-      await press('farm-notification-tray >>> .bell');
-      const open = await until((value) => value.panel !== null, 'opened-tray');
-      await save(`${name}-open`, open);
-      await cdp('screenshot', target, path.join(output, `${name}-tray.png`));
-      assert.equal(open.contentTop, before.contentTop);
-      assert(open.panel && open.panel.left >= 0 && open.panel.right <= width, JSON.stringify(open));
-      assert.equal(open.items.filter((title) => title === decision.title).length, 1);
+        assert.equal(
+          (await inspect()).contentTop,
+          before.contentTop,
+          'Reconnect cannot move the content',
+        );
+        for (const phase of [
+          'decision',
+          'decision',
+          'empty',
+          'error',
+          'empty',
+          'update',
+          'empty',
+        ]) {
+          transition(phase);
+          const current = await until(
+            (value) =>
+              phase === 'decision'
+                ? value.top === decision.title
+                : phase === 'error'
+                  ? value.items.some((item) => item.includes('Could not refresh runs'))
+                  : phase === 'update'
+                    ? value.items.includes('Farmslot update available')
+                    : !value.top &&
+                      !value.items.includes('Could not refresh runs') &&
+                      !value.items.includes('Farmslot update available'),
+            phase,
+          );
+          assert.equal(current.width, width, 'The viewport must stay at the requested width');
+          assert.equal(current.contentTop, before.contentTop, 'A notice cannot move the content');
+          assert.equal(current.stripHeight, 44);
+          assert.equal(
+            current.rowTop,
+            before.rowTop,
+            'A read notice cannot move a retained run row',
+          );
+          await save(`${name}-${phase}-${revision}`, current);
+        }
+        transition('decision');
+        await until((value) => value.top === decision.title, 'recurrence');
+        await press('farm-notification-tray >>> .bell');
+        const open = await until((value) => value.panel !== null, 'opened-tray');
+        await save(`${name}-open`, open);
+        await cdp('screenshot', target, path.join(output, `${name}-tray.png`));
+        assert.equal(open.contentTop, before.contentTop);
+        assert(
+          open.panel && open.panel.left >= 0 && open.panel.right <= width,
+          JSON.stringify(open),
+        );
+        assert.equal(open.items.filter((title) => title === decision.title).length, 1);
 
-      await escape();
-      assert.equal((await inspect()).panel, null);
-      transition('empty');
-      await until((value) => !value.top, 'cleared');
-      transition('update-complete');
-      await until(
-        (value) => value.items.includes('Farmslot update complete'),
-        'completion-guidance',
-      );
-      await press('farm-notification-tray >>> .bell');
-      await press('farm-notification-tray >>> [data-notice-id="gateway-update"] a');
-      const guidance = await until(
-        (value) =>
-          value.updateVisible &&
-          value.updateText.includes('packaged gateway needs a restart') &&
-          value.updateText.includes('Rebuild and replace'),
-        'visible-follow-up',
-      );
-      assert.equal(guidance.rowTop, before.rowTop);
-      await cdp('screenshot', target, path.join(output, `${name}-update-guidance.png`));
-      await press('update-banner >>> .dismiss');
-      await until((value) => !value.items.includes('Farmslot update complete'), 'acknowledged');
-      await escape();
-      await until((value) => value.panel === null, 'closed-after-dismissal');
-      transition('empty');
+        await escape();
+        assert.equal((await inspect()).panel, null);
+        transition('empty');
+        await until((value) => !value.top, 'cleared');
+        transition('update-complete');
+        await until(
+          (value) => value.items.includes('Farmslot update complete'),
+          'completion-guidance',
+        );
+        await press('farm-notification-tray >>> .bell');
+        await press('farm-notification-tray >>> [data-notice-id="gateway-update"] a');
+        const guidance = await until(
+          (value) =>
+            value.updateVisible &&
+            value.updateText.includes('packaged gateway needs a restart') &&
+            value.updateText.includes('Rebuild and replace'),
+          'visible-follow-up',
+        );
+        assert.equal(guidance.width, width, 'The viewport must stay at the requested width');
+        assert.equal(guidance.rowTop, before.rowTop);
+        await cdp('screenshot', target, path.join(output, `${name}-update-guidance.png`));
+        await press('update-banner >>> .dismiss');
+        await until((value) => !value.items.includes('Farmslot update complete'), 'acknowledged');
+        await escape();
+        await until((value) => value.panel === null, 'closed-after-dismissal');
+        transition('empty');
+      });
     }
     const reads = frames.filter((frame) => frame.method === 'run.list').length;
     assert(reads >= 8, 'Repeated observed reads reached the real client adapter');
