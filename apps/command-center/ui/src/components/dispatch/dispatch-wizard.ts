@@ -99,7 +99,10 @@ import {
   selectedTemplateMode,
   syncSelectedAppForProject,
 } from './dispatch-wizard-draft.js';
-import { filterRunsForComparisonPicker } from './dispatch-wizard-helpers.js';
+import {
+  comparisonPickerRunsQuery,
+  filterRunsForComparisonPicker,
+} from './dispatch-wizard-helpers.js';
 import {
   requestDispatchProfileFit,
   requestDispatchProjectMatch,
@@ -207,13 +210,9 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _observeRunReads(): void {
-    const projects = getState().globalFilters.projects;
     this.comparisonQuery.setQuery(
       this._comparePickerOpen && !this.mockMode
-        ? resourceQuery<RunListResult>(Methods.RUN_LIST, {
-            limit: 50,
-            ...(projects.length === 1 ? { project: projects[0] } : {}),
-          })
+        ? comparisonPickerRunsQuery(getState().globalFilters.projects)
         : undefined,
     );
     this.baselineQuery.setQuery(

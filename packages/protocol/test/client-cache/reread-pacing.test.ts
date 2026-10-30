@@ -354,8 +354,7 @@ test('a decision list paced by its consumer waits 30 s for the run writes that c
     rereadIntervalMs: { decisions: 30_000 },
   }));
 
-test('the registered decision list reads each change at once, for consumers that act only on a ready inbox', async (t) => {
-  const query = resourceQuery('decision.list', {});
+async function listReadsEachChange(t: TestContext, query: ResourceQuery) {
   const gateway = pacedGateway(t, query);
   const stop = gateway.cache.observe(query, () => {});
   try {
@@ -371,7 +370,13 @@ test('the registered decision list reads each change at once, for consumers that
   } finally {
     stop();
   }
-});
+}
+
+test('the registered decision list reads each change at once, for consumers that act only on a ready inbox', (t) =>
+  listReadsEachChange(t, resourceQuery('decision.list', {})));
+
+test('a run list whose consumer sets a zero floor reads each change at once', (t) =>
+  listReadsEachChange(t, { ...resourceQuery('run.list', {}), rereadIntervalMs: { runs: 0 } }));
 
 test('retryAfterPending reads after a read in flight instead of joining it', async (t) => {
   const query = resourceQuery('decision.list', {});
