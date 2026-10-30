@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Keep loaded native history while a healthy source change refreshes the read; report real observation failures separately.
 - Show gate preparation during replay capture and readiness checks; report operator wait only after its decision exists.
+- Bound Pi provider responses and flag stalled worker token usage during initial work and review fixes.
 
 - Complete artifact-only eval packages without requiring publication claim approval.
 
