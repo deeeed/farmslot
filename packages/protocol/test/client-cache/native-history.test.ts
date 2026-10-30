@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { ResourceCacheConformanceTransport } from '../../src/client-cache/conformance.js';
+import {
+  createGatewayResourceCache,
+  type ResourceReadMethod,
+  type ResourceReadResult,
+} from '../../src/client-cache/index.js';
 import {
   nativeHistoryParams,
   nativeHistoryQuery,
@@ -69,6 +75,66 @@ const basicController = () => {
   });
   return controller;
 };
+
+test('a superseded native history page retains loaded messages and retries without a change notice', async () => {
+  const query = nativeHistoryQuery(target, 'owner-a');
+  class NativeTransport extends ResourceCacheConformanceTransport {
+    override async request<T>(
+      method: ResourceReadMethod,
+      params: unknown,
+      signal: AbortSignal,
+    ): Promise<ResourceReadResult<T>> {
+      const result = await super.request<T>(method, params, signal);
+      return {
+        ...result,
+        resourceState: {
+          epoch: 'conformance-epoch',
+          dependencies: query.dependencies.map((key) => ({ key, revision: 0 })),
+        },
+      };
+    }
+  }
+  const transport = new NativeTransport({
+    gatewayUrl: 'ws://native-history.test',
+    principalId: 'owner-a',
+    principalGeneration: 0,
+  });
+  const capabilities = transport.connection.capabilities;
+  assert(capabilities?.resourceChanges);
+  transport.setConnection({
+    connected: true,
+    id: 1,
+    capabilities: {
+      ...capabilities,
+      resourceChanges: { ...capabilities.resourceChanges, observedReads: 1 },
+    },
+  });
+  const cache = createGatewayResourceCache({ transport });
+  const stop = cache.observe(query, () => {});
+  try {
+    const warm = cache.retry(query);
+    const saved = { ...page([event(1, 'loaded')]), value: 'saved' };
+    (await transport.nextRead()).resolve(saved);
+    assert.equal((await warm).status, 'ready');
+    const superseded = cache.retry(query);
+    (await transport.nextRead()).reject('RESOURCE_OBSERVATION_CHANGED');
+    await superseded;
+    assert.equal(cache.read(query).status, 'stale');
+    assert.equal(cache.read(query).error?.code, 'RESOURCE_OBSERVATION_CHANGED');
+    assert.equal(cache.read(query).data?.cursor, 1);
+    assert.equal(cache.read(query).data?.events[0].text, 'loaded');
+    const followup = await transport.nextRead();
+    assert.equal(transport.requestCount, 3);
+    followup.resolve({ ...page([event(2, ' fresh')]), value: 'fresh' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(cache.read(query).status, 'ready');
+    assert.equal(cache.read(query).data?.cursor, 2);
+    assert.equal(nativeTimeline(cache.read(query).data!.events)[0].text, 'loaded fresh');
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
 
 test('200 logical messages retain every fragment of the newest message', () => {
   const events = Array.from({ length: 205 }, (_, i) =>

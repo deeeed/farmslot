@@ -43,7 +43,7 @@ import {
 } from '../../resource-cache.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
-import { isSupersededRead } from '../shared/resource-query-controller.js';
+import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-controller.js';
 
 import type { NativeProfileSelection } from './native-profiles.js';
 import { renderNativeSessionHeader } from './native-session-header.js';
@@ -890,8 +890,7 @@ export class NativeSessionView extends LitElement {
       ['closed', 'failed'].includes(session.state) &&
       (!session.processPid || session.processStopped);
     return html`
-      ${this.historyObservation.status === 'stale' &&
-      !isSupersededRead(this.historyObservation.error) &&
+      ${heldDataIsSaved(this.historyObservation, this.connected) &&
       this.historyObservation.observedAt !== undefined
         ? html`<p
             role="status"

@@ -50,7 +50,9 @@ for (const code of [
   });
 }
 
-test('a superseded page keeps loaded data and schedules one reread without a delivered change notice', async () => {
+test('a non-native superseded read preserves its existing change-notice retry policy', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  t.mock.method(performance, 'now', () => Date.now());
   const { transport, cache, stop } = await fixture();
   try {
     const failed = cache.retry(query);
@@ -59,16 +61,10 @@ test('a superseded page keeps loaded data and schedules one reread without a del
     assert.equal(cache.read(query).status, 'stale');
     assert.equal(cache.read(query).data?.value, 'before writes');
     assert.equal(cache.read(query).error?.code, 'RESOURCE_OBSERVATION_CHANGED');
-    const followup = await transport.nextRead();
-    assert.equal(transport.requestCount, 3);
-    assert.equal(cache.read(query).data?.value, 'before writes');
-    followup.resolve({ value: 'fresh page' });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(cache.read(query).status, 'ready');
-    assert.equal(cache.read(query).error, undefined);
-    assert.equal(cache.read(query).data?.value, 'fresh page');
+    t.mock.timers.tick(100);
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(transport.requestCount, 3);
+    assert.equal(transport.requestCount, 2, 'Only native history gains a retry without a notice');
   } finally {
     stop();
     await cache.dispose();

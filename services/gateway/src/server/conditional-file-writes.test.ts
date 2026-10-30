@@ -10,6 +10,10 @@ import test from 'node:test';
 import WebSocket from 'ws';
 
 import {
+  NativeSourceChanged,
+  NativeSourceUnavailable,
+} from '@farmslot/agent-runtime/native/observation';
+import {
   type GatewayAuthConnectResult,
   Methods,
   type RequestFrame,
@@ -17,8 +21,10 @@ import {
 } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
-const { getAllNodes, getNode } = await import('../fleet/machine-registry.js');
-const { sendNodeRequest } = await import('../fleet/node-rpc.js');
+const { getAllNodes, getNode, registerNode, unregisterByWs } =
+  await import('../fleet/machine-registry.js');
+const { sendNodeRequest, handleNodeResponse } = await import('../fleet/node-rpc.js');
+const { nativeObservations } = await import('../resources/native-observations.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('../security/auth.js');
 const { createWebSocketServer } = await import('../server.js');
 
@@ -55,6 +61,76 @@ test(
       }
     } finally {
       await harness.close();
+    }
+  },
+);
+
+test(
+  'native source refresh and unavailable codes survive both RPC error boundaries',
+  { timeout: 4000 },
+  async (t) => {
+    const harness = await startServer();
+    const previousHome = process.env.FARMSLOT_HOME;
+    const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    process.env.FARMSLOT_HOME = harness.home;
+    const owner = harness.runtime.writer.createPrincipal(
+      { type: 'service', displayName: 'Native wire fixture' },
+      [{ role: 'admin', scope: { kind: 'global' } }],
+    );
+    const credential = harness.runtime.writer.issueCredential(owner.id, 'wire fixture');
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
+    let boundary = 'gateway';
+    let failure: NativeSourceChanged | NativeSourceUnavailable = new NativeSourceChanged();
+    const nativeSocket = {
+      readyState: WebSocket.OPEN,
+      send(raw: string) {
+        const frame: RequestFrame = JSON.parse(raw);
+        handleNodeResponse(frame.id, false, undefined, failure.message, failure.code, nativeSocket);
+      },
+    } as WebSocket;
+    registerNode(
+      'native-wire-fixture',
+      1,
+      nativeSocket,
+      undefined,
+      undefined,
+      { ownerPrincipalId: owner.id },
+      { principalId: 'wire-node', valid: () => true },
+    );
+    t.mock.method(nativeObservations, 'read', async (_connection, _interests, read, sample) => {
+      if (boundary === 'gateway') throw failure;
+      return { payload: await read(), resourceState: sample() };
+    });
+    try {
+      const ui = await connect(harness.url);
+      const auth = await request(ui, Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        token: credential.secret,
+      });
+      assert.equal(auth.ok, true);
+      for (boundary of ['gateway', 'remote']) {
+        for (failure of [new NativeSourceChanged(), new NativeSourceUnavailable('wire-fixture')]) {
+          const reply = await request(
+            ui,
+            Methods.NATIVE_SESSION_LIST,
+            { executionNodeId: 'native-wire-fixture' },
+            true,
+          );
+          assert.equal(reply.ok, false);
+          assert.equal(reply.error?.code, failure.code, boundary);
+        }
+      }
+      ui.close();
+    } finally {
+      unregisterByWs(nativeSocket);
+      try {
+        await harness.close();
+      } finally {
+        if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+        else process.env.FARMSLOT_HOME = previousHome;
+        if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+        else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+      }
     }
   },
 );
@@ -107,6 +183,8 @@ async function startServer() {
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('missing test server address');
   return {
+    home,
+    runtime,
     url: `ws://127.0.0.1:${address.port}`,
     close: async () => {
       for (const client of wss.clients) client.terminate();
@@ -129,7 +207,12 @@ async function connect(url: string): Promise<WebSocket> {
 }
 
 let requestId = 0;
-async function request(ws: WebSocket, method: string, params: unknown): Promise<ResponseFrame> {
+async function request(
+  ws: WebSocket,
+  method: string,
+  params: unknown,
+  observed = false,
+): Promise<ResponseFrame> {
   const id = `conditional-test-${++requestId}`;
   const response = new Promise<ResponseFrame>((resolve, reject) => {
     const onMessage = (data: WebSocket.RawData) => {
@@ -141,7 +224,13 @@ async function request(ws: WebSocket, method: string, params: unknown): Promise<
     ws.on('message', onMessage);
     ws.once('error', reject);
   });
-  const frame: RequestFrame = { type: 'req', id, method, params };
+  const frame: RequestFrame = {
+    type: 'req',
+    id,
+    method,
+    params,
+    ...(observed ? { resourceRead: { version: 1 } as const } : {}),
+  };
   ws.send(JSON.stringify(frame));
   return response;
 }
