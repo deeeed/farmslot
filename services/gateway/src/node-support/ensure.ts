@@ -20,7 +20,7 @@ import {
 } from '@farmslot/protocol/node/pack-portability';
 import { currentProjectSources } from '@farmslot/slot-config';
 
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, type ExecOnSlotOptions, type ExecResult } from '../core/exec.js';
 import {
   farmslotRoot,
   isLocal,
@@ -264,6 +264,43 @@ export async function ensureNodeSupportBundle(
   }
   const manifestPath = path.posix.join(supportDir, 'manifest.json');
 
+  // The retention inventory and full checksum script grow with the farm. Send
+  // large commands as files, rather than exceeding the shell's argv limit.
+  const execSupport = async (command: string, opts?: ExecOnSlotOptions) => {
+    if (Buffer.byteLength(command) < 32_768) return io.exec(vars, command, opts);
+    const prefix = path.posix.join(path.posix.dirname(supportDir), '.command.');
+    const staged = await io.exec(vars, `mktemp ${shellExpressionForRemotePath(`${prefix}XXXXXX`)}`);
+    const scriptPath = staged.stdout.trim();
+    if (staged.exitCode !== 0 || !scriptPath.startsWith(prefix))
+      throw new Error(`Node support command staging failed: ${staged.stderr}`);
+    let execution: PromiseSettledResult<ExecResult>;
+    try {
+      await io.writeFile(vars, scriptPath, command);
+      execution = {
+        status: 'fulfilled',
+        value: await io.exec(vars, `/bin/sh ${shellExpressionForRemotePath(scriptPath)}`, opts),
+      };
+    } catch (reason) {
+      execution = { status: 'rejected', reason };
+    }
+    try {
+      const cleaned = await io.exec(vars, `rm -f ${shellExpressionForRemotePath(scriptPath)}`, {
+        timeout: 10_000,
+      });
+      if (cleaned.exitCode !== 0)
+        throw new Error(`Node support command cleanup failed: ${cleaned.stderr}`);
+    } catch (cleanupError) {
+      if (execution.status === 'rejected')
+        throw new AggregateError(
+          [execution.reason, cleanupError],
+          'Node support execution and cleanup failed',
+        );
+      throw cleanupError;
+    }
+    if (execution.status === 'rejected') throw execution.reason;
+    return execution.value;
+  };
+
   // Always rewritten: another gateway or a prepare may have repointed the slot
   // since this process last looked, and the write is one small file.
   const activateBundle = async (how: 'published' | 'current', publishCommand?: string) => {
@@ -279,8 +316,7 @@ export async function ensureNodeSupportBundle(
         step('support', 'Node support pruning skipped: retention inventory is unreadable');
       }
     }
-    const result = await io.exec(
-      vars,
+    const result = await execSupport(
       buildNodeSupportActivationCommand({
         supportDir,
         supportHash: manifest.hash,
@@ -305,8 +341,7 @@ export async function ensureNodeSupportBundle(
     return true;
   };
   const verifyChecksums = async (dir: string, manifestFile: string): Promise<boolean> => {
-    const result = await io.exec(
-      vars,
+    const result = await execSupport(
       buildNodeSupportVerifyCommand({ manifestPath: manifestFile, supportDir: dir, files }),
     );
     return result.exitCode === 0;

@@ -212,7 +212,7 @@ export function buildNodeSupportActivationCommand(params: NodeSupportActivationP
   const payload = { ...params, supportRoot: path.posix.dirname(params.supportDir) };
   const script = `import fcntl,hashlib,json,os,re,shutil,subprocess,sys,time
 from pathlib import Path
-d=json.loads(sys.argv[1]);root=Path(d['supportRoot']);root.mkdir(parents=True,exist_ok=True)
+d=json.load(sys.stdin);root=Path(d['supportRoot']);root.mkdir(parents=True,exist_ok=True)
 assert not root.is_symlink()
 with (root/'.activation.lock').open('a') as lock:
  end=time.monotonic()+30
@@ -222,11 +222,11 @@ with (root/'.activation.lock').open('a') as lock:
   except BlockingIOError:
    if time.monotonic()>=end:raise TimeoutError('Node support activation lock timeout')
    time.sleep(.05)
- if d.get('publishCommand'):subprocess.run(['/bin/sh','-c',d['publishCommand']],check=True)
+ if d.get('publishCommand'):subprocess.run(['/bin/sh'],input=d['publishCommand'],text=True,check=True)
  target=Path(d['supportDir'])
  if not target.is_dir():sys.exit(75)
  assert json.loads((target/'manifest.json').read_text())['hash']==d['supportHash']
- subprocess.run(['/bin/sh','-c',d['verifyCommand']],check=True)
+ subprocess.run(['/bin/sh'],input=d['verifyCommand'],text=True,check=True)
  readers=root/'.readers';readers.mkdir(exist_ok=True)
  if d.get('readerTtlMs'):
   lease=readers/(d['supportHash']+'.json')
@@ -306,7 +306,7 @@ with (root/'.activation.lock').open('a') as lock:
   shutil.rmtree(bundle);removed.append(bundle.name)
  print(json.dumps({'selected':d['supportHash'],'removed':removed}))
 `;
-  return `: farmslot-node-support-activate\npython3 -c ${shellQuote(script)} ${shellQuote(JSON.stringify(payload))}`;
+  return `: farmslot-node-support-activate\npython3 -c ${shellQuote(script)} <<'FARMSLOT_NODE_SUPPORT_PAYLOAD'\n${JSON.stringify(payload)}\nFARMSLOT_NODE_SUPPORT_PAYLOAD`;
 }
 
 /** A cached read keeps its files through execution, even if its cache lease expires meanwhile. */
