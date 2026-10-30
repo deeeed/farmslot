@@ -134,7 +134,7 @@ export async function proveAcPanel({
       );
       await shot('written');
       // The row's own effect is the distance from the pipeline to the next control. Content
-      // loading above, or the page's scroll limit after a shrink, moves both together.
+      // loading above moves both; a shrink at the page's scroll limit moves only the pipeline.
       const movement =
         written.nextTop - written.pipelineTop - (unwritten.nextTop - unwritten.pipelineTop);
       await save(`${width}-arrival`, { unwritten, written, movement });
