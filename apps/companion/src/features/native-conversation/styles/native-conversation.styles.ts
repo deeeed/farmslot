@@ -4,6 +4,18 @@ import { colors, fonts, radii, spacing } from '../../../lib/theme';
 
 export const nativeStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgBase },
+  timeline: { flex: 1 },
+  // Overlays the bottom of the timeline, so it never moves the conversation or the composer.
+  jumpLatest: {
+    position: 'absolute',
+    alignSelf: 'center',
+    bottom: spacing.md,
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+    borderRadius: 22,
+    backgroundColor: colors.bgCardHover,
+    justifyContent: 'center',
+  },
   content: { padding: spacing.lg, gap: spacing.md },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm },
   heading: { color: colors.textPrimary, fontSize: fonts.sizeLg, fontWeight: '800' },

@@ -441,3 +441,33 @@ export function nativeCommandLockSettled(
     )
   );
 }
+
+/** A reader within this distance of the end of a conversation follows new output. */
+const NATIVE_FOLLOW_SLACK_PX = 80;
+
+export interface NativeFollow {
+  /** The reader is at the end, so new output stays in view. */
+  following: boolean;
+  /** Timeline entries added while the reader was away from the end. */
+  unseen: number;
+}
+
+/** Opening a conversation, or jumping to its latest entry, follows again. */
+export const NATIVE_FOLLOW_LATEST: NativeFollow = { following: true, unseen: 0 };
+
+/** The reader scrolled. Back at the end means caught up. */
+export function nativeFollowScrolled(state: NativeFollow, distanceFromEnd: number): NativeFollow {
+  if (distanceFromEnd < NATIVE_FOLLOW_SLACK_PX) return NATIVE_FOLLOW_LATEST;
+  return state.following ? { following: false, unseen: 0 } : state;
+}
+
+/** Entries arrived. A reader away from the end has that many more to catch up on. */
+export function nativeFollowGrew(state: NativeFollow, added: number): NativeFollow {
+  return state.following || added <= 0 ? state : { ...state, unseen: state.unseen + added };
+}
+
+/** The jump control's label, or none while the reader follows. */
+export function nativeFollowLabel(state: NativeFollow): string | undefined {
+  if (state.following) return undefined;
+  return state.unseen ? `Latest · ${state.unseen} new` : 'Latest';
+}

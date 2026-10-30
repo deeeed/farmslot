@@ -22,8 +22,13 @@ import {
 import { sourceObservationAge } from '@farmslot/protocol';
 import {
   appendNativePage,
+  NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
   nativeDeliveryLabel,
+  type NativeFollow,
+  nativeFollowGrew,
+  nativeFollowLabel,
+  nativeFollowScrolled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
   nativeObservationQuery,
@@ -77,6 +82,10 @@ export interface NativeSessionFixture {
   catalog(): Promise<NativeSessionCatalogResult>;
   list(): Promise<NativeSessionListResult>;
   read(params: NativeSessionReadParams): Promise<NativeSessionReadResult>;
+}
+
+function timelineDistance(timeline: Element) {
+  return timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
 }
 
 @customElement('native-session-view')
@@ -162,6 +171,9 @@ export class NativeSessionView extends LitElement {
   };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
+  @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
+  /** The selection the timeline DOM was last rendered for. */
+  private renderedRevision = -1;
 
   private timeline() {
     if (this.timelineEvents !== this.transcript.events) {
@@ -174,6 +186,7 @@ export class NativeSessionView extends LitElement {
   static styles = nativeSessionStyles;
 
   protected updated(changed: PropertyValues) {
+    this.renderedRevision = this.revision;
     if (
       changed.has('initialSessionId') &&
       changed.get('initialSessionId') &&
@@ -250,7 +263,7 @@ export class NativeSessionView extends LitElement {
     this.historyQuery = query;
     this.historyStop = observeNativeResource(query, (state) => {
       if (!this.isConnected || revision !== this.revision) return;
-      const follow = this.timelineAtEnd();
+      const before = this.timeline().length;
       this.historyObservation = state;
       const page = state.data;
       this.session = page?.session;
@@ -282,14 +295,41 @@ export class NativeSessionView extends LitElement {
           this.localCommand = undefined;
         }
       }
-      if (follow) void this.updateComplete.then(() => this.scrollTimelineToEnd());
+      this.followTimeline(before);
     });
   }
 
-  /** A reader at the end of the transcript keeps new output in view. */
-  private timelineAtEnd() {
+  /** A reader at the end keeps new output in view; one who scrolled up counts what arrived. */
+  private followTimeline(before: number) {
+    // The DOM still shows the last render: opening an entry may have moved the reader off the end.
     const timeline = this.renderRoot.querySelector('.timeline');
-    return !timeline || timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
+    if (timeline && this.renderedRevision === this.revision)
+      this.follow = nativeFollowScrolled(this.follow, timelineDistance(timeline));
+    this.follow = nativeFollowGrew(this.follow, this.timeline().length - before);
+    if (this.follow.following) void this.updateComplete.then(() => this.scrollTimelineToEnd());
+  }
+
+  private readonly timelineScrolled = (event: Event) => {
+    this.follow = nativeFollowScrolled(
+      this.follow,
+      timelineDistance(event.currentTarget as Element),
+    );
+  };
+
+  private renderJumpLatest() {
+    const label = nativeFollowLabel(this.follow);
+    return label
+      ? html`<button
+          class="jump-latest"
+          data-testid="native-jump-latest"
+          @click=${() => {
+            this.follow = NATIVE_FOLLOW_LATEST;
+            this.scrollTimelineToEnd();
+          }}
+        >
+          ${label}
+        </button>`
+      : nothing;
   }
 
   private scrollTimelineToEnd() {
@@ -385,6 +425,7 @@ export class NativeSessionView extends LitElement {
       this.catalog = undefined;
       this.responseAttempts = new Set();
       this.transcript = { events: [], cursor: 0 };
+      this.follow = NATIVE_FOLLOW_LATEST;
       this.historyScope = undefined;
       this.requests = [];
       this.receipts = [];
@@ -604,7 +645,7 @@ export class NativeSessionView extends LitElement {
           this.historyScope = scope;
         }
         this.pollError = '';
-        const nearBottom = this.timelineAtEnd();
+        const before = this.timeline().length;
         this.transcript = appendNativePage(this.transcript, page);
         for (const event of page.events) {
           if (event.type === 'approval.resolved' && event.request) {
@@ -638,8 +679,8 @@ export class NativeSessionView extends LitElement {
             this.localCommand = undefined;
           }
         }
+        this.followTimeline(before);
         await this.updateComplete;
-        if (nearBottom) this.scrollTimelineToEnd();
         if (!page.hasMore) break;
       }
     } catch (error) {
@@ -655,6 +696,7 @@ export class NativeSessionView extends LitElement {
 
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
+    this.follow = NATIVE_FOLLOW_LATEST;
     this.selectedId = id;
     this.selectedNodeId = executionNodeId;
     this.responseAttempts = new Set();
@@ -1144,7 +1186,11 @@ export class NativeSessionView extends LitElement {
                   : 'conversation-only'}"
               >
                 <section class="conversation">
-                  <div class="timeline" aria-label="Agent conversation">
+                  <div
+                    class="timeline"
+                    aria-label="Agent conversation"
+                    @scroll=${this.timelineScrolled}
+                  >
                     ${repeat(
                       this.timeline(),
                       (entry) => entry.key,
@@ -1218,6 +1264,7 @@ ${JSON.stringify(
                           ${this.caughtUp ? 'Send a task to begin.' : 'Loading conversation…'}
                         </p>`
                       : nothing}
+                    <div class="jump-anchor">${this.renderJumpLatest()}</div>
                   </div>
                   <div class="composer">
                     ${this.receipts.some(

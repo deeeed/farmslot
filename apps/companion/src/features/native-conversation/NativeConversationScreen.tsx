@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -11,7 +11,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { NativeSessionInfo } from '@farmslot/protocol';
-import { nativeDeliveryLabel } from '@farmslot/protocol/client-cache';
+import {
+  NATIVE_FOLLOW_LATEST,
+  nativeDeliveryLabel,
+  nativeFollowGrew,
+  nativeFollowLabel,
+  nativeFollowScrolled,
+} from '@farmslot/protocol/client-cache';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 
@@ -34,7 +40,18 @@ export function NativeConversationScreen({
 }) {
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollView>(null);
-  const follow = useRef(true);
+  const [follow, setFollow] = useState(NATIVE_FOLLOW_LATEST);
+  const entryCount = useRef(vm.entries.length);
+  useEffect(() => {
+    entryCount.current = vm.entries.length;
+    setFollow(NATIVE_FOLLOW_LATEST);
+  }, [vm.session?.id]);
+  useEffect(() => {
+    const added = vm.entries.length - entryCount.current;
+    entryCount.current = vm.entries.length;
+    setFollow((current) => nativeFollowGrew(current, added));
+  }, [vm.entries.length]);
+  const jumpLabel = selected ? nativeFollowLabel(follow) : undefined;
   const [showUnavailable, setShowUnavailable] = useState(false);
   return (
     <KeyboardAvoidingView
@@ -91,137 +108,155 @@ export function NativeConversationScreen({
           </Text>
         ) : null}
       </View>
-      <ScrollView
-        ref={scroll}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        onScroll={(event) => {
-          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-          follow.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 100;
-        }}
-        scrollEventThrottle={100}
-        onContentSizeChange={() => {
-          if (follow.current && selected) scroll.current?.scrollToEnd({ animated: false });
-        }}
-      >
-        {!selected ? (
-          <>
-            <NativeSessionSetup
-              viewModel={vm.creation}
-              actions={actions.creation}
-              onCreate={() => {
-                void actions.creation.create().then((session) => {
-                  if (session) onSelect(session);
-                });
-              }}
-            />
-            {vm.unavailable.length ? (
-              <View>
-                <Pressable
-                  testID="companion-native-unavailable-toggle"
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded: showUnavailable }}
-                  style={styles.button}
-                  onPress={() => setShowUnavailable((value) => !value)}
-                >
-                  <Text style={styles.buttonText}>
-                    {showUnavailable ? 'Hide' : 'Show'} unavailable nodes ({vm.unavailable.length})
-                  </Text>
-                </Pressable>
-                {showUnavailable
-                  ? vm.unavailable.map((value, index) => (
-                      <Text
-                        testID={`companion-native-unavailable-detail-${index}`}
-                        style={styles.muted}
-                        key={value}
-                      >
-                        {value}
-                      </Text>
-                    ))
-                  : null}
-              </View>
-            ) : null}
-            {vm.sessions.map((session) => (
-              <Pressable
-                accessibilityRole="button"
-                key={`${session.executionNodeId}:${session.id}`}
-                testID={`companion-native-session-${session.id}`}
-                style={styles.card}
-                onPress={() => onSelect(session)}
-              >
-                <Text style={styles.heading}>
-                  {session.runner} · {session.model ?? 'Default model'}
-                </Text>
-                <Text style={styles.text}>
-                  {session.state} · {session.executionNodeId}
-                </Text>
-                <Text selectable style={styles.muted}>
-                  {session.cwd}
-                </Text>
-                <Text style={styles.muted}>{session.id}</Text>
-              </Pressable>
-            ))}
-            {vm.ready && !vm.sessions.length ? (
-              <Text style={styles.muted}>
-                No conversations found. Choose a workspace and runner to start one.
-              </Text>
-            ) : null}
-          </>
-        ) : (
-          <>
-            {vm.session?.profileId ? (
-              <Text testID="companion-native-session-profile" style={styles.muted}>
-                Configuration: {vm.session.profileId}
-              </Text>
-            ) : null}
-            {vm.resume.available ? (
-              <>
-                <NativeProfilePicker
-                  viewModel={vm.resume.profiles}
-                  actions={actions.resume.profiles}
-                  disabled={vm.resume.busy}
-                  locked
-                />
-                <Pressable
-                  testID="companion-native-resume"
-                  accessibilityRole="button"
-                  style={styles.button}
-                  accessibilityState={{ disabled: !vm.resume.ready }}
-                  disabled={!vm.resume.ready}
-                  onPress={() => {
-                    void actions.resume.resume().then((session) => {
-                      if (session) onSelect(session);
-                    });
-                  }}
-                >
-                  <Text style={styles.buttonText}>
-                    {vm.resume.busy ? 'Resuming…' : 'Resume conversation'}
-                  </Text>
-                </Pressable>
-              </>
-            ) : null}
-            {vm.entries.map((entry) => (
-              <NativeTimelineCard key={entry.key} entry={entry} />
-            ))}
-            {vm.requests.map((request) => (
-              <NativeRequestCard
-                key={`${request.generation}:${request.request?.id}`}
-                event={request}
-                attempted={vm.responses.includes(request.request?.id ?? '')}
-                disabled={
-                  !vm.writable ||
-                  vm.busy ||
-                  request.generation !== vm.session?.generation ||
-                  (request.type === 'question.requested'
-                    ? !vm.session?.capabilities.questions
-                    : !vm.session?.capabilities.approvals)
-                }
-                respond={(id, response) => void actions.respond(id, response)}
+      <View style={styles.timeline}>
+        <ScrollView
+          ref={scroll}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          onScroll={(event) => {
+            const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+            const distance = contentSize.height - contentOffset.y - layoutMeasurement.height;
+            setFollow((current) => nativeFollowScrolled(current, distance));
+          }}
+          scrollEventThrottle={100}
+          onContentSizeChange={() => {
+            if (follow.following && selected) scroll.current?.scrollToEnd({ animated: false });
+          }}
+        >
+          {!selected ? (
+            <>
+              <NativeSessionSetup
+                viewModel={vm.creation}
+                actions={actions.creation}
+                onCreate={() => {
+                  void actions.creation.create().then((session) => {
+                    if (session) onSelect(session);
+                  });
+                }}
               />
-            ))}
-          </>
-        )}
-      </ScrollView>
+              {vm.unavailable.length ? (
+                <View>
+                  <Pressable
+                    testID="companion-native-unavailable-toggle"
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: showUnavailable }}
+                    style={styles.button}
+                    onPress={() => setShowUnavailable((value) => !value)}
+                  >
+                    <Text style={styles.buttonText}>
+                      {showUnavailable ? 'Hide' : 'Show'} unavailable nodes ({vm.unavailable.length}
+                      )
+                    </Text>
+                  </Pressable>
+                  {showUnavailable
+                    ? vm.unavailable.map((value, index) => (
+                        <Text
+                          testID={`companion-native-unavailable-detail-${index}`}
+                          style={styles.muted}
+                          key={value}
+                        >
+                          {value}
+                        </Text>
+                      ))
+                    : null}
+                </View>
+              ) : null}
+              {vm.sessions.map((session) => (
+                <Pressable
+                  accessibilityRole="button"
+                  key={`${session.executionNodeId}:${session.id}`}
+                  testID={`companion-native-session-${session.id}`}
+                  style={styles.card}
+                  onPress={() => onSelect(session)}
+                >
+                  <Text style={styles.heading}>
+                    {session.runner} · {session.model ?? 'Default model'}
+                  </Text>
+                  <Text style={styles.text}>
+                    {session.state} · {session.executionNodeId}
+                  </Text>
+                  <Text selectable style={styles.muted}>
+                    {session.cwd}
+                  </Text>
+                  <Text style={styles.muted}>{session.id}</Text>
+                </Pressable>
+              ))}
+              {vm.ready && !vm.sessions.length ? (
+                <Text style={styles.muted}>
+                  No conversations found. Choose a workspace and runner to start one.
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {vm.session?.profileId ? (
+                <Text testID="companion-native-session-profile" style={styles.muted}>
+                  Configuration: {vm.session.profileId}
+                </Text>
+              ) : null}
+              {vm.resume.available ? (
+                <>
+                  <NativeProfilePicker
+                    viewModel={vm.resume.profiles}
+                    actions={actions.resume.profiles}
+                    disabled={vm.resume.busy}
+                    locked
+                  />
+                  <Pressable
+                    testID="companion-native-resume"
+                    accessibilityRole="button"
+                    style={styles.button}
+                    accessibilityState={{ disabled: !vm.resume.ready }}
+                    disabled={!vm.resume.ready}
+                    onPress={() => {
+                      void actions.resume.resume().then((session) => {
+                        if (session) onSelect(session);
+                      });
+                    }}
+                  >
+                    <Text style={styles.buttonText}>
+                      {vm.resume.busy ? 'Resuming…' : 'Resume conversation'}
+                    </Text>
+                  </Pressable>
+                </>
+              ) : null}
+              {vm.entries.map((entry) => (
+                <NativeTimelineCard key={entry.key} entry={entry} />
+              ))}
+              {vm.requests.map((request) => (
+                <NativeRequestCard
+                  key={`${request.generation}:${request.request?.id}`}
+                  event={request}
+                  attempted={vm.responses.includes(request.request?.id ?? '')}
+                  disabled={
+                    !vm.writable ||
+                    vm.busy ||
+                    request.generation !== vm.session?.generation ||
+                    (request.type === 'question.requested'
+                      ? !vm.session?.capabilities.questions
+                      : !vm.session?.capabilities.approvals)
+                  }
+                  respond={(id, response) => void actions.respond(id, response)}
+                />
+              ))}
+            </>
+          )}
+        </ScrollView>
+        {jumpLabel ? (
+          <Pressable
+            testID="companion-native-jump-latest"
+            accessibilityRole="button"
+            style={styles.jumpLatest}
+            onPress={() => {
+              setFollow(NATIVE_FOLLOW_LATEST);
+              // Instant, like Command Center: an animated scroll reports positions short of the end.
+              scroll.current?.scrollToEnd({ animated: false });
+            }}
+          >
+            <Text style={styles.buttonText}>{jumpLabel}</Text>
+          </Pressable>
+        ) : null}
+      </View>
       {selected ? (
         <View style={styles.composer}>
           {!vm.writable ? (
