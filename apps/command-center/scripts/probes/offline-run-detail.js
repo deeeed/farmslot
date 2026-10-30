@@ -8,7 +8,7 @@ const query = Reflect.get(detail, 'detailQuery');
 if (observation !== query?.state) throw new Error('Inspect the query owning the rendered detail');
 const run = detail.run;
 const root = detail.shadowRoot;
-const editor = root.querySelector('run-tag-editor');
+const editor = root.querySelector('run-tag-editor:not([kind="tickets"])');
 const commands = [...root.querySelectorAll('button')].filter((button) =>
   /^(Delete run|Refresh output)$/.test(button.textContent.trim()),
 );
