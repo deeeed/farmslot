@@ -65,62 +65,71 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
       options.setRecentImportedProfiles(
         importedProfiles.map((importedProfile) => importedProfile.profile),
       );
-      // Scanning a new code for a gateway replaces the sign-in saved for it.
-      await savePairedProfiles(importedProfiles, (importedProfile, onReplace) =>
-        saveProfile(
-          importedProfile.profile,
-          importedProfile.secret,
-          importedProfile.personSession,
-          importedProfile.verification,
-          { replacePersonLogin: true, onReplace },
-        ),
-      );
-      options.setProfileConnectionTests(
-        Object.fromEntries(
-          importedProfiles.map(({ profile }) => [
-            profile.id,
-            {
-              status: 'testing',
-              message: `Testing ${profile.url}…`,
-            },
-          ]),
-        ),
-      );
-      const reachabilityChecks = startImportedPairingProfileTests(importedProfiles);
-      const allReachability = Promise.all(reachabilityChecks);
-      const preferredReachable = await preferredReachablePairingResult(
-        importedProfiles,
-        reachabilityChecks,
-      );
-      const preferredProfile = preferredReachable?.profile;
-      if (preferredProfile && preferredReachable) {
-        await setActiveProfile(preferredProfile.id);
-        options.setUrlInput(preferredProfile.url);
-        options.setAuthMode(preferredProfile.authMode ?? 'none');
-        options.setProfileConnectionTests((current) => ({
-          ...current,
-          [preferredProfile.id]: pairingProfileTestState(preferredReachable),
-        }));
-      }
-      const importMessage = preferredProfile
-        ? `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported. Connected to ${preferredProfile.name}.`
-        : `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported, but none passed validation. The current profile is unchanged.`;
-      options.setPairingImportMessage(importMessage);
-      void allReachability.then((reachability) => {
-        options.setProfileConnectionTests(
-          Object.fromEntries(
-            reachability.map((candidate) => [
-              candidate.profile.id,
-              pairingProfileTestState(candidate),
-            ]),
+      // Scanning a new code for a gateway replaces the sign-in saved for it. Until one address
+      // answers and becomes active, the pairing can still be undone.
+      const preferredReachable = await savePairedProfiles(importedProfiles, {
+        save: (importedProfile, onReplace) =>
+          saveProfile(
+            importedProfile.profile,
+            importedProfile.secret,
+            importedProfile.personSession,
+            importedProfile.verification,
+            { replacePersonLogin: true, onReplace },
           ),
-        );
+        activate: async () => {
+          options.setProfileConnectionTests(
+            Object.fromEntries(
+              importedProfiles.map(({ profile }) => [
+                profile.id,
+                {
+                  status: 'testing',
+                  message: `Testing ${profile.url}…`,
+                },
+              ]),
+            ),
+          );
+          const reachabilityChecks = startImportedPairingProfileTests(importedProfiles);
+          void Promise.all(reachabilityChecks).then((reachability) => {
+            options.setProfileConnectionTests(
+              Object.fromEntries(
+                reachability.map((candidate) => [
+                  candidate.profile.id,
+                  pairingProfileTestState(candidate),
+                ]),
+              ),
+            );
+          });
+          const preferred = await preferredReachablePairingResult(
+            importedProfiles,
+            reachabilityChecks,
+          );
+          if (!preferred)
+            throw new Error(
+              'None of the paired addresses answered, so the previous sign-in is kept. Check the connection and pair again with a new code.',
+            );
+          // A fresh login adapter replaces the running client's, also when this profile was active.
+          await setActiveProfile(preferred.profile.id);
+          return preferred;
+        },
+        afterRollback: async (profiles) => {
+          const { activeProfileId, signedOut } = useConnectionStore.getState();
+          // The running client may still hold the adapter for the login the pairing replaced.
+          if (!signedOut && profiles.some(({ id }) => id === activeProfileId))
+            await setActiveProfile(activeProfileId);
+        },
       });
+      const preferredProfile = preferredReachable.profile;
+      options.setUrlInput(preferredProfile.url);
+      options.setAuthMode(preferredProfile.authMode ?? 'none');
+      options.setProfileConnectionTests((current) => ({
+        ...current,
+        [preferredProfile.id]: pairingProfileTestState(preferredReachable),
+      }));
+      const importMessage = `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported. Connected to ${preferredProfile.name}.`;
+      options.setPairingImportMessage(importMessage);
       options.setAdvancedGatewaySetupOpen(false);
-      if (preferredProfile) {
-        connect();
-        options.onPaired?.();
-      }
+      connect();
+      options.onPaired?.();
       setPairingScannerOpen(false);
       Alert.alert('Companion paired', importMessage);
     } catch (error) {
