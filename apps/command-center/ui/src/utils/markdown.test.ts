@@ -20,7 +20,9 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
       '',
       'Use the <details> element, not <script>alert(1)</script>.',
       '',
-      '![screenshot](https://example.com/s.png?leak=1)',
+      "![screenshot](https://example.com/s.png?leak=1) and ![A & B's](https://example.com/ab.png)",
+      '',
+      '[![CI](https://example.com/badge.svg)](https://example.com/actions)',
       '',
       '<details>',
       '<summary>Evidence</summary>',
@@ -38,6 +40,10 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
   assert.doesNotMatch(html, /<details>|<script>|<img/);
   // An image is a link the reader can choose to open; nothing is fetched on render.
   assert.match(html, /<a href="https:\/\/example.com\/s.png\?leak=1">screenshot<\/a>/);
+  assert.match(html, />A &amp; B&#39;s<\/a>/, 'alt text is escaped once');
+  // A linked image (a badge) keeps the outer link and shows its alt text.
+  assert.match(html, /<a href="https:\/\/example.com\/actions">CI<\/a>/);
+  assert.doesNotMatch(html, /badge\.svg/);
   // Raw HTML on its own lines keeps them.
   assert.match(
     html,
