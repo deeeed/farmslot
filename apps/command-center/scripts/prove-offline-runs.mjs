@@ -3141,7 +3141,7 @@ if (phase === 'detail-web') {
   const tag = `offline-detail-${randomUUID().slice(0, 20)}`;
   const browser = await detailBrowser(fixture.runId);
   const { until, cdp, route, artifacts } = browser;
-  let cold, age;
+  let cold, age, failure;
   try {
     const initial = await until(
       (value) =>
@@ -3229,11 +3229,19 @@ if (phase === 'detail-web') {
         screenshots: artifacts,
       }),
     );
-  } finally {
+  } catch (error) {
+    failure = error;
+  }
+  try {
     const current = (await rpc('run.get', { runId: fixture.runId })).run;
     if (current.tags?.includes(tag))
       await rpc('run.tags.set', { runId: fixture.runId, tags: original.tags ?? [] });
+  } catch (error) {
+    if (failure)
+      throw new AggregateError([failure, error], 'Detail proof and fixture restoration failed');
+    throw error;
   }
+  if (failure) throw failure;
   process.exit(0);
 }
 
