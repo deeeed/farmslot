@@ -19,7 +19,6 @@ import {
   type NativeSessionSendResult,
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
-import { sourceObservationAge } from '@farmslot/protocol';
 import {
   nativeHistoryCanAct,
   nativeHistoryQuery,
@@ -151,6 +150,9 @@ export class NativeSessionView extends LitElement {
   @state() private invalidDelivery = false;
   private revision = 0;
   private timer?: ReturnType<typeof setTimeout>;
+  private statusClock?: ReturnType<typeof setInterval>;
+  private readUnavailableSince?: number;
+  private inventoryCurrent = false;
   private unsubscribe?: () => void;
   private inventoryRevision = 0;
   private storageScope = '';
@@ -174,6 +176,20 @@ export class NativeSessionView extends LitElement {
   }
 
   static styles = nativeSessionStyles;
+
+  protected willUpdate() {
+    if (!this.connected || this.pollError || this.inventoryError || this.catalogError)
+      this.readUnavailableSince ??= Date.now();
+    else if (
+      isSupersededRead(this.historyObservation.error) ||
+      (this.worker
+        ? this.historyObservation.status === 'ready'
+        : this.inventoryCurrent &&
+          this.catalogCurrent &&
+          (!this.selectedId || this.historyObservation.status === 'ready'))
+    )
+      this.readUnavailableSince = undefined;
+  }
 
   protected updated(changed: PropertyValues) {
     if (
@@ -315,6 +331,8 @@ export class NativeSessionView extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    // Display ages and a sustained outage even when no producer event arrives.
+    this.statusClock = setInterval(() => this.requestUpdate(), 1000);
     document.addEventListener('fullscreenchange', this.fullscreenChanged);
     this.connected = Boolean(this.fixture) || gateway.connectionState === 'connected';
     if (!this.fixture) {
@@ -340,6 +358,7 @@ export class NativeSessionView extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    clearInterval(this.statusClock);
     document.removeEventListener('fullscreenchange', this.fullscreenChanged);
     this.revision++;
     clearTimeout(this.timer);
@@ -379,6 +398,8 @@ export class NativeSessionView extends LitElement {
     const scope = this.fixture ? 'fixture' : (getResourceWorkspaceKey() ?? '');
     if (scope !== this.storageScope) {
       this.storageScope = scope;
+      this.readUnavailableSince = undefined;
+      this.inventoryCurrent = false;
       this.revision++;
       this.selectedId = safeLsGet(this.key('selected')) ?? '';
       this.selectedNodeId = safeLsGet(this.key('selected-node')) ?? 'local';
@@ -457,6 +478,7 @@ export class NativeSessionView extends LitElement {
         observeNativeResource(
           nativeObservationQuery<NativeSessionListResult>(Methods.NATIVE_SESSION_LIST, {}, owner),
           (state) => {
+            this.inventoryCurrent = state.status === 'ready';
             this.inventoryError = state.error?.message ?? '';
             const sessions = state.data?.sessions ?? [];
             this.sessions = sessions
@@ -672,6 +694,7 @@ export class NativeSessionView extends LitElement {
     this.caughtUp = false;
     this.error = '';
     this.pollError = '';
+    this.readUnavailableSince = undefined;
     this.busy = false;
     if (!this.worker) {
       safeLsSet(this.key('selected'), id);
@@ -898,21 +921,6 @@ export class NativeSessionView extends LitElement {
       ['closed', 'failed'].includes(session.state) &&
       (!session.processPid || session.processStopped);
     return html`
-      ${heldDataIsSaved(this.historyObservation, this.connected) &&
-      this.historyObservation.observedAt !== undefined
-        ? html`<p
-            role="status"
-            data-testid="native-history-saved"
-            data-observed-at=${this.historyObservation.observedAt}
-          >
-            Saved conversation history,
-            ${sourceObservationAge(this.historyObservation.observedAt, Date.now())}. Actions wait
-            for a current read.
-          </p>`
-        : nothing}
-      ${this.historyObservation.status === 'unsupported'
-        ? html`<p role="status">Live conversation updates are unavailable on this gateway.</p>`
-        : nothing}
       ${renderNativeSessionHeader({
         worker: this.worker,
         sessions: this.sessions,
@@ -946,6 +954,11 @@ export class NativeSessionView extends LitElement {
           history.replaceState(null, '', buildHash('native', params));
         },
         readError: this.pollError || this.inventoryError || this.catalogError,
+        unavailableSince: this.readUnavailableSince,
+        observedAt: this.historyObservation.observedAt,
+        savedHistory: heldDataIsSaved(this.historyObservation, this.connected),
+        unsupported: this.historyObservation.status === 'unsupported',
+        now: Date.now(),
         refresh: () => {
           const cache = getResourceCache();
           const owner = getResourceNativeOwnerId();
@@ -967,14 +980,7 @@ export class NativeSessionView extends LitElement {
         },
       })}
       ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
-      ${this.pollError ? html`<div class="error" role="alert">${this.pollError}</div>` : nothing}
-      ${this.inventoryError
-        ? html`<div class="error" role="alert">${this.inventoryError}</div>`
-        : nothing}
-      ${this.catalogError
-        ? html`<div class="error" role="alert">${this.catalogError}</div>`
-        : nothing}
-      ${this.worker && !this.inputAllowed
+      ${this.worker && (this.taskHistory || (this.session && !this.workerControl))
         ? html`<p class="meta" data-testid="native-worker-read-only">
             ${this.taskHistory
               ? 'This task history is read-only. Slot files reflect the current workspace.'

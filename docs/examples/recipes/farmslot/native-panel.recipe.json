@@ -1,0 +1,26 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Worker conversation disclosure and stable read status",
+  "description": "Use private GATEWAY_PORT/VITE_PORT, an owned headless Agent Chrome FARMSLOT_CDP_PORT, FARMSLOT_LAYOUT_EVIDENCE and ffmpeg. Uses the real mounted consumers and observed socket/cache adapter with a controlled fixture. No native host, provider, device or gateway activation. To reproduce the original UI, select its archived FARMSLOT_LAYOUT_UI_ROOT and FARMSLOT_LAYOUT_EXPECT_SHIFT=1.",
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "FARMSLOT_LAYOUT_NATIVE_PANEL=1 node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 300000,
+        "intent": "Open the actual conversation through its shared disclosure, reload to verify the saved choice, and observe genuine protocol failure/refresh/recovery responses. Require retained transcript, a fixed status row, no raw source error, real 60-second outage admission and no native commands at 1280px and 414px. Save source-timed recordings and screenshots.",
+        "next": "result"
+      },
+      "result": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require all mounted-client assertions and owned teardown to pass.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -163,6 +163,7 @@ import {
 } from './run-detail-url-state.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
 import { collectRunInteractivePacketArtifacts } from './run-utils.js';
+import { rememberRunWorkerPanel, runWorkerPanelOpen } from './run-worker-panel-preferences.js';
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
@@ -399,7 +400,8 @@ export class RunDetail extends RunDetailState {
       this._refreshingOutput = false;
       this._visualReviewBusy = false;
       this._rereviewInFlight = false;
-      this._showTerminal = false;
+      this._showTerminal = runWorkerPanelOpen(workspaceKey, this.runId, 'terminal');
+      this._showNativeHistory = runWorkerPanelOpen(workspaceKey, this.runId, 'conversation');
       this._liveTimeoutRequestSeq++;
       this._liveTimeoutKey = '';
       this.liveTimeoutPrStatus = null;
@@ -1786,6 +1788,16 @@ export class RunDetail extends RunDetailState {
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
       _renderAgentSessions: (run) =>
         renderRunAgentSessions(run, {
+          nativeHistoryOpen: this._showNativeHistory,
+          onToggleNativeHistory: () => {
+            this._showNativeHistory = !this._showNativeHistory;
+            rememberRunWorkerPanel(
+              getResourceWorkspaceKey(),
+              this.runId,
+              'conversation',
+              this._showNativeHistory,
+            );
+          },
           actionsBlocked: this._actionsBlocked(),
           states: this._sessionStates,
           onCopy: (row, kind) => void this._copyRunnerSessionCommand(run, row, kind),
@@ -1811,6 +1823,12 @@ export class RunDetail extends RunDetailState {
           this._terminalRole = '';
         }
         this._showTerminal = !this._showTerminal;
+        rememberRunWorkerPanel(
+          getResourceWorkspaceKey(),
+          this.runId,
+          'terminal',
+          this._showTerminal,
+        );
       },
     });
     return view;
@@ -1864,6 +1882,7 @@ export class RunDetail extends RunDetailState {
     this._terminalContextId = opened.contextId;
     this._terminalRole = opened.role;
     this._showTerminal = true;
+    rememberRunWorkerPanel(getResourceWorkspaceKey(), this.runId, 'terminal', true);
     this._sessionStates = {
       ...this._sessionStates,
       [row.contextId]: {

@@ -17,6 +17,7 @@ import {
 } from '../../../packages/protocol/src/client-cache/registry.ts';
 import { mockPipelineRuns, mockRuns } from '../ui/src/dev/mock-data.ts';
 
+import { nativePanelFixture, proveNativePanel } from './native-panel-proof.mjs';
 import { proveRefetchNotices, recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
@@ -39,6 +40,7 @@ const epoch = `layout-fixture-${randomUUID()}`;
 let revision = 0;
 let mode = 'empty';
 const refetchProof = process.env.FARMSLOT_LAYOUT_REFETCH === '1';
+const nativePanelProof = process.env.FARMSLOT_LAYOUT_NATIVE_PANEL === '1';
 const legacyProof = process.env.FARMSLOT_LAYOUT_BEFORE === '1';
 const uiRoot = process.env.FARMSLOT_LAYOUT_UI_ROOT ?? path.join(source, 'apps/command-center/ui');
 assert(
@@ -46,6 +48,7 @@ assert(
   'The before proof requires an explicit archived UI',
 );
 const now = Date.now();
+const nativeFixture = nativePanelFixture(now);
 const decision = {
   id: 'layout-decision',
   title: 'Review the saved result',
@@ -70,6 +73,7 @@ const fixtureRun = {
   slotId: null,
   taskFile: null,
   decisions: [],
+  ...(nativePanelProof ? nativeFixture.run : {}),
 };
 // A resolved gate from the checked-in sample, served through the ordinary run APIs.
 const gateRun = structuredClone(
@@ -108,6 +112,7 @@ function observedRun() {
   return structuredClone(gateRun);
 }
 const values = {
+  ...(nativePanelProof ? { 'native.session.read': nativeFixture.page } : {}),
   'run.list': () => ({ runs: [refetchProof ? gateRun : fixtureRun] }),
   'run.get': () => ({ run: observedRun() }),
   'run.recipeRunsForRun': () => ({ recipeRuns: [], selectedRecipeRunId: null }),
@@ -173,6 +178,7 @@ wss.on('connection', (socket) =>
     frames.push({
       at: Date.now(),
       method: request.method,
+      ...(nativePanelProof ? { mode, revision } : {}),
       ...(request.method === 'run.get'
         ? { params: { runId: request.params?.runId, view: request.params?.view } }
         : {}),
@@ -208,7 +214,23 @@ wss.on('connection', (socket) =>
     else if (request.method === 'resource.observers.replace')
       reply.payload = { version: 1, sequence: request.params.sequence, applied: true };
     else if (request.method === 'gateway.ping') reply.payload = { ok: true };
-    else if (mode === 'error' && request.method === 'run.list' && !request.params?.active) {
+    else if (
+      nativePanelProof &&
+      request.method === 'native.session.read' &&
+      ['native-error', 'native-changed'].includes(mode)
+    ) {
+      reply.ok = false;
+      reply.error =
+        mode === 'native-error'
+          ? {
+              code: 'NATIVE_SOURCE_UNAVAILABLE',
+              message: 'Native observation source unavailable. Retry after source recovery.',
+            }
+          : {
+              code: 'RESOURCE_OBSERVATION_CHANGED',
+              message: 'The source changed during this read.',
+            };
+    } else if (mode === 'error' && request.method === 'run.list' && !request.params?.active) {
       reply.ok = false;
       reply.error = { code: 'UNAVAILABLE', message: 'Fixture read is unavailable' };
     } else if (
@@ -336,6 +358,7 @@ function transition(next) {
   mode = next;
   holdingReplies = next === 'refetch-gap';
   revision++;
+  if (nativePanelProof) nativeFixture.advance(revision);
   const changes = [
     { family: 'decisions', scope: 'farm' },
     { family: 'runs', scope: 'farm' },
@@ -344,6 +367,16 @@ function transition(next) {
       ? [
           { family: 'run', runId: 'layout-run' },
           { family: 'configuration', scope: 'farm' },
+        ]
+      : []),
+    ...(nativePanelProof
+      ? [
+          { family: 'run', runId: 'layout-run' },
+          ...(resourceDependenciesForRead(
+            'native.session.read',
+            nativeFixture.params,
+            'layout-fixture',
+          ) ?? []),
         ]
       : []),
   ].map((key) => ({ key, revision, kind: 'updated' }));
@@ -442,6 +475,18 @@ try {
       expected: 'original layout jump',
       shift,
       samples,
+    });
+  } else if (nativePanelProof) {
+    await proveNativePanel({
+      cdp,
+      target,
+      browserCall,
+      emulation,
+      transition,
+      output,
+      save,
+      frames,
+      viewport,
     });
   } else if (refetchProof) {
     await proveRefetchNotices({

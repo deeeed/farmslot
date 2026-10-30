@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Open worker conversations on request, remember their disclosure state, and keep reconnect/history status in one stable row.
+
 - Alert only for current needs-you conditions. Completed dispatches stay in their current slot/run views and monitor violations stay in history; neither produces an informational browser alert.
 
 - Keep read errors and saved ages in one notification tray with a fixed-height attention strip; current decisions clear and recur without repeated alerts or moving the page. Keep saved-gate text in one reserved row and reserve Evals status space through pending reads.

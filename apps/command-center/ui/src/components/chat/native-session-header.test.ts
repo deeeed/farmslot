@@ -30,6 +30,6 @@ test('a superseded history read shows Refreshing history rather than a source er
   assert.doesNotMatch(output, /source unavailable|Replaying history/);
   assert.match(
     litText(renderNativeSessionHeader({ ...context, connected: false })),
-    /Disconnected\. Draft and session preserved\./,
+    /Reconnecting/,
   );
 });

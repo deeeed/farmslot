@@ -9,6 +9,8 @@ import {
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
+import { nativeWorkerTargets } from '../chat/native-worker-target.js';
+import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
 import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 
 export type RunSessionCopyKind = 'reopen' | 'attach';
@@ -204,6 +206,8 @@ export function runnerSessionOpenRefusal(result: RunSessionCommandResult): strin
 }
 
 export interface RunSessionRenderContext {
+  nativeHistoryOpen: boolean;
+  onToggleNativeHistory: () => void;
   actionsBlocked?: boolean;
   states: Record<string, RunSessionRowState | undefined>;
   onCopy: (row: RunSessionRow, kind: RunSessionCopyKind) => void;
@@ -581,7 +585,20 @@ export function renderRunAgentSessions(
           </div>
         `;
       })}
-      <native-worker-history .contexts=${run.agentContexts ?? []}></native-worker-history>
+      ${nativeWorkerTargets(run.agentContexts ?? []).length
+        ? html`
+            ${renderCollapsibleSectionHeader(
+              'Conversation',
+              !ctx.nativeHistoryOpen,
+              ctx.onToggleNativeHistory,
+              { testId: 'run-native-history-toggle', className: 'worker-panel-toggle' },
+            )}
+            <native-worker-history
+              .contexts=${run.agentContexts ?? []}
+              .expanded=${ctx.nativeHistoryOpen}
+            ></native-worker-history>
+          `
+        : nothing}
     </section>
   `;
 }

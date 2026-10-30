@@ -1,14 +1,28 @@
 import { html, type TemplateResult } from 'lit';
+import { ifDefined } from 'lit/directives/if-defined.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+
+interface CollapsibleSectionHeaderOptions {
+  testId?: string;
+  className?: string;
+  disabled?: boolean;
+  title?: string;
+}
 
 export function renderCollapsibleSectionHeader(
   label: string,
   collapsed: boolean,
   onToggle?: () => void,
+  options: CollapsibleSectionHeaderOptions = {},
 ): TemplateResult {
   return html`
     <button
+      data-testid=${ifDefined(options.testId)}
+      class=${ifDefined(options.className)}
+      ?disabled=${options.disabled ?? false}
+      title=${ifDefined(options.title)}
+      aria-expanded=${String(!collapsed)}
       style="display:flex; width:100%; align-items:center; justify-content:space-between; border:1px solid ${collapsed
         ? `${colors.bgCardHover}`
         : `${colors.accent}55`}; background:${collapsed
