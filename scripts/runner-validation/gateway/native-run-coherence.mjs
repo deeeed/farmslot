@@ -1277,8 +1277,10 @@ try {
       const initialized = await wait(
         () => rpc('run.get', { runId: runtimeRunId }).run,
         (value) => {
+          // The marker stays set, so a fast later dispatch failure cannot hide it.
+          if (value.engineState?.taskInit?.status === 'initialized') return true;
           assert.notEqual(value.status, 'failed', value.error);
-          return value.engineState?.taskInit?.status === 'initialized';
+          return false;
         },
         'tmux pre-written task runtime',
       );

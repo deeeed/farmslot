@@ -640,8 +640,18 @@ if (process.argv[2] === 'serve') {
       assert.equal(publicationBase, entry.expected);
       assert.ok(checklist.includes('origin/' + entry.expected));
       assert.equal(run.engineState?.taskInit?.status, 'initialized');
+      // update-branch has no PREPARE: its dispatch step starts, then initializes the task.
       assert.ok(
-        !run.steps.find((step: { name: string }) => step.name === 'dispatch')?.startedAt,
+        !(run.agentContexts ?? []).some(
+          (context: {
+            runId?: string;
+            promptDeliveryStartedAt?: string;
+            nativeSession?: unknown;
+            runnerSessionId?: string | null;
+          }) =>
+            context.runId === run.id &&
+            (context.promptDeliveryStartedAt || context.nativeSession || context.runnerSessionId),
+        ),
         'checkpoint precedes worker launch',
       );
       json(path.join(out, entry.id + '.json'), { run, task, checklist });
