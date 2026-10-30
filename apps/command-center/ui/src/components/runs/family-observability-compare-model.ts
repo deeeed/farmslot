@@ -9,11 +9,11 @@ import { formatDuration } from './run-utils.js';
 export interface FamilyCopilotCompareRequest {
   prompt: string;
   intent: 'diagnostic-readonly';
-  runId: string;
+  runId?: string;
   sourceSurface: 'family-observability';
   contextOverride: {
     selectedFamilyId: string;
-    selectedRunId: string;
+    selectedRunId?: string;
     compareRunIds: string[];
     surfaceId: 'family-observability';
     affordances: string[];

@@ -1,6 +1,6 @@
 // eval-experiments.ts — Family observability projection of eval experiment packages
 
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -14,6 +14,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { projectTaskRoots } from '../core/config.js';
 import {
   EXPERIMENT_MANIFEST_FILENAME,
   fileExists,
@@ -224,10 +225,33 @@ async function experimentManifestProjection(
   };
 }
 
+interface ManifestEntry {
+  manifest: EvalExperimentManifest;
+  manifestPath: string;
+}
+
+/** One manifest per experiment key: the newest, or the first seen on a tie. */
+function keepNewest(entries: Map<string, ManifestEntry>, entry: ManifestEntry): void {
+  const existing = entries.get(entry.manifest.experimentKey);
+  if (!existing || existing.manifest.updatedAt < entry.manifest.updatedAt)
+    entries.set(entry.manifest.experimentKey, entry);
+}
+
+async function projectManifests(
+  entries: Map<string, ManifestEntry>,
+): Promise<EvalExperimentProjection[]> {
+  const projections = await Promise.all(
+    [...entries.values()].map(({ manifest, manifestPath }) =>
+      experimentManifestProjection(manifest, manifestPath),
+    ),
+  );
+  return projections.sort((a, b) => a.experimentId.localeCompare(b.experimentId));
+}
+
 export async function buildEvalExperimentProjections(
   familyRuns: Run[],
 ): Promise<EvalExperimentProjection[]> {
-  const byEvalKey = new Map<string, { projection: EvalExperimentProjection; updatedAt: string }>();
+  const byEvalKey = new Map<string, ManifestEntry>();
   for (const run of familyRuns) {
     const canonical = run.engineState?.evalExperiment?.experimentManifestPath;
     let raw: string | undefined;
@@ -246,14 +270,42 @@ export async function buildEvalExperimentProjections(
     }
     const parsed = JSON.parse(raw);
     if (!isEvalExperimentManifest(parsed)) continue;
-    const existing = byEvalKey.get(parsed.experimentKey);
-    if (existing && existing.updatedAt >= parsed.updatedAt) continue;
-    byEvalKey.set(parsed.experimentKey, {
-      projection: await experimentManifestProjection(parsed, manifestPath),
-      updatedAt: parsed.updatedAt,
-    });
+    keepNewest(byEvalKey, { manifest: parsed, manifestPath });
   }
-  return [...byEvalKey.values()]
-    .map((entry) => entry.projection)
-    .sort((a, b) => a.experimentId.localeCompare(b.experimentId));
+  return projectManifests(byEvalKey);
+}
+
+/**
+ * A family whose experiments have no runs yet is reachable only through the
+ * projects' eval roots: `<task root>/evals/<case>/artifacts/experiment-manifest.json`.
+ */
+export async function findReferenceOnlyExperiments(
+  familyId: string,
+  project?: string,
+  roots?: Awaited<ReturnType<typeof projectTaskRoots>>,
+): Promise<{ project: string; experiments: EvalExperimentProjection[] } | null> {
+  const byEvalKey = new Map<string, ManifestEntry>();
+  for (const { project: rootProject, root } of roots ?? (await projectTaskRoots())) {
+    if (project && rootProject !== project) continue;
+    let cases: string[];
+    try {
+      cases = await readdir(path.join(root, 'evals'));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw err;
+    }
+    for (const name of cases) {
+      const manifestPath = path.join(root, 'evals', name, EXPERIMENT_MANIFEST_RELATIVE_PATH);
+      if (!(await fileExists(manifestPath))) continue;
+      const parsed = JSON.parse(await readFile(manifestPath, 'utf8'));
+      if (isEvalExperimentManifest(parsed) && parsed.familyId === familyId)
+        keepNewest(byEvalKey, { manifest: parsed, manifestPath });
+    }
+  }
+  const [newest] = [...byEvalKey.values()].sort((a, b) =>
+    b.manifest.updatedAt.localeCompare(a.manifest.updatedAt),
+  );
+  return newest
+    ? { project: newest.manifest.project, experiments: await projectManifests(byEvalKey) }
+    : null;
 }

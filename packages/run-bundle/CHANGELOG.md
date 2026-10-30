@@ -8,7 +8,7 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 - Measure acquisition and store trees with bounded parallel filesystem calls, so run completion no longer waits 30+ minutes on a busy gateway.
 
-- Reuse existing admission reservations before scanning acquisition trees, and fail new admission scans after 30 seconds without creating a late reservation.
+- Reuse existing admission reservations before scanning acquisition trees, allow new scans two minutes on a loaded gateway, and time out without creating a late reservation.
 
 - Repair a missing gateway-written payload from its own directory.
 
