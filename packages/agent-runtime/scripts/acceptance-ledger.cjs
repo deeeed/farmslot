@@ -211,6 +211,39 @@ function setDerivedClaims(taskDir, claims) {
   return ledger;
 }
 
+/** The task-dir relative path of an existing file inside the task, or null. */
+function taskRelative(realTask, file) {
+  if (!fs.existsSync(file)) return null;
+  const relative = path.relative(realTask, fs.realpathSync(file));
+  if (
+    !relative ||
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    return null;
+  return relative.split(path.sep).join('/');
+}
+
+/**
+ * Transport one execution's engine claims (`claimsPath`) with task-relative
+ * evidence led by its trace. A repair passes the engine-selected rows; retained
+ * rows keep their original verdicts.
+ */
+function transferEngineClaims(taskDir, claimsPath, tracePath, selectedClaims) {
+  const claims = JSON.parse(fs.readFileSync(claimsPath, 'utf8'));
+  const root = path.dirname(claimsPath);
+  const realTask = fs.realpathSync(taskDir);
+  const criteria = (selectedClaims ?? claims.criteria).map((claim) => ({
+    ...claim,
+    evidence: [...new Set([tracePath, ...claim.evidence.map((file) => path.resolve(root, file))])]
+      .map((file) => taskRelative(realTask, file))
+      .filter((file) => file !== null),
+  }));
+  setDerivedClaims(taskDir, { ...claims, criteria });
+  return criteria;
+}
+
 /**
  * The retained package a task row came from: the directory of its transported
  * trace whose engine claims still name the row's execution, or null.
@@ -452,6 +485,7 @@ module.exports = {
   rowPackageDir,
   setDerivedClaims,
   summarizeAcceptanceStatus,
+  transferEngineClaims,
   validateAcceptanceStatusLedger,
   writeAcceptanceLedger,
 };

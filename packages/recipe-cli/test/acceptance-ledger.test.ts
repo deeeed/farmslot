@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -33,6 +34,7 @@ const acceptanceCli = require('@farmslot/agent-runtime/scripts/acceptance-cli.cj
 };
 const attemptSelection = require('@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs') as {
   recordRecipeAttemptSelection(taskDir: string, artifactDir: string): boolean;
+  selectRecipeAttempt(taskDir: string, artifactDir: string): Promise<boolean>;
 };
 const criteria = ['The command observes one.', 'A second expectation is required.'];
 const manifest: RecipeActionManifestDocument = {
@@ -293,6 +295,92 @@ test('a repair ledger passes the evidence review terminal gate with its retained
   assert.deepEqual(await gate.pendingClaimReviewIssues(taskDir, unbound), [
     'Task claim AC-1 differs from its selected engine claim.',
   ]);
+  // Re-selecting the repair keeps the engine selection, retained row included.
+  assert.ok(await attemptSelection.selectRecipeAttempt(taskDir, repairDir));
+  const reselected = JSON.parse(
+    fs.readFileSync(path.join(taskDir, 'artifacts/acceptance-status.json'), 'utf8'),
+  ) as RecipeClaimLedger;
+  assert.deepEqual(reselected, ledger);
+  assert.deepEqual(await gate.pendingClaimReviewIssues(taskDir, reselected), []);
+});
+
+test('re-selecting an earlier attempt moves the task verdicts with the selection', async (t) => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'reselect-task-'));
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+  const taskDir = path.join(target, 'task');
+  fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  fs.writeFileSync(
+    path.join(taskDir, 'inputs/handoff.json'),
+    JSON.stringify({ task: { acceptanceCriteria: criteria } }),
+  );
+  const claims = criteria.map((claim, index) => ({ id: `AC-${index + 1}`, claim }));
+  const runner = createRecipeRunner({
+    actionManifest: manifest,
+    adapters: createStandardCoreAdapters({ actions: ['command', 'assert_output', 'end'] }),
+    defaultSource: { kind: 'operator', trust: 'trusted', name: 'test' },
+  });
+  // Each pass selects itself as a task run does: the proof, then a later
+  // regression recipe that proves nothing.
+  const attempt = async (name: string, proves: string[]) => {
+    const dir = path.join(taskDir, 'artifacts/recipe-runs', name);
+    const result = await runner.run({
+      projectRoot: target,
+      artifactsDir: dir,
+      claims,
+      recipeDocument: {
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        proofTargets: claims.filter(({ id }) => proves.includes(id)),
+        workflow: {
+          entry: 'observe',
+          nodes: {
+            observe: {
+              action: 'command',
+              cmd: 'printf one',
+              intent: 'Read the actual command result.',
+              next: proves.length ? 'check' : 'done',
+            },
+            ...(proves.length
+              ? {
+                  check: {
+                    action: 'assert_output',
+                    source: 'observe',
+                    contains: 'one',
+                    proves,
+                    intent: 'The observed result proves the claim.',
+                    next: 'done',
+                  },
+                }
+              : {}),
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    });
+    assert.ok(attemptSelection.recordRecipeAttemptSelection(taskDir, dir));
+    recordRecipeAcceptance(taskDir, target, result);
+    return { dir, result };
+  };
+  const proof = await attempt('proof', ['AC-1']);
+  await attempt('regression', []);
+  // The operator command re-selects the proof attempt.
+  const helper = require.resolve('@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs');
+  execFileSync(process.execPath, [helper, taskDir, proof.dir]);
+  const ledger = JSON.parse(
+    fs.readFileSync(path.join(taskDir, 'artifacts/acceptance-status.json'), 'utf8'),
+  ) as RecipeClaimLedger;
+  assert.equal(ledger.recipeRunId, proof.result.claims.recipeRunId);
+  assert.deepEqual(
+    ledger.criteria.map(({ id, verdict }) => [id, verdict]),
+    [
+      ['AC-1', 'proven'],
+      ['AC-2', 'missing'],
+    ],
+  );
+  assert.equal(ledger.criteria[0]?.evidence[0], 'artifacts/recipe-runs/proof/trace.json');
+  const gate = (await import(path.join(path.dirname(helper), 'claim-review-gate.mjs'))) as {
+    pendingClaimReviewIssues(taskDir: string, ledger: RecipeClaimLedger): Promise<string[]>;
+  };
+  assert.deepEqual(await gate.pendingClaimReviewIssues(taskDir, ledger), []);
 });
 
 test('a QA task merges real case executions and passes the evidence review terminal gate', async (t) => {
