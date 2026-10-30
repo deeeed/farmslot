@@ -263,12 +263,13 @@ if (process.argv[2] === 'serve') {
     const address = ports.address();
     assert.ok(address && typeof address !== 'string');
     await new Promise<void>((resolve) => ports.close(() => resolve()));
-    // Hold only scheduling after the real writer returns, so public cancellation
-    // can stop before preparation. No outcome or persisted value is changed.
+    // Hold only scheduling once the task initializes in prepare's skip branch
+    // (ADR-068 Amendment 7), so public cancellation can stop before worker launch.
+    // No outcome or persisted value is changed.
     const loader = path.join(scratch, 'observe.mjs');
     writeFileSync(
       loader,
-      `import {registerHooks} from 'node:module';import assert from 'node:assert/strict';registerHooks({load(url,context,next){const result=next(url,context);if(!url.endsWith('/services/gateway/src/run-engine/orchestrator.ts'))return result;const before=String(result.source);const after=before.replace('return executeWriteTaskStep(runId, run, { broadcastFn, stepPartialIO });',${JSON.stringify(`{ const result = await executeWriteTaskStep(runId, run, {broadcastFn,stepPartialIO}); const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.written','written'); const until=Date.now()+90000; while(!fs.existsSync(${JSON.stringify(out)}+'/'+runId+'.release')) { if(Date.now()>until)throw new Error('Proof controller did not cancel writer checkpoint'); await new Promise(resolve=>setTimeout(resolve,50)); } return result; }`)});assert.notEqual(after,before);return {...result,source:after};}});`,
+      `import {registerHooks} from 'node:module';import assert from 'node:assert/strict';registerHooks({load(url,context,next){const result=next(url,context);if(!url.endsWith('/services/gateway/src/run-engine/task-sync.ts'))return result;const before=String(result.source);const done='await rm(path.join(taskDir, TASK_INIT_INPUT), { force: true });';const after=before.replace(done,done+${JSON.stringify(`const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.written','written'); const until=Date.now()+90000; while(!fs.existsSync(${JSON.stringify(out)}+'/'+runId+'.release')) { if(Date.now()>until)throw new Error('Proof controller did not cancel initialization checkpoint'); await new Promise(resolve=>setTimeout(resolve,50)); }`)});assert.notEqual(after,before);return {...result,source:after};}});`,
     );
     env = {
       ...env,
@@ -315,20 +316,24 @@ if (process.argv[2] === 'serve') {
       const criteria = ['HANDOFF-103', 'HANDOFF-104'].includes(entry.ticket)
         ? []
         : expected.acceptanceCriteria;
-      rpc('run.replayStep', { runId: entry.id, stepName: 'write-task', triggeredBy: 'operator' });
+      rpc('run.replayStep', {
+        runId: entry.id,
+        stepName: 'write-task',
+        triggeredBy: 'operator',
+        skipPrepare: true,
+      });
       await wait(() => {
         const run = readRun(entry.id);
         if (run.status === 'failed') throw new Error(run.error);
         return existsSync(path.join(out, entry.id + '.written'));
-      }, 'production write-task');
+      }, 'production write-task and task initialization');
       const run = readRun(entry.id);
-      for (const step of ['prepare', 'dispatch']) {
-        assert.equal(
-          run.steps.find((candidate) => candidate.name === step)?.startedAt,
-          undefined,
-          'checkpoint precedes preparation and worker launch',
-        );
-      }
+      assert.equal(run.engineState?.taskInit?.status, 'initialized');
+      assert.equal(
+        run.steps.find((candidate) => candidate.name === 'dispatch')?.startedAt,
+        undefined,
+        'checkpoint precedes worker launch',
+      );
       assert.deepEqual(run.ticketData?.acceptanceCriteria, criteria);
       assert.ok(run.taskFile);
       const task = readFileSync(run.taskFile, 'utf8');
@@ -354,6 +359,7 @@ if (process.argv[2] === 'serve') {
         'services/gateway/src/external/jira.ts',
         'services/gateway/src/external/github.ts',
         'services/gateway/src/run-engine/task-steps.ts',
+        'services/gateway/src/run-engine/task-sync.ts',
         'scripts/runner-validation/gateway/acceptance-handoff.mts',
       ].map((file) => [
         file,
@@ -370,7 +376,7 @@ if (process.argv[2] === 'serve') {
         'cached empty criteria are recovered by production write-task',
         'stored run, formal task and handoff match authored criteria',
         'explicit empty heading and label suppress retired criteria',
-        'public cancel precedes preparation/worker launch',
+        'task initializes after write-task; public cancel precedes worker launch',
       ],
       limits: [
         'Temporary local Jira source transports authored input; real gateway/RPC and writer derive all outputs. Existing tmux server only, one detached owned session. No UI target, HUD not applicable.',

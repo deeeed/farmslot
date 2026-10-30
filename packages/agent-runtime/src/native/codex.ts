@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import {
   nativeResultJsonSchema,
   type NativeSessionResponse,
+  type NativeSessionTool,
   type NativeStructuredResult,
   nativeStructuredResult,
   PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
@@ -54,6 +55,26 @@ function wireString(value: unknown): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+/** What a Codex item does: its kind, command line and files. */
+function codexToolKind(
+  itemType: string,
+  item: Record<string, unknown>,
+): Pick<NativeSessionTool, 'kind' | 'command' | 'paths'> {
+  if (itemType === 'commandExecution') {
+    const command = optionalString(item.command);
+    return { kind: 'command', ...(command ? { command } : {}) };
+  }
+  if (itemType === 'fileChange') {
+    const paths = (Array.isArray(item.changes) ? item.changes : []).flatMap((change: unknown) => {
+      const path =
+        change && typeof change === 'object' ? (change as { path?: unknown }).path : undefined;
+      return typeof path === 'string' ? [path] : [];
+    });
+    return { kind: 'file-edit', ...(paths.length ? { paths } : {}) };
+  }
+  return { kind: itemType === 'webSearch' ? 'web' : 'other' };
 }
 
 function questions(value: unknown) {
@@ -206,6 +227,7 @@ export const codexNativeAdapter: NativeAdapter = {
                 input: item.command ?? item.arguments ?? item.changes,
                 output: item.aggregatedOutput ?? item.result,
                 status: optionalString(item.status),
+                ...codexToolKind(itemType, item),
               };
               const itemId = wireString(item.id);
               if (message.method === 'item/started') pendingTools.set(itemId, tool);

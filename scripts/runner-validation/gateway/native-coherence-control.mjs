@@ -224,9 +224,9 @@ const controls = {
     'const taskFile = opts.task',
   ],
   runtime: [
-    'services/gateway/src/run-engine/task-steps.ts',
-    /await initializeExistingTaskRuntime\(current\)/,
-    'void current',
+    'services/gateway/src/run-engine/task-sync.ts',
+    /else await initializeExistingTaskRuntime\(run\)/,
+    'else void run',
   ],
   adapters: [
     'packages/recipe-runner/src/core/library.ts',

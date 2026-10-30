@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import {
   nativeResultJsonSchema,
   type NativeSessionResponse,
+  type NativeSessionTool,
   type NativeStructuredResult,
   nativeStructuredResult,
   PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
@@ -29,6 +30,40 @@ export function claudeResumeUnavailableReason(version: string): string | undefin
 
 function record(value: unknown): JsonRecord {
   return value !== null && typeof value === 'object' ? (value as JsonRecord) : {};
+}
+
+/** What a Claude Code tool call does: its kind, command line and files. */
+function claudeToolKind(
+  name: string,
+  input: unknown,
+): Pick<NativeSessionTool, 'kind' | 'command' | 'paths'> {
+  const value = record(input);
+  const path = [value.file_path, value.notebook_path, value.path].find(
+    (item): item is string => typeof item === 'string',
+  );
+  const paths = path ? { paths: [path] } : {};
+  switch (name) {
+    case 'Bash':
+      return {
+        kind: 'command',
+        ...(typeof value.command === 'string' ? { command: value.command } : {}),
+      };
+    case 'Read':
+      return { kind: 'file-read', ...paths };
+    case 'Edit':
+    case 'MultiEdit':
+    case 'Write':
+    case 'NotebookEdit':
+      return { kind: 'file-edit', ...paths };
+    case 'Grep':
+    case 'Glob':
+      return { kind: 'search', ...paths };
+    case 'WebFetch':
+    case 'WebSearch':
+      return { kind: 'web' };
+    default:
+      return { kind: 'other' };
+  }
 }
 
 function textContent(content: unknown): string | undefined {
@@ -342,6 +377,7 @@ export const claudeNativeAdapter: NativeAdapter = {
               tool: {
                 name: typeof tool.name === 'string' ? tool.name : 'Claude tool',
                 input: tool.input,
+                ...claudeToolKind(typeof tool.name === 'string' ? tool.name : '', tool.input),
               },
               data: tool,
             });

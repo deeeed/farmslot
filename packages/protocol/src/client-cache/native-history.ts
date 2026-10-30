@@ -4,12 +4,15 @@ import type {
   NativeSessionReadResult,
   NativeSessionResponse,
   NativeSessionTargetParams,
+  NativeSessionTool,
+  NativeToolKind,
 } from '../rpc/native-session.js';
 import { Methods } from '../rpc/registry.js';
 
 import { canActOn } from './held-data.js';
 import type { ResourceReadStamp } from './keys.js';
 import { type ResourceQuery, resourceQuery, type ResourceReadMethod } from './registry.js';
+import { terminalLinesFromText } from './terminal-text.js';
 import type { ResourceQueryState, ResourceReadResult } from './types.js';
 
 export interface NativeTimelineEntry {
@@ -69,12 +72,14 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
             name: started.tool?.name ?? completed.tool?.name ?? 'Tool',
           },
         };
+        // A runner can name the command or files only after the call started (Cursor does).
+        previous.text = nativeToolLabel(previous.event.tool);
       } else {
         const entry: NativeTimelineEntry = {
           key: event.sequence,
           kind: 'tool',
           event,
-          text: event.tool?.name ?? 'Tool',
+          text: nativeToolLabel(event.tool),
         };
         entries.push(entry);
         if (identity) tools.set(identity, entry);
@@ -568,10 +573,16 @@ export function nativeMessagePreview(text: string): NativeMessagePreview | undef
   if (body.length <= NATIVE_MESSAGE_COLLAPSE_CHARS && lines.length <= NATIVE_MESSAGE_COLLAPSE_LINES)
     return undefined;
   const head = lines.slice(0, NATIVE_MESSAGE_PREVIEW_LINES).join('\n');
-  if (head.length <= NATIVE_MESSAGE_PREVIEW_CHARS) return { text: head, lines: lines.length };
-  // Cut inside a line: mark it, without splitting a surrogate pair.
-  const cut = head.slice(0, NATIVE_MESSAGE_PREVIEW_CHARS).replace(/[\uD800-\uDBFF]$/, '');
-  return { text: `${cut.trimEnd()}…`, lines: lines.length };
+  return { text: nativeClip(head, NATIVE_MESSAGE_PREVIEW_CHARS), lines: lines.length };
+}
+
+/** At most `max` characters, then "…" where it was cut, never splitting a surrogate pair. */
+function nativeClip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text
+    .slice(0, max)
+    .replace(/[\uD800-\uDBFF]$/, '')
+    .trimEnd()}…`;
 }
 
 /** Only the reader's own messages collapse; assistant, tool and status entries show in full. */
@@ -609,7 +620,7 @@ export function nativeWork(events: NativeSessionEvent[]): NativeWork | undefined
   const tools = new Map<string, string>();
   for (const event of events) {
     if (event.sequence <= turn.sequence || !event.nativeId || !event.tool) continue;
-    if (event.type === 'tool.started') tools.set(event.nativeId, event.tool.name);
+    if (event.type === 'tool.started') tools.set(event.nativeId, nativeToolLabel(event.tool));
     else if (event.type === 'tool.completed') tools.delete(event.nativeId);
   }
   return { since: Date.parse(turn.at), tool: [...tools.values()].at(-1) };
@@ -629,6 +640,93 @@ function nativeElapsed(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+const NATIVE_TOOL_LABEL_CHARS = 120;
+const NATIVE_TOOL_LABEL_FILES = 3;
+// Fits a tool card's box without scrolling, so the end of the output is what the reader sees.
+const NATIVE_TOOL_OUTPUT_LINES = 10;
+const NATIVE_COMMAND_CHARS = 200;
+// "Change", not "Edit": the kind also covers creating, deleting and moving a file.
+const NATIVE_TOOL_VERBS: Partial<Record<NativeToolKind, string>> = {
+  command: 'Run',
+  'file-edit': 'Change',
+  'file-read': 'Read',
+  search: 'Search',
+};
+
+/**
+ * A tool call as a reader reads it: "Run npm test", "Change a.ts, b.ts", "Read a.ts", "Search src",
+ * at most 120 characters before an ellipsis. A tool whose adapter gave no kind or subject keeps the
+ * runner's own name.
+ */
+export function nativeToolLabel(tool: NativeSessionTool | undefined): string {
+  if (!tool) return 'Tool';
+  const names = (tool.paths ?? []).map(
+    (path) => path.replace(/\/+$/, '').split('/').at(-1) || path,
+  );
+  const files =
+    names.length > NATIVE_TOOL_LABEL_FILES
+      ? `${names.slice(0, NATIVE_TOOL_LABEL_FILES).join(', ')} and ${names.length - NATIVE_TOOL_LABEL_FILES} more`
+      : names.join(', ');
+  const verb = tool.kind && NATIVE_TOOL_VERBS[tool.kind];
+  const subject = tool.kind === 'command' ? tool.command?.trim().split(/\r?\n/)[0] : files;
+  if (!verb || !subject) return tool.name;
+  return nativeClip(`${verb} ${subject}`, NATIVE_TOOL_LABEL_CHARS);
+}
+
+/**
+ * A command card's text: "$ npm test", then the last 10 lines it printed, with "… 12 earlier lines"
+ * above them; its raw input and output stay one tap away. Undefined for any other tool, whose card
+ * shows its raw input and output.
+ */
+export function nativeCommandText(tool: NativeSessionTool | undefined): string | undefined {
+  if (tool?.kind !== 'command' || !tool.command) return undefined;
+  // One line of the command: a heredoc would push the output out of view. All of it is in Raw.
+  const lines = tool.command.trim().split(/\r?\n/);
+  const command = `$ ${nativeClip(lines.length > 1 ? `${lines[0]} …` : lines[0], NATIVE_COMMAND_CHARS)}`;
+  if (tool.output === undefined) return command;
+  const text = nativeOutputText(tool.output);
+  // Output that is not text would look like no output here; its raw card shows it.
+  if (text === undefined) return undefined;
+  const output = terminalLinesFromText(text.replace(/[\r\n]+$/, ''));
+  if (!output.join('')) return command;
+  const hidden = Math.max(0, output.length - NATIVE_TOOL_OUTPUT_LINES);
+  return [
+    command,
+    ...(hidden ? [`… ${hidden} earlier ${hidden === 1 ? 'line' : 'lines'}`] : []),
+    ...output.slice(hidden),
+  ].join('\n');
+}
+
+/**
+ * Runners return output as a string, as text blocks (`{ text }` or `{ content: { text } }`), or as a
+ * process result (`{ stdout, stderr }`).
+ */
+function nativeOutputText(output: unknown): string | undefined {
+  if (typeof output === 'string') return output;
+  if (output && typeof output === 'object' && !Array.isArray(output)) {
+    const { stdout, stderr } = output as Record<string, unknown>;
+    const streams = [stdout, stderr].filter(
+      (stream): stream is string => typeof stream === 'string',
+    );
+    if (!streams.length) return undefined;
+    return streams
+      .map((stream) => stream.replace(/[\r\n]+$/, ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (!Array.isArray(output)) return undefined;
+  const texts = output.flatMap((block: unknown) => {
+    const value = block && typeof block === 'object' ? (block as Record<string, unknown>) : {};
+    const content =
+      value.content && typeof value.content === 'object'
+        ? (value.content as Record<string, unknown>)
+        : {};
+    const text = typeof value.text === 'string' ? value.text : content.text;
+    return typeof text === 'string' ? [text] : [];
+  });
+  return texts.length ? texts.join('\n') : undefined;
 }
 
 export type NativeTimelineRow =

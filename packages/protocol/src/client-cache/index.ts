@@ -11,6 +11,7 @@ export * from './prefetch.js';
 export * from './registry.js';
 export { RUN_LIST_COLLECTION_ID, type RunListCollectionData } from './run-list-versions.js';
 export * from './store.js';
+export * from './terminal-text.js';
 export {
   createResourceCacheTransport,
   type ResourceClientConnection,

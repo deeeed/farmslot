@@ -86,7 +86,11 @@ test('artifact-only completion persists real report, frozen SHA and findings wit
   assert.equal(result.reviewSnapshot?.headSha, 'a'.repeat(40));
   assert.equal(result.recommendation, 'REQUEST_CHANGES');
   assert.equal(result.lineComments[0].body, 'Cancel the trace');
-  assert.equal(getRun(run.id)?.decisions.length, 0);
+  // The finished worker's output review is the only decision; nothing asks to publish.
+  assert.deepEqual(
+    getRun(run.id)?.decisions.map((decision) => decision.payload?.kind),
+    ['output-review'],
+  );
   assert.deepEqual(getRun(run.id)?.reviewResult, result);
   const before = copies;
   assert.equal(await recordArtifactOnlyReviewResult(run.id), result);

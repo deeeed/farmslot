@@ -60,16 +60,11 @@ export async function hostedTaskCommand(slot: SlotVars, args: readonly string[])
   );
 }
 
-/** The gateway transports task data and mirrors the one producer's final bytes. */
-export async function initializeHostedTaskOnSlot(
-  slot: SlotVars,
-  gatewayTaskDir: string,
-  input: HostedTaskInput,
-): Promise<ExecutionTemplateReference> {
-  const requestPath = path.posix.join(input.task.taskDir, `.task-init-${randomUUID()}.json`);
+/** The private request `internal task-init` consumes, refused above its 8 MiB bound. */
+export function hostedTaskRequest(slotId: string, input: HostedTaskInput): string {
   const request = JSON.stringify({
     version: 1,
-    slotId: slot.slotId,
+    slotId,
     binding: input.binding,
     task: input.task,
     template: {
@@ -83,6 +78,17 @@ export async function initializeHostedTaskOnSlot(
   });
   if (Buffer.byteLength(request) > 8 * 1024 * 1024)
     throw new Error('Hosted task request exceeds 8 MiB.');
+  return request;
+}
+
+/** The gateway transports task data and mirrors the one producer's final bytes. */
+export async function initializeHostedTaskOnSlot(
+  slot: SlotVars,
+  gatewayTaskDir: string,
+  input: HostedTaskInput,
+): Promise<ExecutionTemplateReference> {
+  const requestPath = path.posix.join(input.task.taskDir, `.task-init-${randomUUID()}.json`);
+  const request = hostedTaskRequest(slot.slotId, input);
   const hadReceipt = await slotFileExists(
     slot,
     path.posix.join(input.task.taskDir, 'artifacts/harness-provenance.json'),

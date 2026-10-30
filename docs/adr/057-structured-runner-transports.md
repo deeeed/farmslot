@@ -298,3 +298,23 @@ Hosts keep their loaded code until stopped, so a session started on an older hos
 ### Public surface
 
 One optional field, `NativeSessionEvent.response`, in `@farmslot/protocol`. No RPC, CLI flag or harness change. `@farmslot/agent-runtime` sets it, so it needs a release; native hosts started after the upgrade record it. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) defines the boundary.
+
+## Amendment 8: normalized tool kinds, 2026-10-31
+
+**Status:** Proposed (the lead scheduled it after Amendment 7 on 2026-10-31). Accepted on the lead's approval.
+
+### Decision
+
+`NativeSessionEvent.tool` gains three optional fields, set by each runner adapter: `kind` (`command`, `file-edit`, `file-read`, `search`, `web` or `other`), `command` (the command line a `command` tool runs) and `paths` (the files or directories a tool reads, changes or searches). `name` stays the runner's own tool name. An adapter that cannot tell leaves `kind` out, and clients treat it like `other`.
+
+Clients read tool calls through these fields: "Run npm test", "Change a.ts, b.ts", "Read a.ts" or "Search src" in the tool row and the working status. A command's card shows what it ran and the last lines it printed, with its raw input and output one tap away. A tool without a kind or subject keeps the runner's name, and every tool but a command keeps its raw input and output as its card.
+
+### Rationale and consequences
+
+`tool.name` is runner-native (Claude `Bash`, Codex `commandExecution`), so clients could only show runner vocabulary or branch on runner names, which this ADR rules out. Each adapter already knows its runner's tools, so the mapping lives there.
+
+Hosts keep their loaded code until stopped, so a session started on an older host shows runner names, as before.
+
+### Public surface
+
+`NativeSessionTool` and `NativeToolKind` in `@farmslot/protocol`, with the shared presenters `nativeToolLabel` and `nativeCommandText` in its client cache. No RPC, CLI flag or harness change. `@farmslot/agent-runtime` sets the fields, so it needs a release. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) lists each adapter's mapping.
