@@ -13,14 +13,25 @@ export function acPanelCase() {
 
 export function acPanelRun(mode, run) {
   const { runId, slotId } = acPanelCase();
+  const written = mode.startsWith('ac-written');
+  // Unwritten: write-task is still running. Written: it completed and prepare runs next.
+  const current = run.steps.findIndex((step) => step.name === (written ? 'prepare' : 'write-task'));
+  assert(current > 0, 'The fixture flow must contain write-task and prepare');
   return {
     ...run,
     status: 'preparing',
     id: runId,
     familyId: runId,
     slotId,
-    taskFile: mode.startsWith('ac-written') ? 'tasks/layout/TASK.md' : null,
+    taskFile: written ? 'tasks/layout/TASK.md' : null,
     agentContexts: [],
+    steps: run.steps.map((step, index) =>
+      index < current
+        ? step
+        : index === current
+          ? { name: step.name, status: 'running', startedAt: run.steps[index - 1].completedAt }
+          : { name: step.name, status: 'pending' },
+    ),
   };
 }
 
@@ -63,6 +74,15 @@ export async function proveAcPanel({
     assert.fail(label + ': ' + JSON.stringify(value));
   }
   const { width: caseWidth, runId } = acPanelCase();
+  // Each accepted state stays on screen long enough to read in the recording.
+  async function shot(state) {
+    await delay(1000);
+    await cdp(
+      'screenshot',
+      target,
+      path.join(output, `ac-panel-${before ? 'before' : 'after'}-${caseWidth}-${state}.png`),
+    );
+  }
   await cdp('eval', target, `location.hash='run/${runId}';return true;`);
   const results = [];
   for (const width of [caseWidth]) {
@@ -94,11 +114,7 @@ export async function proveAcPanel({
             (before ? v.error.includes('No task file for slot') && v.errorVisible : !v.panel),
           'unwritten',
         );
-        await cdp(
-          'screenshot',
-          target,
-          path.join(output, `ac-panel-${before ? 'before' : 'after'}-${width}-unwritten.png`),
-        );
+        await shot('unwritten');
         if (!before)
           assert(
             !frames.some((f) => f.method === 'task.progress' && !f.mode.startsWith('ac-written')),
@@ -115,6 +131,7 @@ export async function proveAcPanel({
             frames.some((f) => f.method === 'task.progress' && f.revision === revision),
           'written',
         );
+        await shot('written');
         const movement = written.nextTop - unwritten.nextTop;
         await save(`${width}-arrival`, { unwritten, written, movement });
         if (!before)
@@ -124,11 +141,13 @@ export async function proveAcPanel({
           (v) => v.error.includes('Invalid JSON') && v.errorVisible,
           'real-read-error',
         );
+        await shot('real-read-error');
         transition('ac-written-recovered');
         const recovered = await until(
           (v) => v.panel && !v.error && v.counts.includes('0/1 assessed'),
           'recovered',
         );
+        await shot('recovered');
         results.push({ width, unwritten, written, movement, failed, recovered });
       },
     });

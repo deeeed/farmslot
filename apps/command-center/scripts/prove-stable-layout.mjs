@@ -758,7 +758,11 @@ if (failure || cleanupFailures.length)
 console.log(
   JSON.stringify({
     result: 'PASS',
-    widths: refetchProof && process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1' ? [1280] : [1280, 414],
+    widths: acPanelProof
+      ? [acCase.width]
+      : refetchProof && process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1'
+        ? [1280]
+        : [1280, 414],
     observationRequests: frames.length,
     scope: 'isolated protocol fixture presentation',
   }),
