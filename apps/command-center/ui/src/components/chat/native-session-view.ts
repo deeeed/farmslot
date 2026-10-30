@@ -1425,14 +1425,7 @@ ${JSON.stringify(
                     ${this.localCommand &&
                     !nativeMessageShown(this.transcript.events, this.localCommand.commandId)
                       ? html`<article class="user">
-                          <span class="meta"
-                            >You ·
-                            ${nativeDeliveryLabel(
-                              this.receipts.find(
-                                (receipt) => receipt.commandId === this.localCommand?.commandId,
-                              ),
-                            )}</span
-                          >
+                          <span class="meta">You · ${nativeDeliveryLabel(lastReceipt)}</span>
                           <div class="text">
                             ${this.renderMessageBody(
                               this.localCommand.text,

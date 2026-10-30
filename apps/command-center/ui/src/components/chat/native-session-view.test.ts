@@ -3,6 +3,16 @@ import { mock, test } from 'node:test';
 
 import type { NativeCommandReceipt, NativeSessionReadResult } from '@farmslot/protocol';
 
+// The view keeps its command and draft in localStorage, which node lacks.
+const stored = new Map<string, string>();
+Object.assign(globalThis, {
+  localStorage: {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => void stored.set(key, value),
+    removeItem: (key: string) => void stored.delete(key),
+  },
+});
+
 // The workspace pane pulls CSS and Monaco that node can't load; the gateway client opens sockets.
 mock.module('./native-workspace.js', { namedExports: {} });
 mock.module('../../gateway-client.js', { namedExports: { gateway: {} } });
@@ -14,15 +24,16 @@ interface View {
   draft: string;
   localCommand?: { commandId: string; text: string };
   poll(): Promise<void>;
+  sessionKey(suffix: string): string;
 }
 
 const text = 'Then reply with only the word NEXT.';
 
-function page(receipt: NativeCommandReceipt): NativeSessionReadResult {
+function page(receipt: NativeCommandReceipt, generation = 'generation'): NativeSessionReadResult {
   return {
     session: {
       id: 'session',
-      generation: 'generation',
+      generation,
       hostPid: 0,
       runner: 'fixture',
       nativeSessionId: 'conversation',
@@ -54,7 +65,7 @@ function page(receipt: NativeCommandReceipt): NativeSessionReadResult {
 }
 
 // Built from the prototype so no DOM or render cycle is needed; one fixture read, no rescheduling.
-function makeView(receipt: NativeCommandReceipt, draft: string): View {
+function makeView(receipt: NativeCommandReceipt, draft: string, generation?: string): View {
   const view = Object.create(NativeSessionView.prototype) as View;
   Object.defineProperty(view, 'isConnected', { value: true });
   Object.defineProperty(view, 'updateComplete', { value: Promise.resolve(true) });
@@ -62,7 +73,8 @@ function makeView(receipt: NativeCommandReceipt, draft: string): View {
     requestUpdate: () => undefined,
     schedule: () => undefined,
     followTimeline: () => undefined,
-    fixture: { read: async () => page(receipt) },
+    fixture: { read: async () => page(receipt, generation) },
+    storageScope: 'fixture',
     selectedId: 'session',
     selectedNodeId: 'local',
     connected: true,
@@ -79,6 +91,8 @@ function makeView(receipt: NativeCommandReceipt, draft: string): View {
       text,
     },
   });
+  stored.clear();
+  stored.set(view.sessionKey('command:session'), JSON.stringify(view.localCommand));
   return view;
 }
 
@@ -96,10 +110,27 @@ test('a queued message the session closed before taking goes back to the compose
   await view.poll();
   assert.equal(view.localCommand, undefined);
   assert.equal(view.draft, `${text}\n\ntyped meanwhile`);
+  assert.equal(stored.get(view.sessionKey('draft:session')), view.draft);
+  assert.equal(stored.has(view.sessionKey('command:session')), false);
 });
 
 test('a delivered message that failed stays out of the composer', async () => {
   const view = makeView(receipt(true), '');
+  await view.poll();
+  assert.equal(view.localCommand, undefined);
+  assert.equal(view.draft, '');
+  assert.equal(stored.has(view.sessionKey('draft:session')), false);
+});
+
+test('a queued message a resume carried into the new generation stays out of the composer', async () => {
+  // The host may still deliver it: its receipt moved to the new generation, still queued.
+  const carried = {
+    ...receipt(false),
+    generation: 'resumed',
+    state: 'pending' as const,
+    queued: true,
+  };
+  const view = makeView(carried, '', 'resumed');
   await view.poll();
   assert.equal(view.localCommand, undefined);
   assert.equal(view.draft, '');
