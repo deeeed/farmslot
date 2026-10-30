@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs';
-import { copyFile, cp, mkdir } from 'node:fs/promises';
+import { copyFile, cp, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 
-import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
+import { HANDOFF_INPUT, readTaskProvenance } from '@farmslot/agent-runtime';
+import { DEFAULT_TASK_DIR, type TemplateProvenance } from '@farmslot/protocol';
 
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { execLocal, isLocal } from '../core/exec.js';
@@ -13,8 +14,10 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
-import { getRun } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { initializeExistingTaskRuntime } from '../tasks/existing-runtime.js';
 import { copyPreparedTaskRootSidecars } from '../tasks/sidecars.js';
+import { initializeWrittenTask, TASK_INIT_INPUT } from '../tasks/writer.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';
 
@@ -105,8 +108,67 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
   } catch (err) {
     // Push failures must surface — workers depend on inputs/ and assets/ being
     // present, and silent loss leads to opaque downstream failures (missing
-    // review-input artifacts, unresolved fixtures). The caller (startRun's
-    // post-WRITE_TASK hook) propagates this as a step failure.
+    // review-input artifacts, unresolved fixtures). The caller (task
+    // initialization in PREPARE or DISPATCH) propagates this as a step failure.
     throw new Error(`[run-engine] task file copy to slot failed: ${(err as Error).message}`);
   }
+}
+
+async function readTemplateProvenanceForTask(
+  taskFilePath: string,
+): Promise<TemplateProvenance | null> {
+  const taskDir = path.dirname(taskFilePath);
+  const provenance = readTaskProvenance(taskDir);
+  if (!provenance?.templateProvenance) return null;
+  const parsed = {
+    ...provenance.templateProvenance,
+    ...(provenance.executionTemplate ? { executionTemplate: provenance.executionTemplate } : {}),
+  } as TemplateProvenance;
+  if (parsed.kind !== 'task-template' || typeof parsed.contentHash !== 'string') {
+    throw new Error(`Invalid template provenance in ${path.join(taskDir, HANDOFF_INPUT)}`);
+  }
+  return parsed;
+}
+
+/**
+ * ADR-068 Amendment 7: the node producer imports project tooling from the slot,
+ * so a written task initializes only once prepare checked out and installed it.
+ * Idempotent: an initialized task, or one initialized at write-task before this
+ * marker existed, is verified and never copied again.
+ */
+export async function completeRunTaskInitialization(
+  runId: string,
+  options: { emit?: (event: string, payload: unknown) => void; onlyPending?: boolean } = {},
+): Promise<void> {
+  const run = getRun(runId);
+  if (!run?.slotId || !run.taskFile) return;
+  const taskDir = path.dirname(run.taskFile);
+  const marker = run.engineState?.taskInit;
+  if (marker?.taskFile !== run.taskFile || marker.status !== 'pending') {
+    if (!options.onlyPending && existsSync(path.join(taskDir, 'artifacts/harness-provenance.json')))
+      await initializeExistingTaskRuntime(run);
+    return;
+  }
+  options.emit?.('substep', { name: 'task-init', detail: 'Initializing the task on the slot' });
+  if (existsSync(path.join(taskDir, TASK_INIT_INPUT))) await initializeWrittenTask(run);
+  else await initializeExistingTaskRuntime(run);
+  const templateProvenance = await readTemplateProvenanceForTask(run.taskFile);
+  if (templateProvenance)
+    updateRun(runId, {
+      templateProvenance,
+      ...(templateProvenance.executionTemplate
+        ? { executionTemplate: templateProvenance.executionTemplate }
+        : {}),
+    });
+  await copyTaskFilesToSlot(runId);
+  await persistRunNow(
+    updateRun(runId, {
+      engineState: {
+        ...getRun(runId)!.engineState,
+        taskInit: { taskFile: run.taskFile, status: 'initialized' },
+      },
+    }),
+    'task initialized',
+  );
+  await rm(path.join(taskDir, TASK_INIT_INPUT), { force: true });
 }

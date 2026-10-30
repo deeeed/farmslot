@@ -222,8 +222,8 @@ const { taskInit } = await import('../../../packages/agent-runtime/src/index.js'
 mock.module('../../../services/gateway/src/tasks/writer.js', {
   namedExports: {
     ...writer,
-    writeTaskFile: (run: Run, opts: Parameters<typeof writer.writeTaskFile>[1]) =>
-      writer.writeTaskFile(run, {
+    initializeWrittenTask: (run: Run, opts: Parameters<typeof writer.initializeWrittenTask>[1]) =>
+      writer.initializeWrittenTask(run, {
         ...opts,
         initializeTask: async (_slot, directory, input) => {
           const result = await taskInit({
@@ -262,6 +262,11 @@ const taskSteps: typeof import('../../../services/gateway/src/run-engine/task-st
     ).href
   );
 const { executeWriteTaskStep } = taskSteps;
+const taskSync: typeof import('../../../services/gateway/src/run-engine/task-sync.js') =
+  await import(
+    new URL('../../../services/gateway/src/run-engine/task-sync.ts?finished-proof', import.meta.url)
+      .href
+  );
 const policy = await import('../../../services/gateway/src/run-engine/dispatch-policy.js');
 const { createGatewayAuthRuntime } = await import('../../../services/gateway/src/security/auth.js');
 const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: process.env.FARMSLOT_HOME });
@@ -496,20 +501,21 @@ try {
       });
       const taskFile = store.getRun(created.run.id)?.taskFile;
       assert(taskFile);
-      const before = await readFile(taskFile, 'utf8');
-      assert(before.includes('Keep the new task'));
       const workerTask = path.join(
         repo,
         'temp/tasks',
         path.relative(path.join(workspace, 'projects', project, 'tasks'), taskFile),
       );
-      assert.equal(await readFile(workerTask, 'utf8'), before);
+      // ADR-068 Amendment 7: the task initializes on the prepared checkout.
+      await assert.rejects(access(workerTask));
       const prepared = await prepareFresh.slotPrepare(
         { slotId: slot, prepareProfile: 'fixture', runId: created.run.id },
         () => {},
       );
       assert.equal(prepared.prepared, true);
-      assert.equal(await readFile(taskFile, 'utf8'), before);
+      await taskSync.completeRunTaskInitialization(created.run.id);
+      const before = await readFile(taskFile, 'utf8');
+      assert(before.includes('Keep the new task'));
       assert.equal(await readFile(workerTask, 'utf8'), before);
       const readback: RunGetResult = await client.call<RunGetResult>('run.get', {
         runId: created.run.id,
@@ -518,7 +524,7 @@ try {
       results.push({
         kind,
         releasedBeforeClaimAndWrite: true,
-        newTaskSurvivesPrepare: true,
+        newTaskInitializedAfterPrepare: true,
         taskSha256: createHash('sha256').update(before).digest('hex'),
       });
       if (retained && preservedBranch) {

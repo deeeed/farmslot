@@ -662,6 +662,37 @@ for (const verdict of ['pass', 'issues'] as const) {
   });
 }
 
+test('a judge recipe run that rewrites the harness execution record still finalizes', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'eval-execution-record-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = await firstOutputFixture(root, makeRun(root));
+  const record = path.join(root, 'task/artifacts/provider-execution.json');
+  await writeFile(record, '{"recordedAt":"worker"}\n');
+  const first = await freezeEvalFirstOutputPackage(run, {});
+  assert.ok(
+    first.validationEvidence.some(({ path: file }) => file === 'artifacts/provider-execution.json'),
+  );
+  await writeFile(record, '{"recordedAt":"judge recipe run"}\n');
+  const judgePath = 'artifacts/eval-first-output/review-loop-1/review-result.json';
+  await mkdir(path.join(root, 'task/artifacts/eval-first-output/review-loop-1'), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(root, 'task', judgePath),
+    JSON.stringify({ verdict: 'pass', issues: [] }),
+  );
+  run.steps = [
+    {
+      name: 'review',
+      status: 'done',
+      outputs: { verdict: 'pass', retryCount: 0, attempts: [{ artifactPaths: [judgePath] }] },
+    },
+  ];
+  const finalized = await finalizeEvalResultPackageForRun(run);
+  assert.ok(finalized);
+  assert.deepEqual(finalized.validationEvidence, first.validationEvidence);
+});
+
 test('unavailable first-output measurements stay unknown instead of inheriting later run metrics', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'eval-worker-unknown-'));
   t.after(() => rm(root, { recursive: true, force: true }));
