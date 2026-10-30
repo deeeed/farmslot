@@ -29,6 +29,10 @@ return {
   observedAt: root?.querySelector('[data-observed-at]')?.getAttribute('data-observed-at'),
   age: root?.querySelector('[data-observed-at]')?.textContent.trim() ?? '',
   timelineTop: root?.querySelector('.timeline')?.getBoundingClientRect().top,
+  timelineOffset: root?.querySelector('.timeline')
+    ? root.querySelector('.timeline').getBoundingClientRect().top -
+      root.host.getBoundingClientRect().top
+    : undefined,
   history: root?.querySelector('.timeline') ? renderedText(root.querySelector('.timeline')) : '',
   retry: Boolean(root?.querySelector('[data-testid="native-refresh"]')),
   inputDisabled: root?.querySelector('textarea')?.disabled,

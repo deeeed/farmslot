@@ -201,6 +201,7 @@ export async function proveNativePanel({
           v.history.includes('Source revision'),
         );
         const baseline = ready.timelineTop;
+        const offset = ready.timelineOffset;
         for (const mode of ['native-error', 'native-ready', 'native-changed', 'native-ready']) {
           const value = await modeSample(mode, (v) =>
             mode === 'native-error'
@@ -213,6 +214,7 @@ export async function proveNativePanel({
           );
           assert(value.history.includes('Retained panel history.'), 'Loaded history must survive');
           if (!before) {
+            assert.equal(value.timelineOffset, offset, 'The status must not move its timeline');
             assert.equal(value.timelineTop, baseline, 'A read status must not move history');
             assert.equal(value.statusHeight, 56);
             assert(value.statusVisible, 'The status must be visible in the recording');
@@ -238,6 +240,7 @@ export async function proveNativePanel({
           const outageMs = Date.now() - failedAt;
           assert(outageMs >= 60_000, 'Unavailable must wait for 60 seconds of actual outage');
           assert.equal(aged.timelineTop, baseline);
+          assert.equal(aged.timelineOffset, offset);
           assert(
             aged.retry && aged.inputDisabled,
             'A real failed read stays fail-closed with Retry',
@@ -255,6 +258,7 @@ export async function proveNativePanel({
             5_000,
           );
           await modeSample('native-ready', (v) => v.status.includes('Live'));
+          assert.equal((await inspect()).timelineOffset, offset);
         }
         const image = await browserCall('Page.captureScreenshot', { format: 'png' });
         await writeFile(
