@@ -4,12 +4,21 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
+export function acPanelCase() {
+  const width = Number(process.env.FARMSLOT_AC_PANEL_WIDTH);
+  assert([1280, 414].includes(width), 'Select FARMSLOT_AC_PANEL_WIDTH=1280 or414');
+  const phase = process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1' ? 'before' : 'after';
+  return { width, runId: `ac-${phase}-${width}`, slotId: `fixture-task-${phase}-${width}` };
+}
+
 export function acPanelRun(mode, run) {
+  const { runId, slotId } = acPanelCase();
   return {
     ...run,
     status: 'preparing',
-    familyId: 'layout-run',
-    slotId: 'fixture-task-slot',
+    id: runId,
+    familyId: runId,
+    slotId,
     taskFile: mode.startsWith('ac-written') ? 'tasks/layout/TASK.md' : null,
     agentContexts: [],
   };
@@ -17,7 +26,7 @@ export function acPanelRun(mode, run) {
 
 export function acPanelProgress(mode) {
   return {
-    slotId: 'fixture-task-slot',
+    slotId: acPanelCase().slotId,
     markdown: '',
     structured: null,
     acceptanceCriteria: [{ id: 'AC-1', text: 'The written task exposes its criteria.' }],
@@ -53,9 +62,10 @@ export async function proveAcPanel({
     await save('timeout-' + label, value);
     assert.fail(label + ': ' + JSON.stringify(value));
   }
-  await cdp('eval', target, "location.hash='run/layout-run';return true;");
+  const { width: caseWidth, runId } = acPanelCase();
+  await cdp('eval', target, `location.hash='run/${runId}';return true;`);
   const results = [];
-  for (const width of [1280, 414]) {
+  for (const width of [caseWidth]) {
     await viewport(width);
     transition('ac-unwritten');
     await recordBrowserProof({

@@ -7,10 +7,10 @@
     "nodes": {
       "prove": {
         "action": "command",
-        "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 FARMSLOT_AC_PANEL_WIDTH=1280 FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/1280\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
         "timeout_ms": 300000,
-        "intent": "Before a task source exists, require no AC panel and no task.progress read. Publish the written task through fixture snapshots and require the criterion to appear without moving the following control. Preserve a real ledger read error after the task exists, then recover. Record both widths1280 and414.",
-        "next": "result"
+        "intent": "Before a task source exists, require no AC panel and no task.progress read. Publish the written task through fixture snapshots and require the criterion to appear without moving the following control. Preserve a real ledger read error after the task exists, then recover. Record1280px; the next node owns a distinct414px run.",
+        "next": "prove414"
       },
       "result": {
         "action": "assert_output",
@@ -20,7 +20,25 @@
         "intent": "Require all mounted protocol/presentation assertions and scoped teardown.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "prove414": {
+        "action": "command",
+        "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 FARMSLOT_AC_PANEL_WIDTH=414 FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/414\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 300000,
+        "intent": "Repeat with a distinct fresh414px run lifecycle; no written task is rewound.",
+        "next": "result414"
+      },
+      "result414": {
+        "action": "assert_output",
+        "source": "prove414",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require all mounted protocol/presentation assertions and scoped teardown.",
+        "next": "result"
+      }
     }
   }
 }

@@ -20,7 +20,7 @@ const visible = (element) => {
 };
 return {
   width: innerWidth,
-  runLoaded: detail?.run?.id === 'layout-run',
+  runLoaded: /^ac-(before|after)-(1280|414)$/.test(detail?.run?.id ?? ''),
   sourceReady: Boolean(detail?.detailQuery?.ready),
   postureReady: detail?._postureStatus?.status === 'ready',
   sidebarAnimating:

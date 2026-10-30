@@ -21,7 +21,7 @@ import {
   mockRuns,
 } from '../ui/src/dev/mock-data.ts';
 
-import { acPanelProgress, acPanelRun, proveAcPanel } from './ac-panel-proof.mjs';
+import { acPanelCase, acPanelProgress, acPanelRun, proveAcPanel } from './ac-panel-proof.mjs';
 import { nativePanelFixture, proveNativePanel } from './native-panel-proof.mjs';
 import { proveRefetchNotices, recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
@@ -48,6 +48,7 @@ let mode = 'empty';
 const refetchProof = process.env.FARMSLOT_LAYOUT_REFETCH === '1';
 const nativePanelProof = process.env.FARMSLOT_LAYOUT_NATIVE_PANEL === '1';
 const acPanelProof = process.env.FARMSLOT_LAYOUT_AC_PANEL === '1';
+const acCase = acPanelProof ? acPanelCase() : undefined;
 const legacyProof = process.env.FARMSLOT_LAYOUT_BEFORE === '1';
 const uiRoot = process.env.FARMSLOT_LAYOUT_UI_ROOT ?? path.join(source, 'apps/command-center/ui');
 assert(
@@ -139,8 +140,8 @@ const values = {
   ...(acPanelProof
     ? {
         'runtime.posture.status': () => ({
-          runId: 'layout-run',
-          slotId: 'fixture-task-slot',
+          runId: acCase.runId,
+          slotId: acCase.slotId,
           state: {
             posture: 'active',
             policySource: 'framework-default',
@@ -275,7 +276,7 @@ wss.on('connection', (socket) =>
     else if (request.method === 'gateway.ping') reply.payload = { ok: true };
     else if (acPanelProof && request.method === 'task.progress' && !mode.startsWith('ac-written')) {
       reply.ok = false;
-      reply.error = { code: 'INTERNAL_ERROR', message: 'No task file for slot fixture-task-slot' };
+      reply.error = { code: 'INTERNAL_ERROR', message: `No task file for slot ${acCase.slotId}` };
     } else if (
       nativePanelProof &&
       request.method === 'native.session.read' &&
@@ -448,10 +449,10 @@ function transition(next) {
       : []),
     ...(acPanelProof
       ? [
-          { family: 'run', runId: 'layout-run' },
+          { family: 'run', runId: acCase.runId },
           ...(resourceDependenciesForRead(
             'task.progress',
-            { slotId: 'fixture-task-slot', runId: 'layout-run' },
+            { slotId: acCase.slotId, runId: acCase.runId },
             'layout-fixture',
           ) ?? []),
         ]
