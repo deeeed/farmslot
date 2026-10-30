@@ -169,3 +169,104 @@ test('the owned primary worker keeps progressing between turns while its backgro
     );
   }
 });
+
+test('a publication gate recovers only a confirmed vanished worker', async () => {
+  const run = fixRun('tmux', 'waiting');
+  run.flowType = 'fix-bug';
+  const context = run.agentContexts![0]!;
+  context.role = 'fix-bug';
+  context.runnerSessionId = 'saved-session';
+  context.runnerSessionPath = '/tmp/saved-session.jsonl';
+  context.target = { target: 'owned:bugfix', session: 'owned', paneId: '%288' };
+  run.status = 'reconciling';
+  run.decisions = [
+    {
+      id: 'gate',
+      type: 'engine_human_gate',
+      title: 'Gate',
+      description: '',
+      actions: [],
+      createdAt: '2026-10-30T00:00:00Z',
+      payload: {
+        kind: 'ready',
+        prNumber: null,
+        repo: null,
+        branch: 'fix',
+        diffStat: { files: 0, additions: 0, deletions: 0 },
+        workerReport: '',
+      },
+    },
+  ];
+  for (const present of [false, true]) {
+    const progress = await readRunProgress(run, {
+      slot: async () => slot,
+      target: async () => ({ target: '%288', session: 'owned' }),
+      taskProgress: async () => null,
+      activity: async () => null,
+      turn: async () => null,
+      background: async () => null,
+      retainedTarget: async () =>
+        present ? { state: 'unknown', reason: 'node unreachable' } : { state: 'absent' },
+    });
+    assert.equal(progress.kind, present ? 'unproven' : 'idle');
+    assert.equal(
+      runDecisionWaitingStatus(run, progress, 'human_gate'),
+      present ? 'reconciling' : 'human-gating',
+    );
+  }
+  run.decisions = [];
+  const progress = await readRunProgress(run, {
+    slot: async () => slot,
+    target: async () => ({ target: '%288', session: 'owned' }),
+    taskProgress: async () => null,
+    activity: async () => null,
+    turn: async () => null,
+    background: async () => null,
+    retainedTarget: async () =>
+      assert.fail('ordinary monitoring keeps its existing recovery policy'),
+  });
+  assert.equal(progress.kind, 'unproven');
+});
+
+test('a rehosted publication worker is observed in its exact resumed pane', async () => {
+  const run = fixRun('tmux', 'waiting');
+  const context = run.agentContexts![0]!;
+  run.decisions = [
+    {
+      id: 'gate',
+      type: 'engine_human_gate',
+      title: 'Gate',
+      description: '',
+      actions: [],
+      createdAt: '2026-10-30T00:00:00Z',
+      payload: {
+        kind: 'ready',
+        prNumber: null,
+        repo: null,
+        branch: 'fix',
+        diffStat: { files: 0, additions: 0, deletions: 0 },
+        workerReport: '',
+      },
+    },
+  ];
+  context.role = 'primary';
+  for (const active of [false, true]) {
+    let probes = 0;
+    const progress = await readAgentContextProgress(run, context, {
+      slot: async () => slot,
+      target: async () => ({ target: '%owned', session: 'owned' }),
+      taskProgress: async () => null,
+      activity: async (_vars, target) =>
+        target === '%new' ? reading(active ? 'tool-running' : 'idle') : null,
+      turn: async (_vars, target) =>
+        target === '%new' ? reading(active ? 'active' : 'idle') : null,
+      background: async (_vars, target) => (target === '%new' ? reading('idle') : null),
+      retainedTarget: async () => {
+        probes++;
+        return { state: 'present', target: '%new' };
+      },
+    });
+    assert.equal(progress.kind, active ? 'making-progress' : 'idle');
+    assert.equal(probes, 1);
+  }
+});

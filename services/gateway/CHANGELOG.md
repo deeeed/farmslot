@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recover publication-gate progress after a worker pane disappears; verify a resumed conversation before reading its replacement pane.
+
 - Preserve acceptance-contract task writes across a CI-watch handoff when the parent releases its slot.
 - Keep reference answers out of eval workers and exclude contaminated first outputs from comparisons.
 
