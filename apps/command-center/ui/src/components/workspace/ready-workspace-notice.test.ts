@@ -9,16 +9,17 @@ import {
   renderReadyResolvedBanner,
 } from './ready-workspace-package-renderers.js';
 
-test('an incomplete refresh retains the whole resolved notice, including its captured commit', () => {
+test('a missing observation retains the whole notice; a current unresolved decision clears it', () => {
   const notice = new RetainedNotice();
   const scope = 'owner/run/decision';
   const message = readyResolvedNotice({ headSha: 'abcdef0123456789' }, '2026-10-30T00:00:00Z');
   assert.ok(message);
   notice.read(scope, message, true);
-  const retained = notice.read(scope, readyResolvedNotice({ headSha: '1111111' }), true);
+  const retained = notice.read(scope, undefined, true);
   const rendered = litText(renderReadyResolvedBanner({ message: retained }));
   assert.match(rendered, /2026-10-30T00:00:00Z at commit abcdef0/);
   assert.doesNotMatch(rendered, /1111111|resolved undefined/);
+  assert.equal(notice.read(scope, undefined, false), undefined);
   assert.equal(notice.read('owner/run/other-decision', undefined, true), undefined);
 });
 

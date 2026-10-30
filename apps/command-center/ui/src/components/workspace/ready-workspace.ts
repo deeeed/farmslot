@@ -773,15 +773,12 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         : undefined;
     const owner = this._usesMockData ? 'mock' : getResourceWorkspaceKey();
     const scope = owner ? JSON.stringify([owner, this.runId, this.decision?.id]) : undefined;
-    const observed = this._usesMockData ? this.decision : this._queries.observedDecision;
-    const currentMessage = readyResolvedNotice(payload, observed?.resolvedAt);
-    const provisional = observed?.resolvedAction === 'superseded';
-    const retained = this._resolvedNotice.read(
+    const observed = this._usesMockData ? this.decision : this._queries.decision;
+    const message = this._resolvedNotice.read(
       scope,
-      provisional ? undefined : currentMessage,
-      !provisional,
+      readyResolvedNotice(payload, observed?.resolvedAt),
+      !observed,
     );
-    const message = provisional ? currentMessage : retained;
     return renderReadyResolvedBanner({ message, savedMessage });
   }
 

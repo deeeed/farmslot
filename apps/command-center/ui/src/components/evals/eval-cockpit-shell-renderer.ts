@@ -31,7 +31,7 @@ export function renderEvalCockpitShell(options: EvalCockpitShellRenderOptions) {
         </div>
       </div>
       <div
-        class="eval-notice-slot ${options.error ? 'eval-error' : 'eval-status'}"
+        class="eval-notice-slot ${options.error ? 'eval-error' : options.busy ? 'eval-status' : ''}"
         role="status"
         data-testid="eval-operation-status"
       >

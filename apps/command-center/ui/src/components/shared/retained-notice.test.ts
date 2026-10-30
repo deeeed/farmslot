@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { RetainedNotice } from './retained-notice.js';
 
-test('a resolved gate notice survives missing refetch metadata within its exact owner and decision', () => {
+test('a resolved gate notice survives a missing observation within its exact owner and decision', () => {
   const notice = new RetainedNotice();
   const scope = 'owner-a/run-a/decision-a';
   assert.equal(notice.read(scope, undefined, true), undefined);

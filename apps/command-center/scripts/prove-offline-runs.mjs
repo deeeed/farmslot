@@ -32,8 +32,7 @@ async function openReadNotices(cdp, route, observation) {
 }
 
 async function closeReadNotices(cdp, route, observation) {
-  if (observation?.readNoticesNeeded && observation.noticesClosed === false)
-    await cdp('key', route, 'Escape');
+  if (observation?.noticesClosed === false) await cdp('key', route, 'Escape');
 }
 
 const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');

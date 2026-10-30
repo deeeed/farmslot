@@ -6,7 +6,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Alert only for current needs-you conditions. Completed dispatches stay in their current slot/run views and monitor violations stay in history; neither produces an informational browser alert.
 
-- Keep read errors and saved ages in one notification tray with a fixed-height attention strip; current decisions clear and recur without repeated alerts or moving the page. Retain saved-gate resolution notices and reserve Evals status space through refetches.
+- Keep read errors and saved ages in one notification tray with a fixed-height attention strip; current decisions clear and recur without repeated alerts or moving the page. Keep saved-gate text in one reserved row and reserve Evals status space through pending reads.
 
 - Saved-age notices (gateway update, runs, checklists, fleet, nodes, slot progress) no longer flash while a reread is in flight; they show while disconnected, after a failed read, or while the gateway's source check is out of date. A read refused because its source changed mid-read counts as failed only once reads have kept being refused for 60 s. The update banner shows its saved line only beside the Update button. On the fleet page, slow or failed progress reads share one line with one Retry; slots with three failed reads in a row are named there as an alert.
 - Fewer gateway reads on a busy farm: the copilot panel reads the copilot status only while it is open, and the fleet page reads runner seats for the machines it shows, so a slot change no longer rereads them.

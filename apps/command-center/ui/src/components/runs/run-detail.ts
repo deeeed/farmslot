@@ -161,13 +161,11 @@ import {
   selectedStepNameFromRunDetailHash,
   STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
-import { RunDisplayResolutions } from './run-display-resolutions.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
 import { collectRunInteractivePacketArtifacts } from './run-utils.js';
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
-  private readonly _displayResolutions = new RunDisplayResolutions();
   @state() private _runObservation: ResourceQueryState<RunGetResult> = { status: 'loading' };
   @state() private _recipeObservation: ResourceQueryState<RunRecipeRunsForRunResult> = {
     status: 'loading',
@@ -467,16 +465,8 @@ export class RunDetail extends RunDetailState {
     const sharedRun = s.runs.find((run) => run.id === this.runId) ?? null;
     // Compact rows are placeholders while this query hydrates. Full detail and
     // its freshness belong solely to the authoritative run.get observation.
-    const displayedRun =
-      observation.data?.run ?? snapshotRun ?? (observation.status === 'loading' ? sharedRun : null);
-    const decisions = this._displayResolutions.read(
-      workspaceKey ? JSON.stringify([workspaceKey, this.runId]) : undefined,
-      displayedRun?.decisions ?? [],
-    );
     this.run =
-      displayedRun && decisions !== displayedRun.decisions
-        ? { ...displayedRun, decisions }
-        : displayedRun;
+      observation.data?.run ?? snapshotRun ?? (observation.status === 'loading' ? sharedRun : null);
     // Reset transient nudge-decision-card state when the bound run changes or when the
     // current `branch_affinity_nudge` decision has been resolved server-side. Without this,
     // _branchNudgeShowPicker / _selectedSlotId leak into the next decision render and the

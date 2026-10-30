@@ -65,21 +65,8 @@ export class ReadyWorkspaceQueries implements ReactiveController {
     return !(this.run.belongsToWorkspace && this.run.state.data) && Boolean(this.displayRun);
   }
 
-  get observedDecision(): RunDecision | undefined {
-    return this.displayRun?.decisions.find(({ id }) => id === this.view.decision?.id);
-  }
-
   get decision(): RunDecision | undefined {
-    const current = this.observedDecision;
-    // The containing run view retains settled gate metadata across incomplete refetches.
-    // This is display-only; requireDecision still reads and validates the current canonical run.
-    const displayed = this.view.decision;
-    return current &&
-      !current.resolvedAt &&
-      displayed?.resolvedAt &&
-      displayed.resolvedAction !== 'superseded'
-      ? { ...current, resolvedAt: displayed.resolvedAt, resolvedAction: displayed.resolvedAction }
-      : current;
+    return this.displayRun?.decisions.find(({ id }) => id === this.view.decision?.id);
   }
 
   get ready(): boolean {
@@ -90,7 +77,7 @@ export class ReadyWorkspaceQueries implements ReactiveController {
     const run = this.run.requireReady().run;
     this.evidence.requireReady();
     const decision = run.decisions.find(({ id }) => id === this.view.decision?.id);
-    if (run.id !== this.view.runId || !decision || decision.resolvedAt || this.decision?.resolvedAt)
+    if (run.id !== this.view.runId || !decision || decision.resolvedAt)
       throw new Error('The gate changed. Review the current gate before acting.');
     return decision;
   }

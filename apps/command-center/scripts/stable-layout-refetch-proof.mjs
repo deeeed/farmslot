@@ -150,7 +150,7 @@ export async function proveRefetchNotices({
         await cdp(
           'eval',
           target,
-          "(document.querySelector('farm-app').shadowRoot ?? document.querySelector('farm-app')).querySelector('eval-cockpit').shadowRoot.querySelector('.candidate-replay-panel').scrollIntoView(); return true;",
+          "const root = (document.querySelector('farm-app').shadowRoot ?? document.querySelector('farm-app')).querySelector('eval-cockpit').shadowRoot; [...root.querySelectorAll('.base-choice-note')].find(element => element.textContent.includes('The gateway captures')).scrollIntoView({ block: 'center' }); return true;",
         );
       const positions = [];
       await record(`${view}-${before ? 'before' : 'after-' + width}`, async () => {
@@ -162,9 +162,40 @@ export async function proveRefetchNotices({
           'refetch-gap',
           'refetch-ready',
         ]) {
-          transition(mode);
-          await delay(300);
-          const during = await inspect();
+          const requestMark = frames.length;
+          const expectedRevision = transition(mode);
+          const requested = () =>
+            frames
+              .slice(requestMark)
+              .some(({ method, params }) =>
+                view === 'run'
+                  ? method === 'run.get' && params?.runId === 'layout-run' && !params?.view
+                  : method === 'config.templateOptions',
+              );
+          const settled = (value) =>
+            requested() &&
+            (view === 'run'
+              ? value.runReadStatus === 'ready' &&
+                value.runReadRevision === expectedRevision &&
+                value.runResolved &&
+                value.gateNotice?.includes('Decision resolved')
+              : mode === 'refetch-error'
+                ? value.configurationError === 'UNAVAILABLE' && value.templateErrorRendered
+                : value.configurationStatus === 'ready' &&
+                  value.configurationRevision === expectedRevision &&
+                  !value.templateErrorRendered);
+          const during = await until(
+            mode === 'refetch-gap'
+              ? (value) =>
+                  requested() &&
+                  (view === 'run'
+                    ? ['loading', 'stale'].includes(value.runReadStatus) &&
+                      (value.runReadRevision ?? -1) < expectedRevision
+                    : ['loading', 'stale'].includes(value.configurationStatus) &&
+                      (value.configurationRevision ?? -1) < expectedRevision)
+              : settled,
+            `${view}-${width}-${mode}-before-release`,
+          );
           await save(`${view}-${width}-${positions.length}-pending`, during);
           if (!before && view === 'run')
             assert(
@@ -181,11 +212,16 @@ export async function proveRefetchNotices({
               during.templateStatus?.includes('could not be refreshed'),
               'The last template failure must remain visible during retry',
             );
-          positions.push({ mode: mode + '-pending', ...during });
+          positions.push({ mode: mode + '-before-release', expectedRevision, ...during });
           releaseReplies();
-          await delay(1400);
-          const value = await inspect();
-          positions.push({ mode, ...value });
+          const value = await until(settled, `${view}-${width}-${mode}-settled`);
+          positions.push({ mode, expectedRevision, ...value });
+          if (view === 'evals')
+            assert(value.templateNoteVisible, 'The measured note must be visible in the recording');
+          if (!before && view === 'evals') {
+            assert.equal(value.operationHeight, 44, 'Idle operation space must remain reserved');
+            assert.equal(value.operationBorder, '0px', 'Idle operation space must be neutral');
+          }
           const screenshot = await browserCall('Page.captureScreenshot', { format: 'png' });
           await writeFile(
             path.join(output, `${view}-${width}-${mode}-${positions.length}.png`),

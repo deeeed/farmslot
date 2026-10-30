@@ -103,17 +103,13 @@ for (const item of gateRun.decisions) {
     createdAt: new Date(now).toISOString(),
   };
 }
-function observedRun(params) {
+function observedRun() {
   if (!refetchProof) return fixtureRun;
-  const run = structuredClone(gateRun);
-  // The parent retains its snapshot while an ordinary refetch omits resolution metadata.
-  if (mode === 'refetch-gap' && params?.view !== 'snapshot')
-    for (const item of run.decisions) delete item.resolvedAt;
-  return run;
+  return structuredClone(gateRun);
 }
 const values = {
   'run.list': () => ({ runs: [refetchProof ? gateRun : fixtureRun] }),
-  'run.get': (params) => ({ run: observedRun(params) }),
+  'run.get': () => ({ run: observedRun() }),
   'run.recipeRunsForRun': () => ({ recipeRuns: [], selectedRecipeRunId: null }),
   'config.templateOptions': () => ({ options: [] }),
   'runner.visibleModels.get': () => ({ runners: [] }),
@@ -174,7 +170,13 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', (socket) =>
   socket.on('message', (raw) => {
     const request = JSON.parse(String(raw));
-    frames.push({ at: Date.now(), method: request.method });
+    frames.push({
+      at: Date.now(),
+      method: request.method,
+      ...(request.method === 'run.get'
+        ? { params: { runId: request.params?.runId, view: request.params?.view } }
+        : {}),
+    });
     const reply = { type: 'res', id: request.id, ok: true };
     if (request.method === 'auth.connect')
       reply.payload = {
@@ -353,12 +355,15 @@ function transition(next) {
           payload: { version: 1, epoch, changes },
         }),
       );
+  return revision;
 }
 let vite;
 let viteLog = '';
 let failure;
 let cleanupFailures = [];
 try {
+  const ffmpeg = await execute('ffmpeg', ['-version'], { timeout: 10000 });
+  await save('recording-preflight', { ffmpeg: ffmpeg.stdout.split('\n')[0] });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', resolve);
