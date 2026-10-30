@@ -251,6 +251,7 @@ export class NativeSessionView extends LitElement {
     this.historyQuery = query;
     this.historyStop = observeNativeResource(query, (state) => {
       if (!this.isConnected || revision !== this.revision) return;
+      const follow = this.timelineAtEnd();
       this.historyObservation = state;
       const page = state.data;
       this.session = page?.session;
@@ -282,7 +283,19 @@ export class NativeSessionView extends LitElement {
           this.localCommand = undefined;
         }
       }
+      if (follow) void this.updateComplete.then(() => this.scrollTimelineToEnd());
     });
+  }
+
+  /** A reader at the end of the transcript keeps new output in view. */
+  private timelineAtEnd() {
+    const timeline = this.renderRoot.querySelector('.timeline');
+    return !timeline || timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
+  }
+
+  private scrollTimelineToEnd() {
+    const timeline = this.renderRoot.querySelector('.timeline');
+    if (timeline) timeline.scrollTop = timeline.scrollHeight;
   }
 
   private get taskHistory() {
@@ -592,9 +605,7 @@ export class NativeSessionView extends LitElement {
           this.historyScope = scope;
         }
         this.pollError = '';
-        const timeline = this.renderRoot.querySelector('.timeline');
-        const nearBottom =
-          !timeline || timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
+        const nearBottom = this.timelineAtEnd();
         this.transcript = appendNativePage(this.transcript, page);
         for (const event of page.events) {
           if (event.type === 'approval.resolved' && event.request) {
@@ -629,10 +640,7 @@ export class NativeSessionView extends LitElement {
           }
         }
         await this.updateComplete;
-        if (nearBottom) {
-          const element = this.renderRoot.querySelector('.timeline');
-          if (element) element.scrollTop = element.scrollHeight;
-        }
+        if (nearBottom) this.scrollTimelineToEnd();
         if (!page.hasMore) break;
       }
     } catch (error) {
