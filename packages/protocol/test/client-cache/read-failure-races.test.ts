@@ -20,7 +20,11 @@ async function fixture() {
   return { transport, cache, stop };
 }
 
-for (const code of ['RESOURCE_OBSERVATION_UNAVAILABLE', 'NATIVE_SOURCE_UNAVAILABLE']) {
+for (const code of [
+  'RESOURCE_OBSERVATION_UNAVAILABLE',
+  'NATIVE_SOURCE_UNAVAILABLE',
+  'RESOURCE_OBSERVATION_CHANGED',
+]) {
   test(`a write during failed ${code} I/O retains exactly one follow-up`, async () => {
     const { transport, cache, stop } = await fixture();
     try {
@@ -45,6 +49,31 @@ for (const code of ['RESOURCE_OBSERVATION_UNAVAILABLE', 'NATIVE_SOURCE_UNAVAILAB
     }
   });
 }
+
+test('a superseded page keeps loaded data and schedules one reread without a delivered change notice', async () => {
+  const { transport, cache, stop } = await fixture();
+  try {
+    const failed = cache.retry(query);
+    (await transport.nextRead()).reject('RESOURCE_OBSERVATION_CHANGED');
+    await failed;
+    assert.equal(cache.read(query).status, 'stale');
+    assert.equal(cache.read(query).data?.value, 'before writes');
+    assert.equal(cache.read(query).error?.code, 'RESOURCE_OBSERVATION_CHANGED');
+    const followup = await transport.nextRead();
+    assert.equal(transport.requestCount, 3);
+    assert.equal(cache.read(query).data?.value, 'before writes');
+    followup.resolve({ value: 'fresh page' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(cache.read(query).status, 'ready');
+    assert.equal(cache.read(query).error, undefined);
+    assert.equal(cache.read(query).data?.value, 'fresh page');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(transport.requestCount, 3);
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
 
 test('a failed read without an intervening write stays visible without an automatic retry', async () => {
   const { transport, cache, stop } = await fixture();

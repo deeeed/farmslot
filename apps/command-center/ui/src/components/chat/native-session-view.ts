@@ -43,6 +43,7 @@ import {
 } from '../../resource-cache.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
+import { isSupersededRead } from '../shared/resource-query-controller.js';
 
 import type { NativeProfileSelection } from './native-profiles.js';
 import { renderNativeSessionHeader } from './native-session-header.js';
@@ -259,7 +260,7 @@ export class NativeSessionView extends LitElement {
       this.receipts = page?.commands ?? [];
       this.requests = page?.pendingRequests ?? [];
       this.caughtUp = state.status === 'ready' && !!page && !page.hasMore;
-      this.pollError = state.error?.message ?? '';
+      this.pollError = isSupersededRead(state.error) ? '' : (state.error?.message ?? '');
       if (page && this.caughtUp)
         for (const event of page.events) {
           if (event.type === 'approval.resolved' && event.request) {
@@ -890,6 +891,7 @@ export class NativeSessionView extends LitElement {
       (!session.processPid || session.processStopped);
     return html`
       ${this.historyObservation.status === 'stale' &&
+      !isSupersededRead(this.historyObservation.error) &&
       this.historyObservation.observedAt !== undefined
         ? html`<p
             role="status"
@@ -912,6 +914,7 @@ export class NativeSessionView extends LitElement {
         session,
         connected: this.connected,
         caughtUp: this.caughtUp,
+        refreshingHistory: isSupersededRead(this.historyObservation.error),
         busy: this.busy,
         workspace: this.workspace,
         workspaceAllowed: this.workspaceAllowed,

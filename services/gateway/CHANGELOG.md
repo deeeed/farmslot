@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep loaded native history while a healthy source change refreshes the read; report real observation failures separately.
+
 - Complete artifact-only eval packages without requiring publication claim approval.
 
 - Recover unsent review-fix prompts after restart, verify relaunched worker processes, and surface unconfirmed delivery within the launch budget while preserving findings.
