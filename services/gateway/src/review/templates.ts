@@ -10,6 +10,7 @@ import {
   DEFAULT_BRANCH,
   DEFAULT_TASK_DIR,
   type EvidenceManifest,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   registeredAcceptanceCriteria,
   type ReviewIssue,
   type ReviewMode,
@@ -33,6 +34,7 @@ import {
   expandTemplate,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 import { projectWorkerTemplatePath } from '../core/worker-templates.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
@@ -390,8 +392,13 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
         template = await readFile(fallbackTemplatePath, 'utf-8');
       }
     } catch (err) {
-      throw new Error(
+      // No reviewer can start, so the request is refused rather than recorded as a review.
+      throw new GatewayMethodError(
+        PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
         `Review template not found for project ${project} (${validationDepth}): ${(err as Error).message}`,
+        {
+          userAction: `Add templates/worker/review.md to project ${project}, then request the review again.`,
+        },
       );
     }
   }

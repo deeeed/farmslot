@@ -1485,10 +1485,37 @@ export async function executeHumanGateStep(
           boundedPlan,
           'human-gate',
         );
-        await reconcilePublishGateReviewPlanResult(runId, boundedPlan, reviewPlanResult, context, {
-          reviewedPackage,
-          stampFreshReviews: true,
-        });
+        // A request whose review never launched leaves the gate as it was before the
+        // request; the gate shows the refusal, and no review is required or counted.
+        const neverLaunched =
+          !!reviewPlanResult.rejection && reviewPlanResult.reviewIds.length === 0;
+        if (neverLaunched) {
+          const beforeRestore = getRun(runId)!;
+          const projectVars = await loadProjectVarsOrNull(
+            beforeRestore.project,
+            'publication review policy',
+            beforeRestore.id,
+          );
+          updateRun(runId, {
+            engineState: {
+              ...beforeRestore.engineState,
+              publishGate: {
+                ...beforeRestore.engineState?.publishGate,
+                reviewPolicy: publicationReviewPolicyForRun(
+                  beforeRestore,
+                  projectVars?.projectJson,
+                ),
+              },
+            },
+          });
+        }
+        await reconcilePublishGateReviewPlanResult(
+          runId,
+          neverLaunched ? [] : boundedPlan,
+          reviewPlanResult,
+          context,
+          { reviewedPackage, stampFreshReviews: true },
+        );
         gateAction = await presentReadyGate();
         continue;
       }

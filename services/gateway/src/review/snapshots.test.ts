@@ -8,6 +8,7 @@ import test from 'node:test';
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import { reviewSnapshotIdentityText } from '@farmslot/protocol';
 
+import { projectSourceDiffPathspecs } from '../run-engine/diff-artifacts.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 import {
@@ -219,6 +220,56 @@ test('immutable review ranges include committed text and docs excluded by source
   }
 });
 
+// F250: a podspec is outside the default source filter, but it is part of the
+// published change, so the package and a COLD review of the same HEAD must agree.
+test('a package fingerprints the committed change a cold review certifies, and its own dirty edits', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'package-review-diff-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const commit = (message: string) =>
+    git(
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '-qm',
+      message,
+    );
+  git('init', '-q');
+  await writeFile(path.join(repo, 'CHANGELOG.md'), '# Changelog\n');
+  await writeFile(path.join(repo, 'Moonshine.podspec'), "s.version = '1.0'\n");
+  git('add', '.');
+  commit('test: seed');
+  const base = git('rev-parse', 'HEAD');
+  await writeFile(path.join(repo, 'CHANGELOG.md'), '# Changelog\n\n- Fix the build phase.\n');
+  await writeFile(path.join(repo, 'Moonshine.podspec'), "s.version = '1.1'\n");
+  git('add', '.');
+  commit('fix: build phase');
+  const deps: NonNullable<Parameters<typeof captureCurrentReviewSnapshot>[2]> = {
+    resolveContext: async () => ({ baseRef: base, pathspecs: projectSourceDiffPathspecs(null) }),
+    exec: async (_vars, command) => ({
+      exitCode: 0,
+      stdout: execFileSync('bash', ['-c', command], { cwd: repo, encoding: 'utf8' }),
+      stderr: '',
+    }),
+  };
+  const capture = (range: Parameters<typeof captureCurrentReviewSnapshot>[1]) =>
+    captureCurrentReviewSnapshot(makeVars(), range, deps);
+  const cold = (await capture({ mode: 'cold' })).snapshot;
+  const clean = (await capture({ baseRef: base })).snapshot;
+  assert.equal(clean.diffHash, cold.diffHash);
+  assert.deepEqual(clean.diffStat, { files: 2, additions: 3, deletions: 1 });
+  await writeFile(path.join(repo, 'CHANGELOG.md'), '# Changelog\n\n- Uncommitted.\n');
+  assert.notEqual((await capture({ baseRef: base })).snapshot.diffHash, cold.diffHash);
+  git('checkout', '--', 'CHANGELOG.md');
+  await writeFile(path.join(repo, 'notes.md'), 'untracked\n');
+  assert.notEqual((await capture({ baseRef: base })).snapshot.diffHash, cold.diffHash);
+});
+
 // ADR-063 Amendment 5: after a rebase the delta is the branch's own change at both heads.
 test('a rebased lineage delta compares its own change with range-diff and leaves base-only changes out', async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), 'review-range-diff-'));
@@ -369,9 +420,14 @@ test('a base-only override preserves source pathspecs and untracked identities',
     { path: 'src/new.ts', blobSha: blob, mode: '100644' },
   ]);
   assert.ok(commands.some((command) => command.includes('ls-files')));
+  // The committed range is whole; only the worktree's own edits keep the source filter.
+  const diffs = commands.filter(
+    (command) => command.includes('--numstat') || command.includes('--full-index'),
+  );
+  assert.ok(diffs.some((command) => command.includes(`${base}' '${head}' -- '.'`)));
   assert.ok(
-    commands
-      .filter((command) => command.includes('--numstat') || command.includes('--full-index'))
+    diffs
+      .filter((command) => !command.includes(base))
       .every((command) => command.includes("'src'")),
   );
 });

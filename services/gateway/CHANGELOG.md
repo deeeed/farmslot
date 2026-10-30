@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A review that cannot start (for example, a project without a review template) pauses the request with its reason instead of counting as a failed review, and the gate keeps the review policy it had before the request.
+- Publication packages fingerprint the complete committed change, the same diff a cold review certifies, so a passing review of the package HEAD is current even when the change touches files outside the source filter.
 - Dispatch keeps probing a runtime it just booted until its launch budget ends, so an iOS simulator that is still busy after `simctl boot` no longer fails one 5-second health check.
 - Prepare retries its remote fetch when another slot sharing the same repository moved a tracking ref first, instead of failing with "cannot lock ref".
 - Task files tell workers to mark complete with criteria awaiting human review; the run gate collects that review.
