@@ -24,13 +24,14 @@ import {
   appendNativePage,
   nativeCommandLockSettled,
   nativeDeliveryLabel,
+  nativeEntryPreview,
   nativeHistoryCanAct,
   nativeHistoryQuery,
+  type NativeMessagePreview,
   nativeMessagePreview,
   nativeMessageToggleLabel,
   nativeObservationQuery,
   nativeTimeline,
-  type NativeTimelineEntry,
   type NativeTranscript,
   type ResourceQuery,
   type ResourceQueryState,
@@ -74,6 +75,9 @@ type LocalCommand = {
   commandId: string;
   text: string;
 };
+
+/** Expanded-message key of the send awaiting confirmation; timeline entries use their event sequence. */
+const PENDING_MESSAGE_KEY = -1;
 
 /** Static preview reads that dev harnesses inject in place of the shared resource cache. */
 export interface NativeSessionFixture {
@@ -297,18 +301,17 @@ export class NativeSessionView extends LitElement {
     return !timeline || timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
   }
 
-  private renderMessageBody(entry: NativeTimelineEntry) {
-    const preview = entry.kind === 'user' ? nativeMessagePreview(entry.text) : undefined;
-    if (!preview) return html`<span class="body">${entry.text}</span>`;
-    const expanded = this.expandedMessages.has(entry.key);
-    return html`<span class="body">${expanded ? entry.text : preview.text}</span>
+  private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: number) {
+    if (!preview) return html`<span class="body">${text}</span>`;
+    const expanded = this.expandedMessages.has(key);
+    return html`<span class="body">${expanded ? text : preview.text}</span>
       <button
         class="message-toggle"
         data-testid="native-message-toggle"
         aria-expanded=${expanded ? 'true' : 'false'}
         @click=${() => {
           const next = new Set(this.expandedMessages);
-          if (!next.delete(entry.key)) next.add(entry.key);
+          if (!next.delete(key)) next.add(key);
           this.expandedMessages = next;
         }}
       >
@@ -1215,7 +1218,11 @@ ${JSON.stringify(
                                           timestamp: entry.event.at,
                                         } satisfies ChatMessage}
                                       ></chat-message>`
-                                    : this.renderMessageBody(entry)}
+                                    : this.renderMessageBody(
+                                        entry.text,
+                                        nativeEntryPreview(entry),
+                                        entry.key,
+                                      )}
                                 </div>
                                 ${entry.event.type === 'error' && entry.event.data
                                   ? html`<details>
@@ -1234,7 +1241,11 @@ ${JSON.stringify(
                       ? html`<article class="user">
                           <span class="meta">You · Delivery unconfirmed</span>
                           <div class="text">
-                            <span class="body">${this.localCommand.text}</span>
+                            ${this.renderMessageBody(
+                              this.localCommand.text,
+                              nativeMessagePreview(this.localCommand.text),
+                              PENDING_MESSAGE_KEY,
+                            )}
                           </div>
                         </article>`
                       : nothing}

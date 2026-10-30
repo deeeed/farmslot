@@ -452,14 +452,21 @@ export interface NativeMessagePreview {
 
 /** A long message (a worker's dispatch prompt) shows its start until the reader expands it. */
 export function nativeMessagePreview(text: string): NativeMessagePreview | undefined {
-  const lines = text.split('\n');
-  if (text.length <= NATIVE_MESSAGE_PREVIEW_CHARS && lines.length <= NATIVE_MESSAGE_PREVIEW_LINES)
+  // A trailing newline is not a line the reader sees.
+  const body = text.replace(/\n+$/, '');
+  const lines = body.split('\n');
+  if (body.length <= NATIVE_MESSAGE_PREVIEW_CHARS && lines.length <= NATIVE_MESSAGE_PREVIEW_LINES)
     return undefined;
   const head = lines.slice(0, NATIVE_MESSAGE_PREVIEW_LINES).join('\n');
-  return {
-    text: `${head.slice(0, NATIVE_MESSAGE_PREVIEW_CHARS).trimEnd()}…`,
-    lines: lines.length,
-  };
+  if (head.length <= NATIVE_MESSAGE_PREVIEW_CHARS) return { text: head, lines: lines.length };
+  // Cut inside a line: mark it, without splitting a surrogate pair.
+  const cut = head.slice(0, NATIVE_MESSAGE_PREVIEW_CHARS).replace(/[\uD800-\uDBFF]$/, '');
+  return { text: `${cut.trimEnd()}…`, lines: lines.length };
+}
+
+/** Only the reader's own messages collapse; assistant, tool and status entries show in full. */
+export function nativeEntryPreview(entry: NativeTimelineEntry): NativeMessagePreview | undefined {
+  return entry.kind === 'user' ? nativeMessagePreview(entry.text) : undefined;
 }
 
 export function nativeMessageToggleLabel(preview: NativeMessagePreview, expanded: boolean): string {

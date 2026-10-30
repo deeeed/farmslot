@@ -5,6 +5,7 @@ import {
   appendNativePage,
   nativeCommandLockSettled,
   nativeDeliveryLabel,
+  nativeEntryPreview,
   nativeMessagePreview,
   nativeMessageToggleLabel,
   nativeTimeline,
@@ -212,22 +213,38 @@ test('late acceptance restores the user prompt before its assistant response', (
 });
 
 test('a long message shows its first lines until expanded; short ones show in full', () => {
+  const lines = (count: number) =>
+    Array.from({ length: count }, (_, i) => `- step ${i}`).join('\n');
   assert.equal(nativeMessagePreview('Fix the flaky test.'), undefined);
-  assert.equal(
-    nativeMessagePreview(Array.from({ length: 8 }, (_, i) => `line ${i}`).join('\n')),
-    undefined,
-  );
-  const prompt = Array.from({ length: 200 }, (_, i) => `- step ${i}`).join('\n');
-  const preview = nativeMessagePreview(prompt);
+  assert.equal(nativeMessagePreview(lines(8)), undefined);
+  // A prompt read from a file ends in a newline; it is not a hidden line.
+  assert.equal(nativeMessagePreview(`${lines(8)}\n`), undefined);
+  const preview = nativeMessagePreview(`${lines(200)}\n`);
   assert(preview);
   assert.equal(preview.lines, 200);
-  assert.equal(preview.text.split('\n').length, 8);
-  assert(preview.text.endsWith('…'));
+  // Cut at a line end: the label carries the count, no ellipsis.
+  assert.equal(preview.text, lines(8));
   assert.equal(nativeMessageToggleLabel(preview, false), 'Show all · 200 lines');
   assert.equal(nativeMessageToggleLabel(preview, true), 'Show less');
   const wide = nativeMessagePreview('x'.repeat(5000));
   assert(wide);
   assert.equal(wide.lines, 1);
-  assert.equal(wide.text.length, 601);
+  assert.equal(wide.text, `${'x'.repeat(600)}…`);
   assert.equal(nativeMessageToggleLabel(wide, false), 'Show all · 1 line');
+  // A cut never splits an emoji.
+  assert.equal(
+    nativeMessagePreview(`${'x'.repeat(599)}😀${'x'.repeat(10)}`)?.text,
+    `${'x'.repeat(599)}…`,
+  );
+});
+
+test('only user messages collapse', () => {
+  const long = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n');
+  const [user, assistant] = nativeTimeline([
+    event(1, 'command.submitted', long),
+    event(2, 'text.delta', long),
+  ]);
+  assert(user?.kind === 'user' && assistant?.kind === 'assistant');
+  assert.equal(nativeEntryPreview(user)?.lines, 200);
+  assert.equal(nativeEntryPreview(assistant), undefined);
 });

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- `nativeMessagePreview` gives the first 8 lines (at most 600 characters) of a long native conversation message, with its line count; `nativeMessageToggleLabel` gives its "Show all · N lines" or "Show less" label.
+- `nativeMessagePreview` gives the first 8 lines (at most 600 characters) of a long native conversation message, with its line count; `nativeEntryPreview` applies it to user messages only, and `nativeMessageToggleLabel` gives the "Show all · N lines" or "Show less" label.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.4 - 2026-10-30

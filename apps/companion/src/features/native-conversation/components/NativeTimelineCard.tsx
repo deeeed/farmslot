@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
-  nativeMessagePreview,
+  nativeEntryPreview,
   nativeMessageToggleLabel,
   type NativeTimelineEntry,
 } from '@farmslot/protocol/client-cache';
@@ -11,7 +11,7 @@ import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
 export function NativeTimelineCard({ entry }: { entry: NativeTimelineEntry }) {
   const [expanded, setExpanded] = useState(false);
-  const preview = entry.kind === 'user' ? nativeMessagePreview(entry.text) : undefined;
+  const preview = nativeEntryPreview(entry);
   return (
     <View style={[styles.card, entry.kind === 'user' && styles.user]}>
       <Text style={styles.muted}>
