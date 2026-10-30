@@ -99,9 +99,11 @@ export class GatewayUpdateObservation {
   /** Called by the owning service's slow scheduler or a newly admitted visible observer. */
   async tick(): Promise<void> {
     if (this.stopped) return;
-    this.publish();
     const legacy = this.hasLegacyInterest();
-    if ((this.options.hasInterest() || legacy) && this.due()) await this.refresh();
+    // A due check publishes its result once. Publishing the expired age first would flip viewers
+    // to stale for the length of the check and back.
+    if ((this.options.hasInterest() || legacy) && this.due()) return this.refresh();
+    this.publish();
   }
 
   async refresh(): Promise<void> {

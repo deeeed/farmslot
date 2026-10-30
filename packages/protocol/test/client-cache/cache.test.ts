@@ -11,6 +11,7 @@ import {
   type ResourceStoreScope,
   resourceStoreScopeId,
 } from '../../src/client-cache/index.js';
+import type { ResourceKey } from '../../src/client-cache/keys.js';
 
 const scope: ResourceStoreScope = {
   gatewayUrl: 'ws://localhost:1234',
@@ -96,7 +97,8 @@ test('an unknown dependency conservatively schedules one follow-up', async () =>
       epoch: 'conformance-epoch',
       changes: [
         {
-          key: { family: 'run', runId: 'not-a-declared-dependency' },
+          // A family from a newer gateway: no declared dependency can rule it out.
+          key: { family: 'future-family', id: 'x' } as unknown as ResourceKey,
           revision: 1,
           kind: 'updated',
         },
@@ -110,6 +112,40 @@ test('an unknown dependency conservatively schedules one follow-up', async () =>
     assert.equal((await done).status, 'ready');
     assert.equal(transport.requestCount, 2);
   } finally {
+    await cache.dispose();
+  }
+});
+
+test('changes to known keys no query declares neither reread nor stale held data', async () => {
+  const transport = new ResourceCacheConformanceTransport(scope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  const statuses: string[] = [];
+  const stop = cache.observe(query, (state) => statuses.push(state.status));
+  // Other slots and workspaces change several times a second on a busy farm.
+  const otherSlotsChange = (revision: number) =>
+    transport.publish({
+      version: 1,
+      epoch: 'conformance-epoch',
+      changes: [
+        { key: { family: 'slot', slotId: `other-${revision}` }, revision, kind: 'updated' },
+        { key: { family: 'workspace', slotId: `other-${revision}` }, revision, kind: 'updated' },
+      ],
+    });
+  try {
+    const firstDone = cache.retry(query);
+    const first = await transport.nextRead();
+    otherSlotsChange(1);
+    first.resolve({ value: 'held' });
+    assert.equal((await firstDone).status, 'ready');
+    statuses.length = 0;
+    for (let revision = 2; revision < 20; revision++) otherSlotsChange(revision);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(cache.read(query).status, 'ready');
+    assert.deepEqual(statuses, [], 'held data never turns stale');
+    assert.equal(transport.requestCount, 1, 'no follow-up reads');
+  } finally {
+    stop();
     await cache.dispose();
   }
 });
