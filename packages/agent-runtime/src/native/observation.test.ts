@@ -87,8 +87,10 @@ test('armed source sees real journal appends before fs.watch callback; no comman
   }
 });
 
-test('held late read and structured missing are fenced against intervening commits', async () => {
+test('healthy journal append supersedes a held read without revoking source admission', async (t) => {
   const fixture = setup();
+  const notices: unknown[][] = [];
+  t.mock.method(console, 'info', (...args: unknown[]) => notices.push(args));
   try {
     await fixture.source.start();
     let release!: () => void;
@@ -101,7 +103,10 @@ test('held late read and structured missing are fenced against intervening commi
     });
     appendDurable(join(fixture.root, 'sessions', 's.journal'), { pending: [] });
     release();
-    await assert.rejects(pending, NativeSourceUnavailable);
+    await assert.rejects(pending, { code: 'RESOURCE_OBSERVATION_CHANGED' });
+    assert.equal(fixture.source.current().ready, true);
+    assert.ok(notices.some((args) => String(args[1]).includes('"reason":"node-read"')));
+    assert.equal((await fixture.source.read(async () => 'fresh')).value, 'fresh');
     await assert.rejects(
       fixture.source.read(async () => {
         throw Object.assign(new Error('Missing'), { code: 'NOT_FOUND' });
@@ -119,14 +124,19 @@ test('held late read and structured missing are fenced against intervening commi
   }
 });
 
-test('partial append revokes admission without truncation; fresh armed receipt recovers', async () => {
+test('partial append revokes admission without truncation; fresh armed receipt recovers', async (t) => {
   const fixture = setup();
+  const logs: unknown[][] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => logs.push(args));
   try {
     await fixture.source.start();
     const old = fixture.source.current();
     const journal = join(fixture.root, 'sessions', 's.journal');
     writeFileSync(journal, '{', { mode: 0o600 });
     assert.throws(() => fixture.source.fence(), NativeSourceUnavailable);
+    assert.ok(
+      logs.some((args) => String(args[1]).includes('"reason":"incomplete-journal-append"')),
+    );
     assert.equal(fixture.source.current().ready, false);
     writeFileSync(journal, '{}\n', { mode: 0o600 });
     await fixture.source.start();

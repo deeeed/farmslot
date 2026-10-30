@@ -12,6 +12,7 @@ interface NativeSessionHeaderContext {
   session?: NativeSessionInfo;
   connected: boolean;
   caughtUp: boolean;
+  refreshingHistory?: boolean;
   busy: boolean;
   workspace: boolean;
   workspaceAllowed: boolean;
@@ -109,9 +110,11 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
           : 'disconnected'}
         >${!ctx.connected
           ? 'Disconnected. Draft and session preserved.'
-          : session
-            ? `${ctx.taskHistory ? 'Task history' : session.state}${ctx.caughtUp ? '' : ' · Replaying history'}`
-            : ''}</span
+          : ctx.refreshingHistory
+            ? 'Refreshing history'
+            : session
+              ? `${ctx.taskHistory ? 'Task history' : session.state}${ctx.caughtUp ? '' : ' · Replaying history'}`
+              : ''}</span
       >
     </div>
   `;

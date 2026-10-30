@@ -16,6 +16,8 @@ import {
 import { notificationTray, publishReadNotice } from '../../utils/notification-tray.js';
 import { heldDataIsSaved as resourceHeldDataIsSaved } from '../../utils/resource-read-status.js';
 
+import { readCurrent } from './read-current.js';
+
 export {
   isSupersededRead,
   readFailureText,
@@ -29,6 +31,23 @@ export function heldDataIsSaved(
   now = Date.now(),
 ): boolean {
   return resourceHeldDataIsSaved(state, connected, now);
+}
+
+/**
+ * Held data an action may start from: current, or stale only while its paced reread is due. The
+ * action rereads it first (readCurrent); saved data never qualifies.
+ */
+export function canActOn(
+  state: ResourceQueryState<unknown>,
+  connected = gateway.connectionState === 'connected',
+  now = Date.now(),
+): boolean {
+  return (
+    connected &&
+    state.data !== undefined &&
+    (state.status === 'ready' ||
+      (state.status === 'stale' && !heldDataIsSaved(state, connected, now)))
+  );
 }
 
 /** Binds a panel's query to the current farm owner; the shared cache owns all reads. */
@@ -101,11 +120,21 @@ export class ResourceQueryController<T> implements ReactiveController {
     );
   }
 
+  /** An action can start; requireCurrent rereads a paced query before it runs. */
+  get actable(): boolean {
+    return this.belongsToWorkspace && canActOn(this.state);
+  }
+
   requireReady(): T {
     const state = this.cache && this.query ? this.cache.read(this.query) : undefined;
     if (!this.ready || state?.status !== 'ready' || state.data === undefined)
       throw new Error('Wait for a current read before acting.');
     return state.data;
+  }
+
+  async requireCurrent(): Promise<T> {
+    if (this.cache && this.query && this.actable) await readCurrent(this.cache, [this.query]);
+    return this.requireReady();
   }
 
   async retry(): Promise<ResourceQueryState<T>> {

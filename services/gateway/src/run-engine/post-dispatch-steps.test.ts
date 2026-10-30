@@ -30,7 +30,7 @@ import {
   computeReadyGateReviewSubjectHash,
 } from '../run-completion/ready-gate-package.js';
 import { buildResultDecision, ResultDecisionHoldError } from '../run-completion/result-decision.js';
-import { createRun, getRun, updateRun } from '../runs/store.js';
+import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { RunGateNotReadyError } from './gate-prerequisites.js';
 import {
@@ -162,6 +162,31 @@ function restartReplayContext(): PostDispatchStepContext {
     deferTerminalSlotRelease: () => {},
   };
 }
+
+test('gate entry replaces a stale operator-wait label before configuration awaits', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'GATE-PREPARATION' });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, { status: 'human-gating' });
+  updateRunStep(run.id, 'human-gate', {
+    status: 'running',
+    detail: 'Waiting for operator decision',
+  });
+  const stop = new Error('Observed gate preparation before configuration');
+  await assert.rejects(
+    executeHumanGateStep(run.id, {
+      ...restartReplayContext(),
+      isHumanGateEnabled: async () => {
+        assert.deepEqual(getRun(run.id)!.decisions, []);
+        assert.equal(
+          getRun(run.id)!.steps.find((step) => step.name === 'human-gate')!.detail,
+          'Preparing operator decision',
+        );
+        throw stop;
+      },
+    }),
+    (error) => error === stop,
+  );
+});
 
 test('complete re-entry with zero pending decisions restores Codex after a current-head native PASS', async (t) => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'review-replay-'));

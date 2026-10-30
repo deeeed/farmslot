@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import {
   comparePickerFamilyChipLabel,
   compareRunSearchText,
+  comparisonPickerRunsQuery,
   detectVariantCollision,
   familyRunsForComparePicker,
   filterRunsByExactTicket,
@@ -256,4 +258,14 @@ test('compareRunSearchText includes resolved slot and find-slot engine fallback'
   assert.match(text, /macwork-ff-4/);
   assert.match(text, /grok/);
   assert.match(text, /grok-composer-2\.5-fast/);
+});
+
+test('the comparison picker reads run changes at once, on the plain run list query', () => {
+  const all = comparisonPickerRunsQuery(['a', 'b']);
+  assert.equal(all.id, resourceQuery('run.list', { limit: 50 }).id);
+  assert.deepEqual(all.rereadIntervalMs, { runs: 0 });
+  assert.equal(
+    comparisonPickerRunsQuery(['a']).id,
+    resourceQuery('run.list', { limit: 50, project: 'a' }).id,
+  );
 });

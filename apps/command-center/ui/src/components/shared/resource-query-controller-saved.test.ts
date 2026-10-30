@@ -76,7 +76,10 @@ test('a busy farm neither rereads a panel nor flashes its saved notice', async (
   assert.equal(reads().length, readsBefore, 'undeclared changes cause no reread');
   assert.equal(panel.state.status, 'ready');
 
-  // A declared change rereads; the held data is stale only while that read runs.
+  // A declared change rereads; the held data is stale only while that read runs. It arrives a full
+  // run list reread interval after the last read.
+  const now = performance.now.bind(performance);
+  t.mock.method(performance, 'now', () => now() + 30_000);
   hold = true;
   revision++;
   socket.event('resource.changed', {

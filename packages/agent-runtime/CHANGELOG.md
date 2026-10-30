@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.10 - 2026-10-30
+
+- Keep loaded native history while a healthy source change refreshes the read; report real observation failures separately.
+
 ## 0.39.9 - 2026-10-29
 
 - Observe native host journal commits and shared account status without replaying commands; preserve structured missing-session errors.

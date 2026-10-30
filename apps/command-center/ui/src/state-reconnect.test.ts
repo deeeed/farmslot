@@ -203,7 +203,10 @@ test('the workspace survives a gateway restart and clears only for another accou
 
   await t.test(
     'domain payloads cannot replace collections, while resource changes refetch them once',
-    async () => {
+    async (st) => {
+      // Automatic run list rereads are paced; this notice arrives a full interval after the last read.
+      const now = performance.now.bind(performance);
+      st.mock.method(performance, 'now', () => now() + activeRunsQuery.rereadIntervalMs!.runs!);
       const socket = fakeGateway.sockets.at(-1)!;
       socket.event('run.updated', { run: makeRun({ id: 'untrusted-event-row' }) });
       socket.event('decision.new', {
