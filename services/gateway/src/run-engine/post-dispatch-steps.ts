@@ -1655,6 +1655,7 @@ export async function executeCompleteStep(
   if (runBeforeDiff.engineState?.evalExperiment) {
     await executeEvalHarnessLifecycle(runBeforeDiff, 'cleanup');
     await captureRunOutput(runId);
+    if (runBeforeDiff.engineState.evalExperiment.blind) await freezeBlindTrialFirstOutput(runId);
   }
 
   // diffStat needs the slot's git tree; runs before slotRelease below.

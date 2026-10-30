@@ -200,3 +200,14 @@ test('normal prepare-to-dispatch claims can advance the epoch while preserving t
   assert.equal(captures, 1);
   assert.equal(run.engineState!.evalExperiment!.blind!.isolation!.slotEpoch, 7);
 });
+
+test('a completion recovery cannot relabel reviewed output as the first output', async (t) => {
+  await fixture(t);
+  run.steps = [{ name: 'review', status: 'done', startedAt: '2026-10-30T00:01:00.000Z' }];
+  await freezeBlindTrialFirstOutput(run.id);
+  assert.equal(
+    run.engineState!.evalExperiment!.blind!.invalidReason,
+    'First output was not frozen before review started.',
+  );
+  assert.equal(captures, 1);
+});

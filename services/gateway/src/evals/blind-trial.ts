@@ -272,11 +272,13 @@ async function captureFirstOutput(runId: string): Promise<void> {
     diffText = checkpoint.diffText;
     invalidReason = checkpoint.invalidReason;
   } else {
+    if (run.steps.some((step) => step.name === 'review' && step.startedAt))
+      invalidReason = 'First output was not frozen before review started.';
     try {
       await verifyBlindTrialGit(run);
     } catch (error) {
       // Retain failed isolation as invalid evidence, but never cross an ownership boundary.
-      invalidReason = (error as Error).message;
+      invalidReason ??= (error as Error).message;
     }
     await assertOwner();
     const snapshot = await captureRunDiffSnapshot(run);
