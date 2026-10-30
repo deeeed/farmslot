@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A native command's output keeps a terminal hyperlink's text and everything after it, which were dropped up to the last link.
 - A native conversation names tool calls by what they do, "Run npm test", "Change a.ts, b.ts" or "Read a.ts", in the tool row and the working status, instead of runner names such as `commandExecution`. A command's details show the command and the last 10 lines it printed, with its raw input and output one tap away.
 - A resolved approval or question stays in the native conversation: "Approved: rm -r build", "Declined: …", "Answered: Which file? → a.ts", or "Resolved: …" when the session's host did not record the decision.
 - Collapsing a long message (Show less) or a turn's tool calls in a native conversation keeps its button where you saw it, instead of the content above shrinking it out of view.

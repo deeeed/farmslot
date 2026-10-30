@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- A worker terminal screen and a native command's output keep a terminal hyperlink's text (a file path or URL a tool printed as a link) and everything after it, which were dropped up to the last link on the screen.
 - A native conversation names tool calls by what they do, "Run npm test", "Change a.ts, b.ts" or "Read a.ts", in the tool row and the working status, instead of runner names such as `commandExecution`. A command's details show the command and the last 10 lines it printed, with its raw input and output one tap away.
 - A resolved approval or question stays in the native conversation: "Approved: rm -r build", "Declined: …", "Answered: Which file? → a.ts", or "Resolved: …" when the session's host did not record the decision.
 - The family change ledger needs a latest run before it offers its evidence files.

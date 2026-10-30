@@ -1,4 +1,5 @@
-const OSC_SEQUENCE_PATTERN = /\x1b\][^\x07]*(?:\x07|\x1b\\)/g;
+// The body stops at the first ESC: a hyperlink (OSC 8) ends at its own terminator, so its text stays.
+const OSC_SEQUENCE_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const CSI_SEQUENCE_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const ANSI_ESCAPE_PATTERN = /\x1b[@-Z\\-_]/g;
 const CONTROL_CHARS_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
