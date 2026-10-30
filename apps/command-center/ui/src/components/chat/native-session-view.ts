@@ -194,6 +194,8 @@ export class NativeSessionView extends LitElement {
     const observation = this.historyObservation;
     if (
       this.connected &&
+      observation.status === 'stale' &&
+      observation.data !== undefined &&
       observation.observedAt !== undefined &&
       isSupersededRead(observation.error) &&
       !heldDataIsSaved(observation, this.connected)
