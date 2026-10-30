@@ -39,31 +39,40 @@ after(async () => {
 });
 let dirCount = 0;
 
-/** A task dir as writeTaskFile leaves it right after mkdir: stamped with its owner, if any. */
-async function taskDir(ticket: string, ownerRunId?: string): Promise<void> {
+/** A task dir as writeTaskFile leaves it right after mkdir, with the given owner stamp. */
+async function taskDir(ticket: string, stamp: string | null): Promise<void> {
   const dir = path.join(
     getOrchestratorTaskRoot(project),
     flowDir('dev'),
     `${ticket.toLowerCase()}-1030-23${String(dirCount++).padStart(4, '0')}`,
   );
   await mkdir(path.join(dir, 'inputs'), { recursive: true });
-  if (ownerRunId)
-    await writeFile(
-      path.join(dir, RUNTIME_CAPABILITY_CATALOG_INPUT),
-      JSON.stringify({ version: 1, ownerRunId }),
-    );
+  if (stamp !== null) await writeFile(path.join(dir, RUNTIME_CAPABILITY_CATALOG_INPUT), stamp);
 }
 
-/** An earlier attempt with the given outcome, step statuses and task dir. */
+type AttemptOptions = {
+  taskFile?: string;
+  dispatchStartedAt?: string;
+  stamp?: 'owner' | 'none' | 'truncated';
+  project?: string;
+  fields?: Partial<Run>;
+};
+
+/** An earlier attempt with the given outcome and step statuses, and the task dir it wrote. */
 async function attempt(
   ticket: string,
   status: Run['status'],
   stepStatus: Record<string, RunStep['status']>,
-  options: { taskFile?: string; dispatchStartedAt?: string; stamp?: boolean } = {},
+  options: AttemptOptions = {},
 ): Promise<Run> {
-  const run = createRun({ flowType: 'dev', project, ticketOrPr: ticket });
+  const run = createRun({
+    flowType: 'dev',
+    project: options.project ?? project,
+    ticketOrPr: ticket,
+  });
   created.push(run.id);
   updateRun(run.id, {
+    ...options.fields,
     status,
     taskFile: options.taskFile ?? null,
     steps: run.steps.map((step) => ({
@@ -74,7 +83,11 @@ async function attempt(
         : {}),
     })),
   });
-  await taskDir(ticket, options.stamp === false ? undefined : run.id);
+  const stamp = JSON.stringify({ version: 1, ownerRunId: run.id });
+  await taskDir(
+    ticket,
+    { owner: stamp, none: null, truncated: stamp.slice(0, 20) }[options.stamp ?? 'owner'],
+  );
   return getRun(run.id)!;
 }
 
@@ -90,7 +103,8 @@ async function redispatch(ticket: string) {
 }
 
 async function pendingCollision(runId: string) {
-  for (let tick = 0; tick < 200; tick++) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
     const decision = getRun(runId)?.decisions.find((item) => item.type === 'engine_collision');
     if (decision) return decision;
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -121,8 +135,7 @@ test(
 
     const { current, choice } = await redispatch('MANUAL-1');
     assert.equal(await choice, 'create-new');
-    const decision = getRun(current.id)!.decisions.find((item) => item.type === 'engine_collision');
-    assert.equal(decision?.resolvedAction, 'create-new', 'the automatic choice stays on record');
+    assert.deepEqual(getRun(current.id)!.decisions, [], 'nothing waited on the operator');
   },
 );
 
@@ -139,15 +152,60 @@ for (const [ticket, name, setup] of [
       ),
   ],
   [
+    'KEEP-REPLAYED',
+    'an attempt replayed from prepare after its dispatch',
+    // Replay resets dispatch to pending; the records its first dispatch left remain.
+    (ticket: string) =>
+      attempt(
+        ticket,
+        'failed',
+        { 'write-task': 'done', prepare: 'failed', dispatch: 'pending' },
+        {
+          taskFile: `tasks/feat/${ticket.toLowerCase()}/TASK.md`,
+          fields: {
+            worktreeHeadAtDispatch: 'a'.repeat(40),
+            engineState: {
+              taskExecution: {
+                taskFile: `tasks/feat/${ticket.toLowerCase()}/TASK.md`,
+                startedAt: new Date().toISOString(),
+              },
+            },
+          },
+        },
+      ),
+  ],
+  [
     'KEEP-LIVE',
     'an earlier attempt that is still live',
     (ticket: string) => attempt(ticket, 'preparing', {}),
   ],
   [
+    'KEEP-OTHER-PROJECT',
+    "a stamp naming another project's run",
+    (ticket: string) =>
+      attempt(
+        ticket,
+        'failed',
+        { 'write-task': 'failed', dispatch: 'skipped' },
+        { project: 'other' },
+      ),
+  ],
+  [
     'KEEP-UNSTAMPED',
     'a task dir with no owner stamp',
     (ticket: string) =>
-      attempt(ticket, 'failed', { 'write-task': 'failed', dispatch: 'skipped' }, { stamp: false }),
+      attempt(ticket, 'failed', { 'write-task': 'failed', dispatch: 'skipped' }, { stamp: 'none' }),
+  ],
+  [
+    'KEEP-TRUNCATED',
+    'a task dir whose owner stamp was cut short',
+    (ticket: string) =>
+      attempt(
+        ticket,
+        'failed',
+        { 'write-task': 'failed', dispatch: 'skipped' },
+        { stamp: 'truncated' },
+      ),
   ],
 ] as const) {
   test(`${name} keeps the collision decision`, async () => {

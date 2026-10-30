@@ -57,8 +57,11 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
   const collision = handleCollisionDecision(run.id, run, [dir], dir);
   let decision = run.decisions.find((item) => item.type === 'engine_collision');
   try {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    decision = run.decisions.find((item) => item.type === 'engine_collision');
+    // The collision first checks who owns the dir (file reads), then asks.
+    for (const deadline = Date.now() + 2_000; !decision && Date.now() < deadline; ) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      decision = run.decisions.find((item) => item.type === 'engine_collision');
+    }
     assert.ok(decision);
     assert.equal(decision.description, `Task dir collision for ${dir}: ${dir}`);
     assert.deepEqual(decision.actions, collisionDecisionActions(run));

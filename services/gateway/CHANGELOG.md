@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - A reference-only eval experiment opens as its family snapshot, with its reference package and no runs, instead of failing with "No runs found".
 - Launch and resume Codex workers without the startup update check, so a worker never self-updates inside its pane and misses its ready window.
-- Redispatching a ticket whose earlier attempts failed or were cancelled before dispatch takes a new task dir without asking; the collision is recorded as resolved automatically. An earlier attempt that reached dispatch or is still live, or a dir without an owner stamp, still asks.
+- Redispatching a ticket whose earlier attempts failed or were cancelled before dispatch takes a new task dir without a collision decision. An earlier attempt that ever reached dispatch (replays included) or is still live, or a dir without a readable owner stamp, still asks.
 - Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
 - Allow a requested re-review at the same HEAD when a package refresh changed only the run artifacts its open findings cite.
 - Recover publication-gate, COMPLETE and FINALIZE progress after a worker pane disappears, even without a saved conversation; verify a resumed conversation before reading its replacement pane.

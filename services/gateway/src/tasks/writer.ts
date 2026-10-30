@@ -579,7 +579,7 @@ function flowTaskBaseDir(
 /**
  * The run each task dir was written for, from the owner stamp writeTaskFile leaves right
  * after creating the dir, so a write-task that fails later still names its owner.
- * A dir without the stamp has no provable owner: null.
+ * A dir without a readable stamp has no provable owner: null.
  */
 export async function readTaskDirOwners(
   run: Pick<Run, 'project' | 'flowType'>,
@@ -599,7 +599,14 @@ export async function readTaskDirOwners(
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
         throw err;
       }
-      const owner = (JSON.parse(stamp) as { ownerRunId?: unknown }).ownerRunId;
+      let owner: unknown;
+      try {
+        owner = (JSON.parse(stamp) as { ownerRunId?: unknown }).ownerRunId;
+      } catch (err) {
+        // A stamp cut short by a crash mid-write names no owner; the caller keeps asking.
+        if (err instanceof SyntaxError) return null;
+        throw err;
+      }
       return typeof owner === 'string' ? owner : null;
     }),
   );

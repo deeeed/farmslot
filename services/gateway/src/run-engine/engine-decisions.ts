@@ -577,14 +577,21 @@ export function buildCollisionSuccessorParams(
   };
 }
 
-/** A run that failed or was cancelled before its dispatch step started never ran a worker. */
+/**
+ * A run that failed or was cancelled before any worker launched. Replay resets the dispatch
+ * step's timing, so the records a dispatch leaves on the run also count as having reached it.
+ */
 function endedBeforeDispatch(run: Run): boolean {
   if (run.status !== 'failed' && run.status !== 'cancelled') return false;
   const dispatch = run.steps.find((step) => step.name === PipelineSteps.DISPATCH);
-  return (
-    dispatch !== undefined &&
-    !dispatch.startedAt &&
-    (dispatch.status === 'pending' || dispatch.status === 'skipped')
+  if (!dispatch || dispatch.startedAt) return false;
+  if (dispatch.status !== 'pending' && dispatch.status !== 'skipped') return false;
+  return !(
+    run.engineState?.taskExecution ||
+    run.engineState?.workspaceReviewDispatchGeneration !== undefined ||
+    run.worktreeHeadAtDispatch ||
+    run.metrics?.runnerSessionId ||
+    run.agentContexts?.some((context) => context.startedAt || context.runnerSessionId)
   );
 }
 
@@ -594,18 +601,27 @@ function endedBeforeDispatch(run: Run): boolean {
  * an owner that is still live or one that reached dispatch keeps the decision.
  */
 async function collisionOnlyFromAttemptsBeforeDispatch(
+  runId: string,
   current: Run,
   existingDirs: string[],
 ): Promise<boolean> {
-  // Lazy import keeps the task writer out of this module's load cycle.
-  const { readTaskDirOwners } = await import('../tasks/writer.js');
-  const owners = await readTaskDirOwners(current, existingDirs);
-  for (const owner of owners) {
-    if (!owner || owner === current.id) return false;
-    const prior = await getRunWithArchived(owner);
-    if (!prior || prior.project !== current.project || !endedBeforeDispatch(prior)) return false;
+  try {
+    // Lazy import keeps the task writer out of this module's load cycle.
+    const { readTaskDirOwners } = await import('../tasks/writer.js');
+    const owners = await readTaskDirOwners(current, existingDirs);
+    for (const owner of owners) {
+      if (!owner || owner === current.id) return false;
+      const prior = await getRunWithArchived(owner);
+      if (!prior || prior.project !== current.project || !endedBeforeDispatch(prior)) return false;
+    }
+    return owners.length > 0;
+  } catch (err) {
+    // Unproven ownership keeps today's behaviour: the operator chooses.
+    console.warn(
+      `[run-engine] collision owner check failed for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
+    return false;
   }
-  return owners.length > 0;
 }
 
 /**
@@ -624,6 +640,9 @@ async function collisionOnlyFromAttemptsBeforeDispatch(
  * createEngineDecision replays a resolved decision only when canReplayCollisionDecision
  * says the set of colliding dirs is unchanged; a new dir between precheck and WRITE_TASK
  * forces a fresh prompt so the operator sees the updated state.
+ *
+ * Dirs left only by attempts that ended before dispatch need no choice: this returns
+ * 'create-new' without a decision. Ownership is proven again at each call, never replayed.
  */
 export async function handleCollisionDecision(
   runId: string,
@@ -631,6 +650,13 @@ export async function handleCollisionDecision(
   existingDirs: string[],
   ticketSlug: string,
 ): Promise<'create-new'> {
+  if (await collisionOnlyFromAttemptsBeforeDispatch(runId, current, existingDirs)) {
+    console.warn(
+      `[run-engine] run ${runId.slice(0, 8)}: ${existingDirs.join(', ')} came only from attempts that ended before dispatch; creating a new task dir`,
+    );
+    return 'create-new';
+  }
+
   // Project-scoped lookup — two different projects can legitimately produce
   // task dir basenames with the same prefix (same slug schema, different repos).
   // Without the project filter a same-named dir in another project becomes the
@@ -665,24 +691,13 @@ export async function handleCollisionDecision(
   // ambiguous when multiple prior runs collide; the panel makes the choice explicit.
   const actions = collisionDecisionActions(current);
 
-  let autoAction: 'create-new' | undefined;
-  try {
-    if (await collisionOnlyFromAttemptsBeforeDispatch(current, existingDirs))
-      autoAction = 'create-new';
-  } catch (err) {
-    // Unproven ownership keeps today's behaviour: the operator chooses.
-    console.warn(
-      `[run-engine] collision owner check failed for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
-    );
-  }
-
   const actionId = await createEngineDecision(
     runId,
     'collision',
     `Task dir collision for ${ticketSlug}: ${existingDirs.join(', ')}`,
     actions,
     { kind: 'collision', ticketSlug, existingDirs, priorRunIds, dirOwners },
-    { canReplay: (prior) => canReplayCollisionDecision(prior, existingDirs), autoAction },
+    { canReplay: (prior) => canReplayCollisionDecision(prior, existingDirs) },
   );
 
   if (actionId === 'abort') throw new Error('Aborted: task dir collision');
@@ -754,8 +769,6 @@ export async function createEngineDecision(
      * reason+resolvedAt only and silently replays the prior action against new data. */
     canReplay?: (existing: RunDecision) => boolean;
     readProgress?: (run: Run) => Promise<RunProgressObservation>;
-    /** The caller already established which action applies; record it without waiting. */
-    autoAction?: string;
   },
 ): Promise<string> {
   const run = getRun(runId);
@@ -855,10 +868,10 @@ export async function createEngineDecision(
   });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 
-  const autoAction = autoResolveEngineDecision(run, reason, actions) ?? options?.autoAction;
+  const autoAction = autoResolveEngineDecision(run, reason, actions);
   if (autoAction) {
     console.warn(
-      `[run-engine] auto-resolved ${reason} for run ${runId.slice(0, 8)} -> ${autoAction}`,
+      `[run-engine] validation mode auto-resolved ${reason} for run ${runId.slice(0, 8)} -> ${autoAction}`,
     );
   }
   const actionId =
