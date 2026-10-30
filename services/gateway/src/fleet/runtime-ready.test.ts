@@ -12,6 +12,8 @@ let liveProcess = false;
 let controlOk = true;
 let refusal: string | undefined;
 let afterProbe: (() => void) | undefined;
+let locked = false;
+const probesUnderLock: string[] = [];
 const calls: string[] = [];
 const realConfig = await import('../core/config.js');
 let prepareSeconds: number | undefined;
@@ -48,7 +50,12 @@ mock.module('../methods/runtime-capabilities.js', {
       ) => {
         assert.equal(device, true);
         if (refusal) return { ok: false, reason: refusal };
-        await body();
+        locked = true;
+        try {
+          await body();
+        } finally {
+          locked = false;
+        }
         return { ok: true };
       },
     }),
@@ -63,6 +70,7 @@ mock.module('./resource-manager.js', {
     getActiveResource: () => active,
     probeResourceStatus: async (_slot: string, id: string) => {
       calls.push('probe:' + id);
+      if (locked) probesUnderLock.push(id);
       const values = states[id];
       const status = values.length > 1 ? values.shift() : values[0];
       afterProbe?.();
@@ -110,6 +118,7 @@ beforeEach(() => {
   controlOk = true;
   refusal = undefined;
   afterProbe = undefined;
+  probesUnderLock.length = 0;
   calls.length = 0;
 });
 const ready = (
@@ -170,6 +179,23 @@ test('a runtime still busy after boot is probed again until healthy within its l
     'probe:server',
     'probe:server',
     'probe:browser',
+  ]);
+  // Only the first post-boot probe holds the capability lock other slots share.
+  assert.deepEqual(probesUnderLock, ['server']);
+});
+test('an ownership change while probing a busy runtime refuses before the next resource', async () => {
+  states = { browser: ['running'], server: ['stopped', 'stopped', 'stopped', 'running'] };
+  let probes = 0;
+  afterProbe = () => {
+    if (++probes === 3) row.current_run_id = 'successor';
+  };
+  await assert.rejects(ready(), /ownership changed/);
+  assert.deepEqual(calls, [
+    'probe:server',
+    'pressure',
+    'boot:server',
+    'probe:server',
+    'probe:server',
   ]);
 });
 test('changed owner, epoch and cancellation during health cannot authorize a boot', async () => {
