@@ -1220,6 +1220,11 @@ export function createGatewayResourceCache(
   }
 
   return {
+    observedKey(match) {
+      for (const entry of entries.values())
+        if (entry.listeners.size && entry.query.dependencies.some(match)) return true;
+      return false;
+    },
     observe<T>(query: ResourceQuery<T>, listener: (state: ResourceQueryState<T>) => void) {
       if (disposed) throw new Error('Resource cache is disposed');
       const entry = entryFor(query);
@@ -1289,6 +1294,13 @@ export function createGatewayResourceCache(
       if (disposed) throw new Error('Resource cache is disposed');
       const entry = entryFor(query);
       await fetchEntry(entry, false, placement, signal);
+      return entry.state as ResourceQueryState<T>;
+    },
+    async retryAfterPending<T>(query: ResourceQuery<T>) {
+      if (disposed) throw new Error('Resource cache is disposed');
+      const entry = entryFor(query);
+      await entry.pending?.promise.catch(() => undefined);
+      await fetchEntry(entry, false);
       return entry.state as ResourceQueryState<T>;
     },
     async hasContent(key) {
