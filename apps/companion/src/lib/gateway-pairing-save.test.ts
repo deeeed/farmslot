@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 
-import type { GatewayAuthConnectResult, PersonSessionAuth } from '@farmslot/protocol';
+import {
+  type GatewayAuthConnectResult,
+  type PersonSessionAuth,
+  PersonSessionClient,
+  PersonSessionEndedError,
+} from '@farmslot/protocol';
 
 import type { GatewayProfile } from './gateway-profiles';
 
@@ -190,4 +195,29 @@ test('a pairing whose addresses never answer keeps the old login and re-syncs on
     { id: lan.id, login: 'a'.repeat(32) },
     { id: tailnet.id, login: undefined },
   ]);
+});
+
+test('a probe that sees the new session end leaves the old login for the rollback', async () => {
+  await signIn(lan, session('a'));
+  const paired = session('b');
+  const entry = { profile: lan, personSession: paired };
+  await assert.rejects(
+    save.savePairedProfiles([entry], {
+      save: ({ profile }, onReplace) => signIn(profile, paired, onReplace),
+      activate: async () => {
+        const credentials = save.pairingProbeCredentials(entry);
+        assert.ok(credentials.sessionStorage);
+        const probe = new PersonSessionClient({
+          storage: credentials.sessionStorage,
+          request: async () => {
+            throw Object.assign(new Error('ended'), { code: 'AUTH_SESSION_ENDED' });
+          },
+        });
+        await assert.rejects(probe.accessToken(true), PersonSessionEndedError);
+        throw new Error('None of the paired addresses answered');
+      },
+    }),
+    /None of the paired addresses answered/u,
+  );
+  assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'a'.repeat(32));
 });

@@ -1,6 +1,28 @@
-import type { PersonSessionAuth } from '@farmslot/protocol';
+import type { InteractiveGatewayCredentials, PersonSessionAuth } from '@farmslot/protocol';
 
 import { type GatewayProfile, restoreGatewayProfileLogin } from './gateway-profiles';
+
+/**
+ * Credentials for probing a paired address while the pairing can still be undone. They hold the
+ * new grant in memory: a probe that sees the new session end, or a service credential refused,
+ * writes nothing over the saved login a rollback has to find.
+ */
+export function pairingProbeCredentials(entry: {
+  secret?: string;
+  personSession?: PersonSessionAuth;
+}): InteractiveGatewayCredentials {
+  if (!entry.personSession) return entry.secret ? { token: entry.secret } : {};
+  let held: PersonSessionAuth | null = entry.personSession;
+  return {
+    sessionStorage: {
+      load: async () => held,
+      save: async (value) => {
+        held = value;
+      },
+    },
+    personSessionRequired: true,
+  };
+}
 
 /**
  * Saves every profile a pairing produced and activates one, or keeps none of their logins. If a
