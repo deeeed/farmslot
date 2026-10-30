@@ -133,10 +133,18 @@ export async function proveAcPanel({
         'written',
       );
       await shot('written');
-      const movement = written.nextTop - unwritten.nextTop;
+      // At the page's scroll limit a shrink moves content above instead of the next control.
+      const movement = {
+        next: written.nextTop - unwritten.nextTop,
+        pipeline: written.pipelineTop - unwritten.pipelineTop,
+      };
       await save(`${width}-arrival`, { unwritten, written, movement });
       if (!before) {
-        assert.equal(movement, 0, 'Task criteria arrival must not move the next control');
+        assert.deepEqual(
+          movement,
+          { next: 0, pipeline: 0 },
+          'Task criteria arrival must not move the next control',
+        );
         assert(!written.slotPending, 'Loaded criteria release the reserved row');
       }
       transition('ac-written-error');
