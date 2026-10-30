@@ -17,7 +17,8 @@ import {
 } from '@farmslot/protocol';
 import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
-import { writeResultPackageManifest } from '../evals/package-store.js';
+import { firstOutputFixture } from '../evals/first-output.test-support.js';
+import { readFrozenEvalFirstOutputPackage } from '../evals/package-store.js';
 import type { ReviewOptions } from '../review/orchestrator.js';
 import {
   admitReviewRound,
@@ -48,12 +49,7 @@ import {
 } from './post-dispatch-steps.js';
 import { shouldPrepareLocalFirstPackage } from './publication-policy.js';
 import { executePublishGateReviewPlan as executeGateReviewPlan } from './ready-gate.js';
-import {
-  deleteTestRunIfPresent,
-  makeEvalResultPackage,
-  makeReadyGatePackage,
-  makeRun,
-} from './test-fixtures.js';
+import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
 for (const verdict of ['pass', 'issues', 'failed'] as const) {
   test(`review reconciliation retains unfinished rows and lineage after ${verdict}`, async (t) => {
@@ -1919,75 +1915,86 @@ test('readyGateReviewSubjectMatches ignores review-loop metadata but rejects sub
     false,
   );
 });
-test('executeReviewStep skips eval packages with review axis none', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-review-axis-skip-'));
-  t.after(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
-
-  const packagePath = path.join(root, 'candidate.result-package.json');
-  await writeResultPackageManifest(
-    packagePath,
-    makeEvalResultPackage({
-      axes: {
-        template: { path: 'templates/worker/fix-bug.md' },
-        review: { name: 'none', version: 'first-pass' },
-      },
-    }),
-  );
-
-  const run = createRun({
-    flowType: 'fix-bug',
-    mode: 'autonomous',
-    project: 'example-mobile-farm',
-    ticketOrPr: 'EVAL-REVIEW-SKIP',
-    runner: 'codex',
-    slotId: 'runner-mobile-1',
-    completionPolicy: 'artifact-only',
-    engineState: {
-      evalExperiment: {
-        experimentId: 'experiment-review-skip',
-        experimentKey: 'experiment-key-review-skip',
-        experimentManifestPath: path.join(root, 'experiment-manifest.json'),
-        packagePath,
-        candidateStrategyFingerprint: 'fingerprint-review-skip',
-        trialId: 'trial-review-skip',
-      },
-    },
-  });
-  t.after(async () => {
-    await deleteTestRunIfPresent(run.id);
-  });
-
-  const io = await executeReviewStep(run.id, {
-    activeMonitors: new Map(),
-    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
-    broadcastFn: () => {},
-    createEngineDecision: async () => 'decision-1',
-    executeNoChangeGate: async () => {},
-    executePublishGateReviewPlan: async () => ({ reviewIds: [] }),
-    executeReadyGate: async () => 'ready',
-    executeReviewGate: async () => {},
-    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
-    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
-    isHumanGateEnabled: async () => false,
-    monitorTerminalError: ({ reason }) => new Error(reason),
-    refreshRunLinks: async () => {},
-    stepPartialIO: new Map(),
-    deferTerminalSlotRelease: () => {},
-  });
-
-  assert.deepEqual(io.inputs, {
-    slotId: 'runner-mobile-1',
-    enabled: false,
-    reviewAxis: { name: 'none', version: 'first-pass' },
-  });
-  assert.deepEqual(io.outputs, {
-    skipped: true,
-    reason: 'eval-review-axis-none',
-    reviewAxis: { name: 'none', version: 'first-pass' },
-  });
-});
+for (const mode of ['autonomous', 'interactive'] as const) {
+  for (const verdict of ['pass', 'issues'] as const) {
+    test(`eval ${mode} ${verdict} is judged once even with review axis none`, async (t) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'eval-first-review-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const run = createRun({
+        flowType: 'fix-bug',
+        mode,
+        project: 'generic-project',
+        ticketOrPr: 'EVAL-FIRST',
+        slotId: 'eval-slot',
+        completionPolicy: 'artifact-only',
+      });
+      t.after(() => deleteTestRunIfPresent(run.id));
+      const fixture = await firstOutputFixture(root, getRun(run.id)!);
+      updateRun(run.id, { taskFile: fixture.taskFile, engineState: fixture.engineState });
+      updateRunStep(run.id, 'dispatch', { startedAt: '2026-10-30T00:00:00Z' });
+      const events: string[] = [];
+      let idle = false;
+      const issues =
+        verdict === 'issues'
+          ? [{ file: 'value.ts', description: 'Wrong result', severity: 'major' as const }]
+          : [];
+      const context: PostDispatchStepContext = {
+        ...restartReplayContext(),
+        readEvalWorkerProgress: async () => ({ kind: idle ? 'idle' : 'making-progress' }),
+        waitForEvalWorkerProgress: async () => {
+          events.push('wait');
+          idle = true;
+        },
+        captureEvalWorkerOutput: async () => {
+          events.push('capture');
+          return 1;
+        },
+        extractEvalWorkerCost: async () => {
+          events.push('worker-usage');
+          return {
+            costUsd: 0.25,
+            turns: 2,
+            inputTokens: 100,
+            outputTokens: 20,
+            totalTokens: 120,
+            cacheCreation: null,
+            cacheRead: null,
+            actualModel: 'worker',
+          };
+        },
+        executeReviewForRun: async (_id, _slot, options) => {
+          events.push('judge');
+          assert.equal(options?.maxRetries, 0);
+          assert.equal(options?.resumeFromResult, undefined);
+          const frozen = await readFrozenEvalFirstOutputPackage(getRun(run.id)!);
+          assert.deepEqual(frozen?.metrics, {
+            durationMs: 60_000,
+            costEstimate: 0.25,
+            sessionTurns: 2,
+            sessionInputTokens: 100,
+            sessionOutputTokens: 20,
+            sessionTotalTokens: 120,
+          });
+          return { verdict, issues, retryCount: 0, maxRetries: 0 };
+        },
+        createEngineDecision: async () =>
+          assert.fail('An eval never sends findings back to the worker'),
+        executeReadyGate: async () => assert.fail('An eval has no publication gate'),
+      };
+      const io = await executeReviewStep(run.id, context);
+      assert.deepEqual(events, ['wait', 'capture', 'worker-usage', 'judge']);
+      assert.equal(io.outputs?.verdict, verdict);
+      assert.deepEqual(io.outputs?.issues, issues);
+      assert.equal(getRun(run.id)?.status, run.status);
+      assert.deepEqual(getRun(run.id)?.decisions, []);
+      assert.deepEqual(context.stepPartialIO.size, 0);
+      assert.equal(
+        (await executeHumanGateStep(run.id, context)).outputs?.reason,
+        'artifact-only-policy',
+      );
+    });
+  }
+}
 
 test('only a flow whose COMPLETE ends the run defers its slot release to the engine', () => {
   // The branch that decides whether COMPLETE performs its own release or hands

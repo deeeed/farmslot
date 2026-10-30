@@ -320,11 +320,15 @@ export async function executeReview(
             deliveryBaselineRef: run.engineState?.evalExperiment?.blind?.firstOutput?.headSha,
           }),
         );
+        await persistRunNow(getRun(runId)!, 'eval judge receipt recovered');
+        const { stopSettledReviewer } = await import('./native-review-agent.js');
+        await stopSettledReviewer(runId, cached.contextId);
       }
       return cached.result;
     }
     const completed = await executeOwnedReview(runId, slotId, options);
-    await recordEvalJudgeResult(getRun(runId) ?? run, completed);
+    if (run.engineState?.evalExperiment)
+      await withNativeReviewMutation(() => recordEvalJudgeResult(getRun(runId) ?? run, completed));
     return completed;
   });
   // Pipeline and publication reviews both end here: a pass is what was reviewed.

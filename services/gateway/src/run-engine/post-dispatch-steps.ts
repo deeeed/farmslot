@@ -204,6 +204,7 @@ export interface PostDispatchStepContext {
   executeReviewForRun?: typeof executeReview;
   readEvalWorkerProgress?: typeof readRunProgress;
   extractEvalWorkerCost?: typeof extractAndPersistSessionCost;
+  captureEvalWorkerOutput?: typeof captureRunOutput;
   waitForEvalWorkerProgress?: () => Promise<void>;
   resumeInterruptedPublicationReviewForRun?: typeof resumeInterruptedPublicationReview;
   resumeVisualRepairForRun?: typeof resumeVisualRepair;
@@ -365,6 +366,7 @@ async function freezeEvalWorkerFacts(run: Run, context: PostDispatchStepContext)
     updateRunStep(run.id, S.REVIEW, { detail: 'Waiting for the first worker turn to finish' });
     await (context.waitForEvalWorkerProgress?.() ?? delay(250));
   }
+  await (context.captureEvalWorkerOutput ?? captureRunOutput)(run.id, true, true);
   const cost = await (context.extractEvalWorkerCost ?? extractAndPersistSessionCost)(run.id);
   const current = getRun(run.id);
   if (runSupersededSince(current, generation))
@@ -806,7 +808,7 @@ export async function executeReviewStep(
         : undefined;
   // A result decision's Send back continues from its recorded findings: the
   // worker gets them first, as Continue Fixing does, instead of a fresh review.
-  const sendBack = takeSendBackReview(runId);
+  const sendBack = evalJudge ? null : takeSendBackReview(runId);
   let result: ReviewResult = await executeReviewForRun(
     runId,
     current.slotId,

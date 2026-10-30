@@ -97,6 +97,7 @@ export async function readEvalJudgeReceipt(run: Run): Promise<EvalJudgeReceipt |
   )
     throw new Error('Eval judge receipt differs from its frozen first output');
   const raw = value.result;
+  if (!isRecord(raw.reviewSnapshot)) throw new Error('Eval judge snapshot is missing');
   const snapshot = parseReviewSnapshotArtifact(JSON.stringify(raw.reviewSnapshot));
   const feedback = parseStructuredReviewFeedback(
     JSON.stringify({ schemaVersion: 1, verdict: raw.verdict, issues: raw.issues }),

@@ -867,13 +867,14 @@ async function runNativeReviewAttempt(
     admit();
     if (original.engineState?.evalExperiment && !feedback.incomplete) {
       const artifactPaths = [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths];
+      const reviewerSessionId = context.runnerSessionId;
       await withNativeReviewMutation(() =>
         recordEvalJudgeResult(
           original,
           {
             ...feedback,
             reviewId: lineage,
-            reviewerSessionId: context.runnerSessionId,
+            reviewerSessionId,
             runner,
             model,
             effort: input.effort,
@@ -884,7 +885,7 @@ async function runNativeReviewAttempt(
             reviewSnapshot: reviewSnapshot.snapshot,
             usage: unavailableRunnerSessionUsage({
               runner,
-              runnerSessionId: context.runnerSessionId ?? null,
+              runnerSessionId: reviewerSessionId ?? null,
               runnerSessionPath: null,
               error: 'Native reviewer usage accounting is unavailable',
             }),

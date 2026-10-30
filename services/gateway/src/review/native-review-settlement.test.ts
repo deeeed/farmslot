@@ -1,12 +1,21 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { mock, test, type TestContext } from 'node:test';
 
 import type { NativeSessionEvent, Principal } from '@farmslot/protocol';
+
+import type { ReviewSnapshotRange } from './snapshots.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
 const checklist = await import('../tasks/checklist-target.js');
 const snapshots = await import('./snapshots.js');
+const feedback = await import('./feedback.js');
+const { firstOutputFixture } = await import('../evals/first-output.test-support.js');
+const { readEvalJudgeReceipt } = await import('../evals/judge.js');
+const { freezeEvalFirstOutputPackage } = await import('../evals/package-store.js');
 const reviewAgent = await import('./review-agent.js');
 const { upsertAgentContext } = await import('../agents/contexts.js');
 const { rewriteStatusFile } = await import('../core/state.js');
@@ -67,6 +76,8 @@ const noop = async () => {};
 // Reviewer contexts whose process the agent stopped, and whether that stop fails.
 const stopped: string[] = [];
 let stopFails = false;
+let snapshotRange: ReviewSnapshotRange | undefined;
+let judgeRecordedBeforeStop = false;
 const completionCommands: string[] = [];
 let loseCompletionReply = false;
 let completionLaunches = 0;
@@ -169,6 +180,8 @@ mock.module('../runners/native/worker.js', {
   namedExports: {
     cancelNativeWorkerContext: async (_runId: string, context: { id: string }) => {
       stopped.push(context.id);
+      if (getRun(_runId)?.engineState?.evalExperiment)
+        judgeRecordedBeforeStop = Boolean(await readEvalJudgeReceipt(getRun(_runId)!));
       if (stopFails) throw new Error('native worker stop is unconfirmed');
     },
     dispatchNativeWorker: async (input: { runId: string; contextId: string }) => {
@@ -391,6 +404,7 @@ mock.module('../tasks/checklist-target.js', {
 mock.module('../tasks/watcher.js', { namedExports: { unwatchContext: noop } });
 mock.module('./feedback.js', {
   namedExports: {
+    ...feedback,
     readReviewFeedback: async () =>
       ['completion-invalid', 'completion-invalid-idle'].includes(ending)
         ? {
@@ -419,16 +433,19 @@ mock.module('./reviewed-inputs.js', { namedExports: { noteReviewInputsAtLaunch: 
 mock.module('./snapshots.js', {
   namedExports: {
     ...snapshots,
-    captureReviewSnapshot: async () => ({
-      snapshot: {
-        source: 'local-git',
-        baseSha: 'b'.repeat(40),
-        headSha: 'a'.repeat(40),
-        diffPath: 'artifacts/review.diff',
-        capturedAt: new Date().toISOString(),
-      },
-      artifactPaths: [],
-    }),
+    captureReviewSnapshot: async (...args: Parameters<typeof snapshots.captureReviewSnapshot>) => {
+      snapshotRange = args[4];
+      return {
+        snapshot: {
+          source: 'local-git',
+          baseSha: 'b'.repeat(40),
+          headSha: 'a'.repeat(40),
+          diffPath: 'artifacts/review.diff',
+          capturedAt: new Date().toISOString(),
+        },
+        artifactPaths: [],
+      };
+    },
     removeSlotFiles: noop,
     readPersistedReviewSnapshot: async () => ({
       snapshot: {
@@ -506,6 +523,31 @@ const review = (runId: string) =>
     mode: 'cold',
     reviewId: `pipeline-review-${runId}`,
   });
+
+test('an eval pins the blind range and records its only judge before settling the reviewer', async (t) => {
+  ending = 'verdict';
+  const root = await mkdtemp(path.join(os.tmpdir(), 'eval-native-judge-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = await nativeRun(t);
+  const fixture = await firstOutputFixture(root, getRun(run.id)!);
+  updateRun(run.id, { engineState: fixture.engineState, taskFile: fixture.taskFile });
+  await freezeEvalFirstOutputPackage(getRun(run.id)!, {});
+  judgeRecordedBeforeStop = false;
+  const before = dispatchCalls;
+  const result = await review(run.id);
+  assert.equal(result.verdict, 'issues');
+  assert.equal(dispatchCalls, before + 1);
+  assert.equal(snapshotRange?.committedBaseSha, 'b'.repeat(40));
+  assert.equal(snapshotRange?.committedHeadSha, 'a'.repeat(40));
+  assert.equal(judgeRecordedBeforeStop, true);
+  const receipt = await readEvalJudgeReceipt(getRun(run.id)!);
+  assert.equal(receipt?.result.verdict, 'issues');
+  assert.deepEqual(receipt?.result.issues, result.issues);
+  assert.equal(
+    getRun(run.id)?.agentContexts?.find(({ id }) => id === receipt?.contextId)?.status,
+    'complete',
+  );
+});
 
 test('a failed native turn with valid findings receives one completion turn in the same admission', async (t) => {
   ending = 'completion-turn';

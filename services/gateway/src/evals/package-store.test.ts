@@ -15,13 +15,16 @@ import {
 import { resolveEvalSource } from '../methods/eval/source-resolution.js';
 import { TEMPLATE_PROVENANCE_INPUT } from '../tasks/writer.js';
 
+import { firstOutputFixture } from './first-output.test-support.js';
 import {
   computeCandidateStrategyFingerprint,
   computeExperimentKey,
   computePackageHash,
   finalizeEvalResultPackageForRun,
+  freezeEvalFirstOutputPackage,
   MAX_RESULT_PACKAGE_ARTIFACT_SCAN_FILES,
   packageIdFor,
+  readFrozenEvalFirstOutputPackage,
   readResultPackageManifest,
   scanResultPackageArtifacts,
   stableJson,
@@ -582,6 +585,78 @@ test('finalizeEvalResultPackageForRun hashes artifacts and updates experiment tr
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+for (const verdict of ['pass', 'issues'] as const) {
+  test(`final ${verdict} eval retains frozen worker facts and separate judge evidence`, async (t) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'eval-worker-freeze-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const run = await firstOutputFixture(root, makeRun(root));
+    const metrics = { costEstimate: 0.25, sessionTotalTokens: 1500, durationMs: 60_000 };
+    const first = await freezeEvalFirstOutputPackage(run, metrics);
+    assert.equal(first.diff.headSha, 'a'.repeat(40));
+    const workerReport = first.validationEvidence.find(
+      ({ path: file }) => file === 'artifacts/report.md',
+    );
+    assert.ok(workerReport?.sha256);
+    run.metrics.costEstimate = 99;
+    run.metrics.sessionTotalTokens = 99999;
+    assert.deepEqual(
+      (await freezeEvalFirstOutputPackage(run, { costEstimate: 99 })).metrics,
+      metrics,
+    );
+    const reportPath = path.join(root, 'task/artifacts/report.md');
+    await writeFile(reportPath, 'Reviewer overwrote the worker report\n');
+    await assert.rejects(
+      finalizeEvalResultPackageForRun(run),
+      /Frozen eval worker evidence changed/,
+    );
+    await writeFile(reportPath, 'First worker report\n');
+    await assert.rejects(finalizeEvalResultPackageForRun(run), /judge has no completed verdict/);
+    const judgePath = 'artifacts/eval-first-output/review-loop-1/review-result.json';
+    await mkdir(path.join(root, 'task/artifacts/eval-first-output/review-loop-1'), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(root, 'task', judgePath),
+      JSON.stringify({
+        verdict,
+        issues:
+          verdict === 'issues'
+            ? [{ file: 'value.ts', severity: 'major', description: 'Wrong answer' }]
+            : [],
+      }),
+    );
+    run.steps = [
+      {
+        name: 'review',
+        status: 'done',
+        outputs: {
+          verdict,
+          retryCount: 0,
+          attempts: [{ artifactPaths: [judgePath] }],
+        },
+      },
+    ];
+    const finalized = await finalizeEvalResultPackageForRun(run);
+    assert.ok(finalized);
+    assert.deepEqual(finalized.metrics, metrics);
+    assert.deepEqual(finalized.validationEvidence, first.validationEvidence);
+    assert.equal(finalized.reviewEvidence.length, 1);
+    assert.equal(finalized.reviewEvidence[0]?.path, judgePath);
+    assert.deepEqual(finalized.diff, first.diff);
+    assert.equal(finalized.comparisonEligibility?.status, 'eligible');
+    assert.equal(finalized.packageHash, computePackageHash(finalized));
+    assert.equal((await readFrozenEvalFirstOutputPackage(run))?.packageHash, first.packageHash);
+  });
+}
+
+test('unavailable first-output measurements stay unknown instead of inheriting later run metrics', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'eval-worker-unknown-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = await firstOutputFixture(root, makeRun(root));
+  const frozen = await freezeEvalFirstOutputPackage(run, {});
+  assert.deepEqual(frozen.metrics, {});
 });
 
 test('finalizeEvalResultPackageForRun rejects removed evalPackage engine state loudly', async () => {
