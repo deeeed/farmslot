@@ -24,6 +24,7 @@ import {
   nativeWatchTools,
   nativeWork,
   nativeWorkLabel,
+  retainNativeMessages,
 } from '../../src/client-cache/native-history.js';
 import type { NativeSessionEvent, NativeSessionReadResult } from '../../src/rpc/native-session.js';
 
@@ -422,26 +423,34 @@ test('a sent message shows itself until the conversation shows it', () => {
   }
 });
 
-test('a queued message the host fails before showing it is dropped; a shown one is not', () => {
-  const receipt = (state: 'pending' | 'failed' | 'completed', queued = false) => ({
+test('a message the host failed without submitting it is dropped; a delivered one is not', () => {
+  const receipt = (
+    state: 'pending' | 'failed' | 'completed',
+    submitted: boolean,
+    queued = false,
+  ) => ({
     commandId: 'command',
     generation: 'generation',
     state,
     queued,
-    submitted: state !== 'pending',
-    accepted: state === 'completed',
+    submitted,
+    accepted: submitted,
   });
   // Closed or re-leased while queued: failed, never submitted.
-  assert.equal(nativeMessageDropped([], 'command', receipt('failed')), true);
-  // Failed after the conversation showed it: the reader still sees it there.
-  assert.equal(
-    nativeMessageDropped([event(1, 'command.submitted', 'task')], 'command', receipt('failed')),
-    false,
-  );
-  assert.equal(nativeMessageDropped([], 'command', receipt('pending', true)), false);
-  assert.equal(nativeMessageDropped([], 'command', receipt('completed')), false);
+  assert.equal(nativeMessageDropped(receipt('failed', false)), true);
+  // Interrupted after delivery, its prompt evicted from the retained history by a long turn.
+  const longTurn: NativeSessionEvent[] = [event(1, 'command.submitted', 'task')];
+  for (let i = 0; i < 201; i++)
+    longTurn.push(
+      { ...event(2 + i * 2, 'tool.started'), tool: { name: 'Bash' } },
+      event(3 + i * 2, 'text.delta', `step ${i}`),
+    );
+  assert.equal(nativeMessageShown(retainNativeMessages(longTurn), 'command'), false);
+  assert.equal(nativeMessageDropped(receipt('failed', true)), false);
+  assert.equal(nativeMessageDropped(receipt('pending', false, true)), false);
+  assert.equal(nativeMessageDropped(receipt('completed', true)), false);
   // No receipt for this generation: the host may still send it after a resume.
-  assert.equal(nativeMessageDropped([], 'command'), false);
+  assert.equal(nativeMessageDropped(), false);
 });
 
 test('late acceptance restores the user prompt before its assistant response', () => {

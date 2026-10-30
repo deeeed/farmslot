@@ -528,16 +528,13 @@ export function nativeMessageShown(events: NativeSessionEvent[], commandId: stri
 }
 
 /**
- * Whether the host failed a sent message before the conversation showed it, as it does
- * with a queued message when the session closes or its worker lease changes. Nothing
- * else keeps that text, so a client gives it back to the reader.
+ * Whether the host failed a sent message without submitting it, as it does with a queued
+ * message when the session closes or its worker lease changes. The runner never got the
+ * text and nothing else keeps it, so a client gives it back to the reader. The host's
+ * receipt decides, not the client's events: those may no longer hold a delivered prompt.
  */
-export function nativeMessageDropped(
-  events: NativeSessionEvent[],
-  commandId: string,
-  receipt?: NativeCommandReceipt,
-): boolean {
-  return receipt?.state === 'failed' && !nativeMessageShown(events, commandId);
+export function nativeMessageDropped(receipt?: NativeCommandReceipt): boolean {
+  return receipt?.state === 'failed' && !receipt.submitted;
 }
 
 /** A confirmed replacement generation must not inherit the old browser input lock. */
