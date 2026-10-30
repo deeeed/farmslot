@@ -12,10 +12,13 @@ import { nativeStyles as styles } from '../styles/native-conversation.styles';
 export function NativeTimelineCard({
   entry,
   onDisclosure,
+  hidden = false,
 }: {
   entry: NativeTimelineEntry;
   /** Called before the card opens or closes, so the conversation keeps the reader's place. */
   onDisclosure: () => void;
+  /** Inside a closed fold: kept mounted, so its own state survives. */
+  hidden?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const toggle = () => {
@@ -24,7 +27,7 @@ export function NativeTimelineCard({
   };
   const preview = nativeEntryPreview(entry);
   return (
-    <View style={[styles.card, entry.kind === 'user' && styles.user]}>
+    <View style={[styles.card, entry.kind === 'user' && styles.user, hidden && styles.hidden]}>
       <Text style={styles.muted}>
         {entry.kind === 'user'
           ? 'You'

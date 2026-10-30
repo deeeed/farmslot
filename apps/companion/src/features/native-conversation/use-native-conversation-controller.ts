@@ -16,6 +16,7 @@ import {
   nativeHistoryQuery,
   nativeObservationQuery,
   nativeTimeline,
+  nativeTimelineRows,
   type NativeTranscript,
   nativeWork,
   resourceQuery,
@@ -418,6 +419,7 @@ export function useNativeConversationController(params: NativeConversationParams
       }
     });
   const entries = nativeTimeline(transcript.events);
+  const rows = nativeTimelineRows(entries);
   const work = nativeWork(transcript.events);
   const canSend = writable && session?.state === 'idle' && !pending && !busy && !!draft.trim();
   const proof = useRef({
@@ -484,6 +486,7 @@ export function useNativeConversationController(params: NativeConversationParams
       resume: resume.viewModel,
       session,
       entries,
+      rows,
       work,
       requests: snapshot?.pendingRequests ?? [],
       responses,

@@ -57,8 +57,11 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
       if (previous) {
         const completed = previous.event.type === 'tool.completed' ? previous.event : event;
         const started = event.type === 'tool.started' ? event : previous.event;
+        // Keep the entry's sequence: cached history keeps only this merged event, and the next read
+        // keys the tool by it, so a card the reader opened stays the same card when it finishes.
         previous.event = {
           ...completed,
+          sequence: previous.key,
           tool: {
             ...started.tool,
             ...completed.tool,
@@ -558,13 +561,94 @@ export function nativeWork(events: NativeSessionEvent[]): NativeWork | undefined
  * `since` is the execution host's clock: a client clock ahead of it overstates the time by the skew.
  */
 export function nativeWorkLabel(work: NativeWork, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - work.since) / 1000));
+  return `Working · ${nativeElapsed(now - work.since)}${work.tool ? ` · ${work.tool}` : ''}`;
+}
+
+/** "12s", "1m 12s", "1h 3m". */
+function nativeElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(seconds / 60);
-  const elapsed =
-    minutes >= 60
-      ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
-      : minutes
-        ? `${minutes}m ${seconds % 60}s`
-        : `${seconds}s`;
-  return `Working · ${elapsed}${work.tool ? ` · ${work.tool}` : ''}`;
+  if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+export type NativeTimelineRow =
+  /** `fold`: the summary row that hides this tool while folded. */
+  | { kind: 'entry'; key: number; entry: NativeTimelineEntry; fold?: number }
+  /** Keyed by the entry that ended its turn; `tools` are the keys it hides. */
+  | { kind: 'work'; key: number; label: string; tools: number[] };
+
+/**
+ * The timeline with a summary row for each finished turn's tool calls, "Worked for 4m 12s ·
+ * 6 tools", just before the turn's end, and those tools marked with it. Nothing moves when a
+ * turn finishes: the tools keep their place and their keys, and the row is added below them.
+ * A turn ends at `turn.completed`, or at `session.closed` when its host stopped mid-turn.
+ * Messages and statuses stay; a running turn has no summary.
+ */
+export function nativeTimelineRows(entries: NativeTimelineEntry[]): NativeTimelineRow[] {
+  const rows: NativeTimelineRow[] = [];
+  let turn: NativeTimelineEntry[] = [];
+  for (const entry of entries) {
+    const ends =
+      entry.kind === 'status' && ['turn.completed', 'session.closed'].includes(entry.event.type);
+    if (!ends) {
+      turn.push(entry);
+      continue;
+    }
+    const tools = turn.filter((item) => item.kind === 'tool');
+    for (const item of turn)
+      rows.push({
+        kind: 'entry',
+        key: item.key,
+        entry: item,
+        ...(tools.length && item.kind === 'tool' ? { fold: entry.key } : {}),
+      });
+    if (tools.length) {
+      const prompt =
+        turn.find(
+          (item) =>
+            item.kind === 'user' &&
+            entry.event.commandId !== undefined &&
+            item.event.commandId === entry.event.commandId,
+        ) ?? turn.find((item) => item.kind === 'user');
+      // Without its prompt in the kept history, the turn's first kept entry is the best start.
+      const opened = prompt ?? turn[0];
+      const elapsed = nativeElapsed(Date.parse(entry.event.at) - Date.parse(opened.event.at));
+      const outcome =
+        entry.event.type === 'session.closed' || entry.event.status === 'interrupted'
+          ? 'Stopped after'
+          : entry.event.status === 'failed'
+            ? 'Failed after'
+            : 'Worked for';
+      rows.push({
+        kind: 'work',
+        key: entry.key,
+        label: `${outcome} ${elapsed} · ${tools.length} ${tools.length === 1 ? 'tool' : 'tools'}`,
+        tools: tools.map((tool) => tool.key),
+      });
+    }
+    rows.push({ kind: 'entry', key: entry.key, entry });
+    turn = [];
+  }
+  for (const item of turn) rows.push({ kind: 'entry', key: item.key, entry: item });
+  return rows;
+}
+
+/**
+ * Tools shown running in a live read here. A turn the reader watched starts open when it
+ * finishes, so its tools don't fold away under them. A stored snapshot is not live: a turn that
+ * finished while the reader was away starts folded.
+ */
+export function nativeWatchTools(rows: NativeTimelineRow[], watched: Set<number>, live: boolean) {
+  if (!live) return;
+  for (const row of rows)
+    if (row.kind === 'entry' && row.entry.kind === 'tool' && row.fold === undefined)
+      watched.add(row.key);
+}
+
+export function nativeFoldWatched(
+  row: Extract<NativeTimelineRow, { kind: 'work' }>,
+  watched: ReadonlySet<number>,
+): boolean {
+  return row.tools.some((key) => watched.has(key));
 }
