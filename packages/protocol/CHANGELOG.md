@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- `nativeMessageShown` says whether a native conversation shows a sent message yet (its submission or acceptance, with the text), the rule `nativeTimeline` uses for user entries, so a client can show a message it sent until then.
+- `nativeMessageShown` says whether a native conversation shows a sent message yet (its submission or acceptance, with the text), the rule `nativeTimeline` uses for user entries, so a client can show a message it sent until then. `nativeMessageDropped` says the host failed such a message before showing it (a queued message when the session closes or its worker lease changes), so a client can give the text back.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.5 - 2026-10-31

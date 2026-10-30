@@ -15,6 +15,7 @@ import {
   nativeHistoryCanAct,
   nativeHistoryCanSend,
   nativeHistoryQuery,
+  nativeMessageDropped,
   nativeMessageShown,
   nativeObservationQuery,
   nativeSendLabel,
@@ -270,6 +271,11 @@ export function useNativeConversationController(params: NativeConversationParams
     ) {
       pendingRef.current = undefined;
       setPending(undefined);
+      // The host failed it unseen (the session closed while it was queued): back to the composer.
+      if (nativeMessageDropped(snapshot.events, command.commandId, receipt)) {
+        draftRef.current = command.text;
+        setDraft(command.text);
+      }
       void persist(draftRef.current, undefined, responsesRef.current).catch((cause) => {
         if (alive.current && currentStorageKey.current === storageKey) setError(message(cause));
       });

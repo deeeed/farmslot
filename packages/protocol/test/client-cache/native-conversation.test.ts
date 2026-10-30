@@ -12,6 +12,7 @@ import {
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
+  nativeMessageDropped,
   nativeMessagePreview,
   nativeMessageShown,
   nativeMessageToggleLabel,
@@ -419,6 +420,28 @@ test('a sent message shows itself until the conversation shows it', () => {
       shown,
     );
   }
+});
+
+test('a queued message the host fails before showing it is dropped; a shown one is not', () => {
+  const receipt = (state: 'pending' | 'failed' | 'completed', queued = false) => ({
+    commandId: 'command',
+    generation: 'generation',
+    state,
+    queued,
+    submitted: state !== 'pending',
+    accepted: state === 'completed',
+  });
+  // Closed or re-leased while queued: failed, never submitted.
+  assert.equal(nativeMessageDropped([], 'command', receipt('failed')), true);
+  // Failed after the conversation showed it: the reader still sees it there.
+  assert.equal(
+    nativeMessageDropped([event(1, 'command.submitted', 'task')], 'command', receipt('failed')),
+    false,
+  );
+  assert.equal(nativeMessageDropped([], 'command', receipt('pending', true)), false);
+  assert.equal(nativeMessageDropped([], 'command', receipt('completed')), false);
+  // No receipt for this generation: the host may still send it after a resume.
+  assert.equal(nativeMessageDropped([], 'command'), false);
 });
 
 test('late acceptance restores the user prompt before its assistant response', () => {
