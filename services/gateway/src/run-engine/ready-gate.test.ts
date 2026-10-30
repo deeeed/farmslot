@@ -974,12 +974,53 @@ test(
     const held = getRun(run.id)!;
     assert.equal(held.slotId, before.slotId);
     assert.deepEqual(held.engineState, before.engineState);
-    assert.deepEqual(held.steps, before.steps);
+    assert.deepEqual(
+      held.steps,
+      before.steps.map((step) =>
+        step.name === 'human-gate' ? { ...step, detail: 'Waiting for operator decision' } : step,
+      ),
+    );
     assert.notEqual(held.status, 'failed');
     assert.equal(resolveEngineDecision(card.id, 'abort'), true);
     assert.equal(await execution, 'abort');
   },
 );
+
+test('Retry Gate reports preparation while its second source read is pending', async (t) => {
+  let release!: () => void;
+  t.after(() => release?.());
+  const { run, next } = sourceGateFixture(t);
+  let started!: () => void;
+  const reading = new Promise<void>((resolve) => (started = resolve));
+  const pending = new Promise<void>((resolve) => (release = resolve));
+  let reads = 0;
+  const execution = executeReadyGate(run.id, {
+    ensurePackage: async () => {
+      if (++reads === 2) {
+        started();
+        await pending;
+      }
+      throw new Error('Owned source is unavailable');
+    },
+  });
+  const first = await next(execution);
+  assert.equal(resolveEngineDecision(first.id, 'hold'), true);
+  await reading;
+  assert.equal(getRun(run.id)!.decisions.filter((decision) => !decision.resolvedAt).length, 0);
+  assert.equal(
+    getRun(run.id)!.steps.find((step) => step.name === 'human-gate')!.detail,
+    'Preparing operator decision: checking publication package',
+  );
+  release();
+  const second = await next(execution);
+  assert.notEqual(second.id, first.id);
+  assert.equal(
+    getRun(run.id)!.steps.find((step) => step.name === 'human-gate')!.detail,
+    'Waiting for operator decision',
+  );
+  assert.equal(resolveEngineDecision(second.id, 'abort'), true);
+  assert.equal(await execution, 'abort');
+});
 
 test(
   'an unavailable package keeps the existing fix delivery reachable without approval',

@@ -84,6 +84,34 @@ test('rollback release preserves live posture and binds every replay status to i
   });
 });
 
+test('gate replay exposes preparation before its first post-invalidation await', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'PROJ-216' });
+  t.after(() => evictTestRun(run.id, 'failed'));
+  updateRun(run.id, {
+    status: 'human-gating',
+    steps: run.steps.map((step) => ({
+      ...step,
+      status: step.name === 'human-gate' ? 'running' : 'done',
+      ...(step.name === 'human-gate' ? { detail: 'Waiting for operator decision' } : {}),
+    })),
+  });
+  const stop = new Error('Observed replay preparation before capture');
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'human-gate' }, () => {}, {
+      afterGenerationBump: async () => {
+        const current = getRun(run.id)!;
+        assert.deepEqual(current.decisions, []);
+        assert.equal(
+          current.steps.find((step) => step.name === 'human-gate')!.detail,
+          'Preparing operator decision: replaying gate',
+        );
+        throw stop;
+      },
+    }),
+    (error) => error === stop,
+  );
+});
+
 test('workspace replay rejects launch and runner changes without mutating the attempt', async (context) => {
   const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'replay-test-owner';
@@ -2334,6 +2362,10 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
           duringReplay = structuredClone(
             getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-race'),
           );
+          assert.equal(
+            getRun(run.id)!.steps.find((step) => step.name === 'human-gate')!.detail,
+            'Preparing operator decision: replaying gate',
+          );
         },
       }),
     /no longer safely reclaimable/,
@@ -2349,6 +2381,10 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
   assert.equal(after?.status, 'blocked');
   assert.equal(reopened?.resolvedAt, undefined);
   assert.equal(reopened?.context?.supersededBy, undefined);
+  assert.equal(
+    after?.steps.find((step) => step.name === 'human-gate')?.detail,
+    'Waiting for operator decision',
+  );
 });
 
 test('slot activation persists its dispatch baseline and ordinary prepare replay clears the intent', async (t) => {

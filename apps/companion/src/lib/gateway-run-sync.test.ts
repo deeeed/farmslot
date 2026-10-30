@@ -137,7 +137,10 @@ class CollectionTransport implements ResourceCacheTransport {
   }
 }
 
-test('native collections keep history on demand, replace deleted rows, retain stale observations and clear on owner change', async () => {
+test('native collections keep history on demand, replace deleted rows, retain stale observations and clear on owner change', async (t) => {
+  let clockOffset = 0;
+  const now = performance.now.bind(performance);
+  t.mock.method(performance, 'now', () => now() + clockOffset);
   const transport = new CollectionTransport();
   const cache = createGatewayResourceCache({ transport, store: createMemoryResourceStore() });
   const observed: NativeRunCollectionSnapshot[] = [];
@@ -162,6 +165,8 @@ test('native collections keep history on demand, replace deleted rows, retain st
     assert.equal(observed.at(-1)?.runs.data?.runs.length, 2);
     transport.active = [];
     transport.history = [];
+    // Run writes reread the run lists at most every 30 s.
+    clockOffset += 30_000;
     transport.invalidateRuns();
     await flush();
     assert.equal(transport.reads.length, 6, 'Each observed run query refreshes once');

@@ -949,6 +949,9 @@ export async function executeReadyGate(
   let recoveredAction: string | undefined;
   if (publicationApprovalGate) {
     for (;;) {
+      updateRunStep(runId, S.HUMAN_GATE, {
+        detail: 'Preparing operator decision: checking publication package',
+      });
       // A finished fix that no resume will adopt must not read as in progress: the
       // gate's readiness would refuse the package. Settled on each pass, as Retry
       // Gate may follow the worker's finish.
@@ -1419,7 +1422,9 @@ export async function executeReadyGate(
     branchFreshness,
   );
 
-  updateRunStep(runId, S.HUMAN_GATE, { detail: 'Waiting for operator decision' });
+  updateRunStep(runId, S.HUMAN_GATE, {
+    detail: 'Preparing operator decision: reconciling workspace',
+  });
   // ADR-054: entering a durable operator wait. The effective retention policy
   // applies before the operator chooses; their choice then governs what follows.
   await reconcileRunPosture({ runId, boundary: 'operator-wait' });

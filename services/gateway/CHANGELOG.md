@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Show gate preparation during replay capture and readiness checks; report operator wait only after its decision exists.
+
 - Complete artifact-only eval packages without requiring publication claim approval.
 
 - Recover unsent review-fix prompts after restart, verify relaunched worker processes, and surface unconfirmed delivery within the launch budget while preserving findings.

@@ -112,3 +112,94 @@ for (const scenario of [
     }
   });
 }
+
+test('archive selection reads a paced list at once before the next archive', async () => {
+  const transport = new ResourceCacheConformanceTransport({
+    gatewayUrl: 'ws://archive.invalid/',
+    principalId: 'owner',
+    principalGeneration: 0,
+  });
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  // Paced like the run lists: a change within 30 s of the last read waits for the floor.
+  const query = {
+    ...resourceQuery<RunListResult>('sources.status'),
+    rereadIntervalMs: { sources: 30_000 },
+  };
+  const stop = cache.observe(query, () => {});
+  const writes: string[] = [];
+  try {
+    const ready = cache.retry(query);
+    const initial = { value: 'initial', runs: [row('first'), row('second')], totalCount: 2 };
+    (await transport.nextRead()).resolve(initial);
+    await ready;
+    const done = archiveRunSelection(['first', 'second'], {
+      cache,
+      queries: [query],
+      isCurrent: () => true,
+      archive: async (id) => {
+        writes.push(id);
+        if (id === 'first') transport.advance(1);
+      },
+    });
+    for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(transport.requestCount, 2, 'The next archive does not wait out the floor');
+    assert.deepEqual(writes, ['first']);
+    const remaining = { value: 'remaining', runs: [row('second')], totalCount: 1 };
+    (await transport.nextRead()).resolve(remaining, 1);
+    assert.equal((await done).size, 0);
+    assert.deepEqual(writes, ['first', 'second']);
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
+
+test('archive selection stops when the shared lists never come back current', async () => {
+  const transport = new ResourceCacheConformanceTransport({
+    gatewayUrl: 'ws://archive.invalid/',
+    principalId: 'owner',
+    principalGeneration: 0,
+  });
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  const query = {
+    ...resourceQuery<RunListResult>('sources.status'),
+    rereadIntervalMs: { sources: 30_000 },
+  };
+  const stop = cache.observe(query, () => {});
+  const writes: string[] = [];
+  try {
+    const ready = cache.retry(query);
+    const listed = { value: 'listed', runs: [row('a'), row('b'), row('c')], totalCount: 3 };
+    (await transport.nextRead()).resolve(listed);
+    await ready;
+    transport.advance(1);
+    let settled = false;
+    const done = archiveRunSelection(['a', 'b', 'c'], {
+      cache,
+      queries: [query],
+      isCurrent: () => true,
+      archive: async (id) => {
+        writes.push(id);
+      },
+    }).finally(() => (settled = true));
+    // Every reply predates the change, so no read covers it.
+    while (!settled) {
+      const read = await Promise.race([transport.nextRead(), done.then(() => undefined)]);
+      read?.resolve(listed, 0);
+    }
+    const failures = await done;
+    assert.equal(
+      transport.requestCount,
+      4,
+      'One run tries the shared reads; the rest do not repeat them',
+    );
+    assert.deepEqual(writes, []);
+    assert.deepEqual([...failures.keys()], ['a', 'b', 'c']);
+    assert.ok([...failures.values()].every((message) => /Wait for current runs/.test(message)));
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
