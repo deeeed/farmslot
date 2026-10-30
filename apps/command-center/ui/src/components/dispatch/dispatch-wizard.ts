@@ -266,24 +266,24 @@ export class DispatchWizard extends DispatchWizardState {
   private _captureRunAction(): () => boolean {
     const workspace = getResourceWorkspaceKey();
     const connection = gateway.resourceConnectionId;
-    const scope = JSON.stringify([
-      this._ticketId,
-      this._project,
-      this._flowType,
-      this._comparisonParentRunId,
-    ]);
+    // Comparison mode decides whether an active run on the ticket blocks the action.
+    const scopeOf = () =>
+      JSON.stringify([
+        this._ticketId,
+        this._project,
+        this._flowType,
+        this._comparisonFlow,
+        this._comparisonLane,
+        this._comparisonFamilyId,
+        this._comparisonParentRunId,
+      ]);
+    const scope = scopeOf();
     return () =>
       this.isConnected &&
       workspace === getResourceWorkspaceKey() &&
       connection === gateway.resourceConnectionId &&
       gateway.connectionState === 'connected' &&
-      scope ===
-        JSON.stringify([
-          this._ticketId,
-          this._project,
-          this._flowType,
-          this._comparisonParentRunId,
-        ]);
+      scope === scopeOf();
   }
   @state() private _sourceSelections: SourceSelection[] = [];
   @state() private _sourceSelectionRefusal = '';
