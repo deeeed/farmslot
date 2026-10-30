@@ -1,4 +1,4 @@
-import type { NativeSessionReadResult } from '@farmslot/protocol';
+import type { NativeCommandReceipt, NativeSessionReadResult } from '@farmslot/protocol';
 import {
   canActOn,
   nativeHistoryCanAct,
@@ -32,4 +32,9 @@ export function nativeConversationWritable(input: {
     !['closed', 'failed', 'closing', 'starting'].includes(session.state) &&
     (session.workerManaged ? input.workerControl : !input.run)
   );
+}
+
+/** A message whose delivery is unconfirmed can be sent again; a queued one waits for its turn. */
+export function nativeRetryAvailable(receipt: NativeCommandReceipt | undefined): boolean {
+  return !receipt || (['pending', 'unknown'].includes(receipt.state) && !receipt.queued);
 }

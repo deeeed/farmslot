@@ -9,6 +9,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execLocal, execOnSlot } from '../core/exec.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
@@ -55,8 +56,9 @@ function gitSpec(
   blind: EvalBlindTrial,
   epoch: number,
   capsule: string,
+  slotId = run.slotId,
 ): BlindGitSpec {
-  if (!run.branch || run.slotId !== vars.slotId)
+  if (!run.branch || slotId !== vars.slotId)
     throw new Error('Blind trial branch/slot identity is missing.');
   return {
     slotId: vars.slotId,
@@ -335,10 +337,11 @@ export async function restoreBlindTrialGit(
   await assertOwnership();
   if (Number((await readSlotRow(vars.slotId))?.slot_epoch) !== epoch)
     throw new Error('Blind trial restoration lost its entry epoch.');
+  // A failed trial is usually detached from its slot; its isolation names the slot.
   const receipt = await executeGit(
     'restore',
     vars,
-    gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
+    gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath, isolation.slotId),
   );
   if (
     (receipt.status !== 'restored' && receipt.status !== 'absent') ||
@@ -346,4 +349,19 @@ export async function restoreBlindTrialGit(
   )
     throw new Error('Blind trial Git restoration was not confirmed.');
   await assertOwnership();
+}
+
+/** The blind trial whose isolated Git directory the slot repo still holds, if any. */
+export async function readBlindTrialMarker(vars: SlotVars): Promise<string | null> {
+  const result = await execOnSlot(
+    vars,
+    `git -C ${shSingleQuote(vars.remoteRepo)} config --get farmslot.blindRun`,
+    { timeout: 30_000 },
+  );
+  if (result.exitCode === 1) return null;
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Cannot read the blind trial Git marker: ${result.stderr.trim() || result.stdout.trim()}`,
+    );
+  return result.stdout.trim() || null;
 }

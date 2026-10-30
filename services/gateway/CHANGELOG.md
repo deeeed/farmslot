@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Releasing a slot whose blind eval trial (failed or done) lost its slot pointer while the repository stayed on the isolated Git restores the original repository and the candidate branch first, and refuses when that trial's run record is gone instead of resetting the only copy of the candidate commits.
 - A review that cannot start (for example, a project without a review template) pauses the request with its reason instead of counting as a failed review, and the gate keeps the review policy it had before the request.
 - Publication packages fingerprint the complete committed change, the same diff a cold review certifies, so a passing review of the package HEAD is current even when the change touches files outside the source filter.
 - A blind eval judge that re-runs the recipe no longer blocks package finalization: the harness execution record it rewrites is not frozen worker evidence.

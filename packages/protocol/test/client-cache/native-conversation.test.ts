@@ -14,6 +14,7 @@ import {
   nativeFollowScrolled,
   nativeMessagePreview,
   nativeMessageToggleLabel,
+  nativeSendLabel,
   nativeTimeline,
   type NativeTimelineRow,
   nativeTimelineRows,
@@ -389,6 +390,14 @@ test('a resolved request stays in the conversation with its decision or answers'
     ),
     [undefined, undefined, undefined, undefined, undefined],
   );
+});
+
+test('a busy session queues the message for its next turn; a closed one takes none', () => {
+  assert.equal(nativeSendLabel('idle'), 'Send');
+  assert.equal(nativeSendLabel('running'), 'Queue message');
+  assert.equal(nativeSendLabel('waiting'), 'Queue message');
+  for (const state of ['starting', 'closing', 'closed', 'failed', undefined] as const)
+    assert.equal(nativeSendLabel(state), undefined);
 });
 
 test('late acceptance restores the user prompt before its assistant response', () => {

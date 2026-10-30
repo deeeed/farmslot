@@ -843,7 +843,10 @@ test('lease variants share one durable session entry but cannot hydrate each oth
   );
 });
 
-import { nativeHistoryCanAct } from '../../src/client-cache/native-history.js';
+import {
+  nativeHistoryCanAct,
+  nativeHistoryCanSend,
+} from '../../src/client-cache/native-history.js';
 test('cold, saved, unsupported and replaced rendered snapshots disable real command eligibility', () => {
   const saved = page([event(1, 'saved')]);
   const now = Date.parse('2026-10-30T00:00:00Z');
@@ -905,4 +908,44 @@ test('tool events do not consume the 200 conversation message allowance', () => 
   const retained = nativeTimeline(retainNativeMessages(events));
   assert.equal(retained.filter((entry) => entry.kind === 'assistant').length, 200);
   assert.equal(retained[0].event.commandId, 'command-5');
+});
+
+test('a newer read while a turn streams refuses an answer on the old snapshot, not a message', () => {
+  const now = Date.parse('2026-10-30T00:00:00Z');
+  const resourceState = { epoch: 'epoch', dependencies: [] };
+  const rendered = page([event(1, 'counting')]);
+  const read = (data: NativeSessionReadResult) => ({
+    status: 'ready' as const,
+    data,
+    resourceState,
+  });
+  // The worker kept streaming: the cache holds a newer read than the one on screen.
+  const newer = read(page([event(1, 'counting'), event(2, ' on')]));
+  assert(!nativeHistoryCanAct(newer, rendered, true, now));
+  assert(nativeHistoryCanSend(newer, rendered, true, now));
+  // Another conversation by now: resumed, another worker lease, or the task released.
+  const resumed = read({
+    ...newer.data,
+    session: { ...newer.data.session, generation: 'resumed' },
+  });
+  assert(!nativeHistoryCanSend(resumed, rendered, true, now), 'resumed generation');
+  const leased = read({ ...newer.data, session: { ...newer.data.session, workerLeaseId: 'next' } });
+  assert(!nativeHistoryCanSend(leased, rendered, true, now), 'another lease');
+  const scope = { leaseId: 'lease', startAfter: 0, endAt: 9, released: true };
+  const released = read({ ...newer.data, scope });
+  assert(
+    !nativeHistoryCanSend(
+      released,
+      { ...rendered, scope: { ...scope, released: false } },
+      true,
+      now,
+    ),
+  );
+  // Saved, offline or incomplete history still waits.
+  assert(
+    !nativeHistoryCanSend({ status: 'stale', data: rendered }, rendered, true, now),
+    'restored',
+  );
+  assert(!nativeHistoryCanSend(newer, rendered, false, now));
+  assert(!nativeHistoryCanSend(read({ ...newer.data, hasMore: true }), rendered, true, now));
 });
