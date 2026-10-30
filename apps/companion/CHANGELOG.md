@@ -8,6 +8,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## 0.9.0 - 2026-10-30
 
+- The shared gateway cache reads less: a change to another slot or workspace no longer rereads every held view, farm-wide slot changes reread fleet and slot PRs at most every 10 s and the PR list at most every 30 s, a failed read waits as long as it took before the next automatic try (doubling up to 5 min), and the offline prefetch checks an active run's slot head at most once a minute. A run list restored at a cold start shows the same saved time as the live one.
 - Quick actions no longer hide the rest of the app from VoiceOver on iOS.
 - Evidence images and gate diffs no longer restart their reads or rebuild a loaded image on every connection status change, which aborted large downloads and could drop a failed read; reads still retry on reconnect and when the signed-in profile's headers change.
 - On gateways with version lists, run history shows every live run instead of the latest 80, filled and caught up in pages that each finish within the 60 s request timeout. Older gateways keep the 80-row read. The offline-store baseline measures run list reads to the merged list, after the last page.
