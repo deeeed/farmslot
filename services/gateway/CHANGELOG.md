@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
+- Recover publication-gate progress after a worker pane disappears; verify a resumed conversation before reading its replacement pane.
 - Keep prepare's support verification and retention inventory out of process arguments, so growing run history cannot fail dispatch with E2BIG.
 
 - Preserve acceptance-contract task writes across a CI-watch handoff when the parent releases its slot.
