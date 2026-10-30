@@ -1,9 +1,10 @@
 const all = (root) =>
   [...root.querySelectorAll('*')].flatMap((e) => (e.shadowRoot ? [e, ...all(e.shadowRoot)] : [e]));
-const renderedText = (node) =>
-  node.nodeType === Node.TEXT_NODE
-    ? node.textContent
-    : [...(node.shadowRoot ?? node).childNodes].map(renderedText).join('');
+const renderedText = (node) => {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+  if (node instanceof Element && node.matches('style,script,template')) return '';
+  return [...(node.shadowRoot ?? node).childNodes].map(renderedText).join('');
+};
 const elements = all(document);
 const detail = elements.find((e) => e.matches('run-detail'));
 const views = detail?.shadowRoot
@@ -26,6 +27,7 @@ return {
     status.getBoundingClientRect().bottom <= innerHeight,
   ),
   observedAt: root?.querySelector('[data-observed-at]')?.getAttribute('data-observed-at'),
+  age: root?.querySelector('[data-observed-at]')?.textContent.trim() ?? '',
   timelineTop: root?.querySelector('.timeline')?.getBoundingClientRect().top,
   history: root?.querySelector('.timeline') ? renderedText(root.querySelector('.timeline')) : '',
   retry: Boolean(root?.querySelector('[data-testid="native-refresh"]')),

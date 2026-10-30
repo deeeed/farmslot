@@ -66,6 +66,7 @@ export function nativePanelFixture(now) {
   return {
     run: {
       transport: 'native',
+      familyId: 'layout-run',
       agentContexts: [
         {
           id: 'panel-worker',
@@ -74,6 +75,7 @@ export function nativePanelFixture(now) {
           runId: 'layout-run',
           slotId: null,
           status: 'working',
+          nudgeCount: 0,
           runner: 'sample',
           model: 'sample-model',
           nativeSession: binding,
@@ -127,15 +129,27 @@ export async function proveNativePanel({
   const before = process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1';
   const inspect = () =>
     cdp('eval', target, '--file', path.join(import.meta.dirname, 'probes/native-panel.js'));
+  const runtimeErrors = [];
+  const onRuntimeEvent = (raw) => {
+    const event = JSON.parse(String(raw));
+    if (event.method === 'Runtime.exceptionThrown') runtimeErrors.push(event.params);
+  };
+  emulation.on('message', onRuntimeEvent);
+  await browserCall('Runtime.enable');
   async function until(accept, label, timeout = 45_000) {
     const end = Date.now() + timeout;
     let value;
     do {
       value = await inspect();
+      if (runtimeErrors.length) {
+        await save('runtime-errors', runtimeErrors);
+        assert.fail(runtimeErrors[0].exceptionDetails.exception?.description ?? 'Rendering failed');
+      }
       if (accept(value)) return value;
       await delay(100);
     } while (Date.now() < end);
     await save('timeout-' + label, value);
+    await save('runtime-errors', runtimeErrors);
     assert.fail(label + ': ' + JSON.stringify(value));
   }
   const click = () =>
@@ -203,21 +217,32 @@ export async function proveNativePanel({
             assert.equal(value.statusHeight, 56);
             assert(value.statusVisible, 'The status must be visible in the recording');
             assert(!value.errors.some((e) => /observation source|source recovery/i.test(e)));
+            if (mode === 'native-error') {
+              assert.equal(value.observedAt, ready.observedAt);
+              assert(value.age.includes('Saved conversation history'));
+              assert(value.inputDisabled, 'Failed reads must keep input disabled');
+            }
           }
         }
         if (!before && width === 1280) {
           await modeSample('native-error', (v) => v.readState === 'reconnecting');
+          const failedRevision = samples.at(-1).revision;
+          const failedAt = frames.find(
+            (frame) => frame.method === 'native.session.read' && frame.revision === failedRevision,
+          ).at;
           const aged = await until(
             (v) => v.readState === 'unavailable',
             'sustained-outage',
             75_000,
           );
+          const outageMs = Date.now() - failedAt;
+          assert(outageMs >= 60_000, 'Unavailable must wait for 60 seconds of actual outage');
           assert.equal(aged.timelineTop, baseline);
           assert(
             aged.retry && aged.inputDisabled,
             'A real failed read stays fail-closed with Retry',
           );
-          samples.push({ mode: 'sustained-outage', ...aged });
+          samples.push({ mode: 'sustained-outage', outageMs, ...aged });
           const retryMark = frames.length;
           await cdp(
             'click',
@@ -287,4 +312,6 @@ export async function proveNativePanel({
     limit:
       'Mounted observed-WebSocket presentation proof; no native host, worker, device, provider or gateway activation.',
   });
+  assert.deepEqual(runtimeErrors, [], 'No uncaught rendering errors');
+  emulation.off('message', onRuntimeEvent);
 }
