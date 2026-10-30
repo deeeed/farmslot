@@ -308,15 +308,22 @@ async function releasePreflight(
   }
   const boundOwner = (row?.current_run_id as string | null | undefined) ?? null;
   // A finished blind trial can lose the slot pointer while the repo still holds its
-  // isolated Git; that marker proves the run still owns the checkout. An unreadable
-  // repo proves nothing, so the release is skipped as before.
+  // isolated Git; that marker proves the run still owns the checkout. Only a trial
+  // isolated on this slot of a slot no run holds for cleanup is checked, and an
+  // unreadable repo keeps the old skip.
+  const expectedBlindRun =
+    params.expectedRunId && !boundOwner && !row?.cleanup_run_id
+      ? await getRunWithArchived(params.expectedRunId)
+      : undefined;
   const adoptedBlindOwner =
-    params.expectedRunId &&
-    !boundOwner &&
-    !ownsRunSlotCleanup(row, params.expectedRunId) &&
-    (await readBlindTrialMarker(await loadSlotVars(params.slotId)).catch(() => null)) ===
-      params.expectedRunId
-      ? params.expectedRunId
+    expectedBlindRun?.engineState?.evalExperiment?.blind?.isolation?.slotId === params.slotId &&
+    (await readBlindTrialMarker(await loadSlotVars(params.slotId)).catch((error: unknown) => {
+      console.warn(
+        `[release] blind marker unreadable on ${params.slotId}: ${(error as Error).message}`,
+      );
+      return null;
+    })) === expectedBlindRun.id
+      ? expectedBlindRun.id
       : null;
   // A run whose cancel deferred cleanup no longer holds the slot pointer, but
   // the slot is held for its cleanup and that run may still release it.
@@ -567,7 +574,7 @@ async function slotReleaseImpl(
           if (
             params.expectedRunId &&
             !ownsRunSlotCleanup(slot, params.expectedRunId) &&
-            !(owner === null && blindMarker === params.expectedRunId)
+            !(owner === null && !slot.cleanup_run_id && blindMarker === params.expectedRunId)
           ) {
             claimSkip = `Slot ${params.slotId} is held by ${owner ? `run ${owner}` : 'no run'}, not run ${params.expectedRunId}`;
             return false;

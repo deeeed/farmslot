@@ -29,6 +29,7 @@ const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSY
 let repo = '';
 let slotRow: Record<string, unknown>;
 let markerWrites = 0;
+let afterMarkerRead: (() => void) | undefined;
 
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
 const applies = (
@@ -49,6 +50,7 @@ const execForTest = async (_vars: unknown, cmd: string) => {
     encoding: 'utf8',
     timeout: 30_000,
   });
+  if (cmd.includes('farmslot.blindRun')) afterMarkerRead?.();
   return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
 };
 
@@ -236,6 +238,7 @@ beforeEach(() => {
   // Ready again after the stale releasing fence was reclaimed: no run pointer.
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 9 };
   markerWrites = 0;
+  afterMarkerRead = undefined;
 });
 
 test('an unowned force release restores a detached blind trial Git before resetting', async () => {
@@ -344,5 +347,45 @@ test('a release for another run leaves a blind slot it does not own untouched', 
   });
   assert.equal(markerWrites, 0);
   assert.equal(git(repo, 'config', '--get', 'farmslot.blindRun'), 'trial-foreign');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), candidate);
+});
+
+test('a done blind trial does not take a slot another run holds for cleanup', async () => {
+  const { spec, candidate } = blindSlot('foreign-cleanup', 'trial-held');
+  await detachedTrial(spec, { status: 'done', slotId: SLOT_ID });
+  slotRow = { ...slotRow, cleanup_run_id: 'follow-up' };
+
+  const result = await slotRelease(
+    { slotId: SLOT_ID, expectedRunId: spec.runId, forceReset: true },
+    () => {},
+  );
+
+  assert.deepEqual(result, {
+    released: false,
+    reason: `Slot ${SLOT_ID} is held by no run, not run ${spec.runId}`,
+  });
+  assert.equal(markerWrites, 0);
+  assert.equal(git(repo, 'config', '--get', 'farmslot.blindRun'), 'trial-held');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), candidate);
+});
+
+test('a cleanup hold that lands after preflight stops a done blind trial at the fence', async () => {
+  const { spec, candidate } = blindSlot('late-cleanup', 'trial-late');
+  await detachedTrial(spec, { status: 'done', slotId: SLOT_ID });
+  afterMarkerRead = () => {
+    slotRow = { ...slotRow, cleanup_run_id: 'follow-up' };
+  };
+
+  const result = await slotRelease(
+    { slotId: SLOT_ID, expectedRunId: spec.runId, forceReset: true },
+    () => {},
+  );
+
+  assert.deepEqual(result, {
+    released: false,
+    reason: `Slot ${SLOT_ID} is held by no run, not run ${spec.runId}`,
+  });
+  assert.equal(markerWrites, 0);
+  assert.equal(git(repo, 'config', '--get', 'farmslot.blindRun'), 'trial-late');
   assert.equal(git(repo, 'rev-parse', 'HEAD'), candidate);
 });
