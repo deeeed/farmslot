@@ -208,6 +208,51 @@ test('interleaved tool results preserve names and inputs without crossing genera
   assert.equal(timeline[2].event.tool?.output, undefined);
 });
 
+test('a resolved request stays in the conversation with its decision or answers', () => {
+  const approval = { id: 'approval', title: 'Allow runner action?', detail: 'rm -r build' };
+  const question = {
+    id: 'question',
+    title: 'Answer runner questions',
+    questions: [
+      { id: 'file', prompt: 'Which file?', options: [{ label: 'a.ts' }, { label: 'b.ts' }] },
+    ],
+  };
+  const resolved = (
+    sequence: number,
+    request?: NativeSessionEvent['request'],
+    response?: NativeSessionEvent['response'],
+  ): NativeSessionEvent => ({ ...event(sequence, 'approval.resolved'), request, response });
+  const timeline = nativeTimeline([
+    { ...event(1, 'tool.started'), nativeId: 'tool', tool: { name: 'Bash' } },
+    resolved(2, approval, { decision: 'approve' }),
+    resolved(3, approval, { decision: 'deny' }),
+    resolved(4, question, { answers: { file: ['a.ts', 'b.ts'] } }),
+    resolved(5, approval),
+    resolved(6, question),
+    // A runner's own notice for a request already resolved here carries no request.
+    resolved(7),
+    { ...event(8, 'turn.completed'), status: 'completed' },
+  ]);
+  assert.deepEqual(
+    timeline.filter((entry) => entry.kind === 'resolution').map((entry) => entry.text),
+    [
+      'Approved: rm -r build',
+      'Declined: rm -r build',
+      'Answered: Which file? → a.ts, b.ts',
+      'Resolved: rm -r build',
+      'Resolved: Which file?',
+    ],
+  );
+  // Not a tool call: folding the finished turn leaves it in view.
+  const rows = nativeTimelineRows(timeline);
+  assert.deepEqual(
+    rows.flatMap((row) =>
+      row.kind === 'entry' && row.entry.kind === 'resolution' ? [row.fold] : [],
+    ),
+    [undefined, undefined, undefined, undefined, undefined],
+  );
+});
+
 test('late acceptance restores the user prompt before its assistant response', () => {
   const timeline = nativeTimeline([
     event(1, 'text.delta', 'answer'),

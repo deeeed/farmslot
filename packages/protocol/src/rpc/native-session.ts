@@ -199,6 +199,11 @@ export interface NativeSessionEvent {
       multiSelect?: boolean;
     }>;
   };
+  /**
+   * On `approval.resolved`: the response this host delivered for the request. Absent when the
+   * runner resolved the request without one, so its decision is unknown.
+   */
+  response?: NativeSessionResponse;
   status?: 'completed' | 'failed' | 'interrupted';
   /** Only a schema-bound completed provider turn may supply this value. */
   structuredResult?: NativeStructuredResult;
