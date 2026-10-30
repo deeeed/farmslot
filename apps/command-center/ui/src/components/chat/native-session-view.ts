@@ -27,6 +27,7 @@ import {
   nativeHistoryCanAct,
   nativeHistoryQuery,
   nativeMessagePreview,
+  nativeMessageToggleLabel,
   nativeObservationQuery,
   nativeTimeline,
   type NativeTimelineEntry,
@@ -311,7 +312,7 @@ export class NativeSessionView extends LitElement {
           this.expandedMessages = next;
         }}
       >
-        ${expanded ? 'Show less' : `Show all · ${preview.lines} lines`}
+        ${nativeMessageToggleLabel(preview, expanded)}
       </button>`;
   }
 

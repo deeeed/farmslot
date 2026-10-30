@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
-import { nativeMessagePreview, type NativeTimelineEntry } from '@farmslot/protocol/client-cache';
+import {
+  nativeMessagePreview,
+  nativeMessageToggleLabel,
+  type NativeTimelineEntry,
+} from '@farmslot/protocol/client-cache';
 
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
@@ -54,9 +58,7 @@ export function NativeTimelineCard({ entry }: { entry: NativeTimelineEntry }) {
               style={styles.messageToggle}
               onPress={() => setExpanded(!expanded)}
             >
-              <Text style={styles.buttonText}>
-                {expanded ? 'Show less' : `Show all · ${preview.lines} lines`}
-              </Text>
+              <Text style={styles.buttonText}>{nativeMessageToggleLabel(preview, expanded)}</Text>
             </Pressable>
           ) : null}
         </>

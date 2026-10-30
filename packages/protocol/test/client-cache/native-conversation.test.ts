@@ -6,6 +6,7 @@ import {
   nativeCommandLockSettled,
   nativeDeliveryLabel,
   nativeMessagePreview,
+  nativeMessageToggleLabel,
   nativeTimeline,
 } from '../../src/client-cache/native-history.js';
 import type { NativeSessionEvent, NativeSessionReadResult } from '../../src/rpc/native-session.js';
@@ -218,10 +219,15 @@ test('a long message shows its first lines until expanded; short ones show in fu
   );
   const prompt = Array.from({ length: 200 }, (_, i) => `- step ${i}`).join('\n');
   const preview = nativeMessagePreview(prompt);
-  assert.equal(preview?.lines, 200);
-  assert.equal(preview?.text.split('\n').length, 8);
-  assert(preview?.text.endsWith('…'));
+  assert(preview);
+  assert.equal(preview.lines, 200);
+  assert.equal(preview.text.split('\n').length, 8);
+  assert(preview.text.endsWith('…'));
+  assert.equal(nativeMessageToggleLabel(preview, false), 'Show all · 200 lines');
+  assert.equal(nativeMessageToggleLabel(preview, true), 'Show less');
   const wide = nativeMessagePreview('x'.repeat(5000));
-  assert.equal(wide?.lines, 1);
-  assert.equal(wide?.text.length, 601);
+  assert(wide);
+  assert.equal(wide.lines, 1);
+  assert.equal(wide.text.length, 601);
+  assert.equal(nativeMessageToggleLabel(wide, false), 'Show all · 1 line');
 });

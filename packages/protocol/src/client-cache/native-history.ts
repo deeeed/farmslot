@@ -461,3 +461,8 @@ export function nativeMessagePreview(text: string): NativeMessagePreview | undef
     lines: lines.length,
   };
 }
+
+export function nativeMessageToggleLabel(preview: NativeMessagePreview, expanded: boolean): string {
+  if (expanded) return 'Show less';
+  return `Show all · ${preview.lines} ${preview.lines === 1 ? 'line' : 'lines'}`;
+}
