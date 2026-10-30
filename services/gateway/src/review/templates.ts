@@ -397,7 +397,10 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
         PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
         `Review template not found for project ${project} (${validationDepth}): ${(err as Error).message}`,
         {
-          userAction: `Add templates/worker/review.md to project ${project}, then request the review again.`,
+          userAction:
+            (err as NodeJS.ErrnoException).code === 'ENOENT'
+              ? `Add templates/worker/review.md to project ${project}, then request the review again.`
+              : `Fix the review template of project ${project}, then request the review again.`,
         },
       );
     }

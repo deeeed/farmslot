@@ -222,52 +222,56 @@ test('immutable review ranges include committed text and docs excluded by source
 
 // F250: a podspec is outside the default source filter, but it is part of the
 // published change, so the package and a COLD review of the same HEAD must agree.
-test('a package fingerprints the committed change a cold review certifies, and its own dirty edits', async (t) => {
+async function podspecChange(t: test.TestContext) {
   const repo = await mkdtemp(path.join(tmpdir(), 'package-review-diff-'));
   t.after(() => rm(repo, { recursive: true, force: true }));
-  const git = (...args: string[]) =>
-    execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
-  const commit = (message: string) =>
-    git(
+  const commit = `git -c commit.gpgsign=false -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm`;
+  execFileSync(
+    'bash',
+    [
       '-c',
-      'commit.gpgsign=false',
-      '-c',
-      'user.name=Fixture',
-      '-c',
-      'user.email=fixture@example.invalid',
-      'commit',
-      '-qm',
-      message,
-    );
-  git('init', '-q');
-  await writeFile(path.join(repo, 'CHANGELOG.md'), '# Changelog\n');
-  await writeFile(path.join(repo, 'Moonshine.podspec'), "s.version = '1.0'\n");
-  git('add', '.');
-  commit('test: seed');
-  const base = git('rev-parse', 'HEAD');
-  await writeFile(path.join(repo, 'CHANGELOG.md'), '# Changelog\n\n- Fix the build phase.\n');
-  await writeFile(path.join(repo, 'Moonshine.podspec'), "s.version = '1.1'\n");
-  git('add', '.');
-  commit('fix: build phase');
+      [
+        'set -e',
+        'git init -q',
+        "printf '# Changelog\\n' > CHANGELOG.md",
+        'printf "s.version = \'1.0\'\\n" > Moonshine.podspec',
+        `git add . && ${commit} seed && git update-ref refs/fixture/base HEAD`,
+        "printf '# Changelog\\n\\n- Fix the build phase.\\n' > CHANGELOG.md",
+        'printf "s.version = \'1.1\'\\n" > Moonshine.podspec',
+        `git add CHANGELOG.md Moonshine.podspec && ${commit} fix`,
+      ].join('\n'),
+    ],
+    { cwd: repo },
+  );
   const deps: NonNullable<Parameters<typeof captureCurrentReviewSnapshot>[2]> = {
-    resolveContext: async () => ({ baseRef: base, pathspecs: projectSourceDiffPathspecs(null) }),
+    resolveContext: async () => ({
+      baseRef: 'refs/fixture/base',
+      pathspecs: projectSourceDiffPathspecs(null),
+    }),
     exec: async (_vars, command) => ({
       exitCode: 0,
       stdout: execFileSync('bash', ['-c', command], { cwd: repo, encoding: 'utf8' }),
       stderr: '',
     }),
   };
-  const capture = (range: Parameters<typeof captureCurrentReviewSnapshot>[1]) =>
-    captureCurrentReviewSnapshot(makeVars(), range, deps);
-  const cold = (await capture({ mode: 'cold' })).snapshot;
-  const clean = (await capture({ baseRef: base })).snapshot;
-  assert.equal(clean.diffHash, cold.diffHash);
-  assert.deepEqual(clean.diffStat, { files: 2, additions: 3, deletions: 1 });
+  const capture = async (range: Parameters<typeof captureCurrentReviewSnapshot>[1]) =>
+    (await captureCurrentReviewSnapshot(makeVars(), range, deps)).snapshot;
+  return { repo, capture };
+}
+
+test('a clean package fingerprints the committed change a cold review of its HEAD certifies', async (t) => {
+  const { capture } = await podspecChange(t);
+  const cold = await capture({ mode: 'cold' });
+  const pkg = await capture({ baseRef: 'refs/fixture/base' });
+  assert.equal(pkg.diffHash, cold.diffHash);
+  assert.deepEqual(pkg.diffStat, { files: 2, additions: 3, deletions: 1 });
+});
+
+test('an uncommitted source edit still separates a package from the review of its HEAD', async (t) => {
+  const { repo, capture } = await podspecChange(t);
+  const cold = await capture({ mode: 'cold' });
   await writeFile(path.join(repo, 'CHANGELOG.md'), '# Changelog\n\n- Uncommitted.\n');
-  assert.notEqual((await capture({ baseRef: base })).snapshot.diffHash, cold.diffHash);
-  git('checkout', '--', 'CHANGELOG.md');
-  await writeFile(path.join(repo, 'notes.md'), 'untracked\n');
-  assert.notEqual((await capture({ baseRef: base })).snapshot.diffHash, cold.diffHash);
+  assert.notEqual((await capture({ baseRef: 'refs/fixture/base' })).diffHash, cold.diffHash);
 });
 
 // ADR-063 Amendment 5: after a rebase the delta is the branch's own change at both heads.

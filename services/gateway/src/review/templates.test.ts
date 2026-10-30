@@ -174,16 +174,7 @@ test('a project without a review template refuses the review launch instead of f
     await rm(root, { recursive: true, force: true });
     invalidateProjectVarsCache(project);
   });
-  const vars = {
-    slotId: 'fixture',
-    projectName: project,
-    host: 'localhost',
-    machine: 'fixture',
-    remoteRepo: '/tmp/fixture',
-    platform: 'cli',
-    session: 'fixture',
-    resourceVars: {},
-  } as never;
+  const vars = makeVars({ projectName: project });
   const refusal = await expandReviewTemplate(vars, 'temp/tasks/review', run.id, 'static-code').then(
     () => assert.fail('a missing template must refuse the launch'),
     (error: unknown) => error,
