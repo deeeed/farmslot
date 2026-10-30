@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- A worker terminal screen and a native command's output keep a terminal hyperlink's text (a file path or URL a tool printed as a link) and everything after it, which were dropped up to the last link on the screen.
 - While a native session runs a turn or waits on a request, the composer's button reads "Queue message" and queues the message for the next turn, as in Command Center, instead of staying disabled until the turn ends. A queued message no longer offers "Retry same message", and a message that could not be sent (the conversation was resumed elsewhere meanwhile) goes back to the composer instead of waiting on a delivery.
 - A native conversation names tool calls by what they do, "Run npm test", "Change a.ts, b.ts" or "Read a.ts", in the tool row and the working status, instead of runner names such as `commandExecution`. A command's details show the command and the last 10 lines it printed, with its raw input and output one tap away.
 - A resolved approval or question stays in the native conversation: "Approved: rm -r build", "Declined: …", "Answered: Which file? → a.ts", or "Resolved: …" when the session's host did not record the decision.
