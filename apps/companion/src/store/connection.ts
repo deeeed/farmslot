@@ -33,6 +33,7 @@ import {
   GatewayClient,
   type GatewayHttpAuthHeaders,
   gatewayHttpAuthHeaders,
+  signOutGatewayDevice,
   testGatewayConnection,
 } from '../lib/gateway-client';
 import {
@@ -47,6 +48,7 @@ import { commandCenterUrlForProfile } from '../lib/gateway-profile-web-url';
 import {
   DEFAULT_GATEWAY_PROFILES,
   DEFAULT_GATEWAY_URL,
+  endGatewayProfilePersonLogin,
   forgetGatewayProfileSecret,
   type GatewayProfile,
   type GatewayProfileAuthMode,
@@ -68,12 +70,19 @@ const GATEWAY_URL_KEY = '@farmslot:gatewayUrl';
 const GATEWAY_PROFILES_KEY = '@farmslot:gatewayProfiles';
 const ACTIVE_GATEWAY_PROFILE_KEY = '@farmslot:activeGatewayProfileId';
 const LIVENESS_PROBE_TIMEOUT_MS = 8_000;
+// Deleting a signed-in profile waits this long for its gateway before ending the login locally.
+const PROFILE_SIGN_OUT_TIMEOUTS = { connectMs: 5_000, pingMs: 5_000 };
 
 let livenessController: ConnectionLivenessController | null = null;
 let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
 const probeAttemptTracker = new ConnectionProbeAttemptTracker();
 
 export type { ConnectionProbeResult } from '../lib/connection-probe';
+
+/** `deviceStillListed`: the gateway did not confirm the sign-out, so it may still list this device. */
+export interface ProfileDeleteResult {
+  deviceStillListed: boolean;
+}
 
 interface ConnectionStore {
   status: ConnectionState;
@@ -114,7 +123,8 @@ interface ConnectionStore {
     authMode: GatewayProfileAuthMode,
     secret: string,
   ) => Promise<void>;
-  deleteProfile: (profileId: string) => Promise<void>;
+  /** A profile with a person login signs this device out of its gateway as part of the delete. */
+  deleteProfile: (profileId: string) => Promise<ProfileDeleteResult>;
   resetSavedProfiles: () => Promise<void>;
   connect: () => void;
   retryConnection: () => Promise<ConnectionProbeResult>;
@@ -435,9 +445,14 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
   deleteProfile: async (profileId: string) => {
     const profile = get().profiles.find((candidate) => candidate.id === profileId);
-    if (!profile || profile.readonly) return;
-    if (await readGatewayProfilePersonSession(profile))
-      throw new Error('Sign out this device before deleting its profile.');
+    if (!profile || profile.readonly) return { deviceStillListed: false };
+    // The gateway revokes the session when it answers, unless another saved profile may still use
+    // it. The login stored for this profile ends either way.
+    const deviceStillListed = !(await endGatewayProfilePersonLogin(
+      profile,
+      get().profiles,
+      (credentials) => signOutGatewayDevice(profile.url, credentials, PROFILE_SIGN_OUT_TIMEOUTS),
+    ));
     const profiles = mergeGatewayProfiles(
       get().profiles.filter((candidate) => candidate.id !== profileId),
     );
@@ -448,7 +463,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     await forgetGatewayProfileSecret(profile);
     if (profileId !== get().activeProfileId) {
       set({ profiles });
-      return;
+      return { deviceStillListed };
     }
     const state = get();
     const nextProfile = profiles[0] ?? null;
@@ -474,7 +489,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
       set({ personSession: null });
       await state.client?.setConnection('', {}, false, 'profile-change');
-      return;
+      return { deviceStillListed };
     }
     await AsyncStorage.setItem(ACTIVE_GATEWAY_PROFILE_KEY, nextProfile.id);
     await AsyncStorage.setItem(GATEWAY_URL_KEY, nextProfile.url);
@@ -503,6 +518,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
     await state.client?.setConnection(nextProfile.url, auth, transition.changed, 'profile-change');
     if (transition.changed) void livenessController?.probeFresh();
+    return { deviceStillListed };
   },
 
   resetSavedProfiles: async () => {
