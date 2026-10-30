@@ -454,6 +454,18 @@ export function appendNativePage(
   return cursor === previous.cursor ? previous : { events, cursor };
 }
 
+/**
+ * The composer's send action for a session in this state: "Send" when it is idle, "Queue message"
+ * for the next turn while a turn runs or waits on a request. Undefined: it takes no input now.
+ */
+export function nativeSendLabel(
+  state: NativeSessionReadResult['session']['state'] | undefined,
+): 'Send' | 'Queue message' | undefined {
+  if (state === 'idle') return 'Send';
+  if (state === 'running' || state === 'waiting') return 'Queue message';
+  return undefined;
+}
+
 export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {
   if (!receipt) return 'Delivery unknown';
   if (receipt.queued) return 'Queued for the next turn';

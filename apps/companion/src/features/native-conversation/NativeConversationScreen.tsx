@@ -343,7 +343,7 @@ export function NativeConversationScreen({
               <Text testID="companion-native-delivery" style={styles.muted}>
                 {nativeDeliveryLabel(vm.receipt)}
               </Text>
-              {!vm.receipt || ['pending', 'unknown'].includes(vm.receipt.state) ? (
+              {vm.canRetry ? (
                 <Pressable
                   testID="companion-native-retry"
                   accessibilityRole="button"
@@ -364,7 +364,7 @@ export function NativeConversationScreen({
               style={[styles.button, !vm.canSend && styles.disabled]}
               onPress={() => void actions.send()}
             >
-              <Text style={styles.buttonText}>Send</Text>
+              <Text style={styles.buttonText}>{vm.sendLabel}</Text>
             </Pressable>
             <Pressable
               testID="companion-native-stop"

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The native composer's Send / Queue message choice comes from the shared client-cache rule that Companion now uses too.
 - A resolved approval or question stays in the native conversation: "Approved: rm -r build", "Declined: …", "Answered: Which file? → a.ts", or "Resolved: …" when the session's host did not record the decision.
 - Collapsing a long message (Show less) or a turn's tool calls in a native conversation keeps its button where you saw it, instead of the content above shrinking it out of view.
 - A family with no runs, such as a reference-only eval, shows no "Open latest run" link.

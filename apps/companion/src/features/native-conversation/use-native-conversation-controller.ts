@@ -15,6 +15,7 @@ import {
   nativeHistoryCanAct,
   nativeHistoryQuery,
   nativeObservationQuery,
+  nativeSendLabel,
   nativeTimeline,
   nativeTimelineRows,
   type NativeTranscript,
@@ -25,7 +26,7 @@ import {
 import { observeNativeConversation } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
-import { nativeConversationWritable } from '../../lib/native-conversation';
+import { nativeConversationWritable, nativeRetryAvailable } from '../../lib/native-conversation';
 import {
   createNativeConversationStorage,
   nativeConversationStorageKey,
@@ -350,7 +351,8 @@ export function useNativeConversationController(params: NativeConversationParams
   };
   const send = () =>
     mutate(async () => {
-      if (!session || session.state !== 'idle' || pendingRef.current || !draft.trim()) return;
+      if (!session || !nativeSendLabel(session.state) || pendingRef.current || !draft.trim())
+        return;
       const command: PendingCommand = {
         ...target,
         generation: session.generation,
@@ -421,7 +423,9 @@ export function useNativeConversationController(params: NativeConversationParams
   const entries = nativeTimeline(transcript.events);
   const rows = nativeTimelineRows(entries);
   const work = nativeWork(transcript.events);
-  const canSend = writable && session?.state === 'idle' && !pending && !busy && !!draft.trim();
+  const sendLabel = nativeSendLabel(session?.state);
+  const receipt = snapshot?.commands.find((item) => item.commandId === pending?.commandId);
+  const canSend = writable && !!sendLabel && !pending && !busy && !!draft.trim();
   const proof = useRef({
     focused,
     observation: runObservation,
@@ -492,13 +496,15 @@ export function useNativeConversationController(params: NativeConversationParams
       responses,
       draft,
       pending,
-      receipt: snapshot?.commands.find((item) => item.commandId === pending?.commandId),
+      receipt,
+      canRetry: nativeRetryAvailable(receipt),
       error: error || pollError || creation.viewModel.error || resume.viewModel.error,
       busy,
       ready,
       connected: connection === 'connected',
       writable,
       canSend,
+      sendLabel: sendLabel ?? 'Send',
       canStop:
         writable &&
         !!session?.capabilities.interrupt &&

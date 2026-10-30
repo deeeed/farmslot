@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { NativeSessionEvent, NativeSessionReadResult } from '@farmslot/protocol';
+import type {
+  NativeCommandReceipt,
+  NativeSessionEvent,
+  NativeSessionReadResult,
+} from '@farmslot/protocol';
 
-import { nativeConversationWritable } from './native-conversation';
+import { nativeConversationWritable, nativeRetryAvailable } from './native-conversation';
 
 function event(
   sequence: number,
@@ -116,4 +120,24 @@ test("the message field stays open while a streaming worker's history only waits
     nativeConversationWritable({ ...workerInput, run: { ...run, error: failed } }),
     false,
   );
+});
+
+test('a queued message waits for its turn instead of offering a retry', () => {
+  const receipt = (
+    state: NativeCommandReceipt['state'],
+    queued?: boolean,
+  ): NativeCommandReceipt => ({
+    generation: 'generation',
+    commandId: 'command',
+    state,
+    submitted: !queued,
+    accepted: false,
+    ...(queued ? { queued } : {}),
+  });
+  assert.equal(nativeRetryAvailable(undefined), true);
+  assert.equal(nativeRetryAvailable(receipt('pending')), true);
+  assert.equal(nativeRetryAvailable(receipt('unknown')), true);
+  assert.equal(nativeRetryAvailable(receipt('pending', true)), false);
+  assert.equal(nativeRetryAvailable(receipt('accepted')), false);
+  assert.equal(nativeRetryAvailable(receipt('completed')), false);
 });
