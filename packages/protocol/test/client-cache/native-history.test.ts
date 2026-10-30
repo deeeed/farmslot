@@ -264,6 +264,64 @@ test('a snapshot saved by the previous reader is read again from its start, once
   assert.deepEqual(afters, [undefined, 3], 'the replayed snapshot resumes from its cursor');
 });
 
+test('a resolved request stays through the cache; a snapshot that dropped it is read again', async () => {
+  const at = (
+    sequence: number,
+    type: NativeSessionEvent['type'],
+    extra: Partial<NativeSessionEvent> = {},
+  ) => ({
+    ...event(sequence, ''),
+    type,
+    text: undefined,
+    ...extra,
+  });
+  const request = { id: 'request', title: 'Allow runner action?', detail: 'rm -r build' };
+  const history = [
+    at(1, 'command.submitted', { text: 'Clean up.' }),
+    at(2, 'approval.requested', { nativeId: 'native-request', request }),
+    at(3, 'approval.resolved', {
+      nativeId: 'native-request',
+      request,
+      response: { decision: 'approve' },
+    }),
+    at(4, 'turn.completed', { status: 'completed' }),
+  ];
+  assert.deepEqual(
+    retainNativeMessages(history).map((item) => item.sequence),
+    [1, 3, 4],
+  );
+  // The previous reader kept no resolutions, but kept the cursor.
+  const saved = {
+    ...page([history[0], history[3]], 4),
+    historyRead: { pageReadCount: 1, pageAfters: [0], projection: 2 },
+  };
+  const afters: Array<number | undefined> = [];
+  const replayed = await readNativeHistory(
+    target,
+    saved,
+    async (params) => {
+      afters.push(params.after);
+      const after = params.after ?? 0;
+      return {
+        data: page(
+          history.filter((item) => item.sequence > after),
+          4,
+        ),
+      };
+    },
+    signal(),
+  );
+  assert.deepEqual(afters, [undefined]);
+  assert.deepEqual(
+    nativeTimeline(replayed.data.events).map(({ kind, text }) => [kind, text]),
+    [
+      ['user', 'Clean up.'],
+      ['resolution', 'Approved: rm -r build'],
+      ['status', 'Turn completed'],
+    ],
+  );
+});
+
 test('a finished tool keeps its key through the cache, so a card the reader opened stays open', () => {
   const at = (
     sequence: number,

@@ -2,6 +2,7 @@ import type {
   NativeCommandReceipt,
   NativeSessionEvent,
   NativeSessionReadResult,
+  NativeSessionResponse,
   NativeSessionTargetParams,
   NativeSessionTool,
   NativeToolKind,
@@ -15,7 +16,7 @@ import type { ResourceQueryState, ResourceReadResult } from './types.js';
 
 export interface NativeTimelineEntry {
   key: number;
-  kind: 'user' | 'assistant' | 'tool' | 'status';
+  kind: 'user' | 'assistant' | 'tool' | 'resolution' | 'status';
   event: NativeSessionEvent;
   text: string;
 }
@@ -80,6 +81,13 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
         entries.push(entry);
         if (identity) tools.set(identity, entry);
       }
+    } else if (event.type === 'approval.resolved' && event.request) {
+      entries.push({
+        key: event.sequence,
+        kind: 'resolution',
+        event,
+        text: nativeResolutionText(event.request, event.response),
+      });
     } else if (['turn.completed', 'session.closed', 'error'].includes(event.type)) {
       entries.push({
         key: event.sequence,
@@ -98,13 +106,39 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
   return entries;
 }
 
+/**
+ * "Approved: rm -r build", "Declined: …", "Answered: Which file? → a.ts", or "Resolved: …" when
+ * the host did not deliver the response (the runner resolved it), so the decision is unknown.
+ */
+function nativeResolutionText(
+  request: NonNullable<NativeSessionEvent['request']>,
+  response: NativeSessionResponse | undefined,
+): string {
+  const questions = request.questions ?? [];
+  const answered = questions.flatMap((question) => {
+    const answer = response?.answers?.[question.id];
+    return answer?.length ? [`${question.prompt} → ${answer.join(', ')}`] : [];
+  });
+  if (answered.length) return `Answered: ${answered.join('; ')}`;
+  const subject = questions.length
+    ? questions.map((question) => question.prompt).join('; ')
+    : (request.detail ?? request.tool?.name ?? request.title);
+  const outcome =
+    response?.decision === 'approve'
+      ? 'Approved'
+      : response?.decision === 'deny'
+        ? 'Declined'
+        : 'Resolved';
+  return `${outcome}: ${subject}`;
+}
+
 /** Client projection metadata. Never sent as a native RPC parameter. */
 export interface NativeHistorySnapshot extends NativeSessionReadResult {
   historyRead: { pageReadCount: number; pageAfters: number[]; projection?: number };
 }
 
 /** Bumped when retention keeps more: a snapshot saved by an older reader is read again from its start, once. */
-const NATIVE_HISTORY_PROJECTION = 2;
+const NATIVE_HISTORY_PROJECTION = 3;
 
 export const NATIVE_HISTORY_MESSAGES = 200;
 export const NATIVE_HISTORY_SESSIONS = 10;

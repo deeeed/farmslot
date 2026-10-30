@@ -279,6 +279,26 @@ A gateway update interrupted the await of an authorized review. The consumed dec
 
 No public RPC, field, CLI flag, SDK export or harness extension changes. The gateway uses the existing native snapshot and command contracts. Runtime and decoder bytes do not change; no runtime publication or native-host restart is needed. The [agent-runtime specification](../reference/agent-runtime.md#in-flight-reviewer-continuity) defines the boundary.
 
+## Amendment 7: record how an approval or question was resolved, 2026-10-31
+
+**Status:** Accepted (approved by the lead 2026-10-31).
+
+### Decision
+
+`approval.resolved` carries an optional normalized `response`: `decision` for an approval, `answers` for a question. The native manager sets it from the response the host delivered for that request, beside the `request` it already attaches; the adapter event type has no such field. A resolution the host did not deliver, such as the runner resolving a request itself, leaves it out: the request was resolved and its decision is unknown. Runner-specific `data` stays diagnostic.
+
+Clients keep each resolved request in the conversation as "Approved: …", "Declined: …", "Answered: question → answer", or "Resolved: …" when the decision is unknown.
+
+### Rationale and consequences
+
+A request left the conversation once resolved, so neither Command Center nor Companion could show what was approved or answered. The decision and answers existed only in runner-specific `data`, and Codex's own resolution notice carries none; reading them would need runner-name branches. The manager knows the response because it delivers it.
+
+Hosts keep their loaded code until stopped, so a session started on an older host records resolutions without `response`; clients show those as "Resolved: …".
+
+### Public surface
+
+One optional field, `NativeSessionEvent.response`, in `@farmslot/protocol`. No RPC, CLI flag or harness change. `@farmslot/agent-runtime` sets it, so it needs a release; native hosts started after the upgrade record it. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) defines the boundary.
+
 ## Amendment 8: normalized tool kinds, 2026-10-31
 
 **Status:** Proposed (the lead scheduled it after Amendment 7 on 2026-10-31). Accepted on the lead's approval.

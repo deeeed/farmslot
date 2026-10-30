@@ -233,6 +233,8 @@ interface SessionRecord {
 export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
   private readonly processObservations: ProcessMetadataCache = new Map();
+  /** Responses being delivered, by request ID. A resolution outside delivery has no known decision. */
+  private readonly delivering = new Map<string, NativeSessionResponse>();
   private persisted = new WeakMap<
     SessionRecord,
     {
@@ -1085,6 +1087,8 @@ export class NativeSessionManager {
       for (const [id, pending] of record.pendingRequests)
         if (pending.nativeId === event.nativeId) {
           enriched.request = pending.request;
+          const response = this.delivering.get(id);
+          if (response) enriched.response = response;
           record.pendingRequests.delete(id);
         }
     if (event.type === 'command.accepted' && event.commandId) {
@@ -1373,7 +1377,15 @@ export class NativeSessionManager {
     // Reserve durably before delivery. An uncertain decision cannot be applied twice.
     record.pendingRequests.set(requestId, { ...pending, responseState: 'unknown' });
     this.persist(record);
-    await record.adapter.respond(pending.nativeId!, response);
+    this.delivering.set(
+      requestId,
+      response.answers ? { answers: response.answers } : { decision: response.decision },
+    );
+    try {
+      await record.adapter.respond(pending.nativeId!, response);
+    } finally {
+      this.delivering.delete(requestId);
+    }
   }
   async interrupt(owner: string, id: string): Promise<void> {
     const record = this.owned(owner, id);

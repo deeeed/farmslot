@@ -312,6 +312,10 @@ latest 100 receipts. Older IDs remain deduplicated across process generations;
 a missing receipt in a page does not mean the command was never submitted. Consume each page once and
 persist its returned cursor. Pending interactions are separate from the event
 page. Respond with `request.id`; `nativeId` is evidence, not an input token.
+The `approval.resolved` event that ends a pending interaction carries its `request`
+and, when this host delivered the response, that `response` (`decision` or
+`answers`). A resolution the host did not deliver has no `response`: its decision
+is unknown ([ADR-057 Amendment 7](../adr/057-structured-runner-transports.md#amendment-7-record-how-an-approval-or-question-was-resolved-2026-10-31)).
 
 Adapters normalize each tool call into `tool.kind`, `tool.command` and `tool.paths`
 ([ADR-057 Amendment 8](../adr/057-structured-runner-transports.md#amendment-8-normalized-tool-kinds-2026-10-31));
