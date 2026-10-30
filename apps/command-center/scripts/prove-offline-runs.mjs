@@ -4233,14 +4233,14 @@ if (phase === 'dispatch-runs-web') {
     path.join(home, 'dispatch-runs-proof', randomUUID());
   await mkdir(artifacts, { recursive: true });
   const snapshot = () => cdp('eval', route, '--file', probe);
-  const until = async (ready, label) => {
+  const until = async (ready, label, inspectNotices = true) => {
     const deadline = Date.now() + 45000;
     let value;
     do {
       value = await snapshot();
-      if (await openReadNotices(cdp, route, value)) continue;
+      if (inspectNotices && (await openReadNotices(cdp, route, value))) continue;
       if (ready(value)) {
-        await closeReadNotices(cdp, route, value);
+        if (inspectNotices) await closeReadNotices(cdp, route, value);
         return value;
       }
       await delay(100);
@@ -4311,11 +4311,13 @@ if (phase === 'dispatch-runs-web') {
             row(value)?.visible &&
             row(value).disabled,
           'Saved comparison cards must disable selection after disconnect',
+          false,
         );
         pickerObservedAt = stale.picker.observedAt;
         assert(pickerObservedAt >= changed.picker.observedAt);
         await cdp('key', route, 'Enter');
         const refused = await snapshot();
+        assert.equal(refused.activeCard, runId, 'Enter must target the actual stale baseline card');
         assert.equal(
           refused.selectedBaseline,
           '',

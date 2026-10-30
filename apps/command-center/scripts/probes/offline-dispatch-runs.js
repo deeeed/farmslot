@@ -32,7 +32,9 @@ const noticeText = (item) => item?.querySelector('p')?.textContent.trim();
 return {
   mounted: true,
   noticesClosed,
-  readNoticesNeeded: baseline.state.status === 'stale' || Boolean(baseline.state.error),
+  readNoticesNeeded: [picker, baseline].some(
+    (controller) => controller.state.status === 'stale' || Boolean(controller.state.error),
+  ),
   open: Reflect.get(view, '_comparePickerOpen'),
   pickerReady: Reflect.get(view, '_comparisonReady'),
   contextBlocked:
@@ -45,9 +47,11 @@ return {
   picker: read(picker),
   baseline: read(baseline),
   canonicalRows: runs.every((run) => picker.state.data?.runs.includes(run)),
-  pickerAge: root.querySelector('[data-comparison-saved-age]')?.textContent.trim(),
+  pickerAge: noticeText(readNotice(Reflect.get(picker, 'query')?.id)),
   baselineAge: noticeText(readNotice(Reflect.get(baseline, 'query')?.id)),
-  readError: root.querySelector('[data-comparison-read-error]')?.textContent.trim(),
+  readError: picker.state.error
+    ? noticeText(readNotice(Reflect.get(picker, 'query')?.id))
+    : undefined,
   baselineError: baseline.state.error
     ? noticeText(readNotice(Reflect.get(baseline, 'query')?.id))
     : undefined,
