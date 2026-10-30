@@ -36,6 +36,9 @@ export const CANDIDATE_PACKAGE_FILENAME = 'candidate.result-package.json';
 export const MAX_RESULT_PACKAGE_ARTIFACT_SCAN_FILES = 2000;
 export const MAX_RESULT_PACKAGE_ARTIFACT_SCAN_DEPTH = 8;
 
+/** The recipe harness rewrites its execution record on every run, a judge's included. */
+const RECIPE_EXECUTION_RECORD = 'artifacts/provider-execution.json';
+
 const GATEWAY_OWNED_ARTIFACTS = new Set([
   `artifacts/${EXPERIMENT_MANIFEST_FILENAME}`,
   `artifacts/${RESULT_PACKAGE_DIR}/${REFERENCE_PACKAGE_FILENAME}`,
@@ -706,6 +709,7 @@ export async function finalizeEvalResultPackageForRun(
     if (frozen) {
       const artifacts = await scanResultPackageArtifacts(path.dirname(run.taskFile), run);
       for (const expected of frozen.validationEvidence) {
+        if (expected.path === RECIPE_EXECUTION_RECORD) continue;
         const actual = artifacts.find(({ path: file }) => file === expected.path);
         if (!actual || actual.sha256 !== expected.sha256 || actual.sizeBytes !== expected.sizeBytes)
           throw new Error(`Frozen eval worker evidence changed: ${expected.path}`);
