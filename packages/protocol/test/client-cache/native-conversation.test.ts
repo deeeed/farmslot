@@ -13,6 +13,7 @@ import {
   nativeFollowLabel,
   nativeFollowScrolled,
   nativeMessagePreview,
+  nativeMessageShown,
   nativeMessageToggleLabel,
   nativeSendLabel,
   nativeTimeline,
@@ -398,6 +399,26 @@ test('a busy session queues the message for its next turn; a closed one takes no
   assert.equal(nativeSendLabel('waiting'), 'Queue message');
   for (const state of ['starting', 'closing', 'closed', 'failed', undefined] as const)
     assert.equal(nativeSendLabel(state), undefined);
+});
+
+test('a sent message shows itself until the conversation shows it', () => {
+  const cases: [NativeSessionEvent[], boolean][] = [
+    [[], false],
+    [[event(1, 'text.delta', 'answer')], false],
+    [[event(1, 'command.submitted')], false],
+    [[{ ...event(1, 'command.submitted', 'other task'), commandId: 'other' }], false],
+    [[event(1, 'command.submitted', 'task')], true],
+    [[event(1, 'text.delta', 'answer'), event(2, 'command.accepted', 'task')], true],
+  ];
+  for (const [events, shown] of cases) {
+    assert.equal(nativeMessageShown(events, 'command'), shown);
+    assert.equal(
+      nativeTimeline(events).some(
+        (entry) => entry.kind === 'user' && entry.event.commandId === 'command',
+      ),
+      shown,
+    );
+  }
 });
 
 test('late acceptance restores the user prompt before its assistant response', () => {

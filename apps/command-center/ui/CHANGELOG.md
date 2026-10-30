@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A native conversation's unconfirmed message follows the shared client-cache rule for when the conversation shows it, as Companion does.
 - A native command's output keeps a terminal hyperlink's text and everything after it, which were dropped up to the last link.
 - The native composer's Send / Queue message choice comes from the shared client-cache rule that Companion now uses too.
 - A native conversation names tool calls by what they do, "Run npm test", "Change a.ts, b.ts" or "Read a.ts", in the tool row and the working status, instead of runner names such as `commandExecution`. A command's details show the command and the last 10 lines it printed, with its raw input and output one tap away.

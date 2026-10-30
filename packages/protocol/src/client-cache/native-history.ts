@@ -28,13 +28,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
   const tools = new Map<string, NativeTimelineEntry>();
   const prompts = new Map<string, NativeSessionEvent>();
   for (const event of events) {
-    if (
-      (event.type === 'command.submitted' || event.type === 'command.accepted') &&
-      event.commandId &&
-      event.text !== undefined &&
-      !prompts.has(event.commandId)
-    )
-      prompts.set(event.commandId, event);
+    if (nativePrompt(event) && !prompts.has(event.commandId)) prompts.set(event.commandId, event);
   }
   for (const event of events) {
     if (event.commandId && !userCommands.has(event.commandId)) {
@@ -512,6 +506,25 @@ export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {
     case 'failed':
       return 'Failed';
   }
+}
+
+/** A sent message the timeline shows: its submission or acceptance, with the message text. */
+function nativePrompt(
+  event: NativeSessionEvent,
+): event is NativeSessionEvent & { commandId: string; text: string } {
+  return (
+    (event.type === 'command.submitted' || event.type === 'command.accepted') &&
+    !!event.commandId &&
+    event.text !== undefined
+  );
+}
+
+/**
+ * Whether the timeline shows the message sent as `commandId`. Until it does, a
+ * client shows the message itself, with its delivery state.
+ */
+export function nativeMessageShown(events: NativeSessionEvent[], commandId: string): boolean {
+  return events.some((event) => event.commandId === commandId && nativePrompt(event));
 }
 
 /** A confirmed replacement generation must not inherit the old browser input lock. */

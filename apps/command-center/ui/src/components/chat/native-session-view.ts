@@ -36,6 +36,7 @@ import {
   nativeHistoryQuery,
   type NativeMessagePreview,
   nativeMessagePreview,
+  nativeMessageShown,
   nativeMessageToggleLabel,
   nativeObservationQuery,
   nativeSendLabel,
@@ -1415,11 +1416,7 @@ ${JSON.stringify(
                       ),
                     )}
                     ${this.localCommand &&
-                    !this.transcript.events.some(
-                      (event) =>
-                        event.commandId === this.localCommand?.commandId &&
-                        ['command.submitted', 'command.accepted'].includes(event.type),
-                    )
+                    !nativeMessageShown(this.transcript.events, this.localCommand.commandId)
                       ? html`<article class="user">
                           <span class="meta">You · Delivery unconfirmed</span>
                           <div class="text">

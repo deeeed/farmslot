@@ -4,6 +4,8 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import {
   nativeCommandText,
   nativeEntryPreview,
+  type NativeMessagePreview,
+  nativeMessagePreview,
   nativeMessageToggleLabel,
   type NativeTimelineEntry,
 } from '@farmslot/protocol/client-cache';
@@ -81,23 +83,70 @@ export function NativeTimelineCard({
           ) : null}
         </>
       ) : (
-        <>
-          <Text selectable style={entry.kind === 'status' ? styles.muted : styles.text}>
-            {preview && !expanded ? preview.text : entry.text}
-          </Text>
-          {preview ? (
-            <Pressable
-              testID="companion-native-message-toggle"
-              accessibilityRole="button"
-              accessibilityState={{ expanded }}
-              style={styles.messageToggle}
-              onPress={toggle}
-            >
-              <Text style={styles.buttonText}>{nativeMessageToggleLabel(preview, expanded)}</Text>
-            </Pressable>
-          ) : null}
-        </>
+        <NativeMessageText
+          text={entry.text}
+          preview={preview}
+          muted={entry.kind === 'status'}
+          onDisclosure={onDisclosure}
+        />
       )}
     </View>
+  );
+}
+
+/** A message sent from here that the conversation does not show yet, with its delivery state. */
+export function NativePendingMessageCard({
+  text,
+  delivery,
+  onDisclosure,
+}: {
+  text: string;
+  delivery: string;
+  onDisclosure: () => void;
+}) {
+  return (
+    <View testID="companion-native-pending-message" style={[styles.card, styles.user]}>
+      <Text style={styles.muted}>You · {delivery}</Text>
+      <NativeMessageText
+        text={text}
+        preview={nativeMessagePreview(text)}
+        onDisclosure={onDisclosure}
+      />
+    </View>
+  );
+}
+
+function NativeMessageText({
+  text,
+  preview,
+  muted = false,
+  onDisclosure,
+}: {
+  text: string;
+  preview?: NativeMessagePreview;
+  muted?: boolean;
+  onDisclosure: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <>
+      <Text selectable style={muted ? styles.muted : styles.text}>
+        {preview && !expanded ? preview.text : text}
+      </Text>
+      {preview ? (
+        <Pressable
+          testID="companion-native-message-toggle"
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          style={styles.messageToggle}
+          onPress={() => {
+            onDisclosure();
+            setExpanded(!expanded);
+          }}
+        >
+          <Text style={styles.buttonText}>{nativeMessageToggleLabel(preview, expanded)}</Text>
+        </Pressable>
+      ) : null}
+    </>
   );
 }

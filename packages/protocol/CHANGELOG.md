@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `nativeMessageShown` says whether a native conversation shows a sent message yet (its submission or acceptance, with the text), the rule `nativeTimeline` uses for user entries, so a client can show a message it sent until then.
 - `stripTerminalControls` ends an OSC sequence at its own terminator, so a terminal hyperlink (OSC 8) keeps its text and the text after it, instead of everything up to the last link being removed.
 - `nativeSendLabel` gives a native composer's send action for a session state: "Send" when idle, "Queue message" for the next turn while a turn runs or waits on a request, none when the session takes no input. `nativeHistoryCanSend` is the held-data rule for sending a message: current, complete history of the conversation on screen (same generation, worker lease and task scope, not released), without `nativeHistoryCanAct`'s requirement that it be the exact snapshot on screen, so a newer read landing while a turn streams does not refuse a queued message.
 - `RunEngineState.taskInit` records whether a run's task still waits for node initialization after prepare (`pending`) or is `initialized`.
