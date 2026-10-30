@@ -70,7 +70,7 @@ export interface ResourceQueryDefinition {
   normalizeParams?(params: unknown): unknown;
   retentionGroups?(params: unknown): string[];
   dependencies(params: unknown, nativeReaderId?: string): ResourceKey[];
-  /** Longer floors than RESOURCE_REREAD_INTERVAL_MS for keys this read only cross-references. */
+  /** This read's floors in place of RESOURCE_REREAD_INTERVAL_MS for changes to these families. */
   rereadIntervalMs?: Partial<Record<ResourceKey['family'], number>>;
 }
 
@@ -979,6 +979,8 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 20 * mb },
     live: true,
     dependencies: () => [{ family: 'runs', scope: 'farm' }],
+    // Every write to any run changes the farm runs key, several times a minute on a busy farm.
+    rereadIntervalMs: { runs: 30_000 },
   },
   [Methods.RUN_GET]: {
     persisted: true,

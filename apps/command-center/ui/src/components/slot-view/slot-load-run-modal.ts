@@ -19,7 +19,7 @@ import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { formatCreatedAt, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderRunTitle } from '../shared/run-title.js';
 import {
   navigateToPreparedSlot,
@@ -27,7 +27,10 @@ import {
   shouldBindOnlyForLoadRun,
 } from '../shared/slot-prepare-client.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
-import { DEFAULT_SLOT_PREPARE_OPTIONS } from '../shared/slot-prepare-options-model.js';
+import {
+  DEFAULT_SLOT_PREPARE_OPTIONS,
+  type SlotPrepareOptionsState,
+} from '../shared/slot-prepare-options-model.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 const DEFAULT_LIMIT = 200;
@@ -88,7 +91,7 @@ export class SlotLoadRunModal extends LitElement {
   }
   private get _commandsReady(): boolean {
     // Fixtures describe the controls. Mutation handlers still require a canonical read.
-    return !this.disabled && Boolean(this.runsOverride || this.runsQuery.ready);
+    return !this.disabled && Boolean(this.runsOverride || this.runsQuery.actable);
   }
 
   private _clearConfirmation(): void {
@@ -108,7 +111,7 @@ export class SlotLoadRunModal extends LitElement {
       this._actionError = '';
       this._prepareState = null;
     }
-    if (!this.runsQuery.ready) this._clearConfirmation();
+    if (!this.runsQuery.actable) this._clearConfirmation();
     const saved = this.open && this.runsQuery.state.status !== 'ready' && this.runsQuery.state.data;
     if (saved && !this._savedAgeClock)
       this._savedAgeClock = window.setInterval(() => this.requestUpdate(), 1000);
@@ -118,10 +121,14 @@ export class SlotLoadRunModal extends LitElement {
     }
   }
 
-  private _currentRun(expected: Run): Run {
-    if (!this.isConnected || !this.open || this.disabled)
-      throw new Error('The load dialog changed. Open it again before acting.');
-    const run = this.runsQuery.requireReady().runs.find(({ id }) => id === expected.id);
+  /** The run as the current list has it, while the dialog still shows the `scope` it was opened in. */
+  private async _currentRun(expected: Run, scope: string): Promise<Run> {
+    const changed = () => !this.isConnected || !this.open || this.disabled || this._scope !== scope;
+    if (changed()) throw new Error('The load dialog changed. Open it again before acting.');
+    // Run writes reread the list at most every 30 s; a load reads it first.
+    const { runs } = await this.runsQuery.requireCurrent();
+    if (changed()) throw new Error('The load dialog changed. Open it again before acting.');
+    const run = runs.find(({ id }) => id === expected.id);
     if (
       !run ||
       (this.project && run.project !== this.project) ||
@@ -403,11 +410,16 @@ export class SlotLoadRunModal extends LitElement {
     this._forcePrepare = event.detail.forcePrepare;
   }
 
-  private async _executeLoad(
-    expected: Run,
-    prepareProfile = this._prepareProfile,
-    strictProfile = this._strictProfile,
-  ) {
+  private _prepareOptions(): SlotPrepareOptionsState {
+    return {
+      prepareProfile: this._prepareProfile,
+      strictProfile: this._strictProfile,
+      forcePrepare: this._forcePrepare,
+    };
+  }
+
+  /** `options` are the ones on screen at the click; they stay editable while the runs are reread. */
+  private async _executeLoad(expected: Run, options: SlotPrepareOptionsState) {
     if (this._actionRequest) return;
     const request = Symbol('load-run');
     const scope = this._scope;
@@ -423,15 +435,16 @@ export class SlotLoadRunModal extends LitElement {
     this._actionError = '';
     this._actionBusy = true;
     try {
-      const run = this._currentRun(expected);
+      const run = await this._currentRun(expected, scope);
+      if (!current()) return;
       await runSlotPrepareForRun({
         slotId,
         runId: run.id,
         branch: run.branch!,
         slotBranch: this.slotBranch,
-        prepareProfile,
-        strictProfile,
-        forcePrepare: this._forcePrepare,
+        prepareProfile: options.prepareProfile,
+        strictProfile: options.strictProfile,
+        forcePrepare: options.forcePrepare,
         rebind: true,
       });
       if (!current()) return;
@@ -498,17 +511,19 @@ export class SlotLoadRunModal extends LitElement {
 
   private async _onLoadClick(run: Run) {
     if (this._loadReason(run) || this._actionBusy || this._actionRequest) return;
+    const scope = this._scope;
+    const options = this._prepareOptions();
     try {
-      this._currentRun(run);
-      if (this._pendingConfirm === run.id && this._confirmScope === this._scope) {
+      await this._currentRun(run, scope);
+      if (this._pendingConfirm === run.id && this._confirmScope === scope) {
         if (this._confirmTimer) clearTimeout(this._confirmTimer);
-        await this._executeLoad(run);
+        await this._executeLoad(run, options);
         return;
       }
       this._clearConfirmation();
       this._pendingConfirm = run.id;
       this._confirmRunBranch = run.branch ?? '';
-      this._confirmScope = this._scope;
+      this._confirmScope = scope;
       this._confirmTimer = setTimeout(() => this._clearConfirmation(), 3000);
     } catch (error) {
       this._actionError = error instanceof Error ? error.message : String(error);
@@ -617,11 +632,11 @@ export class SlotLoadRunModal extends LitElement {
                     this._strictProfile = event.detail.strictProfile;
                     return;
                   }
-                  void this._executeLoad(
-                    run,
-                    event.detail.prepareProfile,
-                    event.detail.strictProfile,
-                  );
+                  void this._executeLoad(run, {
+                    ...this._prepareOptions(),
+                    prepareProfile: event.detail.prepareProfile,
+                    strictProfile: event.detail.strictProfile,
+                  });
                 }}
               ></slot-prepare-options>
             </div>
@@ -637,8 +652,7 @@ export class SlotLoadRunModal extends LitElement {
               ? html`<div class="slrm-state error">${this._actionError}</div>`
               : nothing}
             ${!this.runsOverride &&
-            this.runsQuery.state.status !== 'ready' &&
-            this.runsQuery.state.data &&
+            heldDataIsSaved(this.runsQuery.state) &&
             this.runsQuery.state.observedAt !== undefined
               ? html`<div class="slrm-state" data-load-run-freshness="stale">
                   Saved runs, ${sourceObservationAge(this.runsQuery.state.observedAt)}. Actions wait
