@@ -1037,6 +1037,11 @@ export function createGatewayResourceCache(
         // refusals retire that work; an unchanged failed source never retries.
         entry.dirty &&=
           !evictionCodes.has(failure.code) && failure.code !== 'RESOURCE_OBSERVATION_UNSUPPORTED';
+        // A healthy source can supersede the first page before this reader has an interest.
+        // Keep one paced reread even when its change notice could not reach this reader yet.
+        entry.dirty ||=
+          entry.query.method === Methods.NATIVE_SESSION_READ &&
+          failure.code === 'RESOURCE_OBSERVATION_CHANGED';
         if (evictionCodes.has(failure.code)) {
           const evictingStore = store;
           const evictingIncarnation = storeVersion;

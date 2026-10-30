@@ -20,7 +20,11 @@ async function fixture() {
   return { transport, cache, stop };
 }
 
-for (const code of ['RESOURCE_OBSERVATION_UNAVAILABLE', 'NATIVE_SOURCE_UNAVAILABLE']) {
+for (const code of [
+  'RESOURCE_OBSERVATION_UNAVAILABLE',
+  'NATIVE_SOURCE_UNAVAILABLE',
+  'RESOURCE_OBSERVATION_CHANGED',
+]) {
   test(`a write during failed ${code} I/O retains exactly one follow-up`, async () => {
     const { transport, cache, stop } = await fixture();
     try {
@@ -45,6 +49,27 @@ for (const code of ['RESOURCE_OBSERVATION_UNAVAILABLE', 'NATIVE_SOURCE_UNAVAILAB
     }
   });
 }
+
+test('a non-native superseded read preserves its existing change-notice retry policy', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  t.mock.method(performance, 'now', () => Date.now());
+  const { transport, cache, stop } = await fixture();
+  try {
+    const failed = cache.retry(query);
+    (await transport.nextRead()).reject('RESOURCE_OBSERVATION_CHANGED');
+    await failed;
+    assert.equal(cache.read(query).status, 'stale');
+    assert.equal(cache.read(query).data?.value, 'before writes');
+    assert.equal(cache.read(query).error?.code, 'RESOURCE_OBSERVATION_CHANGED');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(100);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(transport.requestCount, 2, 'Only native history gains a retry without a notice');
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
 
 test('a failed read without an intervening write stays visible without an automatic retry', async () => {
   const { transport, cache, stop } = await fixture();

@@ -24,9 +24,51 @@ export interface NativeSourceReceipt {
 
 export class NativeSourceUnavailable extends Error {
   readonly code = 'NATIVE_SOURCE_UNAVAILABLE';
-  constructor() {
+  constructor(readonly reason = 'source-not-ready') {
     super('Native observation source unavailable. Retry after source recovery.');
   }
+}
+
+export class NativeSourceChanged extends Error {
+  readonly code = 'RESOURCE_OBSERVATION_CHANGED';
+  constructor() {
+    super('Native history changed during this read. Refreshing history.');
+  }
+}
+
+/** A healthy advancing source supersedes a page; lost admission remains an error. */
+export function assertNativeSourceCurrent(
+  before: NativeSourceReceipt,
+  after: NativeSourceReceipt,
+  reason: 'node-read' | 'gateway-read' | 'remote-envelope',
+): void {
+  if (sameNativeSource(before, after)) return;
+  if (
+    before.ready &&
+    after.ready &&
+    before.nodeId === after.nodeId &&
+    before.ownerId === after.ownerId &&
+    before.incarnation === after.incarnation &&
+    after.revision > before.revision
+  ) {
+    console.info(
+      '[native-observation]',
+      JSON.stringify({
+        code: 'RESOURCE_OBSERVATION_CHANGED',
+        reason,
+        nodeId: after.nodeId,
+        beforeRevision: before.revision,
+        afterRevision: after.revision,
+      }),
+    );
+    throw new NativeSourceChanged();
+  }
+  const unavailable = new NativeSourceUnavailable(`${reason}-source-replaced-or-unavailable`);
+  console.warn(
+    '[native-observation]',
+    JSON.stringify({ code: unavailable.code, reason: unavailable.reason, nodeId: after.nodeId }),
+  );
+  throw unavailable;
 }
 
 interface SourceSnapshot {
@@ -101,7 +143,7 @@ export class NativeHostObservation {
       if (generation !== this.generation || this.stopped) return;
       const after = this.scan();
       if (this.failed || change !== this.changes || before.digest !== after.digest)
-        throw new NativeSourceUnavailable();
+        throw new NativeSourceUnavailable('arming-source-changed');
       this.setAccounts(accounts);
       this.snapshot = after;
       this.receipt = {
@@ -113,9 +155,11 @@ export class NativeHostObservation {
         changed: ['native-session', 'profiles'],
       };
       this.publish(this.current());
-    } catch {
-      if (generation === this.generation) this.fail();
-      throw new NativeSourceUnavailable();
+    } catch (error) {
+      if (generation === this.generation)
+        this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'arming-failed');
+      if (error instanceof NativeSourceUnavailable) throw error;
+      throw new NativeSourceUnavailable('arming-failed');
     } finally {
       if (generation === this.generation) {
         this.arming = false;
@@ -140,26 +184,29 @@ export class NativeHostObservation {
     this.timer = undefined;
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
-    if (this.receipt.ready) this.fail();
+    if (this.receipt.ready) this.fail('source-stopped');
   }
 
   /** Sync rescan closes the fs.watch delivery window before and after each actual read. */
   fence(): NativeSourceReceipt {
-    if (!this.receipt.ready || this.stopped) throw new NativeSourceUnavailable();
+    if (!this.receipt.ready || this.stopped)
+      throw new NativeSourceUnavailable(this.stopped ? 'source-stopped' : 'source-not-ready');
     try {
       const current = this.scan();
       if (current.host !== this.snapshot?.host || current.accounts !== this.snapshot?.accounts) {
-        this.fail();
-        throw new NativeSourceUnavailable();
+        throw new NativeSourceUnavailable(
+          current.host !== this.snapshot?.host ? 'host-changed' : 'profiles-changed',
+        );
       }
       if (current.digest !== this.snapshot?.digest) {
         this.snapshot = current;
         this.advance(['native-session']);
       }
       return this.current();
-    } catch {
-      this.fail();
-      throw new NativeSourceUnavailable();
+    } catch (error) {
+      this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'scan-failed');
+      if (error instanceof NativeSourceUnavailable) throw error;
+      throw new NativeSourceUnavailable('scan-failed');
     }
   }
 
@@ -175,7 +222,7 @@ export class NativeHostObservation {
       failure = error;
     }
     const after = this.fence();
-    if (!sameNativeSource(before, after)) throw new NativeSourceUnavailable();
+    assertNativeSourceCurrent(before, after, 'node-read');
     if (rejected) throw failure;
     return { value, nativeSource: before };
   }
@@ -198,7 +245,16 @@ export class NativeHostObservation {
     this.accountDigest = hash(JSON.stringify(accounts));
   }
 
-  private fail(): void {
+  private fail(reason: string): void {
+    if (!this.failed)
+      console.warn(
+        '[native-observation]',
+        JSON.stringify({
+          code: 'NATIVE_SOURCE_UNAVAILABLE',
+          reason,
+          nodeId: this.client.executionNodeId,
+        }),
+      );
     this.failed = true;
     this.receipt = {
       ...this.receipt,
@@ -226,7 +282,9 @@ export class NativeHostObservation {
 
     for (const [path, recursive] of targets) {
       const watcher = watch(path, { recursive }, () => this.changed());
-      watcher.on('error', () => this.fail());
+      watcher.on('error', () => {
+        this.fail('watcher-error');
+      });
       this.watchers.push(watcher);
     }
   }
@@ -244,8 +302,8 @@ export class NativeHostObservation {
       // Registration changes fail the account fingerprint fence and re-arm the owner.
       // Provider login/keychain state has no reliable subscribed feed. Its one structured
       // collector runs at >=60s; journal activity never starts additional account probes.
-    } catch {
-      this.fail();
+    } catch (error) {
+      this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'watcher-rescan-failed');
       // A filesystem lifecycle event can reattach the one owner to a replacement host.
       this.recover();
     }
@@ -254,7 +312,7 @@ export class NativeHostObservation {
     if (this.recovering || this.stopped) return;
     this.recovering = this.retry()
       .catch(() => {
-        this.fail(); // Published failure; no timer or request replay. A new source event/Retry may arm again.
+        this.fail('rearm-failed'); // Published failure; no timer or request replay. A new source event/Retry may arm again.
       })
       .finally(() => {
         this.recovering = undefined;
@@ -289,7 +347,7 @@ export class NativeHostObservation {
           return;
         }
         if (after.host !== this.snapshot?.host) {
-          this.fail();
+          this.fail('account-sample-host-changed');
           return;
         }
         const changed = digest !== this.accountDigest || after.digest !== this.snapshot?.digest;
@@ -300,7 +358,9 @@ export class NativeHostObservation {
         if (changed || this.receipt.ready) this.advance(['profiles']);
       })
       .catch(() => {
-        if (generation === this.generation) this.fail();
+        if (generation === this.generation) {
+          this.fail('account-sample-failed');
+        }
       })
       .finally(() => {
         this.refreshing = false;
@@ -331,7 +391,7 @@ export class NativeHostObservation {
         stat.uid !== process.getuid?.() ||
         stat.mode & 0o077
       )
-        throw new NativeSourceUnavailable();
+        throw new NativeSourceUnavailable('unsafe-source-root');
       parts.push(`${stat.dev}:${stat.ino}`);
       if (existsSync(join(this.client.root, 'host.json'))) {
         const identity = readJson<HostIdentity>(join(this.client.root, 'host.json'));
@@ -345,7 +405,7 @@ export class NativeHostObservation {
           !alive(worker.pid) ||
           !lstatSync(identity.socket).isSocket()
         )
-          throw new NativeSourceUnavailable();
+          throw new NativeSourceUnavailable('host-identity-invalid');
         host = hash(JSON.stringify([identity, worker.pid]));
       }
       const sessions = join(this.client.root, 'sessions');
@@ -357,7 +417,7 @@ export class NativeHostObservation {
           directory.uid !== process.getuid?.() ||
           directory.mode & 0o077
         )
-          throw new NativeSourceUnavailable();
+          throw new NativeSourceUnavailable('unsafe-session-directory');
       }
       if (existsSync(sessions))
         for (const file of readdirSync(sessions).sort()) {
@@ -370,10 +430,11 @@ export class NativeHostObservation {
             stat.uid !== process.getuid?.() ||
             stat.mode & 0o077
           )
-            throw new NativeSourceUnavailable();
+            throw new NativeSourceUnavailable('unsafe-journal');
           const bytes = readFileSync(path);
           // Incomplete append is uncertain, not a committed new revision. Never truncate here.
-          if (bytes.length && bytes.at(-1) !== 10) throw new NativeSourceUnavailable();
+          if (bytes.length && bytes.at(-1) !== 10)
+            throw new NativeSourceUnavailable('incomplete-journal-append');
           parts.push(file, `${stat.dev}:${stat.ino}`, hash(bytes));
         }
     }
