@@ -128,10 +128,10 @@ export function renderEvalCockpitCaseBrowser(options: EvalCockpitCaseBrowserRend
                             </select>
                           </label>
                           <label
-                            >Objective
+                            >Ticket problem
                             <input
                               .value=${item.objective}
-                              placeholder="optional objective"
+                              placeholder="Problem statement from ticket"
                               @input=${(e: InputEvent) =>
                                 options.updateBasketCase(item.selectionId, {
                                   objective: (e.target as HTMLInputElement).value,

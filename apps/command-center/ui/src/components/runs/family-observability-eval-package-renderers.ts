@@ -5,6 +5,7 @@ import type {
   FamilyObservabilitySnapshot,
   ResultPackageProjection,
 } from '@farmslot/protocol';
+import { evalComparisonEligibility } from '@farmslot/protocol';
 
 import {
   resultPackageAxisLabel,
@@ -91,6 +92,9 @@ function renderFamilyEvalPackageRow(
   options: FamilyEvalPackagePanelRenderOptions,
   pkg: ResultPackageProjection,
 ) {
+  const eligibility = evalComparisonEligibility(pkg);
+  const included = eligibility.status === 'eligible';
+  const unavailable = eligibility.status === 'pending' ? 'pending' : 'Excluded';
   return html`
     <div class="eval-package-row">
       <span
@@ -109,16 +113,20 @@ function renderFamilyEvalPackageRow(
           : nothing}</span
       >
       <span
-        >${pkg.status}${pkg.missingData.length
-          ? html`<small>${pkg.missingData.slice(0, 2).join(', ')}</small>`
-          : nothing}</span
+        >${included ? pkg.status : eligibility.status}${!included
+          ? html`<small>${eligibility.reason}</small>`
+          : pkg.missingData.length
+            ? html`<small>${pkg.missingData.slice(0, 2).join(', ')}</small>`
+            : nothing}</span
       >
-      <span>${renderFamilyEvalPackageDiff(options, pkg)}</span>
-      <span>${resultPackageEvidenceLabel(pkg)}</span>
+      <span>${included ? renderFamilyEvalPackageDiff(options, pkg) : unavailable}</span>
+      <span>${included ? resultPackageEvidenceLabel(pkg) : unavailable}</span>
       <span
-        >${pkg.metrics?.durationMs != null
-          ? formatDuration(pkg.metrics.durationMs)
-          : 'pending'}${pkg.metrics?.costEstimate != null
+        >${!included
+          ? 'Excluded'
+          : pkg.metrics?.durationMs != null
+            ? formatDuration(pkg.metrics.durationMs)
+            : 'pending'}${included && pkg.metrics?.costEstimate != null
           ? html`<small>$${pkg.metrics.costEstimate.toFixed(2)}</small>`
           : nothing}</span
       >

@@ -55,6 +55,7 @@ import {
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
+import { restoreBlindTrialGit } from '../../evals/blind-trial.js';
 import { archiveSlotScaffolding, excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
 import {
@@ -313,6 +314,8 @@ async function releasePreflight(
   const forceReset = params.forceReset ?? false;
 
   const ownerRun = boundOwner ? await getRunWithArchived(boundOwner) : undefined;
+  if (params.preserveAgents && ownerRun?.engineState?.evalExperiment?.blind?.isolation)
+    throw new Error('Blind trial cleanup must stop its worker before restoring Git metadata.');
   const ownerTerminal = !!ownerRun && isTerminalRunStatus(ownerRun.status);
   const refusal = releaseOwnerRefusal(boundOwner, ownerTerminal, params, options);
   if (refusal) throw new Error(refusal);
@@ -825,6 +828,10 @@ async function slotReleaseImpl(
   } else {
     step('agent', 'Preserving agent windows for human gate');
   }
+
+  const blindOwner = params.expectedRunId ?? boundOwner;
+  const blindRun = blindOwner ? await getRunWithArchived(blindOwner) : undefined;
+  if (blindRun) await restoreBlindTrialGit(blindRun, vars, entryEpoch, assertReleaseClaim);
 
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
   await assertReleaseClaim();

@@ -55,6 +55,7 @@ import {
   shellQuote,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
+import { auditBlindTrialTask, verifyBlindTrialForDispatch } from '../../evals/blind-trial.js';
 import { ensureRunRuntimeReady } from '../../fleet/runtime-ready.js';
 import {
   invalidateArtifactTextCache,
@@ -1636,6 +1637,11 @@ export async function dispatchExecute(
     })) {
       step('copy', `${subdir}/ copied`);
     }
+  }
+
+  if (currentRun) {
+    await auditBlindTrialTask(currentRun, workerTaskAbs, vars);
+    await verifyBlindTrialForDispatch(currentRun);
   }
 
   // We just wrote artifacts/recipe.json + artifacts/recipe-library/ into the

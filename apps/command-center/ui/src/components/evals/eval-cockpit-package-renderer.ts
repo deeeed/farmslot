@@ -1,5 +1,7 @@
 import { html, nothing } from 'lit';
 
+import { evalComparisonEligibility } from '@farmslot/protocol';
+
 import { formatDuration } from '../runs/run-utils.js';
 
 import type { PackageRow } from './eval-cockpit-model.js';
@@ -21,8 +23,11 @@ export function renderEvalCockpitPackageMatrix(rows: readonly PackageRow[]) {
           <span>Package</span><span>Axes</span><span>Status</span><span>Diff</span
           ><span>Evidence</span><span>Time / cost</span><span>Run</span>
         </div>
-        ${rows.map(
-          (row) => html`
+        ${rows.map((row) => {
+          const eligibility = evalComparisonEligibility(row);
+          const included = eligibility.status === 'eligible';
+          const unavailable = eligibility.status === 'pending' ? 'pending' : 'Excluded';
+          return html`
             <div class="package-row">
               <span
                 ><strong>${row.label ?? row.strategyId ?? row.caseId ?? row.packageId}</strong
@@ -35,23 +40,31 @@ export function renderEvalCockpitPackageMatrix(rows: readonly PackageRow[]) {
                 ></span
               >
               <span
-                >${row.status}${row.missingData.length
-                  ? html`<br /><small>${row.missingData.slice(0, 2).join(', ')}</small>`
-                  : nothing}</span
+                >${included ? row.status : eligibility.status}${!included
+                  ? html`<br /><small>${eligibility.reason}</small>`
+                  : row.missingData.length
+                    ? html`<br /><small>${row.missingData.slice(0, 2).join(', ')}</small>`
+                    : nothing}</span
               >
               <span
-                >${row.diff.available
-                  ? `${row.diff.files} files · +${row.diff.additions} -${row.diff.deletions}`
-                  : (row.diff.missingReason ?? 'pending')}</span
+                >${!included
+                  ? 'Excluded'
+                  : row.diff.available
+                    ? `${row.diff.files} files · +${row.diff.additions} -${row.diff.deletions}`
+                    : (row.diff.missingReason ?? 'pending')}</span
               >
               <span
-                >${row.validationEvidenceCount} validation · ${row.visualEvidenceCount} visual ·
-                ${row.reviewEvidenceCount} review</span
+                >${included
+                  ? html`${row.validationEvidenceCount} validation · ${row.visualEvidenceCount}
+                    visual · ${row.reviewEvidenceCount} review`
+                  : unavailable}</span
               >
               <span
-                >${row.metrics?.durationMs != null
-                  ? formatDuration(row.metrics.durationMs)
-                  : 'pending'}${row.metrics?.costEstimate != null
+                >${!included
+                  ? 'Excluded'
+                  : row.metrics?.durationMs != null
+                    ? formatDuration(row.metrics.durationMs)
+                    : 'pending'}${included && row.metrics?.costEstimate != null
                   ? html`<br /><small>$${row.metrics.costEstimate.toFixed(2)}</small>`
                   : nothing}</span
               >
@@ -61,8 +74,8 @@ export function renderEvalCockpitPackageMatrix(rows: readonly PackageRow[]) {
                   : '—'}</span
               >
             </div>
-          `,
-        )}
+          `;
+        })}
       </div>
     </section>
   `;

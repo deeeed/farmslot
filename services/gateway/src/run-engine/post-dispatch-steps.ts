@@ -31,6 +31,7 @@ import {
 } from '@farmslot/review-dispatch';
 
 import { markSlotBusy, markSlotHeld, updateSlotStatusIf } from '../core/index.js';
+import { freezeBlindTrialFirstOutput } from '../evals/blind-trial.js';
 import {
   finalizeEvalResultPackageForRun,
   readResultPackageManifest,
@@ -583,6 +584,7 @@ export async function executeMonitorStep(
         failRunOutputCapture(runId, error, true);
       }
       if (!canSettle()) return retiredResult();
+      await freezeBlindTrialFirstOutput(runId);
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     }
     if (

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep reference answers out of eval workers and exclude contaminated first outputs from comparisons.
+
 - Complete artifact-only eval packages without requiring publication claim approval.
 
 - Recover unsent review-fix prompts after restart, verify relaunched worker processes, and surface unconfirmed delivery within the launch budget while preserving findings.

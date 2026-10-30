@@ -34,6 +34,9 @@ async function writeEvalTestFile(root: string, relPath: string, content: string)
   await writeFile(filePath, content, 'utf-8');
 }
 
+const REFERENCE_DIFF =
+  'diff --git a/src/value.ts b/src/value.ts\nindex 1111111..2222222 100644\n--- a/src/value.ts\n+++ b/src/value.ts\n@@ -1 +1 @@\n-old\n+reference\n';
+
 function makeReferencePackage(): ResultPackageManifest {
   return {
     version: 1,
@@ -385,7 +388,24 @@ test('evalTrialStart creates a catalog candidate without a template axis or orig
   const referencePackage = await writeResultPackageManifest(referencePackagePath, {
     ...makeReferencePackage(),
     source: { kind: 'prior-run', runId: 'original-run', familyId: 'original-family' },
+    baseline: {
+      source: 'local-git',
+      baseSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      capturedAt: '2026-05-09T00:00:00.000Z',
+    },
+    diff: {
+      source: 'artifact',
+      available: true,
+      files: 1,
+      additions: 1,
+      deletions: 1,
+      kind: 'contribution',
+      baseSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      headSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      artifactPath: path.basename(root) + '/reference.diff',
+    },
   });
+  await writeEvalTestFile(root, 'reference.diff', REFERENCE_DIFF);
   const experimentKey = `experiment-key-startref-${Date.now()}`;
   const experimentManifestPath = path.join(root, 'experiment-manifest.json');
   const experimentManifest: EvalExperimentManifest = {
@@ -402,6 +422,7 @@ test('evalTrialStart creates a catalog candidate without a template axis or orig
       source: referencePackage.source,
       taskProfile: 'fix-bug',
       objectiveHash: 'objective-1',
+      problemStatement: 'Show the latest payment in Activity.',
       referencePackageId: referencePackage.packageId,
       referencePackageHash: referencePackage.packageHash,
       referencePackagePath,
@@ -436,7 +457,7 @@ test('evalTrialStart creates a catalog candidate without a template axis or orig
         },
         label: 'candidate start ref',
         variant: 'candidate-start-ref',
-        startRef: 'release/v1.0.0',
+        startRef: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         runner: 'codex',
         model: 'gpt-5.5',
         slotId: 'demo-ff-1',
@@ -458,11 +479,11 @@ test('evalTrialStart creates a catalog candidate without a template axis or orig
   assert.equal(result.run?.executionTemplate?.id, 'fix-bug/default');
   assert.equal(result.run?.taskTemplate, undefined);
   assert.equal(result.run?.ticketOrPr.startsWith('EVAL-'), true);
-  assert.equal(result.run?.startRef?.requestedRef, 'release/v1.0.0');
+  assert.equal(result.run?.startRef?.requestedRef, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   assert.deepEqual(result.run?.startRef?.source, { kind: 'manual' });
   assert.equal(result.candidatePackage.source.kind, 'prior-run');
   assert.deepEqual(result.candidatePackage.productRef, {
-    requestedRef: 'release/v1.0.0',
+    requestedRef: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     source: 'eval-candidate',
   });
   assert.equal(result.candidatePackage.harnessLifecycle?.adapter, 'mobile');
@@ -482,7 +503,10 @@ test('evalTrialStart creates a catalog candidate without a template axis or orig
   const startRefInput = JSON.parse(
     await readFile(path.join(candidateDir, 'inputs', 'candidate-start-ref.json'), 'utf-8'),
   ) as Record<string, unknown>;
-  assert.deepEqual(startRefInput, { requestedRef: 'release/v1.0.0', source: 'eval-candidate' });
+  assert.deepEqual(startRefInput, {
+    requestedRef: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    source: 'eval-candidate',
+  });
   assert.equal(result.taskPath, undefined);
   const normalTaskPath = await writeTaskFixture(result.run!, { skipCollisionCheck: true });
   taskDirs.push(path.dirname(normalTaskPath));
@@ -560,11 +584,11 @@ test('evalTrialStart rejects auto replay when the Reference has no base commit',
         },
         () => {},
       ),
-    /requires a concrete reference base commit\/startRef/,
+    /verified full base commit/,
   );
 });
 
-test('evalTrialStart reuses a prior run startRef instead of falling back to main', async (t) => {
+test('evalTrialStart rejects a prior run requested ref without verified package provenance', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-trial-prior-run-startref-'));
   const originalRun = createRun({
     project: 'farmslot-farm',
@@ -630,41 +654,20 @@ test('evalTrialStart reuses a prior run startRef instead of falling back to main
     missingData: [],
   });
 
-  const previousDisableEngine = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
-  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
-  let result: Awaited<ReturnType<typeof evalTrialStart>>;
-  try {
-    result = await evalTrialStart(
-      {
-        project: 'farmslot-farm',
-        experimentManifestPath,
-        axes: {
-          template: { path: 'templates/fix-bug.md', hash: 'candidate' },
-          model: { name: 'gpt-5.5' },
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath,
+          axes: { model: { name: 'gpt-5.5' } },
+          runner: 'codex',
+          model: 'gpt-5.5',
         },
-        runner: 'codex',
-        model: 'gpt-5.5',
-      },
-      () => {},
-    );
-  } finally {
-    if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
-    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
-  }
-  if (result.run) {
-    updateRun(result.run.id, { status: 'done', completedAt: new Date().toISOString() });
-    await deleteRun(result.run.id);
-  }
-
-  assert.equal(result.run?.startRef?.requestedRef, '0123456789abcdef0123456789abcdef01234567');
-  assert.deepEqual(result.run?.startRef?.source, {
-    kind: 'merged-pr',
-    repo: 'owner/repo',
-    prNumber: 123,
-  });
-  assert.equal(result.run?.completionPolicy, 'artifact-only');
-  assert.equal(result.run?.lane, 'comparison');
-  assert.equal(result.run?.flowType, 'fix-bug');
+        () => {},
+      ),
+    /verified full base commit/,
+  );
 });
 
 test('evalTrialStart automatically replays from the reference base commit when available', async (t) => {
@@ -706,10 +709,12 @@ test('evalTrialStart automatically replays from the reference base commit when a
       headRef: 'fix/perps',
       headSha,
       capturedAt: '2026-05-09T00:00:01.000Z',
+      artifactPath: path.basename(root) + '/reference.diff',
       repository: 'owner/repo',
       prNumber: 123,
     },
   });
+  await writeEvalTestFile(root, 'reference.diff', REFERENCE_DIFF);
   const experimentManifestPath = path.join(root, 'experiment-manifest.json');
   const experimentManifest: EvalExperimentManifest = {
     version: 1,
@@ -725,6 +730,7 @@ test('evalTrialStart automatically replays from the reference base commit when a
       source: referencePackage.source,
       taskProfile: 'fix-bug',
       objectiveHash: 'objective-1',
+      problemStatement: 'Show the latest payment in Activity.',
       referencePackageId: referencePackage.packageId,
       referencePackageHash: referencePackage.packageHash,
       referencePackagePath,
@@ -744,7 +750,7 @@ test('evalTrialStart automatically replays from the reference base commit when a
     root,
     'inputs/reference-pr.json',
     JSON.stringify({
-      title: 'fix(perps): missing latest funding payments in Activity',
+      title: 'Show the latest payment in Activity.',
       url: 'https://github.com/owner/repo/pull/123',
       body: 'Manual testing steps: Activity shows most recent funding payments.',
     }),
@@ -795,18 +801,11 @@ test('evalTrialStart automatically replays from the reference base commit when a
       requestedRef: baseSha,
       source: 'eval-reference',
     });
-    assert.deepEqual(candidate.result.run?.startRef?.source, {
-      kind: 'merged-pr',
-      repo: 'owner/repo',
-      prNumber: 123,
-    });
-    assert.equal(
-      candidate.result.run?.ticketData?.title,
-      'fix(perps): missing latest funding payments in Activity',
-    );
+    assert.deepEqual(candidate.result.run?.startRef?.source, { kind: 'manual' });
+    assert.equal(candidate.result.run?.ticketData?.title, 'Show the latest payment in Activity.');
     assert.match(
       candidate.result.run?.ticketData?.description ?? '',
-      /Activity shows most recent funding payments/,
+      /Show the latest payment in Activity/,
     );
   }
   const candidateDir = path.dirname(
