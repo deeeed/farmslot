@@ -31,7 +31,7 @@ function commit(repo: string, text: string): string {
   );
   return git(repo, 'rev-parse', 'HEAD');
 }
-function command(action: 'isolate' | 'verify' | 'restore', spec: BlindGitSpec) {
+function command(action: 'isolate' | 'boundary' | 'verify' | 'restore', spec: BlindGitSpec) {
   return JSON.parse(
     execFileSync('bash', ['-c', buildBlindGitCommand(action, spec)], {
       env,
@@ -78,6 +78,29 @@ for (const linked of [false, true])
       referenceCommits: [reference],
     };
     assert.equal(command('isolate', spec).status, 'isolated');
+    // A node without sandbox-exec refuses the worker instead of starting it unsandboxed.
+    const unsandboxed = spawnSync(
+      'python3',
+      [
+        '-c',
+        `
+import json, runpy, sys
+module = runpy.run_path(sys.argv[1], run_name='blind_git_fixture')
+module['boundary'].__globals__['SANDBOX'] = '/nonexistent/sandbox-exec'
+module['boundary'](json.loads(sys.argv[2]))
+`,
+        new URL('./blind-git.py', import.meta.url).pathname,
+        JSON.stringify(spec),
+      ],
+      { env, encoding: 'utf8', timeout: 60_000 },
+    );
+    assert.notEqual(unsandboxed.status, 0);
+    assert.match(
+      unsandboxed.stderr,
+      /need macOS sandbox-exec on the slot node; refusing an unsandboxed worker/,
+    );
+    assert.throws(() => command('verify', spec), /worker boundary is missing/);
+    assert.equal(command('boundary', spec).status, 'isolated');
     assert.equal(git(repo, 'rev-parse', 'HEAD'), base);
     assert.equal(readFileSync(path.join(repo, 'value.txt'), 'utf8'), 'base\n');
     assert.equal(existsSync(path.join(repo, 'answer.txt')), false);
@@ -88,7 +111,7 @@ for (const linked of [false, true])
     assert.notEqual(spawnSync('git', ['-C', repo, 'cat-file', '-e', reference], { env }).status, 0);
     assert.notEqual(spawnSync('git', ['-C', repo, 'fetch', 'origin'], { env }).status, 0);
     git(repo, 'fsck', '--full', '--no-reflogs');
-    assert.equal(command('verify', spec).githubAttempt, null);
+    assert.equal(command('verify', spec).githubAttempt, undefined);
     // The worker has no token, gh login or credential helper, and its sandbox
     // cannot read sibling checkouts or retained Git metadata. GitHub calls are recorded.
     const q = (value: string) => `'${value}'`;

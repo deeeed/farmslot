@@ -90,7 +90,7 @@ async function executeGit(
   if (!isRecord(value) || typeof value.status !== 'string')
     throw new Error('Invalid blind trial Git receipt.');
   if (
-    (action === 'isolate' || action === 'verify') &&
+    (action === 'isolate' || action === 'boundary' || action === 'verify') &&
     (value.status !== 'isolated' || value.runId !== spec.runId || value.baseSha !== spec.baseSha)
   )
     throw new Error('Blind trial Git receipt does not match its execution.');
@@ -127,15 +127,13 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
       'blind trial isolation intent',
     );
   }
+  const spec = gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath);
+  await executeGit('isolate', vars, spec, signal);
+  // The worker sandbox denies the node's other slot checkouts, read from the pool.
   const siblingRepos = (await loadMachineSlots(vars.machine))
     .filter((slot) => slot.id !== vars.slotId)
     .map((slot) => slot.repo);
-  await executeGit(
-    'isolate',
-    vars,
-    { ...gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath), siblingRepos },
-    signal,
-  );
+  await executeGit('boundary', vars, { ...spec, siblingRepos }, signal);
   await ownedEpoch(run, epoch);
   await persistRunNow(
     updateBlind(runId, {

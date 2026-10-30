@@ -92,8 +92,13 @@ def prepare_boundary(spec, capsule):
         raise RuntimeError(SANDBOX_REQUIRED + ': ' + checked.stderr.decode(errors='replace').strip())
 
 
-def verify(spec):
-    repo, boundary = Path(spec['repo']), Path(spec['capsule']) / 'boundary'
+def boundary(spec):
+    prepare_boundary(spec, Path(spec['capsule']))
+    return verify(spec)
+
+
+def verify(spec, worker_boundary=True):
+    repo, root = Path(spec['repo']), Path(spec['capsule']) / 'boundary'
     if git(repo, 'config', '--get', 'farmslot.blindRun').stdout.decode().strip() != spec['runId']:
         raise RuntimeError('Blind trial Git ownership does not match')
     if (repo / '.git').is_symlink() or not (repo / '.git').is_dir():
@@ -109,12 +114,12 @@ def verify(spec):
     for commit in spec['referenceCommits']:
         if git(repo, 'cat-file', '-e', commit + '^{commit}', check=False).returncode == 0:
             raise RuntimeError('Reference objects are available in the blind trial')
-    if not all((boundary / name).is_file() for name in ['bin/gh', 'bin/deny', 'sandbox.sb']):
+    if worker_boundary and not all((root / name).is_file() for name in ['bin/gh', 'bin/deny', 'sandbox.sb']):
         raise RuntimeError('Blind trial worker boundary is missing')
-    attempts = boundary / 'attempts.log'
+    attempts = root / 'attempts.log'
     attempt = attempts.read_text(errors='replace').strip().split('\n')[0] if attempts.exists() else ''
-    return {'status': 'isolated', 'baseSha': spec['baseSha'], 'runId': spec['runId'],
-            'githubAttempt': attempt[:500] or None}
+    receipt = {'status': 'isolated', 'baseSha': spec['baseSha'], 'runId': spec['runId']}
+    return {**receipt, 'githubAttempt': attempt[:500]} if attempt else receipt
 
 
 def copy_local_commit_settings(repo, source, destination):
@@ -140,8 +145,7 @@ def isolate(spec):
             raise RuntimeError('Blind trial capsule requires restoration before preparation')
         source = capsule / 'original.entry' if state['originalIsDirectory'] else Path(state['originalDirectory'])
         copy_local_commit_settings(repo, source, repo / '.git')
-        prepare_boundary(spec, capsule)
-        return verify(spec)
+        return verify(spec, worker_boundary=False)
     if not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', spec['baseSha']):
         raise RuntimeError('Blind trial requires a full base commit')
     git(repo, 'check-ref-format', '--branch', spec['branch'])
@@ -154,9 +158,7 @@ def isolate(spec):
         if commit == spec['baseSha'] or git(repo, 'merge-base', '--is-ancestor', commit,
                                            spec['baseSha'], check=False).returncode == 0:
             raise RuntimeError('Blind trial base contains the reference answer')
-    require_sandbox()
     capsule.mkdir(parents=True, mode=0o700)
-    prepare_boundary(spec, capsule)
     prepared, original = capsule / 'prepared.git', capsule / 'original.entry'
     original_directory = Path(git(repo, 'rev-parse', '--absolute-git-dir').stdout.decode().strip())
     state = {**spec, 'phase': 'preparing',
@@ -184,7 +186,7 @@ def isolate(spec):
         # The original index knows which later tracked files must disappear.
         git(repo, 'read-tree', '--reset', '-u', spec['baseSha'], git_dir=source)
         prepared.rename(repo / '.git')
-        result = verify(spec)
+        result = verify(spec, worker_boundary=False)
         state['phase'] = 'isolated'
         save(journal, state)
         return result
@@ -275,5 +277,5 @@ if __name__ == '__main__':
         capsule = Path(request['repo']).resolve().parent / '.farmslot-blind-evals' / request['slotId'] / (request['runId'] + '-' + str(request['slotEpoch']))
         result = {'status': 'planned', 'capsule': str(capsule)}
     else:
-        result = {'isolate': isolate, 'verify': verify, 'restore': restore}[action](request)
+        result = {'isolate': isolate, 'boundary': boundary, 'verify': verify, 'restore': restore}[action](request)
     print(json.dumps(result))
