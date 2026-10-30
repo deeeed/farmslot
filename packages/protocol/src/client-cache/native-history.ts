@@ -417,16 +417,12 @@ export function storedNativeHistoryMatches(
   );
 }
 
-/**
- * The shared held-data rule for sending a message: current, complete history. A message acts on
- * nothing on screen, so a newer read landing while a turn streams does not refuse it. Native
- * actions do not reread first, so history restored from storage (no read stamp) waits for a live read.
- */
-export function nativeHistoryCanSend(
+/** Current, complete history under the shared held-data rule. */
+function nativeHistoryCurrent(
   observation: ResourceQueryState<NativeSessionReadResult> | undefined,
   connected: boolean,
-  now = Date.now(),
-): boolean {
+  now: number,
+): observation is ResourceQueryState<NativeSessionReadResult> & { data: NativeSessionReadResult } {
   return (
     !!observation?.resourceState &&
     canActOn(observation, connected, now) &&
@@ -435,18 +431,34 @@ export function nativeHistoryCanSend(
   );
 }
 
-/** The send rule, for the exact history snapshot on screen: what an answer or stop acts on. */
-export function nativeHistoryCanAct(
+/**
+ * Sending a message: current, complete history of the conversation on screen. A newer read of it,
+ * landing while a turn streams, does not refuse the message; a resumed generation, another worker
+ * lease or a released task scope does. Native actions do not reread first, so history restored from
+ * storage (no read stamp) waits for a live read.
+ */
+export function nativeHistoryCanSend(
   observation: ResourceQueryState<NativeSessionReadResult> | undefined,
   rendered: NativeSessionReadResult | undefined,
   connected: boolean,
   now = Date.now(),
 ): boolean {
   return (
-    nativeHistoryCanSend(observation, connected, now) &&
+    nativeHistoryCurrent(observation, connected, now) &&
     !!rendered &&
-    observation?.data === rendered
+    sameNativeHistoryIdentity(observation.data, rendered) &&
+    !observation.data.scope?.released
   );
+}
+
+/** An answer or stop acts on the exact history snapshot on screen. */
+export function nativeHistoryCanAct(
+  observation: ResourceQueryState<NativeSessionReadResult> | undefined,
+  rendered: NativeSessionReadResult | undefined,
+  connected: boolean,
+  now = Date.now(),
+): boolean {
+  return nativeHistoryCurrent(observation, connected, now) && observation.data === rendered;
 }
 
 export interface NativeTranscript {

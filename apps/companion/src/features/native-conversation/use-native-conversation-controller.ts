@@ -311,7 +311,7 @@ export function useNativeConversationController(params: NativeConversationParams
       !historyQuery ||
       !(history === 'exact'
         ? nativeHistoryCanAct(observation, snapshot, live.status === 'connected')
-        : nativeHistoryCanSend(observation, live.status === 'connected'))
+        : nativeHistoryCanSend(observation, snapshot, live.status === 'connected'))
     )
       throw new Error('Wait for current conversation history before acting.');
     if (!params.runId) return;
@@ -364,10 +364,30 @@ export function useNativeConversationController(params: NativeConversationParams
       setPending(command);
       draftRef.current = '';
       setDraft('');
-      await persist('', command, responsesRef.current);
-      assertCurrentControls('current');
-      const { generation: _, ...request } = command;
-      await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
+      let issued = false;
+      try {
+        await persist('', command, responsesRef.current);
+        assertCurrentControls('current');
+        issued = true;
+        const { generation: _, ...request } = command;
+        await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
+      } catch (cause) {
+        // Never sent: the message goes back to the composer instead of waiting on a delivery.
+        if (!issued) {
+          pendingRef.current = undefined;
+          draftRef.current = command.text;
+          if (alive.current) {
+            setPending(undefined);
+            setDraft(command.text);
+          }
+          try {
+            await persist(command.text, undefined, responsesRef.current);
+          } catch (storageFailure) {
+            throw new AggregateError([cause, storageFailure], 'Cannot restore the unsent message.');
+          }
+        }
+        throw cause;
+      }
     }, 'current');
   const retry = () =>
     mutate(async () => {

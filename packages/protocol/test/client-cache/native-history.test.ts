@@ -914,16 +914,38 @@ test('a newer read while a turn streams refuses an answer on the old snapshot, n
   const now = Date.parse('2026-10-30T00:00:00Z');
   const resourceState = { epoch: 'epoch', dependencies: [] };
   const rendered = page([event(1, 'counting')]);
-  // The worker kept streaming: the cache holds a newer read than the one on screen.
-  const newer = {
+  const read = (data: NativeSessionReadResult) => ({
     status: 'ready' as const,
-    data: page([event(1, 'counting'), event(2, ' on')]),
+    data,
     resourceState,
-  };
+  });
+  // The worker kept streaming: the cache holds a newer read than the one on screen.
+  const newer = read(page([event(1, 'counting'), event(2, ' on')]));
   assert(!nativeHistoryCanAct(newer, rendered, true, now));
-  assert(nativeHistoryCanSend(newer, true, now));
+  assert(nativeHistoryCanSend(newer, rendered, true, now));
+  // Another conversation by now: resumed, another worker lease, or the task released.
+  const resumed = read({
+    ...newer.data,
+    session: { ...newer.data.session, generation: 'resumed' },
+  });
+  assert(!nativeHistoryCanSend(resumed, rendered, true, now), 'resumed generation');
+  const leased = read({ ...newer.data, session: { ...newer.data.session, workerLeaseId: 'next' } });
+  assert(!nativeHistoryCanSend(leased, rendered, true, now), 'another lease');
+  const scope = { leaseId: 'lease', startAfter: 0, endAt: 9, released: true };
+  const released = read({ ...newer.data, scope });
+  assert(
+    !nativeHistoryCanSend(
+      released,
+      { ...rendered, scope: { ...scope, released: false } },
+      true,
+      now,
+    ),
+  );
   // Saved, offline or incomplete history still waits.
-  assert(!nativeHistoryCanSend({ status: 'stale', data: rendered }, true, now), 'restored');
-  assert(!nativeHistoryCanSend(newer, false, now));
-  assert(!nativeHistoryCanSend({ ...newer, data: { ...newer.data, hasMore: true } }, true, now));
+  assert(
+    !nativeHistoryCanSend({ status: 'stale', data: rendered }, rendered, true, now),
+    'restored',
+  );
+  assert(!nativeHistoryCanSend(newer, rendered, false, now));
+  assert(!nativeHistoryCanSend(read({ ...newer.data, hasMore: true }), rendered, true, now));
 });
