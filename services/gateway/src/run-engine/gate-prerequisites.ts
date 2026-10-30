@@ -718,6 +718,11 @@ export async function collectRunGateAssessment(
           inputs,
           visualPolicy,
           qaOutput,
+          outputReview:
+            !qaOutput &&
+            !preparedPackage &&
+            !acceptance.inheritedSource &&
+            runOutputReviewEnabled(run),
           reviewBinding: acceptance.inheritedSource ? 'approved' : 'captured',
           claimOverrideReceiptIds:
             evidencePackage?.claimOverrideReceiptIds ??
@@ -951,11 +956,10 @@ export async function assertRunGateReady(
   actionId?: string,
 ): Promise<RunGateReadiness> {
   const readiness = await collectRunGateReadiness(run, preparedPackage);
-  // Artifact-only eval settlement, QA completion and output-reviewed completion retain
-  // unresolved claims as output for their reviewer.
+  // Artifact-only eval settlement and QA completion retain unresolved claims as output.
   // This defers only their verdict policy, never package or execution integrity.
   const outputCompletion =
-    ((actionId === 'complete' && (run.flowType === 'qa' || runOutputReviewEnabled(run))) ||
+    ((actionId === 'complete' && run.flowType === 'qa') ||
       ((actionId === 'complete' || actionId === 'finalize') &&
         Boolean(run.engineState?.evalExperiment))) &&
     isArtifactOnlyRun(run) &&
