@@ -5,8 +5,11 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - `nativeFollowScrolled`, `nativeFollowGrew` and `nativeFollowLabel` track whether a native conversation reader follows new output and how many entries arrived while they read further up.
+- `buildGatewayPairingLink` turns a pairing QR payload into a Companion pair link (`farmslot://pair?payload=…`, or `farmslot-preview://` and `farmslot-development://` for those builds), encoded so it passes through `adb shell am start -d` unchanged.
 - `NativeTranscript`, `appendNativePage`, `nativeDeliveryLabel` and `nativeCommandLockSettled` move into the client cache, replacing the copies Command Center and Companion each kept.
 - `isSupersededRead`, `heldDataIsSaved` and `canActOn` move from Command Center into the client cache. `nativeHistoryCanAct` takes the full query state and follows `canActOn` for history read on this connection: a change notice or a reply that trails a newer write no longer locks native input. History restored from storage, offline history, a failed read and reads superseded for 60 s still wait for a current read.
+- Record blind eval provenance and comparison eligibility without rewriting historical result packages.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.3 - 2026-10-30

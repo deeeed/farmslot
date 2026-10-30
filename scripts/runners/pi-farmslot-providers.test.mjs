@@ -4,11 +4,104 @@ import test from 'node:test';
 
 import {
   checkPiProviderAuth,
+  deadlinePiFetch,
   fetchOpenAiModelIds,
   listPiProviderSources,
   openaiBaseUrl,
   resolvePiProviderCatalog,
 } from './pi-farmslot-providers.mjs';
+
+function hangingFetch(_input, { signal }) {
+  return Promise.resolve(
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(': keepalive\n\n'));
+          signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    ),
+  );
+}
+
+test('two consecutive deadlines exhaust one retry and a new turn resets the budget', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let operator = new AbortController();
+  let aborts = 0;
+  const fetch = deadlinePiFetch(hangingFetch, 100, () => {
+    aborts++;
+    operator.abort();
+  });
+  const request = async () => {
+    const response = await fetch('http://fixture', { signal: operator.signal });
+    const rejected = assert.rejects(response.text());
+    t.mock.timers.tick(100);
+    await rejected;
+  };
+  await request();
+  assert.equal(aborts, 0);
+  await request();
+  assert.equal(aborts, 1);
+  fetch.reset();
+  operator = new AbortController();
+  await request();
+  assert.equal(aborts, 1);
+  const response = await fetch('http://fixture', { signal: operator.signal });
+  const cancelled = assert.rejects(response.text(), { name: 'AbortError' });
+  operator.abort();
+  await cancelled;
+  t.mock.timers.tick(100);
+  assert.equal(aborts, 1);
+});
+
+test('a request that never receives headers has the same bounded deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fetch = deadlinePiFetch(
+    (_input, { signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+  );
+  const rejected = assert.rejects(fetch('http://fixture'), /timed out after 300000ms/);
+  t.mock.timers.tick(300_000);
+  await rejected;
+});
+
+test('a provider response that opened but never ends gets a retryable timeout', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const operator = new AbortController();
+  t.after(() => operator.abort());
+  const response = await deadlinePiFetch(hangingFetch)('http://fixture', {
+    signal: operator.signal,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'text/event-stream');
+  const body = response.text();
+  const rejection = assert.rejects(body, /Pi model request timed out after 300000ms/);
+  t.mock.timers.tick(300_000);
+  await rejection;
+  assert.equal(operator.signal.aborted, false);
+});
+
+test('operator cancellation stays cancelled and healthy responses clear their deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const operator = new AbortController();
+  const response = await deadlinePiFetch(hangingFetch)('http://fixture', {
+    signal: operator.signal,
+  });
+  const cancelled = assert.rejects(response.text(), { name: 'AbortError' });
+  operator.abort();
+  await cancelled;
+  let requestSignal;
+  const healthy = await deadlinePiFetch(async (_input, options) => {
+    requestSignal = options.signal;
+    return new Response('OK');
+  })('http://fixture');
+  assert.equal(await healthy.text(), 'OK');
+  t.mock.timers.tick(300_000);
+  assert.equal(requestSignal.aborted, false);
+});
 
 test('extension-provider preflight uses live authenticated model discovery without inference', async (t) => {
   let requests = 0;

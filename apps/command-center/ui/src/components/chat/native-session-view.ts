@@ -1209,7 +1209,7 @@ ${JSON.stringify(
                                           timestamp: entry.event.at,
                                         } satisfies ChatMessage}
                                       ></chat-message>`
-                                    : entry.text}
+                                    : html`<span class="body">${entry.text}</span>`}
                                 </div>
                                 ${entry.event.type === 'error' && entry.event.data
                                   ? html`<details>
@@ -1227,7 +1227,9 @@ ${JSON.stringify(
                     )
                       ? html`<article class="user">
                           <span class="meta">You · Delivery unconfirmed</span>
-                          <div class="text">${this.localCommand.text}</div>
+                          <div class="text">
+                            <span class="body">${this.localCommand.text}</span>
+                          </div>
                         </article>`
                       : nothing}
                     ${!this.transcript.events.length

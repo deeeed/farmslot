@@ -4,7 +4,32 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { piTurnFailure, runnerPromptDigest, writePiHook } from './pi-farmslot-hook-writer.mjs';
+import {
+  piMessageTokenUsage,
+  piTurnFailure,
+  runnerPromptDigest,
+  writePiHook,
+} from './pi-farmslot-hook-writer.mjs';
+
+test('only nonzero native assistant usage advances the token clock within a turn', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_800_000_000_000 });
+  const obsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-token-clock-'));
+  t.after(() => fs.rmSync(obsDir, { recursive: true, force: true }));
+  const input = { obsDir, sessionId: 'worker', env: { TMUX_PANE: '%7' } };
+  const start = writePiHook({ ...input, event: 'UserPromptSubmit' });
+  t.mock.timers.tick(300_000);
+  const tool = writePiHook({ ...input, event: 'PostToolUse' });
+  assert.equal(tool.lastTokenProgressAt, start.lastTokenProgressAt);
+  const zero = piMessageTokenUsage({ role: 'assistant', usage: { totalTokens: 0 } });
+  const failed = writePiHook({ ...input, event: 'TokenUsage', usageTokens: zero });
+  assert.equal(failed.lastTokenProgressAt, start.lastTokenProgressAt);
+  const usageTokens = piMessageTokenUsage({ role: 'assistant', usage: { totalTokens: 137 } });
+  const usage = writePiHook({ ...input, event: 'TokenUsage', usageTokens });
+  assert.equal(usage.lastTokenProgressAt, Date.now());
+  assert.equal(usage.turnActive, true);
+  assert.equal(piMessageTokenUsage({ role: 'toolResult', usage: { totalTokens: 100 } }), 0);
+  assert.equal(writePiHook({ ...input, event: 'Stop' }).turnActive, false);
+});
 
 test('Pi session hooks retain the native transcript path through prompt and stop snapshots', (t) => {
   const obsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-session-hook-'));

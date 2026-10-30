@@ -26,7 +26,11 @@ import type {
 } from '@farmslot/protocol';
 import {
   ACCOUNT_SESSION_CONTROL,
+  buildGatewayPairingLink,
   buildGatewayPairingQrPayload,
+  COMPANION_APP_SCHEMES,
+  type CompanionAppScheme,
+  type GatewayPairingQrPayload,
   hasUnsettledRunExecution,
   isTerminalRunStatus,
   Methods,
@@ -214,6 +218,11 @@ const ALPHA_COPY = 'Alpha surface — early, under-tested, and subject to change
 type PairingTarget = Pick<PairingCandidate, 'gatewayUrl' | 'kind' | 'profileName'>;
 
 const DEFAULT_PAIRING_PROFILE_NAME = 'Farmslot Remote';
+const COMPANION_BUILD_LABELS: Record<CompanionAppScheme, string> = {
+  farmslot: 'Production',
+  'farmslot-preview': 'Preview',
+  'farmslot-development': 'Development',
+};
 const DEFAULT_LAN_PAIRING_PROFILE_NAME = 'Local LAN';
 
 @customElement('farm-app')
@@ -328,6 +337,9 @@ export class FarmApp extends LitElement {
   @state() private pairingIncludeRemoteGateway = false;
   @state() private pairingCandidateStatus = '';
   @state() private pairingQrDataUrl = '';
+  @state() private pairingPayload: GatewayPairingQrPayload | null = null;
+  @state() private pairingLinkScheme: CompanionAppScheme = 'farmslot';
+  @state() private pairingLinkStatus = '';
   @state() private pairingExpiresAt = '';
   @state() private pairingProfileCount = 0;
   @state() private pairingError = '';
@@ -1004,6 +1016,8 @@ export class FarmApp extends LitElement {
           this.authSecret = '';
           this.pairingOpen = false;
           this.pairingQrDataUrl = '';
+          this.pairingPayload = null;
+          this.pairingLinkStatus = '';
           this.navigate('fleet');
         },
       );
@@ -1252,6 +1266,8 @@ export class FarmApp extends LitElement {
     this.pairingIncludeLanGateway = false;
     this.pairingIncludeRemoteGateway = false;
     this.pairingQrDataUrl = '';
+    this.pairingPayload = null;
+    this.pairingLinkStatus = '';
     this.pairingExpiresAt = '';
     void this.refreshPairingCandidates();
     void this.refreshPairingPrincipals();
@@ -1287,6 +1303,8 @@ export class FarmApp extends LitElement {
 
   private invalidatePairingQr() {
     this.pairingQrDataUrl = '';
+    this.pairingPayload = null;
+    this.pairingLinkStatus = '';
     this.pairingExpiresAt = '';
     this.pairingProfileCount = 0;
   }
@@ -1459,6 +1477,8 @@ export class FarmApp extends LitElement {
     this.pairingBusy = true;
     this.pairingError = '';
     this.pairingQrDataUrl = '';
+    this.pairingPayload = null;
+    this.pairingLinkStatus = '';
     this.pairingExpiresAt = '';
     this.pairingProfileCount = 0;
     try {
@@ -1477,10 +1497,67 @@ export class FarmApp extends LitElement {
       });
       this.pairingExpiresAt = pairing.expiresAt;
       this.pairingProfileCount = payload.profiles.length;
+      this.pairingPayload = payload;
+      // Past its expiry the gateway refuses the code, so the QR and its link give way to a note.
+      setTimeout(
+        () => {
+          if (this.pairingPayload === payload) this.pairingPayload = null;
+        },
+        Math.max(0, Date.parse(pairing.expiresAt) - Date.now()),
+      );
     } catch (err) {
       this.pairingError = err instanceof Error ? err.message : 'Failed to create pairing QR';
     } finally {
       this.pairingBusy = false;
+    }
+  }
+
+  /** The QR as a link, for a device on adb or a phone that shows this page: same code and expiry. */
+  private renderPairingLink() {
+    if (!this.pairingPayload) return nothing;
+    const link = buildGatewayPairingLink(this.pairingPayload, this.pairingLinkScheme);
+    // The link holds only URL-safe characters, so single quotes keep it whole in the device shell.
+    const adbCommand = `adb shell "am start -a android.intent.action.VIEW -d '${link}'"`;
+    return html`
+      <div class="pairing-link">
+        <select
+          aria-label="Companion build"
+          @change=${(event: Event) => {
+            this.pairingLinkScheme = (event.target as HTMLSelectElement)
+              .value as CompanionAppScheme;
+            this.pairingLinkStatus = '';
+          }}
+        >
+          ${COMPANION_APP_SCHEMES.map(
+            (scheme) =>
+              html`<option value=${scheme} ?selected=${scheme === this.pairingLinkScheme}>
+                ${COMPANION_BUILD_LABELS[scheme]}
+              </option>`,
+          )}
+        </select>
+        <a href=${link}>Open in Companion</a>
+        <button type="button" @click=${() => void this.copyPairingText(link, 'Link copied')}>
+          Copy link
+        </button>
+        <button
+          type="button"
+          @click=${() => void this.copyPairingText(adbCommand, 'adb command copied')}
+        >
+          Copy adb command
+        </button>
+        ${this.pairingLinkStatus
+          ? html`<span class="pairing-link-status">${this.pairingLinkStatus}</span>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  private async copyPairingText(text: string, done: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      this.pairingLinkStatus = done;
+    } catch (error) {
+      this.pairingLinkStatus = `Copy failed: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
 
@@ -2301,11 +2378,27 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           ${this.pairingQrDataUrl
             ? html`
                 <div class="pairing-qr-wrap">
-                  <img class="pairing-qr" src=${this.pairingQrDataUrl} alt="Companion pairing QR" />
-                  <div class="pairing-expiry">
-                    ${this.pairingProfileCount} profile${this.pairingProfileCount === 1 ? '' : 's'}
-                    · expires ${new Date(this.pairingExpiresAt).toLocaleTimeString()}
-                  </div>
+                  ${this.pairingPayload
+                    ? html`
+                        <img
+                          class="pairing-qr"
+                          src=${this.pairingQrDataUrl}
+                          alt="Companion pairing QR"
+                        />
+                        <div class="pairing-expiry">
+                          ${this.pairingProfileCount}
+                          profile${this.pairingProfileCount === 1 ? '' : 's'} · expires
+                          ${new Date(this.pairingExpiresAt).toLocaleTimeString()}
+                        </div>
+                        ${this.renderPairingLink()}
+                      `
+                    : html`
+                        <div class="pairing-expiry">
+                          This code expired at
+                          ${new Date(this.pairingExpiresAt).toLocaleTimeString()}. Generate a new
+                          QR.
+                        </div>
+                      `}
                 </div>
               `
             : html`

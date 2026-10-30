@@ -26,6 +26,8 @@ export interface SlotPrepareInternalOptions {
   stripClean?: boolean;
   /** Reuse the run's existing work branch without resetting or cleaning it. */
   preserveBranch?: boolean;
+  /** Trusted base after the owning eval has isolated the Git object store. */
+  blindBaseSha?: string;
   /** Only with durable evidence that this run has not started branch setup. */
   allowMissingReplayBranch?: boolean;
   beforeBranchSetup?: () => Promise<void>;

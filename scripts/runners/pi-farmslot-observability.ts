@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { Type } from 'typebox';
 
-import { piTurnFailure, writePiHook } from './pi-farmslot-hook-writer.mjs';
-import { resolvePiProviderCatalog } from './pi-farmslot-providers.mjs';
+import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-hook-writer.mjs';
+import { deadlinePiFetch, resolvePiProviderCatalog } from './pi-farmslot-providers.mjs';
 import {
   deliverTaskOnce,
   farmslotStatusLine,
@@ -46,6 +46,18 @@ export default async function (pi: {
   registerCommand?: (name: string, spec: Record<string, unknown>) => void;
   sendUserMessage?: (text: string) => void;
 }) {
+  const timeoutMs = Number(process.env.FARMSLOT_PI_REQUEST_TIMEOUT_MS ?? 300_000);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
+    throw new Error('FARMSLOT_PI_REQUEST_TIMEOUT_MS must be a positive integer');
+  let timeoutFailure: string | null = null;
+  let abortOperation: (() => void) | undefined;
+  const boundedFetch = deadlinePiFetch(globalThis.fetch, timeoutMs, () => {
+    if (abortOperation) {
+      timeoutFailure = `Pi model request timed out after ${timeoutMs}ms and one retry`;
+      abortOperation();
+    }
+  });
+  globalThis.fetch = boundedFetch;
   try {
     const catalog = await resolvePiProviderCatalog(process.env);
     for (const source of catalog) {
@@ -160,10 +172,17 @@ export default async function (pi: {
     'input',
     async (
       event: { text?: string },
-      ctx: { cwd?: string; sessionManager?: { getSessionFile?: () => string | null } },
+      ctx: {
+        cwd?: string;
+        abort: () => void;
+        sessionManager?: { getSessionFile?: () => string | null };
+      },
     ) => {
       const text = promptText(event.text);
       if (!text) return;
+      boundedFetch.reset();
+      timeoutFailure = null;
+      abortOperation = () => ctx.abort();
       writePiHook({
         obsDir: obsDir(),
         event: 'UserPromptSubmit',
@@ -207,6 +226,23 @@ export default async function (pi: {
   );
 
   let terminalFailure: string | null = null;
+  pi.on(
+    'message_end',
+    async (
+      event: { message?: unknown },
+      ctx: { cwd?: string; sessionManager?: { getSessionFile?: () => string | null } },
+    ) => {
+      const usageTokens = piMessageTokenUsage(event.message);
+      if (usageTokens > 0)
+        writePiHook({
+          obsDir: obsDir(),
+          event: 'TokenUsage',
+          usageTokens,
+          ...sessionFrom(ctx),
+          cwd: ctx.cwd,
+        });
+    },
+  );
   pi.on('agent_start', async () => {
     terminalFailure = null;
   });
@@ -215,9 +251,10 @@ export default async function (pi: {
   });
   pi.on('agent_before_settle', async (event: { outcome?: string }) => {
     terminalFailure =
-      event.outcome === 'error'
+      timeoutFailure ??
+      (event.outcome === 'error'
         ? terminalFailure || 'Pi runner failed before completing its turn'
-        : null;
+        : null);
   });
 
   pi.on(
@@ -226,10 +263,11 @@ export default async function (pi: {
       _event: unknown,
       ctx: { cwd?: string; sessionManager?: { getSessionFile?: () => string | null } },
     ) => {
+      const failure = timeoutFailure ?? terminalFailure;
       writePiHook({
         obsDir: obsDir(),
-        event: terminalFailure ? 'StopFailure' : 'Stop',
-        failure: terminalFailure,
+        event: failure ? 'StopFailure' : 'Stop',
+        failure,
         ...sessionFrom(ctx),
         cwd: ctx.cwd,
       });

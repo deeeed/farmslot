@@ -11,6 +11,10 @@ import {
   readNativeWorkerSnapshot,
 } from '../runners/native/worker-control.js';
 import { turnTokenSessionId } from '../runners/observability-files.js';
+import type {
+  ObservabilityReading,
+  RunnerSessionDeliveryState,
+} from '../runners/observability-types.js';
 import {
   readRunnerTurnState,
   resolvePrimaryWorkerTarget,
@@ -52,11 +56,20 @@ export async function runnerTurnIsActive(
   runner: string,
   expectedTurnToken?: string,
   ownsTurn?: (turnToken: string, sessionId: string | undefined) => boolean,
+  onObservation?: (state: ObservabilityReading<RunnerSessionDeliveryState> | null) => void,
 ): Promise<boolean> {
   const state = await readRunnerTurnState(vars, target, runner, expectedTurnToken);
-  if (state?.confidence !== 'high' || state.value !== 'active') return false;
-  if (ownsTurn && (!state.turnToken || !ownsTurn(state.turnToken, state.sessionId))) return false;
-  return paneHostsRunnerProcess(vars, target, runner);
+  if (state?.confidence !== 'high' || state.value !== 'active') {
+    onObservation?.(state);
+    return false;
+  }
+  if (ownsTurn && (!state.turnToken || !ownsTurn(state.turnToken, state.sessionId))) {
+    onObservation?.(null);
+    return false;
+  }
+  const active = await paneHostsRunnerProcess(vars, target, runner);
+  onObservation?.(active ? state : null);
+  return active;
 }
 
 function recreateRoleWindowName(roleWindowName?: string | null, flowType?: string | null): string {
