@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 FARMSLOT_AC_PANEL_WIDTH=1280 FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/1280\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
         "timeout_ms": 300000,
-        "intent": "Before a task source exists, require no AC panel and no task.progress read. Publish the written task through fixture snapshots and require the criterion to appear without moving the following control. Preserve a real ledger read error after the task exists, then recover; a task without criteria leaves no reserved row. Record 1280px; the next node owns a distinct 414px run.",
+        "intent": "Before a task file exists, require no AC panel and no task.progress read while write-task runs. Publish the written task through fixture snapshots and require the criterion to arrive in the held row without changing the pipeline height. Keep a real ledger read error visible after the task exists, then recover; a task without criteria leaves no row; a run opened after its task exists holds no row while its first read loads. Record 1280px; the next nodes own distinct 414px and slot-free review runs.",
         "next": "prove414"
       },
       "result": {
@@ -34,6 +34,21 @@
       "result414": {
         "action": "assert_output",
         "source": "prove414",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require all mounted protocol/presentation assertions and scoped teardown.",
+        "next": "proveReview"
+      },
+      "proveReview": {
+        "action": "command",
+        "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 FARMSLOT_AC_PANEL_WIDTH=1280 FARMSLOT_AC_PANEL_SUBJECT=review FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/1280-review\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 300000,
+        "intent": "Repeat for a slot-free review: its workspace exists before write-task records the task file, and nothing is read or shown until it does.",
+        "next": "resultReview"
+      },
+      "resultReview": {
+        "action": "assert_output",
+        "source": "proveReview",
         "stream": "stdout",
         "match": "\"result\":\"PASS\"",
         "intent": "Require all mounted protocol/presentation assertions and scoped teardown.",

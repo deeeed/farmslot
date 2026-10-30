@@ -103,8 +103,8 @@ export interface RunDetailViewContext {
   acceptanceCriteria: AcceptanceCriterionRef[] | null;
   /** Why the ledger could not be read, when it could not. */
   acceptanceStatusError: string | null;
-  /** Criteria are still expected: the task is unwritten or its progress read is loading. */
-  acceptancePending: boolean;
+  /** Hold the collapsed criteria row from write-task until the task's first read settles. */
+  acceptanceRowHeld: boolean;
   /** Manifest-linked criteria when the run has no ledger; never a verdict. */
   acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null;
   /** Why the evidence manifest behind that fallback could not be read. */
@@ -1257,7 +1257,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         .acceptanceStatus=${ctx.acceptanceStatus}
         .acceptanceCriteria=${ctx.acceptanceCriteria}
         .acceptanceStatusError=${ctx.acceptanceStatusError}
-        .acceptancePending=${ctx.acceptancePending}
+        .acceptanceRowHeld=${ctx.acceptanceRowHeld}
         .acceptanceEvidenceLinks=${ctx.acceptanceEvidenceLinks}
         .acceptanceEvidenceLinksError=${ctx.acceptanceEvidenceLinksError}
         .acceptanceEvidenceHref=${ctx.acceptanceEvidenceHref}

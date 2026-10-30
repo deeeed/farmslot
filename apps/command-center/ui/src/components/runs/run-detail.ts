@@ -162,8 +162,8 @@ import {
   STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
 import {
+  acceptanceRowHeldRunId,
   publicationReviewStepForName,
-  runAwaitsTaskSource,
   runHasTaskSource,
 } from './run-pipeline-model.js';
 import { collectRunInteractivePacketArtifacts } from './run-utils.js';
@@ -229,6 +229,7 @@ export class RunDetail extends RunDetailState {
   private _evidenceGroupId: string | null = null;
   private _evidenceTaskRelative = true;
   private _sharedPanelFocusKey = '';
+  private _acceptanceRowRunId: string | null = null;
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (
@@ -241,6 +242,11 @@ export class RunDetail extends RunDetailState {
     if (changed.has('_recipeObservation')) this._acceptRecipeObservation(this._recipeObservation);
     if (changed.has('_progressObservation')) this._acceptProgressObservation();
     if (changed.has('_selectedProgressObservation')) this._acceptSelectedProgressObservation();
+    this._acceptanceRowRunId = acceptanceRowHeldRunId(
+      this.run,
+      this._acceptanceRowRunId,
+      this._taskProgressLoading,
+    );
     if (
       [
         'run',
@@ -1682,9 +1688,7 @@ export class RunDetail extends RunDetailState {
       acceptanceStatus: this.acceptanceStatus,
       acceptanceCriteria: this.acceptanceCriteria,
       acceptanceStatusError: this.acceptanceStatusError,
-      acceptancePending: Boolean(
-        this.run && (runAwaitsTaskSource(this.run) || this._taskProgressLoading),
-      ),
+      acceptanceRowHeld: this._acceptanceRowRunId !== null,
       acceptanceEvidenceLinks: this.acceptanceEvidenceLinks,
       acceptanceEvidenceLinksError: this.acceptanceEvidenceLinksError,
       acceptanceEvidenceHref: this._acceptanceEvidenceHref,

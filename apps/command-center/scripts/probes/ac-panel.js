@@ -20,7 +20,8 @@ const visible = (element) => {
 };
 return {
   width: innerWidth,
-  runLoaded: /^ac-(before|after)-(1280|414)$/.test(detail?.run?.id ?? ''),
+  runId: detail?.run?.id,
+  progressLoading: Boolean(detail?._taskProgressLoading),
   sourceReady: Boolean(detail?.detailQuery?.ready),
   postureReady: detail?._postureStatus?.status === 'ready',
   sidebarAnimating:
@@ -41,7 +42,5 @@ return {
   pipelineHeight: pipeline?.getBoundingClientRect().height,
   reservedHeight: pipeline?.shadowRoot?.querySelector('.acceptance-slot')?.getBoundingClientRect()
     .height,
-  slotPending: pipeline?.shadowRoot
-    ?.querySelector('.acceptance-slot')
-    ?.hasAttribute('data-pending'),
+  slotHeld: pipeline?.shadowRoot?.querySelector('.acceptance-slot')?.hasAttribute('data-held'),
 };

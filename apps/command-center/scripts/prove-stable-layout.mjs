@@ -21,7 +21,13 @@ import {
   mockRuns,
 } from '../ui/src/dev/mock-data.ts';
 
-import { acPanelCase, acPanelProgress, acPanelRun, proveAcPanel } from './ac-panel-proof.mjs';
+import {
+  acPanelCase,
+  acPanelProgress,
+  acPanelRun,
+  acPanelUnwrittenError,
+  proveAcPanel,
+} from './ac-panel-proof.mjs';
 import { nativePanelFixture, proveNativePanel } from './native-panel-proof.mjs';
 import { proveRefetchNotices, recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
@@ -131,17 +137,17 @@ for (const item of gateRun.decisions) {
     createdAt: new Date(now).toISOString(),
   };
 }
-function observedRun() {
-  if (acPanelProof) return acPanelRun(mode, fixtureRun);
+function observedRun(params) {
+  if (acPanelProof) return acPanelRun(mode, fixtureRun, params?.runId);
   if (!refetchProof) return fixtureRun;
   return structuredClone(gateRun);
 }
 const values = {
   ...(acPanelProof
     ? {
-        'runtime.posture.status': () => ({
-          runId: acCase.runId,
-          slotId: acCase.slotId,
+        'runtime.posture.status': (params) => ({
+          runId: params?.runId ?? acCase.runId,
+          slotId: acPanelRun(mode, fixtureRun, params?.runId).slotId,
           state: {
             posture: 'active',
             policySource: 'framework-default',
@@ -171,13 +177,13 @@ const values = {
     run:
       params?.runId === 'terminal-run'
         ? { ...terminalRun, status: mode === 'terminal-finished' ? 'done' : 'monitoring' }
-        : observedRun(),
+        : observedRun(params),
   }),
   'run.recipeRunsForRun': () => ({ recipeRuns: [], selectedRecipeRunId: null }),
   'config.templateOptions': () => ({ options: [] }),
   'runner.visibleModels.get': () => ({ runners: [] }),
-  'task.progress': () =>
-    acPanelProof ? acPanelProgress(mode) : { markdown: '', structured: null },
+  'task.progress': (params) =>
+    acPanelProof ? acPanelProgress(mode, params) : { markdown: '', structured: null },
   'decision.list': () => ({
     decisions: mode === 'decision' ? [decision, { ...decision, id: 'same-subject' }] : [],
   }),
@@ -241,6 +247,9 @@ wss.on('connection', (socket) =>
       ...(request.method === 'run.get'
         ? { params: { runId: request.params?.runId, view: request.params?.view } }
         : {}),
+      ...(acPanelProof && request.method === 'task.progress'
+        ? { params: { runId: request.params?.runId, slotId: request.params?.slotId } }
+        : {}),
     };
     frames.push(frame);
     const reply = { type: 'res', id: request.id, ok: true };
@@ -274,9 +283,13 @@ wss.on('connection', (socket) =>
     else if (request.method === 'resource.observers.replace')
       reply.payload = { version: 1, sequence: request.params.sequence, applied: true };
     else if (request.method === 'gateway.ping') reply.payload = { ok: true };
-    else if (acPanelProof && request.method === 'task.progress' && !mode.startsWith('ac-written')) {
+    else if (
+      acPanelProof &&
+      request.method === 'task.progress' &&
+      !acPanelRun(mode, fixtureRun, request.params?.runId).taskFile
+    ) {
       reply.ok = false;
-      reply.error = { code: 'INTERNAL_ERROR', message: `No task file for slot ${acCase.slotId}` };
+      reply.error = { code: 'INTERNAL_ERROR', message: acPanelUnwrittenError() };
     } else if (
       nativePanelProof &&
       request.method === 'native.session.read' &&
@@ -322,7 +335,10 @@ wss.on('connection', (socket) =>
         message: `Fixture does not supply ${request.method}`,
       };
     }
-    if (refetchProof && holdingReplies)
+    if (
+      (refetchProof && holdingReplies) ||
+      (acPanelProof && mode === 'ac-opened-loading' && request.method === 'task.progress')
+    )
       heldReplies.push(() => {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
       });
@@ -452,7 +468,7 @@ function transition(next) {
           { family: 'run', runId: acCase.runId },
           ...(resourceDependenciesForRead(
             'task.progress',
-            { slotId: acCase.slotId, runId: acCase.runId },
+            { slotId: acCase.slotId ?? '', runId: acCase.runId },
             'layout-fixture',
           ) ?? []),
         ]
@@ -576,6 +592,7 @@ try {
       save,
       frames,
       viewport,
+      releaseReplies,
     });
   } else if (nativePanelProof) {
     await proveNativePanel({
