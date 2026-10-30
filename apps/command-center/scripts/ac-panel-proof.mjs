@@ -40,7 +40,9 @@ export function acPanelProgress(mode) {
     slotId: acPanelCase().slotId,
     markdown: '',
     structured: null,
-    acceptanceCriteria: [{ id: 'AC-1', text: 'The written task exposes its criteria.' }],
+    ...(mode === 'ac-written-none'
+      ? {}
+      : { acceptanceCriteria: [{ id: 'AC-1', text: 'The written task exposes its criteria.' }] }),
     ...(mode === 'ac-written-error'
       ? { acceptanceStatusError: 'Invalid JSON in artifacts/acceptance-status.json' }
       : {}),
@@ -133,8 +135,10 @@ export async function proveAcPanel({
       await shot('written');
       const movement = written.nextTop - unwritten.nextTop;
       await save(`${width}-arrival`, { unwritten, written, movement });
-      if (!before)
+      if (!before) {
         assert.equal(movement, 0, 'Task criteria arrival must not move the next control');
+        assert(!written.slotPending, 'Loaded criteria release the reserved row');
+      }
       transition('ac-written-error');
       const failed = await until(
         (v) => v.error.includes('Invalid JSON') && v.errorVisible,
@@ -147,7 +151,14 @@ export async function proveAcPanel({
         'recovered',
       );
       await shot('recovered');
-      measured = { width, unwritten, written, movement, failed, recovered };
+      // A written task without criteria leaves no reserved blank row behind.
+      transition('ac-written-none');
+      const none = await until(
+        (v) => !v.panel && (before || v.reservedHeight === 0),
+        'no-criteria',
+      );
+      await shot('no-criteria');
+      measured = { width, unwritten, written, movement, failed, recovered, none };
     },
   });
   await save('ac-panel-result', {

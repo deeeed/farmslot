@@ -101,6 +101,8 @@ export class RunPipeline extends LitElement {
   /** Opens a clicked acceptance evidence file in the host's viewer. */
   @property({ attribute: false }) acceptanceEvidenceOpen?: (open: AcceptanceEvidenceOpen) => void;
   @property() selectedStepName?: string;
+  /** The host is still waiting for this run's criteria, so their collapsed row stays reserved. */
+  @property({ type: Boolean }) acceptancePending = false;
   /** Run detail's header already shows a blocked run's reason, so the status row leaves it out. */
   @property({ type: Boolean, attribute: 'reason-in-header' }) reasonInHeader = false;
   @state() private monitorExpanded = false;
@@ -248,7 +250,9 @@ export class RunPipeline extends LitElement {
           ? this.renderProgressPanel()
           : nothing}
         ${this.run.steps.some((step) => step.name === 'write-task')
-          ? html`<div class="acceptance-slot">${this.renderAcceptancePanel()}</div>`
+          ? html`<div class="acceptance-slot" ?data-pending=${this.acceptancePending}>
+              ${this.renderAcceptancePanel()}
+            </div>`
           : this.renderAcceptancePanel()}
       </div>
     `;

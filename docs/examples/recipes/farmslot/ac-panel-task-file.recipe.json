@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 FARMSLOT_AC_PANEL_WIDTH=1280 FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/1280\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
         "timeout_ms": 300000,
-        "intent": "Before a task source exists, require no AC panel and no task.progress read. Publish the written task through fixture snapshots and require the criterion to appear without moving the following control. Preserve a real ledger read error after the task exists, then recover. Record 1280px; the next node owns a distinct 414px run.",
+        "intent": "Before a task source exists, require no AC panel and no task.progress read. Publish the written task through fixture snapshots and require the criterion to appear without moving the following control. Preserve a real ledger read error after the task exists, then recover; a task without criteria leaves no reserved row. Record 1280px; the next node owns a distinct 414px run.",
         "next": "prove414"
       },
       "result": {

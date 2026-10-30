@@ -13,6 +13,8 @@ export const runPipelineStyles = css`
   }
   .acceptance-slot {
     display: flow-root;
+  }
+  .acceptance-slot[data-pending] {
     /* The collapsed AC panel: 44px summary, its 4px padding, 1px borders and vertical margins. */
     min-height: calc(44px + 2 * 4px + 2px + 2 * ${unsafeCSS(spacing.sm)});
   }

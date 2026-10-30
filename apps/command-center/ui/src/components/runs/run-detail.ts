@@ -161,7 +161,11 @@ import {
   selectedStepNameFromRunDetailHash,
   STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
-import { publicationReviewStepForName, runHasTaskSource } from './run-pipeline-model.js';
+import {
+  publicationReviewStepForName,
+  runAwaitsTaskSource,
+  runHasTaskSource,
+} from './run-pipeline-model.js';
 import { collectRunInteractivePacketArtifacts } from './run-utils.js';
 import {
   rememberRunWorkerPanel,
@@ -1678,6 +1682,9 @@ export class RunDetail extends RunDetailState {
       acceptanceStatus: this.acceptanceStatus,
       acceptanceCriteria: this.acceptanceCriteria,
       acceptanceStatusError: this.acceptanceStatusError,
+      acceptancePending: Boolean(
+        this.run && (runAwaitsTaskSource(this.run) || this._taskProgressLoading),
+      ),
       acceptanceEvidenceLinks: this.acceptanceEvidenceLinks,
       acceptanceEvidenceLinksError: this.acceptanceEvidenceLinksError,
       acceptanceEvidenceHref: this._acceptanceEvidenceHref,

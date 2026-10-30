@@ -1,6 +1,7 @@
 import {
   type FlowType,
   isBlockedAtOpenHumanGate,
+  isTerminalRunStatus,
   type Run,
   type RunStep,
   type TaskProgressStructured,
@@ -27,6 +28,15 @@ export function runHasTaskSource(
   run: Pick<Run, 'taskFile' | 'reviewWorkspace'> | null | undefined,
 ) {
   return Boolean(run?.taskFile || run?.reviewWorkspace);
+}
+
+/** A live run whose write-task step has yet to record the task its criteria come from. */
+export function runAwaitsTaskSource(
+  run: Pick<Run, 'taskFile' | 'reviewWorkspace' | 'status' | 'steps'>,
+): boolean {
+  if (runHasTaskSource(run) || isTerminalRunStatus(run.status)) return false;
+  const status = run.steps.find((step) => step.name === 'write-task')?.status;
+  return status === 'pending' || status === 'running';
 }
 
 function recordValue(value: unknown): UnknownRecord | null {

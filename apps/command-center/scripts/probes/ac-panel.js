@@ -41,4 +41,7 @@ return {
   pipelineHeight: pipeline?.getBoundingClientRect().height,
   reservedHeight: pipeline?.shadowRoot?.querySelector('.acceptance-slot')?.getBoundingClientRect()
     .height,
+  slotPending: pipeline?.shadowRoot
+    ?.querySelector('.acceptance-slot')
+    ?.hasAttribute('data-pending'),
 };

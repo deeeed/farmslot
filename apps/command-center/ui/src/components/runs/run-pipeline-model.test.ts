@@ -11,6 +11,7 @@ import {
   isPublicationReviewProgressActive,
   pipelineDetachedProgressVisible,
   publicationReviewStepForName,
+  runAwaitsTaskSource,
   runHasTaskSource,
   selectedStepShowsLiveTaskProgress,
   stepInspectorTaskProgress,
@@ -64,6 +65,22 @@ test('a slot-free review retains its workspace/checklist source path', () => {
   });
   assert.equal(runHasTaskSource(review), true);
   assert.equal(runHasTaskSource({ ...review, reviewWorkspace: undefined }), false);
+});
+
+test('only a live run before its task is recorded keeps the criteria row pending', () => {
+  const writing = makeRun({
+    taskFile: null,
+    status: 'preparing',
+    steps: [{ name: 'write-task', status: 'running' }],
+  });
+  assert.equal(runAwaitsTaskSource(writing), true);
+  assert.equal(runAwaitsTaskSource({ ...writing, taskFile: 'tasks/example/TASK.md' }), false);
+  assert.equal(runAwaitsTaskSource({ ...writing, status: 'cancelled' }), false);
+  assert.equal(
+    runAwaitsTaskSource({ ...writing, steps: [{ name: 'write-task', status: 'failed' }] }),
+    false,
+  );
+  assert.equal(runAwaitsTaskSource({ ...writing, steps: [] }), false);
 });
 
 test('a publication fix has one current worker node instead of the enclosing gate', () => {
