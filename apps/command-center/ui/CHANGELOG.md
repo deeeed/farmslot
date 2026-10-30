@@ -5,7 +5,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - A family with no runs, such as a reference-only eval, shows no "Open latest run" link.
-- Chat messages (native conversations, the chat panel and worker history) render markdown through the shared sanitized renderer: lists, links, fenced code with its language, tables. A tag written in a message, such as `<details>`, shows as text instead of being rendered, and an image shows as a link, so a message never makes the page load a URL by itself.
+- A finished turn's tool calls in a native conversation fold behind one row at the end of the turn, "Worked for 4m 12s · 6 tools", that opens them in place. A turn you watched run stays open, with any tool you opened still open.
+- Chat messages (native conversations, the chat panel and worker history) render markdown through the shared sanitized renderer: lists, links, fenced code with its language, tables. A tag written in a message, such as `<details>`, shows as text instead of being rendered, and an image shows as a link, so a message never makes the page load a URL by itself. An image inside a link, even wrapped in bold or italics, shows as that link's text; a badge with no alt text and nothing else in its link shows the link's URL.
 - While a native session runs a turn, its status row shows how long it has worked and the tool it runs now ("Working · 1m 12s · Bash") instead of "Live · running".
 - Wait for a written task before reading or showing its acceptance criteria, slot-free reviews included, and hold their collapsed row on the run page from write-task until they load, so they arrive without a jump. Real read failures still show.
 - A long message in a native conversation, such as a worker's dispatch prompt, shows its first lines with "Show all · N lines" instead of filling the transcript.

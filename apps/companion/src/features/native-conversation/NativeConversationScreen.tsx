@@ -14,9 +14,11 @@ import type { NativeSessionInfo } from '@farmslot/protocol';
 import {
   NATIVE_FOLLOW_LATEST,
   nativeDeliveryLabel,
+  nativeFoldWatched,
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
+  nativeWatchTools,
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
@@ -26,6 +28,7 @@ import { NativeRequestCard } from './components/NativeRequestCard';
 import { NativeSessionSetup } from './components/NativeSessionSetup';
 import { NativeSessionState } from './components/NativeSessionState';
 import { NativeTimelineCard } from './components/NativeTimelineCard';
+import { NativeWorkCard } from './components/NativeWorkCard';
 import { nativeStyles as styles } from './styles/native-conversation.styles';
 import type { useNativeConversationController } from './use-native-conversation-controller';
 
@@ -47,11 +50,30 @@ export function NativeConversationScreen({
     contentHeight - viewport.current.offset - viewport.current.height;
   /** The reader opened or closed an entry, so the next size change is theirs, not new output. */
   const disclosed = useRef(false);
+  const disclose = () => {
+    disclosed.current = true;
+  };
+  const watchedTools = useRef(new Set<number>());
+  /** Folds the reader opened or closed, by the key of the entry that ended the turn. */
+  const [foldOpen, setFoldOpen] = useState(new Map<number, boolean>());
   const entryCount = useRef(vm.entries.length);
   useEffect(() => {
     entryCount.current = vm.entries.length;
+    watchedTools.current = new Set();
+    setFoldOpen(new Map());
     setFollow(NATIVE_FOLLOW_LATEST);
   }, [vm.session?.id]);
+  const live = vm.historyObservation.status === 'ready';
+  useEffect(() => {
+    nativeWatchTools(vm.rows, watchedTools.current, live);
+  }, [vm.rows, live]);
+  const folds = new Map(
+    vm.rows.flatMap((row) => (row.kind === 'work' ? [[row.key, row] as const] : [])),
+  );
+  const foldIsOpen = (key: number) => {
+    const fold = folds.get(key);
+    return foldOpen.get(key) ?? (fold ? nativeFoldWatched(fold, watchedTools.current) : true);
+  };
   useEffect(() => {
     const added = vm.entries.length - entryCount.current;
     entryCount.current = vm.entries.length;
@@ -241,15 +263,26 @@ export function NativeConversationScreen({
                   </Pressable>
                 </>
               ) : null}
-              {vm.entries.map((entry) => (
-                <NativeTimelineCard
-                  key={entry.key}
-                  entry={entry}
-                  onDisclosure={() => {
-                    disclosed.current = true;
-                  }}
-                />
-              ))}
+              {vm.rows.map((row) =>
+                row.kind === 'work' ? (
+                  <NativeWorkCard
+                    key={`work:${row.key}`}
+                    label={row.label}
+                    open={foldIsOpen(row.key)}
+                    onToggle={() => {
+                      disclose();
+                      setFoldOpen(new Map(foldOpen).set(row.key, !foldIsOpen(row.key)));
+                    }}
+                  />
+                ) : (
+                  <NativeTimelineCard
+                    key={row.key}
+                    entry={row.entry}
+                    onDisclosure={disclose}
+                    hidden={row.fold !== undefined && !foldIsOpen(row.fold)}
+                  />
+                ),
+              )}
               {vm.requests.map((request) => (
                 <NativeRequestCard
                   key={`${request.generation}:${request.request?.id}`}

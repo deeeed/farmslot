@@ -25,6 +25,7 @@ import {
   nativeCommandLockSettled,
   nativeDeliveryLabel,
   nativeEntryPreview,
+  nativeFoldWatched,
   type NativeFollow,
   nativeFollowGrew,
   nativeFollowLabel,
@@ -36,7 +37,11 @@ import {
   nativeMessageToggleLabel,
   nativeObservationQuery,
   nativeTimeline,
+  type NativeTimelineEntry,
+  type NativeTimelineRow,
+  nativeTimelineRows,
   type NativeTranscript,
+  nativeWatchTools,
   type NativeWork,
   nativeWork,
   type ResourceQuery,
@@ -197,6 +202,35 @@ export class NativeSessionView extends LitElement {
       this.timelineEntries = nativeTimeline(this.transcript.events);
     }
     return this.timelineEntries;
+  }
+
+  private rowsEntries?: NativeTimelineEntry[];
+  private rows: NativeTimelineRow[] = [];
+  private folds = new Map<number, Extract<NativeTimelineRow, { kind: 'work' }>>();
+  private watchedTools = new Set<number>();
+  /** Folds the reader opened or closed, by the key of the entry that ended the turn. */
+  @state() private foldOpen = new Map<number, boolean>();
+
+  private timelineRows() {
+    const entries = this.timeline();
+    if (this.rowsEntries !== entries) {
+      this.rowsEntries = entries;
+      this.rows = nativeTimelineRows(entries);
+      this.folds = new Map(
+        this.rows.flatMap((row) => (row.kind === 'work' ? [[row.key, row] as const] : [])),
+      );
+    }
+    nativeWatchTools(
+      this.rows,
+      this.watchedTools,
+      Boolean(this.fixture) || this.historyObservation.status === 'ready',
+    );
+    return this.rows;
+  }
+
+  private foldIsOpen(key: number) {
+    const fold = this.folds.get(key);
+    return this.foldOpen.get(key) ?? (fold ? nativeFoldWatched(fold, this.watchedTools) : true);
   }
 
   private work() {
@@ -386,6 +420,63 @@ export class NativeSessionView extends LitElement {
           ${label}
         </button>`
       : nothing;
+  }
+
+  private renderEntry(entry: NativeTimelineEntry, session: NativeSessionInfo, hidden = false) {
+    return html`<article class=${entry.kind} data-sequence=${entry.key} ?hidden=${hidden}>
+      ${entry.kind === 'tool'
+        ? html`<details>
+            <summary>
+              ${entry.text} ·
+              ${entry.event.type === 'tool.started'
+                ? 'Started'
+                : (entry.event.tool?.status ?? 'Finished')}
+            </summary>
+            <pre>
+${JSON.stringify(
+                {
+                  ...(entry.event.tool?.input !== undefined
+                    ? { input: entry.event.tool.input }
+                    : {}),
+                  ...(entry.event.tool?.output !== undefined
+                    ? { output: entry.event.tool.output }
+                    : {}),
+                },
+                null,
+                2,
+              )}</pre
+            >
+          </details>`
+        : html`<span class="meta"
+              >${entry.kind === 'user'
+                ? 'You'
+                : entry.kind === 'assistant'
+                  ? session.runner
+                  : entry.event.at}</span
+            >
+            <div class="text">
+              ${entry.kind === 'assistant'
+                ? html`<chat-message
+                    .message=${{
+                      id: `${entry.event.sessionId}:${entry.key}`,
+                      role: 'assistant',
+                      content: entry.text,
+                      timestamp: entry.event.at,
+                    } satisfies ChatMessage}
+                  ></chat-message>`
+                : this.renderMessageBody(
+                    entry.text,
+                    nativeEntryPreview(entry),
+                    entry.event.commandId ?? String(entry.key),
+                  )}
+            </div>
+            ${entry.event.type === 'error' && entry.event.data
+              ? html`<details>
+                  <summary>Error details</summary>
+                  <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
+                </details>`
+              : nothing}`}
+    </article>`;
   }
 
   private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: string) {
@@ -779,6 +870,8 @@ export class NativeSessionView extends LitElement {
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
     this.expandedMessages = new Set();
+    this.watchedTools = new Set();
+    this.foldOpen = new Map();
     this.follow = NATIVE_FOLLOW_LATEST;
     this.selectedId = id;
     this.selectedNodeId = executionNodeId;
@@ -1261,64 +1354,34 @@ export class NativeSessionView extends LitElement {
                     aria-label="Agent conversation"
                     @scroll=${this.timelineScrolled}
                   >
-                    ${repeat(
-                      this.timeline(),
-                      (entry) => entry.key,
-                      (entry) =>
-                        html`<article class=${entry.kind} data-sequence=${entry.key}>
-                          ${entry.kind === 'tool'
-                            ? html`<details>
-                                <summary>
-                                  ${entry.text} ·
-                                  ${entry.event.type === 'tool.started'
-                                    ? 'Started'
-                                    : (entry.event.tool?.status ?? 'Finished')}
-                                </summary>
-                                <pre>
-${JSON.stringify(
-                                    {
-                                      ...(entry.event.tool?.input !== undefined
-                                        ? { input: entry.event.tool.input }
-                                        : {}),
-                                      ...(entry.event.tool?.output !== undefined
-                                        ? { output: entry.event.tool.output }
-                                        : {}),
-                                    },
-                                    null,
-                                    2,
-                                  )}</pre
+                    ${keyed(
+                      `${this.selectedNodeId}:${this.selectedId}`,
+                      repeat(
+                        this.timelineRows(),
+                        (row) => (row.kind === 'work' ? `work:${row.key}` : row.key),
+                        (row) =>
+                          row.kind === 'work'
+                            ? html`<article class="work">
+                                <button
+                                  class="work-toggle"
+                                  data-testid="native-work-fold"
+                                  aria-expanded=${this.foldIsOpen(row.key) ? 'true' : 'false'}
+                                  @click=${() => {
+                                    this.foldOpen = new Map(this.foldOpen).set(
+                                      row.key,
+                                      !this.foldIsOpen(row.key),
+                                    );
+                                  }}
                                 >
-                              </details>`
-                            : html`<span class="meta"
-                                  >${entry.kind === 'user'
-                                    ? 'You'
-                                    : entry.kind === 'assistant'
-                                      ? session.runner
-                                      : entry.event.at}</span
-                                >
-                                <div class="text">
-                                  ${entry.kind === 'assistant'
-                                    ? html`<chat-message
-                                        .message=${{
-                                          id: `${entry.event.sessionId}:${entry.key}`,
-                                          role: 'assistant',
-                                          content: entry.text,
-                                          timestamp: entry.event.at,
-                                        } satisfies ChatMessage}
-                                      ></chat-message>`
-                                    : this.renderMessageBody(
-                                        entry.text,
-                                        nativeEntryPreview(entry),
-                                        entry.event.commandId ?? String(entry.key),
-                                      )}
-                                </div>
-                                ${entry.event.type === 'error' && entry.event.data
-                                  ? html`<details>
-                                      <summary>Error details</summary>
-                                      <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
-                                    </details>`
-                                  : nothing}`}
-                        </article>`,
+                                  ${row.label}
+                                </button>
+                              </article>`
+                            : this.renderEntry(
+                                row.entry,
+                                session,
+                                row.fold !== undefined && !this.foldIsOpen(row.fold),
+                              ),
+                      ),
                     )}
                     ${this.localCommand &&
                     !this.transcript.events.some(

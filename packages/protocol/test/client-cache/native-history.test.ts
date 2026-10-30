@@ -264,6 +264,35 @@ test('a snapshot saved by the previous reader is read again from its start, once
   assert.deepEqual(afters, [undefined, 3], 'the replayed snapshot resumes from its cursor');
 });
 
+test('a finished tool keeps its key through the cache, so a card the reader opened stays open', () => {
+  const at = (
+    sequence: number,
+    type: NativeSessionEvent['type'],
+    extra: Partial<NativeSessionEvent> = {},
+  ) => ({
+    ...event(sequence, ''),
+    type,
+    text: undefined,
+    ...extra,
+  });
+  const bash = { nativeId: 'tool-1', tool: { name: 'Bash' } };
+  const running = [at(1, 'command.submitted', { text: 'Run it.' }), at(2, 'tool.started', bash)];
+  const keyOf = (events: NativeSessionEvent[]) =>
+    nativeTimeline(events).find((e) => e.kind === 'tool')?.key;
+  assert.equal(keyOf(retainNativeMessages(running)), 2);
+  const finished = retainNativeMessages([
+    ...running,
+    at(3, 'text.delta', { text: 'ok' }),
+    at(4, 'tool.completed', bash),
+  ]);
+  assert.equal(keyOf(finished), 2);
+  assert.equal(
+    nativeTimeline(finished).find((e) => e.kind === 'tool')?.event.type,
+    'tool.completed',
+  );
+  assert.deepEqual(retainNativeMessages(finished), finished);
+});
+
 test('cursor pages merge into one complete observation and keep the conservative stamp', async () => {
   const calls: number[] = [];
   const result = await readNativeHistory(
