@@ -55,7 +55,7 @@ import {
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
-import { restoreBlindTrialGit } from '../../evals/blind-trial.js';
+import { readBlindTrialMarker, restoreBlindTrialGit } from '../../evals/blind-trial.js';
 import { archiveSlotScaffolding, excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
 import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
 import {
@@ -258,6 +258,8 @@ export interface SlotReleasePreflight {
   defaultBranch: string;
   /** Work a full release would discard; null under keepWork/forceReset. */
   unmergedWork: SlotUnmergedWork | null;
+  /** The detached blind trial whose isolated Git an unowned slot still holds. */
+  blindMarker: string | null;
 }
 
 /**
@@ -334,12 +336,33 @@ async function releasePreflight(
     /* no project config */
   }
 
+  // A failed blind trial loses its slot pointer but leaves the repo on its isolated
+  // Git. Release restores it from the trial record; without one, a reset would
+  // discard the candidate commits that exist only there.
+  const blindMarker = params.expectedRunId || boundOwner ? null : await readBlindTrialMarker(vars);
+  if (
+    blindMarker &&
+    !(await getRunWithArchived(blindMarker))?.engineState?.evalExperiment?.blind?.isolation
+  )
+    throw new Error(
+      `Slot ${params.slotId} Git is still isolated for blind trial ${blindMarker}, which has no restorable run record; restore that run record before release`,
+    );
+
   const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
   const unmergedWork =
     params.keepWork || forceReset || options?.workspaceRecovery
       ? null
       : await findReleaseUnmergedWork(vars, projectJson, projectVars, defaultBranch);
-  return { vars, boundOwner, ownerTerminal, projectVars, projectJson, defaultBranch, unmergedWork };
+  return {
+    vars,
+    boundOwner,
+    ownerTerminal,
+    projectVars,
+    projectJson,
+    defaultBranch,
+    unmergedWork,
+    blindMarker,
+  };
 }
 
 /**
@@ -448,7 +471,8 @@ async function slotReleaseImpl(
   // Refused before the kill below, so a refusal leaves the worker running. Step 2
   // checks again after the kill for work the worker wrote in between.
   if (preflight.unmergedWork) throw unmergedWorkError(preflight.unmergedWork);
-  const { vars, boundOwner, ownerTerminal, projectVars, projectJson, defaultBranch } = preflight;
+  const { vars, boundOwner, ownerTerminal, projectVars, projectJson, defaultBranch, blindMarker } =
+    preflight;
   const forceReset = params.forceReset ?? false;
   const preserveAgents = params.preserveAgents ?? false;
   const keepWarm = params.keepWarm ?? false;
@@ -829,7 +853,7 @@ async function slotReleaseImpl(
     step('agent', 'Preserving agent windows for human gate');
   }
 
-  const blindOwner = params.expectedRunId ?? boundOwner;
+  const blindOwner = params.expectedRunId ?? boundOwner ?? blindMarker;
   const blindRun = blindOwner ? await getRunWithArchived(blindOwner) : undefined;
   if (blindRun) await restoreBlindTrialGit(blindRun, vars, entryEpoch, assertReleaseClaim);
 
