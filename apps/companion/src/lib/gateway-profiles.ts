@@ -176,15 +176,37 @@ export interface GatewayProfileLogin {
   commitVerifiedCredential(result: GatewayAuthConnectResult): Promise<void>;
 }
 
+/** The stored login as saved, so a pairing that fails can put back what it replaced. */
+export async function snapshotGatewayProfileLogin(profile: GatewayProfile): Promise<string | null> {
+  return SecureStore.getItemAsync(profile.secretStorageKey ?? profileSecretStorageKey(profile.id));
+}
+
+export async function restoreGatewayProfileLogin(
+  profile: GatewayProfile,
+  snapshot: string | null,
+): Promise<void> {
+  const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
+  await serializeProfileWrite(key, async () => {
+    if (snapshot === null) await SecureStore.deleteItemAsync(key);
+    else await SecureStore.setItemAsync(key, snapshot);
+  });
+}
+
 export async function prepareGatewayProfileLogin(
   profile: GatewayProfile,
   secret?: string,
   personSession?: PersonSessionAuth,
+  options: { replacePersonLogin?: boolean } = {},
 ): Promise<GatewayProfileLogin> {
   const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
   let expected = await storedLogin(profile);
   const explicit = profile.authMode !== 'none' && Boolean(secret?.trim());
-  if ((explicit || profile.authMode === 'none') && expected.kind === 'person' && expected.auth)
+  if (
+    !options.replacePersonLogin &&
+    (explicit || profile.authMode === 'none') &&
+    expected.kind === 'person' &&
+    expected.auth
+  )
     throw new Error('Sign out this device before replacing its person login.');
   const raw =
     profile.authMode === 'none'

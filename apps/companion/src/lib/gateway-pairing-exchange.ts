@@ -35,7 +35,8 @@ export interface GatewayPairingExchange {
   expiresAt?: string;
 }
 
-const PAIRING_TIMEOUT_MS = 15_000;
+const PAIRING_CONNECT_TIMEOUT_MS = 10_000;
+const PAIRING_EXCHANGE_TIMEOUT_MS = 30_000;
 type PairingExchange = (urls: string[], code: string) => Promise<GatewayPairingExchange>;
 
 export async function exchangeGatewayPairingQr(
@@ -71,6 +72,8 @@ async function sendUnauthenticatedPairingExchangeWithFallback(
     try {
       return await sendUnauthenticatedPairingExchange(url, code);
     } catch (error) {
+      // The code is single-use. Once a gateway received it, another URL can only report it spent.
+      if ((error as { codeSent?: boolean }).codeSent) throw error;
       lastError = error as Error;
     }
   }
@@ -91,9 +94,12 @@ function sendUnauthenticatedPairingExchange(
     let candidate: PairedGatewayProfile | undefined;
     let invitationExpiry: string | undefined;
     let settled = false;
-    const timer = setTimeout(() => {
-      settleWithError(new Error('Pairing exchange timed out'));
-    }, PAIRING_TIMEOUT_MS);
+    let codeSent = false;
+    const interrupted = () =>
+      new Error(`Pairing on ${url} did not finish. Create a new pairing code and try again.`);
+    let timer = setTimeout(() => {
+      settleWithError(pairingWebSocketConnectionError(url));
+    }, PAIRING_CONNECT_TIMEOUT_MS);
 
     const settleWithResult = (result: GatewayPairingExchange) => {
       if (settled) return;
@@ -108,26 +114,33 @@ function sendUnauthenticatedPairingExchange(
       settled = true;
       clearTimeout(timer);
       ws.close();
-      reject(error);
+      reject(Object.assign(error, { codeSent }));
     };
 
     ws.onopen = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => settleWithError(interrupted()), PAIRING_EXCHANGE_TIMEOUT_MS);
       const frame: RequestFrame = {
         type: 'req',
         id: requestId,
         method: Methods.PAIRING_EXCHANGE,
         params: { code },
       };
+      codeSent = true;
       ws.send(JSON.stringify(frame));
     };
 
     ws.onerror = () => {
-      settleWithError(pairingWebSocketConnectionError(url));
+      settleWithError(codeSent ? interrupted() : pairingWebSocketConnectionError(url));
     };
 
     ws.onclose = () => {
       if (!settled) {
-        settleWithError(new Error('Pairing WebSocket closed before exchange completed'));
+        settleWithError(
+          codeSent
+            ? interrupted()
+            : new Error('Pairing WebSocket closed before exchange completed'),
+        );
       }
     };
 

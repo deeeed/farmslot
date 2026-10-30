@@ -1,5 +1,5 @@
 import { type BarcodeScanningResult, useCameraPermissions } from 'expo-camera';
-import { type Dispatch, type SetStateAction, useState } from 'react';
+import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
 import {
@@ -7,6 +7,7 @@ import {
   parseGatewayPairingQr,
   profileFromPairingResult,
 } from '../../lib/gateway-pairing';
+import { savePairedProfiles } from '../../lib/gateway-pairing-save';
 import type { GatewayProfile, GatewayProfileAuthMode } from '../../lib/gateway-profiles';
 import { useConnectionStore } from '../../store/connection';
 
@@ -32,6 +33,8 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [pairingScannerOpen, setPairingScannerOpen] = useState(false);
   const [pairingInProgress, setPairingInProgress] = useState(false);
+  // The camera reports a QR on every frame; state updates land too late to stop a second exchange.
+  const pairingStarted = useRef(false);
 
   const openPairingScanner = async () => {
     if (!cameraPermission?.granted) {
@@ -41,12 +44,14 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
         return;
       }
     }
+    pairingStarted.current = false;
     setPairingInProgress(false);
     setPairingScannerOpen(true);
   };
 
   const handlePairingBarcodeScanned = async (result: BarcodeScanningResult) => {
-    if (pairingInProgress) return;
+    if (pairingStarted.current) return;
+    pairingStarted.current = true;
     setPairingInProgress(true);
     try {
       const payload = parseGatewayPairingQr(result.data);
@@ -60,14 +65,16 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
       options.setRecentImportedProfiles(
         importedProfiles.map((importedProfile) => importedProfile.profile),
       );
-      for (const importedProfile of importedProfiles) {
-        await saveProfile(
+      // Scanning a new code for a gateway replaces the sign-in saved for it.
+      await savePairedProfiles(importedProfiles, (importedProfile) =>
+        saveProfile(
           importedProfile.profile,
           importedProfile.secret,
           importedProfile.personSession,
           importedProfile.verification,
-        );
-      }
+          { replacePersonLogin: true },
+        ),
+      );
       options.setProfileConnectionTests(
         Object.fromEntries(
           importedProfiles.map(({ profile }) => [
@@ -117,6 +124,8 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
       setPairingScannerOpen(false);
       Alert.alert('Companion paired', importMessage);
     } catch (error) {
+      // The code may be spent: rescanning the same QR would only report it invalid.
+      setPairingScannerOpen(false);
       setPairingInProgress(false);
       Alert.alert('Pairing failed', (error as Error).message);
     }

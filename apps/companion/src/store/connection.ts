@@ -106,6 +106,7 @@ interface ConnectionStore {
     secret?: string,
     personSession?: PersonSessionAuth,
     verification?: GatewayAuthConnectResult,
+    options?: { replacePersonLogin?: boolean },
   ) => Promise<void>;
   setProfileAuth: (
     profileId: string,
@@ -338,6 +339,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     secret?: string,
     personSession?: PersonSessionAuth,
     verification?: GatewayAuthConnectResult,
+    options: { replacePersonLogin?: boolean } = {},
   ) => {
     const normalizedProfile: GatewayProfile = {
       ...profile,
@@ -351,10 +353,15 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           ? (profile.secretStorageKey ?? profileSecretStorageKey(profile.id))
           : undefined,
     };
-    const login = await prepareGatewayProfileLogin(normalizedProfile, secret, personSession);
+    const login = await prepareGatewayProfileLogin(
+      normalizedProfile,
+      secret,
+      personSession,
+      options,
+    );
     if (personSession) {
       const current = await readGatewayProfilePersonSession(normalizedProfile);
-      if (current && current.session.id !== personSession.session.id)
+      if (current && current.session.id !== personSession.session.id && !options.replacePersonLogin)
         throw new Error('Sign out this device before replacing its person login.');
       await login.credentials.sessionStorage.save(personSession);
       const result =
