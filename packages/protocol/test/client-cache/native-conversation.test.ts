@@ -7,13 +7,16 @@ import {
   nativeCommandLockSettled,
   nativeDeliveryLabel,
   nativeEntryPreview,
+  nativeFoldWatched,
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
   nativeMessagePreview,
   nativeMessageToggleLabel,
   nativeTimeline,
+  type NativeTimelineRow,
   nativeTimelineRows,
+  nativeWatchTools,
   nativeWork,
   nativeWorkLabel,
 } from '../../src/client-cache/native-history.js';
@@ -305,7 +308,7 @@ test('a running turn reports when it started and the tool it runs now', () => {
   assert.equal(nativeWorkLabel({ since: 10_000 }, 0), 'Working · 0s', 'a clock behind the gateway');
 });
 
-test('a finished turn folds its tool calls into one row; messages and a running turn stay', () => {
+test('a finished turn gets one summary row below its tools; nothing above it moves', () => {
   const at = (
     sequence: number,
     type: NativeSessionEvent['type'],
@@ -317,13 +320,28 @@ test('a finished turn folds its tool calls into one row; messages and a running 
     ...extra,
   });
   const tool = (id: string, name: string) => ({ nativeId: id, tool: { name } });
-  const rows = nativeTimelineRows(
+  const show = (rows: NativeTimelineRow[]) =>
+    rows.map((row) =>
+      row.kind === 'work'
+        ? `[${row.label}: ${row.tools}]`
+        : `${row.entry.text}${row.fold === undefined ? '' : ` (in ${row.fold})`}`,
+    );
+  const running = [
+    at(1, 'command.submitted', { text: 'Fix the test.' }),
+    at(2, 'tool.started', tool('a', 'Read')),
+    at(3, 'tool.completed', tool('a', 'Read')),
+    at(4, 'text.delta', { text: 'Found it.' }),
+    at(5, 'tool.started', tool('b', 'Edit')),
+  ];
+  assert.deepEqual(show(nativeTimelineRows(nativeTimeline(running))), [
+    'Fix the test.',
+    'Read',
+    'Found it.',
+    'Edit',
+  ]);
+  const done = nativeTimelineRows(
     nativeTimeline([
-      at(1, 'command.submitted', { text: 'Fix the test.' }),
-      at(2, 'tool.started', tool('a', 'Read')),
-      at(3, 'tool.completed', tool('a', 'Read')),
-      at(4, 'text.delta', { text: 'Found it.' }),
-      at(5, 'tool.started', tool('b', 'Edit')),
+      ...running,
       at(6, 'tool.completed', tool('b', 'Edit')),
       at(7, 'text.delta', { text: 'Fixed.' }),
       at(8, 'turn.completed', { status: 'completed' }),
@@ -331,29 +349,44 @@ test('a finished turn folds its tool calls into one row; messages and a running 
       at(10, 'tool.started', tool('c', 'Bash')),
     ]),
   );
+  assert.deepEqual(show(done), [
+    'Fix the test.',
+    'Read (in 8)',
+    'Found it.',
+    'Edit (in 8)',
+    'Fixed.',
+    '[Worked for 1m 10s · 2 tools: 2,5]',
+    'Turn completed',
+    'Run it.',
+    'Bash',
+  ]);
+  // Tools keep their keys, so a reader's open card survives the turn finishing.
   assert.deepEqual(
-    rows.map((row) =>
-      row.kind === 'work' ? `${row.label} [${row.entries.map((e) => e.text)}]` : row.entry.text,
-    ),
-    [
-      'Fix the test.',
-      'Worked for 1m 10s · 2 tools [Read,Edit]',
-      'Found it.',
-      'Fixed.',
-      'Turn completed',
-      'Run it.',
-      'Bash',
-    ],
+    done.slice(0, 5).map((row) => row.key),
+    [1, 2, 4, 5, 7],
   );
-  assert.equal(rows[1].key, 2, 'the row sits where its first tool was');
-  // An interrupted turn, and a turn whose prompt is older than the kept history.
-  const stopped = nativeTimelineRows(
+
+  // A host that stops mid-turn ends that turn; the resumed turn is its own.
+  const resumed = nativeTimelineRows(
     nativeTimeline([
-      at(2, 'tool.started', tool('a', 'Read')),
-      at(5, 'turn.completed', { status: 'interrupted' }),
+      at(1, 'command.submitted', { text: 'Task A.' }),
+      at(2, 'tool.started', tool('a', 'Bash')),
+      at(4, 'session.closed', { status: 'failed', text: 'Native host stopped' }),
+      at(9, 'command.submitted', { text: 'Continue.' }),
+      at(10, 'tool.started', tool('b', 'Edit')),
+      at(12, 'turn.completed', { status: 'completed' }),
     ]),
   );
-  assert.equal(stopped[0].kind === 'work' && stopped[0].label, 'Stopped after 30s · 1 tool');
+  assert.deepEqual(show(resumed), [
+    'Task A.',
+    'Bash (in 4)',
+    '[Stopped after 30s · 1 tool: 2]',
+    'Native host stopped',
+    'Continue.',
+    'Edit (in 12)',
+    '[Worked for 30s · 1 tool: 10]',
+    'Turn completed',
+  ]);
   const failed = nativeTimelineRows(
     nativeTimeline([
       at(1, 'command.submitted', { text: 'Go.' }),
@@ -361,8 +394,7 @@ test('a finished turn folds its tool calls into one row; messages and a running 
       at(3, 'turn.completed', { status: 'failed' }),
     ]),
   );
-  assert.equal(failed[1].kind === 'work' && failed[1].label, 'Failed after 20s · 1 tool');
-  // A turn without tools has nothing to fold.
+  assert.equal(failed[2].kind === 'work' && failed[2].label, 'Failed after 20s · 1 tool');
   const talk = nativeTimeline([
     at(1, 'command.submitted', { text: 'Hi.' }),
     at(2, 'text.delta', { text: 'Hello.' }),
@@ -372,4 +404,15 @@ test('a finished turn folds its tool calls into one row; messages and a running 
     nativeTimelineRows(talk).map((row) => row.kind),
     ['entry', 'entry', 'entry'],
   );
+
+  // Only a live read marks tools as watched; a stored snapshot does not.
+  const watched = new Set<number>();
+  nativeWatchTools(nativeTimelineRows(nativeTimeline(running)), watched, false);
+  assert.equal(watched.size, 0);
+  nativeWatchTools(nativeTimelineRows(nativeTimeline(running)), watched, true);
+  assert.deepEqual([...watched], [2, 5]);
+  const fold = done.find((row) => row.kind === 'work');
+  assert(fold?.kind === 'work');
+  assert.equal(nativeFoldWatched(fold, watched), true);
+  assert.equal(nativeFoldWatched(fold, new Set()), false);
 });

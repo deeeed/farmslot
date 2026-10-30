@@ -14,9 +14,11 @@ import type { NativeSessionInfo } from '@farmslot/protocol';
 import {
   NATIVE_FOLLOW_LATEST,
   nativeDeliveryLabel,
+  nativeFoldWatched,
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
+  nativeWatchTools,
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
@@ -51,18 +53,27 @@ export function NativeConversationScreen({
   const disclose = () => {
     disclosed.current = true;
   };
-  /** Tools shown while their turn ran here: that turn's fold opens when it finishes. */
   const watchedTools = useRef(new Set<number>());
+  /** Folds the reader opened or closed, by the key of the entry that ended the turn. */
+  const [foldOpen, setFoldOpen] = useState(new Map<number, boolean>());
   const entryCount = useRef(vm.entries.length);
   useEffect(() => {
     entryCount.current = vm.entries.length;
     watchedTools.current = new Set();
+    setFoldOpen(new Map());
     setFollow(NATIVE_FOLLOW_LATEST);
   }, [vm.session?.id]);
+  const live = vm.historyObservation.status === 'ready';
   useEffect(() => {
-    for (const row of vm.rows)
-      if (row.kind === 'entry' && row.entry.kind === 'tool') watchedTools.current.add(row.key);
-  }, [vm.rows]);
+    nativeWatchTools(vm.rows, watchedTools.current, live);
+  }, [vm.rows, live]);
+  const folds = new Map(
+    vm.rows.flatMap((row) => (row.kind === 'work' ? [[row.key, row] as const] : [])),
+  );
+  const foldIsOpen = (key: number) => {
+    const fold = folds.get(key);
+    return foldOpen.get(key) ?? (fold ? nativeFoldWatched(fold, watchedTools.current) : true);
+  };
   useEffect(() => {
     const added = vm.entries.length - entryCount.current;
     entryCount.current = vm.entries.length;
@@ -255,14 +266,21 @@ export function NativeConversationScreen({
               {vm.rows.map((row) =>
                 row.kind === 'work' ? (
                   <NativeWorkCard
-                    key={row.key}
+                    key={`work:${row.key}`}
                     label={row.label}
-                    entries={row.entries}
-                    defaultExpanded={watchedTools.current.has(row.key)}
-                    onDisclosure={disclose}
+                    open={foldIsOpen(row.key)}
+                    onToggle={() => {
+                      disclose();
+                      setFoldOpen(new Map(foldOpen).set(row.key, !foldIsOpen(row.key)));
+                    }}
                   />
                 ) : (
-                  <NativeTimelineCard key={row.key} entry={row.entry} onDisclosure={disclose} />
+                  <NativeTimelineCard
+                    key={row.key}
+                    entry={row.entry}
+                    onDisclosure={disclose}
+                    hidden={row.fold !== undefined && !foldIsOpen(row.fold)}
+                  />
                 ),
               )}
               {vm.requests.map((request) => (

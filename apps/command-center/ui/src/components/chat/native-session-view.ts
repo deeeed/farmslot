@@ -25,6 +25,7 @@ import {
   nativeCommandLockSettled,
   nativeDeliveryLabel,
   nativeEntryPreview,
+  nativeFoldWatched,
   type NativeFollow,
   nativeFollowGrew,
   nativeFollowLabel,
@@ -40,6 +41,7 @@ import {
   type NativeTimelineRow,
   nativeTimelineRows,
   type NativeTranscript,
+  nativeWatchTools,
   type NativeWork,
   nativeWork,
   type ResourceQuery,
@@ -204,18 +206,31 @@ export class NativeSessionView extends LitElement {
 
   private rowsEntries?: NativeTimelineEntry[];
   private rows: NativeTimelineRow[] = [];
-  /** Tools shown while their turn ran here: that turn's fold opens when it finishes. */
+  private folds = new Map<number, Extract<NativeTimelineRow, { kind: 'work' }>>();
   private watchedTools = new Set<number>();
+  /** Folds the reader opened or closed, by the key of the entry that ended the turn. */
+  @state() private foldOpen = new Map<number, boolean>();
 
   private timelineRows() {
     const entries = this.timeline();
     if (this.rowsEntries !== entries) {
       this.rowsEntries = entries;
       this.rows = nativeTimelineRows(entries);
-      for (const row of this.rows)
-        if (row.kind === 'entry' && row.entry.kind === 'tool') this.watchedTools.add(row.key);
+      this.folds = new Map(
+        this.rows.flatMap((row) => (row.kind === 'work' ? [[row.key, row] as const] : [])),
+      );
     }
+    nativeWatchTools(
+      this.rows,
+      this.watchedTools,
+      Boolean(this.fixture) || this.historyObservation.status === 'ready',
+    );
     return this.rows;
+  }
+
+  private foldIsOpen(key: number) {
+    const fold = this.folds.get(key);
+    return this.foldOpen.get(key) ?? (fold ? nativeFoldWatched(fold, this.watchedTools) : true);
   }
 
   private work() {
@@ -407,8 +422,8 @@ export class NativeSessionView extends LitElement {
       : nothing;
   }
 
-  private renderEntry(entry: NativeTimelineEntry, session: NativeSessionInfo) {
-    return html`<article class=${entry.kind} data-sequence=${entry.key}>
+  private renderEntry(entry: NativeTimelineEntry, session: NativeSessionInfo, hidden = false) {
+    return html`<article class=${entry.kind} data-sequence=${entry.key} ?hidden=${hidden}>
       ${entry.kind === 'tool'
         ? html`<details>
             <summary>
@@ -856,6 +871,7 @@ ${JSON.stringify(
     this.revision++;
     this.expandedMessages = new Set();
     this.watchedTools = new Set();
+    this.foldOpen = new Map();
     this.follow = NATIVE_FOLLOW_LATEST;
     this.selectedId = id;
     this.selectedNodeId = executionNodeId;
@@ -1338,18 +1354,34 @@ ${JSON.stringify(
                     aria-label="Agent conversation"
                     @scroll=${this.timelineScrolled}
                   >
-                    ${repeat(
-                      this.timelineRows(),
-                      (row) => row.key,
-                      (row) =>
-                        row.kind === 'work'
-                          ? html`<article class="work" data-sequence=${row.key}>
-                              <details ?open=${this.watchedTools.has(row.key)}>
-                                <summary data-testid="native-work-fold">${row.label}</summary>
-                                ${row.entries.map((entry) => this.renderEntry(entry, session))}
-                              </details>
-                            </article>`
-                          : this.renderEntry(row.entry, session),
+                    ${keyed(
+                      `${this.selectedNodeId}:${this.selectedId}`,
+                      repeat(
+                        this.timelineRows(),
+                        (row) => (row.kind === 'work' ? `work:${row.key}` : row.key),
+                        (row) =>
+                          row.kind === 'work'
+                            ? html`<article class="work">
+                                <button
+                                  class="work-toggle"
+                                  data-testid="native-work-fold"
+                                  aria-expanded=${this.foldIsOpen(row.key) ? 'true' : 'false'}
+                                  @click=${() => {
+                                    this.foldOpen = new Map(this.foldOpen).set(
+                                      row.key,
+                                      !this.foldIsOpen(row.key),
+                                    );
+                                  }}
+                                >
+                                  ${row.label}
+                                </button>
+                              </article>`
+                            : this.renderEntry(
+                                row.entry,
+                                session,
+                                row.fold !== undefined && !this.foldIsOpen(row.fold),
+                              ),
+                      ),
                     )}
                     ${this.localCommand &&
                     !this.transcript.events.some(

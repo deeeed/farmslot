@@ -236,11 +236,20 @@ export const nativeSessionStyles = css`
   summary {
     cursor: pointer;
   }
-  /* A finished turn's folded tool calls: one row, a full touch target, keeping the disclosure marker. */
-  article.work > details > summary {
-    box-sizing: border-box;
+  /* A finished turn's tool calls behind one row, just above the turn's end. */
+  .timeline article[hidden] {
+    display: none;
+  }
+  .work-toggle {
     min-height: 44px;
-    padding-block: 12px;
+    width: 100%;
+    text-align: left;
+  }
+  .work-toggle::before {
+    content: '▸ ';
+  }
+  .work-toggle[aria-expanded='true']::before {
+    content: '▾ ';
   }
   details pre,
   .request pre {
