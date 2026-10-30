@@ -43,6 +43,37 @@ test('an existing reservation bypasses historical acquisition scanning without r
   assert.equal(await fs.readFile(file, 'utf8'), before);
 });
 
+test('new admission waits for an acquisition scan delayed beyond thirty seconds', async (t) => {
+  let release!: () => void;
+  stalled = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const scanning = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const admission = reserveRunBundleMetadata(store, 'loaded-gateway', undefined, root).then(
+    () => ({ ok: true as const }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+  try {
+    await scanning;
+    t.mock.timers.tick(45_000);
+    release();
+    const result = await admission;
+    assert.equal(result.ok, true, result.ok ? undefined : String(result.error));
+    const reservation = JSON.parse(
+      await fs.readFile(path.join(store.root, 'reservations/loaded-gateway.json'), 'utf8'),
+    );
+    assert.equal(reservation.runId, 'loaded-gateway');
+  } finally {
+    release();
+    stalled = undefined;
+    entered = undefined;
+    t.mock.timers.reset();
+  }
+});
+
 test('new admission times out by name and a late read-only scan cannot write a reservation', async (t) => {
   let release!: () => void;
   stalled = new Promise<void>((resolve) => {
@@ -55,11 +86,11 @@ test('new admission times out by name and a late read-only scan cannot write a r
   const reservation = reserveRunBundleMetadata(store, 'new-work', undefined, root);
   const rejected = assert.rejects(
     reservation,
-    /Retention admission acquisition scan timed out after 30000ms for run new-work/,
+    /Retention admission acquisition scan timed out after 120000ms for run new-work/,
   );
   try {
     await scanning;
-    t.mock.timers.tick(30_000);
+    t.mock.timers.tick(120_000);
     await rejected;
   } finally {
     release();
