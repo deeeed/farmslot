@@ -22,6 +22,7 @@ import {
   readRunnerBackgroundWorkState,
   readRunnerTurnState,
 } from './registry.js';
+import { readRetainedWorkerProgressTarget } from './retained-worker-progress.js';
 import { reviewWorkspaceRunnerVars } from './review-startup.js';
 
 export interface RunProgressObservation {
@@ -79,6 +80,7 @@ interface RunProgressReaders {
   background: typeof readRunnerBackgroundWorkState;
   turnActive: typeof runnerTurnLeaseIsActive;
   taskProgress: RunnerTaskProgressReader;
+  retainedTarget: typeof readRetainedWorkerProgressTarget;
 }
 
 const progressReaders: RunProgressReaders = {
@@ -94,6 +96,7 @@ const progressReaders: RunProgressReaders = {
   turnActive: runnerTurnLeaseIsActive,
   // Registry and lifecycle consumers form a cycle; look up this capability after initialization.
   taskProgress: async (input) => (await import('./registry.js')).readRunnerTaskProgress(input),
+  retainedTarget: readRetainedWorkerProgressTarget,
 };
 
 async function observeContext(
@@ -148,25 +151,43 @@ async function observeContext(
       });
   if (!target?.target) return { kind: 'unproven', activeRole };
   const runner = normalizeRunner(context?.runner ?? run.metrics.runner);
-  const [activity, turnState, backgroundWork] = await Promise.all([
-    source.activity(vars, target.target, runner),
-    source.turn(vars, target.target, runner),
-    source.background(vars, target.target, runner),
-  ]);
-  const kind = classifyMonitorProgress({
-    activity: structured(activity),
-    turnState: structured(turnState),
-    backgroundWork,
-  });
-  if (kind === 'making-progress' && activeRole === 'review-fix') {
-    const receipt = context?.promptAcceptance;
-    const accepted =
-      receipt?.turnToken &&
-      receipt.deliveryStartedAt === context?.promptDeliveryStartedAt &&
-      (await source.turnActive(vars, target.target, runner, receipt.turnToken));
-    return { kind: kind === 'making-progress' && accepted ? kind : 'unproven', activeRole };
-  }
-  return { kind, activeRole };
+  const observeTarget = async (observedTarget: string): Promise<RunProgressObservation> => {
+    const [activity, turnState, backgroundWork] = await Promise.all([
+      source.activity(vars, observedTarget, runner),
+      source.turn(vars, observedTarget, runner),
+      source.background(vars, observedTarget, runner),
+    ]);
+    const kind = classifyMonitorProgress({
+      activity: structured(activity),
+      turnState: structured(turnState),
+      backgroundWork,
+    });
+    if (kind === 'making-progress' && activeRole === 'review-fix') {
+      const receipt = context?.promptAcceptance;
+      const accepted =
+        receipt?.turnToken &&
+        receipt.deliveryStartedAt === context?.promptDeliveryStartedAt &&
+        (await source.turnActive(vars, observedTarget, runner, receipt.turnToken));
+      return { kind: kind === 'making-progress' && accepted ? kind : 'unproven', activeRole };
+    }
+    return { kind, activeRole };
+  };
+  const progress = await observeTarget(target.target);
+  if (
+    progress.kind !== 'unproven' ||
+    !context?.target?.paneId ||
+    !run.decisions.some((decision) => !decision.resolvedAt && decision.payload?.kind === 'ready')
+  )
+    return progress;
+  const retained = await source.retainedTarget(vars, context);
+  if (retained.state === 'absent')
+    return {
+      kind: 'idle',
+      activeRole,
+      reason: 'Recorded worker pane is gone and its slot has no live runner',
+    };
+  if (retained.state === 'unknown') return { ...progress, reason: retained.reason };
+  return observeTarget(retained.target);
 }
 
 /** Observe one owned worker without letting an unrelated role mask its state. */
