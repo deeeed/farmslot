@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { type BlindGitSpec, buildBlindGitCommand } from './blind-git.js';
+import { type BlindGitSpec, buildBlindGitCommand, withBlindTrialBoundary } from './blind-git.js';
 
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 function git(repo: string, ...args: string[]): string {
@@ -31,7 +31,7 @@ function commit(repo: string, text: string): string {
   );
   return git(repo, 'rev-parse', 'HEAD');
 }
-function command(action: 'isolate' | 'verify' | 'restore', spec: BlindGitSpec) {
+function command(action: 'isolate' | 'boundary' | 'verify' | 'restore', spec: BlindGitSpec) {
   return JSON.parse(
     execFileSync('bash', ['-c', buildBlindGitCommand(action, spec)], {
       env,
@@ -61,19 +61,46 @@ for (const linked of [false, true])
     git(source, 'update-ref', 'refs/remotes/origin/main', reference);
     const refs = git(source, 'for-each-ref', '--format=%(refname) %(objectname)');
     const repo = linked ? path.join(root, 'linked') : source;
+    const sibling = path.join(root, 'sibling');
+    mkdirSync(sibling);
+    writeFileSync(path.join(sibling, 'answer.txt'), 'reference\n');
     if (linked) git(source, 'worktree', 'add', '-q', '--detach', repo, 'main');
     writeFileSync(path.join(repo, 'private-input.txt'), 'preserved\n');
     const spec: BlindGitSpec = {
       slotId: 'fixture-slot',
       slotEpoch: 1,
       repo,
-      capsule: path.join(root, 'control'),
+      capsule: path.join(root, '.farmslot-blind-evals/fixture-slot/trial-1-1'),
+      siblingRepos: [sibling],
       runId: 'trial-1',
       branch: 'eval/trial-1',
       baseSha: base,
       referenceCommits: [reference],
     };
     assert.equal(command('isolate', spec).status, 'isolated');
+    // A node without sandbox-exec refuses the worker instead of starting it unsandboxed.
+    const unsandboxed = spawnSync(
+      'python3',
+      [
+        '-c',
+        `
+import json, runpy, sys
+module = runpy.run_path(sys.argv[1], run_name='blind_git_fixture')
+module['boundary'].__globals__['SANDBOX'] = '/nonexistent/sandbox-exec'
+module['boundary'](json.loads(sys.argv[2]))
+`,
+        new URL('./blind-git.py', import.meta.url).pathname,
+        JSON.stringify(spec),
+      ],
+      { env, encoding: 'utf8', timeout: 60_000 },
+    );
+    assert.notEqual(unsandboxed.status, 0);
+    assert.match(
+      unsandboxed.stderr,
+      /need macOS sandbox-exec on the slot node; refusing an unsandboxed worker/,
+    );
+    assert.throws(() => command('verify', spec), /worker boundary is missing/);
+    assert.equal(command('boundary', spec).status, 'isolated');
     assert.equal(git(repo, 'rev-parse', 'HEAD'), base);
     assert.equal(readFileSync(path.join(repo, 'value.txt'), 'utf8'), 'base\n');
     assert.equal(existsSync(path.join(repo, 'answer.txt')), false);
@@ -84,6 +111,64 @@ for (const linked of [false, true])
     assert.notEqual(spawnSync('git', ['-C', repo, 'cat-file', '-e', reference], { env }).status, 0);
     assert.notEqual(spawnSync('git', ['-C', repo, 'fetch', 'origin'], { env }).status, 0);
     git(repo, 'fsck', '--full', '--no-reflogs');
+    assert.equal(command('verify', spec).githubAttempt, undefined);
+    // A transport the isolated repository refuses is recorded on its own, by any git binary.
+    const fetched = spawnSync(
+      'bash',
+      [
+        '-c',
+        withBlindTrialBoundary(
+          '! /usr/bin/env git fetch https://github.com/owner/reference.git main',
+          spec.capsule,
+        ),
+      ],
+      { cwd: repo, env, encoding: 'utf8' },
+    );
+    assert.equal(fetched.status, 0, fetched.stderr);
+    assert.match(fetched.stderr, /transport 'https' not allowed/);
+    assert.equal(existsSync(path.join(spec.capsule, 'boundary/attempts.log')), false);
+    assert.equal(
+      command('verify', spec).githubAttempt,
+      "git fetch https://github.com/owner/reference.git main: transport 'https' not allowed",
+    );
+    rmSync(path.join(spec.capsule, 'boundary/git-trace.jsonl'));
+    assert.equal(command('verify', spec).githubAttempt, undefined);
+    // The worker has no token, gh login or credential helper, and its sandbox
+    // cannot read sibling checkouts or retained Git metadata. GitHub calls are recorded.
+    const q = (value: string) => `'${value}'`;
+    const worker = spawnSync(
+      'bash',
+      [
+        '-c',
+        withBlindTrialBoundary(
+          [
+            'test -z "${GH_TOKEN-}${GITHUB_TOKEN-}"',
+            `test "$(cat ${q(path.join(repo, 'value.txt'))})" = base`,
+            `! cat ${q(path.join(sibling, 'answer.txt'))}`,
+            `! ls ${q(path.join(root, '.farmslot-blind-evals'))}`,
+            `! git --git-dir=${q(path.join(spec.capsule, 'original.entry'))} cat-file -e ${reference}`,
+            // A linked worktree's original checkout holds the reference objects too.
+            `! git --git-dir=${q(path.join(source, '.git'))} cat-file -e ${reference}`,
+            ...(linked ? [`! cat ${q(path.join(source, 'value.txt'))}`] : []),
+            '! gh pr list --repo owner/reference',
+            '! printf "protocol=https\\nhost=github.com\\n\\n" | git credential fill',
+            '! git ls-remote ssh://git@github.com/owner/reference.git',
+          ].join(' && '),
+          spec.capsule,
+        ),
+      ],
+      {
+        cwd: root,
+        env: { ...env, GH_TOKEN: 'inherited', GITHUB_TOKEN: 'inherited' },
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(worker.status, 0, worker.stderr);
+    const attempts = readFileSync(path.join(spec.capsule, 'boundary/attempts.log'), 'utf8');
+    assert.match(attempts, /^gh pr list --repo owner\/reference\ncredential get github.com\n/u);
+    // Git may first probe the SSH variant; the transport attempt itself is recorded either way.
+    assert.match(attempts, /^ssh .*git@github\.com git-upload-pack '\/owner\/reference\.git'$/mu);
+    assert.equal(command('verify', spec).githubAttempt, 'gh pr list --repo owner/reference');
     assert.equal(
       command('isolate', spec).status,
       'isolated',

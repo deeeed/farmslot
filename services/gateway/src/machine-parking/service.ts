@@ -68,6 +68,7 @@ import {
   runWithResourceLifecycleContext,
 } from '../core/resource-lifecycle-log.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
+import { blindTrialWorkerCapsule } from '../evals/blind-git.js';
 import { readMachinePressure } from '../fleet/pressure-read.js';
 import {
   executeResourceControl,
@@ -506,6 +507,10 @@ async function defaultReloadRunner(
     vars,
     recoveryHandle: handle,
     initialPrompt: continuationPrompt,
+    blindTrialCapsule: blindTrialWorkerCapsule(
+      run,
+      run.agentContexts?.find((context) => context.id === handle.contextId)?.role,
+    ),
   });
   if (!result.ok) throw new Error(result.error);
   if (!result.live || result.acknowledgement.kind !== 'structured') {

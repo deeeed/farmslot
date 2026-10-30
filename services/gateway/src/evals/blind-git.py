@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -41,8 +42,85 @@ def pack_into(repo, directory, arguments, source_file):
                                    or 'Blind trial object transfer failed')
 
 
-def verify(spec):
-    repo = Path(spec['repo'])
+# The worker starts without GitHub credentials, inside a sandbox (blind-git.ts).
+# These stand-ins refuse its gh, credential-helper and SSH-transport calls and record them.
+BOUNDARY_SCRIPT = '''#!/bin/sh
+[ "${0##*/}" = gh ] && set -- gh "$@"
+[ "$1 $2" = 'credential get' ] && set -- "$@" "$(sed -n 's/^host=//p')"
+printf '%s\\n' "$*" >> ATTEMPTS
+echo 'GitHub access is unavailable in this blind eval trial.' >&2
+exit 1
+'''
+SANDBOX = '/usr/bin/sandbox-exec'
+SANDBOX_REQUIRED = 'Blind eval trials need macOS sandbox-exec on the slot node; refusing an unsandboxed worker'
+
+
+def require_sandbox():
+    if not os.access(SANDBOX, os.X_OK):
+        raise RuntimeError(SANDBOX_REQUIRED)
+
+
+def sandbox_profile(spec, capsule):
+    # Deny reads of other slot checkouts, the original checkout a linked worktree
+    # shares objects with, every blind capsule except this boundary, and the
+    # GitHub CLI login. Later rules take precedence.
+    repo = Path(spec['repo']).resolve()
+    checkouts = [Path(os.path.expanduser(path)).resolve() for path in spec.get('siblingRepos', [])]
+    state = json.loads((capsule / 'state.json').read_text())
+    if not state['originalIsDirectory']:
+        common = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir',
+                          git_dir=state['originalDirectory']).stdout.decode().strip()).resolve()
+        checkouts += [common, common.parent] if common.name == '.git' else [common]
+    denied = [path for path in checkouts if path != repo and path not in repo.parents]
+    capsules = {path.parent / '.farmslot-blind-evals' for path in [repo] + checkouts}
+    denied += sorted(capsules) + [(Path.home() / '.config' / 'gh').resolve()]
+    quote = lambda path: json.dumps(str(path), ensure_ascii=False)
+    return '\n'.join(['(version 1)', '(allow default)',
+                      '(deny file-read* ' + ' '.join('(subpath %s)' % quote(path) for path in denied) + ')',
+                      '(allow file-read* (subpath %s))' % quote((capsule / 'boundary').resolve()), ''])
+
+
+def prepare_boundary(spec, capsule):
+    require_sandbox()
+    root = capsule / 'boundary'
+    (root / 'gh-config').mkdir(parents=True, exist_ok=True)
+    (root / 'bin').mkdir(exist_ok=True)
+    script = BOUNDARY_SCRIPT.replace('ATTEMPTS', shlex.quote(str(root / 'attempts.log')))
+    for name in ['gh', 'deny']:
+        (root / 'bin' / name).write_text(script)
+        (root / 'bin' / name).chmod(0o700)
+    (root / 'sandbox.sb').write_text(sandbox_profile(spec, capsule))
+    checked = subprocess.run([SANDBOX, '-f', str(root / 'sandbox.sb'), '/usr/bin/true'], capture_output=True)
+    if checked.returncode:
+        raise RuntimeError(SANDBOX_REQUIRED + ': ' + checked.stderr.decode(errors='replace').strip())
+
+
+def refused_git_transport(trace):
+    # Git refuses the isolated repository's transports before any stand-in runs;
+    # its trace records the refusal and the command that tried, whichever git ran.
+    if not trace.exists():
+        return ''
+    argv = {}
+    with trace.open(errors='replace') as lines:
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get('event') == 'start':
+                argv[event.get('sid')] = ' '.join(event.get('argv') or ['git'])
+            elif event.get('event') == 'error' and event.get('fmt') == "transport '%s' not allowed":
+                return argv.get(event.get('sid'), 'git') + ': ' + str(event.get('msg'))
+    return ''
+
+
+def boundary(spec):
+    prepare_boundary(spec, Path(spec['capsule']))
+    return verify(spec)
+
+
+def verify(spec, worker_boundary=True):
+    repo, root = Path(spec['repo']), Path(spec['capsule']) / 'boundary'
     if git(repo, 'config', '--get', 'farmslot.blindRun').stdout.decode().strip() != spec['runId']:
         raise RuntimeError('Blind trial Git ownership does not match')
     if (repo / '.git').is_symlink() or not (repo / '.git').is_dir():
@@ -58,7 +136,13 @@ def verify(spec):
     for commit in spec['referenceCommits']:
         if git(repo, 'cat-file', '-e', commit + '^{commit}', check=False).returncode == 0:
             raise RuntimeError('Reference objects are available in the blind trial')
-    return {'status': 'isolated', 'baseSha': spec['baseSha'], 'runId': spec['runId']}
+    if worker_boundary and not all((root / name).is_file() for name in ['bin/gh', 'bin/deny', 'sandbox.sb']):
+        raise RuntimeError('Blind trial worker boundary is missing')
+    attempts = root / 'attempts.log'
+    attempt = attempts.read_text(errors='replace').strip().split('\n')[0] if attempts.exists() else ''
+    attempt = attempt or refused_git_transport(root / 'git-trace.jsonl')
+    receipt = {'status': 'isolated', 'baseSha': spec['baseSha'], 'runId': spec['runId']}
+    return {**receipt, 'githubAttempt': attempt[:500]} if attempt else receipt
 
 
 def copy_local_commit_settings(repo, source, destination):
@@ -84,7 +168,7 @@ def isolate(spec):
             raise RuntimeError('Blind trial capsule requires restoration before preparation')
         source = capsule / 'original.entry' if state['originalIsDirectory'] else Path(state['originalDirectory'])
         copy_local_commit_settings(repo, source, repo / '.git')
-        return verify(spec)
+        return verify(spec, worker_boundary=False)
     if not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', spec['baseSha']):
         raise RuntimeError('Blind trial requires a full base commit')
     git(repo, 'check-ref-format', '--branch', spec['branch'])
@@ -125,7 +209,7 @@ def isolate(spec):
         # The original index knows which later tracked files must disappear.
         git(repo, 'read-tree', '--reset', '-u', spec['baseSha'], git_dir=source)
         prepared.rename(repo / '.git')
-        result = verify(spec)
+        result = verify(spec, worker_boundary=False)
         state['phase'] = 'isolated'
         save(journal, state)
         return result
@@ -216,5 +300,5 @@ if __name__ == '__main__':
         capsule = Path(request['repo']).resolve().parent / '.farmslot-blind-evals' / request['slotId'] / (request['runId'] + '-' + str(request['slotEpoch']))
         result = {'status': 'planned', 'capsule': str(capsule)}
     else:
-        result = {'isolate': isolate, 'verify': verify, 'restore': restore}[action](request)
+        result = {'isolate': isolate, 'boundary': boundary, 'verify': verify, 'restore': restore}[action](request)
     print(json.dumps(result))

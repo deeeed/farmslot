@@ -1,6 +1,6 @@
 # Blind eval trials
 
-Normative reference for [ADR-030 Amendment 1](../adr/030-replay-provenance-and-reference-evals.md#amendment-1-blind-trial-inputs-and-comparison-eligibility-2026-10-30). Owned by gateway eval execution; retain with that capability. This reference defines the worker-input and comparison contract, rather than a particular experiment or rollout.
+Normative reference for [ADR-030 Amendments 1 to 3](../adr/030-replay-provenance-and-reference-evals.md#amendment-1-blind-trial-inputs-and-comparison-eligibility-2026-10-30). Owned by gateway eval execution; retain with that capability. This reference defines the worker-input and comparison contract, rather than a particular experiment or rollout.
 
 ## Inputs
 
@@ -16,6 +16,16 @@ Normative reference for [ADR-030 Amendment 1](../adr/030-replay-provenance-and-r
 - Before worker launch, verify that reference commits are unavailable, remote URLs are absent and fetch protocols are disabled. Recheck the boundary at dispatch and first-output capture.
 - Existing slot Git metadata is retained outside the worker checkout under the trial's lease. Preparation and recovery must not fetch into the isolated repository.
 - Teardown stops the owned worker, retains its candidate commits, then restores the original Git metadata before ordinary slot cleanup. Restoration is bound to the original run and slot ownership. A failed restoration keeps the slot fenced.
+
+## Worker boundary
+
+- The worker starts without source-host credentials: no GitHub token variables, an empty GitHub CLI configuration, no Git credential helper and no Git SSH transport.
+- Recording stand-ins in the trial capsule refuse the GitHub CLI on the worker's path and Git's credential and SSH-transport calls. Git's trace in the capsule records transports the isolated repository refuses, whichever git binary ran. A recorded attempt makes the trial invalid at first-output capture.
+- A GitHub CLI call by absolute path fails without credentials but is not recorded.
+- The worker runs under a macOS `sandbox-exec` profile generated from the pool at preparation. It cannot read the node's other slot checkouts, the original checkout a linked-worktree slot shares objects with, blind capsules other than its own boundary, or the GitHub CLI login.
+- Worker session reloads (recovery, parking and operator resume) start under the same boundary.
+- The network stays open. A blind trial on a source repository readable without credentials is not isolated by this boundary.
+- Preparation fails on a node without `sandbox-exec`. Dispatch fails for a native worker and for a runner tier that applies its own sandbox. Neither path starts the worker unsandboxed.
 
 ## First output and contamination
 
@@ -35,4 +45,4 @@ Normative reference for [ADR-030 Amendment 1](../adr/030-replay-provenance-and-r
 
 ## Public surface
 
-The protocol package owns the case, trial and result-package fields consumed by the existing eval RPCs and Command Center comparison readers. The gateway owns input validation, Git isolation, first-output capture and contamination assessment. Existing framework prepare/dispatch/teardown contracts remain the lifecycle path. Harnesses inherit the blinded task and base; they receive no reference lookup capability or new command. Additive wire metadata follows protocol patch versioning and the matching-reader rollout.
+The protocol package owns the case, trial and result-package fields consumed by the existing eval RPCs and Command Center comparison readers. The gateway owns input validation, Git isolation, first-output capture and contamination assessment. Existing framework prepare/dispatch/teardown contracts remain the lifecycle path. Harnesses inherit the blinded task, base and worker boundary; they receive no reference lookup capability or new command. Additive wire metadata follows protocol patch versioning and the matching-reader rollout.

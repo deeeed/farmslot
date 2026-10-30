@@ -29,6 +29,7 @@ import {
 import { applyProjectCommandEnv, withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
+import { withBlindTrialBoundary } from '../evals/blind-git.js';
 
 import {
   assertSafeRunnerArgumentValue,
@@ -428,6 +429,8 @@ interface RunnerSessionReloadOptions {
   codexAccountLabel?: string | null;
   codexAuthSource?: string | null;
   initialPrompt?: string;
+  /** Capsule of a blind eval trial; the resumed worker keeps the trial boundary. */
+  blindTrialCapsule?: string;
 }
 
 export function buildRunnerSessionReloadCommand(
@@ -444,6 +447,8 @@ export function buildRunnerSessionReloadCommand(
   const initialPrompt = opts.initialPrompt?.trim()
     ? ` ${shellQuote(opts.initialPrompt.trim())}`
     : '';
+  const blind = (command: string): string =>
+    opts.blindTrialCapsule ? withBlindTrialBoundary(command, opts.blindTrialCapsule) : command;
 
   if (runner === 'claude') {
     const installCommand = buildRunnerObservabilityInstallCommand(
@@ -464,10 +469,12 @@ export function buildRunnerSessionReloadCommand(
     );
     return withMachineEnv(
       withTaskRecipeTrustEnvironment(
-        withRunnerObservabilityInstall(
-          `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
-          installCommand,
-          settingsFallback,
+        blind(
+          withRunnerObservabilityInstall(
+            `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
+            installCommand,
+            settingsFallback,
+          ),
         ),
         repo,
         opts.taskDir,
@@ -494,11 +501,13 @@ export function buildRunnerSessionReloadCommand(
     });
     return withMachineEnv(
       withTaskRecipeTrustEnvironment(
-        withRunnerObservabilityInstall(
-          `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
-            vars.codexPath,
-          )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
-          installCommand,
+        blind(
+          withRunnerObservabilityInstall(
+            `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
+              vars.codexPath,
+            )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
+            installCommand,
+          ),
         ),
         repo,
         opts.taskDir,
@@ -520,11 +529,13 @@ export function buildRunnerSessionReloadCommand(
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     return withMachineEnv(
       withTaskRecipeTrustEnvironment(
-        withRequiredRunnerInstall(
-          `cd ${shellQuote(repo)} && ${resolveGrokBinary(
-            vars.grokPath,
-          )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
-          installCommand,
+        blind(
+          withRequiredRunnerInstall(
+            `cd ${shellQuote(repo)} && ${resolveGrokBinary(
+              vars.grokPath,
+            )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
+            installCommand,
+          ),
         ),
         repo,
         opts.taskDir,
@@ -800,6 +811,8 @@ export interface BuildLaunchOptions {
    * Optional explicit auth.json path override (tests). Prefer codexAccountLabel.
    */
   codexAuthSource?: string | null;
+  /** Capsule of a blind eval trial; its worker starts without GitHub credentials. */
+  blindTrialCapsule?: string;
 }
 
 /**
@@ -840,7 +853,12 @@ export function buildLaunchCommand(
   const withRecipeTrust = (command: string): string =>
     withMachineEnv(
       withTaskRecipeTrustEnvironment(
-        withSourceInputs(command),
+        // Innermost, so neither pool nor project environment restores a credential.
+        withSourceInputs(
+          opts.blindTrialCapsule
+            ? withBlindTrialBoundary(command, opts.blindTrialCapsule)
+            : command,
+        ),
         repo,
         opts.taskDir ?? (opts.taskFile ? path.posix.dirname(opts.taskFile) : undefined),
       ),

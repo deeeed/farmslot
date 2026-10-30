@@ -383,3 +383,17 @@ Freeze the worker's contribution, evidence, native usage, cost and elapsed worke
 **Rationale.** Review-driven fixes measure a model together with its reviewer instead of measuring the model's first output.
 
 **Public surface.** Existing eval entry points, result-package fields and review artifacts carry the result. This adds no dispatch flag or harness command. The normative contract is [Blind eval trials](../reference/blind-eval-trials.md#first-output-judging).
+
+## Amendment 3: blind trial boundary (2026-10-31)
+
+**Status:** Proposed.
+
+**Decision.** Amendment 1's isolated object store is necessary but not sufficient. A blind worker also starts without source-host credentials and inside an operating-system sandbox. Its launch removes GitHub token variables, uses an empty GitHub CLI configuration, clears Git credential helpers and refuses Git SSH transport. Gateway-owned stand-ins in the trial capsule refuse GitHub CLI, credential and SSH-transport calls and record them. Git's trace in the capsule records transports the isolated repository refuses, whichever git binary ran. A recorded attempt makes the trial invalid at first-output capture. A GitHub CLI call by absolute path fails without credentials but is not recorded.
+
+The sandbox profile is generated from the pool during preparation. It denies reads of the node's other slot checkouts, the blind capsule roots except this trial's boundary, and the GitHub CLI login. Preparation refuses a node without macOS `sandbox-exec`. Dispatch refuses a runner tier that applies its own sandbox, which cannot nest, and a native worker, which does not carry the boundary. A blind worker never starts unsandboxed.
+
+**Rationale.** A candidate used an authenticated GitHub CLI to find the reference pull request and apply its diff. A credential-free probe still read the reference from a sibling slot checkout and from retained Git metadata.
+
+**Consequences.** Blind workers cannot read GitHub. Blind trials run on macOS nodes, with runners and tiers that do not apply their own sandbox. Worker session reloads keep the same boundary. The network stays open, so a source repository readable without credentials needs a network boundary before its blind trials are valid. Production runs keep their credentials and launch path.
+
+**Public surface.** No new RPC, field or flag. The existing invalid reason and dispatch errors carry the outcome. The normative contract is [Blind eval trials](../reference/blind-eval-trials.md#worker-boundary).

@@ -744,6 +744,8 @@ export interface ReloadRunnerForParkOptions {
   recoveryHandle: MachinePauseRecoveryHandle;
   initialPrompt: string;
   timeoutMs?: number;
+  /** Capsule of a blind eval trial whose worker this reload resumes. */
+  blindTrialCapsule?: string;
 }
 
 /** Reload exactly the persisted runner session; never falls back to a fresh launch. */
@@ -821,6 +823,7 @@ export async function reloadRunnerForPark(
         runtimeDir: handle.runtimeDir,
         taskDir: handle.taskDir,
         initialPrompt,
+        blindTrialCapsule: options.blindTrialCapsule,
       },
     )}`;
     await deps.respawnPane(options.vars, target, command, { preservePaneAfterExit: true });
