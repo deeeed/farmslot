@@ -123,10 +123,23 @@ test('panel observers share reads, refuse stale actions and drop old filters and
     'An ordinary current-owner reread stays quiet',
   );
   assert.throws(() => first.requireReady(), /current read/);
-  const heldReads = socket.sent.slice(readsBefore).filter(({ method }) => method === 'run.list');
+  const retryMark = fake.requests.length;
+  const retry = first.retry();
+  await flush();
+  const heldReads = fake.requests
+    .slice(retryMark)
+    .filter(
+      ({ method, params }) =>
+        method === 'run.list' &&
+        params &&
+        typeof params === 'object' &&
+        Reflect.get(params, 'familyId') === 'old-filter',
+    );
+  assert.equal(heldReads.length, 1, 'Retry starts an actual read before the pacing floor');
   const failingRead = heldReads.at(-1);
   assert.ok(failingRead);
   socket.failure(failingRead.id, { code: 'UNAVAILABLE', message: 'Source unavailable' });
+  await retry;
   await flush();
   assert.equal(first.state.error?.message, 'Source unavailable');
   assert.equal(

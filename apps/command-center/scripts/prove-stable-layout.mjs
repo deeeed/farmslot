@@ -321,7 +321,8 @@ async function capture(file) {
   assert.equal((await inspect()).width, before.width, 'Capture must preserve the viewport');
 }
 async function until(accept, label) {
-  const deadline = Date.now() + 30000;
+  // Collection rereads may legitimately wait for their 30-second floor.
+  const deadline = Date.now() + 45000;
   let actual;
   do {
     actual = await inspect();
