@@ -191,7 +191,7 @@ function blindSlot(label: string, runId: string) {
 }
 
 /** The failed trial as the store holds it after its slot pointer was cleared. */
-async function detachedTrial(spec: BlindGitSpec): Promise<void> {
+async function detachedTrial(spec: BlindGitSpec, overrides: Partial<Run> = {}): Promise<void> {
   const created = realRuns.createRun(
     { flowType: 'dev', project: 'fixture', ticketOrPr: 'EVAL-TAT-4162' },
     { deferBackgroundPersist: true },
@@ -226,6 +226,7 @@ async function detachedTrial(spec: BlindGitSpec): Promise<void> {
         },
       },
     },
+    ...overrides,
   };
   writeFileSync(path.join(runRoot, `${trial.id}.json`), JSON.stringify(trial));
   await realRuns.loadAllRuns();
@@ -276,4 +277,72 @@ test('an unowned release refuses a blind repo whose trial record is missing', as
   assert.equal(gitStatus('config', '--get', 'remote.origin.fetch'), 1);
   assert.equal(git(repo, 'rev-parse', 'HEAD'), candidate);
   assert.equal(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD'), BRANCH);
+});
+
+test('an unowned release that preserves agents refuses before restoring a blind trial', async () => {
+  const { spec, candidate } = blindSlot('preserve', 'trial-preserve');
+  await detachedTrial(spec);
+
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true, preserveAgents: true }, () => {}),
+    /Blind trial cleanup must stop its worker before restoring Git metadata/,
+  );
+
+  assert.equal(markerWrites, 0, 'the slot was never fenced');
+  assert.equal(slotRow.phase, null);
+  assert.equal(git(repo, 'config', '--get', 'farmslot.blindRun'), 'trial-preserve');
+  assert.equal(gitStatus('config', '--get', 'remote.origin.fetch'), 1);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), candidate);
+});
+
+test('an unowned keepWork release restores a blind trial and keeps its checkout', async () => {
+  const { spec, candidate } = blindSlot('keep-work', 'trial-keep-work');
+  await detachedTrial(spec);
+  writeFileSync(path.join(repo, 'notes.txt'), 'uncommitted candidate note\n');
+
+  const result = await slotRelease({ slotId: SLOT_ID, keepWork: true }, () => {});
+
+  assert.deepEqual(result, { released: true });
+  assert.equal(
+    git(repo, 'config', '--get', 'remote.origin.fetch'),
+    '+refs/heads/*:refs/remotes/origin/*',
+  );
+  assert.equal(gitStatus('config', '--get', 'farmslot.blindRun'), 1);
+  assert.equal(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD'), BRANCH);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), candidate);
+  assert.equal(readFileSync(path.join(repo, 'notes.txt'), 'utf8'), 'uncommitted candidate note\n');
+  assert.equal(slotRow.lifecycle, 'ready');
+});
+
+test('a done blind trial whose slot pointer was cleared releases its own isolated Git', async () => {
+  const { spec, candidate } = blindSlot('done', 'trial-done');
+  await detachedTrial(spec, { status: 'done', slotId: SLOT_ID });
+
+  const result = await slotRelease(
+    { slotId: SLOT_ID, expectedRunId: spec.runId, forceReset: true },
+    () => {},
+  );
+
+  assert.deepEqual(result, { released: true });
+  assert.equal(
+    git(repo, 'config', '--get', 'remote.origin.fetch'),
+    '+refs/heads/*:refs/remotes/origin/*',
+  );
+  assert.equal(gitStatus('config', '--get', 'farmslot.blindRun'), 1);
+  assert.equal(git(repo, 'rev-parse', `refs/heads/${BRANCH}`), candidate);
+});
+
+test('a release for another run leaves a blind slot it does not own untouched', async () => {
+  const { spec, candidate } = blindSlot('foreign', 'trial-foreign');
+  await detachedTrial(spec, { status: 'done', slotId: SLOT_ID });
+
+  const result = await slotRelease({ slotId: SLOT_ID, expectedRunId: 'other-run' }, () => {});
+
+  assert.deepEqual(result, {
+    released: false,
+    reason: `Slot ${SLOT_ID} is held by no run, not run other-run`,
+  });
+  assert.equal(markerWrites, 0);
+  assert.equal(git(repo, 'config', '--get', 'farmslot.blindRun'), 'trial-foreign');
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), candidate);
 });

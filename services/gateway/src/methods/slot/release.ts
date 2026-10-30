@@ -276,6 +276,9 @@ export async function slotReleasePreflight(
   return 'skipped' in preflight ? null : preflight;
 }
 
+const BLIND_WORKER_STOP_REFUSAL =
+  'Blind trial cleanup must stop its worker before restoring Git metadata.';
+
 async function releasePreflight(
   params: SlotReleaseParams,
   options?: SlotReleaseOptions,
@@ -304,9 +307,24 @@ async function releasePreflight(
     return { skipped };
   }
   const boundOwner = (row?.current_run_id as string | null | undefined) ?? null;
+  // A finished blind trial can lose the slot pointer while the repo still holds its
+  // isolated Git; that marker proves the run still owns the checkout. An unreadable
+  // repo proves nothing, so the release is skipped as before.
+  const adoptedBlindOwner =
+    params.expectedRunId &&
+    !boundOwner &&
+    !ownsRunSlotCleanup(row, params.expectedRunId) &&
+    (await readBlindTrialMarker(await loadSlotVars(params.slotId)).catch(() => null)) ===
+      params.expectedRunId
+      ? params.expectedRunId
+      : null;
   // A run whose cancel deferred cleanup no longer holds the slot pointer, but
   // the slot is held for its cleanup and that run may still release it.
-  if (params.expectedRunId && !ownsRunSlotCleanup(row, params.expectedRunId)) {
+  if (
+    params.expectedRunId &&
+    !ownsRunSlotCleanup(row, params.expectedRunId) &&
+    !adoptedBlindOwner
+  ) {
     const skipped = `Slot ${params.slotId} is held by ${boundOwner ? `run ${boundOwner}` : 'no run'}, not run ${params.expectedRunId}`;
     console.log(`[release] ${skipped}; leaving it untouched`);
     return { skipped };
@@ -317,7 +335,7 @@ async function releasePreflight(
 
   const ownerRun = boundOwner ? await getRunWithArchived(boundOwner) : undefined;
   if (params.preserveAgents && ownerRun?.engineState?.evalExperiment?.blind?.isolation)
-    throw new Error('Blind trial cleanup must stop its worker before restoring Git metadata.');
+    throw new Error(BLIND_WORKER_STOP_REFUSAL);
   const ownerTerminal = !!ownerRun && isTerminalRunStatus(ownerRun.status);
   const refusal = releaseOwnerRefusal(boundOwner, ownerTerminal, params, options);
   if (refusal) throw new Error(refusal);
@@ -339,14 +357,19 @@ async function releasePreflight(
   // A failed blind trial loses its slot pointer but leaves the repo on its isolated
   // Git. Release restores it from the trial record; without one, a reset would
   // discard the candidate commits that exist only there.
-  const blindMarker = params.expectedRunId || boundOwner ? null : await readBlindTrialMarker(vars);
+  const blindMarker =
+    adoptedBlindOwner ??
+    (params.expectedRunId || boundOwner ? null : await readBlindTrialMarker(vars));
+  const markerRun = blindMarker ? await getRunWithArchived(blindMarker) : undefined;
   if (
     blindMarker &&
-    !(await getRunWithArchived(blindMarker))?.engineState?.evalExperiment?.blind?.isolation
+    (markerRun?.engineState?.evalExperiment?.blind?.isolation?.slotId !== params.slotId ||
+      !markerRun.branch)
   )
     throw new Error(
       `Slot ${params.slotId} Git is still isolated for blind trial ${blindMarker}, which has no restorable run record; restore that run record before release`,
     );
+  if (blindMarker && params.preserveAgents) throw new Error(BLIND_WORKER_STOP_REFUSAL);
 
   const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
   const unmergedWork =
@@ -541,7 +564,11 @@ async function slotReleaseImpl(
           const owner = ((slot.current_run_id as string | null | undefined) ?? null) as
             | string
             | null;
-          if (params.expectedRunId && !ownsRunSlotCleanup(slot, params.expectedRunId)) {
+          if (
+            params.expectedRunId &&
+            !ownsRunSlotCleanup(slot, params.expectedRunId) &&
+            !(owner === null && blindMarker === params.expectedRunId)
+          ) {
             claimSkip = `Slot ${params.slotId} is held by ${owner ? `run ${owner}` : 'no run'}, not run ${params.expectedRunId}`;
             return false;
           }

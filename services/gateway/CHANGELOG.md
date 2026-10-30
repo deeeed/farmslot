@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Releasing a slot that a failed, detached blind eval trial left on its isolated Git restores the original repository and the candidate branch first, and refuses when that trial's run record is gone instead of resetting the only copy of the candidate commits.
+- Releasing a slot whose blind eval trial (failed or done) lost its slot pointer while the repository stayed on the isolated Git restores the original repository and the candidate branch first, and refuses when that trial's run record is gone instead of resetting the only copy of the candidate commits.
 - Dispatch keeps probing a runtime it just booted until its launch budget ends, so an iOS simulator that is still busy after `simctl boot` no longer fails one 5-second health check.
 - Prepare retries its remote fetch when another slot sharing the same repository moved a tracking ref first, instead of failing with "cannot lock ref".
 - Task files tell workers to mark complete with criteria awaiting human review; the run gate collects that review.
