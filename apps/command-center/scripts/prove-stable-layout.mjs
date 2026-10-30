@@ -463,8 +463,13 @@ try {
       const name = `${width}${expanded ? '-expanded' : ''}`;
       await viewport(width);
       if ((await inspect()).sidebarExpanded !== expanded) await press('.fa-nav-toggle');
+      await until(
+        (value) => value.sidebarExpanded === expanded && !value.sidebarAnimating,
+        'sidebar-settled',
+      );
       await record(`tray-after-${name}`, async () => {
         const before = await inspect();
+        await save(`${name}-baseline`, before);
         assert.equal(before.width, width, 'The browser must use the requested CSS viewport');
         const authBefore = frames.filter((frame) => frame.method === 'auth.connect').length;
         for (const socket of wss.clients)

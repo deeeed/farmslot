@@ -14,6 +14,10 @@ return {
     .map((element) => element.textContent.trim())
     .join(' '),
   sidebarExpanded: root?.querySelector('.fa-nav-toggle')?.title === 'Collapse sidebar',
+  sidebarAnimating: root
+    ?.querySelector('nav')
+    ?.getAnimations()
+    .some((animation) => animation.playState === 'running'),
   updateVisible: Boolean(banner?.getClientRects().length),
   updateText: (banner?.shadowRoot?.textContent ?? '').replace(/\s+/g, ' '),
 
