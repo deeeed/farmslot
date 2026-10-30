@@ -188,7 +188,8 @@ export interface FamilyObservabilitySnapshot {
   familyRootTicketOrPr: string;
   project: string;
   generatedAt: string;
-  latestRunId: string;
+  /** Absent for a reference-only family: it has eval references but no runs yet. */
+  latestRunId?: string;
   latestPrNumber: number | null;
   workflowState: 'active' | 'complete' | 'failed';
   familyRunCount: number;

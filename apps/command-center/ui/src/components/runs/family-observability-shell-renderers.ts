@@ -88,7 +88,11 @@ export function renderFamilyTopbar(options: FamilyTopbarRenderOptions): Template
           ? html`<a class="action-link" href=${`#run/${selectedRun.runId}`}
               >Open selected run · ${selectedRun.runId.slice(0, 8)}</a
             >`
-          : html`<a class="action-link" href=${`#run/${snapshot.latestRunId}`}>Open latest run</a>`}
+          : snapshot.latestRunId
+            ? html`<a class="action-link" href=${`#run/${snapshot.latestRunId}`}
+                >Open latest run</a
+              >`
+            : nothing}
         <button
           class="action-btn"
           ?disabled=${options.reportLoading || options.commandsReady === false}

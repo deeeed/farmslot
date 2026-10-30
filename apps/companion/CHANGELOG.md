@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- The family change ledger needs a latest run before it offers its evidence files.
 - A native conversation shows its state on its own line; while a turn runs, how long it has worked and the tool it runs now ("Working · 1m 12s · Bash").
 - A long message in a native conversation, such as a worker's dispatch prompt, shows its first lines with "Show all · N lines". Opening it, or a tool's details, keeps your place instead of scrolling to the end.
 - Scrolled up in a native conversation, a "Latest · N new" button jumps back to the end and follows new output again.
