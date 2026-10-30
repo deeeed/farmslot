@@ -301,8 +301,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     if (!profile) return;
     // A login that cannot be read must not become the saved selection a restart opens.
     const auth = await authCredentialsForProfile(profile);
-    await AsyncStorage.setItem(ACTIVE_GATEWAY_PROFILE_KEY, profile.id);
-    await AsyncStorage.setItem(GATEWAY_URL_KEY, profile.url);
+    await AsyncStorage.multiSet([
+      [ACTIVE_GATEWAY_PROFILE_KEY, profile.id],
+      [GATEWAY_URL_KEY, profile.url],
+    ]);
     await AsyncStorage.removeItem(SIGNED_OUT_KEY);
     set({ signedOut: false });
     const authMode = profile.authMode ?? 'none';

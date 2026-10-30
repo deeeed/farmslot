@@ -7,7 +7,7 @@ import {
   parseGatewayPairingQr,
   profileFromPairingResult,
 } from '../../lib/gateway-pairing';
-import { savePairedProfiles } from '../../lib/gateway-pairing-save';
+import { keepPairing } from '../../lib/gateway-pairing-save';
 import type { GatewayProfile, GatewayProfileAuthMode } from '../../lib/gateway-profiles';
 import { useConnectionStore } from '../../store/connection';
 
@@ -65,18 +65,10 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
       options.setRecentImportedProfiles(
         importedProfiles.map((importedProfile) => importedProfile.profile),
       );
-      // Scanning a new code for a gateway replaces the sign-in saved for it. Until one address
-      // answers and becomes active, the pairing can still be undone.
-      const preferredReachable = await savePairedProfiles(importedProfiles, {
-        save: (importedProfile, onReplace) =>
-          saveProfile(
-            importedProfile.profile,
-            importedProfile.secret,
-            importedProfile.personSession,
-            importedProfile.verification,
-            { replacePersonLogin: true, onReplace },
-          ),
-        activate: async () => {
+      // Nothing is saved until an address answers. Scanning a new code for a gateway then replaces
+      // the sign-in saved for it.
+      const preferredReachable = await keepPairing(importedProfiles, {
+        probe: async () => {
           options.setProfileConnectionTests(
             Object.fromEntries(
               importedProfiles.map(({ profile }) => [
@@ -99,23 +91,32 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
               ),
             );
           });
-          const preferred = await preferredReachablePairingResult(
-            importedProfiles,
-            reachabilityChecks,
-          );
-          if (!preferred)
-            throw new Error(
-              'None of the paired addresses answered, so the previous sign-in is kept. Check the connection and pair again with a new code.',
-            );
-          // A fresh login adapter replaces the running client's, also when this profile was active.
-          await setActiveProfile(preferred.profile.id);
-          return preferred;
+          return preferredReachablePairingResult(importedProfiles, reachabilityChecks);
         },
-        afterRollback: async (profiles) => {
-          const { activeProfileId, signedOut } = useConnectionStore.getState();
-          // The running client may still hold the adapter for the login the pairing replaced.
-          if (!signedOut && profiles.some(({ id }) => id === activeProfileId))
-            await setActiveProfile(activeProfileId);
+        save: (importedProfile, onReplace) =>
+          saveProfile(
+            importedProfile.profile,
+            importedProfile.secret,
+            importedProfile.personSession,
+            importedProfile.verification,
+            { replacePersonLogin: true, onReplace },
+          ),
+        activate: async ({ profile }) => {
+          try {
+            // A fresh login adapter replaces the running client's, also when this profile was active.
+            await setActiveProfile(profile.id);
+          } catch (error) {
+            // The saved logins stay; the running client must not keep a login they replaced.
+            const { activeProfileId, signedOut } = useConnectionStore.getState();
+            if (
+              !signedOut &&
+              importedProfiles.some((entry) => entry.profile.id === activeProfileId)
+            )
+              await setActiveProfile(activeProfileId).catch(() => undefined);
+            throw new Error(
+              `Paired, but Companion could not switch to ${profile.name}: ${(error as Error).message}`,
+            );
+          }
         },
       });
       const preferredProfile = preferredReachable.profile;

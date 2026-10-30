@@ -99,10 +99,7 @@ test('pairing again replaces the person login saved for that gateway', async () 
       { profile: lan, personSession: paired },
       { profile: tailnet, personSession: paired },
     ],
-    {
-      save: ({ profile }, onReplace) => signIn(profile, paired, onReplace),
-      activate: async () => undefined,
-    },
+    ({ profile }, onReplace) => signIn(profile, paired, onReplace),
   );
   assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'b'.repeat(32));
   assert.equal(
@@ -121,12 +118,9 @@ test('a pairing that fails part way puts back the logins it replaced', async () 
         { profile: lan, personSession: paired },
         { profile: tailnet, personSession: paired },
       ],
-      {
-        save: async ({ profile }, onReplace) => {
-          if (profile === tailnet) throw new Error('Keychain unavailable');
-          await signIn(profile, paired, onReplace);
-        },
-        activate: async () => undefined,
+      async ({ profile }, onReplace) => {
+        if (profile === tailnet) throw new Error('Keychain unavailable');
+        await signIn(profile, paired, onReplace);
       },
     ),
     /Keychain unavailable/u,
@@ -148,15 +142,12 @@ test('a rollback keeps a login someone else saved after the pairing wrote its ow
         { profile: lan, personSession: paired },
         { profile: tailnet, personSession: paired },
       ],
-      {
-        save: async ({ profile }, onReplace) => {
-          if (profile === tailnet) {
-            await signIn(lan, session('c'));
-            throw new Error('Keychain unavailable');
-          }
-          await signIn(profile, paired, onReplace);
-        },
-        activate: async () => undefined,
+      async ({ profile }, onReplace) => {
+        if (profile === tailnet) {
+          await signIn(lan, session('c'));
+          throw new Error('Keychain unavailable');
+        }
+        await signIn(profile, paired, onReplace);
       },
     ),
     /Keychain unavailable/u,
@@ -164,60 +155,68 @@ test('a rollback keeps a login someone else saved after the pairing wrote its ow
   assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'c'.repeat(32));
 });
 
-test('a pairing whose addresses never answer keeps the old login and re-syncs on it', async () => {
+const reachable = { profile: lan, reachable: true };
+
+function probeThatSeesSessionEnd(entry: { personSession?: PersonSessionAuth }) {
+  return async () => {
+    const { sessionStorage } = save.pairingProbeCredentials(entry);
+    assert.ok(sessionStorage);
+    const probe = new PersonSessionClient({
+      storage: sessionStorage,
+      request: async () => {
+        throw Object.assign(new Error('ended'), { code: 'AUTH_SESSION_ENDED' });
+      },
+    });
+    await assert.rejects(probe.accessToken(true), PersonSessionEndedError);
+    return null;
+  };
+}
+
+test('a pairing whose addresses never answer saves nothing', async () => {
+  await signIn(lan, session('a'));
+  const entry = { profile: lan, personSession: session('b') };
+  const saved: string[] = [];
+  await assert.rejects(
+    save.keepPairing([entry], {
+      probe: probeThatSeesSessionEnd(entry),
+      save: async ({ profile }) => {
+        saved.push(profile.id);
+      },
+      activate: async () => undefined,
+    }),
+    /None of the paired addresses answered, so nothing was saved/u,
+  );
+  assert.deepEqual(saved, []);
+  assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'a'.repeat(32));
+});
+
+test('a pairing saves only after an address answers and keeps its logins if switching fails', async () => {
   await signIn(lan, session('a'));
   const paired = session('b');
-  const resynced: { id: string; login: string | undefined }[] = [];
+  const steps: string[] = [];
   await assert.rejects(
-    save.savePairedProfiles(
+    save.keepPairing(
       [
         { profile: lan, personSession: paired },
         { profile: tailnet, personSession: paired },
       ],
       {
-        save: ({ profile }, onReplace) => signIn(profile, paired, onReplace),
-        activate: async () => {
-          throw new Error('None of the paired addresses answered');
+        probe: async () => {
+          steps.push('probe');
+          return reachable;
         },
-        afterRollback: async (touched) => {
-          for (const profile of touched)
-            resynced.push({
-              id: profile.id,
-              login: (await profiles.readGatewayProfilePersonSession(profile))?.session.id,
-            });
-          throw new Error('reconnect failed');
+        save: async ({ profile }, onReplace) => {
+          steps.push(`save ${profile.kind}`);
+          await signIn(profile, paired, onReplace);
+        },
+        activate: async ({ profile }) => {
+          steps.push(`activate ${profile.kind}`);
+          throw new Error('Could not switch');
         },
       },
     ),
-    /None of the paired addresses answered/u,
+    /Could not switch/u,
   );
-  assert.deepEqual(resynced, [
-    { id: lan.id, login: 'a'.repeat(32) },
-    { id: tailnet.id, login: undefined },
-  ]);
-});
-
-test('a probe that sees the new session end leaves the old login for the rollback', async () => {
-  await signIn(lan, session('a'));
-  const paired = session('b');
-  const entry = { profile: lan, personSession: paired };
-  await assert.rejects(
-    save.savePairedProfiles([entry], {
-      save: ({ profile }, onReplace) => signIn(profile, paired, onReplace),
-      activate: async () => {
-        const credentials = save.pairingProbeCredentials(entry);
-        assert.ok(credentials.sessionStorage);
-        const probe = new PersonSessionClient({
-          storage: credentials.sessionStorage,
-          request: async () => {
-            throw Object.assign(new Error('ended'), { code: 'AUTH_SESSION_ENDED' });
-          },
-        });
-        await assert.rejects(probe.accessToken(true), PersonSessionEndedError);
-        throw new Error('None of the paired addresses answered');
-      },
-    }),
-    /None of the paired addresses answered/u,
-  );
-  assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'a'.repeat(32));
+  assert.deepEqual(steps, ['probe', 'save lan', 'save tailnet', 'activate lan']);
+  assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'b'.repeat(32));
 });
