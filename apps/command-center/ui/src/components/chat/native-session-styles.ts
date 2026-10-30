@@ -236,11 +236,11 @@ export const nativeSessionStyles = css`
   summary {
     cursor: pointer;
   }
-  /* A finished turn's folded tool calls: one row, a full touch target. */
+  /* A finished turn's folded tool calls: one row, a full touch target, keeping the disclosure marker. */
   article.work > details > summary {
-    display: flex;
-    align-items: center;
+    box-sizing: border-box;
     min-height: 44px;
+    padding-block: 12px;
   }
   details pre,
   .request pre {
