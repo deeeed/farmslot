@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -256,50 +256,31 @@ test('prepare fails closed when a remote cannot be refreshed', async (t) => {
   assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
 });
 
-test('prepare retries a fetch that lost a remote ref to a concurrent fetch in the shared repo', async (t) => {
-  const { repo, vars } = slotRepo(t, ['origin']);
-  git(repo, 'push', '-q', 'origin', BRANCH);
-  // Another checkout published main; this repo's tracking ref has not seen it yet.
-  const behind = git(repo, 'rev-parse', 'origin/main');
-  const published = git(repo, 'commit-tree', 'HEAD^{tree}', '-p', behind, '-m', 'published');
-  git(repo, 'push', '-q', 'origin', `${published}:refs/heads/main`);
-  git(repo, 'update-ref', 'refs/remotes/origin/main', behind);
-  // A slot sharing this repository fetches at the same time and holds the ref.
-  const lock = path.join(repo, '.git/refs/remotes/origin/main.lock');
-  writeFileSync(lock, '');
-  const fetches: string[] = [];
-  await assertPrepareCommitsPublished(vars, BRANCH, async (slot, command) => {
-    const result = await bash(slot, command);
-    if (command.includes(' fetch --all ')) {
-      fetches.push(result.stderr);
-      rmSync(lock, { force: true });
-    }
-    return result;
-  });
-  assert.equal(fetches.length, 2);
-  assert.match(fetches[0]!, /cannot lock ref 'refs\/remotes\/origin\/main'/);
-  assert.equal(git(repo, 'rev-parse', 'origin/main'), published);
-});
+// Slots whose worktrees share one repository fetch at once; git refuses the
+// loser's tracking-ref update in either of these two forms.
+const refRaces = [
+  "error: cannot lock ref 'refs/remotes/origin/main': is at 92c802b8 but expected a7310937\n" +
+    ' ! a7310937..92c802b8  main       -> origin/main  (unable to update local ref)',
+  "error: cannot lock ref 'refs/remotes/origin/main': Unable to create '/slot/.git/refs/remotes/origin/main.lock': File exists.",
+];
 
-test('prepare refuses a ref race that outlasts its retries and other fetch failures at once', async () => {
+test('prepare retries a fetch only while it loses a ref to a concurrent fetch in the shared repo', async () => {
   const vars = { slotId: 'macpro-echobridge-3', remoteRepo: '/slot' } as SlotVars;
-  const race =
-    "error: cannot lock ref 'refs/remotes/origin/main': is at 92c802b8 but expected a7310937\n" +
-    ' ! a7310937..92c802b8  main       -> origin/main  (unable to update local ref)';
-  for (const [stderr, attempts] of [
-    [race, 3],
-    ['fatal: unable to access the remote', 1],
+  const failure = (stderr: string) => ({ stdout: '', stderr, exitCode: 1 });
+  for (const [outcomes, refused] of [
+    [[failure(refRaces[0]!), undefined], false],
+    [[failure(refRaces[1]!), undefined], false],
+    [[failure(refRaces[0]!), failure(refRaces[1]!), failure(refRaces[0]!)], true],
+    [[failure('fatal: unable to access the remote')], true],
   ] as const) {
     let fetches = 0;
-    await assert.rejects(
-      assertPrepareCommitsPublished(vars, BRANCH, async (_slot, command) => {
-        if (!command.includes(' fetch --all ')) return { stdout: '', stderr: '', exitCode: 0 };
-        fetches++;
-        return { stdout: '', stderr, exitCode: 1 };
-      }),
-      /Cannot verify remote commits.*branches untouched/,
-    );
-    assert.equal(fetches, attempts);
+    const prepared = assertPrepareCommitsPublished(vars, BRANCH, async (_slot, command) => {
+      if (!command.includes(' fetch --all ')) return { stdout: '', stderr: '', exitCode: 0 };
+      return outcomes[fetches++] ?? { stdout: '', stderr: '', exitCode: 0 };
+    });
+    if (refused) await assert.rejects(prepared, /Cannot verify remote commits.*branches untouched/);
+    else await prepared;
+    assert.equal(fetches, outcomes.length);
   }
 });
 
