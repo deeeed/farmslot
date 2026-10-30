@@ -65,7 +65,8 @@ export async function savePairedProfiles<T extends PairingEntry>(
         if (!replaced.has(entry)) replaced.set(entry, previous);
       });
   } catch (error) {
-    await Promise.all(
+    // The pairing's error is the one to report, also when a restore fails.
+    await Promise.allSettled(
       [...replaced].map(([entry, previous]) =>
         restoreGatewayProfileLogin(entry.profile, previous, {
           personSessionId: entry.personSession?.session.id,

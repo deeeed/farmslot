@@ -145,7 +145,8 @@ function sameLogin(left: StoredProfileLogin, right: StoredProfileLogin): boolean
 }
 
 async function serializeProfileWrite(key: string, write: () => Promise<void>): Promise<void> {
-  while (profileWrites.has(key)) await profileWrites.get(key);
+  // A failed write reports to its own caller. The next one still runs and checks the stored login.
+  while (profileWrites.has(key)) await profileWrites.get(key)?.catch(() => undefined);
   const task = write();
   profileWrites.set(key, task);
   try {

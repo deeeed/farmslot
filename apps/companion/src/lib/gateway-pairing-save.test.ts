@@ -4,6 +4,7 @@ import test, { mock } from 'node:test';
 import {
   type GatewayAuthConnectResult,
   type PersonSessionAuth,
+  PersonSessionChangedError,
   PersonSessionClient,
   PersonSessionEndedError,
 } from '@farmslot/protocol';
@@ -89,6 +90,7 @@ async function signIn(
   });
   await login.credentials.sessionStorage.save(auth);
   await login.commitVerifiedCredential(verified);
+  return login;
 }
 
 test('pairing again replaces the person login saved for that gateway', async () => {
@@ -99,7 +101,9 @@ test('pairing again replaces the person login saved for that gateway', async () 
       { profile: lan, personSession: paired },
       { profile: tailnet, personSession: paired },
     ],
-    ({ profile }, onReplace) => signIn(profile, paired, onReplace),
+    async ({ profile }, onReplace) => {
+      await signIn(profile, paired, onReplace);
+    },
   );
   assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'b'.repeat(32));
   assert.equal(
@@ -153,6 +157,32 @@ test('a rollback keeps a login someone else saved after the pairing wrote its ow
     /Keychain unavailable/u,
   );
   assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'c'.repeat(32));
+});
+
+test('a rollback still runs behind a refresh the replaced login could not save', async () => {
+  const running = await signIn(lan, session('a'));
+  const paired = session('b');
+  let refresh: Promise<void> | undefined;
+  await assert.rejects(
+    save.savePairedProfiles(
+      [
+        { profile: lan, personSession: paired },
+        { profile: tailnet, personSession: paired },
+      ],
+      async ({ profile }, onReplace) => {
+        if (profile === tailnet) {
+          // The running client saves a refresh of login A just as the pairing's next write fails.
+          refresh = running.credentials.sessionStorage.save(session('a'));
+          throw new Error('Profile list write failed');
+        }
+        await signIn(profile, paired, onReplace);
+      },
+    ),
+    /Profile list write failed/u,
+  );
+  assert.ok(refresh);
+  await assert.rejects(refresh, PersonSessionChangedError);
+  assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'a'.repeat(32));
 });
 
 const reachable = { profile: lan, reachable: true };
