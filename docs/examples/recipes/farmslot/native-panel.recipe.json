@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "FARMSLOT_LAYOUT_NATIVE_PANEL=1 node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
         "timeout_ms": 300000,
-        "intent": "Open the actual conversation through its shared disclosure, reload to verify the saved choice, and observe genuine protocol failure/refresh/recovery responses. Require retained transcript, a fixed status row, no raw source error, real 60-second outage admission and no native commands at 1280px and 414px. Save source-timed recordings and screenshots.",
+        "intent": "Open the actual conversation through its shared disclosure, reload to verify the saved choice, and observe genuine protocol failure/refresh/recovery responses. Verify Family and Terminal open/close across reloads, refuse finished-run terminal restoration and surface an unsupported inventory before selection. Require retained transcript, a fixed status row, no raw source error, real 60-second outage admission and no native commands at 1280px and 414px. Save source-timed recordings and screenshots.",
         "next": "result"
       },
       "result": {

@@ -299,6 +299,122 @@ export async function proveNativePanel({
     }
     results.push({ width, samples });
   }
+  if (!before) {
+    const additions = [];
+    await cdp('eval', target, "location.hash='family/layout-run?run=layout-run';return true;");
+    await until((v) => v.runLoaded && v.expanded === false && v.views === 0, 'family-closed');
+    await cdp(
+      'click',
+      target,
+      'family-observability >>> [data-testid="run-native-history-toggle"]',
+    );
+    const familyOpen = await until(
+      (v) => v.views === 1 && v.history.includes('Retained panel history.'),
+      'family-open',
+    );
+    assert(familyOpen.toggleHeight >= 44, 'The shared Family disclosure must remain touch-sized');
+    await browserCall('Page.reload');
+    additions.push({
+      phase: 'family-remember-open',
+      ...(await until(
+        (v) => v.timeOrigin !== familyOpen.timeOrigin && v.expanded && v.views === 1,
+        'family-remember-open',
+      )),
+    });
+    await cdp(
+      'click',
+      target,
+      'family-observability >>> [data-testid="run-native-history-toggle"]',
+    );
+    const familyClosed = await until((v) => !v.expanded && v.views === 0, 'family-close');
+    await browserCall('Page.reload');
+    additions.push({
+      phase: 'family-remember-closed',
+      ...(await until(
+        (v) => v.timeOrigin !== familyClosed.timeOrigin && v.expanded === false && v.views === 0,
+        'family-remember-closed',
+      )),
+    });
+
+    await cdp('eval', target, "location.hash='run/terminal-run';return true;");
+    await until(
+      (v) => v.runId === 'terminal-run' && v.terminalExpanded === 'false' && v.terminalViews === 0,
+      'terminal-default-closed',
+    );
+    await cdp('click', target, 'run-detail >>> [data-testid="run-terminal-toggle"]');
+    const terminalOpen = await until(
+      (v) => v.terminalViews === 1 && frames.some((f) => f.method === 'terminal.subscribe'),
+      'terminal-open',
+    );
+    await browserCall('Page.reload');
+    additions.push({
+      phase: 'terminal-remember-open',
+      ...(await until(
+        (v) => v.timeOrigin !== terminalOpen.timeOrigin && v.terminalViews === 1,
+        'terminal-remember-open',
+      )),
+    });
+    await cdp('click', target, 'run-detail >>> [data-testid="run-terminal-toggle"]');
+    const terminalClosed = await until(
+      (v) => v.terminalExpanded === 'false' && v.terminalViews === 0,
+      'terminal-close',
+    );
+    await browserCall('Page.reload');
+    additions.push({
+      phase: 'terminal-remember-closed',
+      ...(await until(
+        (v) =>
+          v.timeOrigin !== terminalClosed.timeOrigin &&
+          v.terminalExpanded === 'false' &&
+          v.terminalViews === 0,
+        'terminal-remember-closed',
+      )),
+    });
+    await cdp('click', target, 'run-detail >>> [data-testid="run-terminal-toggle"]');
+    await until((v) => v.terminalViews === 1, 'terminal-reopen');
+    transition('terminal-finished');
+    const finished = await until(
+      (v) => v.detailText.includes('This run is finished.') && v.terminalViews === 0,
+      'terminal-finished',
+    );
+    const finishMark = frames.length;
+    await browserCall('Page.reload');
+    additions.push({
+      phase: 'terminal-finished-no-restore',
+      ...(await until(
+        (v) =>
+          v.timeOrigin !== finished.timeOrigin &&
+          v.detailText.includes('This run is finished.') &&
+          v.terminalViews === 0,
+        'terminal-finished-no-restore',
+      )),
+    });
+    assert(
+      !frames.slice(finishMark).some((f) => f.method === 'terminal.subscribe'),
+      'A finished run must never restore a terminal subscription',
+    );
+    assert(
+      !frames.some((f) => f.method === 'terminal.input'),
+      'Disclosure proof never types into a terminal',
+    );
+
+    transition('native-unsupported');
+    await cdp('eval', target, "location.hash='native';return true;");
+    const unsupportedOrigin = (await inspect()).timeOrigin;
+    await browserCall('Page.reload');
+    additions.push({
+      phase: 'unsupported-inventory',
+      ...(await until(
+        (v) =>
+          v.timeOrigin !== unsupportedOrigin &&
+          v.readState === 'unsupported' &&
+          v.status.includes('Update the gateway') &&
+          !v.retry,
+        'unsupported-inventory',
+      )),
+    });
+    await save('additional-disclosures', { result: 'PASS', additions });
+  }
   assert(
     !frames.some(
       (f) =>

@@ -15,7 +15,11 @@ import {
   resourceCollectorReadMethods,
   resourceDependenciesForRead,
 } from '../../../packages/protocol/src/client-cache/registry.ts';
-import { mockPipelineRuns, mockRuns } from '../ui/src/dev/mock-data.ts';
+import {
+  mockFamilyObservabilitySnapshot,
+  mockPipelineRuns,
+  mockRuns,
+} from '../ui/src/dev/mock-data.ts';
 
 import { nativePanelFixture, proveNativePanel } from './native-panel-proof.mjs';
 import { proveRefetchNotices, recordBrowserProof } from './stable-layout-refetch-proof.mjs';
@@ -75,6 +79,22 @@ const fixtureRun = {
   decisions: [],
   ...(nativePanelProof ? nativeFixture.run : {}),
 };
+
+const terminalRun = {
+  ...fixtureRun,
+  id: 'terminal-run',
+  familyId: 'terminal-run',
+  transport: 'tmux',
+  slotId: 'layout-slot',
+  agentContexts: [],
+};
+const familySnapshot = mockFamilyObservabilitySnapshot();
+familySnapshot.familyId = 'layout-run';
+familySnapshot.latestRunId = 'layout-run';
+familySnapshot.runs = [
+  { ...familySnapshot.runs[0], runId: 'layout-run', status: fixtureRun.status },
+];
+
 // A resolved gate from the checked-in sample, served through the ordinary run APIs.
 const gateRun = structuredClone(
   mockPipelineRuns().find((run) => run.decisions.some((item) => item.payload?.kind === 'ready')),
@@ -112,9 +132,27 @@ function observedRun() {
   return structuredClone(gateRun);
 }
 const values = {
-  ...(nativePanelProof ? { 'native.session.read': nativeFixture.page } : {}),
+  ...(nativePanelProof
+    ? {
+        'native.session.read': nativeFixture.page,
+        'family.observability.get': () => ({ snapshot: familySnapshot }),
+        'terminal.subscribe': () => ({ ok: true }),
+        'terminal.unsubscribe': () => ({ ok: true }),
+        'terminal.resize': () => ({ ok: true }),
+        'terminal.snapshot': () => ({
+          lines: ['Read-only terminal presentation fixture'],
+          slotId: 'layout-slot',
+          timestamp: Date.now(),
+        }),
+      }
+    : {}),
   'run.list': () => ({ runs: [refetchProof ? gateRun : fixtureRun] }),
-  'run.get': () => ({ run: observedRun() }),
+  'run.get': (params) => ({
+    run:
+      params?.runId === 'terminal-run'
+        ? { ...terminalRun, status: mode === 'terminal-finished' ? 'done' : 'monitoring' }
+        : observedRun(),
+  }),
   'run.recipeRunsForRun': () => ({ recipeRuns: [], selectedRecipeRunId: null }),
   'config.templateOptions': () => ({ options: [] }),
   'runner.visibleModels.get': () => ({ runners: [] }),
@@ -205,7 +243,7 @@ wss.on('connection', (socket) =>
             version: 1,
             epoch,
             versionLists: false,
-            observedReads: 1,
+            ...(nativePanelProof && mode === 'native-unsupported' ? {} : { observedReads: 1 }),
             workspaceReads: 1,
             upstreamObservers: { version: 1, methods: resourceCollectorReadMethods() },
           },
@@ -372,6 +410,7 @@ function transition(next) {
     ...(nativePanelProof
       ? [
           { family: 'run', runId: 'layout-run' },
+          { family: 'run', runId: 'terminal-run' },
           ...(resourceDependenciesForRead(
             'native.session.read',
             nativeFixture.params,

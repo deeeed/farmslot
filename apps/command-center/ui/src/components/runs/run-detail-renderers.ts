@@ -1320,7 +1320,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           ${terminal.disabledReason
             ? html`<span role="status">${terminal.disabledReason}</span>`
             : nothing}
-          ${ctx._showTerminal
+          ${ctx._showTerminal && !terminal.disabledReason
             ? html`<div class="terminal-section">
                 <terminal-view
                   .slotId=${terminal.target?.slotId ?? boundSlotId ?? ''}

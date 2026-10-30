@@ -163,7 +163,11 @@ import {
 } from './run-detail-url-state.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
 import { collectRunInteractivePacketArtifacts } from './run-utils.js';
-import { rememberRunWorkerPanel, runWorkerPanelOpen } from './run-worker-panel-preferences.js';
+import {
+  rememberRunWorkerPanel,
+  runWorkerPanelOpen,
+  toggleRunWorkerPanel,
+} from './run-worker-panel-preferences.js';
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
@@ -1790,12 +1794,10 @@ export class RunDetail extends RunDetailState {
         renderRunAgentSessions(run, {
           nativeHistoryOpen: this._showNativeHistory,
           onToggleNativeHistory: () => {
-            this._showNativeHistory = !this._showNativeHistory;
-            rememberRunWorkerPanel(
+            this._showNativeHistory = toggleRunWorkerPanel(
               getResourceWorkspaceKey(),
               this.runId,
               'conversation',
-              this._showNativeHistory,
             );
           },
           actionsBlocked: this._actionsBlocked(),

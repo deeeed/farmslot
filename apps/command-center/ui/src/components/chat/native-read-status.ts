@@ -1,6 +1,6 @@
 import { type NativeSessionInfo, sourceObservationAge } from '@farmslot/protocol';
 
-interface NativeReadStatusContext {
+export interface NativeReadStatusContext {
   connected: boolean;
   selected: boolean;
   caughtUp: boolean;
@@ -53,7 +53,7 @@ export function nativeReadStatus(ctx: NativeReadStatusContext) {
         ? 'No history read yet'
         : ''
       : ctx.saved
-        ? `Saved conversation history, ${sourceObservationAge(ctx.observedAt, ctx.now)}`
-        : `Updated ${Math.floor(Math.max(0, ctx.now - ctx.observedAt) / 1000)}s ago`;
+        ? `Saved conversation history, ${sourceObservationAge(ctx.observedAt, ctx.now)}. Actions wait for a current read.`
+        : `Updated ${sourceObservationAge(ctx.observedAt, ctx.now).replace(/ old$/, ' ago')}`;
   return { state, text, age, retry: waiting && ctx.connected && !ctx.unsupported };
 }

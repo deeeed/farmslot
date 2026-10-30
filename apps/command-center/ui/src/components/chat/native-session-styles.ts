@@ -70,6 +70,11 @@ export const nativeSessionStyles = css`
   .bar select {
     max-width: min(480px, 70vw);
   }
+  native-read-status {
+    display: block;
+    flex: 0 0 56px;
+    min-height: 56px;
+  }
   .native-read-status {
     display: flex;
     align-items: center;
@@ -93,6 +98,11 @@ export const nativeSessionStyles = css`
   .native-read-status-text > .meta {
     white-space: normal;
     line-height: 16px;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    max-height: 32px;
+    overflow: hidden;
   }
   .native-read-status button {
     min-height: 44px;

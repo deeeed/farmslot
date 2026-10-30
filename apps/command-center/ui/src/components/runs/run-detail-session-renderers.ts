@@ -344,6 +344,9 @@ export function renderRunAgentSessions(
         letter-spacing: 0.06em;
         color: ${colors.textMuted};
       }
+      .worker-panel-toggle {
+        min-height: 44px;
+      }
       .agent-sessions-hint {
         color: ${colors.textSecondary};
         font-size: ${fonts.sizeXs};

@@ -1,6 +1,7 @@
-import { safeLsGet, safeLsSet } from '../../utils/storage.js';
+import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 
 export type RunWorkerPanelKind = 'conversation' | 'terminal';
+const choices = new Map<string, boolean>();
 
 function preferenceKey(owner: string | undefined, runId: string, kind: RunWorkerPanelKind) {
   return owner && runId ? `cc:run-worker-panel:${JSON.stringify([owner, runId, kind])}` : undefined;
@@ -12,7 +13,7 @@ export function runWorkerPanelOpen(
   kind: RunWorkerPanelKind,
 ): boolean {
   const key = preferenceKey(owner, runId, kind);
-  return key !== undefined && safeLsGet(key) === '1';
+  return key !== undefined && (choices.get(key) ?? safeLsGet(key) === '1');
 }
 
 export function rememberRunWorkerPanel(
@@ -22,5 +23,19 @@ export function rememberRunWorkerPanel(
   open: boolean,
 ): void {
   const key = preferenceKey(owner, runId, kind);
-  if (key) safeLsSet(key, open ? '1' : '0');
+  if (!key) return;
+  // Disclosure still works when browser storage is blocked; only reload persistence is lost.
+  choices.set(key, open);
+  if (open) safeLsSet(key, '1');
+  else safeLsRemove(key);
+}
+
+export function toggleRunWorkerPanel(
+  owner: string | undefined,
+  runId: string,
+  kind: RunWorkerPanelKind,
+): boolean {
+  const open = !runWorkerPanelOpen(owner, runId, kind);
+  rememberRunWorkerPanel(owner, runId, kind, open);
+  return open;
 }

@@ -35,12 +35,16 @@ test('a real outage becomes unavailable only after 60 seconds, keeping the actua
   };
   const before = nativeReadStatus({ ...failed, now: 159_999 });
   assert.equal(before.state, 'reconnecting');
-  assert.equal(before.age, 'Saved conversation history, 1m old');
+  assert.equal(before.age, 'Saved conversation history, 1m old. Actions wait for a current read.');
   const after = nativeReadStatus({ ...failed, now: 160_000 });
   assert.equal(after.state, 'unavailable');
   assert.equal(after.retry, true);
   assert.doesNotMatch(after.text, /observation source|source recovery/);
   assert.equal(nativeReadStatus({ ...failed, connected: false, now: 160_000 }).retry, false);
+});
+
+test('live observation ages use bounded minutes and hours', () => {
+  assert.equal(nativeReadStatus({ ...current, now: 3_690_000 }).age, 'Updated 1h ago');
 });
 
 test('a pending retry keeps the outage status until the caller observes recovery', () => {

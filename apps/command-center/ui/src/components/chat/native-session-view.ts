@@ -148,9 +148,10 @@ export class NativeSessionView extends LitElement {
   @state() private invalidDelivery = false;
   private revision = 0;
   private timer?: ReturnType<typeof setTimeout>;
-  private statusClock?: ReturnType<typeof setInterval>;
   private readUnavailableSince?: number;
   private inventoryCurrent = false;
+  @state() private inventoryUnsupported = false;
+  @state() private catalogUnsupported = false;
   private unsubscribe?: () => void;
   private inventoryRevision = 0;
   private storageScope = '';
@@ -329,8 +330,6 @@ export class NativeSessionView extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    // Display ages and a sustained outage even when no producer event arrives.
-    this.statusClock = setInterval(() => this.requestUpdate(), 1000);
     document.addEventListener('fullscreenchange', this.fullscreenChanged);
     this.connected = Boolean(this.fixture) || gateway.connectionState === 'connected';
     if (!this.fixture) {
@@ -356,7 +355,6 @@ export class NativeSessionView extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    clearInterval(this.statusClock);
     document.removeEventListener('fullscreenchange', this.fullscreenChanged);
     this.revision++;
     clearTimeout(this.timer);
@@ -398,6 +396,8 @@ export class NativeSessionView extends LitElement {
       this.storageScope = scope;
       this.readUnavailableSince = undefined;
       this.inventoryCurrent = false;
+      this.inventoryUnsupported = false;
+      this.catalogUnsupported = false;
       this.revision++;
       this.selectedId = safeLsGet(this.key('selected')) ?? '';
       this.selectedNodeId = safeLsGet(this.key('selected-node')) ?? 'local';
@@ -477,6 +477,7 @@ export class NativeSessionView extends LitElement {
           nativeObservationQuery<NativeSessionListResult>(Methods.NATIVE_SESSION_LIST, {}, owner),
           (state) => {
             this.inventoryCurrent = state.status === 'ready';
+            this.inventoryUnsupported = state.status === 'unsupported';
             this.inventoryError = state.error?.message ?? '';
             const sessions = state.data?.sessions ?? [];
             this.sessions = sessions
@@ -506,6 +507,7 @@ export class NativeSessionView extends LitElement {
             owner,
           ),
           (state) => {
+            this.catalogUnsupported = state.status === 'unsupported';
             this.catalogError = state.error?.message ?? '';
             this.catalog = state.data;
             this.catalogCurrent = state.status === 'ready';
@@ -953,8 +955,11 @@ export class NativeSessionView extends LitElement {
         unavailableSince: this.readUnavailableSince,
         observedAt: this.historyObservation.observedAt,
         savedHistory: heldDataIsSaved(this.historyObservation, this.connected),
-        unsupported: this.historyObservation.status === 'unsupported',
-        now: Date.now(),
+        historyObservation: this.historyObservation,
+        unsupported:
+          this.historyObservation.status === 'unsupported' ||
+          this.inventoryUnsupported ||
+          this.catalogUnsupported,
         refresh: () => {
           const cache = getResourceCache();
           const owner = getResourceNativeOwnerId();

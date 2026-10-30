@@ -1,8 +1,11 @@
 import { html, nothing } from 'lit';
 
 import type { NativeSessionInfo } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
-import { nativeReadStatus } from './native-read-status.js';
+import './native-read-status-view.js';
+
+import type { NativeReadStatusRowContext } from './native-read-status-view.js';
 import type { NativeWorkerViewTarget } from './native-worker-target.js';
 
 interface NativeSessionHeaderContext {
@@ -27,21 +30,20 @@ interface NativeSessionHeaderContext {
   unavailableSince?: number;
   observedAt?: number;
   savedHistory?: boolean;
+  historyObservation?: ResourceQueryState<unknown>;
   unsupported?: boolean;
-  now?: number;
   refresh(): void;
   toggleWorkspace(): void;
 }
 
 export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
   const session = ctx.session;
-  const status = nativeReadStatus({
+  const status: NativeReadStatusRowContext = {
     ...ctx,
     selected: Boolean(ctx.selectedId),
     sessionState: session?.state,
     saved: ctx.savedHistory,
-    now: ctx.now ?? Date.now(),
-  });
+  };
   return html`
     <div class="bar">
       ${ctx.worker
@@ -105,26 +107,6 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
         ${ctx.fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
       </button>
     </div>
-    <div class="native-read-status" data-testid="native-read-status" data-state=${status.state}>
-      <div class="native-read-status-text">
-        <span
-          class="status"
-          role="status"
-          data-state=${status.state === 'ready' && session ? session.state : status.state}
-          >${status.text}</span
-        >
-        <span
-          class="meta"
-          data-testid=${ctx.savedHistory && ctx.observedAt !== undefined
-            ? 'native-history-saved'
-            : 'native-history-age'}
-          data-observed-at=${ctx.observedAt ?? ''}
-          >${status.age}</span
-        >
-      </div>
-      ${status.retry
-        ? html`<button data-testid="native-refresh" @click=${ctx.refresh}>Retry</button>`
-        : nothing}
-    </div>
+    <native-read-status .context=${status}></native-read-status>
   `;
 }
