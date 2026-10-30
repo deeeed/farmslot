@@ -2362,6 +2362,10 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
           duringReplay = structuredClone(
             getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-race'),
           );
+          assert.equal(
+            getRun(run.id)!.steps.find((step) => step.name === 'human-gate')!.detail,
+            'Preparing operator decision: replaying gate',
+          );
         },
       }),
     /no longer safely reclaimable/,
@@ -2377,6 +2381,10 @@ test('runReplayStep supersedes pending gate decisions before its first awaited o
   assert.equal(after?.status, 'blocked');
   assert.equal(reopened?.resolvedAt, undefined);
   assert.equal(reopened?.context?.supersededBy, undefined);
+  assert.equal(
+    after?.steps.find((step) => step.name === 'human-gate')?.detail,
+    'Waiting for operator decision',
+  );
 });
 
 test('slot activation persists its dispatch baseline and ordinary prepare replay clears the intent', async (t) => {

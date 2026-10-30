@@ -1370,6 +1370,7 @@ export async function executeHumanGateStep(
       }
     }
     const presentReadyGate = async (): Promise<string> => {
+      updateRunStep(runId, S.HUMAN_GATE, { detail: 'Preparing operator decision' });
       // A refused approval reopens only the wait. A later explicit review request
       // or Continue Fixing decision still follows its existing owner below.
       if (publicationApprovalGate && !shouldResumePublicationGate(getRun(runId)!))

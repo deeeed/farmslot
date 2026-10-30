@@ -949,6 +949,9 @@ export async function executeReadyGate(
   let recoveredAction: string | undefined;
   if (publicationApprovalGate) {
     for (;;) {
+      updateRunStep(runId, S.HUMAN_GATE, {
+        detail: 'Preparing operator decision: checking publication package',
+      });
       // A finished fix that no resume will adopt must not read as in progress: the
       // gate's readiness would refuse the package. Settled on each pass, as Retry
       // Gate may follow the worker's finish.

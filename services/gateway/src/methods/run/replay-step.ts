@@ -1430,6 +1430,8 @@ async function replayRunStep(
     // continuation instead of a waiter that would swallow the person's choice.
     for (const decision of reopened) resolveEngineDecision(decision.id, 'superseded');
     const run = updateRun(params.runId, { decisions });
+    if (run.steps.some((step) => step.name === PS.HUMAN_GATE && step.status === 'running'))
+      updateRunStep(params.runId, PS.HUMAN_GATE, { detail: 'Waiting for operator decision' });
     await persistRunNow(run, 'replay-rollback-decisions');
     emit(Events.RUN_UPDATED, { run });
     for (const decision of reopened)
