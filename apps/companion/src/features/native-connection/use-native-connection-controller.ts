@@ -11,7 +11,7 @@ import { useConnectionStore } from '../../store/connection';
 import { useGatewayPairingController } from '../settings/use-gateway-pairing-controller';
 import type { ProfileConnectionTestState } from '../settings/use-gateway-profile-controller';
 
-/** `pairingLink` is a pairing QR payload from a pair link; it pairs once the connection store is ready. */
+/** `pairingLink` is a pairing QR payload from a pair link; once the connection store is ready it asks, then pairs. */
 export function useNativeConnectionController(options: { pairingLink?: string } = {}) {
   const { pairingLink } = options;
   const connection = useConnectionStore();
@@ -40,8 +40,8 @@ export function useNativeConnectionController(options: { pairingLink?: string } 
     onPaired: () => setPaired(true),
   });
   openScannerRef.current = pairing.openPairingScanner;
-  const pairFromLinkRef = useRef(pairing.pairFromQrData);
-  pairFromLinkRef.current = pairing.pairFromQrData;
+  const pairFromLinkRef = useRef(pairing.pairFromLink);
+  pairFromLinkRef.current = pairing.pairFromLink;
   const storeReady = Boolean(connection.client) && !connection.initializing;
   useEffect(() => {
     alive.current = true;
@@ -55,8 +55,8 @@ export function useNativeConnectionController(options: { pairingLink?: string } 
     void openScannerRef.current();
   }, [connection.profiles.length, pairingLink]);
   useEffect(() => {
-    // Pairing saves profiles and activates one, so it waits for the store to load the saved ones.
-    if (pairingLink && storeReady) void pairFromLinkRef.current(pairingLink);
+    // The prompt names the saved profiles a pairing replaces, so it waits for the store to load them.
+    if (pairingLink && storeReady) pairFromLinkRef.current(pairingLink);
   }, [pairingLink, storeReady]);
   const act = async (work: () => Promise<unknown>) => {
     if (mutation.current) return;

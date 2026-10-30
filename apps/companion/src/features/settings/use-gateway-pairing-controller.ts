@@ -1,12 +1,15 @@
 import { type BarcodeScanningResult, useCameraPermissions } from 'expo-camera';
-import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useState } from 'react';
 import { Alert } from 'react-native';
 
 import {
   exchangeGatewayPairingQr,
+  type GatewayPairingQrPayload,
+  pairingLinkPrompt,
   parseGatewayPairingQr,
   profileFromPairingResult,
 } from '../../lib/gateway-pairing';
+import { claimPairing, forgetLastPairing, releasePairing } from '../../lib/gateway-pairing-claim';
 import { keepPairing } from '../../lib/gateway-pairing-save';
 import type { GatewayProfile, GatewayProfileAuthMode } from '../../lib/gateway-profiles';
 import { useConnectionStore } from '../../store/connection';
@@ -33,11 +36,6 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [pairingScannerOpen, setPairingScannerOpen] = useState(false);
   const [pairingInProgress, setPairingInProgress] = useState(false);
-  // The camera reports a QR on every frame and a link can arrive twice; state updates land too late
-  // to stop a second exchange with the same single-use code.
-  const pairingRunning = useRef(false);
-  const lastPairingData = useRef<string | null>(null);
-
   const openPairingScanner = async () => {
     if (!cameraPermission?.granted) {
       const result = await requestCameraPermission();
@@ -46,16 +44,13 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
         return;
       }
     }
-    lastPairingData.current = null;
+    forgetLastPairing();
     setPairingInProgress(false);
     setPairingScannerOpen(true);
   };
 
-  /** Pairs from a pairing QR payload, scanned or from a pair link: one exchange per payload. */
-  const pairFromQrData = async (data: string) => {
-    if (pairingRunning.current || data === lastPairingData.current) return;
-    pairingRunning.current = true;
-    lastPairingData.current = data;
+  /** Pairs from a pairing QR payload, scanned or from a link, that the caller claimed with `claimPairing`. */
+  const pair = async (data: string) => {
     setPairingInProgress(true);
     try {
       const payload = parseGatewayPairingQr(data);
@@ -143,18 +138,45 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
       setPairingInProgress(false);
       Alert.alert('Pairing failed', (error as Error).message);
     } finally {
-      pairingRunning.current = false;
+      releasePairing();
     }
   };
 
-  const handlePairingBarcodeScanned = (result: BarcodeScanningResult) =>
-    pairFromQrData(result.data);
+  const handlePairingBarcodeScanned = (result: BarcodeScanningResult) => {
+    if (claimPairing(result.data) === 'claimed') void pair(result.data);
+  };
+
+  /** Any app or web page can open a pair link, so it pairs only after the user confirms where. */
+  const pairFromLink = (data: string) => {
+    const claim = claimPairing(data);
+    // The same link again (its route remounted) was handled already; its code is single-use.
+    if (claim === 'busy')
+      Alert.alert('Pairing already running', 'Wait for it to finish, then open the link again.');
+    if (claim !== 'claimed') return;
+    let payload: GatewayPairingQrPayload;
+    try {
+      payload = parseGatewayPairingQr(data);
+    } catch (error) {
+      releasePairing();
+      Alert.alert('Pairing link not valid', (error as Error).message);
+      return;
+    }
+    Alert.alert(
+      'Pair with this gateway?',
+      pairingLinkPrompt(payload, useConnectionStore.getState().profiles),
+      [
+        { text: 'Cancel', style: 'cancel', onPress: releasePairing },
+        { text: 'Pair', onPress: () => void pair(data) },
+      ],
+      { cancelable: false },
+    );
+  };
 
   return {
     closePairingScanner: () => setPairingScannerOpen(false),
     handlePairingBarcodeScanned,
     openPairingScanner,
-    pairFromQrData,
+    pairFromLink,
     pairingInProgress,
     pairingScannerOpen,
   };

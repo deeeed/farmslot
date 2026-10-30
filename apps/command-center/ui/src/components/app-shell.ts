@@ -1498,6 +1498,13 @@ export class FarmApp extends LitElement {
       this.pairingExpiresAt = pairing.expiresAt;
       this.pairingProfileCount = payload.profiles.length;
       this.pairingPayload = payload;
+      // Past its expiry the gateway refuses the code, so the QR and its link give way to a note.
+      setTimeout(
+        () => {
+          if (this.pairingPayload === payload) this.pairingPayload = null;
+        },
+        Math.max(0, Date.parse(pairing.expiresAt) - Date.now()),
+      );
     } catch (err) {
       this.pairingError = err instanceof Error ? err.message : 'Failed to create pairing QR';
     } finally {
@@ -2371,12 +2378,27 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           ${this.pairingQrDataUrl
             ? html`
                 <div class="pairing-qr-wrap">
-                  <img class="pairing-qr" src=${this.pairingQrDataUrl} alt="Companion pairing QR" />
-                  <div class="pairing-expiry">
-                    ${this.pairingProfileCount} profile${this.pairingProfileCount === 1 ? '' : 's'}
-                    · expires ${new Date(this.pairingExpiresAt).toLocaleTimeString()}
-                  </div>
-                  ${this.renderPairingLink()}
+                  ${this.pairingPayload
+                    ? html`
+                        <img
+                          class="pairing-qr"
+                          src=${this.pairingQrDataUrl}
+                          alt="Companion pairing QR"
+                        />
+                        <div class="pairing-expiry">
+                          ${this.pairingProfileCount}
+                          profile${this.pairingProfileCount === 1 ? '' : 's'} · expires
+                          ${new Date(this.pairingExpiresAt).toLocaleTimeString()}
+                        </div>
+                        ${this.renderPairingLink()}
+                      `
+                    : html`
+                        <div class="pairing-expiry">
+                          This code expired at
+                          ${new Date(this.pairingExpiresAt).toLocaleTimeString()}. Generate a new
+                          QR.
+                        </div>
+                      `}
                 </div>
               `
             : html`
