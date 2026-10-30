@@ -56,7 +56,8 @@ import {
   execOnSlot,
   farmslotRoot,
   getOrchestratorTaskRoot,
-  readSlotField,
+  ownsRunTaskWrite,
+  readSlotRow,
 } from '../core/index.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
@@ -1394,8 +1395,7 @@ export async function writeTaskFile(
       taskDir,
       taskAbsDir,
       async () =>
-        Boolean(opts?.initializeTask) ||
-        (await readSlotField(run.slotId!, 'current_run_id')) === run.id,
+        Boolean(opts?.initializeTask) || ownsRunTaskWrite(await readSlotRow(run.slotId!), run.id),
       [],
     );
   }
