@@ -37,6 +37,8 @@ interface RecordedAcceptanceContext {
   claimOverrideReceiptIds?: readonly string[];
   visualJudgmentReceiptIds?: readonly string[];
   qaOutput?: boolean;
+  /** Artifact-only output outside QA whose own output review judges its claims. */
+  outputReview?: boolean;
   reviewBinding?: 'captured' | 'current' | 'approved';
   /** The gate's code review certifies the evidence package head (ADR-062 Amendment 18). */
   codeReviewCertified?: boolean;
@@ -78,7 +80,7 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
       },
     };
   }
-  const { inputs, visualPolicy, qaOutput = false } = context;
+  const { inputs, visualPolicy, qaOutput = false, outputReview = false } = context;
   const approved = context.reviewBinding === 'approved';
   const run = approved
     ? {
@@ -200,6 +202,9 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
           (qaOutput &&
             claim.verdict === 'awaiting-review' &&
             ['visual', 'mixed'].includes(claim.proofMode)) ||
+          // Without a publication package no code review certifies a review
+          // claim, so that output review judges those as well.
+          (outputReview && claim.verdict === 'awaiting-review') ||
           acceptance.criteria.some(
             (criterion) =>
               criterion.id === claim.id &&

@@ -7,13 +7,13 @@ import test from 'node:test';
 import { createArtifactOnlyTrial } from './artifact-only-completion.test-support.js';
 
 await import('../runtime/mock-pty.test-support.js');
-const { failRunOutputCapture } = await import('../run-completion/output.js');
+const { captureRunOutput, failRunOutputCapture } = await import('../run-completion/output.js');
 const { retainedRunTaskDirectory } = await import('../run-completion/retained-artifacts.js');
 const { getRun, updateRun } = await import('../runs/store.js');
 const { assertRunGateReady, collectRunGateReadiness } = await import('./gate-prerequisites.js');
 const { deleteTestRunIfPresent } = await import('./test-fixtures.js');
 
-async function trial(t: test.TestContext, proofMode: 'state' | 'review' = 'state') {
+async function trial(t: test.TestContext, proofMode: 'state' | 'review' | 'visual' = 'state') {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'artifact-only-completion-'));
   t.after(() => rm(taskDir, { recursive: true, force: true }));
   const result = await createArtifactOnlyTrial(taskDir, 'generic-project', proofMode);
@@ -94,4 +94,31 @@ test('eval completion retains unapproved claims without requiring publication ap
   await chmod(retained, 0o600);
   await writeFile(retained, '{}');
   await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
+});
+
+// F243: f74906ee kept its output review through REVIEW, then COMPLETE refused its
+// awaiting-review claims, which only that output review can judge.
+test('an output review judges claims awaiting review; other verdicts still refuse', async (t) => {
+  const reviewed = async (proofMode: 'review' | 'visual') => {
+    const { run } = await trial(t, proofMode);
+    updateRun(run.id, { lane: 'validation', variant: null });
+    await captureRunOutput(run.id, false, true);
+    const current = getRun(run.id)!;
+    assert.equal(current.decisions.filter(({ resolvedAt }) => !resolvedAt).length, 1);
+    return current;
+  };
+  const awaiting = await reviewed('review');
+  assert.deepEqual((await collectRunGateReadiness(awaiting, null)).reasons, []);
+  await assert.doesNotReject(assertRunGateReady(awaiting, null, 'complete'));
+  await assert.doesNotReject(assertRunGateReady(awaiting, null, 'finalize'));
+
+  // A visual claim outside any recording is weak, not awaiting review.
+  const weak = await reviewed('visual');
+  await assert.rejects(assertRunGateReady(weak, null, 'complete'), /claim verdicts/);
+  // A comparison trial has no output review to judge them.
+  updateRun(awaiting.id, { lane: 'comparison', variant: 'candidate' });
+  await assert.rejects(
+    assertRunGateReady(getRun(awaiting.id)!, null, 'complete'),
+    /claim verdicts/,
+  );
 });

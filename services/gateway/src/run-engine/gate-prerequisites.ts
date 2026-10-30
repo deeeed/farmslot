@@ -718,6 +718,11 @@ export async function collectRunGateAssessment(
           inputs,
           visualPolicy,
           qaOutput,
+          outputReview:
+            !qaOutput &&
+            !preparedPackage &&
+            !acceptance.inheritedSource &&
+            runOutputReviewEnabled(run),
           reviewBinding: acceptance.inheritedSource ? 'approved' : 'captured',
           claimOverrideReceiptIds:
             evidencePackage?.claimOverrideReceiptIds ??
