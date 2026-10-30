@@ -487,14 +487,28 @@ ${JSON.stringify(
         class="message-toggle"
         data-testid="native-message-toggle"
         aria-expanded=${expanded ? 'true' : 'false'}
-        @click=${() => {
-          const next = new Set(this.expandedMessages);
-          if (!next.delete(key)) next.add(key);
-          this.expandedMessages = next;
+        @click=${(event: Event) => {
+          const toggle = () => {
+            const next = new Set(this.expandedMessages);
+            if (!next.delete(key)) next.add(key);
+            this.expandedMessages = next;
+          };
+          if (expanded) void this.collapseInPlace(event.currentTarget, toggle);
+          else toggle();
         }}
       >
         ${nativeMessageToggleLabel(preview, expanded)}
       </button>`;
+  }
+
+  /** Collapsing shrinks the content above its toggle; keep the toggle where the reader saw it. */
+  private async collapseInPlace(toggle: EventTarget | null, collapse: () => void) {
+    const timeline = this.renderRoot.querySelector('.timeline');
+    if (!(toggle instanceof Element) || !timeline) return collapse();
+    const before = toggle.getBoundingClientRect().top;
+    collapse();
+    await this.updateComplete;
+    if (toggle.isConnected) timeline.scrollTop += toggle.getBoundingClientRect().top - before;
   }
 
   private scrollTimelineToEnd() {
@@ -1366,11 +1380,14 @@ ${JSON.stringify(
                                   class="work-toggle"
                                   data-testid="native-work-fold"
                                   aria-expanded=${this.foldIsOpen(row.key) ? 'true' : 'false'}
-                                  @click=${() => {
-                                    this.foldOpen = new Map(this.foldOpen).set(
-                                      row.key,
-                                      !this.foldIsOpen(row.key),
-                                    );
+                                  @click=${(event: Event) => {
+                                    const open = this.foldIsOpen(row.key);
+                                    const toggle = () => {
+                                      this.foldOpen = new Map(this.foldOpen).set(row.key, !open);
+                                    };
+                                    if (open)
+                                      void this.collapseInPlace(event.currentTarget, toggle);
+                                    else toggle();
                                   }}
                                 >
                                   ${row.label}
