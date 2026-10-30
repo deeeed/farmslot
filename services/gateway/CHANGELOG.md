@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Prepare retries its remote fetch when another slot sharing the same repository moved a tracking ref first, instead of failing with "cannot lock ref".
 - Task files tell workers to mark complete with criteria awaiting human review; the run gate collects that review.
 - Blind eval trials check their commit signatures from the frozen trial base, so a finished worker no longer fails MONITOR on the removed `origin/main`.
 - A reference-only eval experiment opens as its family snapshot, with its reference package and no runs, instead of failing with "No runs found".
