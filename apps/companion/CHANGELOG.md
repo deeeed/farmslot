@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- A resolved approval or question stays in the native conversation: "Approved: rm -r build", "Declined: …", "Answered: Which file? → a.ts", or "Resolved: …" when the session's host did not record the decision.
 - The family change ledger needs a latest run before it offers its evidence files.
 - A finished turn's tool calls in a native conversation fold behind one row at the end of the turn, "Worked for 4m 12s · 6 tools", that opens them in place. A turn you watched run stays open, with any tool you opened still open.
 - A native conversation shows its state on its own line; while a turn runs, how long it has worked and the tool it runs now ("Working · 1m 12s · Bash").

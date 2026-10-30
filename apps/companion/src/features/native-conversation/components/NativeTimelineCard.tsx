@@ -35,7 +35,9 @@ export function NativeTimelineCard({
             ? 'Assistant'
             : entry.kind === 'tool'
               ? 'Tool'
-              : 'Status'}
+              : entry.kind === 'request'
+                ? 'Request'
+                : 'Status'}
       </Text>
       {entry.kind === 'tool' ? (
         <>

@@ -19,6 +19,8 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import test from 'node:test';
 
+import type { NativeSessionEvent } from '@farmslot/protocol';
+
 import { NativeSessionClient } from './client.js';
 import { decodeRequest, type HostIdentity, requestHost, socketDirectory } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
@@ -46,6 +48,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   send({id:m.id,result:{turn:{id:turn}}});
   send({method:'turn/started',params:{threadId:thread,turn:{id:turn}}});
   if(text==='approval') {send({id:7,method:'item/commandExecution/requestApproval',params:{threadId:thread,command:'fixture tool'}});return;}
+  if(text==='self-resolved') {send({id:8,method:'item/commandExecution/requestApproval',params:{threadId:thread,command:'fixture tool'}});send({method:'serverRequest/resolved',params:{threadId:thread,requestId:8}});send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'completed'}}});return;}
   send({method:'item/started',params:{threadId:thread,item:{id:'tool',type:'commandExecution',command:'fixture tool'}}});
   const child = require('node:child_process').spawn(process.execPath,['-e',"setInterval(()=>{},1000)"],{stdio:'ignore',detached:true});
   fs.writeFileSync('descendant',String(child.pid));
@@ -1630,6 +1633,45 @@ test('legacy stop attestation distinguishes a positively owned replacement gener
     const exited = once(foreign, 'exit');
     foreign.kill('SIGTERM');
     await exited;
+    fixture.restore();
+  }
+});
+
+test('a resolved request records the response this host delivered, and none for a runner resolution', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  try {
+    const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    await manager.send('owner', session.id, 'delivered', 'approval');
+    await until(() => manager.read('owner', session.id).pendingRequests.length === 1);
+    const delivered = manager.read('owner', session.id).pendingRequests[0]!.request!.id;
+    await manager.respond('owner', session.id, delivered, { decision: 'deny' });
+    await until(() => manager.read('owner', session.id).session.state === 'idle');
+    await manager.send('owner', session.id, 'runner', 'self-resolved');
+    await until(() =>
+      manager
+        .read('owner', session.id, 0, 500)
+        .events.some((event) => event.type === 'turn.completed' && event.commandId === 'runner'),
+    );
+    const resolved = (events: NativeSessionEvent[]) =>
+      events
+        .filter((event) => event.type === 'approval.resolved')
+        .map((event) => [event.request?.title, event.response]);
+    const expected = [
+      ['Allow runner action?', { decision: 'deny' }],
+      ['Allow runner action?', undefined],
+    ];
+    assert.deepEqual(resolved(manager.read('owner', session.id, 0, 500).events), expected);
+    const journal = readFileSync(join(fixture.root, `${session.id}.journal`), 'utf8')
+      .trim()
+      .split('\n')
+      .flatMap((line) => {
+        const event = (JSON.parse(line) as { event?: NativeSessionEvent }).event;
+        return event ? [event] : [];
+      });
+    assert.deepEqual(resolved(journal), expected);
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
     fixture.restore();
   }
 });

@@ -12,7 +12,7 @@ import type { NativeWorkerFilesystemPolicy } from './worker-launch.js';
 
 export type NativeEventInput = Omit<
   NativeSessionEvent,
-  'sequence' | 'at' | 'sessionId' | 'generation'
+  'sequence' | 'at' | 'sessionId' | 'generation' | 'response'
 >;
 export interface NativeAdapterOptions {
   cwd: string;
