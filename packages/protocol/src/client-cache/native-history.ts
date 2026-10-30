@@ -443,7 +443,7 @@ export function nativeCommandLockSettled(
 }
 
 /** A reader within this distance of the end of a conversation follows new output. */
-export const NATIVE_FOLLOW_SLACK_PX = 80;
+const NATIVE_FOLLOW_SLACK_PX = 80;
 
 export interface NativeFollow {
   /** The reader is at the end, so new output stays in view. */

@@ -3,8 +3,12 @@ import test from 'node:test';
 
 import {
   appendNativePage,
+  NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
   nativeDeliveryLabel,
+  nativeFollowGrew,
+  nativeFollowLabel,
+  nativeFollowScrolled,
   nativeTimeline,
 } from '../../src/client-cache/native-history.js';
 import type { NativeSessionEvent, NativeSessionReadResult } from '../../src/rpc/native-session.js';
@@ -209,12 +213,6 @@ test('late acceptance restores the user prompt before its assistant response', (
   );
 });
 
-import {
-  NATIVE_FOLLOW_LATEST,
-  nativeFollowGrew,
-  nativeFollowLabel,
-  nativeFollowScrolled,
-} from '../../src/client-cache/native-history.js';
 test('a reader who scrolls up keeps their place and counts new entries until they jump back', () => {
   let follow = NATIVE_FOLLOW_LATEST;
   assert.equal(nativeFollowLabel(follow), undefined);

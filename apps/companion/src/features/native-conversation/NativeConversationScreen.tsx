@@ -249,7 +249,8 @@ export function NativeConversationScreen({
             style={styles.jumpLatest}
             onPress={() => {
               setFollow(NATIVE_FOLLOW_LATEST);
-              scroll.current?.scrollToEnd({ animated: true });
+              // Instant, like Command Center: an animated scroll reports positions short of the end.
+              scroll.current?.scrollToEnd({ animated: false });
             }}
           >
             <Text style={styles.buttonText}>{jumpLabel}</Text>
