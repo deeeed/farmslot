@@ -9,6 +9,7 @@ type Reply = (socket: FakeSocket, frame: Frame) => void;
 class FakeSocket {
   static opened: FakeSocket[] = [];
   static unreachable = new Set<string>();
+  static silent = new Set<string>();
   static reply: Reply = () => {};
   onopen?: () => void;
   onerror?: () => void;
@@ -18,6 +19,7 @@ class FakeSocket {
 
   constructor(readonly url: string) {
     FakeSocket.opened.push(this);
+    if (FakeSocket.silent.has(url)) return;
     setImmediate(() => (FakeSocket.unreachable.has(url) ? this.onerror?.() : this.onopen?.()));
   }
 
@@ -73,10 +75,16 @@ const connected = (principal: { id: string; subjectKind: string }) => ({
   principal: { ...principal, generation: 1, displayName: principal.id, roles: [] },
 });
 
-function withFakeSockets(t: test.TestContext, reply: Reply, unreachable: string[] = []) {
+function withFakeSockets(
+  t: test.TestContext,
+  reply: Reply,
+  unreachable: string[] = [],
+  silent: string[] = [],
+) {
   const original = globalThis.WebSocket;
   FakeSocket.opened = [];
   FakeSocket.unreachable = new Set(unreachable);
+  FakeSocket.silent = new Set(silent);
   FakeSocket.reply = reply;
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
   t.after(() => {
@@ -130,5 +138,37 @@ test('an unreachable first URL falls back before the code is sent', async (t) =>
   assert.deepEqual(
     profiles.map(({ url }) => url),
     [lan, tailnet],
+  );
+});
+
+test('a connection that opens after its timeout never receives the code', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  withFakeSockets(
+    t,
+    (socket, frame) => {
+      if (frame.method === 'pairing.exchange')
+        socket.respond(frame.id, true, {
+          profile: { name: 'macwork', url: lan, authMode: 'token', secret: 'device-secret' },
+        });
+      else
+        socket.respond(
+          frame.id,
+          true,
+          connected({ id: 'farm-automation', subjectKind: 'service' }),
+        );
+    },
+    [],
+    [tailnet],
+  );
+  const paired = exchangeGatewayPairingQr(payload);
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(10_000);
+  await paired;
+  const late = FakeSocket.opened.find(({ url }) => url === tailnet)!;
+  late.onopen?.();
+  assert.deepEqual(late.sent, []);
+  assert.deepEqual(
+    FakeSocket.opened.map(({ url }) => url),
+    [tailnet, lan],
   );
 });

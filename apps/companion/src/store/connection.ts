@@ -50,6 +50,7 @@ import {
   forgetGatewayProfileSecret,
   type GatewayProfile,
   type GatewayProfileAuthMode,
+  type GatewayProfileLoginOptions,
   isLegacyPresetGatewayUrl,
   mergeGatewayProfiles,
   prepareGatewayProfileLogin,
@@ -106,7 +107,7 @@ interface ConnectionStore {
     secret?: string,
     personSession?: PersonSessionAuth,
     verification?: GatewayAuthConnectResult,
-    options?: { replacePersonLogin?: boolean },
+    options?: GatewayProfileLoginOptions,
   ) => Promise<void>;
   setProfileAuth: (
     profileId: string,
@@ -339,7 +340,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     secret?: string,
     personSession?: PersonSessionAuth,
     verification?: GatewayAuthConnectResult,
-    options: { replacePersonLogin?: boolean } = {},
+    options: GatewayProfileLoginOptions = {},
   ) => {
     const normalizedProfile: GatewayProfile = {
       ...profile,

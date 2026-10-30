@@ -1,26 +1,30 @@
-import {
-  type GatewayProfile,
-  restoreGatewayProfileLogin,
-  snapshotGatewayProfileLogin,
-} from './gateway-profiles';
+import type { PersonSessionAuth } from '@farmslot/protocol';
+
+import { type GatewayProfile, restoreGatewayProfileLogin } from './gateway-profiles';
 
 /**
- * Saves every profile a pairing produced, or none of their logins. A step that fails puts back the
- * login each profile had before, so a failed pairing leaves no half-saved sign-in behind.
+ * Saves every profile a pairing produced, or none of their logins. If a save fails, each login this
+ * pairing wrote goes back to the value it replaced, unless someone has saved a newer login since.
  */
-export async function savePairedProfiles<T extends { profile: GatewayProfile }>(
+export async function savePairedProfiles<
+  T extends { profile: GatewayProfile; secret?: string; personSession?: PersonSessionAuth },
+>(
   imported: readonly T[],
-  save: (entry: T) => Promise<void>,
+  save: (entry: T, onReplace: (previous: string | null) => void) => Promise<void>,
 ): Promise<void> {
-  const before = await Promise.all(
-    imported.map(({ profile }) => snapshotGatewayProfileLogin(profile)),
-  );
+  const replaced = new Map<T, string | null>();
   try {
-    for (const entry of imported) await save(entry);
+    for (const entry of imported)
+      await save(entry, (previous) => {
+        if (!replaced.has(entry)) replaced.set(entry, previous);
+      });
   } catch (error) {
     await Promise.all(
-      imported.map(({ profile }, index) =>
-        restoreGatewayProfileLogin(profile, before[index] ?? null),
+      [...replaced].map(([entry, previous]) =>
+        restoreGatewayProfileLogin(entry.profile, previous, {
+          personSessionId: entry.personSession?.session.id,
+          credential: entry.secret,
+        }),
       ),
     );
     throw error;

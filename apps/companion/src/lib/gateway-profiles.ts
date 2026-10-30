@@ -176,19 +176,33 @@ export interface GatewayProfileLogin {
   commitVerifiedCredential(result: GatewayAuthConnectResult): Promise<void>;
 }
 
-/** The stored login as saved, so a pairing that fails can put back what it replaced. */
-export async function snapshotGatewayProfileLogin(profile: GatewayProfile): Promise<string | null> {
-  return SecureStore.getItemAsync(profile.secretStorageKey ?? profileSecretStorageKey(profile.id));
+export interface GatewayProfileLoginOptions {
+  replacePersonLogin?: boolean;
+  /** Receives the stored value each write replaces, read inside the profile's write queue. */
+  onReplace?: (previous: string | null) => void;
 }
 
+/**
+ * Puts back `previous` only while the stored login is still the one `owner` wrote, so a newer
+ * login saved by anyone else stays.
+ */
 export async function restoreGatewayProfileLogin(
   profile: GatewayProfile,
-  snapshot: string | null,
+  previous: string | null,
+  owner: { personSessionId?: string; credential?: string },
 ): Promise<void> {
   const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
   await serializeProfileWrite(key, async () => {
-    if (snapshot === null) await SecureStore.deleteItemAsync(key);
-    else await SecureStore.setItemAsync(key, snapshot);
+    const current = await storedLogin(profile).catch(() => null);
+    const owned =
+      current?.kind === 'person'
+        ? Boolean(owner.personSessionId) && current.auth?.session.id === owner.personSessionId
+        : current?.kind === 'service' && Boolean(owner.credential?.trim())
+          ? current.credential === owner.credential?.trim()
+          : false;
+    if (!owned) return;
+    if (previous === null) await SecureStore.deleteItemAsync(key);
+    else await SecureStore.setItemAsync(key, previous);
   });
 }
 
@@ -196,7 +210,7 @@ export async function prepareGatewayProfileLogin(
   profile: GatewayProfile,
   secret?: string,
   personSession?: PersonSessionAuth,
-  options: { replacePersonLogin?: boolean } = {},
+  options: GatewayProfileLoginOptions = {},
 ): Promise<GatewayProfileLogin> {
   const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
   let expected = await storedLogin(profile);
@@ -221,6 +235,7 @@ export async function prepareGatewayProfileLogin(
       const current = await storedLogin(profile);
       if (!sameLogin(current, expected)) throw new PersonSessionChangedError();
       const next = { kind: 'person' as const, gatewayUrl: profile.url, auth: value };
+      options.onReplace?.(await SecureStore.getItemAsync(key));
       await SecureStore.setItemAsync(
         key,
         JSON.stringify({ format: PROFILE_LOGIN_FORMAT, ...next }),
@@ -271,6 +286,7 @@ export async function prepareGatewayProfileLogin(
           if (!sameLogin(await storedLogin(profile), expected))
             throw new PersonSessionChangedError();
           const next = { kind: 'service' as const, gatewayUrl: profile.url, credential: raw ?? '' };
+          options.onReplace?.(await SecureStore.getItemAsync(key));
           await SecureStore.setItemAsync(
             key,
             JSON.stringify({ format: PROFILE_LOGIN_FORMAT, ...next }),

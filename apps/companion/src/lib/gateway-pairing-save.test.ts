@@ -73,9 +73,14 @@ const verified: GatewayAuthConnectResult = {
   },
 } as GatewayAuthConnectResult;
 
-async function signIn(profile: GatewayProfile, auth: PersonSessionAuth, replacePersonLogin = true) {
+async function signIn(
+  profile: GatewayProfile,
+  auth: PersonSessionAuth,
+  onReplace?: (previous: string | null) => void,
+) {
   const login = await profiles.prepareGatewayProfileLogin(profile, undefined, auth, {
-    replacePersonLogin,
+    replacePersonLogin: true,
+    onReplace,
   });
   await login.credentials.sessionStorage.save(auth);
   await login.commitVerifiedCredential(verified);
@@ -83,8 +88,13 @@ async function signIn(profile: GatewayProfile, auth: PersonSessionAuth, replaceP
 
 test('pairing again replaces the person login saved for that gateway', async () => {
   await signIn(lan, session('a'));
-  await save.savePairedProfiles([{ profile: lan }, { profile: tailnet }], ({ profile }) =>
-    signIn(profile, session('b')),
+  const paired = session('b');
+  await save.savePairedProfiles(
+    [
+      { profile: lan, personSession: paired },
+      { profile: tailnet, personSession: paired },
+    ],
+    ({ profile }, onReplace) => signIn(profile, paired, onReplace),
   );
   assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'b'.repeat(32));
   assert.equal(
@@ -95,14 +105,47 @@ test('pairing again replaces the person login saved for that gateway', async () 
 
 test('a pairing that fails part way puts back the logins it replaced', async () => {
   await signIn(lan, session('a'));
+  await signIn(tailnet, session('d'));
+  const paired = session('b');
   await assert.rejects(
-    save.savePairedProfiles([{ profile: lan }, { profile: tailnet }], async ({ profile }) => {
-      if (profile === tailnet) throw new Error('Keychain unavailable');
-      await signIn(profile, session('b'));
-    }),
+    save.savePairedProfiles(
+      [
+        { profile: lan, personSession: paired },
+        { profile: tailnet, personSession: paired },
+      ],
+      async ({ profile }, onReplace) => {
+        if (profile === tailnet) throw new Error('Keychain unavailable');
+        await signIn(profile, paired, onReplace);
+      },
+    ),
     /Keychain unavailable/u,
   );
   assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'a'.repeat(32));
-  assert.equal(await profiles.readGatewayProfilePersonSession(tailnet), null);
-  assert.equal(secrets.has('tailnet-login'), false);
+  assert.equal(
+    (await profiles.readGatewayProfilePersonSession(tailnet))?.session.id,
+    'd'.repeat(32),
+    'a profile the pairing never wrote keeps its login',
+  );
+});
+
+test('a rollback keeps a login someone else saved after the pairing wrote its own', async () => {
+  await signIn(lan, session('a'));
+  const paired = session('b');
+  await assert.rejects(
+    save.savePairedProfiles(
+      [
+        { profile: lan, personSession: paired },
+        { profile: tailnet, personSession: paired },
+      ],
+      async ({ profile }, onReplace) => {
+        if (profile === tailnet) {
+          await signIn(lan, session('c'));
+          throw new Error('Keychain unavailable');
+        }
+        await signIn(profile, paired, onReplace);
+      },
+    ),
+    /Keychain unavailable/u,
+  );
+  assert.equal((await profiles.readGatewayProfilePersonSession(lan))?.session.id, 'c'.repeat(32));
 });

@@ -118,6 +118,8 @@ function sendUnauthenticatedPairingExchange(
     };
 
     ws.onopen = () => {
+      // An open queued behind the connect timeout must not send the code after fallback began.
+      if (settled) return;
       clearTimeout(timer);
       timer = setTimeout(() => settleWithError(interrupted()), PAIRING_EXCHANGE_TIMEOUT_MS);
       const frame: RequestFrame = {

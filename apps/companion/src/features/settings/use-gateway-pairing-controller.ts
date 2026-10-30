@@ -66,13 +66,13 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
         importedProfiles.map((importedProfile) => importedProfile.profile),
       );
       // Scanning a new code for a gateway replaces the sign-in saved for it.
-      await savePairedProfiles(importedProfiles, (importedProfile) =>
+      await savePairedProfiles(importedProfiles, (importedProfile, onReplace) =>
         saveProfile(
           importedProfile.profile,
           importedProfile.secret,
           importedProfile.personSession,
           importedProfile.verification,
-          { replacePersonLogin: true },
+          { replacePersonLogin: true, onReplace },
         ),
       );
       options.setProfileConnectionTests(
