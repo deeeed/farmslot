@@ -15,6 +15,7 @@ import {
   type FamilyObservabilityArtifact,
   isEvalExperimentManifest,
   isFamilyDiffProvenance,
+  isRecord,
   isResultPackageManifest,
   isRunArtifactImagePath,
   type PortableTemplateProvenance,
@@ -547,27 +548,16 @@ async function readTemplateProvenance(taskDir: string): Promise<TemplateProvenan
   return parsed;
 }
 
-export async function finalizeEvalResultPackageForRun(
+async function captureEvalPackage(
   run: Run,
-): Promise<ResultPackageManifest | null> {
+  currentPackage: ResultPackageManifest,
+  metrics = metricsForRun(run),
+): Promise<ResultPackageManifest> {
   const link = run.engineState?.evalExperiment;
-  if (!link) {
-    const staleEvalPackage = Object.prototype.hasOwnProperty.call(
-      run.engineState ?? {},
-      'evalPackage',
-    );
-    if (staleEvalPackage) {
-      throw new Error(
-        `Run ${run.id} uses removed engineState.evalPackage eval schema; recreate the experiment trial with eval.trial.start`,
-      );
-    }
-    return null;
-  }
-  if (!run.taskFile) return null;
-
+  if (!link || !run.taskFile) throw new Error('Eval package task is missing');
   const taskDir = path.dirname(run.taskFile);
-  const currentPackage = await readResultPackageManifest(link.packagePath);
-  const diff = await readTaskDiffProvenance(taskDir, 'eval-diff-missing');
+  const diff =
+    link.blind?.firstOutput?.diff ?? (await readTaskDiffProvenance(taskDir, 'eval-diff-missing'));
   const templateProvenance = await readTemplateProvenance(taskDir);
   const validationEvidence = await scanResultPackageArtifacts(taskDir, run);
   const visualEvidence = visualEvidenceFromArtifacts(validationEvidence, run);
@@ -589,42 +579,160 @@ export async function finalizeEvalResultPackageForRun(
     : currentPackage.templateProvenance
       ? portableTemplateProvenance(currentPackage.templateProvenance)
       : undefined;
-  const finalized =
-    currentPackage.status === 'final'
-      ? currentPackage
-      : await writeResultPackageManifest(link.packagePath, {
-          ...currentPackage,
-          comparisonEligibility: blindTrialEligibility(link.blind),
-          status: 'final',
-          finalizedAt: new Date().toISOString(),
-          runId: run.id,
-          familyId: run.familyId,
-          diff,
-          axes: portableProvenance
-            ? {
-                ...currentPackage.axes,
-                template: {
-                  ...currentPackage.axes.template,
-                  path: portableProvenance.templatePath,
-                  name:
-                    currentPackage.axes.template?.name ??
-                    portableProvenance.templateName.replace(/\.md$/, ''),
-                  hash: portableProvenance.contentHash,
-                  ref: portableProvenance.projectRepoHeadSha ?? currentPackage.axes.template?.ref,
-                },
-              }
-            : currentPackage.axes,
-          templateProvenance: portableProvenance,
-          visualEvidence,
-          validationEvidence,
-          evidenceRequirements: finalizeEvidenceRequirements(currentPackage.evidenceRequirements, {
-            diff,
-            validationEvidence,
-            visualEvidence,
-          }),
-          metrics: metricsForRun(run),
-          missingData: [...new Set(missingData)],
-        });
+  return {
+    ...currentPackage,
+    comparisonEligibility: blindTrialEligibility(link.blind),
+    status: 'final',
+    finalizedAt: new Date().toISOString(),
+    runId: run.id,
+    familyId: run.familyId,
+    diff,
+    axes: portableProvenance
+      ? {
+          ...currentPackage.axes,
+          template: {
+            ...currentPackage.axes.template,
+            path: portableProvenance.templatePath,
+            name:
+              currentPackage.axes.template?.name ??
+              portableProvenance.templateName.replace(/\.md$/, ''),
+            hash: portableProvenance.contentHash,
+            ref: portableProvenance.projectRepoHeadSha ?? currentPackage.axes.template?.ref,
+          },
+        }
+      : currentPackage.axes,
+    templateProvenance: portableProvenance,
+    visualEvidence,
+    validationEvidence,
+    evidenceRequirements: finalizeEvidenceRequirements(currentPackage.evidenceRequirements, {
+      diff,
+      validationEvidence,
+      visualEvidence,
+    }),
+    metrics,
+    missingData: [...new Set(missingData)],
+  };
+}
+
+function firstOutputPackagePath(run: Run): string {
+  const link = run.engineState?.evalExperiment;
+  if (!link) throw new Error('Eval experiment is missing');
+  return path.join(path.dirname(link.packagePath), 'first-output.result-package.json');
+}
+
+export async function readFrozenEvalFirstOutputPackage(
+  run: Run,
+): Promise<ResultPackageManifest | null> {
+  const file = firstOutputPackagePath(run);
+  if (!(await fileExists(file))) return null;
+  const snapshot = await readResultPackageManifest(file);
+  const first = run.engineState?.evalExperiment?.blind?.firstOutput;
+  if (
+    !first ||
+    snapshot.runId !== run.id ||
+    snapshot.diff.headSha !== first.headSha ||
+    snapshot.diff.baseSha !== first.diff.baseSha ||
+    snapshot.packageHash !== computePackageHash(snapshot)
+  )
+    throw new Error('Frozen eval worker package differs from its first output');
+  return snapshot;
+}
+
+export async function freezeEvalFirstOutputPackage(
+  run: Run,
+  metrics: ResultPackageMetrics,
+): Promise<ResultPackageManifest> {
+  const frozen = await readFrozenEvalFirstOutputPackage(run);
+  if (frozen) return frozen;
+  const link = run.engineState?.evalExperiment;
+  if (!link?.blind?.firstOutput)
+    throw new Error('Eval judging requires a verified frozen first output');
+  const current = await readResultPackageManifest(link.packagePath);
+  if (current.status === 'final')
+    throw new Error('A finalized historical eval cannot be judged again');
+  if (
+    !link.blind.invalidReason &&
+    run.agentContexts?.some(
+      (context) =>
+        context.role === 'review' &&
+        (context.nativeSession || context.runnerSessionId || context.reviewResultValidatedAt),
+    )
+  )
+    throw new Error('The worker package was not frozen before judging started');
+  const snapshot = await captureEvalPackage(run, current, metrics);
+  const first = link.blind.firstOutput;
+  return writeResultPackageManifest(firstOutputPackagePath(run), {
+    ...snapshot,
+    finalizedAt: first.capturedAt,
+    baseline: { source: 'local-git', baseSha: link.blind.baseSha, capturedAt: first.capturedAt },
+    head: { source: 'local-git', headSha: first.headSha, capturedAt: first.capturedAt },
+    // Contribution provenance is already frozen in diff; these are engine-owned outputs.
+    validationEvidence: snapshot.validationEvidence.filter(
+      ({ path: file }) => !['artifacts/diff.txt', 'artifacts/diff-stat.json'].includes(file),
+    ),
+  });
+}
+
+export async function finalizeEvalResultPackageForRun(
+  run: Run,
+): Promise<ResultPackageManifest | null> {
+  const link = run.engineState?.evalExperiment;
+  if (!link) {
+    const staleEvalPackage = Object.prototype.hasOwnProperty.call(
+      run.engineState ?? {},
+      'evalPackage',
+    );
+    if (staleEvalPackage) {
+      throw new Error(
+        `Run ${run.id} uses removed engineState.evalPackage eval schema; recreate the experiment trial with eval.trial.start`,
+      );
+    }
+    return null;
+  }
+  if (!run.taskFile) return null;
+
+  const currentPackage = await readResultPackageManifest(link.packagePath);
+  let finalized = currentPackage;
+  if (currentPackage.status !== 'final') {
+    const frozen = link.blind?.firstOutput ? await readFrozenEvalFirstOutputPackage(run) : null;
+    if (link.blind?.firstOutput && !frozen)
+      throw new Error('The eval first-output worker package is missing');
+    let snapshot = frozen ?? (await captureEvalPackage(run, currentPackage));
+    if (frozen) {
+      const artifacts = await scanResultPackageArtifacts(path.dirname(run.taskFile), run);
+      for (const expected of frozen.validationEvidence) {
+        const actual = artifacts.find(({ path: file }) => file === expected.path);
+        if (!actual || actual.sha256 !== expected.sha256 || actual.sizeBytes !== expected.sizeBytes)
+          throw new Error(`Frozen eval worker evidence changed: ${expected.path}`);
+      }
+      const review = run.steps.find(({ name }) => name === 'review')?.outputs;
+      const invalidSkipped =
+        frozen.comparisonEligibility?.status === 'invalid' &&
+        review?.skipped === true &&
+        review.reason === 'eval-first-output-invalid';
+      if (!invalidSkipped && review?.verdict !== 'pass' && review?.verdict !== 'issues')
+        throw new Error('The eval first-output judge has no completed verdict');
+      const paths = new Set(
+        Array.isArray(review.attempts)
+          ? review.attempts.flatMap((attempt: unknown) =>
+              isRecord(attempt) && Array.isArray(attempt.artifactPaths)
+                ? attempt.artifactPaths.filter(
+                    (file: unknown): file is string => typeof file === 'string',
+                  )
+                : [],
+            )
+          : [],
+      );
+      snapshot = {
+        ...frozen,
+        reviewEvidence: artifacts.filter(({ path: file }) => paths.has(file)),
+      };
+    }
+    finalized = await writeResultPackageManifest(link.packagePath, {
+      ...snapshot,
+      finalizedAt: new Date().toISOString(),
+    });
+  }
 
   const experimentManifest = await readEvalExperimentManifest(link.experimentManifestPath);
   const updatedTrials = experimentManifest.trials.map((trial) => {

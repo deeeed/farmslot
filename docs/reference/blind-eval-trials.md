@@ -25,6 +25,14 @@ Normative reference for [ADR-030 Amendment 1](../adr/030-replay-provenance-and-r
 - Preserve the reason and source identities with the assessment. Reference identities are never copied back into the worker task tree.
 - Finalized historical output packages retain their original bytes and hashes. Readers show their missing blind provenance as invalid comparison input; finality alone does not imply eligibility.
 
+## First-output judging
+
+- A valid completed first worker output receives exactly one configured/default reviewer as a judge, including when a review axis says none or production review is disabled. Invalid blind trials retain their package and reason without judging.
+- Freeze worker evidence and native worker usage before the judge starts. Worker elapsed time ends at the first terminal output; reviewer time and usage remain separate. Missing measurements stay unknown.
+- Preserve the judge's verdict and findings by severity. Passing and issues verdicts both finalize the artifact-only package automatically. No worker fix, send-back decision or second review follows an eval judge.
+- A replay reuses the completed judge for the same frozen output. An in-flight review keeps its existing recovery identity. Changed worker evidence cannot replace the frozen facts.
+- Infrastructure failures remain separate from model quality. Existing final packages and historical trials are not rewritten or rerun.
+
 ## Public surface
 
 The protocol package owns the case, trial and result-package fields consumed by the existing eval RPCs and Command Center comparison readers. The gateway owns input validation, Git isolation, first-output capture and contamination assessment. Existing framework prepare/dispatch/teardown contracts remain the lifecycle path. Harnesses inherit the blinded task and base; they receive no reference lookup capability or new command. Additive wire metadata follows protocol patch versioning and the matching-reader rollout.

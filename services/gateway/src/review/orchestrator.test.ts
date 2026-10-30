@@ -1094,6 +1094,25 @@ test('disabled project review does not skip explicit publication reviews', () =>
   assert.equal(shouldSkipForDisabledReviewConfig({ enabled: true }), false);
 });
 
+test('eval judging overrides disabled production review and every worker-fix budget', () => {
+  assert.equal(shouldSkipForDisabledReviewConfig({ enabled: false }, { evalJudge: true }), false);
+  assert.equal(
+    resolveReviewMaxRetries({
+      evalJudge: true,
+      configuredMaxRetries: 5,
+      requestedMaxRetries: 5,
+      resume: true,
+      priorRetryCount: 4,
+    }),
+    0,
+  );
+  assert.equal(
+    resolveReviewMaxRetries({ configuredMaxRetries: 2, resume: true, priorRetryCount: 2 }),
+    3,
+    'production continuation retains its existing policy',
+  );
+});
+
 // ─── runReviewRetryLoop ───
 //
 // The loop's central invariant: it keeps `review → fix → re-review` going up to maxRetries

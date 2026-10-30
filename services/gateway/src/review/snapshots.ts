@@ -186,6 +186,11 @@ async function resolveReviewContext(
   throw new Error(`review base ${remoteBaseRef} is unavailable after refresh`);
 }
 
+export interface FrozenReviewContribution {
+  snapshot: ReviewDiffSnapshot;
+  diffText: string;
+}
+
 export interface ReviewSnapshotRange {
   /** Omit mode to override only the base, retaining source filters and untracked identity. */
   mode?: ReviewMode;
@@ -193,6 +198,7 @@ export interface ReviewSnapshotRange {
   baseRef?: string;
   committedBaseSha?: string;
   committedHeadSha?: string;
+  frozenContribution?: FrozenReviewContribution;
 }
 
 interface ReviewSnapshotDependencies {
@@ -205,6 +211,7 @@ export async function captureCurrentReviewSnapshot(
   range?: ReviewSnapshotRange,
   deps: ReviewSnapshotDependencies = { resolveContext: resolveReviewContext, exec: execOnSlot },
 ): Promise<{ snapshot: ReviewDiffSnapshot; diffText?: string }> {
+  if (range?.frozenContribution) return range.frozenContribution;
   try {
     const pinned = range?.committedBaseSha && range?.committedHeadSha;
     const immutableRange = range?.mode !== undefined || !!pinned;
