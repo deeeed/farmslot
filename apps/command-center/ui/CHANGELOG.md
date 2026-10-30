@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A queued native message the session never took (it was closed meanwhile) goes back to the composer, ahead of anything typed since, instead of disappearing. The sent message's label shows its delivery state, such as "Queued for the next turn", instead of a fixed "Delivery unconfirmed".
 - A native conversation's unconfirmed message follows the shared client-cache rule for when the conversation shows it, as Companion does.
 - A native command's output keeps a terminal hyperlink's text and everything after it, which were dropped up to the last link.
 - The native composer's Send / Queue message choice comes from the shared client-cache rule that Companion now uses too.

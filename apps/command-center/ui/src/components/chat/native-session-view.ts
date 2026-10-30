@@ -34,6 +34,7 @@ import {
   nativeFollowScrolled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
+  nativeMessageDropped,
   type NativeMessagePreview,
   nativeMessagePreview,
   nativeMessageShown,
@@ -384,13 +385,21 @@ export class NativeSessionView extends LitElement {
         );
         if (
           nativeCommandLockSettled(this.localCommand, page.session.generation, receipt, page.events)
-        ) {
-          safeLsRemove(this.sessionKey(`command:${this.selectedId}`));
-          this.localCommand = undefined;
-        }
+        )
+          this.releaseLocalCommand(receipt);
       }
       this.followTimeline(before);
     });
+  }
+
+  /** Releases the sent message; one the host failed without submitting goes back to the composer. */
+  private releaseLocalCommand(receipt?: NativeCommandReceipt) {
+    const text = this.localCommand?.text;
+    safeLsRemove(this.sessionKey(`command:${this.selectedId}`));
+    this.localCommand = undefined;
+    if (!text || !nativeMessageDropped(receipt)) return;
+    this.draft = [text, this.draft.trim()].filter(Boolean).join('\n\n');
+    safeLsSet(this.sessionKey(`draft:${this.selectedId}`), this.draft);
   }
 
   /** A reader at the end keeps new output in view; one who scrolled up counts what arrived. */
@@ -878,10 +887,8 @@ ${JSON.stringify(
               receipt,
               this.transcript.events,
             )
-          ) {
-            safeLsRemove(this.sessionKey(`command:${this.selectedId}`));
-            this.localCommand = undefined;
-          }
+          )
+            this.releaseLocalCommand(receipt);
         }
         this.followTimeline(before);
         await this.updateComplete;
@@ -1418,7 +1425,14 @@ ${JSON.stringify(
                     ${this.localCommand &&
                     !nativeMessageShown(this.transcript.events, this.localCommand.commandId)
                       ? html`<article class="user">
-                          <span class="meta">You · Delivery unconfirmed</span>
+                          <span class="meta"
+                            >You ·
+                            ${nativeDeliveryLabel(
+                              this.receipts.find(
+                                (receipt) => receipt.commandId === this.localCommand?.commandId,
+                              ),
+                            )}</span
+                          >
                           <div class="text">
                             ${this.renderMessageBody(
                               this.localCommand.text,
