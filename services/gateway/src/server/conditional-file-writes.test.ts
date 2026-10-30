@@ -97,10 +97,16 @@ test(
       { ownerPrincipalId: owner.id },
       { principalId: 'wire-node', valid: () => true },
     );
-    t.mock.method(nativeObservations, 'read', async (_connection, _interests, read, sample) => {
+    const readNative: typeof nativeObservations.read = async (
+      _connection,
+      _interests,
+      read,
+      sample,
+    ) => {
       if (boundary === 'gateway') throw failure;
       return { payload: await read(), resourceState: sample() };
-    });
+    };
+    t.mock.method(nativeObservations, 'read', readNative);
     try {
       const ui = await connect(harness.url);
       const auth = await request(ui, Methods.AUTH_CONNECT, {

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Keep loaded native history while a healthy source change refreshes the read; report real observation failures separately.
+- Show gate preparation during replay capture and readiness checks; report operator wait only after its decision exists.
 
 - Complete artifact-only eval packages without requiring publication claim approval.
 
