@@ -30,6 +30,7 @@ import {
   type NativeTranscript,
   type ResourceQuery,
   type ResourceQueryState,
+  SUPERSEDED_READ_GRACE_MS,
 } from '@farmslot/protocol/client-cache';
 import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
@@ -149,6 +150,7 @@ export class NativeSessionView extends LitElement {
   private revision = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private readUnavailableSince?: number;
+  private savedHistoryBoundary?: ReturnType<typeof setTimeout>;
   private inventoryCurrent = false;
   @state() private inventoryUnsupported = false;
   @state() private catalogUnsupported = false;
@@ -188,6 +190,22 @@ export class NativeSessionView extends LitElement {
           (!this.selectedId || this.historyObservation.status === 'ready'))
     )
       this.readUnavailableSince = undefined;
+    clearTimeout(this.savedHistoryBoundary);
+    const observation = this.historyObservation;
+    if (
+      this.connected &&
+      observation.observedAt !== undefined &&
+      isSupersededRead(observation.error) &&
+      !heldDataIsSaved(observation, this.connected)
+    ) {
+      // Re-evaluate action controls once when held history becomes saved. Age ticks stay in the row.
+      this.savedHistoryBoundary = setTimeout(
+        () => {
+          if (this.isConnected) this.requestUpdate();
+        },
+        observation.observedAt + SUPERSEDED_READ_GRACE_MS - Date.now(),
+      );
+    }
   }
 
   protected updated(changed: PropertyValues) {
@@ -355,6 +373,7 @@ export class NativeSessionView extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    clearTimeout(this.savedHistoryBoundary);
     document.removeEventListener('fullscreenchange', this.fullscreenChanged);
     this.revision++;
     clearTimeout(this.timer);
@@ -954,7 +973,6 @@ export class NativeSessionView extends LitElement {
         readError: this.pollError || this.inventoryError || this.catalogError,
         unavailableSince: this.readUnavailableSince,
         observedAt: this.historyObservation.observedAt,
-        savedHistory: heldDataIsSaved(this.historyObservation, this.connected),
         historyObservation: this.historyObservation,
         unsupported:
           this.historyObservation.status === 'unsupported' ||

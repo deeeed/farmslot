@@ -541,6 +541,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const boundSlotId = resolveRunSlotId(r);
   const terminalUnavailable = reviewTerminalUnavailableReason(r);
   const terminal = runTerminalView(r, ctx._showTerminal ? ctx._terminalContextId : undefined);
+  const terminalOpen = ctx._showTerminal && !terminal.disabledReason;
   const openReviewGate = r.decisions.some(
     (decision) => !decision.resolvedAt && decision.type === 'engine_review_posting',
   );
@@ -1308,19 +1309,19 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             boundSlotId
               ? `Terminal (${terminal.target?.slotId ?? boundSlotId})`
               : `${r.transport === 'native' ? 'Worktree shell' : 'Reviewer terminal'} (${r.reviewWorkspace!.machine})`,
-            !ctx._showTerminal,
+            !terminalOpen,
             ctx.toggleTerminal,
             {
               testId: 'run-terminal-toggle',
-              className: `terminal-toggle worker-panel-toggle ${ctx._showTerminal ? 'active' : ''}`,
-              disabled: Boolean(terminal.disabledReason) && !ctx._showTerminal,
+              className: `terminal-toggle worker-panel-toggle ${terminalOpen ? 'active' : ''}`,
+              disabled: Boolean(terminal.disabledReason),
               title: terminal.disabledReason ?? '',
             },
           )}
           ${terminal.disabledReason
             ? html`<span role="status">${terminal.disabledReason}</span>`
             : nothing}
-          ${ctx._showTerminal && !terminal.disabledReason
+          ${terminalOpen
             ? html`<div class="terminal-section">
                 <terminal-view
                   .slotId=${terminal.target?.slotId ?? boundSlotId ?? ''}

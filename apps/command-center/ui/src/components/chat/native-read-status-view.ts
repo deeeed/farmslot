@@ -1,4 +1,4 @@
-import { html, LitElement, nothing } from 'lit';
+import { html, LitElement, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import { heldDataIsSaved, type ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -60,6 +60,10 @@ export class NativeReadStatusView extends LitElement {
   protected createRenderRoot() {
     // Keep the existing status, saved-caption and observed-time hooks in the owning view's DOM.
     return this;
+  }
+
+  protected willUpdate(changed: PropertyValues) {
+    if (changed.has('context')) this.now = Date.now();
   }
 
   protected updated() {

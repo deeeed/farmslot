@@ -35,6 +35,7 @@ await mkdir(output, { recursive: true });
 const execute = promisify(execFile);
 const frames = [];
 const heldReplies = [];
+const timedReplies = new Set();
 let holdingReplies = false;
 const releaseReplies = () => {
   holdingReplies = false;
@@ -255,7 +256,7 @@ wss.on('connection', (socket) =>
     else if (
       nativePanelProof &&
       request.method === 'native.session.read' &&
-      ['native-error', 'native-changed'].includes(mode)
+      ['native-error', 'native-changed', 'native-quiet-changed'].includes(mode)
     ) {
       reply.ok = false;
       reply.error =
@@ -301,7 +302,18 @@ wss.on('connection', (socket) =>
       heldReplies.push(() => {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
       });
-    else socket.send(JSON.stringify(reply));
+    else if (
+      nativePanelProof &&
+      mode === 'native-quiet-changed' &&
+      request.method === 'native.session.read'
+    ) {
+      // A real delayed refusal makes the existing cache backoff quiet across its saved-data boundary.
+      const timer = setTimeout(() => {
+        timedReplies.delete(timer);
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
+      }, 250);
+      timedReplies.add(timer);
+    } else socket.send(JSON.stringify(reply));
   }),
 );
 const cdp = async (...args) =>
@@ -665,6 +677,7 @@ try {
 } catch (error) {
   failure = error;
 } finally {
+  for (const timer of timedReplies) clearTimeout(timer);
   await writeFile(path.join(output, 'vite.log'), viteLog);
   await save('requests', frames);
   emulation?.close();

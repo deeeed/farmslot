@@ -29,7 +29,6 @@ interface NativeSessionHeaderContext {
   readError?: string;
   unavailableSince?: number;
   observedAt?: number;
-  savedHistory?: boolean;
   historyObservation?: ResourceQueryState<unknown>;
   unsupported?: boolean;
   refresh(): void;
@@ -42,7 +41,6 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
     ...ctx,
     selected: Boolean(ctx.selectedId),
     sessionState: session?.state,
-    saved: ctx.savedHistory,
   };
   return html`
     <div class="bar">

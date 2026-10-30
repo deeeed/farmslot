@@ -260,6 +260,53 @@ export async function proveNativePanel({
           );
           await modeSample('native-ready', (v) => v.status.includes('Live'));
           assert.equal((await inspect()).timelineOffset, offset);
+          const message =
+            'run-detail >>> native-worker-history >>> native-session-view >>> [data-testid="native-message"]';
+          await cdp('fill', target, message, 'Keep this draft unsent.');
+          const fresh = await until(
+            (v) => !v.inputDisabled && !v.sendDisabled,
+            'current-draft-enabled',
+          );
+          await modeSample(
+            'native-quiet-changed',
+            (v) =>
+              v.status === 'Refreshing history' &&
+              !v.savedCaption &&
+              !v.inputDisabled &&
+              !v.sendDisabled,
+          );
+          const quietRevision = samples.at(-1).revision;
+          const saved = await until(
+            (v) => {
+              if (!v.savedCaption) return false;
+              assert(
+                v.inputDisabled && v.sendDisabled,
+                'Saved history and disabled controls must change together',
+              );
+              return true;
+            },
+            'quiet-grace-controls',
+            75_000,
+          );
+          const lastRead = frames
+            .filter((f) => f.method === 'native.session.read' && f.revision === quietRevision)
+            .at(-1);
+          assert(
+            Date.now() - lastRead.at > 1000,
+            'The grace boundary must occur without another read event',
+          );
+          assert.equal(saved.observedAt, fresh.observedAt);
+          assert.equal(saved.timelineOffset, offset);
+          samples.push({
+            mode: 'quiet-grace-controls',
+            quietMs: Date.now() - lastRead.at,
+            ...saved,
+          });
+          await modeSample(
+            'native-ready',
+            (v) => v.status.includes('Live') && !v.inputDisabled && !v.sendDisabled,
+          );
+          await cdp('fill', target, message, '');
         }
         const image = await browserCall('Page.captureScreenshot', { format: 'png' });
         await writeFile(
@@ -375,7 +422,10 @@ export async function proveNativePanel({
     await until((v) => v.terminalViews === 1, 'terminal-reopen');
     transition('terminal-finished');
     const finished = await until(
-      (v) => v.detailText.includes('This run is finished.') && v.terminalViews === 0,
+      (v) =>
+        v.detailText.includes('This run is finished.') &&
+        v.terminalExpanded === 'false' &&
+        v.terminalViews === 0,
       'terminal-finished',
     );
     const finishMark = frames.length;

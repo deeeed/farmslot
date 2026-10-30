@@ -49,5 +49,7 @@ return {
   history: root?.querySelector('.timeline') ? renderedText(root.querySelector('.timeline')) : '',
   retry: Boolean(root?.querySelector('[data-testid="native-refresh"]')),
   inputDisabled: root?.querySelector('textarea')?.disabled,
+  sendDisabled: root?.querySelector('[data-testid="native-send"]')?.disabled,
+  savedCaption: Boolean(root?.querySelector('[data-testid="native-history-saved"]')),
   errors: [...(root?.querySelectorAll('[role="alert"]') ?? [])].map((e) => e.textContent.trim()),
 };
