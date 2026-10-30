@@ -7,7 +7,7 @@ import test from 'node:test';
 import { createArtifactOnlyTrial } from './artifact-only-completion.test-support.js';
 
 await import('../runtime/mock-pty.test-support.js');
-const { failRunOutputCapture } = await import('../run-completion/output.js');
+const { captureRunOutput, failRunOutputCapture } = await import('../run-completion/output.js');
 const { retainedRunTaskDirectory } = await import('../run-completion/retained-artifacts.js');
 const { getRun, updateRun } = await import('../runs/store.js');
 const { assertRunGateReady, collectRunGateReadiness } = await import('./gate-prerequisites.js');
@@ -94,4 +94,23 @@ test('eval completion retains unapproved claims without requiring publication ap
   await chmod(retained, 0o600);
   await writeFile(retained, '{}');
   await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
+});
+
+// F243: f74906ee kept its output review through REVIEW, then COMPLETE refused its
+// awaiting-review claims, which only that output review can judge.
+test('output-reviewed completion leaves unreviewed claims to the output review', async (t) => {
+  const { run } = await trial(t, 'review');
+  updateRun(run.id, { lane: 'validation', variant: null });
+  await captureRunOutput(run.id, false, true);
+  const current = getRun(run.id)!;
+  assert.equal(current.decisions.filter(({ resolvedAt }) => !resolvedAt).length, 1);
+  const readiness = await collectRunGateReadiness(current, null);
+  assert.deepEqual(
+    readiness.reasons.map(({ code, evidencePolicy }) => ({ code, evidencePolicy })),
+    [{ code: 'evidence-policy-unsatisfied', evidencePolicy: 'claim-verdict' }],
+  );
+  await assert.doesNotReject(assertRunGateReady(current, null, 'complete'));
+  // Completing execution never approves those claims.
+  await assert.rejects(assertRunGateReady(current, null, 'finalize'), /claim verdicts/);
+  await assert.rejects(assertRunGateReady(current, null, 'approve-publish'), /claim verdicts/);
 });

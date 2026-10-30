@@ -8,6 +8,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Prepare retries its remote fetch when another slot sharing the same repository moved a tracking ref first, instead of failing with "cannot lock ref".
 - Task files tell workers to mark complete with criteria awaiting human review; the run gate collects that review.
 - An artifact-only run with output review keeps its output review through pipeline review and a result decision, so COMPLETE no longer refuses for a missing captured output review; refreshing the output restores a review an earlier capture retired.
+- COMPLETE for an artifact-only run with output review leaves claims awaiting review to that output review instead of refusing them under the publication claim-verdict policy; finalize and publication still require the verdicts.
 - Blind eval trials check their commit signatures from the frozen trial base, so a finished worker no longer fails MONITOR on the removed `origin/main`.
 - A reference-only eval experiment opens as its family snapshot, with its reference package and no runs, instead of failing with "No runs found".
 - Launch and resume Codex workers without the startup update check, so a worker never self-updates inside its pane and misses its ready window.
