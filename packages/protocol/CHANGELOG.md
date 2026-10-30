@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- `isSupersededRead`, `heldDataIsSaved` and `canActOn` move from Command Center into the client cache, and `nativeHistoryCanAct` uses `canActOn`. A native conversation stays usable while its worker streams in Command Center and Companion: a change notice or a reply that trails a newer write no longer locks input. Saved history (offline, a failed read, reads superseded for 60 s) still waits for a current read.
+- `isSupersededRead`, `heldDataIsSaved` and `canActOn` move from Command Center into the client cache. `nativeHistoryCanAct` takes the full query state and follows `canActOn` for history read on this connection: a change notice or a reply that trails a newer write no longer locks native input. History restored from storage, offline history, a failed read and reads superseded for 60 s still wait for a current read.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.3 - 2026-10-30

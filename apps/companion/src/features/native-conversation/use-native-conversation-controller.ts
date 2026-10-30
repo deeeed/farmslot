@@ -22,6 +22,7 @@ import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import {
   nativeCommandLockSettled,
+  nativeConversationWritable,
   nativeTimeline,
   type NativeTranscript,
 } from '../../lib/native-conversation';
@@ -271,16 +272,15 @@ export function useNativeConversationController(params: NativeConversationParams
 
   const session = snapshot?.session;
   const workerControl = worker && nativeWorkerViewControl(worker, session);
-  const writable =
-    !!session &&
-    ready &&
-    caughtUp &&
-    !pollError &&
-    !snapshot?.scope?.released &&
-    (!params.runId || runObservation.status === 'ready') &&
-    nativeHistoryCanAct(historyObservation, snapshot, connection === 'connected') &&
-    !['closed', 'failed', 'closing', 'starting'].includes(session.state) &&
-    (session.workerManaged ? !!workerControl : !params.runId);
+  const writable = nativeConversationWritable({
+    allowed,
+    ready,
+    connected: connection === 'connected',
+    history: historyObservation,
+    snapshot,
+    run: params.runId ? runObservation : undefined,
+    workerControl: !!workerControl,
+  });
   const target: NativeSessionTargetParams = {
     sessionId: params.sessionId ?? '',
     executionNodeId: node,

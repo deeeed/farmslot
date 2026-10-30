@@ -573,7 +573,10 @@ test('eleven opened sessions persist ten canonical histories; cold data keeps or
     try {
       const restored = await cold.retry(lastQuery);
       assert.equal(restored.status, 'stale');
-      assert(!nativeHistoryCanAct(restored, restored.data, offline.connection.connected));
+      assert(
+        !nativeHistoryCanAct(restored, restored.data, true),
+        'saved history waits for a live read',
+      );
       assert.equal(restored.observedAt, original.observedAt);
       assert.deepEqual(restored.data, original.data);
       assert.equal(offline.requestCount, 0);
@@ -644,20 +647,26 @@ import { nativeHistoryCanAct } from '../../src/client-cache/native-history.js';
 test('cold, saved, unsupported and replaced rendered snapshots disable real command eligibility', () => {
   const saved = page([event(1, 'saved')]);
   const now = Date.parse('2026-10-30T00:00:00Z');
+  const resourceState = { epoch: 'epoch', dependencies: [] };
   for (const status of ['loading', 'error', 'unsupported'] as const)
-    assert(!nativeHistoryCanAct({ status, data: saved }, saved, true, now));
-  assert(!nativeHistoryCanAct({ status: 'ready', data: saved }, saved, false, now));
-  assert(!nativeHistoryCanAct({ status: 'ready', data: { ...saved } }, saved, true, now));
-  assert(nativeHistoryCanAct({ status: 'ready', data: saved }, saved, true, now));
+    assert(!nativeHistoryCanAct({ status, data: saved, resourceState }, saved, true, now));
+  const ready = { status: 'ready' as const, data: saved, resourceState };
+  assert(!nativeHistoryCanAct(ready, saved, false, now));
+  assert(!nativeHistoryCanAct({ ...ready, data: { ...saved } }, saved, true, now));
+  assert(nativeHistoryCanAct(ready, saved, true, now));
   // A reread that is only due keeps input usable; saved data does not.
-  assert(nativeHistoryCanAct({ status: 'stale', data: saved }, saved, true, now));
-  assert(!nativeHistoryCanAct({ status: 'stale', data: saved }, saved, false, now));
+  const due = { status: 'stale' as const, data: saved, resourceState, observedAt: now };
+  assert(nativeHistoryCanAct(due, saved, true, now));
+  assert(!nativeHistoryCanAct(due, saved, false, now));
+  assert(!nativeHistoryCanAct({ status: 'stale', data: saved }, saved, true, now), 'restored');
   const failed = { code: 'NATIVE_SOURCE_UNAVAILABLE', message: 'unavailable' };
-  assert(!nativeHistoryCanAct({ status: 'stale', data: saved, error: failed }, saved, true, now));
-  const superseded = { code: 'RESOURCE_OBSERVATION_CHANGED', message: 'changed' };
-  const recent = { status: 'stale' as const, data: saved, error: superseded, observedAt: now };
-  assert(nativeHistoryCanAct(recent, saved, true, now + 59_999));
-  assert(!nativeHistoryCanAct(recent, saved, true, now + 60_000));
+  assert(!nativeHistoryCanAct({ ...due, error: failed }, saved, true, now));
+  const superseded = {
+    ...due,
+    error: { code: 'RESOURCE_OBSERVATION_CHANGED', message: 'changed' },
+  };
+  assert(nativeHistoryCanAct(superseded, saved, true, now + 59_999));
+  assert(!nativeHistoryCanAct(superseded, saved, true, now + 60_000));
 });
 
 test('turn status records do not consume the 200 logical message allowance', () => {

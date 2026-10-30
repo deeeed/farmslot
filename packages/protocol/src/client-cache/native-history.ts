@@ -359,7 +359,10 @@ export function storedNativeHistoryMatches(
   );
 }
 
-/** The shared held-data action rule, for the exact history snapshot on screen. */
+/**
+ * The shared held-data action rule, for the exact history snapshot on screen. Native actions do
+ * not reread first, so history restored from storage (no read stamp) waits for a live read.
+ */
 export function nativeHistoryCanAct(
   observation: ResourceQueryState<NativeSessionReadResult> | undefined,
   rendered: NativeSessionReadResult | undefined,
@@ -367,7 +370,7 @@ export function nativeHistoryCanAct(
   now = Date.now(),
 ): boolean {
   return (
-    !!observation &&
+    !!observation?.resourceState &&
     canActOn(observation, connected, now) &&
     !!rendered &&
     observation.data === rendered &&
