@@ -236,9 +236,12 @@ test('a long message shows its first lines until expanded; short ones show in fu
   const lines = (count: number) =>
     Array.from({ length: count }, (_, i) => `- step ${i}`).join('\n');
   assert.equal(nativeMessagePreview('Fix the flaky test.'), undefined);
-  assert.equal(nativeMessagePreview(lines(8)), undefined);
+  // Collapsing would hide only a few lines or characters.
+  assert.equal(nativeMessagePreview(lines(12)), undefined);
+  assert.equal(nativeMessagePreview('x'.repeat(900)), undefined);
   // A prompt read from a file ends in a newline; it is not a hidden line.
-  assert.equal(nativeMessagePreview(`${lines(8)}\n`), undefined);
+  assert.equal(nativeMessagePreview(`${lines(12)}\n`), undefined);
+  assert.equal(nativeMessagePreview(lines(13))?.lines, 13);
   const preview = nativeMessagePreview(`${lines(200)}\n`);
   assert(preview);
   assert.equal(preview.lines, 200);
@@ -253,7 +256,7 @@ test('a long message shows its first lines until expanded; short ones show in fu
   assert.equal(nativeMessageToggleLabel(wide, false), 'Show all · 1 line');
   // A cut never splits an emoji.
   assert.equal(
-    nativeMessagePreview(`${'x'.repeat(599)}😀${'x'.repeat(10)}`)?.text,
+    nativeMessagePreview(`${'x'.repeat(599)}😀${'x'.repeat(400)}`)?.text,
     `${'x'.repeat(599)}…`,
   );
 });

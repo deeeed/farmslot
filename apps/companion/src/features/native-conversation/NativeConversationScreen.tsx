@@ -42,6 +42,8 @@ export function NativeConversationScreen({
   const scroll = useRef<ScrollView>(null);
   const [follow, setFollow] = useState(NATIVE_FOLLOW_LATEST);
   const viewport = useRef({ offset: 0, height: 0 });
+  const distanceFromEnd = (contentHeight: number) =>
+    contentHeight - viewport.current.offset - viewport.current.height;
   /** The reader opened or closed an entry, so the next size change is theirs, not new output. */
   const disclosed = useRef(false);
   const entryCount = useRef(vm.entries.length);
@@ -122,7 +124,7 @@ export function NativeConversationScreen({
           onScroll={(event) => {
             const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
             viewport.current = { offset: contentOffset.y, height: layoutMeasurement.height };
-            const distance = contentSize.height - contentOffset.y - layoutMeasurement.height;
+            const distance = distanceFromEnd(contentSize.height);
             setFollow((current) => nativeFollowScrolled(current, distance));
           }}
           scrollEventThrottle={100}
@@ -130,7 +132,7 @@ export function NativeConversationScreen({
             if (disclosed.current) {
               // Keep the reader's place; follow again only if the end is still in view.
               disclosed.current = false;
-              const distance = height - viewport.current.offset - viewport.current.height;
+              const distance = distanceFromEnd(height);
               setFollow((current) => nativeFollowScrolled(current, distance));
             } else if (follow.following && selected) {
               scroll.current?.scrollToEnd({ animated: false });

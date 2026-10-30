@@ -81,9 +81,6 @@ type LocalCommand = {
   text: string;
 };
 
-/** Expanded-message key of the send awaiting confirmation; timeline entries use their event sequence. */
-const PENDING_MESSAGE_KEY = -1;
-
 /** Static preview reads that dev harnesses inject in place of the shared resource cache. */
 export interface NativeSessionFixture {
   catalog(): Promise<NativeSessionCatalogResult>;
@@ -178,8 +175,8 @@ export class NativeSessionView extends LitElement {
   };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
-  /** Long messages the reader expanded, by timeline key. */
-  @state() private expandedMessages = new Set<number>();
+  /** Long messages the reader expanded, by command, so a send keeps its state once confirmed. */
+  @state() private expandedMessages = new Set<string>();
   @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
   /** The selection the timeline DOM was last rendered for. */
   private renderedRevision = -1;
@@ -341,7 +338,7 @@ export class NativeSessionView extends LitElement {
       : nothing;
   }
 
-  private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: number) {
+  private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: string) {
     if (!preview) return html`<span class="body">${text}</span>`;
     const expanded = this.expandedMessages.has(key);
     return html`<span class="body">${expanded ? text : preview.text}</span>
@@ -1267,7 +1264,7 @@ ${JSON.stringify(
                                     : this.renderMessageBody(
                                         entry.text,
                                         nativeEntryPreview(entry),
-                                        entry.key,
+                                        entry.event.commandId ?? String(entry.key),
                                       )}
                                 </div>
                                 ${entry.event.type === 'error' && entry.event.data
@@ -1290,7 +1287,7 @@ ${JSON.stringify(
                             ${this.renderMessageBody(
                               this.localCommand.text,
                               nativeMessagePreview(this.localCommand.text),
-                              PENDING_MESSAGE_KEY,
+                              this.localCommand.commandId,
                             )}
                           </div>
                         </article>`

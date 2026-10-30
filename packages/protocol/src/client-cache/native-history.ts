@@ -474,6 +474,9 @@ export function nativeFollowLabel(state: NativeFollow): string | undefined {
 
 const NATIVE_MESSAGE_PREVIEW_LINES = 8;
 const NATIVE_MESSAGE_PREVIEW_CHARS = 600;
+// A message collapses only when that hides a real amount, never a line or a few characters.
+const NATIVE_MESSAGE_COLLAPSE_LINES = 12;
+const NATIVE_MESSAGE_COLLAPSE_CHARS = 900;
 
 export interface NativeMessagePreview {
   text: string;
@@ -485,7 +488,7 @@ export function nativeMessagePreview(text: string): NativeMessagePreview | undef
   // A trailing newline is not a line the reader sees.
   const body = text.replace(/\n+$/, '');
   const lines = body.split('\n');
-  if (body.length <= NATIVE_MESSAGE_PREVIEW_CHARS && lines.length <= NATIVE_MESSAGE_PREVIEW_LINES)
+  if (body.length <= NATIVE_MESSAGE_COLLAPSE_CHARS && lines.length <= NATIVE_MESSAGE_COLLAPSE_LINES)
     return undefined;
   const head = lines.slice(0, NATIVE_MESSAGE_PREVIEW_LINES).join('\n');
   if (head.length <= NATIVE_MESSAGE_PREVIEW_CHARS) return { text: head, lines: lines.length };
