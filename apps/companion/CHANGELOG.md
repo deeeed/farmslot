@@ -6,6 +6,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - A pair link, `farmslot://pair?payload=<pairing QR payload>` (`farmslot-preview://` and `farmslot-development://` for those builds), opens the connection screen and pairs as if its QR were scanned: the same single exchange, single-use code and expiry. `farmslot://connection?payload=…` does the same.
 - Pairing from a QR works again for a gateway this device was already paired with: the new sign-in replaces the saved one instead of failing with "Sign out this device before replacing its person login." Nothing is saved until one of the paired addresses answers, and a pairing that fails while saving puts back the sign-in it replaced. One scan runs one exchange, and the scanner closes when pairing fails, so a spent code no longer shows "Pairing code is invalid or expired" over the real error. The next address in the QR is tried only when the previous one could not be reached, never after a gateway received the single-use code.
+- The native conversation message field, Send, Stop and request answers no longer lock each time a streaming worker writes or its run changes. They wait for a current read only while history is saved: restored from storage, offline, after a failed read, or reads superseded for 60 s.
 - Reserve one read-status row per view and open Sources in a disclosure, keeping polling, saved ages and read errors from moving the surrounding controls.
 
 ## 0.9.0 - 2026-10-30
