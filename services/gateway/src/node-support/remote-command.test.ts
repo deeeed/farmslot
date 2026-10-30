@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { SlotVars } from '../core/index.js';
+import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { buildPiAuthCheckCommand } from '../runners/runner-observability.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
@@ -30,17 +31,34 @@ function remoteVars(slotId = 'mini-ff-1'): SlotVars {
 }
 
 /** A node that holds no bundle until this fake publishes one. */
+function fakeCommandFiles() {
+  const files = new Map<string, string>();
+  return {
+    read: (command: string) => files.get(command) ?? command,
+    write: (file: string, data: string) =>
+      files.set(`/bin/sh ${shellExpressionForRemotePath(file)}`, data),
+    stage: (command: string) => {
+      const match = /^mktemp '([^']+\/\.command\.)XXXXXX'$/.exec(command);
+      return match ? { exitCode: 0, stdout: `${match[1]}fixture\n`, stderr: '' } : undefined;
+    },
+  };
+}
+
 function fakeNode(opts: { failUpload?: boolean } = {}) {
   const calls: string[] = [];
+  const commands = fakeCommandFiles();
   let manifest: string | null = null;
   const io: NodeSupportIo = {
     retentionReferences: async () => ({ selectionPaths: [], runHashes: [] }),
     exec: async (_vars, cmd) => {
+      cmd = commands.read(cmd);
       calls.push(`exec:${cmd.slice(0, 20)}`);
       if (cmd.startsWith(': farmslot-node-support-activate') && cmd.includes('"selectionPath":'))
         calls.push('select');
       const homeResult = fakeSupportHomeResult(cmd);
       if (homeResult) return homeResult;
+      const staging = commands.stage(cmd);
+      if (staging) return staging;
       if (cmd.includes('mktemp -d')) {
         return { exitCode: 0, stdout: '/home/u/farmslot-node/support/.incoming/x\n', stderr: '' };
       }
@@ -56,6 +74,7 @@ function fakeNode(opts: { failUpload?: boolean } = {}) {
       throw new Error(`unexpected read ${filePath}`);
     },
     writeFile: async (_vars, filePath, data) => {
+      commands.write(filePath, data);
       calls.push('write');
       if (filePath.endsWith('manifest.json')) manifest = data;
     },
@@ -244,12 +263,14 @@ async function withTempFarm(t: test.TestContext): Promise<{
 /** A node whose bundle uploads wait until released. */
 function gatedNode(opts: { failUpload?: boolean } = {}) {
   const uploads: string[] = [];
+  const commands = fakeCommandFiles();
   const manifests = new Map<string, string>();
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
   const io: NodeSupportIo = {
     retentionReferences: async () => ({ selectionPaths: [], runHashes: [] }),
     exec: async (_vars, cmd) =>
+      commands.stage(cmd) ??
       fakeSupportHomeResult(cmd) ??
       (cmd.includes('mktemp -d')
         ? {
@@ -265,6 +286,8 @@ function gatedNode(opts: { failUpload?: boolean } = {}) {
       return body;
     },
     writeFile: async (_vars, file, data) => {
+      commands.write(file, data);
+      if (file.includes('/.command.')) return;
       // The incoming manifest; the publish moves it to support/<hash>/.
       const hash = (JSON.parse(data) as { hash: string }).hash;
       manifests.set(`/tmp/node-home/farmslot-node/support/${hash}/manifest.json`, data);

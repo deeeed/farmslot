@@ -222,6 +222,11 @@ export const nativeSessionStyles = css`
   .text chat-message .cm-bubble > span {
     white-space: pre-wrap;
   }
+  .message-toggle {
+    display: block;
+    min-height: 44px;
+    margin-top: 6px;
+  }
   details {
     border: 1px solid ${unsafeCSS(colors.bgCardHover)};
     border-radius: 4px;
