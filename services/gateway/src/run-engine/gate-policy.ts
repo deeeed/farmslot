@@ -715,6 +715,21 @@ export function publicationReviewMatchesPreparedPackage(
     .stale;
 }
 
+/** True when a package refresh changed only the review subject (evidence) since this review. */
+export function publicationReviewSubjectOnlyDrifted(
+  review: ReviewStatus,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'>,
+): boolean {
+  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
+  if (!packageReviewSubjectHash || !review.reviewedReviewSubjectHash) return false;
+  const diagnosis = diagnosePublicationReviewStaleness(
+    review,
+    packageReviewSubjectHash,
+    preparedPackage,
+  );
+  return diagnosis.subjectDrift && !diagnosis.headDrift && !diagnosis.diffDrift;
+}
+
 export function countStalePublicationReviews(
   reviews: ReviewStatus[],
   preparedPackage: ReadyGatePrPackage,

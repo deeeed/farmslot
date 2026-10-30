@@ -1,7 +1,10 @@
 import {
   type ExecResult,
+  openReviewFindingCount,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type PublicationReviewLaunchRejection,
+  type ReadyGatePrPackage,
+  reviewFindingIsSettled,
   reviewFixRetriesExhausted,
   type ReviewStatus,
 } from '@farmslot/protocol';
@@ -11,9 +14,10 @@ import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 
-import { reviewNeedsContinuation } from './gate-policy.js';
+import { publicationReviewSubjectOnlyDrifted, reviewNeedsContinuation } from './gate-policy.js';
 
 type GitExecutor = (command: string) => Promise<ExecResult>;
+type LaunchPackage = Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'>;
 
 function isRecoverableReviewLaunchCode(
   code: string,
@@ -94,6 +98,34 @@ function latestLaunchReview(reviews: readonly ReviewStatus[]): ReviewStatus | un
 }
 
 /**
+ * A same-HEAD re-review has new input when the package refresh changed only the
+ * evidence and every open finding names a path git ignores (run artifacts).
+ */
+async function refreshedEvidenceAnswersFindings(
+  review: ReviewStatus,
+  preparedPackage: LaunchPackage | undefined,
+  executeGit: GitExecutor,
+): Promise<boolean> {
+  if (!preparedPackage || !publicationReviewSubjectOnlyDrifted(review, preparedPackage))
+    return false;
+  const open = (review.issues ?? []).filter(
+    (issue) => !reviewFindingIsSettled(review, review, issue),
+  );
+  if (!open.length || open.length !== openReviewFindingCount(review)) return false;
+  const files = [...new Set(open.map((issue) => issue.file.trim()))];
+  if (files.some((file) => !file)) return false;
+  const ignored = await executeGitProbe(
+    executeGit,
+    `check-ignore -- ${files.map(shellQuote).join(' ')}`,
+    'git check-ignore',
+  );
+  // check-ignore prints one line per ignored path.
+  return (
+    ignored.exitCode === 0 && ignored.stdout.split(/\r?\n/u).filter(Boolean).length === files.length
+  );
+}
+
+/**
  * Fail closed before an independent publication review can consume another
  * reviewer session. The caller supplies the slot git executor so this policy
  * is shared by automatic launches and synchronous decision resolution.
@@ -101,6 +133,7 @@ function latestLaunchReview(reviews: readonly ReviewStatus[]): ReviewStatus | un
 export async function assertReviewLaunchState(
   reviews: readonly ReviewStatus[],
   executeGit: GitExecutor,
+  preparedPackage?: LaunchPackage,
 ): Promise<void> {
   const [status, head] = await Promise.all([
     executeGitProbe(executeGit, 'status --porcelain=v1 --untracked-files=all', 'git status'),
@@ -148,7 +181,8 @@ export async function assertReviewLaunchState(
     priorReview?.verdict === 'issues' &&
     reviewedCommit === headSha &&
     !reviewNeedsContinuation(priorReview) &&
-    !reviewFixRetriesExhausted(priorReview)
+    !reviewFixRetriesExhausted(priorReview) &&
+    !(await refreshedEvidenceAnswersFindings(priorReview, preparedPackage, executeGit))
   ) {
     const feedbackPath =
       priorReview.artifactPaths?.find((artifactPath) =>
@@ -176,11 +210,15 @@ export async function assertReviewLaunchState(
 export async function assertReviewLaunchStateForSlot(
   reviews: readonly ReviewStatus[],
   slotId: string,
+  preparedPackage?: LaunchPackage,
 ): Promise<void> {
   try {
     const vars = await loadSlotVars(slotId);
-    await assertReviewLaunchState(reviews, (command) =>
-      execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
+    await assertReviewLaunchState(
+      reviews,
+      (command) =>
+        execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
+      preparedPackage,
     );
   } catch (error) {
     if (error instanceof GatewayMethodError && isRecoverableReviewLaunchCode(error.code)) {
