@@ -19,6 +19,12 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
       '| lint | pass |',
       '',
       'Use the <details> element, not <script>alert(1)</script>.',
+      '',
+      '![screenshot](https://example.com/s.png?leak=1)',
+      '',
+      '<details>',
+      '<summary>Evidence</summary>',
+      '</details>',
     ].join('\n'),
   );
   assert.match(html, /<ul>\s*<li>fixed the <strong>test<\/strong><\/li>/);
@@ -29,5 +35,12 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
     html,
     /Use the &lt;details&gt; element, not &lt;script&gt;alert\(1\)&lt;\/script&gt;\./,
   );
-  assert.doesNotMatch(html, /<details>|<script>/);
+  assert.doesNotMatch(html, /<details>|<script>|<img/);
+  // An image is a link the reader can choose to open; nothing is fetched on render.
+  assert.match(html, /<a href="https:\/\/example.com\/s.png\?leak=1">screenshot<\/a>/);
+  // Raw HTML on its own lines keeps them.
+  assert.match(
+    html,
+    /<p>&lt;details&gt;<br>&lt;summary&gt;Evidence&lt;\/summary&gt;<br>&lt;\/details&gt;<\/p>/,
+  );
 });

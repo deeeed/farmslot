@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Chat messages (native conversations, the chat panel and worker history) render markdown through the shared sanitized renderer: lists, links, fenced code with its language, tables. A tag written in a message, such as `<details>`, shows as text instead of being rendered.
+- Chat messages (native conversations, the chat panel and worker history) render markdown through the shared sanitized renderer: lists, links, fenced code with its language, tables. A tag written in a message, such as `<details>`, shows as text instead of being rendered, and an image shows as a link, so a message never makes the page load a URL by itself.
 - A long message in a native conversation, such as a worker's dispatch prompt, shows its first lines with "Show all · N lines" instead of filling the transcript.
 - Scrolled up in a native conversation, a "Latest" button at the bottom of the transcript jumps back to the end and follows again; it counts entries that arrive meanwhile ("Latest · 2 new"). Your place is kept until you tap it.
 - The Companion pairing QR comes with its pair link: Open in Companion, Copy link and Copy adb command (`adb shell am start` for a device on adb), for the production, preview or development build. Same code and expiry as the QR; when the code expires, the QR and link give way to a note.

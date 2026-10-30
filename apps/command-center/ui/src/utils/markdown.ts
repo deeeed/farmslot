@@ -8,12 +8,18 @@ export function renderMarkdown(md: string): string {
   return DOMPurify.sanitize(raw);
 }
 
-// A chat message is text: a tag written in it is shown, never rendered.
+const escapeText = (text: string) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// A chat message is text: a tag written in it is shown, never rendered, and keeps its lines.
+// An image is a link: model output must not make the page fetch a URL it chose.
 const chatMarked = new Marked({
   breaks: true,
   gfm: true,
   renderer: {
-    html: ({ text }) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    html: ({ text, block }) =>
+      block ? `<p>${escapeText(text.trimEnd()).replace(/\n/g, '<br>')}</p>` : escapeText(text),
+    image: ({ href, text }) => `<a href="${escapeText(href)}">${escapeText(text || href)}</a>`,
   },
 });
 
