@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 
+import { primaryRoleForFlow, type Run } from '@farmslot/protocol';
+
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 
 export interface BlindGitSpec {
@@ -51,4 +53,10 @@ export function withBlindTrialBoundary(command: string, capsule: string): string
     `export GIT_CONFIG_VALUE_1=${shSingleQuote(`!${deny} credential`)}`,
     `/usr/bin/sandbox-exec -f ${shSingleQuote(`${boundary}/sandbox.sb`)} /bin/sh -c ${shSingleQuote(command)}`,
   ].join(' && ');
+}
+
+/** The capsule a relaunched worker of a blind trial must start under; reviewers keep their own launch. */
+export function blindTrialWorkerCapsule(run: Run, role?: string | null): string | undefined {
+  if (role && role !== primaryRoleForFlow(run.flowType)) return undefined;
+  return run.engineState?.evalExperiment?.blind?.isolation?.capsulePath;
 }

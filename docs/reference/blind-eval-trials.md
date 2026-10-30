@@ -22,6 +22,8 @@ Normative reference for [ADR-030 Amendments 1 to 3](../adr/030-replay-provenance
 - The worker starts without source-host credentials: no GitHub token variables, an empty GitHub CLI configuration, no Git credential helper and no Git SSH transport.
 - Recording stand-ins in the trial capsule refuse GitHub CLI, credential and SSH-transport calls. A recorded attempt makes the trial invalid at first-output capture.
 - The worker runs under a macOS `sandbox-exec` profile generated from the pool at preparation. It cannot read the node's other slot checkouts, blind capsules other than its own boundary, or the GitHub CLI login.
+- Worker session reloads (recovery, parking and operator resume) start under the same boundary.
+- The network stays open. A blind trial on a source repository readable without credentials is not isolated by this boundary.
 - Preparation fails on a node without `sandbox-exec`. Dispatch fails for a native worker and for a runner tier that applies its own sandbox. Neither path starts the worker unsandboxed.
 
 ## First output and contamination

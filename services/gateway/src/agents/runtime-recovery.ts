@@ -28,6 +28,7 @@ import {
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import { blindTrialWorkerCapsule } from '../evals/blind-git.js';
 import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
@@ -614,6 +615,7 @@ export async function restoreTmuxWorker(
         runtimeDir,
         safetyTier,
         taskDir: run.taskFile ? path.posix.dirname(run.taskFile) : undefined,
+        blindTrialCapsule: blindTrialWorkerCapsule(run, selected.role),
       },
     )}`;
     await assertReloadStillOwnsSlot(run.id, params.slotId, entrySlotEpoch);

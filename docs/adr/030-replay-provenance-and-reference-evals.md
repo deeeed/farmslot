@@ -394,6 +394,6 @@ The sandbox profile is generated from the pool during preparation. It denies rea
 
 **Rationale.** A candidate used an authenticated GitHub CLI to find the reference pull request and apply its diff. A credential-free probe still read the reference from a sibling slot checkout and from retained Git metadata.
 
-**Consequences.** Blind workers cannot read GitHub. Blind trials run on macOS nodes, with runners and tiers that do not apply their own sandbox. Production runs keep their credentials and launch path.
+**Consequences.** Blind workers cannot read GitHub. Blind trials run on macOS nodes, with runners and tiers that do not apply their own sandbox. Worker session reloads keep the same boundary. The network stays open, so a source repository readable without credentials needs a network boundary before its blind trials are valid. Production runs keep their credentials and launch path.
 
 **Public surface.** No new RPC, field or flag. The existing invalid reason and dispatch errors carry the outcome. The normative contract is [Blind eval trials](../reference/blind-eval-trials.md#worker-boundary).
