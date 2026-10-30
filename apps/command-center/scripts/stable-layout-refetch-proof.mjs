@@ -107,6 +107,18 @@ export async function proveRefetchNotices({
   }
   const record = (name, run) =>
     recordBrowserProof({ name, run, browserCall, emulation, output, save });
+  // The tray separately covers an expanded narrow sidebar. These views use their full width.
+  const expanded = await cdp(
+    'eval',
+    target,
+    "return document.querySelector('farm-app').querySelector('.fa-nav-toggle')?.title === 'Collapse sidebar';",
+  );
+  if (expanded) await cdp('click', target, '.fa-nav-toggle');
+  await cdp(
+    'eval',
+    target,
+    "await Promise.all(document.querySelector('farm-app').querySelector('nav').getAnimations().map(animation => animation.finished)); return true;",
+  );
   const observations = [];
   for (const width of before ? [1280] : [1280, 414]) {
     await viewport(width);
