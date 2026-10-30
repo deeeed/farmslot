@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { NativeSessionEvent, NativeSessionReadResult } from '@farmslot/protocol';
-
 import {
   appendNativePage,
   nativeCommandLockSettled,
   nativeDeliveryLabel,
   nativeTimeline,
-} from './native-session-model.js';
+} from '../../src/client-cache/native-history.js';
+import type { NativeSessionEvent, NativeSessionReadResult } from '../../src/rpc/native-session.js';
 
 function event(
   sequence: number,

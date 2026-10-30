@@ -11,25 +11,25 @@ import {
   type RunGetResult,
 } from '@farmslot/protocol';
 import {
+  nativeCommandLockSettled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
   nativeObservationQuery,
+  nativeTimeline,
+  type NativeTranscript,
   resourceQuery,
 } from '@farmslot/protocol/client-cache';
 
 import { observeNativeConversation } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
-import {
-  nativeCommandLockSettled,
-  nativeTimeline,
-  type NativeTranscript,
-} from '../../lib/native-conversation';
+import { nativeConversationWritable } from '../../lib/native-conversation';
 import {
   createNativeConversationStorage,
   nativeConversationStorageKey,
 } from '../../lib/native-conversation-storage';
 import {
+  nativeWorkerForAction,
   nativeWorkerViewControl,
   nativeWorkerViewForRun,
   type NativeWorkerViewSelection,
@@ -118,14 +118,16 @@ export function useNativeConversationController(params: NativeConversationParams
         : undefined,
     [runObservation.data, runQuery, selection],
   );
-  const currentWorker = useCallback((): NativeWorkerViewTarget | undefined => {
-    if (!runQuery) return;
-    const observed = getResourceCache()?.read(runQuery);
-    if (observed?.status !== 'ready' || !observed.data) return;
-    const target = nativeWorkerViewForRun(observed.data.run, selection);
-    if (!target) throw new Error('This run no longer contains the selected worker conversation.');
-    return target;
-  }, [runQuery, selection]);
+  const currentWorker = useCallback(
+    (): NativeWorkerViewTarget | undefined =>
+      runQuery &&
+      nativeWorkerForAction(
+        getResourceCache()?.read(runQuery),
+        selection,
+        useConnectionStore.getState().status === 'connected',
+      ),
+    [runQuery, selection],
+  );
   const generation = client?.connectionGeneration;
   const farmConnection = useMemo(
     () =>
@@ -271,16 +273,15 @@ export function useNativeConversationController(params: NativeConversationParams
 
   const session = snapshot?.session;
   const workerControl = worker && nativeWorkerViewControl(worker, session);
-  const writable =
-    !!session &&
-    ready &&
-    caughtUp &&
-    !pollError &&
-    !snapshot?.scope?.released &&
-    (!params.runId || runObservation.status === 'ready') &&
-    nativeHistoryCanAct(historyObservation, snapshot, connection === 'connected') &&
-    !['closed', 'failed', 'closing', 'starting'].includes(session.state) &&
-    (session.workerManaged ? !!workerControl : !params.runId);
+  const writable = nativeConversationWritable({
+    allowed,
+    ready,
+    connected: connection === 'connected',
+    history: historyObservation,
+    snapshot,
+    run: params.runId ? runObservation : undefined,
+    workerControl: !!workerControl,
+  });
   const target: NativeSessionTargetParams = {
     sessionId: params.sessionId ?? '',
     executionNodeId: node,

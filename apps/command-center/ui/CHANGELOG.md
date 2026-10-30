@@ -4,8 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Require ticket problem text for eval trials and mark invalid or contaminated packages as excluded from comparison.
-
+- The native conversation takes its transcript, delivery label and input-lock helpers from the shared client cache instead of its own copy. No behaviour change.
+- The native conversation message box, Send / Queue message and request answers no longer lock, dropping what you were typing, each time a streaming worker writes. They follow the same rule as other held data and wait for a current read only while history is saved: restored from storage, offline, after a failed read, or reads superseded for 60 s.
 - Alert only for current needs-you conditions. Completed dispatches stay in their current slot/run views and monitor violations stay in history; neither produces an informational browser alert.
 
 - Keep read errors and saved ages in one notification tray with a fixed-height attention strip; current decisions clear and recur without repeated alerts or moving the page. Keep saved-gate text in one reserved row and reserve Evals status space through pending reads.
@@ -16,6 +16,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Saved-age notices (gateway update, runs, checklists, fleet, nodes, slot progress) no longer flash while a reread is in flight; they show while disconnected, after a failed read, or while the gateway's source check is out of date. A read refused because its source changed mid-read counts as failed only once reads have kept being refused for 60 s. The update banner shows its saved line only beside the Update button. On the fleet page, slow or failed progress reads share one line with one Retry; slots with three failed reads in a row are named there as an alert.
 - Fewer gateway reads on a busy farm: the copilot panel reads the copilot status only while it is open, and the fleet page reads runner seats for the machines it shows, so a slot change no longer rereads them.
 - Show finished workers waiting for their monitor from current checklist timing, keep unavailable progress neutral, and wrap the reason.
+- Require ticket problem text for eval trials and mark invalid or contaminated packages as excluded from comparison.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.1 - 2026-10-29
