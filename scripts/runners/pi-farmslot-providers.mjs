@@ -5,6 +5,64 @@ import { fileURLToPath } from 'node:url';
 
 const DEFAULT_OLLAMA = '127.0.0.1:11434';
 
+/** Bound worker HTTP requests through the final response byte. Pi owns retries. */
+export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted) {
+  let consecutiveTimeouts = 0;
+  const boundedFetch = async (input, options = {}) => {
+    const upstream = options.signal ?? (input instanceof Request ? input.signal : undefined);
+    const deadline = new AbortController();
+    const signal = upstream ? AbortSignal.any([upstream, deadline.signal]) : deadline.signal;
+    const timer = setTimeout(() => {
+      if (upstream?.aborted) return;
+      deadline.abort();
+      if (++consecutiveTimeouts >= 2) onExhausted?.();
+    }, timeoutMs);
+    const failure = (error) =>
+      deadline.signal.aborted && !upstream?.aborted
+        ? new Error(`Pi model request timed out after ${timeoutMs}ms`)
+        : error;
+    try {
+      const response = await fetchImpl(input, { ...options, signal });
+      if (!response.body) {
+        clearTimeout(timer);
+        consecutiveTimeouts = 0;
+        return response;
+      }
+      const reader = response.body.getReader();
+      const body = new ReadableStream({
+        async pull(controller) {
+          try {
+            const next = await reader.read();
+            if (next.done) {
+              clearTimeout(timer);
+              consecutiveTimeouts = 0;
+              controller.close();
+            } else controller.enqueue(next.value);
+          } catch (error) {
+            clearTimeout(timer);
+            controller.error(failure(error));
+          }
+        },
+        cancel(reason) {
+          clearTimeout(timer);
+          deadline.abort(reason);
+          return reader.cancel(reason);
+        },
+      });
+      const bounded = new Response(body, response);
+      Object.defineProperty(bounded, 'url', { value: response.url });
+      return bounded;
+    } catch (error) {
+      clearTimeout(timer);
+      throw failure(error);
+    }
+  };
+  boundedFetch.reset = () => {
+    consecutiveTimeouts = 0;
+  };
+  return boundedFetch;
+}
+
 export function openaiBaseUrl(raw) {
   let url = String(raw ?? '').trim();
   if (!url) return '';

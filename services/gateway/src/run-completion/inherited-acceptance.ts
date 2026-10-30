@@ -189,13 +189,13 @@ export async function stageInheritedAcceptance(run: Run, vars: SlotVars): Promis
   if (run.acceptanceContractVersion === 1) {
     const { syncAcceptanceExecutionContract } =
       await import('../tasks/acceptance-execution-contract.js');
-    const { readSlotField } = await import('../core/state.js');
+    const { ownsRunTaskWrite, readSlotRow } = await import('../core/state.js');
     await syncAcceptanceExecutionContract(
       run,
       vars,
       path.posix.join(vars.remoteRepo, resolveProjectTaskDirName(project.projectJson), relative),
       path.dirname(run.taskFile),
-      async () => (await readSlotField(vars.slotId, 'current_run_id')) === run.id,
+      async () => ownsRunTaskWrite(await readSlotRow(vars.slotId), run.id),
       source.acceptance.criteria.map(({ id }) => id),
     );
   }

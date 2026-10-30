@@ -95,6 +95,7 @@ export default function RootLayout() {
           >
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="connection" options={{ title: 'Gateway connection' }} />
+            <Stack.Screen name="pair" options={{ title: 'Pair Companion' }} />
             <Stack.Protected guard={farm || renderAccess === 'none'}>
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             </Stack.Protected>

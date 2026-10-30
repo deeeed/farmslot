@@ -214,6 +214,10 @@ export function deriveRunnerSessionDeliveryState(
       ...(record.lastToolProgressAt === null || typeof record.lastToolProgressAt === 'number'
         ? { lastToolProgressAt: record.lastToolProgressAt }
         : {}),
+      ...(typeof record.lastTokenProgressAt === 'number' &&
+      Number.isFinite(record.lastTokenProgressAt)
+        ? { lastTokenProgressAt: record.lastTokenProgressAt }
+        : {}),
       ...(typeof record.turnStartedAt === 'number'
         ? { turnToken: `${sessionId}:${record.turnStartedAt}` }
         : {}),

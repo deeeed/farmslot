@@ -4,10 +4,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve acceptance-contract task writes across a CI-watch handoff when the parent releases its slot.
 - Keep reference answers out of eval workers and exclude contaminated first outputs from comparisons.
 
 - Keep loaded native history while a healthy source change refreshes the read; report real observation failures separately.
 - Show gate preparation during replay capture and readiness checks; report operator wait only after its decision exists.
+- Bound Pi provider responses and flag stalled worker token usage during initial work and review fixes.
 
 - Complete artifact-only eval packages without requiring publication claim approval.
 

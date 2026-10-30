@@ -21,6 +21,17 @@ There does not appear to be one stable cross-runner token-extraction library or 
 | Grok Build   | Grok session `summary.json` joined to Grok unified log by session id | exact tokens when log entry exists | Use `prompt_tokens + completion_tokens` as total. `cached_prompt_tokens` and `reasoning_tokens` are detail fields; expose them separately, but do not double-count them in total.                                                                                                                                                                                                                                      |
 | Cursor Agent | Captured `--print --output-format json` stdout only                  | partial                            | The installed headless CLI emits usage, but the normal interactive TUI transcript does not persist usage fields. Interactive Cursor runs should remain `unavailable` until Farmslot captures a structured stdout/session source.                                                                                                                                                                                       |
 
+## Pi request stalls
+
+Pi worker requests have a five-minute deadline through the last response byte.
+`FARMSLOT_PI_REQUEST_TIMEOUT_MS` overrides that deadline in milliseconds. One
+consecutive timeout retry is allowed; a second timeout aborts the current
+operation and records a structured failure. Operator cancellation stays cancelled.
+
+An active worker with no native token-usage progress for five minutes gets a
+warning in its existing monitor or review-fix step. The warning clears when usage
+advances or the turn stops. It does not stop the process or change its lease.
+
 ## TUI vs headless dispatch
 
 Default interactive TUI dispatch is still the right mode when a worker needs a live pane, tmux steering, review nudges, or manual intervention. Token accuracy is runner-dependent in that mode because TUIs do not all persist structured usage with the same fidelity.

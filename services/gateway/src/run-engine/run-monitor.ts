@@ -113,6 +113,7 @@ import {
   hasUsageBudget,
 } from './flow-usage-budget.js';
 import { operatorWaitDurationMs } from './operator-wait.js';
+import { reportRunnerProgressWarning } from './progress-warning.js';
 import {
   nativePendingRequestText,
   trackOpenQuestion,
@@ -1973,6 +1974,8 @@ async function detectViolations(
       lastProgressAt: inactivityStartMs(state),
       stuckTimeoutMs: config.stuckTimeoutMs,
     });
+    if (reportRunnerProgressWarning(runId, 'monitor', stuckState.turnState, now))
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     if (stuckState.kind === 'making-progress')
       state.lastStructuredProgressAt = stuckState.lastProgressAt;
     if (stuckState.stuck) {
