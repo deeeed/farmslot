@@ -428,7 +428,6 @@ interface RunnerSessionReloadOptions {
   codexAccountLabel?: string | null;
   codexAuthSource?: string | null;
   initialPrompt?: string;
-  skipUpdateCheck?: boolean;
 }
 
 export function buildRunnerSessionReloadCommand(
@@ -498,7 +497,7 @@ export function buildRunnerSessionReloadCommand(
         withRunnerObservabilityInstall(
           `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
             vars.codexPath,
-          )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${codexStartupUpdateFlag(opts.skipUpdateCheck)}${modelFlag} ${quotedSessionId}${initialPrompt}`,
+          )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
           installCommand,
         ),
         repo,
@@ -632,7 +631,8 @@ function codexWorkerConfigFlags(): string {
   // Do not inject `mcp_servers.<name>.enabled=false` for arbitrary server
   // names. Newer Codex versions reject partial MCP tables when the server is
   // not already defined in the node's config, which breaks portable dispatch.
-  return '';
+  // Workers never self-update at launch; Codex versions are a deliberate rollout.
+  return codexStartupUpdateFlag(true);
 }
 
 export function resolveCodexBinary(preferred?: string | null): string {
