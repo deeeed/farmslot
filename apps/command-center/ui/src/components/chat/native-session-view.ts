@@ -493,22 +493,26 @@ ${JSON.stringify(
             if (!next.delete(key)) next.add(key);
             this.expandedMessages = next;
           };
-          if (expanded) void this.collapseInPlace(event.currentTarget, toggle);
-          else toggle();
+          void this.toggleInPlace(event.currentTarget, expanded, toggle);
         }}
       >
         ${nativeMessageToggleLabel(preview, expanded)}
       </button>`;
   }
 
-  /** Collapsing shrinks the content above its toggle; keep the toggle where the reader saw it. */
-  private async collapseInPlace(toggle: EventTarget | null, collapse: () => void) {
+  /**
+   * Collapsing shrinks the content above its toggle; keep the toggle where the reader saw it.
+   * At the top of the timeline there may not be enough content above to scroll back by: the
+   * toggle then moves up only by the space that doesn't exist, and stays in view. Expanding
+   * keeps the default, so the reader reads on from where the preview stopped.
+   */
+  private async toggleInPlace(target: EventTarget | null, collapsing: boolean, toggle: () => void) {
     const timeline = this.renderRoot.querySelector('.timeline');
-    if (!(toggle instanceof Element) || !timeline) return collapse();
-    const before = toggle.getBoundingClientRect().top;
-    collapse();
+    if (!collapsing || !(target instanceof Element) || !timeline) return toggle();
+    const before = target.getBoundingClientRect().top;
+    toggle();
     await this.updateComplete;
-    if (toggle.isConnected) timeline.scrollTop += toggle.getBoundingClientRect().top - before;
+    if (target.isConnected) timeline.scrollTop += target.getBoundingClientRect().top - before;
   }
 
   private scrollTimelineToEnd() {
@@ -1385,9 +1389,7 @@ ${JSON.stringify(
                                     const toggle = () => {
                                       this.foldOpen = new Map(this.foldOpen).set(row.key, !open);
                                     };
-                                    if (open)
-                                      void this.collapseInPlace(event.currentTarget, toggle);
-                                    else toggle();
+                                    void this.toggleInPlace(event.currentTarget, open, toggle);
                                   }}
                                 >
                                   ${row.label}
