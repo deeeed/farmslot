@@ -194,6 +194,76 @@ test('a running turn keeps its start through the cache, so its working time can 
   assert.equal(nativeWork([...running, at(5, 'session.started')]), undefined);
 });
 
+test('keeping the running turn start never reorders tool cards that finished out of order', () => {
+  const at = (
+    sequence: number,
+    type: NativeSessionEvent['type'],
+    extra: Partial<NativeSessionEvent> = {},
+  ) => ({
+    ...event(sequence, ''),
+    type,
+    text: undefined,
+    ...extra,
+  });
+  const tool = (id: string, name: string) => ({ nativeId: id, tool: { name } });
+  // A Task whose nested Bash ends first, then parallel reads that finish in reverse order.
+  const events = [
+    at(1, 'command.submitted', { text: 'Investigate.' }),
+    at(2, 'turn.started'),
+    at(3, 'tool.started', tool('task', 'Task')),
+    at(4, 'tool.started', tool('bash', 'Bash')),
+    at(5, 'tool.completed', tool('bash', 'Bash')),
+    at(6, 'tool.completed', tool('task', 'Task')),
+    at(7, 'tool.started', tool('a', 'Read')),
+    at(8, 'tool.started', tool('b', 'Grep')),
+    at(9, 'tool.completed', tool('b', 'Grep')),
+    at(10, 'tool.completed', tool('a', 'Read')),
+  ];
+  const order = (items: NativeSessionEvent[]) => nativeTimeline(items).map((entry) => entry.text);
+  const saved = retainNativeMessages(events);
+  assert.deepEqual(order(saved), order(events));
+  assert.deepEqual(order(saved), ['Investigate.', 'Task', 'Bash', 'Read', 'Grep']);
+  assert.deepEqual(retainNativeMessages(saved), saved);
+  assert.equal(nativeWork(saved)?.since, Date.parse(events[1].at));
+});
+
+test('a snapshot saved by the previous reader is read again from its start, once', async () => {
+  const at = (sequence: number, type: NativeSessionEvent['type']) => ({
+    ...event(sequence, ''),
+    type,
+    text: sequence === 1 ? 'Run the tests.' : undefined,
+  });
+  const history = [at(1, 'command.submitted'), at(2, 'turn.started'), at(3, 'text.delta')];
+  // The previous reader dropped turn.started but kept the cursor.
+  const saved = {
+    ...page([history[0], history[2]], 3),
+    historyRead: { pageReadCount: 1, pageAfters: [0] },
+  };
+  const afters: Array<number | undefined> = [];
+  const read = (previous: NativeSessionReadResult) =>
+    readNativeHistory(
+      target,
+      previous,
+      async (params) => {
+        afters.push(params.after);
+        const after = params.after ?? 0;
+        return {
+          data: page(
+            history.filter((item) => item.sequence > after),
+            3,
+          ),
+        };
+      },
+      signal(),
+    );
+  const replayed = await read(saved);
+  assert.deepEqual(afters, [undefined]);
+  assert.equal(nativeWork(replayed.data.events)?.since, Date.parse(history[1].at));
+  assert.equal(nativeTimeline(replayed.data.events).length, 2, 'no message twice');
+  await read(replayed.data);
+  assert.deepEqual(afters, [undefined, 3], 'the replayed snapshot resumes from its cursor');
+});
+
 test('cursor pages merge into one complete observation and keep the conservative stamp', async () => {
   const calls: number[] = [];
   const result = await readNativeHistory(

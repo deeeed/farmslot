@@ -87,8 +87,9 @@ export function NativeConversationScreen({
             </Pressable>
           ) : null}
         </View>
-        {vm.connected && vm.session ? (
-          <NativeSessionState state={vm.session.state} work={vm.work} />
+        {/* Kept while disconnected, with the last state and no clock, so the conversation never moves. */}
+        {vm.session ? (
+          <NativeSessionState state={vm.session.state} work={vm.connected ? vm.work : undefined} />
         ) : null}
         {selected ? (
           <ResourceReadStatus observation={vm.historyObservation} label="conversation history" />

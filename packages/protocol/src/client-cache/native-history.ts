@@ -95,8 +95,11 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
 
 /** Client projection metadata. Never sent as a native RPC parameter. */
 export interface NativeHistorySnapshot extends NativeSessionReadResult {
-  historyRead: { pageReadCount: number; pageAfters: number[] };
+  historyRead: { pageReadCount: number; pageAfters: number[]; projection?: number };
 }
+
+/** Bumped when retention keeps more: a snapshot saved by an older reader is read again from its start, once. */
+const NATIVE_HISTORY_PROJECTION = 2;
 
 export const NATIVE_HISTORY_MESSAGES = 200;
 export const NATIVE_HISTORY_SESSIONS = 10;
@@ -141,9 +144,11 @@ export function retainNativeMessages(events: NativeSessionEvent[]): NativeSessio
     ...(entry.kind === 'assistant' || entry.kind === 'user' ? { text: entry.text } : {}),
   }));
   // A running turn's start is not a timeline entry, but its working time is counted from it.
+  // Appended: the timeline skips it and nativeWork compares sequences, so its place does not
+  // matter, and sorting would move tool cards that finished out of order.
   const turn = nativeOpenTurn(events);
   if (!turn || kept.some((item) => item.sequence === turn.sequence)) return kept;
-  return [...kept, turn].sort((a, b) => a.sequence - b.sequence);
+  return [...kept, turn];
 }
 
 export function sameNativeHistoryIdentity(
@@ -205,11 +210,14 @@ export async function readNativeHistory(
   request: NativeHistoryReader,
   signal: AbortSignal,
 ): Promise<ResourceReadResult<NativeHistorySnapshot>> {
-  let retained = previous;
-  let cursor = previous?.cursor;
+  const previousRead = (previous as NativeHistorySnapshot | undefined)?.historyRead;
+  // Saved by a reader that dropped the running turn's start: keep its identity, reread its events.
+  const replay =
+    previousRead !== undefined && previousRead.projection !== NATIVE_HISTORY_PROJECTION;
+  let retained = previous && replay ? { ...previous, events: [] } : previous;
+  let cursor = replay ? undefined : previous?.cursor;
   let stamp: ResourceReadStamp | undefined;
   let first = true;
-  const previousRead = (previous as NativeHistorySnapshot | undefined)?.historyRead;
   let pageReadCount = previousRead?.pageReadCount ?? 0;
   let pageAfters = previousRead?.pageAfters ?? [];
   for (let pages = 0; pages < 1000; pages++) {
@@ -272,7 +280,10 @@ export async function readNativeHistory(
     cursor = page.cursor;
     if (!page.hasMore)
       return {
-        data: { ...retained, historyRead: { pageReadCount, pageAfters } },
+        data: {
+          ...retained,
+          historyRead: { pageReadCount, pageAfters, projection: NATIVE_HISTORY_PROJECTION },
+        },
         resourceState: stamp,
       };
   }
@@ -542,7 +553,10 @@ export function nativeWork(events: NativeSessionEvent[]): NativeWork | undefined
   return { since: Date.parse(turn.at), tool: [...tools.values()].at(-1) };
 }
 
-/** "Working · 1m 12s · Bash": how long the turn has run, and its current tool. */
+/**
+ * "Working · 1m 12s · Bash": how long the turn has run, and its current tool.
+ * `since` is the execution host's clock: a client clock ahead of it overstates the time by the skew.
+ */
 export function nativeWorkLabel(work: NativeWork, now: number): string {
   const seconds = Math.max(0, Math.floor((now - work.since) / 1000));
   const minutes = Math.floor(seconds / 60);
