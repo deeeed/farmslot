@@ -11,8 +11,13 @@ await import('../runtime/mock-pty.test-support.js');
 const { runResolveDecision } = await import('../methods/run.js');
 const { makeRun } = await import('../methods/run/test-fixtures.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
-const { captureRunOutput, failRunOutputCapture, outputManifestDigest, outputReviewDecisions } =
-  await import('./output.js');
+const {
+  captureRunOutput,
+  failRunOutputCapture,
+  outputManifestDigest,
+  outputReviewDecisions,
+  verifyRunOutputReview,
+} = await import('./output.js');
 const { closeRunOutput } = await import('./output-close.js');
 const { retainedRunTaskDirectory } = await import('./retained-artifacts.js');
 const { createRetrospectiveForRun } = await import('./retrospective.js');
@@ -283,7 +288,14 @@ test('a failed manual refresh does not mark an active worker finished', async (t
     false,
     'an active retry must not inherit completion from its previous attempt',
   );
-  updateRun(run.id, { status: 'completing', output: { ...failed.output!, workerFinished: true } });
+  // Completion only starts after the monitor has finished.
+  updateRun(run.id, {
+    status: 'completing',
+    output: { ...failed.output!, workerFinished: true },
+    steps: getRun(run.id)!.steps.map((step) =>
+      step.name === 'monitor' ? { ...step, status: 'done' } : step,
+    ),
+  });
   assert.equal(
     failRunOutputCapture(run.id, new Error('Gate refresh failed')).output?.workerFinished,
     true,
@@ -506,4 +518,77 @@ test('QA with every step done or skipped keeps close available after acknowledge
   assert.equal(closed.metrics.outcome, 'partial');
   assert.deepEqual(closed.steps, originalSteps);
   assert.equal(closed.decisions.filter((decision) => !decision.resolvedAt).length, 0);
+});
+
+// F243: run f74906ee's reviewer re-captured its output while `reviewing`, which read as a
+// running worker, retired the output review and left COMPLETE refusing for good.
+test('a reviewer or refresh capture keeps the artifact-only output review COMPLETE reads', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'output-review-route-'));
+  await mkdir(path.join(dir, 'artifacts'));
+  await writeFile(
+    path.join(dir, 'artifacts/pr-description.md'),
+    '# Fixed\nCriteria await review.\n',
+  );
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'TAT-3216' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+  const finished = {
+    name: 'monitor',
+    status: 'done' as const,
+    outputs: { workerSignal: { status: 'complete' } },
+  };
+  updateRun(run.id, {
+    status: 'monitoring',
+    lane: 'validation',
+    completionPolicy: 'artifact-only',
+    taskFile: path.join(dir, 'TASK.md'),
+    steps: [
+      finished,
+      { name: 'review', status: 'pending' },
+      { name: 'complete', status: 'pending' },
+    ],
+  });
+  const pendingReview = () =>
+    getRun(run.id)!.decisions.filter((d) => !d.resolvedAt && d.payload?.kind === 'output-review');
+
+  await captureRunOutput(run.id, false, true);
+  const [gate] = pendingReview();
+  assert.ok(gate, 'the finished worker raises the output review');
+
+  updateRun(run.id, { status: 'reviewing' });
+  await captureRunOutput(run.id);
+  assert.equal(getRun(run.id)!.output?.workerFinished, true);
+  assert.deepEqual(
+    pendingReview().map((d) => d.id),
+    [gate.id],
+    'the reviewer capture keeps the same pending output review',
+  );
+  await verifyRunOutputReview(run.id, gate.id, true);
+
+  // The state f74906ee was left in: a downgraded capture, no output review, a waiting result.
+  updateRun(run.id, {
+    status: 'needs-decision',
+    output: { ...getRun(run.id)!.output!, workerFinished: false },
+    decisions: [],
+  });
+  await captureRunOutput(run.id);
+  assert.equal(pendingReview().length, 1, 'a refresh restores the output review COMPLETE needs');
+  assert.equal(getRun(run.id)!.output?.workerFinished, true);
+
+  // Send-back relaunches the worker into a fresh monitor; its last capture still says finished.
+  updateRun(run.id, {
+    status: 'monitoring',
+    steps: [{ name: 'monitor', status: 'running' }, ...getRun(run.id)!.steps.slice(1)],
+  });
+  await captureRunOutput(run.id);
+  assert.equal(getRun(run.id)!.output?.workerFinished, false, 'a re-entered monitor is running');
+  assert.equal(pendingReview().length, 0);
+  updateRun(run.id, { status: 'fixing', steps: [finished, ...getRun(run.id)!.steps.slice(1)] });
+  await captureRunOutput(run.id);
+  assert.equal(getRun(run.id)!.output?.workerFinished, false, 'a review fix worker is running');
 });
