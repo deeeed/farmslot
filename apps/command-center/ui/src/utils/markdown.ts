@@ -1,11 +1,44 @@
 import DOMPurify from 'dompurify';
-import { marked } from 'marked';
+import { Marked, marked } from 'marked';
 
 marked.setOptions({ breaks: true, gfm: true });
 
 export function renderMarkdown(md: string): string {
   const raw = marked.parse(md, { async: false }) as string;
   return DOMPurify.sanitize(raw);
+}
+
+const escapeText = (text: string) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// A chat message is text: a tag written in it is shown, never rendered, and keeps its lines.
+// An image is a link: model output must not make the page fetch a URL it chose. An image
+// inside a link is that link's text. marked has already escaped an image's alt text.
+const chatMarked = new Marked({
+  breaks: true,
+  gfm: true,
+  walkTokens: (token) => {
+    if (token.type !== 'link') return;
+    for (const child of token.tokens ?? [])
+      if (child.type === 'image') Object.assign(child, { inLink: true });
+  },
+  renderer: {
+    html: ({ text, block }) =>
+      block ? `<p>${escapeText(text.trimEnd()).replace(/\n/g, '<br>')}</p>` : escapeText(text),
+    image: (token) =>
+      'inLink' in token
+        ? token.text
+        : `<a href="${escapeText(token.href)}">${token.text || escapeText(token.href)}</a>`,
+  },
+});
+
+/** Chat message markdown before sanitizing: lists, links, code and tables; raw HTML stays text. */
+export function chatMarkdownHtml(md: string): string {
+  return chatMarked.parse(md, { async: false }) as string;
+}
+
+export function renderChatMarkdown(md: string): string {
+  return DOMPurify.sanitize(chatMarkdownHtml(md));
 }
 
 export type MdFetchEntry<T> =

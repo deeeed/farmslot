@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - A finished turn's tool calls in a native conversation fold behind one row at the end of the turn, "Worked for 4m 12s · 6 tools", that opens them in place. A turn you watched run stays open, with any tool you opened still open.
+- Chat messages (native conversations, the chat panel and worker history) render markdown through the shared sanitized renderer: lists, links, fenced code with its language, tables. A tag written in a message, such as `<details>`, shows as text instead of being rendered, and an image shows as a link, so a message never makes the page load a URL by itself.
 - While a native session runs a turn, its status row shows how long it has worked and the tool it runs now ("Working · 1m 12s · Bash") instead of "Live · running".
 - A long message in a native conversation, such as a worker's dispatch prompt, shows its first lines with "Show all · N lines" instead of filling the transcript.
 - Scrolled up in a native conversation, a "Latest" button at the bottom of the transcript jumps back to the end and follows again; it counts entries that arrive meanwhile ("Latest · 2 new"). Your place is kept until you tap it.

@@ -216,10 +216,10 @@ export const nativeSessionStyles = css`
     font: inherit;
     line-height: 1.55;
   }
-  /* The message keeps its spacing; the template indentation around it does not render. */
+  /* The message keeps its spacing; the template indentation around it does not render.
+     Assistant markdown keeps its line breaks as <br> and its code in <pre>. */
   pre,
-  .text .body,
-  .text chat-message .cm-bubble > span {
+  .text .body {
     white-space: pre-wrap;
   }
   .message-toggle {
