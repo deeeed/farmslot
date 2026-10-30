@@ -26,8 +26,16 @@ if (detail?.data?.run.id) {
     )
   ).storedObservedAt;
 }
+const tray = document.querySelector('farm-notification-tray')?.shadowRoot;
+const noticesClosed = tray?.querySelector('.bell')?.getAttribute('aria-expanded') === 'false';
+const ids = [
+  Reflect.get(Reflect.get(panel, 'familyQuery'), 'query')?.id,
+  Reflect.get(Reflect.get(panel, 'fullRunQuery'), 'query')?.id,
+].map((id) => `read:${id}`);
 return {
   mounted: true,
+  noticesClosed,
+  readNoticesNeeded: family?.status === 'stale' || detail?.status === 'stale',
   hash: location.hash,
   selectionInRoute:
     new URLSearchParams(location.hash.split('?')[1] ?? '').get('run') === panel.selectedRunId,
@@ -42,9 +50,9 @@ return {
   selectedRunId: panel.selectedRunId,
   runIds: snapshot?.runs.map(({ runId }) => runId) ?? [],
   reportDisabled: report?.disabled,
-  saved: [...panel.shadowRoot.querySelectorAll('[role="status"]')].map((node) =>
-    node.textContent.trim(),
-  ),
+  saved: [...(tray?.querySelectorAll('[data-notice-id]') ?? [])]
+    .filter((node) => ids.includes(node.getAttribute('data-notice-id')))
+    .map((node) => node.textContent.trim()),
   savedRunLink: panel.shadowRoot
     .querySelector(`a[href="#run/${detail?.data?.run.id}"]`)
     ?.textContent.trim(),

@@ -1831,19 +1831,17 @@ export default function TerminalScreen() {
         </ScrollView>
       )}
 
-      <ResourceReadStatus observation={terminalContext.run} label="terminal run" />
-      {progressQuery ? (
-        <ResourceReadStatus observation={progressObservation} label="task progress" />
-      ) : null}
-      {progressObservation.error && progressQuery ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Retry task progress"
-          onPress={() => void getResourceCache()?.retry(progressQuery)}
-        >
-          <Text style={styles.warningRetryText}>Retry</Text>
-        </Pressable>
-      ) : null}
+      <ResourceReadStatus
+        observations={[
+          { observation: terminalContext.run, label: 'terminal run' },
+          ...(progressQuery ? [{ observation: progressObservation, label: 'task progress' }] : []),
+        ]}
+        onRetry={
+          progressObservation.error && progressQuery
+            ? () => void getResourceCache()?.retry(progressQuery)
+            : undefined
+        }
+      />
       <SlotTerminalSessionPane
         key={terminalContext.scopeKey}
         native={native}

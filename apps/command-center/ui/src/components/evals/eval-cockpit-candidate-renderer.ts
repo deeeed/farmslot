@@ -81,6 +81,19 @@ export function renderEvalCockpitCandidateMatrix(options: EvalCockpitCandidateMa
         Candidate${options.enabledCandidateCount === 1 ? '' : 's'} = ${trialCount} isolated
         trial${trialCount === 1 ? '' : 's'}.
       </div>
+      <div
+        class="eval-notice-slot base-choice-note"
+        role="status"
+        data-testid="eval-template-status"
+      >
+        <span data-testid="eval-visible-models-error"
+          >${options.visibleModelsError
+            ? `Saved visible models could not be loaded: ${options.visibleModelsError} `
+            : ''}</span
+        >
+        ${options.candidateTemplateOptionsError ||
+        (options.candidateTemplateOptionsLoading ? 'Loading project template versions...' : '')}
+      </div>
       <div class="candidate-card-list">
         ${options.candidateRows.map((row, index) => {
           const picker = executionPicker(row);
@@ -143,15 +156,6 @@ export function renderEvalCockpitCandidateMatrix(options: EvalCockpitCandidateMa
                     });
                   }}
                 ></review-dispatch-picker>
-                ${options.visibleModelsError
-                  ? html`<div
-                      class="eval-muted"
-                      role="status"
-                      data-testid="eval-visible-models-error"
-                    >
-                      Saved visible models could not be loaded: ${options.visibleModelsError}
-                    </div>`
-                  : nothing}
               </div>
 
               <div class="start-ref-field">
@@ -170,14 +174,6 @@ export function renderEvalCockpitCandidateMatrix(options: EvalCockpitCandidateMa
                     `,
                   )}
                 </div>
-                ${options.candidateTemplateOptionsLoading
-                  ? html`<div class="base-choice-note">Loading project template versions...</div>`
-                  : nothing}
-                ${options.candidateTemplateOptionsError
-                  ? html`<div class="base-choice-note">
-                      ${options.candidateTemplateOptionsError}
-                    </div>`
-                  : nothing}
                 <div class="base-choice-note">
                   The gateway captures the exact template content hash and project commit at launch.
                 </div>

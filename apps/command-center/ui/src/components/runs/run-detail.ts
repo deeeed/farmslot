@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit';
+import { html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import {
@@ -34,7 +34,6 @@ import {
   liveGateParkView,
   Methods,
   sortRunsForFamilyView,
-  sourceObservationAge,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { pendingOutputReview, type VisualJudgmentFeedback } from '@farmslot/review-dispatch';
@@ -1661,92 +1660,6 @@ export class RunDetail extends RunDetailState {
     `;
   }
 
-  private _renderProgressReadStatus(
-    query: ResourceQueryController<TaskProgressResult>,
-    observation: ResourceQueryState<TaskProgressResult>,
-    scope: 'run' | 'selected',
-  ) {
-    if (this.mockData || !query.belongsToWorkspace) return nothing;
-    const label = scope === 'run' ? 'Progress' : 'Selected step progress';
-    return html`
-      ${observation.status === 'loading' && !observation.data && !observation.error
-        ? html`<div class="rehydrating-banner">Loading ${label.toLowerCase()}.</div>`
-        : nothing}
-      ${observation.status === 'stale' && observation.observedAt !== undefined
-        ? html`<div
-            class="rehydrating-banner"
-            data-run-progress-freshness=${scope === 'run' ? 'stale' : nothing}
-            data-selected-progress-freshness=${scope === 'selected' ? 'stale' : nothing}
-          >
-            Saved ${label.toLowerCase()},
-            ${sourceObservationAge(observation.observedAt, this._now)}.
-          </div>`
-        : nothing}
-      ${observation.status === 'unsupported'
-        ? html`<div class="rehydrating-banner">
-            ${label} updates are unavailable on this gateway.
-          </div>`
-        : nothing}
-      ${observation.error
-        ? html`<div
-            class="rehydrating-banner"
-            role="alert"
-            data-run-progress-error=${scope === 'run' ? '' : nothing}
-            data-selected-progress-error=${scope === 'selected' ? '' : nothing}
-          >
-            ${label} read failed: ${observation.error.message}
-            <button
-              ?disabled=${gateway.connectionState !== 'connected'}
-              @click=${() => query.retry()}
-            >
-              Retry reading ${label.toLowerCase()}
-            </button>
-          </div>`
-        : nothing}
-    `;
-  }
-
-  private _renderReadStatus() {
-    const observation = this.detailQuery.belongsToWorkspace ? this._runObservation : undefined;
-    return html`
-      ${observation?.status === 'loading' && this.run
-        ? html`<div class="rehydrating-banner">
-            Loading run details. Actions wait for a current read.
-          </div>`
-        : nothing}
-      ${observation?.status === 'stale' && observation.observedAt !== undefined
-        ? html`<div class="rehydrating-banner" data-run-detail-freshness="stale">
-            Saved run, ${sourceObservationAge(observation.observedAt, this._now)}. Actions wait for
-            a current read.
-          </div>`
-        : nothing}
-      ${observation?.status === 'unsupported'
-        ? html`<div class="rehydrating-banner">Run updates are unavailable on this gateway.</div>`
-        : nothing}
-      ${observation?.error && observation.error.code !== 'RUN_NOT_FOUND'
-        ? html`<div class="rehydrating-banner" role="alert">
-            Run read failed: ${observation.error.message}
-            <button
-              ?disabled=${gateway.connectionState !== 'connected'}
-              @click=${() => this.detailQuery.retry()}
-            >
-              Retry reading run
-            </button>
-          </div>`
-        : nothing}
-      ${this.run && (this.run.slotId || this.run.reviewWorkspace)
-        ? this._renderProgressReadStatus(this.progressQuery, this._progressObservation, 'run')
-        : nothing}
-      ${this._selectedProgressArtifactPath()
-        ? this._renderProgressReadStatus(
-            this.selectedProgressQuery,
-            this._selectedProgressObservation,
-            'selected',
-          )
-        : nothing}
-    `;
-  }
-
   render() {
     const view = renderRunDetailView({
       embedded: this.embedded,
@@ -1900,7 +1813,7 @@ export class RunDetail extends RunDetailState {
         this._showTerminal = !this._showTerminal;
       },
     });
-    return html`${this._renderReadStatus()}${view}`;
+    return view;
   }
 
   /**

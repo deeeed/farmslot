@@ -57,7 +57,7 @@ return {
   saved: view.querySelector('.rdy-saved-state')?.textContent.trim(),
   renderedTags: [
     ...(detail.shadowRoot
-      .querySelector('run-tag-editor')
+      .querySelector('run-tag-editor:not([kind="tickets"])')
       ?.shadowRoot?.querySelectorAll('.tag-pill') ?? []),
   ].map((tag) => tag.textContent.trim().replace(/^#/, '')),
 };

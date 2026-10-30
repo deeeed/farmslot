@@ -4,7 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- The native conversation message field, Send, Stop and request answers no longer lock each time a streaming worker writes or its run changes. They wait for a current read only while history is saved: restored from storage, offline, after a failed read, or reads superseded for 60 s.
+- Reserve one read-status row per view and open Sources in a disclosure, keeping polling, saved ages and read errors from moving the surrounding controls.
 
 ## 0.9.0 - 2026-10-30
 

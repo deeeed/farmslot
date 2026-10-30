@@ -5,9 +5,10 @@ import type {
 } from '../rpc/native-session.js';
 import { Methods } from '../rpc/registry.js';
 
+import { canActOn } from './held-data.js';
 import type { ResourceReadStamp } from './keys.js';
 import { type ResourceQuery, resourceQuery, type ResourceReadMethod } from './registry.js';
-import type { ResourceReadResult } from './types.js';
+import type { ResourceQueryState, ResourceReadResult } from './types.js';
 
 export interface NativeTimelineEntry {
   key: number;
@@ -358,14 +359,19 @@ export function storedNativeHistoryMatches(
   );
 }
 
+/**
+ * The shared held-data action rule, for the exact history snapshot on screen. Native actions do
+ * not reread first, so history restored from storage (no read stamp) waits for a live read.
+ */
 export function nativeHistoryCanAct(
-  observation: { status: string; data?: NativeSessionReadResult } | undefined,
+  observation: ResourceQueryState<NativeSessionReadResult> | undefined,
   rendered: NativeSessionReadResult | undefined,
   connected: boolean,
+  now = Date.now(),
 ): boolean {
   return (
-    connected &&
-    observation?.status === 'ready' &&
+    !!observation?.resourceState &&
+    canActOn(observation, connected, now) &&
     !!rendered &&
     observation.data === rendered &&
     !rendered.hasMore

@@ -743,7 +743,6 @@ export class NativeSessionView extends LitElement {
     return (
       this.connected &&
       this.inputAllowed &&
-      this.caughtUp &&
       !this.invalidDelivery &&
       !this.busy &&
       !this.localCommand &&
@@ -845,7 +844,6 @@ export class NativeSessionView extends LitElement {
     return (
       !this.connected ||
       !this.inputAllowed ||
-      !this.caughtUp ||
       !this.requests.some(
         (current) =>
           current.request?.id === event.request?.id && current.generation === event.generation,

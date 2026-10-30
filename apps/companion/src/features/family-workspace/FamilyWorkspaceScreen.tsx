@@ -167,9 +167,13 @@ export default function FamilyWorkspaceScreen() {
     <>
       <Stack.Screen options={{ title: 'Family Workspace' }} />
       <View style={baseStyles.container} testID="companion-screen-family-workspace">
-        <ResourceReadStatus observation={screen.familyObservation} label="family" />
-        <ResourceReadStatus observation={screen.selectedRunObservation} label="run" />
-        <ResourceReadStatus observation={screen.progressObservation} label="task progress" />
+        <ResourceReadStatus
+          observations={[
+            { observation: screen.familyObservation, label: 'family' },
+            { observation: screen.selectedRunObservation, label: 'run' },
+            { observation: screen.progressObservation, label: 'task progress' },
+          ]}
+        />
         <WorkspaceSectionTabs
           activeTab={activeTab}
           tabs={[...FAMILY_WORKSPACE_TABS]}

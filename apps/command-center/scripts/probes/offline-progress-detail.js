@@ -24,10 +24,20 @@ const selected = Reflect.get(detail, 'selectedProgressQuery');
 const selectedQuery = Reflect.get(selected, 'query');
 const inspector = root.querySelector('step-inspector');
 const tracker = inspector?.shadowRoot?.querySelector('[data-testid="step-task-progress"]');
-const errorText = root.querySelector('[data-run-progress-error]')?.textContent ?? '';
-const staleText = root.querySelector('[data-run-progress-freshness="stale"]')?.textContent ?? '';
+const tray = document.querySelector('farm-notification-tray')?.shadowRoot;
+const noticesClosed = tray?.querySelector('.bell')?.getAttribute('aria-expanded') === 'false';
+const readNotice = (id) =>
+  [...(tray?.querySelectorAll('[data-notice-id]') ?? [])].find(
+    (item) => item.getAttribute('data-notice-id') === `read:${id}`,
+  );
+const noticeText = (item) => item?.querySelector('p')?.textContent.trim();
+const notice = readNotice(query.id);
+const errorText = noticeText(notice) ?? '';
+const staleText = notice?.textContent ?? '';
 return {
   mounted: true,
+  noticesClosed,
+  readNoticesNeeded: controller.state.status === 'stale' || Boolean(controller.state.error),
   hash: location.hash,
   selectedStep: detail.selectedStep?.name,
   runId: detail.runId,

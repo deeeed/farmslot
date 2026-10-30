@@ -2137,17 +2137,6 @@ export class DispatchWizard extends DispatchWizardState {
       retryComparisonPicker: () => {
         void this.comparisonQuery.retry();
       },
-      baselineReadError: this.baselineQuery.state.error?.message ?? '',
-      baselineSavedAge:
-        this._comparisonParentRunId &&
-        this.baselineQuery.state.data &&
-        this.baselineQuery.state.status !== 'ready' &&
-        this.baselineQuery.state.observedAt !== undefined
-          ? sourceObservationAge(this.baselineQuery.state.observedAt)
-          : '',
-      retryBaseline: () => {
-        void this.baselineQuery.retry();
-      },
       comparePickerOpen: this._comparePickerOpen,
       comparePickerSearch: this._comparePickerSearch,
       variantCollision: this._variantCollision,

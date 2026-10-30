@@ -43,7 +43,6 @@ export const decisionInboxStyles = css`
     gap: ${unsafeCSS(spacing.md)};
   }
 
-  .inbox-observation,
   .inbox-error {
     padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.xl)};
     font-size: ${unsafeCSS(fonts.sizeSm)};
