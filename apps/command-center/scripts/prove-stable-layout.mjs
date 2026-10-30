@@ -308,6 +308,16 @@ async function press(selector) {
 }
 const escape = () => cdp('key', target, 'Escape');
 const inspect = async () => cdp('eval', target, '--file', probe);
+async function capture(file) {
+  const before = await inspect();
+  // Keep screenshot capture on the connection that owns this proof's emulated viewport.
+  const result = await browserCall('Page.captureScreenshot', {
+    format: 'png',
+    captureBeyondViewport: false,
+  });
+  await writeFile(file, Buffer.from(result.data, 'base64'));
+  assert.equal((await inspect()).width, before.width, 'Capture must preserve the viewport');
+}
 async function until(accept, label) {
   const deadline = Date.now() + 30000;
   let actual;
@@ -508,7 +518,7 @@ try {
         await press('farm-notification-tray >>> .bell');
         const open = await until((value) => value.panel !== null, 'opened-tray');
         await save(`${name}-open`, open);
-        await cdp('screenshot', target, path.join(output, `${name}-tray.png`));
+        await capture(path.join(output, `${name}-tray.png`));
         assert.equal(open.contentTop, before.contentTop);
         assert(
           open.panel && open.panel.left >= 0 && open.panel.right <= width,
@@ -536,7 +546,7 @@ try {
         );
         assert.equal(guidance.width, width, 'The viewport must stay at the requested width');
         assert.equal(guidance.rowTop, before.rowTop);
-        await cdp('screenshot', target, path.join(output, `${name}-update-guidance.png`));
+        await capture(path.join(output, `${name}-update-guidance.png`));
         await press('update-banner >>> .dismiss');
         await until((value) => !value.items.includes('Farmslot update complete'), 'acknowledged');
         await escape();
