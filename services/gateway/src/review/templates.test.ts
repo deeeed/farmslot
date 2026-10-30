@@ -13,6 +13,7 @@ import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { publicationReviewLaunchRejectionFromError } from '../run-engine/review-launch-gate.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
 import { createRun, deleteRun, updateRun } from '../runs/store.js';
@@ -151,6 +152,39 @@ test('a farm review template can use {{DEFAULT_BRANCH}}', async (t) => {
   assert.match(
     await expandReviewTemplate(vars, 'temp/tasks/review', run.id, 'static-code'),
     /git diff origin\/main\.\.\.HEAD/,
+  );
+});
+
+test('a project without a review template refuses the review launch instead of failing a review', async (t) => {
+  // F250: audiolab-farm had no templates/worker/review.md; the request became a failed review.
+  const project = `.missing-review-template-${process.pid}`;
+  const root = path.join(farmslotRoot, 'projects', project);
+  await mkdir(root, { recursive: true });
+  await writeFile(path.join(root, 'project.json'), JSON.stringify({ name: project }));
+  invalidateProjectVarsCache(project);
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project,
+    ticketOrPr: 'TEST-NO-TEMPLATE',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+    await rm(root, { recursive: true, force: true });
+    invalidateProjectVarsCache(project);
+  });
+  const vars = makeVars({ projectName: project });
+  const refusal = await expandReviewTemplate(vars, 'temp/tasks/review', run.id, 'static-code').then(
+    () => assert.fail('a missing template must refuse the launch'),
+    (error: unknown) => error,
+  );
+  assert.match(String(refusal), /Review template not found for project/);
+  const rejection = publicationReviewLaunchRejectionFromError(refusal);
+  assert.equal(rejection?.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
+  assert.equal(
+    rejection?.userAction,
+    `Add templates/worker/review.md to project ${project}, then request the review again.`,
   );
 });
 

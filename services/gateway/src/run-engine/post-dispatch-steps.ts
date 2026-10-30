@@ -270,6 +270,35 @@ function stampFreshReviewsForPreparedPackage(
   });
 }
 
+/**
+ * A human-gate request whose review never launched leaves the gate as it was before
+ * the request: the policy of the package it was requested on, and no pending plan.
+ * Returns the plan still to reconcile.
+ */
+async function settleUnlaunchedHumanGateRequest(
+  runId: string,
+  plan: ReviewSelection[],
+  result: PublishGateReviewPlanResult,
+  requestedPackage: ReadyGatePrPackage | undefined,
+): Promise<ReviewSelection[]> {
+  if (!result.rejection || result.reviewIds.length > 0) return plan;
+  const latest = getRun(runId)!;
+  const reviewPolicy =
+    requestedPackage?.reviewPolicy ??
+    publicationReviewPolicyForRun(
+      latest,
+      (await loadProjectVarsOrNull(latest.project, 'publication review policy', latest.id))
+        ?.projectJson,
+    );
+  updateRun(runId, {
+    engineState: {
+      ...latest.engineState,
+      publishGate: { ...latest.engineState?.publishGate, reviewPolicy },
+    },
+  });
+  return [];
+}
+
 export async function reconcilePublishGateReviewPlanResult(
   runId: string,
   plan: ReviewSelection[],
@@ -1374,6 +1403,10 @@ export async function executeHumanGateStep(
           activeRecoveryAttempt?.stepName === S.HUMAN_GATE &&
           activeRecoveryAttempt.status === 'started' &&
           activeRecoveryAttempt.triggeredBy === 'auto-recovery';
+        const requestedPackage =
+          reviewSource === 'human-gate'
+            ? await readReadyGatePreparedPackage(getRun(runId)!)
+            : undefined;
         const reviewPlanResult = await executePublishGateReviewPlan(
           runId,
           dispatchReviewSlotId,
@@ -1384,7 +1417,19 @@ export async function executeHumanGateStep(
               !unconsumedReviewDecision && (reviewSource !== 'human-gate' || recoveryReplay),
           },
         );
-        await reconcilePublishGateReviewPlanResult(runId, dispatchPlan, reviewPlanResult, context);
+        await reconcilePublishGateReviewPlanResult(
+          runId,
+          reviewSource === 'human-gate'
+            ? await settleUnlaunchedHumanGateRequest(
+                runId,
+                dispatchPlan,
+                reviewPlanResult,
+                requestedPackage,
+              )
+            : dispatchPlan,
+          reviewPlanResult,
+          context,
+        );
       } else if (recoveredReviewIds.length > 0) {
         const beforeRefresh = await readReadyGatePreparedPackage(getRun(runId)!);
         const diffStat = await getDiffStat(getRun(runId)!);
@@ -1485,10 +1530,18 @@ export async function executeHumanGateStep(
           boundedPlan,
           'human-gate',
         );
-        await reconcilePublishGateReviewPlanResult(runId, boundedPlan, reviewPlanResult, context, {
-          reviewedPackage,
-          stampFreshReviews: true,
-        });
+        await reconcilePublishGateReviewPlanResult(
+          runId,
+          await settleUnlaunchedHumanGateRequest(
+            runId,
+            boundedPlan,
+            reviewPlanResult,
+            reviewedPackage,
+          ),
+          reviewPlanResult,
+          context,
+          { reviewedPackage, stampFreshReviews: true },
+        );
         gateAction = await presentReadyGate();
         continue;
       }
