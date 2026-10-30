@@ -232,7 +232,7 @@ test('a publication gate recovers only a confirmed vanished worker', async () =>
   assert.equal(retainedReads, 0, 'ordinary monitoring keeps its existing recovery policy');
 });
 
-test('COMPLETE recovers only a confirmed vanished worker', async () => {
+test('COMPLETE and FINALIZE recover only a confirmed vanished worker', async () => {
   const run = fixRun('tmux', 'working');
   run.flowType = 'fix-bug';
   const context = run.agentContexts![0]!;
@@ -252,12 +252,19 @@ test('COMPLETE recovers only a confirmed vanished worker', async () => {
         ? { state: 'absent' as const }
         : { state: 'unknown' as const, reason: 'node unreachable' },
   });
-  run.steps = [
-    { name: 'monitor', status: 'done' },
-    { name: 'complete', status: 'running' },
-  ];
-  assert.equal((await readRunProgress(run, readers('absent'))).kind, 'idle');
-  assert.equal((await readRunProgress(run, readers('unknown'))).kind, 'unproven');
+  for (const settling of [
+    [{ name: 'complete', status: 'running' }],
+    // An artifact-only run skips its gate and rechecks readiness in FINALIZE.
+    [
+      { name: 'complete', status: 'done' },
+      { name: 'human-gate', status: 'skipped' },
+      { name: 'finalize', status: 'running' },
+    ],
+  ] as Run['steps'][]) {
+    run.steps = [{ name: 'monitor', status: 'done' }, ...settling];
+    assert.equal((await readRunProgress(run, readers('absent'))).kind, 'idle');
+    assert.equal((await readRunProgress(run, readers('unknown'))).kind, 'unproven');
+  }
   run.steps = [
     { name: 'monitor', status: 'running' },
     { name: 'complete', status: 'pending' },
