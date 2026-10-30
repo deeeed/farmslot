@@ -2,12 +2,14 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type AgentContext,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   Events,
   type EvidenceManifestEntry,
   isPrerequisiteGatePayload,
   isTerminalRunStatus,
+  PipelineSteps,
   type PRReviewOptions,
   prReviewWorkflow,
   type RepeatReviewContext,
@@ -32,7 +34,7 @@ import {
   runDecisionWaitingStatus,
   type RunProgressObservation,
 } from '../runners/run-progress.js';
-import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, getRunWithArchived, listRuns, updateRun, updateRunStep } from '../runs/store.js';
 import { samePrincipalOwner } from '../security/work-originator.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
@@ -576,6 +578,64 @@ export function buildCollisionSuccessorParams(
   };
 }
 
+/** A worker context that ever launched; a native restart keeps only its session history. */
+function contextLaunched(context: AgentContext): boolean {
+  return Boolean(
+    context.startedAt ||
+    context.runnerSessionId ||
+    context.runnerSessionArchive ||
+    context.nativeSession ||
+    context.nativeSessionHistory?.length,
+  );
+}
+
+/**
+ * A run that failed or was cancelled before any worker launched. Replay resets the dispatch
+ * step's timing, so the records a dispatch leaves on the run also count as having reached it.
+ */
+function endedBeforeDispatch(run: Run): boolean {
+  if (run.status !== 'failed' && run.status !== 'cancelled') return false;
+  const dispatch = run.steps.find((step) => step.name === PipelineSteps.DISPATCH);
+  if (!dispatch || dispatch.startedAt) return false;
+  if (dispatch.status !== 'pending' && dispatch.status !== 'skipped') return false;
+  return !(
+    run.engineState?.taskExecution ||
+    run.engineState?.workspaceReviewDispatchGeneration !== undefined ||
+    run.worktreeHeadAtDispatch ||
+    run.metrics?.runnerSessionId ||
+    run.agentContexts?.some(contextLaunched)
+  );
+}
+
+/**
+ * Every colliding dir was written by an earlier attempt of this project that ended before
+ * dispatch, so none holds work and a new dir needs no operator choice. An unstamped dir,
+ * an owner that is still live or one that reached dispatch keeps the decision.
+ */
+async function collisionOnlyFromAttemptsBeforeDispatch(
+  runId: string,
+  current: Run,
+  existingDirs: string[],
+): Promise<boolean> {
+  try {
+    // Lazy import keeps the task writer out of this module's load cycle.
+    const { readTaskDirOwners } = await import('../tasks/writer.js');
+    const owners = await readTaskDirOwners(current, existingDirs);
+    for (const owner of owners) {
+      if (!owner || owner === current.id) return false;
+      const prior = await getRunWithArchived(owner);
+      if (!prior || prior.project !== current.project || !endedBeforeDispatch(prior)) return false;
+    }
+    return owners.length > 0;
+  } catch (err) {
+    // Unproven ownership keeps today's behaviour: the operator chooses.
+    console.warn(
+      `[run-engine] collision owner check failed for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
+    return false;
+  }
+}
+
 /**
  * Shared collision-decision handler. Emits engine_collision with a list of prior runs
  * that own the colliding task dirs, and processes the operator's chosen action:
@@ -592,6 +652,9 @@ export function buildCollisionSuccessorParams(
  * createEngineDecision replays a resolved decision only when canReplayCollisionDecision
  * says the set of colliding dirs is unchanged; a new dir between precheck and WRITE_TASK
  * forces a fresh prompt so the operator sees the updated state.
+ *
+ * Dirs left only by attempts that ended before dispatch need no choice: this returns
+ * 'create-new' without a decision. Ownership is proven again at each call, never replayed.
  */
 export async function handleCollisionDecision(
   runId: string,
@@ -599,6 +662,13 @@ export async function handleCollisionDecision(
   existingDirs: string[],
   ticketSlug: string,
 ): Promise<'create-new'> {
+  if (await collisionOnlyFromAttemptsBeforeDispatch(runId, current, existingDirs)) {
+    console.warn(
+      `[run-engine] run ${runId.slice(0, 8)}: ${existingDirs.join(', ')} came only from attempts that ended before dispatch; creating a new task dir`,
+    );
+    return 'create-new';
+  }
+
   // Project-scoped lookup — two different projects can legitimately produce
   // task dir basenames with the same prefix (same slug schema, different repos).
   // Without the project filter a same-named dir in another project becomes the
