@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- The native conversation takes its transcript, delivery label and input-lock helpers from the shared client cache instead of its own copy, so a queued message shows "Queued for the next turn" as in Command Center.
 - The native conversation message field, Send, Stop and request answers no longer lock each time a streaming worker writes or its run changes. They wait for a current read only while history is saved: restored from storage, offline, after a failed read, or reads superseded for 60 s.
 - Reserve one read-status row per view and open Sources in a disclosure, keeping polling, saved ages and read errors from moving the surrounding controls.
 

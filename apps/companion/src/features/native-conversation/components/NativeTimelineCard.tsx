@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
-import type { NativeTimelineEntry } from '../../../lib/native-conversation';
+import type { NativeTimelineEntry } from '@farmslot/protocol/client-cache';
+
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
 export function NativeTimelineCard({ entry }: { entry: NativeTimelineEntry }) {
