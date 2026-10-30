@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- In a chat message, an image inside a link, even wrapped in bold or italics, shows as that link's text, and a badge without alt text shows the link's URL instead of an empty link.
 - A finished turn's tool calls in a native conversation fold behind one row at the end of the turn, "Worked for 4m 12s · 6 tools", that opens them in place. A turn you watched run stays open, with any tool you opened still open.
 - Chat messages (native conversations, the chat panel and worker history) render markdown through the shared sanitized renderer: lists, links, fenced code with its language, tables. A tag written in a message, such as `<details>`, shows as text instead of being rendered, and an image shows as a link, so a message never makes the page load a URL by itself.
 - While a native session runs a turn, its status row shows how long it has worked and the tool it runs now ("Working · 1m 12s · Bash") instead of "Live · running".

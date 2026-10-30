@@ -23,6 +23,8 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
       "![screenshot](https://example.com/s.png?leak=1) and ![A & B's](https://example.com/ab.png)",
       '',
       '[![CI](https://example.com/badge.svg)](https://example.com/actions)',
+      '[**![Deploy](https://example.com/deploy.svg)**](https://example.com/deploys)',
+      '[![](https://example.com/empty.svg)](https://example.com/runs)',
       '',
       '<details>',
       '<summary>Evidence</summary>',
@@ -43,7 +45,10 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
   assert.match(html, />A &amp; B&#39;s<\/a>/, 'alt text is escaped once');
   // A linked image (a badge) keeps the outer link and shows its alt text.
   assert.match(html, /<a href="https:\/\/example.com\/actions">CI<\/a>/);
-  assert.doesNotMatch(html, /badge\.svg/);
+  assert.doesNotMatch(html, /badge\.svg|deploy\.svg|empty\.svg/);
+  // Inside emphasis too, and with no alt text the link shows its own URL instead of nothing.
+  assert.match(html, /<a href="https:\/\/example.com\/deploys"><strong>Deploy<\/strong><\/a>/);
+  assert.match(html, /<a href="https:\/\/example.com\/runs">https:\/\/example.com\/runs<\/a>/);
   // Raw HTML on its own lines keeps them.
   assert.match(
     html,
