@@ -12,6 +12,7 @@ import {
   type ReviewSelection,
   type ReviewStatus,
   type Run,
+  type RunDecision,
   type RunGatePrerequisiteReason,
   SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
@@ -1724,6 +1725,122 @@ for (const operatorRequest of [false, true]) {
     }
   });
 }
+
+for (const entry of ['request', 'restart replay'] as const)
+  test(`a requested review that never launched restores the gate policy it was requested on (${entry})`, async (t) => {
+    // F250: approve-publish was offered, a review was requested, and the review could not start.
+    const requestedAt = '2026-10-30T18:07:43.000Z';
+    const plan: ReviewSelection[] = [
+      { runner: 'claude', model: 'opus', effort: null, mode: 'cold' },
+    ];
+    const rejection: PublicationReviewLaunchRejection = {
+      code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+      message: 'Review template not found for project fixture-farm (static-code): ENOENT',
+      userAction:
+        'Add templates/worker/review.md to project fixture-farm, then request the review again.',
+      rejectedAt: '2026-10-30T18:09:28.562Z',
+    };
+    // An earlier request set this policy; the refused one must not change it.
+    const priorPolicy = { minimumReviews: 1, requestedBy: 'human-gate' as const };
+    const raisedPolicy = { minimumReviews: 2, requestedBy: 'human-gate' as const };
+    const requestDecision: RunDecision = {
+      id: `decision-unlaunched-${entry}`,
+      type: 'engine_human_gate',
+      title: 'Publication gate',
+      description: 'Request a review',
+      actions: [],
+      createdAt: requestedAt,
+      resolvedAt: requestedAt,
+      resolvedAction: 'request-review',
+      payload: {
+        kind: 'ready',
+        branch: 'feat/unlaunched-review',
+        prNumber: null,
+        repo: null,
+        workerReport: 'done',
+        diffStat: { files: 3, additions: 222, deletions: 3 },
+        prPackage: {
+          ...makeReadyGatePackage(),
+          id: 'pkg-requested',
+          packageHash: 'hash-requested',
+          reviewPolicy: priorPolicy,
+        },
+      },
+      selectionData: { reviewRequest: reviewRequestFromSequence(plan) },
+    };
+    const run = createRun({
+      flowType: 'dev',
+      mode: 'autonomous',
+      project: 'example-mobile-farm',
+      ticketOrPr: `PROJ-UNLAUNCHED-${entry}`,
+      runner: 'claude',
+      slotId: 'remote-mobile-1',
+      engineState: {
+        publishGate: {
+          publicationTarget: 'ready',
+          publicationStatus: 'not_published',
+          packageId: 'pkg-requested',
+          packageHash: 'hash-requested',
+          reviewPolicy: entry === 'request' ? priorPolicy : raisedPolicy,
+          reviews: [],
+        },
+      },
+    });
+    if (entry === 'restart replay') updateRun(run.id, { decisions: [requestDecision] });
+    t.after(async () => {
+      await deleteTestRunIfPresent(run.id);
+    });
+    const rebuiltPolicies: unknown[] = [];
+    let readyGateCalls = 0;
+    await executeHumanGateStep(run.id, {
+      ...restartReplayContext(),
+      executePublishGateReviewPlan: async () => ({ reviewIds: [], rejection }),
+      executeReadyGate: async () => {
+        readyGateCalls += 1;
+        if (entry === 'restart replay' || readyGateCalls > 1) return 'ready';
+        // Resolving request-review raises the gate policy and stores the plan.
+        const latest = getRun(run.id)!;
+        updateRun(run.id, {
+          decisions: [requestDecision],
+          engineState: {
+            ...latest.engineState,
+            publishGate: {
+              ...latest.engineState?.publishGate,
+              reviewPolicy: raisedPolicy,
+              reviewSequence: plan,
+              reviewSequenceRequestedAt: requestedAt,
+            },
+          },
+        });
+        return 'request-review';
+      },
+      prepareCompletionPackageForRun: async (_runId, options) => {
+        rebuiltPolicies.push(options?.reviewPolicy);
+        return {
+          completion: {
+            prNumber: null,
+            ciRepo: null,
+            artifactsCopied: true,
+            prCommentPosted: false,
+            prTitleUpdated: false,
+            prMarkedReady: false,
+            retrospectiveCreated: false,
+            artifacts: [],
+          },
+          prPackage: makeReadyGatePackage(),
+          reviewPolicy: priorPolicy,
+          reviews: [],
+        };
+      },
+    });
+
+    const gate = getRun(run.id)?.engineState?.publishGate;
+    assert.deepEqual(gate?.reviewPolicy, priorPolicy);
+    assert.deepEqual(gate?.reviewSequence ?? [], []);
+    assert.deepEqual(gate?.reviews, []);
+    // The package rebuilt after the refused request carries the restored policy.
+    assert.deepEqual(rebuiltPolicies.at(-1), priorPolicy);
+  });
 
 test('review-pr always presents its publication gate in autonomous mode', async (t) => {
   const run = createRun({

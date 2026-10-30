@@ -267,41 +267,48 @@ export async function captureCurrentReviewSnapshot(
       if (ancestor.exitCode !== 0)
         throw new Error('Last reviewed head is not an ancestor of the current PR head');
     }
-    // Immutable COLD/WARM ranges cover the complete committed PR diff.
-    const pathspec = (immutableRange ? ['.'] : pathspecs).map(shellQuote).join(' ');
-    const capturedRange = `${shellQuote(baseSha)} ${shellQuote(headSha)} -- ${pathspec}`;
-    const numstat = await deps.exec(
+    // Every snapshot covers the complete committed PR diff, so a package and the
+    // COLD/WARM reviews of its HEAD fingerprint the same change.
+    const capturedRange = `${shellQuote(baseSha)} ${shellQuote(headSha)} -- ${shellQuote('.')}`;
+    const committedNumstat = await deps.exec(
       vars,
-      immutableRange
-        ? `${GIT_DIFF_COMMAND} --numstat ${capturedRange}`
-        : runSourceDiffNumstatCommand(baseSha, pathspecs),
-      {
-        timeout: 10_000,
-      },
+      `${GIT_DIFF_COMMAND} --numstat ${capturedRange}`,
+      { timeout: 10_000 },
     );
-    if (numstat.exitCode !== 0) {
-      return {
-        snapshot: unavailableReviewSnapshot('git-numstat-failed', numstat.stderr || numstat.stdout),
-      };
-    }
-    const diff = await deps.exec(
-      vars,
-      immutableRange
-        ? `${GIT_DIFF_COMMAND} ${capturedRange}`
-        : cappedRunSourceDiffCommand(baseSha, pathspecs),
-      {
-        timeout: 30_000,
-        maxBuffer: REVIEW_DIFF_MAX_BUFFER,
-      },
-    );
-    if (diff.exitCode !== 0) {
-      return {
-        snapshot: unavailableReviewSnapshot(
-          /maxBuffer exceeded/i.test(diff.stderr) ? 'diff-artifact-too-large' : 'git-diff-failed',
-          diff.stderr || diff.stdout,
-        ),
-      };
-    }
+    const uncommittedNumstat = immutableRange
+      ? { exitCode: 0, stdout: '', stderr: '' }
+      : await deps.exec(vars, runSourceDiffNumstatCommand(headSha, pathspecs), {
+          timeout: 10_000,
+        });
+    for (const numstat of [committedNumstat, uncommittedNumstat])
+      if (numstat.exitCode !== 0)
+        return {
+          snapshot: unavailableReviewSnapshot(
+            'git-numstat-failed',
+            numstat.stderr || numstat.stdout,
+          ),
+        };
+    const numstat = { stdout: committedNumstat.stdout + uncommittedNumstat.stdout };
+    const diffFailure = (result: ExecResult) =>
+      unavailableReviewSnapshot(
+        /maxBuffer exceeded/i.test(result.stderr) ? 'diff-artifact-too-large' : 'git-diff-failed',
+        result.stderr || result.stdout,
+      );
+    const committed = await deps.exec(vars, `${GIT_DIFF_COMMAND} ${capturedRange}`, {
+      timeout: 30_000,
+      maxBuffer: REVIEW_DIFF_MAX_BUFFER,
+    });
+    if (committed.exitCode !== 0) return { snapshot: diffFailure(committed) };
+    // A package also carries its uncommitted and untracked source edits, which no
+    // review certified, so a dirty worktree never matches a review of HEAD.
+    const uncommitted = immutableRange
+      ? { exitCode: 0, stdout: '', stderr: '' }
+      : await deps.exec(vars, cappedRunSourceDiffCommand(headSha, pathspecs), {
+          timeout: 30_000,
+          maxBuffer: REVIEW_DIFF_MAX_BUFFER,
+        });
+    if (uncommitted.exitCode !== 0) return { snapshot: diffFailure(uncommitted) };
+    const diff = { stdout: committed.stdout + uncommitted.stdout };
     const untrackedManifest = immutableRange
       ? { exitCode: 0, stdout: '', stderr: '' }
       : await deps.exec(vars, runSourceDiffUntrackedManifestCommand(pathspecs), {

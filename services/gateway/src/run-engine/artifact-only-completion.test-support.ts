@@ -9,7 +9,7 @@ import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe
 export async function createArtifactOnlyTrial(
   taskDir: string,
   project = 'generic-project',
-  proofMode: 'state' | 'review' = 'state',
+  proofMode: 'state' | 'review' | 'visual' = 'state',
 ) {
   const { createRun, getRun, updateRun } = await import('../runs/store.js');
   const { captureRunOutput } = await import('../run-completion/output.js');
