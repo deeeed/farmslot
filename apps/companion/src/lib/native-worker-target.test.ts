@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { NativeSessionInfo, Run } from '@farmslot/protocol';
+import type { NativeSessionInfo, Run, RunGetResult } from '@farmslot/protocol';
 
 import {
+  nativeWorkerForAction,
   nativeWorkerViewControl,
   nativeWorkerViewForRun,
   type NativeWorkerViewSelection,
@@ -170,4 +171,26 @@ test('late transcript pages keep metadata changes but retire a different task ow
       false,
       field,
     );
+});
+
+test('a run-linked action targets the worker while its run only waits for a reread', () => {
+  const now = Date.parse('2026-10-30T00:00:00Z');
+  const data = { run } as RunGetResult;
+  assert.deepEqual(nativeWorkerForAction({ status: 'ready', data }, selection, true, now), target);
+  assert.deepEqual(
+    nativeWorkerForAction({ status: 'stale', data, observedAt: now }, selection, true, now),
+    target,
+    'a run write does not refuse the action',
+  );
+  const failed = { code: 'METHOD_ERROR', message: 'failed' };
+  assert.equal(
+    nativeWorkerForAction({ status: 'stale', data, error: failed }, selection, true, now),
+    undefined,
+  );
+  assert.equal(nativeWorkerForAction({ status: 'stale', data }, selection, false, now), undefined);
+  const moved = { run: { ...run, agentContexts: [] } } as RunGetResult;
+  assert.throws(
+    () => nativeWorkerForAction({ status: 'ready', data: moved }, selection, true, now),
+    /no longer contains/,
+  );
 });

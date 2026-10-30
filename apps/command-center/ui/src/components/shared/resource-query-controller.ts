@@ -1,9 +1,11 @@
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
 
-import type {
-  GatewayResourceCache,
-  ResourceQuery,
-  ResourceQueryState,
+import {
+  canActOn as canActOnHeldData,
+  type GatewayResourceCache,
+  heldDataIsSaved as heldDataIsSavedFor,
+  type ResourceQuery,
+  type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
@@ -14,7 +16,6 @@ import {
   subscribeResourceCache,
 } from '../../resource-cache.js';
 import { notificationTray, publishReadNotice } from '../../utils/notification-tray.js';
-import { heldDataIsSaved as resourceHeldDataIsSaved } from '../../utils/resource-read-status.js';
 
 import { readCurrent } from './read-current.js';
 
@@ -24,30 +25,22 @@ export {
   readKeepsFailing,
 } from '../../utils/resource-read-status.js';
 
-/** Bind the shared display policy to this client's current connection. */
+/** The shared held-data rule for this tab's gateway connection. */
 export function heldDataIsSaved(
   state: ResourceQueryState<unknown>,
   connected = gateway.connectionState === 'connected',
   now = Date.now(),
 ): boolean {
-  return resourceHeldDataIsSaved(state, connected, now);
+  return heldDataIsSavedFor(state, connected, now);
 }
 
-/**
- * Held data an action may start from: current, or stale only while its paced reread is due. The
- * action rereads it first (readCurrent); saved data never qualifies.
- */
+/** The shared action rule for this tab's gateway connection. */
 export function canActOn(
   state: ResourceQueryState<unknown>,
   connected = gateway.connectionState === 'connected',
   now = Date.now(),
 ): boolean {
-  return (
-    connected &&
-    state.data !== undefined &&
-    (state.status === 'ready' ||
-      (state.status === 'stale' && !heldDataIsSaved(state, connected, now)))
-  );
+  return canActOnHeldData(state, connected, now);
 }
 
 /** Binds a panel's query to the current farm owner; the shared cache owns all reads. */
