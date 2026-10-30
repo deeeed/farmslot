@@ -1019,6 +1019,8 @@ export async function executeHumanGateStep(
   } = context;
   const current = getRun(runId)!;
   const generation = current.engineState?.generation ?? 0;
+  if (current.steps.some((step) => step.name === S.HUMAN_GATE && step.status === 'running'))
+    updateRunStep(runId, S.HUMAN_GATE, { detail: 'Preparing operator decision' });
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
       await import('../run-completion/human-publication.js');

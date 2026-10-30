@@ -1419,7 +1419,9 @@ export async function executeReadyGate(
     branchFreshness,
   );
 
-  updateRunStep(runId, S.HUMAN_GATE, { detail: 'Waiting for operator decision' });
+  updateRunStep(runId, S.HUMAN_GATE, {
+    detail: 'Preparing operator decision: reconciling workspace',
+  });
   // ADR-054: entering a durable operator wait. The effective retention policy
   // applies before the operator chooses; their choice then governs what follows.
   await reconcileRunPosture({ runId, boundary: 'operator-wait' });

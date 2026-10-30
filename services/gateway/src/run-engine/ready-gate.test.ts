@@ -974,7 +974,12 @@ test(
     const held = getRun(run.id)!;
     assert.equal(held.slotId, before.slotId);
     assert.deepEqual(held.engineState, before.engineState);
-    assert.deepEqual(held.steps, before.steps);
+    assert.deepEqual(
+      held.steps,
+      before.steps.map((step) =>
+        step.name === 'human-gate' ? { ...step, detail: 'Waiting for operator decision' } : step,
+      ),
+    );
     assert.notEqual(held.status, 'failed');
     assert.equal(resolveEngineDecision(card.id, 'abort'), true);
     assert.equal(await execution, 'abort');

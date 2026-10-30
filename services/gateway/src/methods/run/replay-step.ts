@@ -1599,6 +1599,10 @@ async function replayRunStep(
     if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
       updateRun(params.runId, { decisions: existing.decisions });
     }
+    if (replayStepName === PS.HUMAN_GATE)
+      updateRunStep(params.runId, PS.HUMAN_GATE, {
+        detail: 'Preparing operator decision: replaying gate',
+      });
     gateReentry = gateReentries.get(params.runId) ?? {
       decisionIds: new Set(),
       inFlight: 0,
@@ -1865,6 +1869,9 @@ async function replayRunStep(
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
+      updateRunStep(params.runId, PS.HUMAN_GATE, {
+        detail: 'Preparing operator decision: collecting worker artifacts',
+      });
       const copied = await captureRunOutput(params.runId, true, false, {
         forPublication: requiresPublicationApproval(runBeforeGateReplay),
       });
