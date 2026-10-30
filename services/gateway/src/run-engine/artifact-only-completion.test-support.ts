@@ -6,7 +6,11 @@ import { RECIPE_ACTION_MANIFEST_SCHEMA_URL } from '@farmslot/protocol';
 import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
 
 /** Real recipe output shared by the regression and the manual RPC proof. */
-export async function createArtifactOnlyTrial(taskDir: string, project = 'generic-project') {
+export async function createArtifactOnlyTrial(
+  taskDir: string,
+  project = 'generic-project',
+  proofMode: 'state' | 'review' = 'state',
+) {
   const { createRun, getRun, updateRun } = await import('../runs/store.js');
   const { captureRunOutput } = await import('../run-completion/output.js');
   const { resolveWorkerTerminalContract } = await import('../tasks/worker-terminal-contract.js');
@@ -48,7 +52,7 @@ export async function createArtifactOnlyTrial(taskDir: string, project = 'generi
     hud: false,
     defaultSource: { kind: 'operator', trust: 'trusted' },
   });
-  const criterion = { id: 'AC-1', text: 'The value is observed.', proofMode: 'state' as const };
+  const criterion = { id: 'AC-1', text: 'The value is observed.', proofMode };
   const execution = await runner.run({
     projectRoot: taskDir,
     artifactsDir: directory,
@@ -65,7 +69,7 @@ export async function createArtifactOnlyTrial(taskDir: string, project = 'generi
             action: 'assert_output',
             source: 'read',
             contains: 'observed',
-            proves: [criterion.id],
+            ...(proofMode === 'review' ? {} : { proves: [criterion.id] }),
             intent: 'Check.',
             next: 'done',
           },
