@@ -47,6 +47,7 @@ import { readEvalJudgeReceipt, recordEvalJudgeResult } from '../evals/judge.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { prepareRetainedRunCapabilities } from '../run-engine/declared-capabilities.js';
+import { reportRunnerProgressWarning } from '../run-engine/progress-warning.js';
 import { runSupersededSince } from '../run-engine/run-generation.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
@@ -102,7 +103,7 @@ import {
   withNativeReviewMutation,
   withNativeReviewOperation,
 } from './native-review-operation.js';
-import { initReviewProgress, startProgressWatcher } from './progress.js';
+import { broadcastReviewRun, initReviewProgress, startProgressWatcher } from './progress.js';
 import {
   liveNativeReviewer,
   refundedNativeReviewer,
@@ -827,7 +828,18 @@ export async function reviewFixHasActivity(
     return command ? nativeFixTurnIsActive(runId, command) : false;
   }
   const target = context.target?.target;
-  return target ? runnerTurnIsActive(vars, target, context.runner ?? workerRunner) : false;
+  return target
+    ? runnerTurnIsActive(
+        vars,
+        target,
+        context.runner ?? workerRunner,
+        undefined,
+        undefined,
+        (state) => {
+          if (reportRunnerProgressWarning(runId, 'review', state)) broadcastReviewRun(runId);
+        },
+      )
+    : false;
 }
 
 // Module-level constant — wiring is fixed at module load. Tests pass their own deps struct

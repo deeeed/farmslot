@@ -46,6 +46,8 @@ import {
   type GatewayProfileAuthMode,
   gatewayProfileKindUrlError,
   mobileGatewayProfileUrlError,
+  profilesSharingPersonLogin,
+  readGatewayProfilePersonSession,
   readGatewayProfileSecret,
 } from '../../lib/gateway-profiles';
 import { isStoreScreenshotMode } from '../../lib/store-screenshot-mode';
@@ -459,27 +461,48 @@ export default function SettingsScreen() {
     connect();
   };
 
-  const handleDeleteProfile = (profile: GatewayProfile) => {
+  const handleDeleteProfile = async (profile: GatewayProfile) => {
     if (profile.readonly) return;
     const isActive = profile.id === activeProfile?.id;
-    Alert.alert(
-      `Delete ${profile.name}?`,
-      isActive
-        ? 'This is the active profile. Farmslot will switch to the next available profile.'
-        : 'The saved profile and its credential will be removed.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete profile',
-          style: 'destructive',
-          onPress: () => {
-            void deleteProfile(profile.id)
-              .then(connect)
-              .catch((error: Error) => Alert.alert('Profile delete failed', error.message));
-          },
+    // A profile that holds a person login is signed out as part of the delete, unless another
+    // address from the same pairing may still use that sign-in.
+    const signedIn = (await readGatewayProfilePersonSession(profile).catch(() => null)) !== null;
+    const sharedWith = signedIn
+      ? await profilesSharingPersonLogin(profile, profiles).catch(() => [])
+      : [];
+    const signsOut = signedIn && sharedWith.length === 0;
+    const message = signsOut
+      ? [`Signs this device out of ${profile.name} and removes the profile.`]
+      : signedIn
+        ? [
+            `Removes the profile. This device stays signed in to the gateway, because ${sharedWith.map((other) => other.name).join(', ')} may use the same sign-in.`,
+          ]
+        : isActive
+          ? []
+          : ['The saved profile and its credential will be removed.'];
+    if (isActive)
+      message.push(
+        'This is the active profile. Farmslot will switch to the next available profile.',
+      );
+    Alert.alert(`Delete ${profile.name}?`, message.join(' '), [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: signsOut ? 'Sign out and delete' : 'Delete profile',
+        style: 'destructive',
+        onPress: () => {
+          void deleteProfile(profile.id)
+            .then(({ deviceStillListed }) => {
+              if (deviceStillListed)
+                Alert.alert(
+                  'Profile deleted',
+                  `${profile.name} did not confirm the sign-out, so it may still list this device. Its sign-in is gone from this device; revoke the device in Command Center to end it there too.`,
+                );
+              connect();
+            })
+            .catch((error: Error) => Alert.alert('Profile delete failed', error.message));
         },
-      ],
-    );
+      },
+    ]);
   };
 
   const handleOpenExternalUrl = useCallback(async (url: string) => {
@@ -848,7 +871,7 @@ export default function SettingsScreen() {
                     {!profile.readonly ? (
                       <Pressable
                         style={styles.deleteButton}
-                        onPress={() => handleDeleteProfile(profile)}
+                        onPress={() => void handleDeleteProfile(profile)}
                       >
                         <Text style={styles.deleteText}>Delete</Text>
                       </Pressable>

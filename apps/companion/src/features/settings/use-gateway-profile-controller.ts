@@ -9,6 +9,7 @@ import {
   connectionProbeTeachingError,
 } from '../../lib/connection-liveness';
 import { type GatewayAuthCredentials, testGatewayConnection } from '../../lib/gateway-client';
+import { pairingProbeCredentials } from '../../lib/gateway-pairing-save';
 import { sortGatewayProfilesForAutoConnect } from '../../lib/gateway-profile-selection';
 import {
   type GatewayProfile,
@@ -283,7 +284,7 @@ export function startImportedPairingProfileTests(
   importedProfiles: ImportedPairingProfile[],
 ): Promise<PairingProfileReachability>[] {
   return importedProfiles.map(async (importedProfile) => {
-    const auth = await authCredentialsForProfile(importedProfile.profile);
+    const auth = pairingProbeCredentials(importedProfile);
     try {
       const result = await testGatewayConnection(importedProfile.profile.url, auth, {
         connectMs: PAIRING_CONNECT_TIMEOUT_MS,

@@ -7,6 +7,7 @@ import {
   parsePersonSessionAuth,
   type PersonSessionAuth,
   PersonSessionChangedError,
+  PersonSessionEndedError,
   type PersonSessionStorage,
 } from '@farmslot/protocol';
 
@@ -145,7 +146,8 @@ function sameLogin(left: StoredProfileLogin, right: StoredProfileLogin): boolean
 }
 
 async function serializeProfileWrite(key: string, write: () => Promise<void>): Promise<void> {
-  while (profileWrites.has(key)) await profileWrites.get(key);
+  // A failed write reports to its own caller. The next one still runs and checks the stored login.
+  while (profileWrites.has(key)) await profileWrites.get(key)?.catch(() => undefined);
   const task = write();
   profileWrites.set(key, task);
   try {
@@ -176,15 +178,51 @@ export interface GatewayProfileLogin {
   commitVerifiedCredential(result: GatewayAuthConnectResult): Promise<void>;
 }
 
+export interface GatewayProfileLoginOptions {
+  replacePersonLogin?: boolean;
+  /** Receives the stored value each write replaces, read inside the profile's write queue. */
+  onReplace?: (previous: string | null) => void;
+}
+
+/**
+ * Puts back `previous` only while the stored login is still the one `owner` wrote, so a newer
+ * login saved by anyone else stays.
+ */
+export async function restoreGatewayProfileLogin(
+  profile: GatewayProfile,
+  previous: string | null,
+  owner: { personSessionId?: string; credential?: string },
+): Promise<void> {
+  const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
+  await serializeProfileWrite(key, async () => {
+    const current = await storedLogin(profile).catch(() => null);
+    const owned =
+      current?.kind === 'person'
+        ? Boolean(owner.personSessionId) && current.auth?.session.id === owner.personSessionId
+        : current?.kind === 'service' && Boolean(owner.credential?.trim())
+          ? current.credential === owner.credential?.trim()
+          : false;
+    if (!owned) return;
+    if (previous === null) await SecureStore.deleteItemAsync(key);
+    else await SecureStore.setItemAsync(key, previous);
+  });
+}
+
 export async function prepareGatewayProfileLogin(
   profile: GatewayProfile,
   secret?: string,
   personSession?: PersonSessionAuth,
+  options: GatewayProfileLoginOptions = {},
 ): Promise<GatewayProfileLogin> {
   const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
   let expected = await storedLogin(profile);
   const explicit = profile.authMode !== 'none' && Boolean(secret?.trim());
-  if ((explicit || profile.authMode === 'none') && expected.kind === 'person' && expected.auth)
+  if (
+    !options.replacePersonLogin &&
+    (explicit || profile.authMode === 'none') &&
+    expected.kind === 'person' &&
+    expected.auth
+  )
     throw new Error('Sign out this device before replacing its person login.');
   const raw =
     profile.authMode === 'none'
@@ -199,6 +237,7 @@ export async function prepareGatewayProfileLogin(
       const current = await storedLogin(profile);
       if (!sameLogin(current, expected)) throw new PersonSessionChangedError();
       const next = { kind: 'person' as const, gatewayUrl: profile.url, auth: value };
+      options.onReplace?.(await SecureStore.getItemAsync(key));
       await SecureStore.setItemAsync(
         key,
         JSON.stringify({ format: PROFILE_LOGIN_FORMAT, ...next }),
@@ -249,6 +288,7 @@ export async function prepareGatewayProfileLogin(
           if (!sameLogin(await storedLogin(profile), expected))
             throw new PersonSessionChangedError();
           const next = { kind: 'service' as const, gatewayUrl: profile.url, credential: raw ?? '' };
+          options.onReplace?.(await SecureStore.getItemAsync(key));
           await SecureStore.setItemAsync(
             key,
             JSON.stringify({ format: PROFILE_LOGIN_FORMAT, ...next }),
@@ -260,6 +300,75 @@ export async function prepareGatewayProfileLogin(
       pendingPerson = undefined;
     },
   };
+}
+
+/**
+ * Other saved profiles that may hold this profile's device sign-in: a pairing saves it on each
+ * address. A profile whose login cannot be read counts, so its session is never revoked unseen.
+ */
+export async function profilesSharingPersonLogin(
+  profile: GatewayProfile,
+  profiles: readonly GatewayProfile[],
+  sessionId?: string,
+): Promise<GatewayProfile[]> {
+  const own = sessionId ?? (await readGatewayProfilePersonSession(profile))?.session.id;
+  if (!own) return [];
+  const others = profiles.filter((candidate) => candidate.id !== profile.id);
+  const logins = await Promise.all(
+    others.map((candidate) =>
+      readGatewayProfilePersonSession(candidate).then(
+        (login) => login?.session.id,
+        () => own,
+      ),
+    ),
+  );
+  return others.filter((_, index) => logins[index] === own);
+}
+
+/**
+ * Ends this device's person login for a profile it is deleting. `signOut` revokes the device session
+ * on the gateway with the saved login, unless another saved profile may still use it. Only the
+ * session read here ends: a sign-in saved to the profile meanwhile stays, and this rejects. Resolves
+ * false when the gateway did not confirm a sign-out, so it may still list this device.
+ */
+export async function endGatewayProfilePersonLogin(
+  profile: GatewayProfile,
+  profiles: readonly GatewayProfile[],
+  signOut: (credentials: GatewayProfileLogin['credentials']) => Promise<void>,
+): Promise<boolean> {
+  const own = await readGatewayProfilePersonSession(profile);
+  if (!own) return true;
+  let confirmed = true;
+  if ((await profilesSharingPersonLogin(profile, profiles, own.session.id)).length === 0) {
+    try {
+      const { credentials } = await prepareGatewayProfileLogin(profile);
+      const prepared = (await credentials.sessionStorage.load()) as PersonSessionAuth | null;
+      if (prepared?.session.id !== own.session.id) throw new PersonSessionChangedError();
+      await signOut(credentials);
+    } catch (error) {
+      // A session the gateway already ended needs no sign-out there.
+      confirmed = error instanceof PersonSessionEndedError;
+    }
+  }
+  const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
+  await serializeProfileWrite(key, async () => {
+    const current = await storedLogin(profile);
+    if (current.kind !== 'person' || !current.auth) return;
+    if (current.auth.session.id !== own.session.id)
+      throw new Error(
+        'This profile was signed in again during the delete, so it was kept. Delete it again to sign that out too.',
+      );
+    await SecureStore.setItemAsync(
+      key,
+      JSON.stringify({
+        format: PROFILE_LOGIN_FORMAT,
+        kind: 'person',
+        gatewayUrl: profile.url,
+        auth: null,
+      }),
+    );
+  });
+  return confirmed;
 }
 
 export async function forgetGatewayProfileSecret(profile: GatewayProfile): Promise<void> {
