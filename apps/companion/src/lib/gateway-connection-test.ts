@@ -32,6 +32,27 @@ export function testGatewayConnection(
   auth: GatewayAuthCredentials = {},
   timeouts: GatewayConnectionTestTimeouts = {},
 ): Promise<GatewayConnectionTestResult> {
+  return runGatewayConnection(url, auth, timeouts, 'ping');
+}
+
+/**
+ * Signs this device out of a gateway it holds a person login for, over a socket of its own: refresh,
+ * connect, then revoke the device session. Works for a profile the running client is not on.
+ */
+export async function signOutGatewayDevice(
+  url: string,
+  auth: GatewayAuthCredentials,
+  timeouts: GatewayConnectionTestTimeouts = {},
+): Promise<void> {
+  await runGatewayConnection(url, auth, timeouts, 'sign-out');
+}
+
+function runGatewayConnection(
+  url: string,
+  auth: GatewayAuthCredentials,
+  timeouts: GatewayConnectionTestTimeouts,
+  afterAuth: 'ping' | 'sign-out',
+): Promise<GatewayConnectionTestResult> {
   const urlError = mobileGatewayProfileUrlError(url);
   if (urlError) return Promise.reject(new Error(urlError));
 
@@ -223,6 +244,31 @@ export function testGatewayConnection(
           return;
         }
         authResult = response.payload;
+        if (afterAuth === 'sign-out') {
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            finishWithError(new Error(`Gateway did not confirm sign-out within ${pingTimeout}ms`));
+          }, pingTimeout);
+          const signedIn = authResult;
+          (person?.session
+            ? person.signOut()
+            : Promise.reject(new Error('This profile has no device sign-in to end.'))
+          ).then(
+            () => {
+              if (!finish()) return;
+              resolve({
+                ...signedIn,
+                latencyMs: Date.now() - startedAt,
+                gatewayPingSupported: false,
+              });
+            },
+            (error: unknown) =>
+              finishWithError(
+                error instanceof Error ? error : new Error('Gateway sign-out failed.'),
+              ),
+          );
+          return;
+        }
         if (!gatewaySupportsPing(authResult)) {
           if (!finish()) return;
           resolve({

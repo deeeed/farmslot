@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Methods, type RequestFrame } from '@farmslot/protocol';
+import { Methods, type PersonSessionAuth, type RequestFrame } from '@farmslot/protocol';
 
-import { testGatewayConnection } from './gateway-connection-test';
+import { signOutGatewayDevice, testGatewayConnection } from './gateway-connection-test';
 
 test('connection tests authenticate and prove gateway.ping before succeeding', async () => {
   const OriginalWebSocket = globalThis.WebSocket;
@@ -384,3 +384,104 @@ for (const malformed of [
     }
   });
 }
+
+test('signing a device out refreshes its saved login, connects, then revokes the session', async () => {
+  const OriginalWebSocket = globalThis.WebSocket;
+  const sentMethods: string[] = [];
+  const now = new Date();
+  const session = {
+    id: 'a'.repeat(32),
+    principalId: 'person',
+    principalGeneration: 0,
+    deviceName: 'Mobile Companion',
+    deviceKind: 'companion' as const,
+    createdAt: now.toISOString(),
+    lastRefreshedAt: now.toISOString(),
+    refreshExpiresAt: new Date(now.getTime() + 30 * 86400_000).toISOString(),
+    revokedAt: null,
+  };
+  let saved: PersonSessionAuth | null = {
+    session,
+    refreshToken: `fsr_${'a'.repeat(32)}_${'r'.repeat(43)}`,
+  };
+
+  class TestWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+
+    readyState = TestWebSocket.CONNECTING;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror: (() => void) | null = null;
+    onclose: (() => void) | null = null;
+
+    constructor(_url: string) {
+      queueMicrotask(() => {
+        this.readyState = TestWebSocket.OPEN;
+        this.onopen?.();
+      });
+    }
+
+    send(data: string): void {
+      const request = JSON.parse(data) as RequestFrame;
+      sentMethods.push(request.method);
+      const payload =
+        request.method === Methods.AUTH_SESSION_REFRESH
+          ? {
+              session,
+              refreshToken: saved?.refreshToken,
+              accessToken: `fsa_${'a'.repeat(32)}_${'s'.repeat(43)}`,
+              accessExpiresAt: new Date(now.getTime() + 600_000).toISOString(),
+            }
+          : request.method === Methods.AUTH_CONNECT
+            ? {
+                ok: true,
+                clientKind: 'companion',
+                authMode: 'token',
+                authenticatedAt: Date.now(),
+                principal: {
+                  id: 'person',
+                  displayName: 'Arthur',
+                  subjectKind: 'person',
+                  roles: [],
+                },
+                capabilities: { httpBearerAuth: true, voiceInstructionFormatting: true },
+              }
+            : { session: { ...session, revokedAt: new Date().toISOString() } };
+      queueMicrotask(() =>
+        this.onmessage?.({
+          data: JSON.stringify({ type: 'res', id: request.id, ok: true, payload }),
+        } as MessageEvent),
+      );
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+  }
+
+  globalThis.WebSocket = TestWebSocket as unknown as typeof WebSocket;
+  try {
+    await signOutGatewayDevice(
+      'ws://gateway.test/ws',
+      {
+        personSessionRequired: true,
+        sessionStorage: {
+          load: async () => saved,
+          save: async (value) => {
+            saved = value;
+          },
+        },
+      },
+      { connectMs: 50, pingMs: 50 },
+    );
+    assert.deepEqual(sentMethods, [
+      Methods.AUTH_SESSION_REFRESH,
+      Methods.AUTH_CONNECT,
+      Methods.AUTH_SESSION_REVOKE,
+    ]);
+    assert.equal(saved, null);
+  } finally {
+    globalThis.WebSocket = OriginalWebSocket;
+  }
+});

@@ -7,6 +7,7 @@ import {
   parsePersonSessionAuth,
   type PersonSessionAuth,
   PersonSessionChangedError,
+  PersonSessionEndedError,
   type PersonSessionStorage,
 } from '@farmslot/protocol';
 
@@ -299,6 +300,56 @@ export async function prepareGatewayProfileLogin(
       pendingPerson = undefined;
     },
   };
+}
+
+/** Other saved profiles that hold this profile's device sign-in: a pairing saves it on each address. */
+export async function profilesSharingPersonLogin(
+  profile: GatewayProfile,
+  profiles: readonly GatewayProfile[],
+): Promise<GatewayProfile[]> {
+  const own = await readGatewayProfilePersonSession(profile);
+  if (!own) return [];
+  const others = profiles.filter((candidate) => candidate.id !== profile.id);
+  const logins = await Promise.all(
+    others.map((candidate) => readGatewayProfilePersonSession(candidate).catch(() => null)),
+  );
+  return others.filter((_, index) => logins[index]?.session.id === own.session.id);
+}
+
+/**
+ * Ends this device's person login for a profile it is deleting. `signOut` revokes the device session
+ * on the gateway with the saved login; without it (another profile still uses the session) nothing
+ * is revoked. Either way the login stored for this profile ends. Resolves false when the gateway did
+ * not confirm a sign-out, so it may still list this device.
+ */
+export async function endGatewayProfilePersonLogin(
+  profile: GatewayProfile,
+  signOut?: (credentials: GatewayProfileLogin['credentials']) => Promise<void>,
+): Promise<boolean> {
+  let confirmed = true;
+  if (signOut) {
+    try {
+      await signOut((await prepareGatewayProfileLogin(profile)).credentials);
+    } catch (error) {
+      // A session the gateway already ended needs no sign-out there.
+      confirmed = error instanceof PersonSessionEndedError;
+    }
+  }
+  const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
+  await serializeProfileWrite(key, async () => {
+    const current = await storedLogin(profile);
+    if (current.kind !== 'person' || !current.auth) return;
+    await SecureStore.setItemAsync(
+      key,
+      JSON.stringify({
+        format: PROFILE_LOGIN_FORMAT,
+        kind: 'person',
+        gatewayUrl: profile.url,
+        auth: null,
+      }),
+    );
+  });
+  return confirmed;
 }
 
 export async function forgetGatewayProfileSecret(profile: GatewayProfile): Promise<void> {
