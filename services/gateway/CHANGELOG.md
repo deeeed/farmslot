@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep prepare's support verification and retention inventory out of process arguments, so growing run history cannot fail dispatch with E2BIG.
+
 - Preserve acceptance-contract task writes across a CI-watch handoff when the parent releases its slot.
 - Keep reference answers out of eval workers and exclude contaminated first outputs from comparisons.
 
