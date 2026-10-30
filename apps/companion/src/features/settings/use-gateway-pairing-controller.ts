@@ -33,8 +33,10 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [pairingScannerOpen, setPairingScannerOpen] = useState(false);
   const [pairingInProgress, setPairingInProgress] = useState(false);
-  // The camera reports a QR on every frame; state updates land too late to stop a second exchange.
-  const pairingStarted = useRef(false);
+  // The camera reports a QR on every frame and a link can arrive twice; state updates land too late
+  // to stop a second exchange with the same single-use code.
+  const pairingRunning = useRef(false);
+  const lastPairingData = useRef<string | null>(null);
 
   const openPairingScanner = async () => {
     if (!cameraPermission?.granted) {
@@ -44,17 +46,19 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
         return;
       }
     }
-    pairingStarted.current = false;
+    lastPairingData.current = null;
     setPairingInProgress(false);
     setPairingScannerOpen(true);
   };
 
-  const handlePairingBarcodeScanned = async (result: BarcodeScanningResult) => {
-    if (pairingStarted.current) return;
-    pairingStarted.current = true;
+  /** Pairs from a pairing QR payload, scanned or from a pair link: one exchange per payload. */
+  const pairFromQrData = async (data: string) => {
+    if (pairingRunning.current || data === lastPairingData.current) return;
+    pairingRunning.current = true;
+    lastPairingData.current = data;
     setPairingInProgress(true);
     try {
-      const payload = parseGatewayPairingQr(result.data);
+      const payload = parseGatewayPairingQr(data);
       const pairedProfileResults = await exchangeGatewayPairingQr(payload);
       const importedProfiles = pairedProfileResults.map((pairedProfileResult) => ({
         profile: profileFromPairingResult(pairedProfileResult),
@@ -138,13 +142,19 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
       setPairingScannerOpen(false);
       setPairingInProgress(false);
       Alert.alert('Pairing failed', (error as Error).message);
+    } finally {
+      pairingRunning.current = false;
     }
   };
+
+  const handlePairingBarcodeScanned = (result: BarcodeScanningResult) =>
+    pairFromQrData(result.data);
 
   return {
     closePairingScanner: () => setPairingScannerOpen(false),
     handlePairingBarcodeScanned,
     openPairingScanner,
+    pairFromQrData,
     pairingInProgress,
     pairingScannerOpen,
   };

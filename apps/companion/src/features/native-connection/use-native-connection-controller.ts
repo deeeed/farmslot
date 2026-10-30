@@ -11,7 +11,9 @@ import { useConnectionStore } from '../../store/connection';
 import { useGatewayPairingController } from '../settings/use-gateway-pairing-controller';
 import type { ProfileConnectionTestState } from '../settings/use-gateway-profile-controller';
 
-export function useNativeConnectionController() {
+/** `pairingLink` is a pairing QR payload from a pair link; it pairs once the connection store is ready. */
+export function useNativeConnectionController(options: { pairingLink?: string } = {}) {
+  const { pairingLink } = options;
   const connection = useConnectionStore();
   const [name, setName] = useState('My gateway');
   const [url, setUrl] = useState(connection.gatewayUrl);
@@ -38,6 +40,9 @@ export function useNativeConnectionController() {
     onPaired: () => setPaired(true),
   });
   openScannerRef.current = pairing.openPairingScanner;
+  const pairFromLinkRef = useRef(pairing.pairFromQrData);
+  pairFromLinkRef.current = pairing.pairFromQrData;
+  const storeReady = Boolean(connection.client) && !connection.initializing;
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -45,10 +50,14 @@ export function useNativeConnectionController() {
     };
   }, []);
   useEffect(() => {
-    if (autoOpenedScanner.current || connection.profiles.length > 0) return;
+    if (pairingLink || autoOpenedScanner.current || connection.profiles.length > 0) return;
     autoOpenedScanner.current = true;
     void openScannerRef.current();
-  }, [connection.profiles.length]);
+  }, [connection.profiles.length, pairingLink]);
+  useEffect(() => {
+    // Pairing saves profiles and activates one, so it waits for the store to load the saved ones.
+    if (pairingLink && storeReady) void pairFromLinkRef.current(pairingLink);
+  }, [pairingLink, storeReady]);
   const act = async (work: () => Promise<unknown>) => {
     if (mutation.current) return;
     mutation.current = true;

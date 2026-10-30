@@ -1064,6 +1064,27 @@ export function renderAppShellStyles(
         border-radius: 10px;
         padding: 10px;
       }
+      farm-app .pairing-link {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+      farm-app .pairing-link select,
+      farm-app .pairing-link button {
+        background: transparent;
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 6px;
+        color: inherit;
+        cursor: pointer;
+        font: 700 ${fonts.sizeXs} ${fonts.mono};
+        padding: 6px 8px;
+      }
+      farm-app .pairing-link-status {
+        flex-basis: 100%;
+        text-align: center;
+      }
       farm-app .pairing-empty {
         margin-top: 16px;
         border: 1px dashed ${colors.bgCardHover};
