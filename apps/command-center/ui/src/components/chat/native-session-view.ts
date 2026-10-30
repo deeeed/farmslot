@@ -19,11 +19,15 @@ import {
   type NativeSessionSendResult,
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
-import { sourceObservationAge } from '@farmslot/protocol';
 import {
   appendNativePage,
+  NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
   nativeDeliveryLabel,
+  type NativeFollow,
+  nativeFollowGrew,
+  nativeFollowLabel,
+  nativeFollowScrolled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
   nativeObservationQuery,
@@ -31,6 +35,7 @@ import {
   type NativeTranscript,
   type ResourceQuery,
   type ResourceQueryState,
+  SUPERSEDED_READ_GRACE_MS,
 } from '@farmslot/protocol/client-cache';
 import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
@@ -77,6 +82,10 @@ export interface NativeSessionFixture {
   catalog(): Promise<NativeSessionCatalogResult>;
   list(): Promise<NativeSessionListResult>;
   read(params: NativeSessionReadParams): Promise<NativeSessionReadResult>;
+}
+
+function timelineDistance(timeline: Element) {
+  return timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
 }
 
 @customElement('native-session-view')
@@ -149,6 +158,11 @@ export class NativeSessionView extends LitElement {
   @state() private invalidDelivery = false;
   private revision = 0;
   private timer?: ReturnType<typeof setTimeout>;
+  private readUnavailableSince?: number;
+  private savedHistoryBoundary?: ReturnType<typeof setTimeout>;
+  private inventoryCurrent = false;
+  @state() private inventoryUnsupported = false;
+  @state() private catalogUnsupported = false;
   private unsubscribe?: () => void;
   private inventoryRevision = 0;
   private storageScope = '';
@@ -162,6 +176,9 @@ export class NativeSessionView extends LitElement {
   };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
+  @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
+  /** The selection the timeline DOM was last rendered for. */
+  private renderedRevision = -1;
 
   private timeline() {
     if (this.timelineEvents !== this.transcript.events) {
@@ -173,7 +190,40 @@ export class NativeSessionView extends LitElement {
 
   static styles = nativeSessionStyles;
 
+  protected willUpdate() {
+    if (!this.connected || this.pollError || this.inventoryError || this.catalogError)
+      this.readUnavailableSince ??= Date.now();
+    else if (
+      isSupersededRead(this.historyObservation.error) ||
+      (this.worker
+        ? this.historyObservation.status === 'ready'
+        : this.inventoryCurrent &&
+          this.catalogCurrent &&
+          (!this.selectedId || this.historyObservation.status === 'ready'))
+    )
+      this.readUnavailableSince = undefined;
+    clearTimeout(this.savedHistoryBoundary);
+    const observation = this.historyObservation;
+    if (
+      this.connected &&
+      observation.status === 'stale' &&
+      observation.data !== undefined &&
+      observation.observedAt !== undefined &&
+      isSupersededRead(observation.error) &&
+      !heldDataIsSaved(observation, this.connected)
+    ) {
+      // Re-evaluate action controls once when held history becomes saved. Age ticks stay in the row.
+      this.savedHistoryBoundary = setTimeout(
+        () => {
+          if (this.isConnected) this.requestUpdate();
+        },
+        observation.observedAt + SUPERSEDED_READ_GRACE_MS - Date.now(),
+      );
+    }
+  }
+
   protected updated(changed: PropertyValues) {
+    this.renderedRevision = this.revision;
     if (
       changed.has('initialSessionId') &&
       changed.get('initialSessionId') &&
@@ -250,7 +300,7 @@ export class NativeSessionView extends LitElement {
     this.historyQuery = query;
     this.historyStop = observeNativeResource(query, (state) => {
       if (!this.isConnected || revision !== this.revision) return;
-      const follow = this.timelineAtEnd();
+      const before = this.timeline().length;
       this.historyObservation = state;
       const page = state.data;
       this.session = page?.session;
@@ -282,14 +332,41 @@ export class NativeSessionView extends LitElement {
           this.localCommand = undefined;
         }
       }
-      if (follow) void this.updateComplete.then(() => this.scrollTimelineToEnd());
+      this.followTimeline(before);
     });
   }
 
-  /** A reader at the end of the transcript keeps new output in view. */
-  private timelineAtEnd() {
+  /** A reader at the end keeps new output in view; one who scrolled up counts what arrived. */
+  private followTimeline(before: number) {
+    // The DOM still shows the last render: opening an entry may have moved the reader off the end.
     const timeline = this.renderRoot.querySelector('.timeline');
-    return !timeline || timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
+    if (timeline && this.renderedRevision === this.revision)
+      this.follow = nativeFollowScrolled(this.follow, timelineDistance(timeline));
+    this.follow = nativeFollowGrew(this.follow, this.timeline().length - before);
+    if (this.follow.following) void this.updateComplete.then(() => this.scrollTimelineToEnd());
+  }
+
+  private readonly timelineScrolled = (event: Event) => {
+    this.follow = nativeFollowScrolled(
+      this.follow,
+      timelineDistance(event.currentTarget as Element),
+    );
+  };
+
+  private renderJumpLatest() {
+    const label = nativeFollowLabel(this.follow);
+    return label
+      ? html`<button
+          class="jump-latest"
+          data-testid="native-jump-latest"
+          @click=${() => {
+            this.follow = NATIVE_FOLLOW_LATEST;
+            this.scrollTimelineToEnd();
+          }}
+        >
+          ${label}
+        </button>`
+      : nothing;
   }
 
   private scrollTimelineToEnd() {
@@ -338,6 +415,7 @@ export class NativeSessionView extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    clearTimeout(this.savedHistoryBoundary);
     document.removeEventListener('fullscreenchange', this.fullscreenChanged);
     this.revision++;
     clearTimeout(this.timer);
@@ -377,6 +455,10 @@ export class NativeSessionView extends LitElement {
     const scope = this.fixture ? 'fixture' : (getResourceWorkspaceKey() ?? '');
     if (scope !== this.storageScope) {
       this.storageScope = scope;
+      this.readUnavailableSince = undefined;
+      this.inventoryCurrent = false;
+      this.inventoryUnsupported = false;
+      this.catalogUnsupported = false;
       this.revision++;
       this.selectedId = safeLsGet(this.key('selected')) ?? '';
       this.selectedNodeId = safeLsGet(this.key('selected-node')) ?? 'local';
@@ -385,6 +467,7 @@ export class NativeSessionView extends LitElement {
       this.catalog = undefined;
       this.responseAttempts = new Set();
       this.transcript = { events: [], cursor: 0 };
+      this.follow = NATIVE_FOLLOW_LATEST;
       this.historyScope = undefined;
       this.requests = [];
       this.receipts = [];
@@ -455,6 +538,8 @@ export class NativeSessionView extends LitElement {
         observeNativeResource(
           nativeObservationQuery<NativeSessionListResult>(Methods.NATIVE_SESSION_LIST, {}, owner),
           (state) => {
+            this.inventoryCurrent = state.status === 'ready';
+            this.inventoryUnsupported = state.status === 'unsupported';
             this.inventoryError = state.error?.message ?? '';
             const sessions = state.data?.sessions ?? [];
             this.sessions = sessions
@@ -484,6 +569,7 @@ export class NativeSessionView extends LitElement {
             owner,
           ),
           (state) => {
+            this.catalogUnsupported = state.status === 'unsupported';
             this.catalogError = state.error?.message ?? '';
             this.catalog = state.data;
             this.catalogCurrent = state.status === 'ready';
@@ -604,7 +690,7 @@ export class NativeSessionView extends LitElement {
           this.historyScope = scope;
         }
         this.pollError = '';
-        const nearBottom = this.timelineAtEnd();
+        const before = this.timeline().length;
         this.transcript = appendNativePage(this.transcript, page);
         for (const event of page.events) {
           if (event.type === 'approval.resolved' && event.request) {
@@ -638,8 +724,8 @@ export class NativeSessionView extends LitElement {
             this.localCommand = undefined;
           }
         }
+        this.followTimeline(before);
         await this.updateComplete;
-        if (nearBottom) this.scrollTimelineToEnd();
         if (!page.hasMore) break;
       }
     } catch (error) {
@@ -655,6 +741,7 @@ export class NativeSessionView extends LitElement {
 
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
+    this.follow = NATIVE_FOLLOW_LATEST;
     this.selectedId = id;
     this.selectedNodeId = executionNodeId;
     this.responseAttempts = new Set();
@@ -670,6 +757,7 @@ export class NativeSessionView extends LitElement {
     this.caughtUp = false;
     this.error = '';
     this.pollError = '';
+    this.readUnavailableSince = undefined;
     this.busy = false;
     if (!this.worker) {
       safeLsSet(this.key('selected'), id);
@@ -894,21 +982,6 @@ export class NativeSessionView extends LitElement {
       ['closed', 'failed'].includes(session.state) &&
       (!session.processPid || session.processStopped);
     return html`
-      ${heldDataIsSaved(this.historyObservation, this.connected) &&
-      this.historyObservation.observedAt !== undefined
-        ? html`<p
-            role="status"
-            data-testid="native-history-saved"
-            data-observed-at=${this.historyObservation.observedAt}
-          >
-            Saved conversation history,
-            ${sourceObservationAge(this.historyObservation.observedAt, Date.now())}. Actions wait
-            for a current read.
-          </p>`
-        : nothing}
-      ${this.historyObservation.status === 'unsupported'
-        ? html`<p role="status">Live conversation updates are unavailable on this gateway.</p>`
-        : nothing}
       ${renderNativeSessionHeader({
         worker: this.worker,
         sessions: this.sessions,
@@ -942,6 +1015,13 @@ export class NativeSessionView extends LitElement {
           history.replaceState(null, '', buildHash('native', params));
         },
         readError: this.pollError || this.inventoryError || this.catalogError,
+        unavailableSince: this.readUnavailableSince,
+        observedAt: this.historyObservation.observedAt,
+        historyObservation: this.historyObservation,
+        unsupported:
+          this.historyObservation.status === 'unsupported' ||
+          this.inventoryUnsupported ||
+          this.catalogUnsupported,
         refresh: () => {
           const cache = getResourceCache();
           const owner = getResourceNativeOwnerId();
@@ -963,14 +1043,7 @@ export class NativeSessionView extends LitElement {
         },
       })}
       ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
-      ${this.pollError ? html`<div class="error" role="alert">${this.pollError}</div>` : nothing}
-      ${this.inventoryError
-        ? html`<div class="error" role="alert">${this.inventoryError}</div>`
-        : nothing}
-      ${this.catalogError
-        ? html`<div class="error" role="alert">${this.catalogError}</div>`
-        : nothing}
-      ${this.worker && !this.inputAllowed
+      ${this.worker && (this.taskHistory || (this.session && !this.workerControl))
         ? html`<p class="meta" data-testid="native-worker-read-only">
             ${this.taskHistory
               ? 'This task history is read-only. Slot files reflect the current workspace.'
@@ -1144,7 +1217,11 @@ export class NativeSessionView extends LitElement {
                   : 'conversation-only'}"
               >
                 <section class="conversation">
-                  <div class="timeline" aria-label="Agent conversation">
+                  <div
+                    class="timeline"
+                    aria-label="Agent conversation"
+                    @scroll=${this.timelineScrolled}
+                  >
                     ${repeat(
                       this.timeline(),
                       (entry) => entry.key,
@@ -1218,6 +1295,7 @@ ${JSON.stringify(
                           ${this.caughtUp ? 'Send a task to begin.' : 'Loading conversation…'}
                         </p>`
                       : nothing}
+                    <div class="jump-anchor">${this.renderJumpLatest()}</div>
                   </div>
                   <div class="composer">
                     ${this.receipts.some(

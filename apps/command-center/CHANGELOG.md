@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add a recorded browser recipe for remembered worker panel disclosure and stable conversation read status.
 - Add the isolated stable-layout browser recipe and blocking UI review checklist rule.
 
 - Add a rendered-row probe for finished workers waiting for their monitor and for stale or unavailable checklist observations.

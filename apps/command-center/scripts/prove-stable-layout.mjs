@@ -15,8 +15,13 @@ import {
   resourceCollectorReadMethods,
   resourceDependenciesForRead,
 } from '../../../packages/protocol/src/client-cache/registry.ts';
-import { mockPipelineRuns, mockRuns } from '../ui/src/dev/mock-data.ts';
+import {
+  mockFamilyObservabilitySnapshot,
+  mockPipelineRuns,
+  mockRuns,
+} from '../ui/src/dev/mock-data.ts';
 
+import { nativePanelFixture, proveNativePanel } from './native-panel-proof.mjs';
 import { proveRefetchNotices, recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
@@ -30,6 +35,7 @@ await mkdir(output, { recursive: true });
 const execute = promisify(execFile);
 const frames = [];
 const heldReplies = [];
+const timedReplies = new Set();
 let holdingReplies = false;
 const releaseReplies = () => {
   holdingReplies = false;
@@ -39,6 +45,7 @@ const epoch = `layout-fixture-${randomUUID()}`;
 let revision = 0;
 let mode = 'empty';
 const refetchProof = process.env.FARMSLOT_LAYOUT_REFETCH === '1';
+const nativePanelProof = process.env.FARMSLOT_LAYOUT_NATIVE_PANEL === '1';
 const legacyProof = process.env.FARMSLOT_LAYOUT_BEFORE === '1';
 const uiRoot = process.env.FARMSLOT_LAYOUT_UI_ROOT ?? path.join(source, 'apps/command-center/ui');
 assert(
@@ -46,6 +53,7 @@ assert(
   'The before proof requires an explicit archived UI',
 );
 const now = Date.now();
+const nativeFixture = nativePanelFixture(now);
 const decision = {
   id: 'layout-decision',
   title: 'Review the saved result',
@@ -70,7 +78,24 @@ const fixtureRun = {
   slotId: null,
   taskFile: null,
   decisions: [],
+  ...(nativePanelProof ? nativeFixture.run : {}),
 };
+
+const terminalRun = {
+  ...fixtureRun,
+  id: 'terminal-run',
+  familyId: 'terminal-run',
+  transport: 'tmux',
+  slotId: 'layout-slot',
+  agentContexts: [],
+};
+const familySnapshot = mockFamilyObservabilitySnapshot();
+familySnapshot.familyId = 'layout-run';
+familySnapshot.latestRunId = 'layout-run';
+familySnapshot.runs = [
+  { ...familySnapshot.runs[0], runId: 'layout-run', status: fixtureRun.status },
+];
+
 // A resolved gate from the checked-in sample, served through the ordinary run APIs.
 const gateRun = structuredClone(
   mockPipelineRuns().find((run) => run.decisions.some((item) => item.payload?.kind === 'ready')),
@@ -108,8 +133,27 @@ function observedRun() {
   return structuredClone(gateRun);
 }
 const values = {
+  ...(nativePanelProof
+    ? {
+        'native.session.read': nativeFixture.page,
+        'family.observability.get': () => ({ snapshot: familySnapshot }),
+        'terminal.subscribe': () => ({ ok: true }),
+        'terminal.unsubscribe': () => ({ ok: true }),
+        'terminal.resize': () => ({ ok: true }),
+        'terminal.snapshot': () => ({
+          lines: ['Read-only terminal presentation fixture'],
+          slotId: 'layout-slot',
+          timestamp: Date.now(),
+        }),
+      }
+    : {}),
   'run.list': () => ({ runs: [refetchProof ? gateRun : fixtureRun] }),
-  'run.get': () => ({ run: observedRun() }),
+  'run.get': (params) => ({
+    run:
+      params?.runId === 'terminal-run'
+        ? { ...terminalRun, status: mode === 'terminal-finished' ? 'done' : 'monitoring' }
+        : observedRun(),
+  }),
   'run.recipeRunsForRun': () => ({ recipeRuns: [], selectedRecipeRunId: null }),
   'config.templateOptions': () => ({ options: [] }),
   'runner.visibleModels.get': () => ({ runners: [] }),
@@ -170,13 +214,15 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', (socket) =>
   socket.on('message', (raw) => {
     const request = JSON.parse(String(raw));
-    frames.push({
+    const frame = {
       at: Date.now(),
       method: request.method,
+      ...(nativePanelProof ? { mode, revision } : {}),
       ...(request.method === 'run.get'
         ? { params: { runId: request.params?.runId, view: request.params?.view } }
         : {}),
-    });
+    };
+    frames.push(frame);
     const reply = { type: 'res', id: request.id, ok: true };
     if (request.method === 'auth.connect')
       reply.payload = {
@@ -199,7 +245,7 @@ wss.on('connection', (socket) =>
             version: 1,
             epoch,
             versionLists: false,
-            observedReads: 1,
+            ...(nativePanelProof && mode === 'native-unsupported' ? {} : { observedReads: 1 }),
             workspaceReads: 1,
             upstreamObservers: { version: 1, methods: resourceCollectorReadMethods() },
           },
@@ -208,7 +254,23 @@ wss.on('connection', (socket) =>
     else if (request.method === 'resource.observers.replace')
       reply.payload = { version: 1, sequence: request.params.sequence, applied: true };
     else if (request.method === 'gateway.ping') reply.payload = { ok: true };
-    else if (mode === 'error' && request.method === 'run.list' && !request.params?.active) {
+    else if (
+      nativePanelProof &&
+      request.method === 'native.session.read' &&
+      ['native-error', 'native-changed', 'native-quiet-changed'].includes(mode)
+    ) {
+      reply.ok = false;
+      reply.error =
+        mode === 'native-error'
+          ? {
+              code: 'NATIVE_SOURCE_UNAVAILABLE',
+              message: 'Native observation source unavailable. Retry after source recovery.',
+            }
+          : {
+              code: 'RESOURCE_OBSERVATION_CHANGED',
+              message: 'The source changed during this read.',
+            };
+    } else if (mode === 'error' && request.method === 'run.list' && !request.params?.active) {
       reply.ok = false;
       reply.error = { code: 'UNAVAILABLE', message: 'Fixture read is unavailable' };
     } else if (
@@ -241,7 +303,22 @@ wss.on('connection', (socket) =>
       heldReplies.push(() => {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
       });
-    else socket.send(JSON.stringify(reply));
+    else if (
+      nativePanelProof &&
+      mode === 'native-quiet-changed' &&
+      request.method === 'native.session.read'
+    ) {
+      // A real delayed refusal makes the existing cache backoff quiet across its saved-data boundary.
+      frame.replyScheduledAt = Date.now();
+      const timer = setTimeout(() => {
+        frame.replyTimerAt = Date.now();
+        frame.socketReadyState = socket.readyState;
+        frame.replyCode = reply.error?.code;
+        timedReplies.delete(timer);
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
+      }, 250);
+      timedReplies.add(timer);
+    } else socket.send(JSON.stringify(reply));
   }),
 );
 const cdp = async (...args) =>
@@ -336,6 +413,7 @@ function transition(next) {
   mode = next;
   holdingReplies = next === 'refetch-gap';
   revision++;
+  if (nativePanelProof) nativeFixture.advance(revision);
   const changes = [
     { family: 'decisions', scope: 'farm' },
     { family: 'runs', scope: 'farm' },
@@ -344,6 +422,17 @@ function transition(next) {
       ? [
           { family: 'run', runId: 'layout-run' },
           { family: 'configuration', scope: 'farm' },
+        ]
+      : []),
+    ...(nativePanelProof
+      ? [
+          { family: 'run', runId: 'layout-run' },
+          { family: 'run', runId: 'terminal-run' },
+          ...(resourceDependenciesForRead(
+            'native.session.read',
+            nativeFixture.params,
+            'layout-fixture',
+          ) ?? []),
         ]
       : []),
   ].map((key) => ({ key, revision, kind: 'updated' }));
@@ -442,6 +531,18 @@ try {
       expected: 'original layout jump',
       shift,
       samples,
+    });
+  } else if (nativePanelProof) {
+    await proveNativePanel({
+      cdp,
+      target,
+      browserCall,
+      emulation,
+      transition,
+      output,
+      save,
+      frames,
+      viewport,
     });
   } else if (refetchProof) {
     await proveRefetchNotices({
@@ -581,6 +682,7 @@ try {
 } catch (error) {
   failure = error;
 } finally {
+  for (const timer of timedReplies) clearTimeout(timer);
   await writeFile(path.join(output, 'vite.log'), viteLog);
   await save('requests', frames);
   emulation?.close();
