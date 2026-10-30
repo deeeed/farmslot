@@ -34,7 +34,8 @@ import { markSlotBusy, markSlotHeld, updateSlotStatusIf } from '../core/index.js
 import { freezeBlindTrialFirstOutput } from '../evals/blind-trial.js';
 import {
   finalizeEvalResultPackageForRun,
-  readResultPackageManifest,
+  freezeEvalFirstOutputPackage,
+  readFrozenEvalFirstOutputPackage,
 } from '../evals/package-store.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
@@ -57,6 +58,7 @@ import {
 } from '../review/session-mode.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
+  extractAndPersistSessionCost,
   isArtifactOnlyRun,
   prepareCompletionPackage,
   runCompletionPipeline,
@@ -71,6 +73,7 @@ import {
   runDeliveredResult,
   takeSendBackReview,
 } from '../run-completion/result-decision.js';
+import { readRunProgress } from '../runners/run-progress.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -199,6 +202,9 @@ export interface PostDispatchStepContext {
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
   prepareCompletionPackageForRun?: typeof prepareCompletionPackage;
   executeReviewForRun?: typeof executeReview;
+  readEvalWorkerProgress?: typeof readRunProgress;
+  extractEvalWorkerCost?: typeof extractAndPersistSessionCost;
+  waitForEvalWorkerProgress?: () => Promise<void>;
   resumeInterruptedPublicationReviewForRun?: typeof resumeInterruptedPublicationReview;
   resumeVisualRepairForRun?: typeof resumeVisualRepair;
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
@@ -346,25 +352,39 @@ async function prepareGatePackageAfterReviews(
   }
 }
 
-async function evalReviewAxisSkip(run: Run): Promise<{
-  skipped: boolean;
-  axis?: unknown;
-  reason?: string;
-}> {
-  const packagePath = run.engineState?.evalExperiment?.packagePath;
-  if (!packagePath) return { skipped: false };
-  const resultPackage = await readResultPackageManifest(packagePath);
-  const reviewAxis = resultPackage.axes.review;
-  const reviewModes = [reviewAxis?.name, reviewAxis?.version]
-    .map((value) => value?.trim().toLowerCase())
-    .filter((value): value is string => Boolean(value));
-  const skippedMode = reviewModes.find((value) =>
-    ['none', 'skip', 'disabled', 'first-pass'].includes(value),
-  );
-  if (!skippedMode) {
-    return { skipped: false, axis: reviewAxis };
+async function freezeEvalWorkerFacts(run: Run, context: PostDispatchStepContext): Promise<void> {
+  if (await readFrozenEvalFirstOutputPackage(run)) return;
+  const generation = run.engineState?.generation ?? 0;
+  for (;;) {
+    const current = getRun(run.id);
+    if (runSupersededSince(current, generation))
+      throw new Error('Eval worker capture was superseded');
+    const progress = await (context.readEvalWorkerProgress ?? readRunProgress)(current!);
+    if (progress.kind === 'idle') break;
+    if (progress.kind !== 'making-progress') throw new Error('Eval worker idle is unconfirmed');
+    updateRunStep(run.id, S.REVIEW, { detail: 'Waiting for the first worker turn to finish' });
+    await (context.waitForEvalWorkerProgress?.() ?? delay(250));
   }
-  return { skipped: true, axis: reviewAxis, reason: `eval-review-axis-${skippedMode}` };
+  const cost = await (context.extractEvalWorkerCost ?? extractAndPersistSessionCost)(run.id);
+  const current = getRun(run.id);
+  if (runSupersededSince(current, generation))
+    throw new Error('Eval worker capture was superseded');
+  const first = current?.engineState?.evalExperiment?.blind?.firstOutput;
+  const started = Date.parse(
+    current?.steps.find(({ name }) => name === S.DISPATCH)?.startedAt ?? '',
+  );
+  const ended = Date.parse(first?.capturedAt ?? '');
+  await freezeEvalFirstOutputPackage(current!, {
+    durationMs:
+      Number.isFinite(started) && Number.isFinite(ended) && ended >= started
+        ? ended - started
+        : undefined,
+    costEstimate: cost.costUsd ?? undefined,
+    sessionTurns: cost.turns ?? undefined,
+    sessionInputTokens: cost.inputTokens ?? undefined,
+    sessionOutputTokens: cost.outputTokens ?? undefined,
+    sessionTotalTokens: cost.totalTokens ?? undefined,
+  });
 }
 
 export function readyGateReviewSubjectMatches(
@@ -588,10 +608,11 @@ export async function executeMonitorStep(
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     }
     if (
-      (isInteractiveDevRun(after) &&
+      !after.engineState?.evalExperiment &&
+      ((isInteractiveDevRun(after) &&
         (workerSignal?.status === 'blocked' || workerSignal?.status === 'failed')) ||
-      (isLightweightInteractiveDevRun(after) &&
-        (workerSignal?.status === 'complete' || workerSignal?.status === 'done'))
+        (isLightweightInteractiveDevRun(after) &&
+          (workerSignal?.status === 'complete' || workerSignal?.status === 'done')))
     ) {
       // Interactive findings belong to the operator. Pause before failure cleanup
       // or COMPLETE can release the slot; retain the original signal as evidence.
@@ -671,6 +692,7 @@ export async function executeReviewStep(
 ): Promise<StepIO> {
   const { createEngineDecision, interactiveLightweightSkipOutputs, stepPartialIO } = context;
   const current = getRun(runId)!;
+  const evalJudge = Boolean(current.engineState?.evalExperiment);
   if (!current.slotId) throw new Error('No slot assigned');
   const slotId = current.slotId;
   // ADR-063 Amendment 3: the dispatch's first review row also selects the pipeline
@@ -694,20 +716,9 @@ export async function executeReviewStep(
       outputs: { skipped: true, reason: 'pr-complete-has-no-reviewer' },
     };
 
-  const reviewSkip = await evalReviewAxisSkip(current);
-  if (reviewSkip.skipped) {
-    console.log(`[run-engine] run ${runId.slice(0, 8)} — review skipped by eval review axis`);
-    return {
-      inputs: { ...inputs, enabled: false, reviewAxis: reviewSkip.axis },
-      outputs: {
-        skipped: true,
-        reason: reviewSkip.reason,
-        reviewAxis: reviewSkip.axis,
-      },
-    };
-  }
+  if (evalJudge) await freezeEvalWorkerFacts(current, context);
 
-  if (isLightweightInteractiveDevRun(current)) {
+  if (!evalJudge && isLightweightInteractiveDevRun(current)) {
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — review skipped for interactive lightweight dev policy`,
     );
@@ -715,7 +726,7 @@ export async function executeReviewStep(
     return { inputs: { ...inputs, ...skipped.inputs }, outputs: skipped.outputs };
   }
 
-  if (isNoCodeTerminalDisposition(current.metrics.disposition)) {
+  if (!evalJudge && isNoCodeTerminalDisposition(current.metrics.disposition)) {
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — review skipped for no-code disposition ${current.metrics.disposition}`,
     );
@@ -807,9 +818,20 @@ export async function executeReviewStep(
           reviewId: sendBack.reviewId ?? reviewId,
           resumeFromResult: sendBack,
         }
-      : { ...reviewer, validationDepth, mode, reviewId },
+      : { ...reviewer, validationDepth, mode, reviewId, ...(evalJudge ? { maxRetries: 0 } : {}) },
   );
   const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
+  if (evalJudge) {
+    if (
+      result.skipped ||
+      (result.verdict !== 'pass' && result.verdict !== 'issues') ||
+      result.retryCount !== 0
+    )
+      throw new Error(
+        `Eval judge did not complete: ${result.reason ?? result.verdict ?? 'unknown'}`,
+      );
+    return { inputs, outputs: { ...result, cliCommand } };
+  }
   let interactiveRetry = false;
 
   // Every independent reviewer can produce findings that need an operator choice.

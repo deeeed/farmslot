@@ -14,6 +14,7 @@ import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.j
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { recordEvalJudgeResult } from '../evals/judge.js';
 import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
@@ -409,6 +410,12 @@ async function runNativeReviewAttempt(
             mode: input.mode,
             baseRef,
             lastReviewedHeadSha: retained?.lastReviewedHeadSha,
+            ...(original.engineState?.evalExperiment?.blind?.firstOutput
+              ? {
+                  committedBaseSha: original.engineState.evalExperiment.blind.baseSha,
+                  committedHeadSha: original.engineState.evalExperiment.blind.firstOutput.headSha,
+                }
+              : {}),
           })));
       if (
         !snapshot?.snapshot.baseSha ||
@@ -858,6 +865,48 @@ async function runNativeReviewAttempt(
     );
     const completedAt = new Date().toISOString();
     admit();
+    if (original.engineState?.evalExperiment && !feedback.incomplete) {
+      const artifactPaths = [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths];
+      await withNativeReviewMutation(() =>
+        recordEvalJudgeResult(
+          original,
+          {
+            ...feedback,
+            reviewId: lineage,
+            reviewerSessionId: context.runnerSessionId,
+            runner,
+            model,
+            effort: input.effort,
+            mode: 'cold',
+            validationDepth,
+            retryCount: 0,
+            maxRetries: 0,
+            reviewSnapshot: reviewSnapshot.snapshot,
+            usage: unavailableRunnerSessionUsage({
+              runner,
+              runnerSessionId: context.runnerSessionId ?? null,
+              runnerSessionPath: null,
+              error: 'Native reviewer usage accounting is unavailable',
+            }),
+            attempts: [
+              {
+                mode: 'cold',
+                loopNumber: 1,
+                verdict: feedback.verdict,
+                issues: feedback.issues,
+                unresolvedCount: feedback.issues.length,
+                validationDepth,
+                reviewSnapshot: reviewSnapshot.snapshot,
+                artifactPaths,
+                startedAt,
+                completedAt,
+              },
+            ],
+          },
+          contextId,
+        ),
+      );
+    }
     await withNativeReviewMutation(() =>
       upsertAgentContext(
         runId,

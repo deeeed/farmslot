@@ -43,6 +43,7 @@ import {
   shellQuote,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
 } from '../core/tmux.js';
+import { readEvalJudgeReceipt, recordEvalJudgeResult } from '../evals/judge.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { prepareRetainedRunCapabilities } from '../run-engine/declared-capabilities.js';
@@ -244,9 +245,9 @@ type BroadcastFn = (event: string, payload: unknown) => void;
 
 export function shouldSkipForDisabledReviewConfig(
   config: { enabled: boolean },
-  options: Pick<ReviewOptions, 'publicationReview'> = {},
+  options: Pick<ReviewOptions, 'publicationReview'> & { evalJudge?: boolean } = {},
 ): boolean {
-  return !config.enabled && options.publicationReview !== true;
+  return !config.enabled && options.publicationReview !== true && !options.evalJudge;
 }
 
 /** Extra-review auto-fix budget. Restart/resume must not raise this past project max_retries. */
@@ -256,7 +257,9 @@ export function resolveReviewMaxRetries(opts: {
   requestedMaxRetries?: number | null;
   priorRetryCount?: number;
   resume?: boolean;
+  evalJudge?: boolean;
 }): number {
+  if (opts.evalJudge) return 0;
   const projectCap = Math.max(0, opts.configuredMaxRetries ?? 1);
   const requested = opts.requestedMaxRetries;
   const hasRequested = typeof requested === 'number' && Number.isFinite(requested);
@@ -305,9 +308,25 @@ export async function executeReview(
 ): Promise<ReviewResult> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
-  const result = await withNativeReviewOperation(run, () =>
-    executeOwnedReview(runId, slotId, options),
-  );
+  const result = await withNativeReviewOperation(run, async () => {
+    const cached = await readEvalJudgeReceipt(getRun(runId) ?? run);
+    if (cached) {
+      if (cached.contextId) {
+        await withNativeReviewMutation(() =>
+          upsertAgentContext(runId, 'review', {
+            id: cached.contextId,
+            status: 'complete',
+            reviewResultValidatedAt: cached.completedAt,
+            deliveryBaselineRef: run.engineState?.evalExperiment?.blind?.firstOutput?.headSha,
+          }),
+        );
+      }
+      return cached.result;
+    }
+    const completed = await executeOwnedReview(runId, slotId, options);
+    await recordEvalJudgeResult(getRun(runId) ?? run, completed);
+    return completed;
+  });
   // Pipeline and publication reviews both end here: a pass is what was reviewed.
   if (result.verdict === 'pass' && !result.skipped) {
     await recordReviewedInputs(runId).catch((err: Error) =>
@@ -326,10 +345,18 @@ async function executeOwnedReview(
 ): Promise<ReviewResult> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
+  const evalJudge = Boolean(run.engineState?.evalExperiment);
+  if (evalJudge) {
+    if (options.resumeFromResult || options.reservedFixPass)
+      throw new Error('Eval first-output judging has no worker-fix continuation');
+    const { readFrozenEvalFirstOutputPackage } = await import('../evals/package-store.js');
+    if (!(await readFrozenEvalFirstOutputPackage(run)))
+      throw new Error('Eval judging requires its frozen worker package');
+  }
 
   const config = await getReviewConfig(run.project);
   const requestedEffort = options.effort === undefined ? (config.effort ?? null) : options.effort;
-  if (shouldSkipForDisabledReviewConfig(config, options)) {
+  if (shouldSkipForDisabledReviewConfig(config, { ...options, evalJudge })) {
     debugReviewLog(`[review] run ${runId.slice(0, 8)} — disabled for project ${run.project}`);
     return { skipped: true, reason: 'disabled-for-project', retryCount: 0 };
   }
@@ -341,14 +368,17 @@ async function executeOwnedReview(
     publicationReview: options.publicationReview,
     configuredMaxRetries: config.max_retries,
     requestedMaxRetries: options.maxRetries,
+    evalJudge,
   });
   // Callers own the review contract: base review records its depth on the step,
   // publication reviews carry theirs on the plan. There is no implicit live default.
   const validationDepth = options.validationDepth ?? options.resumeFromResult?.validationDepth;
   if (!validationDepth)
     throw new Error(`Review for run ${runId} requires an explicit validation depth`);
-  const artifactScope = options.artifactScope ?? null;
-  const mode = resolveReviewMode({ explicitMode: options.mode, defaultMode: config.mode });
+  const artifactScope = evalJudge ? 'eval-first-output' : (options.artifactScope ?? null);
+  const mode = evalJudge
+    ? 'cold'
+    : resolveReviewMode({ explicitMode: options.mode, defaultMode: config.mode });
   const effort = executionModelFromSelection({
     runner: reviewRunner,
     model,
@@ -356,9 +386,12 @@ async function executeOwnedReview(
     mode,
   }).effort;
   const primaryContext = run.reviewContext ?? run.prWork?.review?.options.reviewContext;
-  const reviewId =
-    options.reviewId ??
-    (mode === 'warm' ? primaryContext?.reviewLineages[0]?.reviewId : `pipeline-review-${run.id}`);
+  const reviewId = evalJudge
+    ? `eval-first-output-${runId}`
+    : (options.reviewId ??
+      (mode === 'warm'
+        ? primaryContext?.reviewLineages[0]?.reviewId
+        : `pipeline-review-${run.id}`));
   const reviewTimeoutMs = (config.review_timeout_min ?? DEFAULT_REVIEW_TIMEOUT_MIN) * 60_000;
   const start = Date.now();
   let hasReusableReviewResult =
@@ -584,11 +617,13 @@ async function executeOwnedReview(
     // later fails; launch/timeout/invalid-artifact failures never set this.
     hasReusableReviewResult = true;
 
-    if (result.verdict === 'pass') {
-      debugReviewLog(`[review] run ${runId.slice(0, 8)} — PASS (${Date.now() - start}ms)`);
+    if (result.verdict === 'pass' || evalJudge) {
+      debugReviewLog(
+        `[review] run ${runId.slice(0, 8)} — ${result.verdict.toUpperCase()} (${Date.now() - start}ms)`,
+      );
       return {
-        verdict: 'pass',
-        issues: [],
+        verdict: result.verdict,
+        issues: result.issues,
         validationDepth,
         usage: result.usage,
         mode: result.mode,
@@ -602,6 +637,7 @@ async function executeOwnedReview(
         model,
         effort: effort,
         retryCount: firstRetryCount,
+        ...(evalJudge ? { maxRetries: 0 } : {}),
         durationMs: Date.now() - start,
       };
     }
