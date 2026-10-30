@@ -371,3 +371,15 @@ Freeze the first worker output before review can change it. Compare its stable p
 **Consequences.** Existing trials without blind provenance cannot supply valid comparison results. An experiment needs explicit problem text before a new candidate can launch. Production runs keep their current checkout and publication behavior.
 
 **Public surface.** The existing `eval.experiment.create`, `eval.trial.start` and `eval.trial.result.get` methods remain the entry points. Protocol-owned case, trial and result-package records carry the problem statement and comparison eligibility for gateway execution and Command Center readers. Optional wire fields require the normal protocol patch release and matching readers. No new worker command, harness API or dispatch flag is introduced. The normative contract is [Blind eval trials](../reference/blind-eval-trials.md).
+
+## Amendment 2: judge the first output once (2026-10-30)
+
+**Status:** Accepted, lead-approved amendment.
+
+**Decision.** A completed eval worker output receives one review as a judge. Findings are measurements: both passing and issues verdicts finish the artifact-only trial without a fix handoff, another review or a person decision. Eval review axes and disabled production review settings do not suppress this judge. Production review and fix loops retain their existing policy.
+
+Freeze the worker's contribution, evidence, native usage, cost and elapsed worker phase before judging. The final package combines those frozen worker facts with the judge's verdict and findings by severity. Unavailable measurements remain unknown. Replays reuse a completed judge; infrastructure failures remain separate from model quality. Completed historical packages retain their bytes.
+
+**Rationale.** Review-driven fixes measure a model together with its reviewer instead of measuring the model's first output.
+
+**Public surface.** Existing eval entry points, result-package fields and review artifacts carry the result. This adds no dispatch flag or harness command. The normative contract is [Blind eval trials](../reference/blind-eval-trials.md#first-output-judging).

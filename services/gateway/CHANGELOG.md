@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Judge eval trials once on their frozen first output and retain findings without worker fix rounds or person decisions.
+
 - Keep reference answers out of eval workers and exclude contaminated first outputs from comparisons.
 
 - Keep loaded native history while a healthy source change refreshes the read; report real observation failures separately.
