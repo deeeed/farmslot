@@ -91,7 +91,14 @@ test('only a verified, distinct first output can enter comparison; legacy output
       diffPath: 'first.diff',
       diffSha256: 'hash',
       patchId: 'reference',
-      diff: { source: 'artifact', available: true, files: 1, additions: 1, deletions: 1 },
+      diff: {
+        kind: 'contribution',
+        source: 'artifact',
+        available: true,
+        files: 1,
+        additions: 1,
+        deletions: 1,
+      },
     },
   };
   assert.equal(blindTrialEligibility(blind).status, 'contaminated');

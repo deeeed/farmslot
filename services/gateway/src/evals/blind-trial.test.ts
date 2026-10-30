@@ -3,9 +3,35 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { mock, test } from 'node:test';
+import { mock, test, type TestContext } from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
+
+import type { SlotVars } from '../core/config.js';
+
+const vars: SlotVars = {
+  slotId: 'owned',
+  machine: 'local',
+  platform: 'cli',
+  host: 'localhost',
+  sshUser: 'fixture',
+  osType: 'macos',
+  claudePath: '',
+  codexPath: '',
+  opencodePath: '',
+  cursorPath: '',
+  grokPath: '',
+  dispatchCmd: '',
+  recycleCmd: '',
+  repo: '/owned',
+  remoteRepo: '/owned',
+  session: 'owned',
+  slotMode: 'dispatch',
+  slotEnabled: true,
+  sshTarget: 'localhost',
+  projectName: 'fixture',
+  resourceVars: {},
+};
 
 let run: Run;
 let epoch = 7;
@@ -17,7 +43,7 @@ const base = 'a'.repeat(40),
 const diffText =
   'diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+candidate\n';
 mock.module('../core/config.js', {
-  namedExports: { loadSlotVars: async () => ({ slotId: 'owned', remoteRepo: '/owned' }) },
+  namedExports: { loadSlotVars: async () => vars },
 });
 mock.module('../core/state.js', {
   namedExports: {
@@ -42,6 +68,7 @@ mock.module('../run-engine/diff-artifacts.js', {
       onCapture();
       return {
         source: 'artifact',
+        kind: 'contribution',
         available: true,
         files: 1,
         additions: 1,
@@ -68,11 +95,23 @@ mock.module('./package-store.js', {
 });
 const { freezeBlindTrialFirstOutput, restoreBlindTrialGit } = await import('./blind-trial.js');
 
-async function fixture(t: Parameters<Parameters<typeof test>[1]>[0]) {
+async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'blind-first-output-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   run = {
     id: 'trial',
+    familyId: 'family',
+    parentRunId: null,
+    lane: 'comparison',
+    flowType: 'dev',
+    project: 'fixture',
+    ticketOrPr: 'EVAL-fixture',
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, runner: null, model: null },
+    createdAt: '2026-10-30T00:00:00.000Z',
+    updatedAt: '2026-10-30T00:00:00.000Z',
     status: 'monitoring',
     slotId: 'owned',
     branch: 'eval/candidate',
@@ -100,7 +139,7 @@ async function fixture(t: Parameters<Parameters<typeof test>[1]>[0]) {
         },
       },
     },
-  } as Run;
+  };
   epoch = 7;
   captures = 0;
   failPersist = false;
@@ -141,14 +180,7 @@ test('cancellation during capture and a foreign restoration epoch both fail clos
   };
   await assert.rejects(freezeBlindTrialFirstOutput(run.id), /active run/);
   await assert.rejects(
-    restoreBlindTrialGit(
-      run,
-      { slotId: 'owned' } as Awaited<
-        ReturnType<(typeof import('../core/config.js'))['loadSlotVars']>
-      >,
-      8,
-      async () => {},
-    ),
+    restoreBlindTrialGit(run, vars, 8, async () => {}),
     /slot epoch/,
   );
 });

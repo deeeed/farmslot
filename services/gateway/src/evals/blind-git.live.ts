@@ -87,6 +87,32 @@ for (const linked of [false, true])
     writeFileSync(path.join(repo, 'value.txt'), 'candidate\n');
     const head = commit(repo, 'candidate');
     assert.equal(command('verify', spec).status, 'isolated');
+    // Simulate a process exit between retaining isolated metadata and restoring
+    // the original entry. The durable restoration journal must recover it.
+    const interrupted = spawnSync(
+      'python3',
+      [
+        '-c',
+        `
+import json, runpy, sys
+from pathlib import Path
+module = runpy.run_path(sys.argv[1], run_name='blind_git_fixture')
+rename = Path.rename
+def interrupt(source, target):
+    if source.name == 'original.entry':
+        raise RuntimeError('fixture interrupted restore')
+    return rename(source, target)
+Path.rename = interrupt
+module['restore'](json.loads(sys.argv[2]))
+`,
+        new URL('./blind-git.py', import.meta.url).pathname,
+        JSON.stringify(spec),
+      ],
+      { env, encoding: 'utf8', timeout: 60_000 },
+    );
+    assert.notEqual(interrupted.status, 0);
+    assert.match(interrupted.stderr, /fixture interrupted restore/);
+    assert.equal(existsSync(path.join(repo, '.git')), false);
     assert.equal(command('restore', spec).headSha, head);
     assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
     assert.equal(git(repo, 'status', '--porcelain'), '');
