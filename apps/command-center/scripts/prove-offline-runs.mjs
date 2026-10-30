@@ -959,7 +959,10 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
           );
           // Drain duplicate events before deletion is the only new filesystem write.
           await delay(2500);
-          const failed = await cdp('eval', route, '--file', probe);
+          const failed = await until(
+            (value) => value.errorRendered && value.freshness === 'stale',
+            'The failed projection must remain visible before its source is repaired',
+          );
           assert(failed.errorRendered && failed.freshness === 'stale');
           await observed.barrier();
           const failedRevision = Math.max(
