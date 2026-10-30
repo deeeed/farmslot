@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `RunEngineState.taskInit` records whether a run's task still waits for node initialization after prepare (`pending`) or is `initialized`.
 - `NativeSessionEvent.tool` is `NativeSessionTool`, with optional `kind` (`NativeToolKind`: `command`, `file-edit`, `file-read`, `search`, `web`, `other`), `command` and `paths` set by the runner adapter. `nativeToolLabel` reads a tool call as "Run npm test", "Change a.ts, b.ts", "Read a.ts" or "Search src", or the runner's name; native timeline entries and `nativeWorkLabel` use it. `nativeCommandText` gives a command card's text: the command's first line and its last 10 output lines, cleaned as the terminal screen cleans them. `stripTerminalControls`, `terminalLinesFromText` and `terminalTailLinesFromText` move into the client cache from Companion.
 - `NativeSessionEvent.response`, optional, on `approval.resolved`: the response the host delivered for the request (`decision` or `answers`); absent when the host did not deliver one. `nativeTimeline` keeps each resolved request as a `resolution` entry, "Approved: …", "Declined: …", "Answered: question → answer" or "Resolved: …". Cached native history keeps them, and a snapshot saved by an older reader is read again from its start, once.
 - `FamilyObservabilitySnapshot.latestRunId` is optional: a reference-only eval family has no runs yet.

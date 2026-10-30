@@ -156,7 +156,6 @@ import { refreshRunLinks } from './run-links.js';
 import { rearmInteractiveHandoffAutoRecovery } from './run-monitor.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 import { executeGradeStep, executeWriteTaskStep } from './task-steps.js';
-import { copyTaskFilesToSlot } from './task-sync.js';
 import {
   beginTerminalTeardown,
   endTerminalTeardown,
@@ -929,11 +928,6 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         // Step `i` is now correctly marked done; finalize only needs to skip steps i+1..end.
         await finalizeNonThrownTerminalRun(runId, i + 1, steps, myGen);
         return;
-      }
-
-      // After write-task: copy task files to slot immediately (so they're visible during prepare)
-      if (stepName === S.WRITE_TASK) {
-        await copyTaskFilesToSlot(runId);
       }
     } catch (err) {
       const msg = (err as Error).message;

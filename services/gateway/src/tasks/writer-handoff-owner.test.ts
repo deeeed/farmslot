@@ -86,7 +86,14 @@ mock.module('./hosted-task-init.js', {
   },
 });
 const writerModule: string = './writer.js?handoff-owner-regression';
-const { writeTaskFile }: typeof import('./writer.js') = await import(writerModule);
+const { initializeWrittenTask, writeTaskFile }: typeof import('./writer.js') = await import(
+  writerModule
+);
+const writeAndInitialize = async (run: Parameters<typeof writeTaskFile>[0]) => {
+  const taskFile = await writeTaskFile(run);
+  await initializeWrittenTask({ ...run, taskFile });
+  return taskFile;
+};
 
 const scenarios = [
   'parent-released',
@@ -161,10 +168,13 @@ for (const [index, scenario] of scenarios.entries()) {
       }
     };
     if (scenario === 'foreign-reservation') {
-      await assert.rejects(() => writeTaskFile(store.getRun(child.id)!), /lost its task owner/);
+      await assert.rejects(
+        () => writeAndInitialize(store.getRun(child.id)!),
+        /lost its task owner/,
+      );
       assert.equal(store.getRun(child.id)!.acceptanceExecutionContract, undefined);
     } else {
-      const task = await writeTaskFile(store.getRun(child.id)!);
+      const task = await writeAndInitialize(store.getRun(child.id)!);
       const contract = JSON.parse(
         await readFile(path.join(path.dirname(task), ACCEPTANCE_CONTRACT_INPUT), 'utf8'),
       );
