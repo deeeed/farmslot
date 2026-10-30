@@ -582,7 +582,9 @@ export async function executeDispatchStep(
   context: DispatchStepContext,
 ): Promise<StepIO> {
   const { blockedRunError, stepPartialIO } = context;
-  // update-branch has no PREPARE step, and restart recovery can mark one done first.
+  // Restore the slot binding first: update-branch has no PREPARE step, and restart
+  // recovery can mark one done before its task initialized.
+  ensureRunSlotBinding(runId);
   await completeRunTaskInitialization(runId, { onlyPending: true });
   const bound = ensureRunSlotBinding(runId);
   const taskExecution = taskExecutionAtDispatch(bound);

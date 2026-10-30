@@ -91,6 +91,7 @@ import {
 } from './execution-template-catalog.js';
 import {
   type HostedTaskInput,
+  hostedTaskRequest,
   initializeHostedTaskOnSlot,
   syncHostedTaskSidecars,
 } from './hosted-task-init.js';
@@ -1390,9 +1391,9 @@ export async function writeTaskFile(
     task: taskData,
     template: configuredTemplate,
   };
+  // Refuse an oversized request now rather than after prepare.
+  hostedTaskRequest(slotVars.slotId, input);
   const frozen = JSON.stringify({ runId: run.id, slotId: run.slotId, input });
-  if (Buffer.byteLength(frozen) > 8 * 1024 * 1024)
-    throw new Error('Hosted task request exceeds 8 MiB.');
   const frozenPath = path.join(taskAbsDir, TASK_INIT_INPUT);
   await writeFile(`${frozenPath}.tmp`, frozen, { mode: 0o600 });
   await rename(`${frozenPath}.tmp`, frozenPath);

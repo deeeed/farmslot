@@ -87,6 +87,10 @@ writeFileSync(
   '---\nplatforms: [cli]\n---\n# Worker: dev\n\n- [ ] 1. Implement the change.\n- [ ] 2. Validate it.\n',
 );
 writeFileSync(
+  path.join(root, 'projects', project, 'templates/worker/update-branch.md'),
+  '---\nplatforms: [cli]\n---\n# Worker: update-branch\n\n- [ ] 1. Update the branch.\n',
+);
+writeFileSync(
   path.join(root, 'pool/local.json'),
   JSON.stringify({
     machine: 'fixture',
@@ -188,7 +192,7 @@ mock.module('../run-completion/inherited-acceptance.js', {
 });
 
 const { getOrchestratorTaskRoot } = await import('../core/config.js');
-const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+const { createRun, deleteRun, getRun, loadAllRuns, updateRun } = await import('../runs/store.js');
 const { executeWriteTaskStep } = await import('./task-steps.js');
 const { executeDispatchStep, executePrepareStep } = await import('./dispatch-lifecycle-steps.js');
 
@@ -208,14 +212,19 @@ function slotOn(branch: 'previous-run' | 'main') {
   assert.equal(existsSync(path.join(repo, sentinel)), branch === 'main');
 }
 
-function devRun(t: TestContext, ticket: string, taskFile?: string) {
+function devRun(
+  t: TestContext,
+  ticket: string,
+  options: { taskFile?: string; flowType?: 'dev' | 'update-branch' } = {},
+) {
+  const { taskFile, flowType = 'dev' } = options;
   const run = createRun({
-    flowType: 'dev',
+    flowType,
     project,
     ticketOrPr: ticket,
     slotId,
     mode: 'autonomous',
-    branch: `feat/${ticket.toLowerCase()}`,
+    branch: `feat/${ticket.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`,
     prepareProfile: 'git-only',
     ...(taskFile ? { taskFile } : {}),
     ticketData: {
@@ -302,7 +311,7 @@ test('an authored run create --task initializes after prepare', budget, async (t
   const taskFile = path.join(getOrchestratorTaskRoot(project), 'dev/authored-ti-2/TASK.md');
   mkdirSync(path.dirname(taskFile), { recursive: true });
   writeFileSync(taskFile, '# Authored task\n\n- [ ] 1. Do the authored work.\n');
-  const run = devRun(t, 'TI-2', taskFile);
+  const run = devRun(t, 'TI-2', { taskFile });
   const before = initialized.length;
 
   await writeTask(run.id);
@@ -320,10 +329,11 @@ test('an authored run create --task initializes after prepare', budget, async (t
 });
 
 test('a prepare replay after initialization only verifies the task', budget, async (t) => {
-  slotOn('previous-run');
+  slotOn('main');
   const run = devRun(t, 'TI-3');
   await writeTask(run.id);
-  await prepare(run.id);
+  // The skip branch initializes; the replay then runs a full prepare over that task.
+  await prepare(run.id, true);
   const taskFile = getRun(run.id)!.taskFile!;
   const bytes = () =>
     [
@@ -343,19 +353,25 @@ test('a prepare replay after initialization only verifies the task', budget, asy
   assertInitializedOnMain(run.id);
 });
 
-test('a refused initialization retries the same frozen input', budget, async (t) => {
+test('a restart and a refused initialization reuse the frozen input', budget, async (t) => {
   slotOn('previous-run');
   const run = devRun(t, 'TI-4');
   await writeTask(run.id);
   const taskFile = getRun(run.id)!.taskFile!;
   const frozen = readFileSync(path.join(path.dirname(taskFile), '.task-init.json'), 'utf8');
+  // A gateway restart between write-task and prepare reloads the persisted run.
+  const beforeRestart = getRun(run.id);
+  await loadAllRuns();
+  assert.notEqual(getRun(run.id), beforeRestart);
+  assert.deepEqual(getRun(run.id)!.engineState?.taskInit, { taskFile, status: 'pending' });
   refuseNextInit = true;
 
   await assert.rejects(prepare(run.id), /injected node restart/);
   assert.deepEqual(getRun(run.id)!.engineState?.taskInit, { taskFile, status: 'pending' });
   assert.equal(readFileSync(path.join(path.dirname(taskFile), '.task-init.json'), 'utf8'), frozen);
 
-  await prepare(run.id);
+  // The prepared checkout stays; the retry goes through the skip branch.
+  await prepare(run.id, true);
 
   assert.deepEqual(initialized.at(-1), initialized.at(-2));
   assert.deepEqual(initialized.at(-1), JSON.parse(frozen).input);
@@ -363,13 +379,17 @@ test('a refused initialization retries the same frozen input', budget, async (t)
 });
 
 test(
-  'dispatch initializes a task prepare left pending before staging parent proof',
+  'dispatch initializes an update-branch task, which has no prepare, before parent proof',
   budget,
   async (t) => {
-    // Restart recovery marked prepare done on a slot it had already moved to main.
     slotOn('main');
-    const run = devRun(t, 'TI-5');
+    const run = devRun(t, 'example/app#5', { flowType: 'update-branch' });
+    assert.equal(
+      run.steps.some((step) => step.name === 'prepare'),
+      false,
+    );
     await writeTask(run.id);
+    assert.equal(getRun(run.id)!.engineState?.taskInit?.status, 'pending');
     updateRun(run.id, { parentRunId: 'fixture-parent' });
     const before = initialized.length;
 
