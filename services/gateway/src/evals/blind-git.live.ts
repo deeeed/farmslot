@@ -48,6 +48,9 @@ for (const linked of [false, true])
     const source = path.join(root, 'source');
     mkdirSync(source);
     git(source, 'init', '-q', '-b', 'main');
+    git(source, 'config', 'user.name', 'Fixture');
+    git(source, 'config', 'user.email', 'fixture@example.invalid');
+    git(source, 'config', 'commit.gpgsign', 'false');
     writeFileSync(path.join(source, 'value.txt'), 'base\n');
     writeFileSync(path.join(source, '.gitignore'), 'private-input.txt\n');
     const base = commit(source, 'base');
@@ -76,6 +79,8 @@ for (const linked of [false, true])
     assert.equal(existsSync(path.join(repo, 'answer.txt')), false);
     assert.equal(readFileSync(path.join(repo, 'private-input.txt'), 'utf8'), 'preserved\n');
     assert.equal(git(repo, 'remote'), '');
+    assert.equal(git(repo, 'config', '--local', '--get', 'commit.gpgsign'), 'false');
+    assert.equal(git(repo, 'config', '--local', '--get', 'user.email'), 'fixture@example.invalid');
     assert.notEqual(spawnSync('git', ['-C', repo, 'cat-file', '-e', reference], { env }).status, 0);
     assert.notEqual(spawnSync('git', ['-C', repo, 'fetch', 'origin'], { env }).status, 0);
     git(repo, 'fsck', '--full', '--no-reflogs');

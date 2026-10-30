@@ -61,6 +61,18 @@ def verify(spec):
     return {'status': 'isolated', 'baseSha': spec['baseSha'], 'runId': spec['runId']}
 
 
+def copy_local_commit_settings(repo, source, destination):
+    # Retain repository-local identity/signing policy, without copying remotes,
+    # fetch configuration or includes that could reopen the reference store.
+    for key in ['user.name', 'user.email', 'user.signingkey', 'commit.gpgsign', 'gpg.format', 'gpg.program']:
+        result = git(repo, 'config', '--local', '--get', key, git_dir=source, check=False)
+        if result.returncode == 1:
+            continue
+        if result.returncode:
+            raise RuntimeError('Cannot read the original commit configuration')
+        git(repo, 'config', '--local', key, result.stdout.decode().rstrip('\n'), git_dir=destination)
+
+
 def isolate(spec):
     repo, capsule = Path(spec['repo']), Path(spec['capsule'])
     journal = capsule / 'state.json'
@@ -70,6 +82,8 @@ def isolate(spec):
             raise RuntimeError('Blind trial capsule belongs to another execution')
         if state['phase'] != 'isolated':
             raise RuntimeError('Blind trial capsule requires restoration before preparation')
+        source = capsule / 'original.entry' if state['originalIsDirectory'] else Path(state['originalDirectory'])
+        copy_local_commit_settings(repo, source, repo / '.git')
         return verify(spec)
     if not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', spec['baseSha']):
         raise RuntimeError('Blind trial requires a full base commit')
@@ -100,6 +114,7 @@ def isolate(spec):
     git(repo, 'config', 'core.worktree', str(repo), git_dir=prepared)
     git(repo, 'config', 'protocol.allow', 'never', git_dir=prepared)
     git(repo, 'config', 'farmslot.blindRun', spec['runId'], git_dir=prepared)
+    copy_local_commit_settings(repo, original_directory, prepared)
     (prepared / 'shallow').write_text(spec['baseSha'] + '\n')
     git(repo, 'update-ref', 'refs/heads/' + spec['branch'], spec['baseSha'], git_dir=prepared)
     git(repo, 'symbolic-ref', 'HEAD', 'refs/heads/' + spec['branch'], git_dir=prepared)
