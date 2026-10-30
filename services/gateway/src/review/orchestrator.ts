@@ -628,7 +628,7 @@ async function executeOwnedReview(
       );
       return {
         verdict: result.verdict,
-        issues: result.issues,
+        issues: evalJudge ? result.issues : [],
         validationDepth,
         usage: result.usage,
         mode: result.mode,
