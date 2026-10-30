@@ -6,12 +6,14 @@ import {
   type ArtifactRef,
   FLOW_WORKER_REPORT_ARTIFACTS,
   isTerminalRunStatus,
+  PipelineSteps,
   RecordedEvidenceReadError,
   type Run,
   runClaimOverrideSnapshotIdentity,
   type RunDecision,
   type RunOutput,
   runOutputReviewEnabled,
+  type RunStatus,
 } from '@farmslot/protocol';
 
 import { GATEWAY_OWNED_DIFF_ARTIFACTS } from '../core/artifact-copy-policy.js';
@@ -135,11 +137,33 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
   return decisions;
 }
 
+/**
+ * Statuses after the worker's last turn in which nothing has relaunched it: a capture
+ * there (a reviewer reading the output, a refresh while a result decision waits) must
+ * not turn finished output back into running output.
+ */
+const AFTER_WORKER_STATUSES: readonly RunStatus[] = [
+  'monitoring',
+  'paused',
+  'blocked',
+  'reviewing',
+  'needs-decision',
+  'human-gating',
+  'completing',
+];
+
+/** The current monitor step ended on the worker's own completion signal. */
+function monitorSawWorkerFinish(run: Run): boolean {
+  const monitor = run.steps.find((step) => step.name === PipelineSteps.MONITOR);
+  const signal = monitor?.outputs?.workerSignal as { status?: unknown } | undefined;
+  return monitor?.status === 'done' && (signal?.status === 'complete' || signal?.status === 'done');
+}
+
 function outputWorkerFinished(run: Run, workerFinished: boolean): boolean {
   return (
     workerFinished ||
-    (Boolean(run.output?.workerFinished) &&
-      ['monitoring', 'paused', 'blocked', 'human-gating', 'completing'].includes(run.status)) ||
+    (AFTER_WORKER_STATUSES.includes(run.status) &&
+      (Boolean(run.output?.workerFinished) || monitorSawWorkerFinish(run))) ||
     Boolean(run.completedAt) ||
     isTerminalRunStatus(run.status)
   );
