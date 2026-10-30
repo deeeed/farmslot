@@ -381,6 +381,8 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
 }
 
 const acquisitionScans = new Map<string, Promise<AcquisitionScan>>();
+// A busy gateway's complete acquisition inventory can exceed thirty seconds.
+const ACQUISITION_ADMISSION_TIMEOUT_MS = 120_000;
 
 /** Share only an in-flight scan, never a stale footprint or a separate accounting store. */
 async function acquisitionBytes(root: string): Promise<AcquisitionScan> {
@@ -499,10 +501,10 @@ export async function reserveRunBundleMetadata(
             () =>
               reject(
                 new Error(
-                  `Retention admission acquisition scan timed out after 30000ms for run ${runId}`,
+                  `Retention admission acquisition scan timed out after ${ACQUISITION_ADMISSION_TIMEOUT_MS}ms for run ${runId}`,
                 ),
               ),
-            30_000,
+            ACQUISITION_ADMISSION_TIMEOUT_MS,
           );
         }),
       ]).finally(() => clearTimeout(timer))
