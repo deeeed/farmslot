@@ -138,6 +138,22 @@ export const nativeSessionStyles = css`
     overflow: auto;
     padding: 12px;
   }
+  /* Zero-height anchor at the bottom of the visible timeline: the jump control never moves content. */
+  .jump-anchor {
+    position: sticky;
+    bottom: 0;
+    height: 0;
+    display: flex;
+    justify-content: center;
+  }
+  .jump-latest {
+    position: absolute;
+    bottom: 4px;
+    min-height: 44px;
+    padding: 0 18px;
+    border-radius: 22px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
   article {
     margin: 0 0 14px;
     overflow-wrap: anywhere;

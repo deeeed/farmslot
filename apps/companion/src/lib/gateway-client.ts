@@ -39,7 +39,11 @@ import {
   workspaceAllowsMethod,
 } from './workspace-access';
 
-export { type GatewayConnectionTestResult, testGatewayConnection } from './gateway-connection-test';
+export {
+  type GatewayConnectionTestResult,
+  signOutGatewayDevice,
+  testGatewayConnection,
+} from './gateway-connection-test';
 export {
   type GatewayAuthCredentials,
   type GatewayHttpAuthHeaders,

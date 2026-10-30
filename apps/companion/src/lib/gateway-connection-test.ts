@@ -32,6 +32,27 @@ export function testGatewayConnection(
   auth: GatewayAuthCredentials = {},
   timeouts: GatewayConnectionTestTimeouts = {},
 ): Promise<GatewayConnectionTestResult> {
+  return runGatewayConnection(url, auth, timeouts, 'ping');
+}
+
+/**
+ * Signs this device out of a gateway it holds a person login for, over a socket of its own: refresh,
+ * connect, then revoke the device session. Works for a profile the running client is not on.
+ */
+export async function signOutGatewayDevice(
+  url: string,
+  auth: GatewayAuthCredentials,
+  timeouts: GatewayConnectionTestTimeouts = {},
+): Promise<void> {
+  await runGatewayConnection(url, auth, timeouts, 'sign-out');
+}
+
+function runGatewayConnection(
+  url: string,
+  auth: GatewayAuthCredentials,
+  timeouts: GatewayConnectionTestTimeouts,
+  afterAuth: 'ping' | 'sign-out',
+): Promise<GatewayConnectionTestResult> {
   const urlError = mobileGatewayProfileUrlError(url);
   if (urlError) return Promise.reject(new Error(urlError));
 
@@ -69,13 +90,16 @@ export function testGatewayConnection(
             }),
         })
       : null;
+    let signingOut = false;
+    const endSessionRequests = (error: Error) => {
+      for (const request of sessionRequests.values()) request.reject(error);
+      sessionRequests.clear();
+    };
     const finish = () => {
       if (settled) return false;
       settled = true;
       clearTimeout(timer);
-      for (const request of sessionRequests.values())
-        request.reject(new Error('Gateway connection test ended.'));
-      sessionRequests.clear();
+      endSessionRequests(new Error('Gateway connection test ended.'));
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
@@ -223,6 +247,32 @@ export function testGatewayConnection(
           return;
         }
         authResult = response.payload;
+        if (afterAuth === 'sign-out') {
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            finishWithError(new Error(`Gateway did not confirm sign-out within ${pingTimeout}ms`));
+          }, pingTimeout);
+          const signedIn = authResult;
+          signingOut = true;
+          (person?.session
+            ? person.signOut()
+            : Promise.reject(new Error('This profile has no device sign-in to end.'))
+          ).then(
+            () => {
+              if (!finish()) return;
+              resolve({
+                ...signedIn,
+                latencyMs: Date.now() - startedAt,
+                gatewayPingSupported: false,
+              });
+            },
+            (error: unknown) =>
+              finishWithError(
+                error instanceof Error ? error : new Error('Gateway sign-out failed.'),
+              ),
+          );
+          return;
+        }
         if (!gatewaySupportsPing(authResult)) {
           if (!finish()) return;
           resolve({
@@ -265,13 +315,19 @@ export function testGatewayConnection(
       });
     };
 
+    // The gateway closes a revoked session's sockets as soon as it answers the revoke, so during a
+    // sign-out a close fails only an unanswered request and the sign-out result decides.
     ws.onerror = () => {
-      finishWithError(new Error('Gateway socket error during connection test'));
+      if (signingOut)
+        endSessionRequests(new Error('Gateway closed before confirming the sign-out.'));
+      else finishWithError(new Error('Gateway socket error during connection test'));
     };
 
     ws.onclose = () => {
       if (settled) return;
-      finishWithError(new Error('Gateway closed before authenticated ping completed'));
+      if (signingOut)
+        endSessionRequests(new Error('Gateway closed before confirming the sign-out.'));
+      else finishWithError(new Error('Gateway closed before authenticated ping completed'));
     };
   });
 }
