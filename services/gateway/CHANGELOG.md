@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Let COMPLETE proceed when the worker pane is confirmed gone with no live runner, as the publication gate already does.
 - Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
 - Allow a requested re-review at the same HEAD when a package refresh changed only the run artifacts its open findings cite.
 - Recover publication-gate progress after a worker pane disappears; verify a resumed conversation before reading its replacement pane.
