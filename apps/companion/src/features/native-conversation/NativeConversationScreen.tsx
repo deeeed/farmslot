@@ -41,6 +41,9 @@ export function NativeConversationScreen({
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollView>(null);
   const [follow, setFollow] = useState(NATIVE_FOLLOW_LATEST);
+  const viewport = useRef({ offset: 0, height: 0 });
+  /** The reader opened or closed an entry, so the next size change is theirs, not new output. */
+  const disclosed = useRef(false);
   const entryCount = useRef(vm.entries.length);
   useEffect(() => {
     entryCount.current = vm.entries.length;
@@ -113,14 +116,25 @@ export function NativeConversationScreen({
           ref={scroll}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          onLayout={(event) => {
+            viewport.current.height = event.nativeEvent.layout.height;
+          }}
           onScroll={(event) => {
             const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+            viewport.current = { offset: contentOffset.y, height: layoutMeasurement.height };
             const distance = contentSize.height - contentOffset.y - layoutMeasurement.height;
             setFollow((current) => nativeFollowScrolled(current, distance));
           }}
           scrollEventThrottle={100}
-          onContentSizeChange={() => {
-            if (follow.following && selected) scroll.current?.scrollToEnd({ animated: false });
+          onContentSizeChange={(_, height) => {
+            if (disclosed.current) {
+              // Keep the reader's place; follow again only if the end is still in view.
+              disclosed.current = false;
+              const distance = height - viewport.current.offset - viewport.current.height;
+              setFollow((current) => nativeFollowScrolled(current, distance));
+            } else if (follow.following && selected) {
+              scroll.current?.scrollToEnd({ animated: false });
+            }
           }}
         >
           {!selected ? (
@@ -221,7 +235,13 @@ export function NativeConversationScreen({
                 </>
               ) : null}
               {vm.entries.map((entry) => (
-                <NativeTimelineCard key={entry.key} entry={entry} />
+                <NativeTimelineCard
+                  key={entry.key}
+                  entry={entry}
+                  onDisclosure={() => {
+                    disclosed.current = true;
+                  }}
+                />
               ))}
               {vm.requests.map((request) => (
                 <NativeRequestCard

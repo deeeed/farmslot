@@ -9,8 +9,19 @@ import {
 
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
-export function NativeTimelineCard({ entry }: { entry: NativeTimelineEntry }) {
+export function NativeTimelineCard({
+  entry,
+  onDisclosure,
+}: {
+  entry: NativeTimelineEntry;
+  /** Called before the card opens or closes, so the conversation keeps the reader's place. */
+  onDisclosure: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const toggle = () => {
+    onDisclosure();
+    setExpanded(!expanded);
+  };
   const preview = nativeEntryPreview(entry);
   return (
     <View style={[styles.card, entry.kind === 'user' && styles.user]}>
@@ -25,11 +36,7 @@ export function NativeTimelineCard({ entry }: { entry: NativeTimelineEntry }) {
       </Text>
       {entry.kind === 'tool' ? (
         <>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded }}
-            onPress={() => setExpanded(!expanded)}
-          >
+          <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={toggle}>
             <Text style={styles.buttonText}>
               {entry.text} ·{' '}
               {entry.event.tool?.status ??
@@ -56,7 +63,7 @@ export function NativeTimelineCard({ entry }: { entry: NativeTimelineEntry }) {
               accessibilityRole="button"
               accessibilityState={{ expanded }}
               style={styles.messageToggle}
-              onPress={() => setExpanded(!expanded)}
+              onPress={toggle}
             >
               <Text style={styles.buttonText}>{nativeMessageToggleLabel(preview, expanded)}</Text>
             </Pressable>
