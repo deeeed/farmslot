@@ -20,8 +20,15 @@ const storage = (
 if (state.decisionsObservation !== Reflect.get(inbox, '_observation'))
   throw new Error('The probe must read the module instance owning the rendered inbox');
 const root = inbox.shadowRoot;
+const tray = document.querySelector('farm-notification-tray')?.shadowRoot;
+const noticesClosed = tray?.querySelector('.bell')?.getAttribute('aria-expanded') === 'false';
+const savedNotice = [...(tray?.querySelectorAll('[data-notice-id]') ?? [])].find((item) =>
+  item.getAttribute('data-notice-id')?.startsWith('read:decision.list:'),
+);
 return {
   mounted: true,
+  noticesClosed,
+  readNoticesNeeded: state.decisionsObservation.status === 'stale',
   url: location.href,
   visibility: document.visibilityState,
   freshness: state.decisionsObservation.status,
@@ -29,7 +36,7 @@ return {
   runFreshness: state.runsObservation?.status,
   runCount: state.runs.length,
   connection: state.connection,
-  stale: root.querySelector('[data-freshness="stale"]')?.textContent?.trim(),
+  stale: savedNotice?.querySelector('p')?.textContent.trim(),
   rows: state.decisions.map((decision) => {
     const button = root.querySelector(`[data-decision-id="${CSS.escape(decision.id)}"]`);
     return {

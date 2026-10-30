@@ -19,7 +19,7 @@
         "action": "ui.press",
         "intent": "Open farm source controls in Settings.",
         "test_id": "companion-tab-settings",
-        "next": "loaded"
+        "next": "settings-open-sources"
       },
       "loaded": {
         "action": "ui.wait_for",
@@ -111,7 +111,7 @@
         "action": "ui.press",
         "intent": "Expand the node source panel.",
         "test_id": "node-{{params.node_id}}-sources",
-        "next": "node-source"
+        "next": "node-open-sources"
       },
       "node-source": {
         "action": "ui.wait_for",
@@ -196,7 +196,7 @@
       "run-timeline": {
         "action": "ui.press",
         "intent": "Open the run timeline that owns the retained source panel.",
-        "next": "run-source",
+        "next": "run-timeline-open-sources",
         "test_id": "companion-run-tab-timeline"
       },
       "run-ready": {
@@ -377,6 +377,24 @@
         "text_contains": ["proof-pack run input"],
         "timeout_ms": 30000,
         "next": "run-capture-hud"
+      },
+      "settings-open-sources": {
+        "action": "ui.press",
+        "test_id": "sources-open",
+        "intent": "Open Sources without changing the surrounding view height.",
+        "next": "loaded"
+      },
+      "node-open-sources": {
+        "action": "ui.press",
+        "test_id": "sources-open",
+        "intent": "Open Sources without changing the surrounding view height.",
+        "next": "node-source"
+      },
+      "run-timeline-open-sources": {
+        "action": "ui.press",
+        "test_id": "sources-open",
+        "intent": "Open Sources without changing the surrounding view height.",
+        "next": "run-source"
       }
     }
   }

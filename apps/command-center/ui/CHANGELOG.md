@@ -5,6 +5,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - The Companion pairing QR comes with its pair link: Open in Companion, Copy link and Copy adb command (`adb shell am start` for a device on adb), for the production, preview or development build. Same code and expiry as the QR.
+- Alert only for current needs-you conditions. Completed dispatches stay in their current slot/run views and monitor violations stay in history; neither produces an informational browser alert.
+
+- Keep read errors and saved ages in one notification tray with a fixed-height attention strip; current decisions clear and recur without repeated alerts or moving the page. Keep saved-gate text in one reserved row and reserve Evals status space through pending reads.
+
 - A live native conversation follows new output again while you are at the end of it, and opens at its latest message. Scrolling up still keeps your place.
 - Keep loaded native history while a healthy source change refreshes the read; report real observation failures separately.
 - Run writes reread the run lists and the decision inbox at most every 30 s, so a busy farm no longer rereads them at every write. A decision raised, answered or changed anywhere rereads the inbox at once. Actions do not wait for that reread: dispatch, conflict cancel, inbox answers, run list actions, archive and the slot load dialog stay enabled while held data only waits for it, read the list first, and act only on a current reply and on what was chosen at the click (selection, dialog, dispatch form and comparison mode, cleanup preview); archive rereads before each run and stops the batch if the lists do not come back current. The comparison baseline picker, which selects only from a current list, still rereads each run change while it is open. The saved-data notices in the inbox, the slot load dialog and the terminal worktree panel show only for saved data (offline or a failed read), not during that wait.

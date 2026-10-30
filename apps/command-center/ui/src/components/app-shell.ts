@@ -48,6 +48,7 @@ import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
 import './shared/hydrating-placeholder.js';
 import './shared/update-banner.js';
+import './shared/notification-tray.js';
 import './shared/whats-new-modal.js';
 import './shared/file-transfer-progress-banner.js';
 import './fleet-map/fleet-canvas.js';
@@ -107,7 +108,11 @@ import {
   subscribe,
 } from '../state.js';
 import { ALPHA_FEATURES_CHANGED, getAlphaFeaturesEnabled } from '../utils/alpha-features.js';
-import { ATTENTION_ALERT_EVENT, type AttentionAlertDetail } from '../utils/notifications.js';
+import {
+  isUpdateNoticeOpen,
+  publishUpdateNotice,
+  updateNoticeKey,
+} from '../utils/notification-tray.js';
 import {
   listPinnedWorkspaces as listPinnedSlotPreferences,
   PINNED_SLOTS_CHANGED,
@@ -248,6 +253,7 @@ export class FarmApp extends LitElement {
         ? (result.data ?? null)
         : null;
       this.updateStatus = this.versionDetailsStatus?.update ?? null;
+      publishUpdateNotice(getResourceWorkspaceKey(), this.updateStatus, this.updateDismissedSha);
       if (result.status === 'stale' && result.data && !this.updateAgeTimer)
         this.updateAgeTimer = setInterval(() => this.requestUpdate(), 1000);
       else if (result.status !== 'stale' || !result.data) {
@@ -294,7 +300,6 @@ export class FarmApp extends LitElement {
   );
   @state() private chatOpen = false;
   @state() private chatUnread = 0;
-  @state() private attentionAlert: AttentionAlertDetail | null = null;
   @state() private _sidebarExpanded = false;
   @state() private _sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
   @state() private _sidebarResizing = false;
@@ -371,7 +376,6 @@ export class FarmApp extends LitElement {
     window.addEventListener('copilot-prompt-request', this.onCopilotPromptRequest as EventListener);
     window.addEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
     window.addEventListener(ALPHA_FEATURES_CHANGED, this.onAlphaFeaturesChanged as EventListener);
-    window.addEventListener(ATTENTION_ALERT_EVENT, this.onAttentionAlert as EventListener);
     this.pinnedSlots = listPinnedSlotPreferences();
     this.bindWorkerInventory();
     this.updateQuery.setQuery(resourceQuery<GatewayStatusResult>(Methods.GATEWAY_STATUS));
@@ -399,7 +403,6 @@ export class FarmApp extends LitElement {
       ALPHA_FEATURES_CHANGED,
       this.onAlphaFeaturesChanged as EventListener,
     );
-    window.removeEventListener(ATTENTION_ALERT_EVENT, this.onAttentionAlert as EventListener);
     clearInterval(this.workerAgeTimer);
     this.workerAgeTimer = undefined;
     clearInterval(this.updateAgeTimer);
@@ -419,34 +422,6 @@ export class FarmApp extends LitElement {
     // on an alpha route, bounce them to fleet immediately, not on next nav.
     this.parseHash();
   };
-
-  private onAttentionAlert = (event: CustomEvent<AttentionAlertDetail>) => {
-    this.attentionAlert = event.detail;
-  };
-
-  private renderAttentionAlert() {
-    const alert = this.attentionAlert;
-    if (!alert) return nothing;
-    return html`<div class="fa-attention-alert" role="status" aria-live="polite">
-      <div>
-        <strong>${alert.title}</strong>
-        ${alert.body ? html`<span>${alert.body}</span>` : nothing}
-      </div>
-      ${alert.route
-        ? html`<button
-            @click=${() => {
-              location.hash = alert.route!;
-              this.attentionAlert = null;
-            }}
-          >
-            Open
-          </button>`
-        : nothing}
-      <button class="dismiss" title="Dismiss" @click=${() => (this.attentionAlert = null)}>
-        ×
-      </button>
-    </div>`;
-  }
 
   private bindWorkerInventory(): void {
     this.workerQuery.setQuery(
@@ -516,12 +491,7 @@ export class FarmApp extends LitElement {
 
   private renderUpdateBanner() {
     const s = this.updateStatus;
-    if (!s || (!s.updateAvailable && !s.operation && !this.updateQuery.state.error)) return nothing;
-    const dismissalKey = s.operation
-      ? `${s.remoteSha}:${s.operation.id}:${s.operation.phase}`
-      : s.remoteSha;
-    if (s.operation?.phase !== 'running' && dismissalKey === this.updateDismissedSha)
-      return nothing;
+    if (!s || !isUpdateNoticeOpen(s, this.updateDismissedSha)) return nothing;
     return html`<update-banner
       .status=${s}
       .current=${this.updateQuery.ready &&
@@ -564,12 +534,11 @@ export class FarmApp extends LitElement {
 
   private dismissUpdateBanner() {
     const status = this.updateStatus;
-    const sha = status?.operation
-      ? `${status.remoteSha}:${status.operation.id}:${status.operation.phase}`
-      : status?.remoteSha;
+    const sha = status ? updateNoticeKey(status) : null;
     if (sha) {
       this.updateDismissedSha = sha;
       localStorage.setItem(UPDATE_DISMISS_KEY, sha);
+      publishUpdateNotice(getResourceWorkspaceKey(), status, sha);
     } else {
       // No remote SHA to key dismissal on — hide for this session only.
       this.updateStatus = null;
@@ -2558,7 +2527,9 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           : ''}
       </nav>
       <div class="fa-main">
-        ${this.renderAttentionAlert()} ${this.renderUpdateBanner()}
+        <farm-notification-tray
+          ><div slot="update">${this.renderUpdateBanner()}</div></farm-notification-tray
+        >
         <fleet-summary-bar
           .summary=${this.summary}
           .connection=${this.connection}

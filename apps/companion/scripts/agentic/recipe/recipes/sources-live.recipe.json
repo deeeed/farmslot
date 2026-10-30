@@ -195,6 +195,12 @@
         "action": "ui.press",
         "test_id": "companion-tab-settings",
         "intent": "Select Settings after the device transport opens the app.",
+        "next": "settings-tab-open-sources"
+      },
+      "settings-tab-open-sources": {
+        "action": "ui.press",
+        "test_id": "sources-open",
+        "intent": "Open Sources without changing the surrounding view height.",
         "next": "settings-visible"
       }
     }
