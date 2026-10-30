@@ -313,6 +313,16 @@ a missing receipt in a page does not mean the command was never submitted. Consu
 persist its returned cursor. Pending interactions are separate from the event
 page. Respond with `request.id`; `nativeId` is evidence, not an input token.
 
+Adapters normalize each tool call into `tool.kind`, `tool.command` and `tool.paths`
+([ADR-057 Amendment 8](../adr/057-structured-runner-transports.md#amendment-8-normalized-tool-kinds-2026-10-31));
+`tool.name` keeps the runner's own name. Claude maps `Bash` to `command`, `Read` to
+`file-read`, `Edit`, `MultiEdit`, `Write` and `NotebookEdit` to `file-edit`, `Grep` and
+`Glob` to `search`, and `WebFetch` and `WebSearch` to `web`. Codex maps
+`commandExecution`, `fileChange` (its changed paths) and `webSearch` items. ACP maps
+the tool call's `kind` (`execute`, `read`, `edit`, `delete`, `move`, `search`,
+`fetch`) and its `locations`; an update that omits them keeps the call's earlier
+values. Every other tool is `other`.
+
 After runner or host failure, reads expose failure and recovery instructions.
 Explicit `create` with the recorded `resumeSessionId` retains the Farmslot session
 ID and command history, and starts a new generation only after confirmed cleanup

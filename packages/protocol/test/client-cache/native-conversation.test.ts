@@ -5,6 +5,7 @@ import {
   appendNativePage,
   NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
+  nativeCommandText,
   nativeDeliveryLabel,
   nativeEntryPreview,
   nativeFoldWatched,
@@ -16,6 +17,7 @@ import {
   nativeTimeline,
   type NativeTimelineRow,
   nativeTimelineRows,
+  nativeToolLabel,
   nativeWatchTools,
   nativeWork,
   nativeWorkLabel,
@@ -206,6 +208,88 @@ test('interleaved tool results preserve names and inputs without crossing genera
   assert.equal(timeline[1].event.tool?.output, 'Edit');
   assert.equal(timeline[2].event.type, 'tool.started');
   assert.equal(timeline[2].event.tool?.output, undefined);
+});
+
+test('a typed tool reads as what it does; an untyped one keeps the runner name', () => {
+  assert.equal(
+    nativeToolLabel({ name: 'commandExecution', kind: 'command', command: 'npm test\n--watch' }),
+    'Run npm test',
+  );
+  assert.equal(
+    nativeToolLabel({ name: 'Edit', kind: 'file-edit', paths: ['src/a.ts', 'src/b.ts'] }),
+    'Edit a.ts, b.ts',
+  );
+  assert.equal(
+    nativeToolLabel({ name: 'fileChange', kind: 'file-edit', paths: ['a', 'b', 'c', 'd', 'e'] }),
+    'Edit a, b, c and 2 more',
+  );
+  assert.equal(
+    nativeToolLabel({ name: 'Read', kind: 'file-read', paths: ['/w/x.md'] }),
+    'Read x.md',
+  );
+  assert.equal(nativeToolLabel({ name: 'Grep', kind: 'search', paths: ['src'] }), 'Search src');
+  // No subject, no kind, or a kind without a verb: the runner's own name.
+  assert.equal(nativeToolLabel({ name: 'Bash', kind: 'command' }), 'Bash');
+  assert.equal(nativeToolLabel({ name: 'WebFetch', kind: 'web' }), 'WebFetch');
+  assert.equal(nativeToolLabel({ name: 'mcp__x', kind: 'other', paths: ['a'] }), 'mcp__x');
+  assert.equal(nativeToolLabel({ name: 'commandExecution' }), 'commandExecution');
+  assert.equal(
+    nativeToolLabel({ name: 'Bash', kind: 'command', command: 'x'.repeat(200) }).length,
+    121,
+  );
+
+  const started = { ...event(1, 'tool.started'), nativeId: 'tool' };
+  const command = { name: 'Bash', kind: 'command' as const, command: 'npm test' };
+  assert.equal(nativeTimeline([{ ...started, tool: command }])[0].text, 'Run npm test');
+  const work = nativeWork([event(0, 'turn.started'), { ...started, tool: command }]);
+  assert.equal(
+    work && nativeWorkLabel(work, Date.parse('2026-09-12T00:00:05Z')),
+    'Working · 5s · Run npm test',
+  );
+});
+
+test('a command card shows what it ran and the end of its output', () => {
+  const lines = Array.from({ length: 45 }, (_, i) => `line ${i + 1}`).join('\n');
+  const text = nativeCommandText({
+    name: 'Bash',
+    kind: 'command',
+    command: 'npm test',
+    output: `${lines}\n`,
+  });
+  assert.equal(text?.split('\n').slice(0, 3).join('|'), '$ npm test|… 5 earlier lines|line 6');
+  assert.equal(text?.split('\n').at(-1), 'line 45');
+  // Text blocks, as Claude and ACP return them.
+  assert.equal(
+    nativeCommandText({
+      name: 'Bash',
+      kind: 'command',
+      command: 'pwd',
+      output: [{ type: 'text', text: '/w' }],
+    }),
+    '$ pwd\n/w',
+  );
+  assert.equal(
+    nativeCommandText({
+      name: 'x',
+      kind: 'command',
+      command: 'ls',
+      output: [{ content: { text: 'a' } }],
+    }),
+    '$ ls\na',
+  );
+  assert.equal(nativeCommandText({ name: 'Bash', kind: 'command', command: 'true' }), '$ true');
+  assert.equal(
+    nativeCommandText({
+      name: 'Bash',
+      kind: 'command',
+      command: 'npm test',
+      output: '\x1b]0;title\x07\x1b[32m✔ passed\x1b[0m',
+    }),
+    '$ npm test\n✔ passed',
+  );
+  // Any other tool keeps its raw card.
+  assert.equal(nativeCommandText({ name: 'Edit', kind: 'file-edit', paths: ['a'] }), undefined);
+  assert.equal(nativeCommandText({ name: 'Bash', kind: 'command' }), undefined);
 });
 
 test('late acceptance restores the user prompt before its assistant response', () => {

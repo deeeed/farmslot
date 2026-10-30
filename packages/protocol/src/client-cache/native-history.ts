@@ -3,6 +3,8 @@ import type {
   NativeSessionEvent,
   NativeSessionReadResult,
   NativeSessionTargetParams,
+  NativeSessionTool,
+  NativeToolKind,
 } from '../rpc/native-session.js';
 import { Methods } from '../rpc/registry.js';
 
@@ -73,7 +75,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
           key: event.sequence,
           kind: 'tool',
           event,
-          text: event.tool?.name ?? 'Tool',
+          text: nativeToolLabel(event.tool),
         };
         entries.push(entry);
         if (identity) tools.set(identity, entry);
@@ -550,7 +552,7 @@ export function nativeWork(events: NativeSessionEvent[]): NativeWork | undefined
   const tools = new Map<string, string>();
   for (const event of events) {
     if (event.sequence <= turn.sequence || !event.nativeId || !event.tool) continue;
-    if (event.type === 'tool.started') tools.set(event.nativeId, event.tool.name);
+    if (event.type === 'tool.started') tools.set(event.nativeId, nativeToolLabel(event.tool));
     else if (event.type === 'tool.completed') tools.delete(event.nativeId);
   }
   return { since: Date.parse(turn.at), tool: [...tools.values()].at(-1) };
@@ -570,6 +572,76 @@ function nativeElapsed(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+const NATIVE_TOOL_LABEL_CHARS = 120;
+const NATIVE_TOOL_LABEL_FILES = 3;
+const NATIVE_TOOL_OUTPUT_LINES = 40;
+// Colour and title escapes a terminal would interpret; as text they are noise.
+const NATIVE_TERMINAL_ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const NATIVE_TOOL_VERBS: Partial<Record<NativeToolKind, string>> = {
+  command: 'Run',
+  'file-edit': 'Edit',
+  'file-read': 'Read',
+  search: 'Search',
+};
+
+/**
+ * A tool call as a reader reads it: "Run npm test", "Edit a.ts, b.ts", "Read a.ts", "Search src".
+ * A tool whose adapter gave no kind or subject keeps the runner's own name.
+ */
+export function nativeToolLabel(tool: NativeSessionTool | undefined): string {
+  if (!tool) return 'Tool';
+  const names = (tool.paths ?? []).map((path) => path.split('/').at(-1) || path);
+  const files =
+    names.length > NATIVE_TOOL_LABEL_FILES
+      ? `${names.slice(0, NATIVE_TOOL_LABEL_FILES).join(', ')} and ${names.length - NATIVE_TOOL_LABEL_FILES} more`
+      : names.join(', ');
+  const verb = tool.kind && NATIVE_TOOL_VERBS[tool.kind];
+  const subject = tool.kind === 'command' ? tool.command?.trim().split('\n')[0] : files;
+  if (!verb || !subject) return tool.name;
+  const label = `${verb} ${subject}`;
+  return label.length > NATIVE_TOOL_LABEL_CHARS
+    ? `${label
+        .slice(0, NATIVE_TOOL_LABEL_CHARS)
+        .replace(/[\uD800-\uDBFF]$/, '')
+        .trimEnd()}…`
+    : label;
+}
+
+/**
+ * A command card's text: "$ npm test", then the last 40 lines it printed, with "… 12 earlier lines"
+ * above them. Undefined for any other tool, whose card shows its raw input and output.
+ */
+export function nativeCommandText(tool: NativeSessionTool | undefined): string | undefined {
+  if (tool?.kind !== 'command' || !tool.command) return undefined;
+  const output = nativeOutputText(tool.output)
+    ?.replace(NATIVE_TERMINAL_ESCAPES, '')
+    .replace(/\n+$/, '');
+  if (!output) return `$ ${tool.command}`;
+  const lines = output.split('\n');
+  const hidden = Math.max(0, lines.length - NATIVE_TOOL_OUTPUT_LINES);
+  return [
+    `$ ${tool.command}`,
+    ...(hidden ? [`… ${hidden} earlier ${hidden === 1 ? 'line' : 'lines'}`] : []),
+    ...lines.slice(hidden),
+  ].join('\n');
+}
+
+/** Runners return output as a string, or as text blocks (`{ text }` or `{ content: { text } }`). */
+function nativeOutputText(output: unknown): string | undefined {
+  if (typeof output === 'string') return output;
+  if (!Array.isArray(output)) return undefined;
+  const texts = output.flatMap((block: unknown) => {
+    const value = block && typeof block === 'object' ? (block as Record<string, unknown>) : {};
+    const content =
+      value.content && typeof value.content === 'object'
+        ? (value.content as Record<string, unknown>)
+        : {};
+    const text = typeof value.text === 'string' ? value.text : content.text;
+    return typeof text === 'string' ? [text] : [];
+  });
+  return texts.length ? texts.join('\n') : undefined;
 }
 
 export type NativeTimelineRow =

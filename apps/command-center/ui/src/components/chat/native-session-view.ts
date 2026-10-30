@@ -23,6 +23,7 @@ import {
   appendNativePage,
   NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
+  nativeCommandText,
   nativeDeliveryLabel,
   nativeEntryPreview,
   nativeFoldWatched,
@@ -433,7 +434,8 @@ export class NativeSessionView extends LitElement {
                 : (entry.event.tool?.status ?? 'Finished')}
             </summary>
             <pre>
-${JSON.stringify(
+${nativeCommandText(entry.event.tool) ??
+              JSON.stringify(
                 {
                   ...(entry.event.tool?.input !== undefined
                     ? { input: entry.event.tool.input }

@@ -52,6 +52,9 @@ test('Codex correlates structured acceptance and denies only the exact pending r
     await session.respond('78', { decision: 'deny' });
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(events.find((event) => event.type === 'tool.completed')?.tool?.status, 'declined');
+    const started = events.find((event) => event.type === 'tool.started')?.tool;
+    assert.deepEqual([started?.kind, started?.paths], ['file-edit', ['greeting.ts']]);
+    assert.equal(events.find((event) => event.type === 'tool.completed')?.tool?.kind, 'command');
     assert.equal(events.find((event) => event.type === 'turn.completed')?.status, 'completed');
     await assert.rejects(session.respond('78', { decision: 'approve' }), /stale/);
   } finally {

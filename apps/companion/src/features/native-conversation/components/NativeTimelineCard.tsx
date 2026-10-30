@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
+  nativeCommandText,
   nativeEntryPreview,
   nativeMessageToggleLabel,
   type NativeTimelineEntry,
@@ -50,7 +51,7 @@ export function NativeTimelineCard({
           {expanded ? (
             <ScrollView nestedScrollEnabled style={styles.detail}>
               <Text selectable style={styles.code}>
-                {JSON.stringify(entry.event.tool, null, 2)}
+                {nativeCommandText(entry.event.tool) ?? JSON.stringify(entry.event.tool, null, 2)}
               </Text>
             </ScrollView>
           ) : null}

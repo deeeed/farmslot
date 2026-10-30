@@ -1,8 +1,48 @@
 import { randomUUID } from 'node:crypto';
 
+import type { NativeSessionTool, NativeToolKind } from '@farmslot/protocol';
+
 import { type AcpPendingRequest, acpPermission } from './acp-requests.js';
 import { type AcpObject, acpObject, AcpRpc, acpString } from './acp-rpc.js';
 import type { NativeAdapter, NativeAdapterOptions, NativeEventInput } from './types.js';
+
+const ACP_TOOL_KINDS: Record<string, NativeToolKind> = {
+  execute: 'command',
+  read: 'file-read',
+  edit: 'file-edit',
+  delete: 'file-edit',
+  move: 'file-edit',
+  search: 'search',
+  fetch: 'web',
+};
+
+/** What an ACP tool call does. An update that omits a field keeps the call's earlier value. */
+function acpToolKind(update: AcpObject): Pick<NativeSessionTool, 'kind' | 'command' | 'paths'> {
+  const kind =
+    typeof update.kind === 'string'
+      ? Object.hasOwn(ACP_TOOL_KINDS, update.kind)
+        ? ACP_TOOL_KINDS[update.kind]
+        : 'other'
+      : undefined;
+  const input =
+    update.rawInput && typeof update.rawInput === 'object'
+      ? (update.rawInput as Record<string, unknown>)
+      : {};
+  const paths = (Array.isArray(update.locations) ? update.locations : []).flatMap(
+    (location: unknown) => {
+      const path =
+        location && typeof location === 'object'
+          ? (location as { path?: unknown }).path
+          : undefined;
+      return typeof path === 'string' ? [path] : [];
+    },
+  );
+  return {
+    ...(kind ? { kind } : {}),
+    ...(kind === 'command' && typeof input.command === 'string' ? { command: input.command } : {}),
+    ...(paths.length ? { paths } : {}),
+  };
+}
 
 export interface AcpAdapterConfig {
   args(options: NativeAdapterOptions): string[];
@@ -121,6 +161,7 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
               ...previous,
               name:
                 typeof update.title === 'string' ? update.title : (previous?.name ?? 'Runner tool'),
+              ...acpToolKind(update),
               ...(update.rawInput !== undefined ? { input: update.rawInput } : {}),
               ...(update.rawOutput !== undefined || update.content !== undefined
                 ? { output: update.rawOutput ?? update.content }

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `NativeSessionEvent.tool` is `NativeSessionTool`, with optional `kind` (`NativeToolKind`: `command`, `file-edit`, `file-read`, `search`, `web`, `other`), `command` and `paths` set by the runner adapter. `nativeToolLabel` reads a tool call as "Run npm test", "Edit a.ts, b.ts", "Read a.ts" or "Search src", or the runner's name; native timeline entries and `nativeWorkLabel` use it. `nativeCommandText` gives a command card's text: the command and its last 40 output lines, without terminal colour codes.
 - `FamilyObservabilitySnapshot.latestRunId` is optional: a reference-only eval family has no runs yet.
 - `nativeTimelineRows` adds a summary row for each finished turn's tool calls ("Worked for 4m 12s · 6 tools", "Stopped after …", "Failed after …") just before the turn's end, and marks those tools with it; tools keep their keys, and messages, statuses and a running turn stay as they are. A turn also ends where its host stopped (`session.closed`). `nativeWatchTools` and `nativeFoldWatched` decide that a turn seen running in a live read starts open.
 - `nativeWork` finds the turn a native session is running, when it started and its current tool; `nativeWorkLabel` gives "Working · 1m 12s · Bash". Cached native history keeps the running turn's `turn.started`, which it dropped before as not a timeline entry.

@@ -38,7 +38,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='permission')return send({id:71,method:'session/request_permission',params:{sessionId:session,toolCall:{title:'Write fixture',rawInput:{path:'fixture'}},options:[{optionId:'allow-once',kind:'allow_once'},{optionId:'deny-once',kind:'reject_once'}]}});
   if(text==='unknown')return send({id:72,method:'fs/read_text_file',params:{path:'/private'}});
   update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'ANSWER'}});
-  update({sessionUpdate:'tool_call',toolCallId:'tool1',title:'read fixture',status:'in_progress',rawInput:{path:'fixture'}});
+  update({sessionUpdate:'tool_call',toolCallId:'tool1',title:'read fixture',kind:'read',locations:[{path:'/work/fixture'}],status:'in_progress',rawInput:{path:'fixture'}});
   update({sessionUpdate:'tool_call_update',toolCallId:'tool1',status:'completed',rawOutput:'data'});
   update({sessionUpdate:'tool_call_update',toolCallId:'tool1',status:'completed',rawOutput:'data'});
   return result(prompt,{stopReason:'end_turn'});
@@ -89,6 +89,12 @@ for (const [runner, adapter] of [
         ['ANSWER'],
       );
       assert.equal(events.filter((e) => e.type === 'tool.completed').length, 1);
+      // The completion update omits the kind and locations; the call keeps them.
+      for (const type of ['tool.started', 'tool.completed'])
+        assert.deepEqual(
+          (({ kind, paths }) => ({ kind, paths }))(events.find((e) => e.type === type)!.tool!),
+          { kind: 'file-read', paths: ['/work/fixture'] },
+        );
       assert.deepEqual(
         events.filter((e) => e.type === 'command.accepted').map((e) => e.commandId),
         ['c1', 'c2'],

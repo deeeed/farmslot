@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- A native conversation names tool calls by what they do, "Run npm test", "Edit a.ts, b.ts" or "Read a.ts", in the tool row and the working status, instead of runner names such as `commandExecution`. A command's details show the command and the last 40 lines it printed.
 - The family change ledger needs a latest run before it offers its evidence files.
 - A finished turn's tool calls in a native conversation fold behind one row at the end of the turn, "Worked for 4m 12s · 6 tools", that opens them in place. A turn you watched run stays open, with any tool you opened still open.
 - A native conversation shows its state on its own line; while a turn runs, how long it has worked and the tool it runs now ("Working · 1m 12s · Bash").

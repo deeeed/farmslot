@@ -4,6 +4,8 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Native Claude, Codex and ACP adapters set `tool.kind`, `tool.command` and `tool.paths` on tool calls, so clients can show what a tool ran or changed without runner names (ADR-057 Amendment 8).
+
 - Re-selecting a retained recipe attempt also moves the task acceptance ledger to that attempt's claims, so the gate no longer shows another execution's verdicts.
 
 ## 0.39.11 - 2026-10-30
