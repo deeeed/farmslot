@@ -336,24 +336,21 @@ export default function DiffViewerScreen() {
           }
           workspaceRouteContext={workspaceRouteContext}
         />
-        <ResourceReadStatus observation={workspaceDiffObservation} label="workspace diff" />
-        <ResourceReadStatus observation={runObservation} label="run diff" />
-        <ResourceReadStatus observation={recipeObservation} label="recipe runs" />
-        {runObservation.error || recipeObservation.error || workspaceDiffObservation.error ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Retry diff"
-            onPress={() => {
-              const cache = getResourceCache();
-              if (workspaceDiffQuery && cache?.read(workspaceDiffQuery).error)
-                void cache.retry(workspaceDiffQuery);
-              if (runQuery && cache?.read(runQuery).error) void cache.retry(runQuery);
-              if (recipeQuery && cache?.read(recipeQuery).error) void cache.retry(recipeQuery);
-            }}
-          >
-            <Text style={styles.backButtonText}>Retry</Text>
-          </Pressable>
-        ) : null}
+        <ResourceReadStatus
+          observations={[
+            { observation: workspaceDiffObservation, label: 'workspace diff' },
+            { observation: runObservation, label: 'run diff' },
+            { observation: recipeObservation, label: 'recipe runs' },
+          ]}
+          retryLabel="Retry diff"
+          onRetry={() => {
+            const cache = getResourceCache();
+            if (workspaceDiffQuery && cache?.read(workspaceDiffQuery).error)
+              void cache.retry(workspaceDiffQuery);
+            if (runQuery && cache?.read(runQuery).error) void cache.retry(runQuery);
+            if (recipeQuery && cache?.read(recipeQuery).error) void cache.retry(recipeQuery);
+          }}
+        />
         {pathParamError ? <Text style={styles.errorText}>{pathParamError}</Text> : null}
         {gateDiffText ? (
           <MobileDiffViewer

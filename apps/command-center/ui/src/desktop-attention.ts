@@ -1,4 +1,5 @@
-import { ATTENTION_ALERT_EVENT } from './utils/notifications.js';
+import { notificationTray } from './utils/notification-tray.js';
+import { getResourceWorkspaceKey } from './resource-cache.js';
 import { getState, subscribe } from './state.js';
 
 export function initializeDesktopAttention(): void {
@@ -14,17 +15,25 @@ export function initializeDesktopAttention(): void {
     const key = JSON.stringify(value);
     if (key === last) return;
     last = key;
-    void publish(value).catch((error: unknown) => {
-      last = '';
-      window.dispatchEvent(
-        new CustomEvent(ATTENTION_ALERT_EVENT, {
-          detail: {
+    const owner = getResourceWorkspaceKey();
+    void publish(value).then(
+      () => {
+        if (owner === getResourceWorkspaceKey()) notificationTray.clear('desktop-attention');
+      },
+      (error: unknown) => {
+        last = '';
+        notificationTray.set('desktop-attention', owner, [
+          {
+            id: 'desktop-attention',
             title: 'Could not update macOS menu bar',
             body: error instanceof Error ? error.message : String(error),
+            route: '#doctor',
+            needsYou: false,
+            current: true,
           },
-        }),
-      );
-    });
+        ]);
+      },
+    );
   };
   update(getState());
   subscribe(update);

@@ -1,66 +1,115 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { sourceObservationAge } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
+import { type LabelledReadObservation, resourceReadMessages } from '../lib/resource-read-status';
 import { baseStyles, colors, spacing } from '../lib/theme';
 
+type ResourceReadStatusProps = {
+  onRetry?: () => void;
+  retryDisabled?: boolean;
+  retryLabel?: string;
+} & (
+  | { observation: ResourceQueryState; label: string; observations?: never }
+  | { observations: readonly LabelledReadObservation[]; observation?: never; label?: never }
+);
+
+/** One fixed status slot. Full messages open out of flow; commands remain with their owner. */
 export function ResourceReadStatus({
   observation,
   label,
+  observations,
   onRetry,
   retryDisabled = false,
-}: {
-  observation: ResourceQueryState;
-  label: string;
-  onRetry?: () => void;
-  retryDisabled?: boolean;
-}) {
+  retryLabel,
+}: ResourceReadStatusProps) {
   const [now, setNow] = useState(Date.now());
+  const [details, setDetails] = useState(false);
+  const reads = observations ?? (observation && label ? [{ observation, label }] : []);
+  const stale = reads.some((read) => read.observation.status === 'stale' && read.observation.data);
   useEffect(() => {
-    if (observation.status !== 'stale' || !observation.data) return;
+    if (!stale) return;
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [observation.status, observation.data]);
-  if (observation.status === 'ready' || observation.status === 'loading') return null;
-  const observedAt = observation.sourceObservation
-    ? observation.sourceObservation.observedAt
-    : observation.observedAt;
+  }, [stale]);
+  const messages = resourceReadMessages(reads, now);
+  const text = messages.join(' · ');
+  useEffect(() => {
+    if (!text) setDetails(false);
+  }, [text]);
   return (
-    <View style={{ padding: spacing.md }}>
-      {observation.status === 'stale' && observedAt !== undefined ? (
-        <Text
-          accessibilityLabel={`Saved ${label}, ${sourceObservationAge(observedAt, now)}. Actions wait for a current read.`}
-          style={[baseStyles.textSecondary, { color: colors.statusWarn }]}
-        >
-          Saved {label}, {sourceObservationAge(observedAt, now)}. Actions wait for a current read.
-        </Text>
-      ) : null}
-      {observation.status === 'unsupported' ? (
-        <Text style={baseStyles.textSecondary}>
-          Live {label} updates are unavailable on this gateway.
-        </Text>
-      ) : null}
-      {observation.error ? (
+    <View style={styles.slot} testID="resource-read-status-slot">
+      {text ? (
         <>
-          <Text accessibilityRole="alert" style={baseStyles.textSecondary}>
-            Could not read {label}: {observation.error.message}
-          </Text>
-          {onRetry ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={text}
+            onPress={() => setDetails(true)}
+            style={styles.message}
+          >
+            <Text style={baseStyles.textSecondary} numberOfLines={1}>
+              {text}
+            </Text>
+          </Pressable>
+          {onRetry && reads.some((read) => read.observation.error) ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Retry reading ${label}`}
+              accessibilityLabel={retryLabel ?? `Retry reading ${label ?? 'this view'}`}
               disabled={retryDisabled}
               onPress={onRetry}
-              style={{ paddingVertical: spacing.sm }}
+              style={styles.retry}
             >
               <Text style={[baseStyles.textSecondary, { color: colors.accent }]}>Retry</Text>
             </Pressable>
           ) : null}
         </>
       ) : null}
+      <Modal
+        visible={details && Boolean(text)}
+        transparent
+        animationType="none"
+        onRequestClose={() => setDetails(false)}
+      >
+        <View style={styles.backdrop}>
+          <View style={styles.details}>
+            <ScrollView>
+              {messages.map((message, index) => (
+                <Text key={index} style={[baseStyles.textSecondary, styles.detailText]}>
+                  {message}
+                </Text>
+              ))}
+            </ScrollView>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setDetails(false)}
+              style={styles.retry}
+            >
+              <Text style={baseStyles.textPrimary}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
+const styles = StyleSheet.create({
+  slot: {
+    height: 44,
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+  },
+  message: { flex: 1, minWidth: 0, minHeight: 44, justifyContent: 'center' },
+  retry: { minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md },
+  backdrop: { flex: 1, justifyContent: 'center', backgroundColor: '#0009', padding: spacing.lg },
+  details: {
+    maxHeight: '70%',
+    backgroundColor: colors.bgCard,
+    borderRadius: 8,
+    padding: spacing.md,
+  },
+  detailText: { marginBottom: spacing.md },
+});

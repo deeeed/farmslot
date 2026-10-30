@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Reserve one read-status row per view and open Sources in a disclosure, keeping polling, saved ages and read errors from moving the surrounding controls.
 
 ## 0.9.0 - 2026-10-30
 
