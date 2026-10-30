@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A reference-only eval experiment opens as its family snapshot, with its reference package and no runs, instead of failing with "No runs found".
 - Launch and resume Codex workers without the startup update check, so a worker never self-updates inside its pane and misses its ready window.
 - Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
 - Allow a requested re-review at the same HEAD when a package refresh changed only the run artifacts its open findings cite.

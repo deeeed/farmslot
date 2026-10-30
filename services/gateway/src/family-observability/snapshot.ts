@@ -6,6 +6,7 @@ import {
 } from '@farmslot/adapter-sdk/evidence';
 import {
   buildFamilySummary,
+  type EvalExperimentProjection,
   type FamilyLearningEntry,
   type FamilyObservabilityArtifact,
   type FamilyObservabilityRunSummary,
@@ -25,6 +26,7 @@ import {
   taskTitleText,
 } from '@farmslot/protocol';
 
+import { syntheticEvalTicket } from '../evals/package-store.js';
 import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
 import { readPortableTextIfExists } from '../live-recipe/context.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
@@ -57,7 +59,10 @@ import {
   readInputDiffProvenance,
   readIterationDiffProvenance,
 } from './change-ledger.js';
-import { buildEvalExperimentProjections } from './eval-experiments.js';
+import {
+  buildEvalExperimentProjections,
+  findReferenceOnlyExperiments,
+} from './eval-experiments.js';
 import { readJsonIfExists, readTextIfExists } from './io.js';
 import { buildFamilyStateSummary, sortRunsByFreshness } from './state.js';
 import { buildFamilyObservabilityTokenSummary } from './token-summary.js';
@@ -939,15 +944,66 @@ export async function buildFamilyObservabilitySnapshotFromRuns(
   };
 }
 
+/** An eval family before its first trial: references only, so no run facts and no run id. */
+function referenceOnlyFamilySnapshot(
+  familyId: string,
+  project: string,
+  experiments: EvalExperimentProjection[],
+): FamilyObservabilitySnapshot {
+  const [first] = experiments;
+  const familyRootTicketOrPr = syntheticEvalTicket(first.experimentKey);
+  const source = first.case.source;
+  return {
+    familyId,
+    familyRootTicketOrPr,
+    project,
+    generatedAt: new Date().toISOString(),
+    latestPrNumber: null,
+    workflowState: 'complete',
+    familyRunCount: 0,
+    activeRunCount: 0,
+    summary:
+      first.case.label?.trim() ||
+      (source.kind === 'merged-pr' ? source.title?.trim() : undefined) ||
+      familyRootTicketOrPr,
+    diffStat: { available: false, files: 0, additions: 0, deletions: 0 },
+    evidence: [],
+    recipeQuality: {
+      semantic: 'unknown',
+      score: null,
+      source: 'missing',
+      reasoning: 'The family has no runs yet.',
+    },
+    learnings: [],
+    runs: [],
+    experiments,
+    relatedByTicket: [],
+    missingData: [
+      ...new Set([
+        'family-runs',
+        'family-evidence',
+        'family-recipe',
+        'family-diff-stat',
+        'family-learnings',
+        ...experiments.flatMap((experiment) => experiment.missingData),
+      ]),
+    ],
+  };
+}
+
 export async function buildFamilyObservabilitySnapshot(
   familyId: string,
   project?: string,
+  roots?: Parameters<typeof findReferenceOnlyExperiments>[2],
 ): Promise<FamilyObservabilitySnapshot> {
   const allRuns = getAllRuns();
   const familyRuns = allRuns.filter(
     (run) => run.familyId === familyId && (!project || run.project === project),
   );
   if (familyRuns.length === 0) {
+    const reference = await findReferenceOnlyExperiments(familyId, project, roots);
+    if (reference)
+      return referenceOnlyFamilySnapshot(familyId, reference.project, reference.experiments);
     throw new Error(
       `No runs found for family ${familyId}${project ? ` in project ${project}` : ''}`,
     );

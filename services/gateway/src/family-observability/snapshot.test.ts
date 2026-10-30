@@ -4,6 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { writeResultPackageManifest } from '../evals/package-store.js';
+
+import { buildFamilyObservabilitySnapshot } from './snapshot.js';
 import {
   buildRetainedFamilySnapshot as buildFamilyObservabilitySnapshotFromRuns,
   makeRecipeJson,
@@ -615,4 +618,105 @@ test('legacy HTML and Markdown report summaries use plain headings without chang
     assert.equal(run.summary, title);
     assert.equal(run.workerReport, reports[index]);
   }
+});
+
+test('a reference-only eval family has a snapshot with no runs and no run id', async (t) => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'family-reference-only-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const referencePackagePath = path.join(base, 'reference.result-package.json');
+  const createdAt = '2026-10-29T11:11:38.359Z';
+  const reference = await writeResultPackageManifest(referencePackagePath, {
+    version: 1,
+    kind: 'result-package',
+    packageId: 'pkg-ref',
+    packageHash: '',
+    status: 'final',
+    createdAt,
+    finalizedAt: createdAt,
+    project: 'example-mobile-farm',
+    familyId: 'experiment-ref',
+    objectiveHash: 'objective-ref',
+    taskProfile: 'fix-bug',
+    role: 'reference',
+    source: { kind: 'merged-pr', repo: 'owner/repo', prNumber: 291 },
+    baseline: { source: 'local-git', baseSha: 'a'.repeat(40), capturedAt: createdAt },
+    head: { source: 'local-git', headSha: 'b'.repeat(40), capturedAt: createdAt },
+    diff: {
+      source: 'artifact',
+      available: true,
+      kind: 'contribution',
+      files: 1,
+      additions: 2,
+      deletions: 1,
+    },
+    axes: {},
+    visualEvidence: [],
+    validationEvidence: [],
+    reviewEvidence: [],
+    outcomeClaims: [],
+    missingData: [],
+  });
+  const manifest = (familyId: string, experimentKey: string) => ({
+    version: 1,
+    kind: 'eval-experiment',
+    experimentId: `experiment-${experimentKey.slice(0, 20)}`,
+    experimentKey,
+    createdAt,
+    updatedAt: createdAt,
+    project: 'example-mobile-farm',
+    familyId,
+    case: {
+      caseId: 'case-291',
+      source: { kind: 'merged-pr', repo: 'owner/repo', prNumber: 291, title: 'fix: order book' },
+      taskProfile: 'fix-bug',
+      objectiveHash: 'objective-ref',
+      referencePackageId: reference.packageId,
+      referencePackageHash: reference.packageHash,
+      referencePackagePath,
+    },
+    rubric: {
+      taskProfile: 'fix-bug',
+      rubricId: 'eval-default',
+      rubricVersion: '1',
+      requiredEvidence: [],
+    },
+    candidateStrategies: [],
+    trials: [],
+    missingData: [],
+  });
+  await writeArtifact(
+    path.join(base, 'evals', '291-269a178bbc5e'),
+    'artifacts/experiment-manifest.json',
+    JSON.stringify(manifest('experiment-ref', '269a178bbc5e42ced90c202d')),
+  );
+  await writeArtifact(
+    path.join(base, 'evals', '292-other'),
+    'artifacts/experiment-manifest.json',
+    JSON.stringify(manifest('experiment-other', '3333333333333333333333')),
+  );
+  const roots = [{ project: 'example-mobile-farm', root: base }];
+
+  const snapshot = await buildFamilyObservabilitySnapshot('experiment-ref', undefined, roots);
+
+  assert.equal(snapshot.latestRunId, undefined);
+  assert.equal(snapshot.familyRunCount, 0);
+  assert.deepEqual(snapshot.runs, []);
+  assert.equal(snapshot.project, 'example-mobile-farm');
+  assert.equal(snapshot.familyRootTicketOrPr, 'EVAL-269A178BBC5E');
+  assert.equal(snapshot.summary, 'fix: order book');
+  assert.deepEqual(
+    snapshot.experiments?.map((experiment) => experiment.familyId),
+    ['experiment-ref'],
+  );
+  assert.equal(snapshot.experiments?.[0]?.packages?.[0]?.role, 'reference');
+  assert.equal(snapshot.experiments?.[0]?.packages?.[0]?.status, 'final');
+  assert.ok(snapshot.missingData.includes('family-runs'));
+  await assert.rejects(
+    buildFamilyObservabilitySnapshot('experiment-ref', 'another-project', roots),
+    /No runs found for family experiment-ref in project another-project/,
+  );
+  await assert.rejects(
+    buildFamilyObservabilitySnapshot('experiment-missing', undefined, roots),
+    /No runs found for family experiment-missing/,
+  );
 });

@@ -663,7 +663,8 @@ export function FamilyChangeLedgerPanel({
   onOpenTerminal: (slotId: string, runId: string) => void;
 }) {
   const ledger = snapshot.familyChangeLedger;
-  if (!ledger) return null;
+  const latestRunId = snapshot.latestRunId;
+  if (!ledger || !latestRunId) return null;
 
   const summary = ledger.summary;
   const missingEntries = ledger.entries.filter((entry) => entry.missingData.length > 0);
@@ -683,10 +684,7 @@ export function FamilyChangeLedgerPanel({
             Durable diff, review, and artifact signals from Command Center
           </Text>
         </View>
-        <Pressable
-          style={styles.compactOpenButton}
-          onPress={() => onOpenArtifacts(snapshot.latestRunId)}
-        >
+        <Pressable style={styles.compactOpenButton} onPress={() => onOpenArtifacts(latestRunId)}>
           <Text style={styles.compactOpenText}>Evidence files</Text>
         </Pressable>
       </View>
