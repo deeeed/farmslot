@@ -18,6 +18,7 @@ import {
   writeEvalExperimentManifest,
   writeResultPackageManifest,
 } from '../evals/package-store.js';
+import { normalizeEvalReplayForTaskWrite } from '../run-engine/eval-replay-normalization.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 import { writeTaskFixture } from '../tasks/writer.test-support.js';
 
@@ -384,10 +385,26 @@ test('evalTrialStart creates a catalog candidate without a template axis or orig
     }
   });
 
+  const original = createRun({
+    project: 'farmslot-farm',
+    flowType: 'dev',
+    ticketOrPr: 'owner/repo#123',
+    ticketData: {
+      source: 'manual',
+      title: 'Reference answer #123',
+      description: 'Answer details',
+      acceptanceCriteria: [],
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+    },
+  });
+  runIds.push(original.id);
   const referencePackagePath = path.join(root, 'reference.result-package.json');
   const referencePackage = await writeResultPackageManifest(referencePackagePath, {
     ...makeReferencePackage(),
-    source: { kind: 'prior-run', runId: 'original-run', familyId: 'original-family' },
+    source: { kind: 'prior-run', runId: original.id, familyId: original.familyId },
     baseline: {
       source: 'local-git',
       baseSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -470,6 +487,12 @@ test('evalTrialStart creates a catalog candidate without a template axis or orig
   }
   if (result.run) runIds.push(result.run.id);
 
+  assert.ok(result.run);
+  const normalized = await normalizeEvalReplayForTaskWrite(result.run.id, result.run);
+  assert.equal(normalized.ticketOrPr, result.run.ticketOrPr);
+  assert.deepEqual(normalized.ticketData, result.run.ticketData);
+  assert.equal(normalized.branch, result.run.branch);
+  assert.doesNotMatch(normalized.ticketData?.description ?? '', /Answer details|#123/);
   assert.equal(result.deduped, false);
   assert.equal(result.run?.familyId, 'eval-family-startref');
   assert.equal(result.run?.parentRunId, null);

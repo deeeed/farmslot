@@ -53,9 +53,11 @@ mock.module('../core/state.js', {
 });
 mock.module('../core/exec.js', {
   namedExports: {
-    execOnSlot: async () => ({
+    execOnSlot: async (_vars: SlotVars, command: string) => ({
       exitCode: 0,
-      stdout: JSON.stringify({ status: 'isolated', runId: run.id, baseSha: base }),
+      stdout: command.includes('git rev-parse HEAD')
+        ? base
+        : JSON.stringify({ status: 'isolated', runId: run.id, baseSha: base }),
       stderr: '',
     }),
     execLocal: async () => ({ exitCode: 0, stdout: '{}', stderr: '' }),
@@ -93,7 +95,8 @@ mock.module('../runs/store.js', {
 mock.module('./package-store.js', {
   namedExports: { sha256Text: (value: string) => createHash('sha256').update(value).digest('hex') },
 });
-const { freezeBlindTrialFirstOutput, restoreBlindTrialGit } = await import('./blind-trial.js');
+const { freezeBlindTrialFirstOutput, restoreBlindTrialGit, verifyBlindTrialForDispatch } =
+  await import('./blind-trial.js');
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'blind-first-output-'));
@@ -173,14 +176,27 @@ test('ownership changes during capture cannot publish or persist a new owner con
   assert.equal(run.engineState!.evalExperiment!.blind!.firstOutput, undefined);
 });
 
-test('cancellation during capture and a foreign restoration epoch both fail closed', async (t) => {
+test('cancellation during capture and restoration on a foreign slot both fail closed', async (t) => {
   await fixture(t);
   onCapture = () => {
     run.status = 'cancelled';
   };
   await assert.rejects(freezeBlindTrialFirstOutput(run.id), /active run/);
   await assert.rejects(
-    restoreBlindTrialGit(run, vars, 8, async () => {}),
-    /slot epoch/,
+    restoreBlindTrialGit(run, { ...vars, slotId: 'foreign' }, epoch, async () => {}),
+    /slot/,
   );
+  await assert.rejects(
+    restoreBlindTrialGit(run, vars, epoch + 1, async () => {}),
+    /entry epoch/,
+  );
+});
+
+test('normal prepare-to-dispatch claims can advance the epoch while preserving the same isolated run', async (t) => {
+  await fixture(t);
+  epoch++;
+  await verifyBlindTrialForDispatch(run);
+  await freezeBlindTrialFirstOutput(run.id);
+  assert.equal(captures, 1);
+  assert.equal(run.engineState!.evalExperiment!.blind!.isolation!.slotEpoch, 7);
 });

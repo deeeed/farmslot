@@ -112,8 +112,8 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   const vars = await loadSlotVars(run.slotId);
   const epoch = await ownedEpoch(run);
   let isolation = blind.isolation;
-  if (isolation && (isolation.slotId !== vars.slotId || isolation.slotEpoch !== epoch))
-    throw new Error('Blind trial isolation belongs to a different slot epoch.');
+  if (isolation && isolation.slotId !== vars.slotId)
+    throw new Error('Blind trial isolation belongs to a different slot.');
   if (!isolation) {
     const planned = await executeGit('plan', vars, gitSpec(run, vars, blind, epoch, ''), signal);
     if (typeof planned.capsule !== 'string')
@@ -128,7 +128,7 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   await executeGit(
     'isolate',
     vars,
-    gitSpec(run, vars, blind, epoch, isolation.capsulePath),
+    gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
     signal,
   );
   await ownedEpoch(run, epoch);
@@ -166,14 +166,16 @@ async function verifyBlindTrialGit(run: Run): Promise<void> {
   const blind = blindFor(run);
   const isolation = blind.isolation;
   if (!isolation?.verifiedAt) throw new Error('Blind trial Git preparation has not been verified.');
-  await ownedEpoch(run, isolation.slotEpoch);
+  // Prepare and dispatch legitimately claim successive epochs for this same run.
+  // Fence each operation on its current epoch; keep the capsule's creation identity.
+  const epoch = await ownedEpoch(run);
   const vars = await loadSlotVars(isolation.slotId);
   await executeGit(
     'verify',
     vars,
     gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
   );
-  await ownedEpoch(run, isolation.slotEpoch);
+  await ownedEpoch(run, epoch);
 }
 
 export async function verifyBlindTrialForDispatch(run: Run): Promise<void> {
@@ -213,11 +215,12 @@ async function captureFirstOutput(runId: string): Promise<void> {
   }
   const isolation = blind.isolation;
   if (!isolation?.verifiedAt) throw new Error('Blind first output lacks verified isolation.');
+  const captureEpoch = await ownedEpoch(run);
   const assertOwner = async () => {
     const current = getRun(runId);
     if (!current || isTerminalRunStatus(current.status) || current.slotId !== run.slotId)
       throw new Error('Blind first output lost its active run.');
-    await ownedEpoch(current, isolation.slotEpoch);
+    await ownedEpoch(current, captureEpoch);
   };
   await assertOwner();
   const diffPath = path.join(path.dirname(link.packagePath), 'first-output.diff');
@@ -235,7 +238,8 @@ async function captureFirstOutput(runId: string): Promise<void> {
     if (
       !isRecord(checkpoint) ||
       checkpoint.runId !== runId ||
-      checkpoint.slotEpoch !== isolation.slotEpoch ||
+      typeof checkpoint.slotEpoch !== 'number' ||
+      checkpoint.slotEpoch < isolation.slotEpoch ||
       checkpoint.baseSha !== blind.baseSha ||
       typeof checkpoint.diffText !== 'string' ||
       !isRecord(checkpoint.firstOutput)
@@ -296,7 +300,7 @@ async function captureFirstOutput(runId: string): Promise<void> {
       checkpointPath,
       JSON.stringify({
         runId,
-        slotEpoch: isolation.slotEpoch,
+        slotEpoch: captureEpoch,
         baseSha: blind.baseSha,
         firstOutput,
         diffText,
@@ -322,13 +326,15 @@ export async function restoreBlindTrialGit(
   const blind = run.engineState?.evalExperiment?.blind;
   const isolation = blind?.isolation;
   if (!blind || !isolation) return;
-  if (isolation.slotId !== vars.slotId || isolation.slotEpoch !== epoch)
-    throw new Error('Blind trial restoration does not own this slot epoch.');
+  if (isolation.slotId !== vars.slotId)
+    throw new Error('Blind trial restoration does not own this slot.');
   await assertOwnership();
+  if (Number((await readSlotRow(vars.slotId))?.slot_epoch) !== epoch)
+    throw new Error('Blind trial restoration lost its entry epoch.');
   const receipt = await executeGit(
     'restore',
     vars,
-    gitSpec(run, vars, blind, epoch, isolation.capsulePath),
+    gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
   );
   if (
     (receipt.status !== 'restored' && receipt.status !== 'absent') ||
