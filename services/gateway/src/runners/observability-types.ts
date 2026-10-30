@@ -15,6 +15,8 @@ export interface ObservabilityReading<T> {
   observedAt: number;
   /** Last structured tool event in this turn; null means none, absent means unsupported. */
   lastToolProgressAt?: number | null;
+  /** Current turn baseline or latest native assistant token-usage progress. */
+  lastTokenProgressAt?: number;
   /** True only when prompt-acceptance evidence matched the requested prompt itself. */
   exactPromptMatch?: boolean;
   /** Error from the exact runner-native terminal turn event, never rendered output. */
@@ -45,6 +47,8 @@ export type RunnerTaskProgressReader = (
 ) => Promise<MonitorProgressKind | null>;
 
 export interface HookRecord {
+  /** Pi's current turn baseline or latest nonzero native assistant usage. */
+  lastTokenProgressAt?: number;
   /** Error emitted by this exact native terminal turn. */
   failure?: string;
   schemaVersion?: number;

@@ -103,6 +103,7 @@ function readSnapshot(directory, key) {
  *   promptText?: string | null,
  *   toolName?: string | null,
  *   cwd?: string | null,
+ *   usageTokens?: number,
  *   env?: NodeJS.ProcessEnv,
  * }} params
  */
@@ -151,6 +152,10 @@ export function writePiHook(params) {
     previousSession?.lastToolProgressAt,
     startsTurn || resetsTurn,
   );
+  const lastTokenProgressAt =
+    startsTurn || resetsTurn || (Number.isFinite(params.usageTokens) && params.usageTokens > 0)
+      ? observedAt
+      : previousSession?.lastTokenProgressAt;
   const rootSessionId =
     event === 'SessionStart'
       ? sessionId
@@ -174,6 +179,7 @@ export function writePiHook(params) {
     ...(typeof turnStartedAt === 'number' ? { turnStartedAt } : {}),
     ...(typeof turnActive === 'boolean' ? { turnActive } : {}),
     lastToolProgressAt,
+    ...(typeof lastTokenProgressAt === 'number' ? { lastTokenProgressAt } : {}),
     ...(typeof rootSessionId === 'string' && rootSessionId ? { rootSessionId } : {}),
     ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),
@@ -186,6 +192,12 @@ export function writePiHook(params) {
     writeSnapshot(path.join(obsDir, 'panes'), record.tmuxPane, record);
   }
   return record;
+}
+
+/** Native per-message usage grows the session counter; zero-usage errors do not. */
+export function piMessageTokenUsage(message) {
+  const tokens = message?.role === 'assistant' ? message.usage?.totalTokens : undefined;
+  return Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
 }
 
 /** The last native assistant result owns this turn's error, never rendered text. */
