@@ -6,6 +6,43 @@ import type { ChatMessage } from '@farmslot/protocol';
 import './chat-action-card.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { renderChatMarkdown } from '../../utils/markdown.js';
+
+/** Rendered message markdown, in the light DOM of whichever view holds the message. */
+const markdownCss = `
+  chat-message .cm-markdown { display: block; }
+  chat-message .cm-markdown > :first-child { margin-top: 0; }
+  chat-message .cm-markdown > :last-child { margin-bottom: 0; }
+  chat-message .cm-markdown p { margin: 0 0 ${spacing.sm}; }
+  chat-message .cm-markdown ul,
+  chat-message .cm-markdown ol { margin: ${spacing.sm} 0; padding-left: 20px; }
+  chat-message .cm-markdown a { color: ${colors.accent}; }
+  chat-message .cm-markdown code {
+    background: ${colors.bgSidebar};
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: ${fonts.sizeSm};
+  }
+  chat-message .cm-markdown pre {
+    background: ${colors.bgSidebar};
+    padding: ${spacing.md};
+    border-radius: ${radii.sm};
+    overflow-x: auto;
+    margin: ${spacing.sm} 0;
+    white-space: pre;
+  }
+  chat-message .cm-markdown pre code { padding: 0; background: none; }
+  chat-message .cm-markdown h1,
+  chat-message .cm-markdown h2,
+  chat-message .cm-markdown h3 { margin: ${spacing.md} 0 ${spacing.sm}; font-size: ${fonts.sizeMd}; }
+  chat-message .cm-markdown table { border-collapse: collapse; margin: ${spacing.sm} 0; }
+  chat-message .cm-markdown th,
+  chat-message .cm-markdown td {
+    padding: 2px ${spacing.md};
+    border: 1px solid ${colors.bgCardHover};
+    font-size: ${fonts.sizeSm};
+  }
+`;
 
 @customElement('chat-message')
 export class ChatMessageElement extends LitElement {
@@ -14,43 +51,6 @@ export class ChatMessageElement extends LitElement {
 
   protected override createRenderRoot() {
     return this;
-  }
-
-  private renderMarkdown(text: string): string {
-    // Simple markdown: bold, code blocks, inline code, line breaks
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(
-        /```([\s\S]*?)```/g,
-        '<pre style="background:#0d0d14;padding:8px;border-radius:4px;overflow-x:auto;font-size:0.75rem;margin:4px 0"><code>$1</code></pre>',
-      )
-      .replace(
-        /`([^`]+)`/g,
-        '<code style="background:#0d0d14;padding:1px 4px;border-radius:3px;font-size:0.75rem">$1</code>',
-      )
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-      .replace(
-        /^### (.+)$/gm,
-        '<h3 style="margin:8px 0 4px;font-size:0.85rem;color:#8888a0">$1</h3>',
-      )
-      .replace(/^## (.+)$/gm, '<h2 style="margin:8px 0 4px;font-size:0.9rem">$1</h2>')
-      .replace(/^# (.+)$/gm, '<h1 style="margin:8px 0 4px;font-size:1rem">$1</h1>')
-      .replace(/^\| (.+)$/gm, (line) => {
-        if (line.includes('|---')) return '<tr style="display:none"></tr>';
-        const cells = line
-          .slice(1)
-          .split('|')
-          .map((c) => c.trim());
-        return `<tr>${cells.map((c) => `<td style="padding:2px 8px;border:1px solid #222240;font-size:0.75rem">${c}</td>`).join('')}</tr>`;
-      })
-      .replace(
-        /(<tr>[\s\S]*?<\/tr>)+/g,
-        (m) => `<table style="border-collapse:collapse;margin:4px 0">${m}</table>`,
-      )
-      .replace(/\n/g, '<br>');
   }
 
   private renderToolTrace() {
@@ -128,9 +128,10 @@ export class ChatMessageElement extends LitElement {
             color: ${colors.textMuted};
             font-size: ${fonts.sizeXs};
           }
+          ${markdownCss}
         </style>
         <div class="cm-system ${content.includes('🔴') ? 'cm-system-error' : ''}">
-          <span .innerHTML=${this.renderMarkdown(content)}></span>
+          <span class="cm-markdown" .innerHTML=${renderChatMarkdown(content)}></span>
           <span class="cm-system-ts">
             — ${new Date(this.message.timestamp).toLocaleTimeString()}</span
           >
@@ -233,13 +234,14 @@ export class ChatMessageElement extends LitElement {
           color: ${colors.textSecondary};
           line-height: 1.4;
         }
+        ${markdownCss}
       </style>
       <div class="cm-wrapper">
         <div class="cm-ts">${new Date(this.message.timestamp).toLocaleTimeString()}</div>
         <div class="cm-bubble ${isUser ? 'cm-user' : 'cm-assistant'}">
           ${isUser
             ? html`<span>${this.message.content}</span>`
-            : html`<span .innerHTML=${this.renderMarkdown(content)}></span>`}
+            : html`<span class="cm-markdown" .innerHTML=${renderChatMarkdown(content)}></span>`}
         </div>
         ${!isUser && this.message.usage?.costUsd
           ? html`<span class="cm-cost-badge">$${this.message.usage.costUsd.toFixed(4)}</span>`
