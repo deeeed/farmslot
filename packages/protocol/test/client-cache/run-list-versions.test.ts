@@ -611,6 +611,46 @@ test('an empty store fills through pages, and a cold start serves the stored col
   await cold.dispose();
 });
 
+test('a live view carries the run collection observation time, as a cold start does', async (t) => {
+  // Every clock read differs, so a view stamped on its own would not match its collection.
+  let clock = 1_000;
+  t.mock.method(Date, 'now', () => ++clock);
+  const fake = gateway([run('a', 1), run('b', 2)]);
+  const store = createMemoryResourceStore();
+  const live = createGatewayResourceCache({ transport: fake.transport, store });
+  const history = observe<RunListResult>(live, { limit: 1000 });
+  const tagged = observe<RunListResult>(live, { familyId: 'family-b' });
+  await flush();
+  const saved = await store.getRows!(RUN_LIST_COLLECTION_ID);
+  assert.equal(history.last()?.status, 'ready');
+  assert.equal(history.last()?.observedAt, saved.entry?.observedAt);
+  assert.equal(tagged.last()?.observedAt, saved.entry?.observedAt);
+  history.stop();
+  tagged.stop();
+  await live.dispose();
+
+  const offline = gateway([], true);
+  const copy = createMemoryResourceStore();
+  await copy.mergeRows!(RUN_LIST_COLLECTION_ID, {
+    entry: saved.entry!,
+    upserts: saved.rows,
+    deletes: [],
+  });
+  const cold = createGatewayResourceCache({
+    transport: {
+      ...offline.transport,
+      getConnection: () => ({ ...offline.transport.getConnection(), connected: false }),
+    },
+    store: copy,
+  });
+  const restored = observe<RunListResult>(cold, { familyId: 'family-b' });
+  await flush();
+  assert.equal(restored.last()?.status, 'stale');
+  assert.equal(restored.last()?.observedAt, saved.entry?.observedAt);
+  restored.stop();
+  await cold.dispose();
+});
+
 test('Command Center history hydrates cold offline with its summaries', async () => {
   // apps/command-center/ui/src/state.ts `runHistoryQuery`.
   const runHistoryParams = {

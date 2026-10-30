@@ -145,6 +145,9 @@ function profileId(connection: ResourceCacheConnection): string {
 }
 
 /** Experimental ADR-071 controller. It opens no sockets and never accepts a command. */
+/** A read's reply; a run list view served from the collection carries the collection's time. */
+type ReadReply = ResourceReadResult<unknown> & { incomplete?: boolean; observedAt?: number };
+
 export function createGatewayResourceCache(
   options: GatewayResourceCacheOptions,
 ): GatewayResourceCache {
@@ -655,10 +658,7 @@ export function createGatewayResourceCache(
   }
 
   /** Version lists rules 3-5: a view of the shared collection after its one shared refresh. */
-  async function readRunListView(
-    entry: QueryEntry,
-    signal: AbortSignal,
-  ): Promise<ResourceReadResult<unknown> & { incomplete?: boolean }> {
+  async function readRunListView(entry: QueryEntry, signal: AbortSignal): Promise<ReadReply> {
     const params = entry.query.params as RunListParams;
     const flags = runListFlags();
     try {
@@ -679,7 +679,14 @@ export function createGatewayResourceCache(
       throw error;
     }
     const data = runList.view(params);
-    if (data) return { data, resourceState: runList.resourceState, incomplete: !runList.complete };
+    // A view is a projection of the collection, so it was observed when the collection was.
+    if (data)
+      return {
+        data,
+        resourceState: runList.resourceState,
+        incomplete: !runList.complete,
+        observedAt: runList.observedAt,
+      };
     // A view whose summaries the version reply cannot answer keeps its own full read.
     return transport.request<RunListResult>(Methods.RUN_LIST, params, signal);
   }
@@ -817,7 +824,7 @@ export function createGatewayResourceCache(
         const fromRunList =
           isRunListView(entry.query) &&
           connection.capabilities?.resourceChanges?.versionLists === true;
-        const reply: ResourceReadResult<unknown> & { incomplete?: boolean } = fromRunList
+        const reply: ReadReply = fromRunList
           ? await readRunListView(entry, pending.controller.signal)
           : entry.query.method === Methods.NATIVE_SESSION_READ
             ? await readNativeHistory(
@@ -855,7 +862,7 @@ export function createGatewayResourceCache(
           entry.unknownGeneration === unknownGeneration &&
           // A view is current only once every listed run is held at its listed version.
           !reply.incomplete;
-        const observedAt = Date.now();
+        const observedAt = reply.observedAt ?? Date.now();
         // `null` is an explicit non-upstream answer: its status follows coverage, with no source time.
         const sourceObservation = entry.query.sourceObservation?.(reply.data);
         if (entry.query.sourceObservation && sourceObservation === undefined)

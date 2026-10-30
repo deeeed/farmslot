@@ -10,13 +10,13 @@ await import('../runtime/mock-pty.test-support.js');
 const { failRunOutputCapture } = await import('../run-completion/output.js');
 const { retainedRunTaskDirectory } = await import('../run-completion/retained-artifacts.js');
 const { getRun, updateRun } = await import('../runs/store.js');
-const { collectRunGateReadiness } = await import('./gate-prerequisites.js');
+const { assertRunGateReady, collectRunGateReadiness } = await import('./gate-prerequisites.js');
 const { deleteTestRunIfPresent } = await import('./test-fixtures.js');
 
-async function trial(t: test.TestContext) {
+async function trial(t: test.TestContext, proofMode: 'state' | 'review' = 'state') {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'artifact-only-completion-'));
   t.after(() => rm(taskDir, { recursive: true, force: true }));
-  const result = await createArtifactOnlyTrial(taskDir);
+  const result = await createArtifactOnlyTrial(taskDir, 'generic-project', proofMode);
   t.after(() => deleteTestRunIfPresent(result.run.id));
   return result;
 }
@@ -55,4 +55,43 @@ test('comparison readiness refuses a failed artifact capture', async (t) => {
   const failedCapture = await collectRunGateReadiness(getRun(run.id)!, null);
   assert.equal(failedCapture.state, 'not-ready');
   assert.ok(failedCapture.reasons.some(({ code }) => code === 'evidence-validation-unavailable'));
+});
+
+// F219: 0b97288d/af00ac09 passed review, then COMPLETE refused their recorded claim verdicts.
+test('eval completion retains unapproved claims without requiring publication approval', async (t) => {
+  const { run } = await trial(t, 'review');
+  updateRun(run.id, {
+    engineState: {
+      evalExperiment: {
+        experimentId: 'experiment-f219',
+        experimentKey: 'f219',
+        experimentManifestPath: '/unused/experiment-manifest.json',
+        packagePath: '/unused/candidate.result-package.json',
+        candidateStrategyFingerprint: 'candidate-f219',
+        trialId: 'trial-f219',
+      },
+    },
+  });
+  const current = getRun(run.id)!;
+  const evalState = current.engineState;
+  const readiness = await collectRunGateReadiness(current, null);
+  assert.deepEqual(
+    readiness.reasons.map(({ code, evidencePolicy }) => ({ code, evidencePolicy })),
+    [{ code: 'evidence-policy-unsatisfied', evidencePolicy: 'claim-verdict' }],
+  );
+  await assert.doesNotReject(assertRunGateReady(current, null, 'complete'));
+  await assert.doesNotReject(assertRunGateReady(current, null, 'finalize'));
+  await assert.rejects(assertRunGateReady(current, null, 'approve-publish'), /claim verdicts/);
+  // An ordinary artifact-only output is outside the eval exception.
+  updateRun(run.id, { engineState: undefined });
+  await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /claim verdicts/);
+
+  updateRun(run.id, { engineState: evalState });
+  const retained = path.join(
+    await retainedRunTaskDirectory(getRun(run.id)!),
+    'artifacts/recipe-runs/proof/recipe-invocation.json',
+  );
+  await chmod(retained, 0o600);
+  await writeFile(retained, '{}');
+  await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
 });
