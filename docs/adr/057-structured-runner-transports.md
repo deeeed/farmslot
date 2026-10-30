@@ -301,7 +301,7 @@ One optional field, `NativeSessionEvent.response`, in `@farmslot/protocol`. No R
 
 ## Amendment 8: normalized tool kinds, 2026-10-31
 
-**Status:** Proposed (the lead scheduled it after Amendment 7 on 2026-10-31). Accepted on the lead's approval.
+**Status:** Accepted (approved by the lead 2026-10-31).
 
 ### Decision
 
