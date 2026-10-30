@@ -83,6 +83,7 @@ export abstract class RunDetailState extends LitElement {
   @state() _resetBranch = false;
   @state() _branchNudgeShowPicker = false;
   @state() _showTerminal = false;
+  @state() _showNativeHistory = false;
   @state() _terminalContextId = '';
   @state() _terminalRole = '';
   @state() _hydrating = false;

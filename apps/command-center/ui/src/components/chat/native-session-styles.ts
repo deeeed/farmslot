@@ -70,6 +70,47 @@ export const nativeSessionStyles = css`
   .bar select {
     max-width: min(480px, 70vw);
   }
+  native-read-status {
+    display: block;
+    flex: 0 0 56px;
+    min-height: 56px;
+  }
+  .native-read-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex: 0 0 56px;
+    height: 56px;
+    padding: 2px 10px;
+    border-bottom: 1px solid ${unsafeCSS(colors.bgCardHover)};
+  }
+  .native-read-status-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .native-read-status-text > span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .native-read-status-text > .meta {
+    white-space: normal;
+    line-height: 16px;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    max-height: 32px;
+    overflow: hidden;
+  }
+  .native-read-status button {
+    min-height: 44px;
+    flex-shrink: 0;
+  }
+  .native-read-status[data-state='unavailable'] .status {
+    color: ${unsafeCSS(colors.statusFail)};
+  }
   .meta {
     font-size: ${unsafeCSS(fonts.sizeXs)};
     color: ${unsafeCSS(colors.textMuted)};
@@ -137,6 +178,22 @@ export const nativeSessionStyles = css`
     min-height: 0;
     overflow: auto;
     padding: 12px;
+  }
+  /* Zero-height anchor at the bottom of the visible timeline: the jump control never moves content. */
+  .jump-anchor {
+    position: sticky;
+    bottom: 0;
+    height: 0;
+    display: flex;
+    justify-content: center;
+  }
+  .jump-latest {
+    position: absolute;
+    bottom: 4px;
+    min-height: 44px;
+    padding: 0 18px;
+    border-radius: 22px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   }
   article {
     margin: 0 0 14px;

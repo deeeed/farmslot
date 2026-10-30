@@ -1,7 +1,11 @@
 import { html, nothing } from 'lit';
 
 import type { NativeSessionInfo } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
+import './native-read-status-view.js';
+
+import type { NativeReadStatusRowContext } from './native-read-status-view.js';
 import type { NativeWorkerViewTarget } from './native-worker-target.js';
 
 interface NativeSessionHeaderContext {
@@ -23,12 +27,21 @@ interface NativeSessionHeaderContext {
   sessionChoice(session: Pick<NativeSessionInfo, 'id' | 'executionNodeId'>): string;
   select(id: string, node?: string): void;
   readError?: string;
+  unavailableSince?: number;
+  observedAt?: number;
+  historyObservation?: ResourceQueryState<unknown>;
+  unsupported?: boolean;
   refresh(): void;
   toggleWorkspace(): void;
 }
 
 export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
   const session = ctx.session;
+  const status: NativeReadStatusRowContext = {
+    ...ctx,
+    selected: Boolean(ctx.selectedId),
+    sessionState: session?.state,
+  };
   return html`
     <div class="bar">
       ${ctx.worker
@@ -76,16 +89,7 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
             >
             <button data-testid="native-new" ?disabled=${ctx.busy} @click=${() => ctx.select('')}>
               New session
-            </button>
-            ${ctx.readError
-              ? html`<button
-                  data-testid="native-refresh"
-                  ?disabled=${!ctx.connected}
-                  @click=${ctx.refresh}
-                >
-                  Retry reading sessions
-                </button>`
-              : nothing}`}
+            </button> `}
       ${session && ctx.workspaceAllowed
         ? html`<button
             aria-pressed=${ctx.workspace}
@@ -100,22 +104,7 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
       <button data-testid="native-fullscreen" @click=${ctx.toggleFullscreen}>
         ${ctx.fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
       </button>
-      <span
-        class="status"
-        role="status"
-        data-state=${ctx.connected
-          ? ctx.taskHistory
-            ? 'history'
-            : (session?.state ?? '')
-          : 'disconnected'}
-        >${!ctx.connected
-          ? 'Disconnected. Draft and session preserved.'
-          : ctx.refreshingHistory
-            ? 'Refreshing history'
-            : session
-              ? `${ctx.taskHistory ? 'Task history' : session.state}${ctx.caughtUp ? '' : ' · Replaying history'}`
-              : ''}</span
-      >
     </div>
+    <native-read-status .context=${status}></native-read-status>
   `;
 }

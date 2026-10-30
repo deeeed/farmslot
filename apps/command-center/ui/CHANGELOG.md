@@ -4,10 +4,13 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Scrolled up in a native conversation, a "Latest" button at the bottom of the transcript jumps back to the end and follows again; it counts entries that arrive meanwhile ("Latest · 2 new"). Your place is kept until you tap it.
 - The Companion pairing QR comes with its pair link: Open in Companion, Copy link and Copy adb command (`adb shell am start` for a device on adb), for the production, preview or development build. Same code and expiry as the QR; when the code expires, the QR and link give way to a note.
 - Native conversation messages no longer start with a blank line and an indent. Line breaks and spacing inside a message stay as written.
 - The native conversation takes its transcript, delivery label and input-lock helpers from the shared client cache instead of its own copy. No behaviour change.
 - The native conversation message box, Send / Queue message and request answers no longer lock, dropping what you were typing, each time a streaming worker writes. They follow the same rule as other held data and wait for a current read only while history is saved: restored from storage, offline, after a failed read, or reads superseded for 60 s.
+- Open worker conversations on request, remember their disclosure state, and keep reconnect/history status in one stable row.
+
 - Alert only for current needs-you conditions. Completed dispatches stay in their current slot/run views and monitor violations stay in history; neither produces an informational browser alert.
 
 - Keep read errors and saved ages in one notification tray with a fixed-height attention strip; current decisions clear and recur without repeated alerts or moving the page. Keep saved-gate text in one reserved row and reserve Evals status space through pending reads.

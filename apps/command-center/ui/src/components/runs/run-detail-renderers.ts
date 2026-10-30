@@ -46,12 +46,12 @@ import { gateway } from '../../gateway-client.js';
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
+import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import type { EvidenceReviewerView } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
 import { renderRunTitle } from '../shared/run-title.js';
-import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
 import { runSourceLinks, ticketUrlForRun } from './family-observability-link-model.js';
@@ -541,6 +541,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const boundSlotId = resolveRunSlotId(r);
   const terminalUnavailable = reviewTerminalUnavailableReason(r);
   const terminal = runTerminalView(r, ctx._showTerminal ? ctx._terminalContextId : undefined);
+  const terminalOpen = ctx._showTerminal && !terminal.disabledReason;
   const openReviewGate = r.decisions.some(
     (decision) => !decision.resolvedAt && decision.type === 'engine_review_posting',
   );
@@ -1301,59 +1302,37 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
       ? nothing
       : ctx._renderRunEvidence(r)}
-    ${boundSlotId || terminal.context?.nativeSession || (r.reviewWorkspace && !terminalUnavailable)
+    ${!terminal.context?.nativeSession &&
+    (boundSlotId || (r.reviewWorkspace && !terminalUnavailable))
       ? html`
-          ${terminal.context?.nativeSession && terminal.target?.slotId && !terminal.disabledReason
-            ? html`<a
-                class="terminal-toggle"
-                href=${slotViewHash({
-                  slotId: terminal.target.slotId,
-                  runId: r.id,
-                  contextId: terminal.context.id,
-                })}
-                >${terminal.label}</a
-              >`
-            : html`
-                <button
-                  data-testid="run-terminal-toggle"
-                  class="terminal-toggle ${ctx._showTerminal ? 'active' : ''}"
-                  ?disabled=${Boolean(terminal.disabledReason) && !ctx._showTerminal}
-                  title=${terminal.disabledReason ?? ''}
-                  @click=${() => {
-                    ctx.toggleTerminal();
-                  }}
-                >
-                  ${ctx._showTerminal ? '- Hide' : '+ Show'}
-                  ${terminal.context?.nativeSession
-                    ? 'Conversation'
-                    : boundSlotId
-                      ? `Terminal (${terminal.target?.slotId ?? boundSlotId})`
-                      : `${r.transport === 'native' ? 'Worktree shell' : 'Reviewer terminal'} (${r.reviewWorkspace!.machine})`}
-                </button>
-              `}
+          ${renderCollapsibleSectionHeader(
+            boundSlotId
+              ? `Terminal (${terminal.target?.slotId ?? boundSlotId})`
+              : `${r.transport === 'native' ? 'Worktree shell' : 'Reviewer terminal'} (${r.reviewWorkspace!.machine})`,
+            !terminalOpen,
+            ctx.toggleTerminal,
+            {
+              testId: 'run-terminal-toggle',
+              className: `terminal-toggle worker-panel-toggle ${terminalOpen ? 'active' : ''}`,
+              disabled: Boolean(terminal.disabledReason),
+              title: terminal.disabledReason ?? '',
+            },
+          )}
           ${terminal.disabledReason
             ? html`<span role="status">${terminal.disabledReason}</span>`
             : nothing}
-          ${ctx._showTerminal
-            ? html`
-                <div class="terminal-section">
-                  ${terminal.context?.nativeSession
-                    ? html`<native-worker-history
-                        .contexts=${[terminal.context]}
-                      ></native-worker-history>`
-                    : html`
-                        <terminal-view
-                          .slotId=${terminal.target?.slotId ?? boundSlotId ?? ''}
-                          .runId=${r.id}
-                          .contextId=${terminal.target?.contextId ?? ctx._terminalContextId}
-                          .role=${terminal.target?.role ?? ctx._terminalRole}
-                        ></terminal-view>
-                      `}
-                </div>
-              `
+          ${terminalOpen
+            ? html`<div class="terminal-section">
+                <terminal-view
+                  .slotId=${terminal.target?.slotId ?? boundSlotId ?? ''}
+                  .runId=${r.id}
+                  .contextId=${terminal.target?.contextId ?? ctx._terminalContextId}
+                  .role=${terminal.target?.role ?? ctx._terminalRole}
+                ></terminal-view>
+              </div>`
             : nothing}
         `
-      : r.reviewWorkspace
+      : !terminal.context?.nativeSession && r.reviewWorkspace
         ? html`<p data-testid="review-terminal-unavailable">${terminalUnavailable}</p>`
         : nothing}
     ${r.reviewWorkspace || r.output || openPublicationGate ? nothing : ctx.renderGateSection(r)}

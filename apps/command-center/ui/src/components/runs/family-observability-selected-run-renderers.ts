@@ -42,6 +42,8 @@ interface FamilySelectedRunDetailRenderOptions {
   runs: readonly FamilyObservabilityRunSummary[];
   prs: readonly PRStatus[];
   fullRun: Run | null;
+  nativeHistoryOpen: boolean;
+  onToggleNativeHistory: () => void;
   commandsReady?: boolean;
   fullRunLoading: boolean;
   fullRunError: string | undefined;
@@ -151,6 +153,8 @@ function renderFamilyRunFiles(options: FamilySelectedRunDetailRenderOptions) {
 function renderFamilyAgentSessions(options: FamilySelectedRunDetailRenderOptions) {
   if (options.fullRun) {
     return renderRunAgentSessions(options.fullRun, {
+      nativeHistoryOpen: options.nativeHistoryOpen,
+      onToggleNativeHistory: options.onToggleNativeHistory,
       states: options.sessionStates,
       actionsBlocked: options.commandsReady === false,
       onCopy: options.onCopySession,

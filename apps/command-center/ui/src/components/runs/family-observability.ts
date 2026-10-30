@@ -124,6 +124,7 @@ import {
   type RunSessionRow,
   runSessionRowStateFromResult,
 } from './run-detail-session-renderers.js';
+import { runWorkerPanelOpen, toggleRunWorkerPanel } from './run-worker-panel-preferences.js';
 
 const MD_CACHE_LIMIT = 50;
 const COPY_COMPARE_PROMPT = 'compare-prompt';
@@ -1060,6 +1061,12 @@ export class FamilyObservability extends FamilyObservabilityState {
   private _renderRunDetail(run: FamilyObservabilityRunSummary) {
     return renderFamilySelectedRunDetail({
       run,
+      nativeHistoryOpen: runWorkerPanelOpen(getResourceWorkspaceKey(), run.runId, 'conversation'),
+      onToggleNativeHistory: () => {
+        const owner = getResourceWorkspaceKey();
+        toggleRunWorkerPanel(owner, run.runId, 'conversation');
+        this.requestUpdate();
+      },
       runs: this.snapshot?.runs ?? [],
       prs: this._prs,
       fullRun: this._fullRunFor(run.runId),

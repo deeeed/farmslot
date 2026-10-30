@@ -215,6 +215,7 @@ test('a publication gate recovers only a confirmed vanished worker', async () =>
     );
   }
   run.decisions = [];
+  let retainedReads = 0;
   const progress = await readRunProgress(run, {
     slot: async () => slot,
     target: async () => ({ target: '%288', session: 'owned' }),
@@ -222,10 +223,13 @@ test('a publication gate recovers only a confirmed vanished worker', async () =>
     activity: async () => null,
     turn: async () => null,
     background: async () => null,
-    retainedTarget: async () =>
-      assert.fail('ordinary monitoring keeps its existing recovery policy'),
+    retainedTarget: async () => {
+      retainedReads++;
+      return { state: 'absent' };
+    },
   });
   assert.equal(progress.kind, 'unproven');
+  assert.equal(retainedReads, 0, 'ordinary monitoring keeps its existing recovery policy');
 });
 
 test('a rehosted publication worker is observed in its exact resumed pane', async () => {
