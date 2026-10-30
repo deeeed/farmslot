@@ -210,7 +210,7 @@ The existing recipe/task routes and `withTaskProjectHost` in `@farmslot/recipe-c
 
 ## Amendment 7: Task initialization after prepare, 2026-10-31
 
-**Status:** Proposed. Earlier decisions retain their status.
+**Status:** Accepted by the lead under delegated amendment authority, 2026-10-31. Implementation: [#1615](https://github.com/deeeed/farmslot/pull/1615). Earlier decisions retain their status.
 
 ### Decision and rationale
 
