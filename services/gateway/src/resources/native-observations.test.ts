@@ -282,7 +282,7 @@ test('wire page keys keep real reader and pin while preserving cursor params unc
   );
 });
 
-test('source revision or replacement during a held real-route read refuses the late page', async () => {
+test('a healthy source revision during a held real-route read supersedes the late page', async () => {
   const machine = `producer-held-${randomUUID()}`;
   const socket = { readyState: WebSocket.OPEN } as WebSocket;
   const source = new GatewayNativeObservations(() => undefined);
@@ -330,7 +330,7 @@ test('source revision or replacement during a held real-route read refuses the l
     await new Promise<void>((resolve) => setImmediate(resolve));
     source.acceptRemote(socket, { ...receipt, revision: 1 }, () => true);
     release();
-    await assert.rejects(pending, { code: 'NATIVE_SOURCE_UNAVAILABLE' });
+    await assert.rejects(pending, { code: 'RESOURCE_OBSERVATION_CHANGED' });
     assert.equal(
       await source.canReadKey(connection, {
         family: 'native-session',
@@ -342,6 +342,58 @@ test('source revision or replacement during a held real-route read refuses the l
     );
   } finally {
     release?.();
+    source.dispose();
+    unregisterByWs(socket);
+  }
+});
+
+test('remote envelope revision races are retryable while replaced or failed sources stay errors', () => {
+  const machine = `producer-revision-${randomUUID()}`;
+  const socket = { readyState: WebSocket.OPEN } as WebSocket;
+  const source = new GatewayNativeObservations(() => undefined);
+  const receipt = {
+    version: 1 as const,
+    nodeId: machine,
+    ownerId: a.id,
+    incarnation: 'same-source',
+    revision: 0,
+    ready: true,
+  };
+  registerNode(
+    machine,
+    1,
+    socket,
+    undefined,
+    undefined,
+    { ownerPrincipalId: a.id, ...{ supportsObservations: true } },
+    { principalId: 'revision-node', valid: () => true },
+  );
+  try {
+    source.acceptRemote(socket, receipt, () => true);
+    source.acceptRemote(socket, { ...receipt, revision: 1 }, () => true);
+    assert.throws(
+      () => source.unwrapRemote(socket, machine, { nativeSource: receipt, value: [] }),
+      { code: 'RESOURCE_OBSERVATION_CHANGED' },
+    );
+    source.acceptRemote(
+      socket,
+      { ...receipt, revision: 2, ready: false, error: 'SOURCE_UNAVAILABLE' },
+      () => true,
+    );
+    assert.throws(
+      () => source.unwrapRemote(socket, machine, { nativeSource: receipt, value: [] }),
+      { code: 'NATIVE_SOURCE_UNAVAILABLE' },
+    );
+    source.acceptRemote(
+      socket,
+      { ...receipt, incarnation: 'replacement', revision: 0 },
+      () => true,
+    );
+    assert.throws(
+      () => source.unwrapRemote(socket, machine, { nativeSource: receipt, value: [] }),
+      { code: 'NATIVE_SOURCE_UNAVAILABLE' },
+    );
+  } finally {
     source.dispose();
     unregisterByWs(socket);
   }

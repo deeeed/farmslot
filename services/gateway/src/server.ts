@@ -4,6 +4,7 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import {
+  NativeSourceChanged,
   type NativeSourceReceipt,
   NativeSourceUnavailable,
 } from '@farmslot/agent-runtime/native/observation';
@@ -1010,7 +1011,7 @@ async function handleMessage(
       console.error(`[server] route method ${frame.method} failed on ${state.id}: ${causeMessage}`);
     } else if (rawMessage.startsWith('Unknown method:')) {
       code = 'METHOD_NOT_FOUND';
-    } else if (err instanceof NativeSourceUnavailable) {
+    } else if (err instanceof NativeSourceUnavailable || err instanceof NativeSourceChanged) {
       code = err.code;
     } else if (err instanceof GatewayAuthError) {
       code = err.code;

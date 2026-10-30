@@ -57,7 +57,8 @@ import {
 } from '../shared/execution-template-picker-model.js';
 import { qaInputFieldStyles } from '../shared/qa-input-fields.js';
 import { renderQaProfileControl } from '../shared/qa-profile-control.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { readCurrent } from '../shared/read-current.js';
+import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
   dispatchNativeProfileKey,
@@ -98,7 +99,10 @@ import {
   selectedTemplateMode,
   syncSelectedAppForProject,
 } from './dispatch-wizard-draft.js';
-import { filterRunsForComparisonPicker } from './dispatch-wizard-helpers.js';
+import {
+  comparisonPickerRunsQuery,
+  filterRunsForComparisonPicker,
+} from './dispatch-wizard-helpers.js';
 import {
   requestDispatchProfileFit,
   requestDispatchProjectMatch,
@@ -206,13 +210,9 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _observeRunReads(): void {
-    const projects = getState().globalFilters.projects;
     this.comparisonQuery.setQuery(
       this._comparePickerOpen && !this.mockMode
-        ? resourceQuery<RunListResult>(Methods.RUN_LIST, {
-            limit: 50,
-            ...(projects.length === 1 ? { project: projects[0] } : {}),
-          })
+        ? comparisonPickerRunsQuery(getState().globalFilters.projects)
         : undefined,
     );
     this.baselineQuery.setQuery(
@@ -230,19 +230,23 @@ export class DispatchWizard extends DispatchWizardState {
       Boolean(
         gateway.connectionState === 'connected' &&
         cache &&
-        cache.read(activeRunsQuery).status === 'ready' &&
-        cache.read(runHistoryQuery).status === 'ready' &&
+        canActOn(cache.read(activeRunsQuery)) &&
+        canActOn(cache.read(runHistoryQuery)) &&
         (!this._comparisonParentRunId || this.baselineQuery.ready),
       )
     );
   }
 
-  private _requireCurrentRunInputs(): void {
+  private async _requireCurrentRunInputs(): Promise<void> {
     const cache = getResourceCache();
+    // Run writes reread the run lists at most every 30 s; an action reads them first.
+    if (cache && gateway.connectionState === 'connected')
+      await readCurrent(cache, [activeRunsQuery, runHistoryQuery]);
     if (
       !this.isConnected ||
       gateway.connectionState !== 'connected' ||
       !cache ||
+      cache !== getResourceCache() ||
       cache.read(activeRunsQuery).status !== 'ready' ||
       cache.read(runHistoryQuery).status !== 'ready'
     )
@@ -261,24 +265,24 @@ export class DispatchWizard extends DispatchWizardState {
   private _captureRunAction(): () => boolean {
     const workspace = getResourceWorkspaceKey();
     const connection = gateway.resourceConnectionId;
-    const scope = JSON.stringify([
-      this._ticketId,
-      this._project,
-      this._flowType,
-      this._comparisonParentRunId,
-    ]);
+    // Comparison mode decides whether an active run on the ticket blocks the action.
+    const scopeOf = () =>
+      JSON.stringify([
+        this._ticketId,
+        this._project,
+        this._flowType,
+        this._comparisonFlow,
+        this._comparisonLane,
+        this._comparisonFamilyId,
+        this._comparisonParentRunId,
+      ]);
+    const scope = scopeOf();
     return () =>
       this.isConnected &&
       workspace === getResourceWorkspaceKey() &&
       connection === gateway.resourceConnectionId &&
       gateway.connectionState === 'connected' &&
-      scope ===
-        JSON.stringify([
-          this._ticketId,
-          this._project,
-          this._flowType,
-          this._comparisonParentRunId,
-        ]);
+      scope === scopeOf();
   }
   @state() private _sourceSelections: SourceSelection[] = [];
   @state() private _sourceSelectionRefusal = '';
@@ -1218,7 +1222,8 @@ export class DispatchWizard extends DispatchWizardState {
     const current = this._captureRunAction();
     this._runActionRequest = request;
     try {
-      this._requireCurrentRunInputs();
+      await this._requireCurrentRunInputs();
+      if (!current() || this._runActionRequest !== request) return;
       this._checkActiveRunConflict();
       if (this._activeRunConflict?.id !== expected)
         throw new Error(
@@ -1605,9 +1610,14 @@ export class DispatchWizard extends DispatchWizardState {
     this._error = '';
 
     try {
-      this._requireCurrentRunInputs();
+      // The form stays editable during the reread; dispatch what it held at the click.
       const payloadDraft = this._dispatchPayloadDraft();
       if (!payloadDraft) return;
+      await this._requireCurrentRunInputs();
+      if (!current() || this._runActionRequest !== request) return;
+      // The reread can show a run that now holds this ticket; its notice replaces the dispatch.
+      this._checkActiveRunConflict();
+      if (this._activeRunConflict) return;
       const runId = await dispatchRunCreateFromDraft(payloadDraft);
       if (current()) location.hash = `run/${runId}`;
     } catch (err: unknown) {
@@ -1628,9 +1638,11 @@ export class DispatchWizard extends DispatchWizardState {
     const current = this._captureRunAction();
     this._dispatching = true;
     try {
-      this._requireCurrentRunInputs();
+      // The form stays editable during the reread; queue what it held at the click.
       const payloadDraft = this._dispatchPayloadDraft();
       if (!payloadDraft) return;
+      await this._requireCurrentRunInputs();
+      if (!current() || this._runActionRequest !== request) return;
       await addDispatchQueueItemFromDraft(payloadDraft);
       if (!current()) return;
       this._ticketId = '';

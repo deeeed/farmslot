@@ -6,6 +6,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Keep reference answers out of eval workers and exclude contaminated first outputs from comparisons.
 
+- Keep loaded native history while a healthy source change refreshes the read; report real observation failures separately.
+- Show gate preparation during replay capture and readiness checks; report operator wait only after its decision exists.
+
 - Complete artifact-only eval packages without requiring publication claim approval.
 
 - Recover unsent review-fix prompts after restart, verify relaunched worker processes, and surface unconfirmed delivery within the launch budget while preserving findings.
