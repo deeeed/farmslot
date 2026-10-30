@@ -443,7 +443,7 @@ export interface PublishGateReviewPlanResult {
 }
 
 export interface PublishGateReviewPlanDependencies {
-  assertLaunchAllowed?: (reviews: readonly ReviewStatus[], slotId: string) => Promise<void>;
+  assertLaunchAllowed?: typeof assertReviewLaunchStateForSlot;
   executeReview?: typeof executeReviewDefault;
   reviewSequenceContext?: ReviewRequestContext;
   /**
@@ -552,7 +552,11 @@ export async function executePublishGateReviewPlan(
           capReason,
           { userAction: 'Request a review to retry.' },
         );
-      await assertLaunchAllowed(launchSnapshot.engineState?.publishGate?.reviews ?? [], slotId);
+      await assertLaunchAllowed(
+        launchSnapshot.engineState?.publishGate?.reviews ?? [],
+        slotId,
+        source === 'human-gate' ? await readPreparedPackage(launchSnapshot) : undefined,
+      );
     } catch (error) {
       const rejection = publicationReviewLaunchRejectionFromError(error);
       if (!rejection) throw error;
