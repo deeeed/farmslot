@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `nativeTimelineRows` folds each finished turn's tool calls into one row ("Worked for 4m 12s · 6 tools", "Stopped after …", "Failed after …") where its first tool was; messages, statuses and a running turn stay as they are.
 - `nativeWork` finds the turn a native session is running, when it started and its current tool; `nativeWorkLabel` gives "Working · 1m 12s · Bash". Cached native history keeps the running turn's `turn.started`, which it dropped before as not a timeline entry.
 - `nativeMessagePreview` gives the first 8 lines (at most 600 characters) of a native conversation message over 12 lines or 900 characters, with its line count; `nativeEntryPreview` applies it to user messages only, and `nativeMessageToggleLabel` gives the "Show all · N lines" or "Show less" label.
 - `NativeFollow`, `NATIVE_FOLLOW_LATEST`, `nativeFollowScrolled`, `nativeFollowGrew` and `nativeFollowLabel` track whether a native conversation reader follows new output and how many entries arrived while they read further up.

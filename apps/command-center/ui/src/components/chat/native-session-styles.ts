@@ -236,6 +236,12 @@ export const nativeSessionStyles = css`
   summary {
     cursor: pointer;
   }
+  /* A finished turn's folded tool calls: one row, a full touch target. */
+  article.work > details > summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
   details pre,
   .request pre {
     max-height: 240px;

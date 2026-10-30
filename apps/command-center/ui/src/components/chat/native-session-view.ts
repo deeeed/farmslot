@@ -36,6 +36,9 @@ import {
   nativeMessageToggleLabel,
   nativeObservationQuery,
   nativeTimeline,
+  type NativeTimelineEntry,
+  type NativeTimelineRow,
+  nativeTimelineRows,
   type NativeTranscript,
   type NativeWork,
   nativeWork,
@@ -197,6 +200,22 @@ export class NativeSessionView extends LitElement {
       this.timelineEntries = nativeTimeline(this.transcript.events);
     }
     return this.timelineEntries;
+  }
+
+  private rowsEntries?: NativeTimelineEntry[];
+  private rows: NativeTimelineRow[] = [];
+  /** Tools shown while their turn ran here: that turn's fold opens when it finishes. */
+  private watchedTools = new Set<number>();
+
+  private timelineRows() {
+    const entries = this.timeline();
+    if (this.rowsEntries !== entries) {
+      this.rowsEntries = entries;
+      this.rows = nativeTimelineRows(entries);
+      for (const row of this.rows)
+        if (row.kind === 'entry' && row.entry.kind === 'tool') this.watchedTools.add(row.key);
+    }
+    return this.rows;
   }
 
   private work() {
@@ -386,6 +405,63 @@ export class NativeSessionView extends LitElement {
           ${label}
         </button>`
       : nothing;
+  }
+
+  private renderEntry(entry: NativeTimelineEntry, session: NativeSessionInfo) {
+    return html`<article class=${entry.kind} data-sequence=${entry.key}>
+      ${entry.kind === 'tool'
+        ? html`<details>
+            <summary>
+              ${entry.text} ·
+              ${entry.event.type === 'tool.started'
+                ? 'Started'
+                : (entry.event.tool?.status ?? 'Finished')}
+            </summary>
+            <pre>
+${JSON.stringify(
+                {
+                  ...(entry.event.tool?.input !== undefined
+                    ? { input: entry.event.tool.input }
+                    : {}),
+                  ...(entry.event.tool?.output !== undefined
+                    ? { output: entry.event.tool.output }
+                    : {}),
+                },
+                null,
+                2,
+              )}</pre
+            >
+          </details>`
+        : html`<span class="meta"
+              >${entry.kind === 'user'
+                ? 'You'
+                : entry.kind === 'assistant'
+                  ? session.runner
+                  : entry.event.at}</span
+            >
+            <div class="text">
+              ${entry.kind === 'assistant'
+                ? html`<chat-message
+                    .message=${{
+                      id: `${entry.event.sessionId}:${entry.key}`,
+                      role: 'assistant',
+                      content: entry.text,
+                      timestamp: entry.event.at,
+                    } satisfies ChatMessage}
+                  ></chat-message>`
+                : this.renderMessageBody(
+                    entry.text,
+                    nativeEntryPreview(entry),
+                    entry.event.commandId ?? String(entry.key),
+                  )}
+            </div>
+            ${entry.event.type === 'error' && entry.event.data
+              ? html`<details>
+                  <summary>Error details</summary>
+                  <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
+                </details>`
+              : nothing}`}
+    </article>`;
   }
 
   private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: string) {
@@ -779,6 +855,7 @@ export class NativeSessionView extends LitElement {
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
     this.expandedMessages = new Set();
+    this.watchedTools = new Set();
     this.follow = NATIVE_FOLLOW_LATEST;
     this.selectedId = id;
     this.selectedNodeId = executionNodeId;
@@ -1262,63 +1339,17 @@ export class NativeSessionView extends LitElement {
                     @scroll=${this.timelineScrolled}
                   >
                     ${repeat(
-                      this.timeline(),
-                      (entry) => entry.key,
-                      (entry) =>
-                        html`<article class=${entry.kind} data-sequence=${entry.key}>
-                          ${entry.kind === 'tool'
-                            ? html`<details>
-                                <summary>
-                                  ${entry.text} ·
-                                  ${entry.event.type === 'tool.started'
-                                    ? 'Started'
-                                    : (entry.event.tool?.status ?? 'Finished')}
-                                </summary>
-                                <pre>
-${JSON.stringify(
-                                    {
-                                      ...(entry.event.tool?.input !== undefined
-                                        ? { input: entry.event.tool.input }
-                                        : {}),
-                                      ...(entry.event.tool?.output !== undefined
-                                        ? { output: entry.event.tool.output }
-                                        : {}),
-                                    },
-                                    null,
-                                    2,
-                                  )}</pre
-                                >
-                              </details>`
-                            : html`<span class="meta"
-                                  >${entry.kind === 'user'
-                                    ? 'You'
-                                    : entry.kind === 'assistant'
-                                      ? session.runner
-                                      : entry.event.at}</span
-                                >
-                                <div class="text">
-                                  ${entry.kind === 'assistant'
-                                    ? html`<chat-message
-                                        .message=${{
-                                          id: `${entry.event.sessionId}:${entry.key}`,
-                                          role: 'assistant',
-                                          content: entry.text,
-                                          timestamp: entry.event.at,
-                                        } satisfies ChatMessage}
-                                      ></chat-message>`
-                                    : this.renderMessageBody(
-                                        entry.text,
-                                        nativeEntryPreview(entry),
-                                        entry.event.commandId ?? String(entry.key),
-                                      )}
-                                </div>
-                                ${entry.event.type === 'error' && entry.event.data
-                                  ? html`<details>
-                                      <summary>Error details</summary>
-                                      <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
-                                    </details>`
-                                  : nothing}`}
-                        </article>`,
+                      this.timelineRows(),
+                      (row) => row.key,
+                      (row) =>
+                        row.kind === 'work'
+                          ? html`<article class="work" data-sequence=${row.key}>
+                              <details ?open=${this.watchedTools.has(row.key)}>
+                                <summary data-testid="native-work-fold">${row.label}</summary>
+                                ${row.entries.map((entry) => this.renderEntry(entry, session))}
+                              </details>
+                            </article>`
+                          : this.renderEntry(row.entry, session),
                     )}
                     ${this.localCommand &&
                     !this.transcript.events.some(

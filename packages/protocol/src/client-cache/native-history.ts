@@ -558,13 +558,55 @@ export function nativeWork(events: NativeSessionEvent[]): NativeWork | undefined
  * `since` is the execution host's clock: a client clock ahead of it overstates the time by the skew.
  */
 export function nativeWorkLabel(work: NativeWork, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - work.since) / 1000));
+  return `Working · ${nativeElapsed(now - work.since)}${work.tool ? ` · ${work.tool}` : ''}`;
+}
+
+/** "12s", "1m 12s", "1h 3m". */
+function nativeElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(seconds / 60);
-  const elapsed =
-    minutes >= 60
-      ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
-      : minutes
-        ? `${minutes}m ${seconds % 60}s`
-        : `${seconds}s`;
-  return `Working · ${elapsed}${work.tool ? ` · ${work.tool}` : ''}`;
+  if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+export type NativeTimelineRow =
+  | { kind: 'entry'; key: number; entry: NativeTimelineEntry }
+  | { kind: 'work'; key: number; label: string; entries: NativeTimelineEntry[] };
+
+/**
+ * The timeline with each finished turn's tool calls folded into one row, "Worked for 4m 12s ·
+ * 6 tools", where its first tool was. Messages and statuses stay; a running turn is not folded.
+ */
+export function nativeTimelineRows(entries: NativeTimelineEntry[]): NativeTimelineRow[] {
+  const folds = new Map<number, Extract<NativeTimelineRow, { kind: 'work' }>>();
+  const folded = new Set<number>();
+  let start = 0;
+  entries.forEach((end, index) => {
+    if (end.kind !== 'status' || end.event.type !== 'turn.completed') return;
+    const turn = entries.slice(start, index);
+    start = index + 1;
+    const tools = turn.filter((entry) => entry.kind === 'tool');
+    if (!tools.length) return;
+    const opened = turn.find((entry) => entry.kind === 'user') ?? tools[0];
+    const elapsed = nativeElapsed(Date.parse(end.event.at) - Date.parse(opened.event.at));
+    const outcome =
+      end.event.status === 'interrupted'
+        ? 'Stopped after'
+        : end.event.status === 'failed'
+          ? 'Failed after'
+          : 'Worked for';
+    const count = `${tools.length} ${tools.length === 1 ? 'tool' : 'tools'}`;
+    folds.set(tools[0].key, {
+      kind: 'work',
+      key: tools[0].key,
+      label: `${outcome} ${elapsed} · ${count}`,
+      entries: tools,
+    });
+    for (const tool of tools) folded.add(tool.key);
+  });
+  return entries.flatMap((entry): NativeTimelineRow[] => {
+    const fold = folds.get(entry.key);
+    if (fold) return [fold];
+    return folded.has(entry.key) ? [] : [{ kind: 'entry', key: entry.key, entry }];
+  });
 }

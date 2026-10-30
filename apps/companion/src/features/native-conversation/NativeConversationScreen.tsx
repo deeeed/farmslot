@@ -26,6 +26,7 @@ import { NativeRequestCard } from './components/NativeRequestCard';
 import { NativeSessionSetup } from './components/NativeSessionSetup';
 import { NativeSessionState } from './components/NativeSessionState';
 import { NativeTimelineCard } from './components/NativeTimelineCard';
+import { NativeWorkCard } from './components/NativeWorkCard';
 import { nativeStyles as styles } from './styles/native-conversation.styles';
 import type { useNativeConversationController } from './use-native-conversation-controller';
 
@@ -47,11 +48,21 @@ export function NativeConversationScreen({
     contentHeight - viewport.current.offset - viewport.current.height;
   /** The reader opened or closed an entry, so the next size change is theirs, not new output. */
   const disclosed = useRef(false);
+  const disclose = () => {
+    disclosed.current = true;
+  };
+  /** Tools shown while their turn ran here: that turn's fold opens when it finishes. */
+  const watchedTools = useRef(new Set<number>());
   const entryCount = useRef(vm.entries.length);
   useEffect(() => {
     entryCount.current = vm.entries.length;
+    watchedTools.current = new Set();
     setFollow(NATIVE_FOLLOW_LATEST);
   }, [vm.session?.id]);
+  useEffect(() => {
+    for (const row of vm.rows)
+      if (row.kind === 'entry' && row.entry.kind === 'tool') watchedTools.current.add(row.key);
+  }, [vm.rows]);
   useEffect(() => {
     const added = vm.entries.length - entryCount.current;
     entryCount.current = vm.entries.length;
@@ -241,15 +252,19 @@ export function NativeConversationScreen({
                   </Pressable>
                 </>
               ) : null}
-              {vm.entries.map((entry) => (
-                <NativeTimelineCard
-                  key={entry.key}
-                  entry={entry}
-                  onDisclosure={() => {
-                    disclosed.current = true;
-                  }}
-                />
-              ))}
+              {vm.rows.map((row) =>
+                row.kind === 'work' ? (
+                  <NativeWorkCard
+                    key={row.key}
+                    label={row.label}
+                    entries={row.entries}
+                    defaultExpanded={watchedTools.current.has(row.key)}
+                    onDisclosure={disclose}
+                  />
+                ) : (
+                  <NativeTimelineCard key={row.key} entry={row.entry} onDisclosure={disclose} />
+                ),
+              )}
               {vm.requests.map((request) => (
                 <NativeRequestCard
                   key={`${request.generation}:${request.request?.id}`}
