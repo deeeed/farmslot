@@ -57,6 +57,7 @@ import {
   REFERENCE_PACKAGE_FILENAME,
   RESULT_PACKAGE_DIR,
   sha256Text,
+  syntheticEvalTicket,
   unavailableDiff,
   visualEvidenceFromArtifacts,
   writeEvalExperimentManifest,
@@ -93,10 +94,6 @@ function sourceSlug(source: EvalPackageSource): string {
       .replace(/[^a-zA-Z0-9_.-]/g, '-')
       .slice(0, 80) || 'git-ref'
   );
-}
-
-function syntheticEvalTicket(experimentKey: string): string {
-  return `EVAL-${experimentKey.slice(0, 12).toUpperCase()}`;
 }
 
 function defaultRubric(
