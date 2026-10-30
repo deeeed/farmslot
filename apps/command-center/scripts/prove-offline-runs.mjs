@@ -786,7 +786,8 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
   assert.equal(await realpath(process.env.FARMSLOT_ROOT), await realpath(fixture.root));
   const repo = await realpath(fixture.repo);
   assert(repo.startsWith(`${home}/`));
-  const statusFile = path.join(fixture.root, '.farm-status.json');
+  const statusFile =
+    process.env.FARMSLOT_TEST_STATUS_FILE ?? path.join(fixture.root, '.farm-status.json');
   const original = await readFile(statusFile);
   const originalMode = (await stat(statusFile)).mode & 0o777;
   const raw = JSON.parse(original);
@@ -937,7 +938,14 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
       },
       async ({ runId, runFile, observed }) => {
         if (!remote && process.env.FARMSLOT_PROGRESS_HISTORY_CONTROL) {
-          await proveProgressHistory({ fixture, projects, runId, runFile, observeResources });
+          await proveProgressHistory({
+            fixture,
+            projects,
+            runId,
+            runFile,
+            statusFile,
+            observeResources,
+          });
           assert.fail('The focused progress control unexpectedly succeeded');
         }
         const proveRegistry = async () => {
@@ -1195,6 +1203,7 @@ if (['progress-web', 'progress-detail-web', 'remote-progress-web'].includes(phas
               projects,
               runId,
               runFile,
+              statusFile,
               observeResources,
               ...(detail
                 ? {
