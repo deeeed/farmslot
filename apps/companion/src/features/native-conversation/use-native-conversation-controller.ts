@@ -15,6 +15,8 @@ import {
   nativeHistoryCanAct,
   nativeHistoryCanSend,
   nativeHistoryQuery,
+  nativeMessageDropped,
+  nativeMessageShown,
   nativeObservationQuery,
   nativeSendLabel,
   nativeTimeline,
@@ -269,6 +271,11 @@ export function useNativeConversationController(params: NativeConversationParams
     ) {
       pendingRef.current = undefined;
       setPending(undefined);
+      // The host failed it unseen (the session closed while it was queued): back to the composer.
+      if (nativeMessageDropped(receipt)) {
+        draftRef.current = command.text;
+        setDraft(command.text);
+      }
       void persist(draftRef.current, undefined, responsesRef.current).catch((cause) => {
         if (alive.current && currentStorageKey.current === storageKey) setError(message(cause));
       });
@@ -446,6 +453,9 @@ export function useNativeConversationController(params: NativeConversationParams
   const work = nativeWork(transcript.events);
   const sendLabel = nativeSendLabel(session?.state);
   const receipt = snapshot?.commands.find((item) => item.commandId === pending?.commandId);
+  /** The pending message, until the conversation shows it. */
+  const pendingText =
+    pending && !nativeMessageShown(transcript.events, pending.commandId) ? pending.text : undefined;
   const canSend = writable && !!sendLabel && !pending && !busy && !!draft.trim();
   const proof = useRef({
     focused,
@@ -463,6 +473,7 @@ export function useNativeConversationController(params: NativeConversationParams
     commands: snapshot?.commands ?? [],
     draft,
     pendingCommandId: pending?.commandId,
+    pendingText,
     responses,
     ready,
     caughtUp,
@@ -488,6 +499,7 @@ export function useNativeConversationController(params: NativeConversationParams
     commands: snapshot?.commands ?? [],
     draft,
     pendingCommandId: pending?.commandId,
+    pendingText,
     responses,
     ready,
     caughtUp,
@@ -517,6 +529,7 @@ export function useNativeConversationController(params: NativeConversationParams
       responses,
       draft,
       pending,
+      pendingText,
       receipt,
       canRetry: nativeRetryAvailable(receipt),
       error: error || pollError || creation.viewModel.error || resume.viewModel.error,

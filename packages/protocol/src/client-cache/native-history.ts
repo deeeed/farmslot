@@ -28,13 +28,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
   const tools = new Map<string, NativeTimelineEntry>();
   const prompts = new Map<string, NativeSessionEvent>();
   for (const event of events) {
-    if (
-      (event.type === 'command.submitted' || event.type === 'command.accepted') &&
-      event.commandId &&
-      event.text !== undefined &&
-      !prompts.has(event.commandId)
-    )
-      prompts.set(event.commandId, event);
+    if (nativePrompt(event) && !prompts.has(event.commandId)) prompts.set(event.commandId, event);
   }
   for (const event of events) {
     if (event.commandId && !userCommands.has(event.commandId)) {
@@ -512,6 +506,35 @@ export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {
     case 'failed':
       return 'Failed';
   }
+}
+
+/** A sent message the timeline shows: its submission or acceptance, with the message text. */
+function nativePrompt(
+  event: NativeSessionEvent,
+): event is NativeSessionEvent & { commandId: string; text: string } {
+  return (
+    (event.type === 'command.submitted' || event.type === 'command.accepted') &&
+    !!event.commandId &&
+    event.text !== undefined
+  );
+}
+
+/**
+ * Whether the timeline shows the message sent as `commandId`. Until it does, a
+ * client shows the message itself, with its delivery state.
+ */
+export function nativeMessageShown(events: NativeSessionEvent[], commandId: string): boolean {
+  return events.some((event) => event.commandId === commandId && nativePrompt(event));
+}
+
+/**
+ * Whether the host failed a sent message without submitting it, as it does with a queued
+ * message when the session closes or its worker lease changes. The runner never got the
+ * text and nothing else keeps it, so a client gives it back to the reader. The host's
+ * receipt decides, not the client's events: those may no longer hold a delivered prompt.
+ */
+export function nativeMessageDropped(receipt?: NativeCommandReceipt): boolean {
+  return receipt?.state === 'failed' && !receipt.submitted;
 }
 
 /** A confirmed replacement generation must not inherit the old browser input lock. */

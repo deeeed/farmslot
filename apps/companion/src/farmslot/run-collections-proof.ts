@@ -73,6 +73,7 @@ interface ConversationProofFrame {
   commands: NativeSessionReadResult['commands'];
   draft: string;
   pendingCommandId?: string;
+  pendingText?: string;
   responses: readonly string[];
   ready: boolean;
   caughtUp: boolean;
@@ -364,16 +365,18 @@ export const observeRunCollectionsProof: FarmslotRecipeUiObserver = async (refs)
                 pageAfters: conversation.pageAfters,
                 timeline: conversation.timeline.slice(-50),
                 commands: conversation.commands.map(
-                  ({ commandId, generation, state, submitted, accepted }) => ({
+                  ({ commandId, generation, state, submitted, accepted, queued }) => ({
                     commandId,
                     generation,
                     state,
                     submitted,
                     accepted,
+                    queued,
                   }),
                 ),
                 draft: conversation.draft,
                 pendingCommandId: conversation.pendingCommandId,
+                pendingText: conversation.pendingText,
                 responses: conversation.responses,
                 ready: conversation.ready,
                 caughtUp: conversation.caughtUp,

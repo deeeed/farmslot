@@ -27,7 +27,7 @@ import { NativeProfilePicker } from './components/NativeProfilePicker';
 import { NativeRequestCard } from './components/NativeRequestCard';
 import { NativeSessionSetup } from './components/NativeSessionSetup';
 import { NativeSessionState } from './components/NativeSessionState';
-import { NativeTimelineCard } from './components/NativeTimelineCard';
+import { NativePendingMessageCard, NativeTimelineCard } from './components/NativeTimelineCard';
 import { NativeWorkCard } from './components/NativeWorkCard';
 import { nativeStyles as styles } from './styles/native-conversation.styles';
 import type { useNativeConversationController } from './use-native-conversation-controller';
@@ -283,6 +283,14 @@ export function NativeConversationScreen({
                   />
                 ),
               )}
+              {vm.pendingText !== undefined ? (
+                <NativePendingMessageCard
+                  key={vm.pending?.commandId}
+                  text={vm.pendingText}
+                  delivery={nativeDeliveryLabel(vm.receipt)}
+                  onDisclosure={disclose}
+                />
+              ) : null}
               {vm.requests.map((request) => (
                 <NativeRequestCard
                   key={`${request.generation}:${request.request?.id}`}
