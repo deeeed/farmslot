@@ -54,6 +54,17 @@ test('blind problem input rejects reference links, SHAs, manifests and patches',
     assert.throws(() => assertBlindProblem(problem, markers), /problem|reference material/);
 });
 
+test('legacy Markdown reference diffs explain how to recreate a blind experiment', () => {
+  assert.throws(
+    () =>
+      sourceComparisonDiff(
+        '# Reference diff\n\n```diff\n@@ -1 +1 @@\n-old\n+fixed\n```',
+        buildSourceDiffFilter(),
+      ),
+    /Archive the existing experiment.*eval\.experiment\.create/,
+  );
+});
+
 test('the task tree audit rejects nested answer files and reference content without printing it', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'blind-inputs-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

@@ -42,6 +42,9 @@ const base = 'a'.repeat(40),
   head = 'c'.repeat(40);
 const diffText =
   'diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+candidate\n';
+let checkout = base;
+let verifyAllowed = true;
+let verifications = 0;
 mock.module('../core/config.js', {
   namedExports: { loadSlotVars: async () => vars },
 });
@@ -53,13 +56,16 @@ mock.module('../core/state.js', {
 });
 mock.module('../core/exec.js', {
   namedExports: {
-    execOnSlot: async (_vars: SlotVars, command: string) => ({
-      exitCode: 0,
-      stdout: command.includes('git rev-parse HEAD')
-        ? base
-        : JSON.stringify({ status: 'isolated', runId: run.id, baseSha: base }),
-      stderr: '',
-    }),
+    execOnSlot: async (_vars: SlotVars, command: string) => {
+      if (command.includes('git rev-parse HEAD'))
+        return { exitCode: 0, stdout: checkout, stderr: '' };
+      verifications++;
+      return {
+        exitCode: verifyAllowed ? 0 : 1,
+        stdout: JSON.stringify({ status: 'isolated', runId: run.id, baseSha: base }),
+        stderr: verifyAllowed ? '' : 'isolation changed',
+      };
+    },
     execLocal: async () => ({ exitCode: 0, stdout: '{}', stderr: '' }),
   },
 });
@@ -146,6 +152,9 @@ async function fixture(t: TestContext) {
   epoch = 7;
   captures = 0;
   failPersist = false;
+  checkout = base;
+  verifyAllowed = true;
+  verifications = 0;
   onCapture = () => {};
   return root;
 }
@@ -210,4 +219,14 @@ test('a completion recovery cannot relabel reviewed output as the first output',
     'First output was not frozen before review started.',
   );
   assert.equal(captures, 1);
+});
+
+test('retained redispatch accepts candidate progress while rechecking Git isolation', async (t) => {
+  await fixture(t);
+  checkout = head;
+  await assert.rejects(verifyBlindTrialForDispatch(run), /differs from its base/);
+  await verifyBlindTrialForDispatch(run, true);
+  assert.equal(verifications, 2);
+  verifyAllowed = false;
+  await assert.rejects(verifyBlindTrialForDispatch(run, true), /isolation changed/);
 });

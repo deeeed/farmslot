@@ -1641,7 +1641,10 @@ export async function dispatchExecute(
 
   if (currentRun) {
     await auditBlindTrialTask(currentRun, workerTaskAbs, vars);
-    await verifyBlindTrialForDispatch(currentRun);
+    await verifyBlindTrialForDispatch(
+      currentRun,
+      options.nativeRetainedFrom?.runId === currentRun.id,
+    );
   }
 
   // We just wrote artifacts/recipe.json + artifacts/recipe-library/ into the

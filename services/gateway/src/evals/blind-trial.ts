@@ -178,9 +178,11 @@ async function verifyBlindTrialGit(run: Run): Promise<void> {
   await ownedEpoch(run, epoch);
 }
 
-export async function verifyBlindTrialForDispatch(run: Run): Promise<void> {
+export async function verifyBlindTrialForDispatch(run: Run, retained = false): Promise<void> {
   if (!run.engineState?.evalExperiment) return;
   await verifyBlindTrialGit(run);
+  // The same retained worker may have candidate commits; isolation still applies.
+  if (retained) return;
   const blind = blindFor(run);
   const vars = await loadSlotVars(blind.isolation!.slotId);
   const checkout = await execOnSlot(vars, `git rev-parse HEAD && git status --porcelain`, {

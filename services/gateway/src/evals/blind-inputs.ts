@@ -41,7 +41,9 @@ export function stablePatchId(diff: string): Promise<string> {
 /** Apply the contribution filter to native reference sections without rewriting hunks. */
 export function sourceComparisonDiff(diff: string, filter: SourceDiffFilter): string {
   if (!diff.startsWith('diff --git '))
-    throw new Error('A native reference contribution diff is required for comparison.');
+    throw new Error(
+      'A native reference contribution diff is required for blind trials. Archive the existing experiment and recreate it with eval.experiment.create.',
+    );
   return diff
     .split(/(?=^diff --git )/m)
     .filter((section) => {
