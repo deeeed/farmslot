@@ -234,7 +234,7 @@ test('a resolved request stays in the conversation with its decision or answers'
     { ...event(8, 'turn.completed'), status: 'completed' },
   ]);
   assert.deepEqual(
-    timeline.filter((entry) => entry.kind === 'request').map((entry) => entry.text),
+    timeline.filter((entry) => entry.kind === 'resolution').map((entry) => entry.text),
     [
       'Approved: rm -r build',
       'Declined: rm -r build',
@@ -246,7 +246,9 @@ test('a resolved request stays in the conversation with its decision or answers'
   // Not a tool call: folding the finished turn leaves it in view.
   const rows = nativeTimelineRows(timeline);
   assert.deepEqual(
-    rows.flatMap((row) => (row.kind === 'entry' && row.entry.kind === 'request' ? [row.fold] : [])),
+    rows.flatMap((row) =>
+      row.kind === 'entry' && row.entry.kind === 'resolution' ? [row.fold] : [],
+    ),
     [undefined, undefined, undefined, undefined, undefined],
   );
 });

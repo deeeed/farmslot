@@ -316,7 +316,7 @@ test('a resolved request stays through the cache; a snapshot that dropped it is 
     nativeTimeline(replayed.data.events).map(({ kind, text }) => [kind, text]),
     [
       ['user', 'Clean up.'],
-      ['request', 'Approved: rm -r build'],
+      ['resolution', 'Approved: rm -r build'],
       ['status', 'Turn completed'],
     ],
   );

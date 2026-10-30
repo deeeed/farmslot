@@ -14,7 +14,7 @@ import type { ResourceQueryState, ResourceReadResult } from './types.js';
 
 export interface NativeTimelineEntry {
   key: number;
-  kind: 'user' | 'assistant' | 'tool' | 'request' | 'status';
+  kind: 'user' | 'assistant' | 'tool' | 'resolution' | 'status';
   event: NativeSessionEvent;
   text: string;
 }
@@ -82,7 +82,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
     } else if (event.type === 'approval.resolved' && event.request) {
       entries.push({
         key: event.sequence,
-        kind: 'request',
+        kind: 'resolution',
         event,
         text: nativeResolutionText(event.request, event.response),
       });
