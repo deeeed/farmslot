@@ -95,6 +95,7 @@ mock.module('../agents/contexts.js', {
   },
 });
 const { verifyWorkerPushedBranch } = await import('../run-engine/push-verification.js');
+const { assertRunCommitSignatures } = await import('./commit-signatures.js');
 const { createPrFromApprovedPackage } = await import('./orchestrator.js');
 beforeEach(() => {
   commands = [];
@@ -129,4 +130,34 @@ test('first publication refuses unsigned commits before any push', async () => {
     /Unsigned outgoing commit\(s\): bbbbbbbbbbbb/,
   );
   assert.ok(!commands.some((command) => command.includes(' push ')));
+});
+
+test('a blind eval trial checks its contribution from the frozen base, not a removed remote', async () => {
+  const baseSha = 'c'.repeat(40);
+  const blindRun = makeRun({
+    ...run,
+    flowType: 'fix-bug',
+    engineState: {
+      evalExperiment: {
+        experimentId: 'experiment-blind',
+        experimentKey: 'blind-key',
+        experimentManifestPath: '/evals/experiment-manifest.json',
+        packagePath: '/evals/candidate.result-package.json',
+        candidateStrategyFingerprint: 'strategy',
+        trialId: 'trial-blind',
+        blind: {
+          version: 1,
+          baseSha,
+          problemDigest: 'problem',
+          referenceCommits: [],
+          referencePatchId: 'reference',
+          forbiddenInputs: [],
+        },
+      },
+    },
+  });
+  await assert.rejects(assertRunCommitSignatures(blindRun), /Unsigned outgoing commit/);
+  const probe = commands.find((command) => command.startsWith('commits='));
+  assert.ok(probe?.includes(`${baseSha}..HEAD`));
+  assert.ok(!probe?.includes('refs/remotes/origin'));
 });

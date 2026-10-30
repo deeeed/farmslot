@@ -131,6 +131,11 @@ export function computeExperimentKey(input: {
   );
 }
 
+/** The root ticket of an experiment's family, shared by its trials and its reference-only view. */
+export function syntheticEvalTicket(experimentKey: string): string {
+  return `EVAL-${experimentKey.slice(0, 12).toUpperCase()}`;
+}
+
 export function computeObjectiveHash(input: {
   project: string;
   source: EvalPackageSource;

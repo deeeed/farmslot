@@ -811,6 +811,7 @@ async function findSlotAttempt(
   // to a prior run before any expensive resource is claimed. The same
   // decision is replayed at WRITE_TASK (deduplicated by createEngineDecision,
   // unless the colliding dir set changed — see canReplayCollisionDecision).
+  // Dirs left only by attempts that ended before dispatch get no decision.
   if (requiresCollisionPrecheck(run.flowType)) {
     const { existingDirs, ticketSlug } = await precheckTaskDirCollision(run);
     if (existingDirs.length > 0) {

@@ -12,8 +12,10 @@ const {
 const path = require('node:path');
 const { sanitizeLatestValidRecipeRunPointer } = require('@farmslot/protocol/recipe');
 
-/** Advance task selection after success without changing any attempt bytes. */
-function recordRecipeAttemptSelection(taskDir, artifactDir) {
+const { transferEngineClaims } = require('./acceptance-ledger.cjs');
+
+/** The selection of a successful attempt, or null when it cannot be selected. */
+function successfulAttempt(taskDir, artifactDir) {
   const artifacts = realpathSync(path.join(taskDir, 'artifacts'));
   const attempt = realpathSync(artifactDir);
   const relative = path.relative(artifacts, attempt).split(path.sep).join('/');
@@ -22,9 +24,13 @@ function recordRecipeAttemptSelection(taskDir, artifactDir) {
     relativeArtifactRoot: relative,
     updatedAt: new Date().toISOString(),
   });
-  if (!pointer) return false;
+  if (!pointer) return null;
   const summary = JSON.parse(readFileSync(path.join(attempt, 'summary.json'), 'utf8'));
-  if (summary.status !== 'pass') return false;
+  if (summary.status !== 'pass') return null;
+  return { artifacts, attempt, pointer };
+}
+
+function writeSelection({ artifacts, pointer }) {
   const destination = path.join(artifacts, 'latest-valid-recipe-run.json');
   const temporary = `${destination}.${randomUUID()}.tmp`;
   try {
@@ -33,6 +39,35 @@ function recordRecipeAttemptSelection(taskDir, artifactDir) {
   } finally {
     rmSync(temporary, { force: true });
   }
+}
+
+/** Advance task selection after success without changing any attempt bytes. */
+function recordRecipeAttemptSelection(taskDir, artifactDir) {
+  const selection = successfulAttempt(taskDir, artifactDir);
+  if (!selection) return false;
+  writeSelection(selection);
+  return true;
+}
+
+/**
+ * Re-select a retained attempt. The task ledger takes the attempt's
+ * engine-selected claims before the pointer moves, so the selection and the
+ * verdicts never name different executions.
+ */
+async function selectRecipeAttempt(taskDir, artifactDir) {
+  const selection = successfulAttempt(taskDir, artifactDir);
+  if (!selection) return false;
+  const { readRecordedEvidencePackage } = await import('@farmslot/adapter-sdk');
+  const { selectedRecipeClaims } = await import('@farmslot/adapter-sdk/evidence');
+  const { input } = await readRecordedEvidencePackage(selection.attempt);
+  if (!input.claims) throw new Error('The selected attempt has no engine claim package.');
+  transferEngineClaims(
+    taskDir,
+    path.join(selection.attempt, 'acceptance-status.json'),
+    path.join(selection.attempt, 'trace.json'),
+    selectedRecipeClaims(input),
+  );
+  writeSelection(selection);
   return true;
 }
 
@@ -44,5 +79,16 @@ function readRecipeAttemptSelection(taskDir) {
   return pointer;
 }
 
-module.exports = { readRecipeAttemptSelection, recordRecipeAttemptSelection };
-if (require.main === module) recordRecipeAttemptSelection(process.argv[2], process.argv[3]);
+module.exports = { readRecipeAttemptSelection, recordRecipeAttemptSelection, selectRecipeAttempt };
+if (require.main === module)
+  selectRecipeAttempt(process.argv[2], process.argv[3]).then(
+    (selected) => {
+      if (selected) return;
+      console.error('Not selected: the attempt is not a successful retained recipe run.');
+      process.exitCode = 1;
+    },
+    (error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    },
+  );

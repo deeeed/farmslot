@@ -185,6 +185,12 @@ test('Claude stream-json adapter preserves structured session, turn, tool, and a
     ],
   );
   assert.equal(events.find((event) => event.type === 'text.delta')?.text, 'Working');
+  assert.deepEqual(events.find((event) => event.type === 'tool.started')?.tool, {
+    name: 'Bash',
+    input: { command: 'pwd' },
+    kind: 'command',
+    command: 'pwd',
+  });
   assert.equal(
     events.find((event) => event.type === 'turn.started')?.nativeId,
     'assistant-message-1',

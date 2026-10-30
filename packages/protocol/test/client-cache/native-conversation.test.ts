@@ -5,6 +5,7 @@ import {
   appendNativePage,
   NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
+  nativeCommandText,
   nativeDeliveryLabel,
   nativeEntryPreview,
   nativeFoldWatched,
@@ -16,6 +17,7 @@ import {
   nativeTimeline,
   type NativeTimelineRow,
   nativeTimelineRows,
+  nativeToolLabel,
   nativeWatchTools,
   nativeWork,
   nativeWorkLabel,
@@ -206,6 +208,187 @@ test('interleaved tool results preserve names and inputs without crossing genera
   assert.equal(timeline[1].event.tool?.output, 'Edit');
   assert.equal(timeline[2].event.type, 'tool.started');
   assert.equal(timeline[2].event.tool?.output, undefined);
+});
+
+test('a typed tool reads as what it does; an untyped one keeps the runner name', () => {
+  assert.equal(
+    nativeToolLabel({ name: 'commandExecution', kind: 'command', command: 'npm test\n--watch' }),
+    'Run npm test',
+  );
+  assert.equal(
+    nativeToolLabel({ name: 'Edit', kind: 'file-edit', paths: ['src/a.ts', 'src/b.ts'] }),
+    'Change a.ts, b.ts',
+  );
+  assert.equal(
+    nativeToolLabel({ name: 'fileChange', kind: 'file-edit', paths: ['a', 'b', 'c', 'd', 'e'] }),
+    'Change a, b, c and 2 more',
+  );
+  assert.equal(
+    nativeToolLabel({ name: 'Read', kind: 'file-read', paths: ['/w/x.md'] }),
+    'Read x.md',
+  );
+  assert.equal(nativeToolLabel({ name: 'Grep', kind: 'search', paths: ['src'] }), 'Search src');
+  assert.equal(nativeToolLabel({ name: 'Glob', kind: 'search', paths: ['/w/src/'] }), 'Search src');
+  // No subject, no kind, or a kind without a verb: the runner's own name.
+  assert.equal(nativeToolLabel({ name: 'Bash', kind: 'command' }), 'Bash');
+  assert.equal(nativeToolLabel({ name: 'WebFetch', kind: 'web' }), 'WebFetch');
+  assert.equal(nativeToolLabel({ name: 'mcp__x', kind: 'other', paths: ['a'] }), 'mcp__x');
+  assert.equal(nativeToolLabel({ name: 'commandExecution' }), 'commandExecution');
+  assert.equal(
+    nativeToolLabel({ name: 'Bash', kind: 'command', command: 'x'.repeat(200) }).length,
+    121,
+  );
+
+  const started = { ...event(1, 'tool.started'), nativeId: 'tool' };
+  const command = { name: 'Bash', kind: 'command' as const, command: 'npm test' };
+  assert.equal(nativeTimeline([{ ...started, tool: command }])[0].text, 'Run npm test');
+  // The command arrives only with the completion (Cursor): the row reads it then, same key.
+  const late = nativeTimeline([
+    { ...started, tool: { name: 'Run command', kind: 'command' } },
+    { ...event(2, 'tool.completed'), nativeId: 'tool', tool: { ...command, name: 'Run command' } },
+  ]);
+  assert.deepEqual(
+    late.map(({ key, text }) => [key, text]),
+    [[1, 'Run npm test']],
+  );
+  const work = nativeWork([event(0, 'turn.started'), { ...started, tool: command }]);
+  assert.equal(
+    work && nativeWorkLabel(work, Date.parse('2026-09-12T00:00:05Z')),
+    'Working · 5s · Run npm test',
+  );
+});
+
+test('a command card shows what it ran and the end of its output', () => {
+  const lines = Array.from({ length: 45 }, (_, i) => `line ${i + 1}`).join('\n');
+  const text = nativeCommandText({
+    name: 'Bash',
+    kind: 'command',
+    command: 'npm test',
+    output: `${lines}\n`,
+  });
+  assert.equal(text?.split('\n').slice(0, 3).join('|'), '$ npm test|… 35 earlier lines|line 36');
+  assert.equal(text?.split('\n').at(-1), 'line 45');
+  // Text blocks, as Claude and ACP return them.
+  assert.equal(
+    nativeCommandText({
+      name: 'Bash',
+      kind: 'command',
+      command: 'pwd',
+      output: [{ type: 'text', text: '/w' }],
+    }),
+    '$ pwd\n/w',
+  );
+  assert.equal(
+    nativeCommandText({
+      name: 'x',
+      kind: 'command',
+      command: 'ls',
+      output: [{ content: { text: 'a' } }],
+    }),
+    '$ ls\na',
+  );
+  assert.equal(nativeCommandText({ name: 'Bash', kind: 'command', command: 'true' }), '$ true');
+  // A process result, as Cursor returns it.
+  assert.equal(
+    nativeCommandText({
+      name: 'Run npm test',
+      kind: 'command',
+      command: 'npm test',
+      output: { exitCode: 1, stdout: 'ran 3\n', stderr: '1 failed\n' },
+    }),
+    '$ npm test\nran 3\n1 failed',
+  );
+  assert.equal(
+    nativeCommandText({
+      name: 'Bash',
+      kind: 'command',
+      command: 'npm test',
+      output: '\x1b]0;title\x07\x1b[32m✔ passed\x1b[0m',
+    }),
+    '$ npm test\n✔ passed',
+  );
+  // A progress meter's carriage returns start lines, as on the terminal screen.
+  assert.equal(
+    nativeCommandText({
+      name: 'Bash',
+      kind: 'command',
+      command: 'curl -o a.tgz x',
+      output: ' 10%\r 60%\r100%\r\n',
+    }),
+    '$ curl -o a.tgz x\n 10%\n 60%\n100%',
+  );
+  // A heredoc shows its first line; the whole command is in the raw card.
+  assert.equal(
+    nativeCommandText({
+      name: 'Bash',
+      kind: 'command',
+      command: "cat <<'EOF'\nhi\nEOF",
+      output: 'hi',
+    }),
+    "$ cat <<'EOF' …\nhi",
+  );
+  // Output that is not text keeps the raw card, rather than looking like no output.
+  assert.equal(
+    nativeCommandText({ name: 'x', kind: 'command', command: 'ls', output: [{ type: 'image' }] }),
+    undefined,
+  );
+  assert.equal(
+    nativeCommandText({
+      name: 'x',
+      kind: 'command',
+      command: 'ls',
+      output: { stdout: '', stderr: '' },
+    }),
+    '$ ls',
+  );
+  // Any other tool keeps its raw card.
+  assert.equal(nativeCommandText({ name: 'Edit', kind: 'file-edit', paths: ['a'] }), undefined);
+  assert.equal(nativeCommandText({ name: 'Bash', kind: 'command' }), undefined);
+});
+
+test('a resolved request stays in the conversation with its decision or answers', () => {
+  const approval = { id: 'approval', title: 'Allow runner action?', detail: 'rm -r build' };
+  const question = {
+    id: 'question',
+    title: 'Answer runner questions',
+    questions: [
+      { id: 'file', prompt: 'Which file?', options: [{ label: 'a.ts' }, { label: 'b.ts' }] },
+    ],
+  };
+  const resolved = (
+    sequence: number,
+    request?: NativeSessionEvent['request'],
+    response?: NativeSessionEvent['response'],
+  ): NativeSessionEvent => ({ ...event(sequence, 'approval.resolved'), request, response });
+  const timeline = nativeTimeline([
+    { ...event(1, 'tool.started'), nativeId: 'tool', tool: { name: 'Bash' } },
+    resolved(2, approval, { decision: 'approve' }),
+    resolved(3, approval, { decision: 'deny' }),
+    resolved(4, question, { answers: { file: ['a.ts', 'b.ts'] } }),
+    resolved(5, approval),
+    resolved(6, question),
+    // A runner's own notice for a request already resolved here carries no request.
+    resolved(7),
+    { ...event(8, 'turn.completed'), status: 'completed' },
+  ]);
+  assert.deepEqual(
+    timeline.filter((entry) => entry.kind === 'resolution').map((entry) => entry.text),
+    [
+      'Approved: rm -r build',
+      'Declined: rm -r build',
+      'Answered: Which file? → a.ts, b.ts',
+      'Resolved: rm -r build',
+      'Resolved: Which file?',
+    ],
+  );
+  // Not a tool call: folding the finished turn leaves it in view.
+  const rows = nativeTimelineRows(timeline);
+  assert.deepEqual(
+    rows.flatMap((row) =>
+      row.kind === 'entry' && row.entry.kind === 'resolution' ? [row.fold] : [],
+    ),
+    [undefined, undefined, undefined, undefined, undefined],
+  );
 });
 
 test('late acceptance restores the user prompt before its assistant response', () => {

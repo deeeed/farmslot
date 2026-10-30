@@ -173,12 +173,13 @@ async function observeContext(
     return { kind, activeRole };
   };
   const progress = await observeTarget(target.target);
-  if (
-    progress.kind !== 'unproven' ||
-    !context?.target?.paneId ||
-    !run.decisions.some((decision) => !decision.resolvedAt && decision.payload?.kind === 'ready')
-  )
-    return progress;
+  // The worker has handed off at a publication gate, COMPLETE or FINALIZE; review fixes are over.
+  const handedOff =
+    run.decisions.some((decision) => !decision.resolvedAt && decision.payload?.kind === 'ready') ||
+    run.steps.some(
+      (step) => (step.name === 'complete' || step.name === 'finalize') && step.status === 'running',
+    );
+  if (progress.kind !== 'unproven' || !context?.target?.paneId || !handedOff) return progress;
   const retained = await source.retainedTarget(vars, context);
   if (retained.state === 'absent')
     return {

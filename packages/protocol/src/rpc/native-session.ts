@@ -174,6 +174,21 @@ export const NativeSessionEventTypes = {
   ERROR: 'error',
 } as const;
 
+/** What a tool call does, normalized by the runner adapter. Absent: an older host, or unknown. */
+export type NativeToolKind = 'command' | 'file-edit' | 'file-read' | 'search' | 'web' | 'other';
+export interface NativeSessionTool {
+  /** The runner's own tool name, such as Bash or commandExecution. */
+  name: string;
+  input?: unknown;
+  output?: unknown;
+  status?: string;
+  kind?: NativeToolKind;
+  /** The command line a `command` tool runs. */
+  command?: string;
+  /** Files the tool reads, edits or searches. */
+  paths?: string[];
+}
+
 export interface NativeSessionEvent {
   sessionId: string;
   sequence: number;
@@ -184,7 +199,7 @@ export interface NativeSessionEvent {
   turnId?: string;
   nativeId?: string;
   text?: string;
-  tool?: { name: string; input?: unknown; output?: unknown; status?: string };
+  tool?: NativeSessionTool;
   responseState?: 'unknown';
   request?: {
     id: string;
@@ -199,6 +214,11 @@ export interface NativeSessionEvent {
       multiSelect?: boolean;
     }>;
   };
+  /**
+   * On `approval.resolved`: the response this host delivered for the request. Absent when the
+   * runner resolved the request without one, so its decision is unknown.
+   */
+  response?: NativeSessionResponse;
   status?: 'completed' | 'failed' | 'interrupted';
   /** Only a schema-bound completed provider turn may supply this value. */
   structuredResult?: NativeStructuredResult;

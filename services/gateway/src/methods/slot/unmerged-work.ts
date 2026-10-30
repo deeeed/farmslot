@@ -7,6 +7,9 @@ import { hasUserSlotChanges } from '../../fleet/slot-scaffolding.js';
 import { ghRequest } from '../../integrations/github-client.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
 
+/** Git's refusal when another fetch in the same repository moved or holds a ref. */
+const REF_LOCK_RACE = /cannot lock ref|unable to update local ref/;
+
 interface UnpushedCommitOptions {
   preservedByLocalBranch?: boolean;
   patchBase?: string;
@@ -257,7 +260,18 @@ export async function assertPrepareCommitsPublished(
   const defaultBranch = options.defaultBranch ?? DEFAULT_BRANCH;
   // Keep last-published tips reachable after upstream deletion/squash merge.
   // Already-pruned squash merges are verified by patch or merged-PR identity below.
-  const fetch = await exec(vars, `${git} fetch --all --no-prune --no-tags`, { timeout: 120_000 });
+  const fetchAll = () =>
+    exec(vars, `${git} fetch --all --no-prune --no-tags`, { timeout: 120_000 });
+  let fetch = await fetchAll();
+  // Slots whose worktrees share one repository prepare concurrently. The fetch
+  // that loses a remote-tracking ref update fails although the other stored the
+  // same remote state, so retry that refusal alone.
+  for (
+    let retry = 0;
+    retry < 2 && fetch.exitCode !== 0 && REF_LOCK_RACE.test(`${fetch.stderr}\n${fetch.stdout}`);
+    retry++
+  )
+    fetch = await fetchAll();
   let acceptedMergedWork = false;
   if (fetch.exitCode !== 0) {
     const refusal = new Error(

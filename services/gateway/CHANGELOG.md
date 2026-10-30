@@ -5,10 +5,17 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Initialize a run's task on the slot after prepare checks out and installs it, so a slot left on an older branch no longer fails write-task with missing provider dependencies (ADR-068 Amendment 7).
+- Dispatch keeps probing a runtime it just booted until its launch budget ends, so an iOS simulator that is still busy after `simctl boot` no longer fails one 5-second health check.
+- Prepare retries its remote fetch when another slot sharing the same repository moved a tracking ref first, instead of failing with "cannot lock ref".
+- Task files tell workers to mark complete with criteria awaiting human review; the run gate collects that review.
+- An artifact-only run with output review keeps its output review through pipeline review and a result decision, so COMPLETE no longer refuses for a missing captured output review; refreshing the output restores a review an earlier capture retired.
+- Blind eval trials check their commit signatures from the frozen trial base, so a finished worker no longer fails MONITOR on the removed `origin/main`.
+- A reference-only eval experiment opens as its family snapshot, with its reference package and no runs, instead of failing with "No runs found".
 - Launch and resume Codex workers without the startup update check, so a worker never self-updates inside its pane and misses its ready window.
+- Redispatching a ticket whose earlier attempts failed or were cancelled before dispatch takes a new task dir without a collision decision. An earlier attempt that ever reached dispatch (replays included) or is still live, or a dir without a readable owner stamp, still asks.
 - Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
 - Allow a requested re-review at the same HEAD when a package refresh changed only the run artifacts its open findings cite.
-- Recover publication-gate progress after a worker pane disappears; verify a resumed conversation before reading its replacement pane.
+- Recover publication-gate, COMPLETE and FINALIZE progress after a worker pane disappears, even without a saved conversation; verify a resumed conversation before reading its replacement pane.
 - Keep prepare's support verification and retention inventory out of process arguments, so growing run history cannot fail dispatch with E2BIG.
 
 - Preserve acceptance-contract task writes across a CI-watch handoff when the parent releases its slot.

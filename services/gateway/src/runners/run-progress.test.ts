@@ -232,6 +232,50 @@ test('a publication gate recovers only a confirmed vanished worker', async () =>
   assert.equal(retainedReads, 0, 'ordinary monitoring keeps its existing recovery policy');
 });
 
+test('COMPLETE and FINALIZE recover only a confirmed vanished worker', async () => {
+  const run = fixRun('tmux', 'working');
+  run.flowType = 'fix-bug';
+  const context = run.agentContexts![0]!;
+  context.role = 'fix-bug';
+  context.runnerSessionId = 'saved-session';
+  context.runnerSessionPath = '/tmp/saved-session.jsonl';
+  context.target = { target: 'owned:bugfix', session: 'owned', paneId: '%0' };
+  const readers = (state: 'absent' | 'unknown') => ({
+    slot: async () => slot,
+    target: async () => ({ target: '%0', session: 'owned' }),
+    taskProgress: async () => null,
+    activity: async () => null,
+    turn: async () => null,
+    background: async () => null,
+    retainedTarget: async () =>
+      state === 'absent'
+        ? { state: 'absent' as const }
+        : { state: 'unknown' as const, reason: 'node unreachable' },
+  });
+  for (const settling of [
+    [{ name: 'complete', status: 'running' }],
+    // An artifact-only run skips its gate and rechecks readiness in FINALIZE.
+    [
+      { name: 'complete', status: 'done' },
+      { name: 'human-gate', status: 'skipped' },
+      { name: 'finalize', status: 'running' },
+    ],
+  ] as Run['steps'][]) {
+    run.steps = [{ name: 'monitor', status: 'done' }, ...settling];
+    assert.equal((await readRunProgress(run, readers('absent'))).kind, 'idle');
+    assert.equal((await readRunProgress(run, readers('unknown'))).kind, 'unproven');
+  }
+  run.steps = [
+    { name: 'monitor', status: 'running' },
+    { name: 'complete', status: 'pending' },
+  ];
+  assert.equal(
+    (await readRunProgress(run, readers('absent'))).kind,
+    'unproven',
+    'monitoring keeps its existing recovery policy',
+  );
+});
+
 test('a rehosted publication worker is observed in its exact resumed pane', async () => {
   const run = fixRun('tmux', 'waiting');
   const context = run.agentContexts![0]!;

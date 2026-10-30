@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A native conversation names tool calls by what they do, "Run npm test", "Change a.ts, b.ts" or "Read a.ts", in the tool row and the working status, instead of runner names such as `commandExecution`. A command's details show the command and the last 10 lines it printed, with its raw input and output one tap away.
+- A resolved approval or question stays in the native conversation: "Approved: rm -r build", "Declined: …", "Answered: Which file? → a.ts", or "Resolved: …" when the session's host did not record the decision.
+- Collapsing a long message (Show less) or a turn's tool calls in a native conversation keeps its button where you saw it, instead of the content above shrinking it out of view.
+- A family with no runs, such as a reference-only eval, shows no "Open latest run" link.
 - A finished turn's tool calls in a native conversation fold behind one row at the end of the turn, "Worked for 4m 12s · 6 tools", that opens them in place. A turn you watched run stays open, with any tool you opened still open.
 - Chat messages (native conversations, the chat panel and worker history) render markdown through the shared sanitized renderer: lists, links, fenced code with its language, tables. A tag written in a message, such as `<details>`, shows as text instead of being rendered, and an image shows as a link, so a message never makes the page load a URL by itself. An image inside a link, even wrapped in bold or italics, shows as that link's text; a badge with no alt text and nothing else in its link shows the link's URL.
 - While a native session runs a turn, its status row shows how long it has worked and the tool it runs now ("Working · 1m 12s · Bash") instead of "Live · running".

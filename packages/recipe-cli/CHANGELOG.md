@@ -6,6 +6,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Record task acceptance through the runtime's shared engine-claim transfer, so it needs the matching `@farmslot/agent-runtime` release.
+
 ## 0.32.1 - 2026-10-29
 
 - Align protocol 0.74.0, task runtime 0.39.8, adapter-sdk 0.25.2 and recorder runtime 0.46.2.

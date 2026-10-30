@@ -57,6 +57,7 @@ import {
   farmslotRoot,
   getOrchestratorTaskRoot,
   ownsRunTaskWrite,
+  type RawProjectJson,
   readSlotRow,
 } from '../core/index.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
@@ -574,6 +575,50 @@ export function findTaskDirCollisions(
   return entries.filter((e) => e.startsWith(prefix));
 }
 
+/** Where a run's flow keeps its task dirs on the orchestrator. */
+function flowTaskBaseDir(
+  run: Pick<Run, 'project' | 'flowType'>,
+  projectJson: RawProjectJson,
+): string {
+  return path.join(getOrchestratorTaskRoot(run.project, projectJson), computeFlowDir(run.flowType));
+}
+
+/**
+ * The run each task dir was written for, from the owner stamp writeTaskFile leaves right
+ * after creating the dir, so a write-task that fails later still names its owner.
+ * A dir without a readable stamp has no provable owner: null.
+ */
+export async function readTaskDirOwners(
+  run: Pick<Run, 'project' | 'flowType'>,
+  dirs: readonly string[],
+): Promise<Array<string | null>> {
+  const projectVars = await loadProjectVars(run.project);
+  const tasksBaseDir = flowTaskBaseDir(run, projectVars.projectJson);
+  return Promise.all(
+    dirs.map(async (dir) => {
+      let stamp: string;
+      try {
+        stamp = await readFile(
+          path.join(tasksBaseDir, dir, RUNTIME_CAPABILITY_CATALOG_INPUT),
+          'utf8',
+        );
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw err;
+      }
+      let owner: unknown;
+      try {
+        owner = (JSON.parse(stamp) as { ownerRunId?: unknown }).ownerRunId;
+      } catch (err) {
+        // A stamp cut short by a crash mid-write names no owner; the caller keeps asking.
+        if (err instanceof SyntaxError) return null;
+        throw err;
+      }
+      return typeof owner === 'string' ? owner : null;
+    }),
+  );
+}
+
 /**
  * Slot-less collision precheck used before GRADE so the engine can short-circuit
  * the LLM-bound grading step when a colliding task dir already exists. Returns
@@ -585,11 +630,7 @@ export async function precheckTaskDirCollision(
 ): Promise<{ existingDirs: string[]; ticketSlug: string }> {
   const ticketSlug = computeTicketSlug(run.ticketOrPr, run.flowType);
   const projectVars = await loadProjectVars(run.project);
-  const fDir = computeFlowDir(run.flowType);
-  const tasksBaseDir = path.join(
-    getOrchestratorTaskRoot(run.project, projectVars.projectJson),
-    fDir,
-  );
+  const tasksBaseDir = flowTaskBaseDir(run, projectVars.projectJson);
   if (!existsSync(tasksBaseDir)) return { existingDirs: [], ticketSlug };
   try {
     const entries = await readdir(tasksBaseDir);
@@ -801,10 +842,7 @@ export async function writeTaskFile(
   const fDir = computeFlowDir(run.flowType);
   const variantSuffix = run.variant ? `-${computeTicketSlug(run.variant, run.flowType)}` : '';
   const baseFolderId = `${tSlug}${variantSuffix}-${timestamp}`;
-  const tasksBaseDir = path.join(
-    getOrchestratorTaskRoot(run.project, projectVars.projectJson),
-    fDir,
-  );
+  const tasksBaseDir = flowTaskBaseDir(run, projectVars.projectJson);
 
   // Collision pre-check: scan for existing dirs sharing the ticket+variant prefix.
   // Produces a readable error listing conflicting dirs. Skipped on retry (create-new

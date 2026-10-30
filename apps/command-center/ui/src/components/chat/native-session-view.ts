@@ -17,12 +17,14 @@ import {
   type NativeSessionReadResult,
   type NativeSessionResponse,
   type NativeSessionSendResult,
+  type NativeSessionTool,
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
 import {
   appendNativePage,
   NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
+  nativeCommandText,
   nativeDeliveryLabel,
   nativeEntryPreview,
   nativeFoldWatched,
@@ -432,20 +434,7 @@ export class NativeSessionView extends LitElement {
                 ? 'Started'
                 : (entry.event.tool?.status ?? 'Finished')}
             </summary>
-            <pre>
-${JSON.stringify(
-                {
-                  ...(entry.event.tool?.input !== undefined
-                    ? { input: entry.event.tool.input }
-                    : {}),
-                  ...(entry.event.tool?.output !== undefined
-                    ? { output: entry.event.tool.output }
-                    : {}),
-                },
-                null,
-                2,
-              )}</pre
-            >
+            ${this.renderToolBody(entry.event.tool)}
           </details>`
         : html`<span class="meta"
               >${entry.kind === 'user'
@@ -479,6 +468,28 @@ ${JSON.stringify(
     </article>`;
   }
 
+  /** A command shows what it ran and its last lines, its raw input and output one tap away. */
+  private renderToolBody(tool: NativeSessionTool | undefined) {
+    const raw = html`<pre>
+${JSON.stringify(
+        {
+          ...(tool?.input !== undefined ? { input: tool.input } : {}),
+          ...(tool?.output !== undefined ? { output: tool.output } : {}),
+        },
+        null,
+        2,
+      )}</pre
+    >`;
+    const command = nativeCommandText(tool);
+    return command
+      ? html`<pre>${command}</pre>
+          <details>
+            <summary>Raw input and output</summary>
+            ${raw}
+          </details>`
+      : raw;
+  }
+
   private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: string) {
     if (!preview) return html`<span class="body">${text}</span>`;
     const expanded = this.expandedMessages.has(key);
@@ -487,14 +498,32 @@ ${JSON.stringify(
         class="message-toggle"
         data-testid="native-message-toggle"
         aria-expanded=${expanded ? 'true' : 'false'}
-        @click=${() => {
-          const next = new Set(this.expandedMessages);
-          if (!next.delete(key)) next.add(key);
-          this.expandedMessages = next;
+        @click=${(event: Event) => {
+          const toggle = () => {
+            const next = new Set(this.expandedMessages);
+            if (!next.delete(key)) next.add(key);
+            this.expandedMessages = next;
+          };
+          void this.toggleInPlace(event.currentTarget, expanded, toggle);
         }}
       >
         ${nativeMessageToggleLabel(preview, expanded)}
       </button>`;
+  }
+
+  /**
+   * Collapsing shrinks the content above its toggle; keep the toggle where the reader saw it.
+   * At the top of the timeline there may not be enough content above to scroll back by: the
+   * toggle then moves up only by the space that doesn't exist, and stays in view. Expanding
+   * keeps the default, so the reader reads on from where the preview stopped.
+   */
+  private async toggleInPlace(target: EventTarget | null, collapsing: boolean, toggle: () => void) {
+    const timeline = this.renderRoot.querySelector('.timeline');
+    if (!collapsing || !(target instanceof Element) || !timeline) return toggle();
+    const before = target.getBoundingClientRect().top;
+    toggle();
+    await this.updateComplete;
+    if (target.isConnected) timeline.scrollTop += target.getBoundingClientRect().top - before;
   }
 
   private scrollTimelineToEnd() {
@@ -1366,11 +1395,12 @@ ${JSON.stringify(
                                   class="work-toggle"
                                   data-testid="native-work-fold"
                                   aria-expanded=${this.foldIsOpen(row.key) ? 'true' : 'false'}
-                                  @click=${() => {
-                                    this.foldOpen = new Map(this.foldOpen).set(
-                                      row.key,
-                                      !this.foldIsOpen(row.key),
-                                    );
+                                  @click=${(event: Event) => {
+                                    const open = this.foldIsOpen(row.key);
+                                    const toggle = () => {
+                                      this.foldOpen = new Map(this.foldOpen).set(row.key, !open);
+                                    };
+                                    void this.toggleInPlace(event.currentTarget, open, toggle);
                                   }}
                                 >
                                   ${row.label}
