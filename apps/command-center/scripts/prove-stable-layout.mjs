@@ -214,14 +214,15 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', (socket) =>
   socket.on('message', (raw) => {
     const request = JSON.parse(String(raw));
-    frames.push({
+    const frame = {
       at: Date.now(),
       method: request.method,
       ...(nativePanelProof ? { mode, revision } : {}),
       ...(request.method === 'run.get'
         ? { params: { runId: request.params?.runId, view: request.params?.view } }
         : {}),
-    });
+    };
+    frames.push(frame);
     const reply = { type: 'res', id: request.id, ok: true };
     if (request.method === 'auth.connect')
       reply.payload = {
@@ -308,7 +309,11 @@ wss.on('connection', (socket) =>
       request.method === 'native.session.read'
     ) {
       // A real delayed refusal makes the existing cache backoff quiet across its saved-data boundary.
+      frame.replyScheduledAt = Date.now();
       const timer = setTimeout(() => {
+        frame.replyTimerAt = Date.now();
+        frame.socketReadyState = socket.readyState;
+        frame.replyCode = reply.error?.code;
         timedReplies.delete(timer);
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
       }, 250);
