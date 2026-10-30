@@ -145,6 +145,12 @@ export interface GatewayResourceCache {
     placement?: ResourceContentPlacement,
     signal?: AbortSignal,
   ): Promise<ResourceQueryState<T>>;
+  /**
+   * Like `retry`, but never joins a read already in flight, which may have sampled the resource
+   * before the caller learned of a change: it reads once that read settles. Optional for test
+   * doubles; the shared cache always provides it.
+   */
+  retryAfterPending?<T>(query: ResourceQuery<T>): Promise<ResourceQueryState<T>>;
   /** Presence for this owner, without loading the bytes or changing their recency. */
   hasContent(key: ContentKey): Promise<boolean>;
   /** Stored bytes for this owner, without changing their recency. */

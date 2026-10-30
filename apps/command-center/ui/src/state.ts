@@ -899,7 +899,7 @@ export function initState(): void {
   });
 
   // Run writes reread the inbox at most every 30 s; a decision raised, answered or changed is read
-  // at once.
+  // at once, by a read that starts after the event rather than one already in flight.
   for (const event of [
     Events.DECISION_NEW,
     Events.DECISION_RESOLVED,
@@ -910,7 +910,10 @@ export function initState(): void {
   ])
     gateway.subscribe(event, () => {
       if (collectionCache && collectionFarm)
-        void collectionCache.retry(decisionsQuery).catch(() => undefined);
+        void (
+          collectionCache.retryAfterPending?.(decisionsQuery) ??
+          collectionCache.retry(decisionsQuery)
+        ).catch(() => undefined);
     });
 
   // GitHub API rate-limit telemetry (github-client.ts emits after each call).

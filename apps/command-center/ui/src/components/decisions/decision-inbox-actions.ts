@@ -23,6 +23,10 @@ export async function assertInboxDecisionReady(
 export async function resolveInboxDecision(decisionId: string, actionId: string): Promise<void> {
   await assertInboxDecisionReady(decisionId, actionId);
   await gateway.request(Methods.DECISION_RESOLVE, { decisionId, actionId });
-  // Run writes reread the list at most every 30 s; the user's own answer is read at once.
-  void getResourceCache()?.retry(decisionsQuery);
+  // Run writes reread the list at most every 30 s; the user's own answer is read at once, by a
+  // read that starts after it.
+  const cache = getResourceCache();
+  void (cache?.retryAfterPending?.(decisionsQuery) ?? cache?.retry(decisionsQuery))?.catch(
+    () => undefined,
+  );
 }

@@ -1289,6 +1289,13 @@ export function createGatewayResourceCache(
       await fetchEntry(entry, false, placement, signal);
       return entry.state as ResourceQueryState<T>;
     },
+    async retryAfterPending<T>(query: ResourceQuery<T>) {
+      if (disposed) throw new Error('Resource cache is disposed');
+      const entry = entryFor(query);
+      await entry.pending?.promise.catch(() => undefined);
+      await fetchEntry(entry, false);
+      return entry.state as ResourceQueryState<T>;
+    },
     async hasContent(key) {
       return (await readStoredContent((target) => target.hasContent(contentKey(key)))) ?? false;
     },

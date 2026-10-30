@@ -372,3 +372,24 @@ test('the registered decision list reads each change at once, for consumers that
     stop();
   }
 });
+
+test('retryAfterPending reads after a read in flight instead of joining it', async (t) => {
+  const query = resourceQuery('decision.list', {});
+  const gateway = pacedGateway(t, query);
+  const stop = gateway.cache.observe(query, () => {});
+  try {
+    await gateway.flush();
+    assert.equal(gateway.reads(), 1);
+    void gateway.cache.retry(query);
+    const after = gateway.cache.retryAfterPending!(query);
+    await gateway.flush();
+    assert.equal(gateway.reads(), 1, 'retry joins the read in flight; retryAfterPending waits');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    assert.equal(gateway.reads(), 2, 'and then reads');
+    gateway.pending.shift()!.answer();
+    assert.equal((await after).status, 'ready');
+  } finally {
+    stop();
+  }
+});
