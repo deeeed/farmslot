@@ -1,3 +1,5 @@
+import timers from 'node:timers/promises';
+
 import { isTerminalRunStatus } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
@@ -15,12 +17,15 @@ import {
 } from './resource-manager.js';
 import { probeResourceProcess } from './resource-process.js';
 
+const HEALTH_POLL_MS = 2_000;
+
 /** The fresh-launch boundary, independent of the prepare profile's health phase. */
 export async function ensureRunRuntimeReady(
   slotId: string,
   runId: string,
   beforeBoot: () => Promise<void>,
   assertCurrent?: () => void,
+  options: { pollMs?: number } = {},
 ): Promise<void> {
   return withSlotSources(slotId, async () => {
     const initial = await readSlotRow(slotId);
@@ -91,6 +96,7 @@ export async function ensureRunRuntimeReady(
             throw new Error(
               `Runtime ${resource.id} on ${slotId} has a foreign live process; boot refused`,
             );
+          const deadline = Date.now() + bootTimeoutMs;
           const result = await executeResourceControl(
             slotId,
             resource.id,
@@ -104,8 +110,17 @@ export async function ensureRunRuntimeReady(
             throw new Error(
               `Runtime ${resource.id} on ${slotId} failed to boot: ${result.detail ?? 'unknown failure'}`,
             );
-          const ready = await probeResourceStatus(slotId, resource.id);
+          let ready = await probeResourceStatus(slotId, resource.id);
           await assertOwner();
+          // A host still busy from the boot (CoreSimulator right after `simctl boot`)
+          // can time out one health probe, so keep probing within the launch budget.
+          while (ready.status === 'stopped' && Date.now() < deadline) {
+            await timers.setTimeout(
+              Math.min(options.pollMs ?? HEALTH_POLL_MS, deadline - Date.now()),
+            );
+            ready = await probeResourceStatus(slotId, resource.id);
+            await assertOwner();
+          }
           if (ready.status !== 'running')
             throw new Error(
               `Runtime ${resource.id} on ${slotId} is ${ready.status} after boot: ${ready.detail ?? 'not healthy'}`,

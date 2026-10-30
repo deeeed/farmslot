@@ -116,7 +116,7 @@ const ready = (
   gate: () => Promise<void> = async () => {
     calls.push('pressure');
   },
-) => ensureRunRuntimeReady('slot', 'run', gate);
+) => ensureRunRuntimeReady('slot', 'run', gate, undefined, { pollMs: 1 });
 
 test('cold runtime boots server then browser and rechecks each with explicit run ownership', async () => {
   await ready();
@@ -156,7 +156,21 @@ test('failed boot and unhealthy post-boot both refuse later resources', async ()
   assert.ok(!calls.includes('probe:browser'));
   controlOk = true;
   states.server = ['stopped'];
+  prepareSeconds = 0.05;
   await assert.rejects(ready(), /stopped after boot/);
+});
+test('a runtime still busy after boot is probed again until healthy within its launch budget', async () => {
+  states = { browser: ['running'], server: ['stopped', 'stopped', 'stopped', 'running'] };
+  await ready();
+  assert.deepEqual(calls, [
+    'probe:server',
+    'pressure',
+    'boot:server',
+    'probe:server',
+    'probe:server',
+    'probe:server',
+    'probe:browser',
+  ]);
 });
 test('changed owner, epoch and cancellation during health cannot authorize a boot', async () => {
   for (const change of [
