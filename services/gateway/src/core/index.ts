@@ -83,6 +83,7 @@ export {
   markSlotHeld,
   markSlotStatusIf,
   ownsRunSlotCleanup,
+  ownsRunTaskWrite,
   readSlotField,
   readSlotRow,
   resetSlot,
