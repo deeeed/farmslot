@@ -27,7 +27,10 @@ import {
   shouldBindOnlyForLoadRun,
 } from '../shared/slot-prepare-client.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
-import { DEFAULT_SLOT_PREPARE_OPTIONS } from '../shared/slot-prepare-options-model.js';
+import {
+  DEFAULT_SLOT_PREPARE_OPTIONS,
+  type SlotPrepareOptionsState,
+} from '../shared/slot-prepare-options-model.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 const DEFAULT_LIMIT = 200;
@@ -407,11 +410,16 @@ export class SlotLoadRunModal extends LitElement {
     this._forcePrepare = event.detail.forcePrepare;
   }
 
-  private async _executeLoad(
-    expected: Run,
-    prepareProfile = this._prepareProfile,
-    strictProfile = this._strictProfile,
-  ) {
+  private _prepareOptions(): SlotPrepareOptionsState {
+    return {
+      prepareProfile: this._prepareProfile,
+      strictProfile: this._strictProfile,
+      forcePrepare: this._forcePrepare,
+    };
+  }
+
+  /** `options` are the ones on screen at the click; they stay editable while the runs are reread. */
+  private async _executeLoad(expected: Run, options: SlotPrepareOptionsState) {
     if (this._actionRequest) return;
     const request = Symbol('load-run');
     const scope = this._scope;
@@ -434,9 +442,9 @@ export class SlotLoadRunModal extends LitElement {
         runId: run.id,
         branch: run.branch!,
         slotBranch: this.slotBranch,
-        prepareProfile,
-        strictProfile,
-        forcePrepare: this._forcePrepare,
+        prepareProfile: options.prepareProfile,
+        strictProfile: options.strictProfile,
+        forcePrepare: options.forcePrepare,
         rebind: true,
       });
       if (!current()) return;
@@ -504,11 +512,12 @@ export class SlotLoadRunModal extends LitElement {
   private async _onLoadClick(run: Run) {
     if (this._loadReason(run) || this._actionBusy || this._actionRequest) return;
     const scope = this._scope;
+    const options = this._prepareOptions();
     try {
       await this._currentRun(run, scope);
       if (this._pendingConfirm === run.id && this._confirmScope === scope) {
         if (this._confirmTimer) clearTimeout(this._confirmTimer);
-        await this._executeLoad(run);
+        await this._executeLoad(run, options);
         return;
       }
       this._clearConfirmation();
@@ -623,11 +632,11 @@ export class SlotLoadRunModal extends LitElement {
                     this._strictProfile = event.detail.strictProfile;
                     return;
                   }
-                  void this._executeLoad(
-                    run,
-                    event.detail.prepareProfile,
-                    event.detail.strictProfile,
-                  );
+                  void this._executeLoad(run, {
+                    ...this._prepareOptions(),
+                    prepareProfile: event.detail.prepareProfile,
+                    strictProfile: event.detail.strictProfile,
+                  });
                 }}
               ></slot-prepare-options>
             </div>

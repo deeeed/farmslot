@@ -999,8 +999,6 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     retention: { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: 10 * mb },
     live: true,
     dependencies: () => [{ family: 'decisions', scope: 'farm' }],
-    // The gateway changes the farm decisions key at every run write, not only for decisions.
-    rereadIntervalMs: { decisions: 30_000 },
   },
   [Methods.FAMILY_OBSERVABILITY_GET]: {
     persisted: false,

@@ -311,8 +311,7 @@ test('the PR list waits longer for the slot, worker and run changes it only cros
   }
 });
 
-async function listWaitsForRunWrites(t: TestContext, method: 'run.list' | 'decision.list') {
-  const query = resourceQuery(method, {});
+async function listWaitsForRunWrites(t: TestContext, query: ResourceQuery) {
   const gateway = pacedGateway(t, query);
   const stop = gateway.cache.observe(query, () => {});
   try {
@@ -347,7 +346,29 @@ async function listWaitsForRunWrites(t: TestContext, method: 'run.list' | 'decis
 }
 
 test('the run list waits 30 s for the run writes that change it', (t) =>
-  listWaitsForRunWrites(t, 'run.list'));
+  listWaitsForRunWrites(t, resourceQuery('run.list', {})));
 
-test('the decision list waits 30 s for the run writes that change it', (t) =>
-  listWaitsForRunWrites(t, 'decision.list'));
+test('a decision list paced by its consumer waits 30 s for the run writes that change it', (t) =>
+  listWaitsForRunWrites(t, {
+    ...resourceQuery('decision.list', {}),
+    rereadIntervalMs: { decisions: 30_000 },
+  }));
+
+test('the registered decision list reads each change at once, for consumers that act only on a ready inbox', async (t) => {
+  const query = resourceQuery('decision.list', {});
+  const gateway = pacedGateway(t, query);
+  const stop = gateway.cache.observe(query, () => {});
+  try {
+    await gateway.flush();
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+    t.mock.timers.tick(1000);
+    gateway.change();
+    await gateway.flush();
+    assert.equal(gateway.reads(), 2, 'A change a second after the last read is read at once');
+    gateway.pending.shift()!.answer();
+    await gateway.flush();
+  } finally {
+    stop();
+  }
+});
