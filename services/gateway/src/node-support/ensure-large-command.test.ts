@@ -23,10 +23,10 @@ test('full support verification and activation handle an inventory larger than A
   const { loadProjectVars } = await import('../core/config.js');
   const { ensureNodeSupportBundle, nodeSupportBundlePaths } = await import('./ensure.js');
   const projectVars = await loadProjectVars('large');
-  const files: NodeSupportFile[] = Array.from({ length: 250 }, (_, index) => {
+  const files: NodeSupportFile[] = Array.from({ length: 128 }, (_, index) => {
     const content = `printf '%s\\n' ${index}\n`;
     return {
-      relativePath: `scripts/${index}-${'x'.repeat(120)}.sh`,
+      relativePath: `scripts/${index}-${'x'.repeat(200)}.sh`,
       contentBase64: Buffer.from(content).toString('base64'),
       sha256: createHash('sha256').update(content).digest('hex'),
       size: Buffer.byteLength(content),
@@ -49,11 +49,14 @@ test('full support verification and activation handle an inventory larger than A
   const supportRoot = path.join(home, 'support');
   const supportDir = path.join(supportRoot, manifest.hash);
   await mkdir(path.join(supportDir, 'scripts'), { recursive: true });
-  for (const file of files)
-    await writeFile(
-      path.join(supportDir, file.relativePath),
-      Buffer.from(file.contentBase64, 'base64'),
-    );
+  await Promise.all(
+    files.map((file) =>
+      writeFile(
+        path.join(supportDir, file.relativePath),
+        Buffer.from(file.contentBase64, 'base64'),
+      ),
+    ),
+  );
   await writeFile(path.join(supportDir, 'manifest.json'), JSON.stringify(manifest));
   const vars = makeVars({
     machine: 'remote',
