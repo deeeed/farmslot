@@ -3,6 +3,7 @@ import { Events, type Run } from '@farmslot/protocol';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { prepareBlindTrialGit } from '../evals/blind-trial.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
@@ -295,6 +296,8 @@ export async function executePrepareStep(
   const flags = getRunFlags(runId);
   // Optional integrate-main for review (merge commit, soft-fail) — off by default.
   const mergeMain = flags?.mergeMain === true;
+  if (current.engineState?.evalExperiment && mergeMain)
+    throw new Error('Blind trials cannot merge a later branch into their base.');
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
     branch: current.branch,
@@ -428,7 +431,10 @@ export async function executePrepareStep(
       prepareController.signal,
       {
         ...(warmRecovery ? { stripClean: true } : {}),
-        ...(isPrepareReplay ? { preserveBranch: true } : {}),
+        ...(isPrepareReplay || current.engineState?.evalExperiment ? { preserveBranch: true } : {}),
+        ...(current.engineState?.evalExperiment?.blind
+          ? { blindBaseSha: current.engineState.evalExperiment.blind.baseSha }
+          : {}),
         allowMissingReplayBranch,
         beforeBranchSetup: branchIdentity
           ? async () => {
@@ -446,6 +452,7 @@ export async function executePrepareStep(
                 }),
                 'prepare branch setup starting',
               );
+              await prepareBlindTrialGit(runId, prepareController.signal);
             }
           : undefined,
         // A replay re-resolves against the commit the run already recorded: a

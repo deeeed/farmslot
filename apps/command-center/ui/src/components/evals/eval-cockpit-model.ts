@@ -371,6 +371,7 @@ export function packageProjectionFromManifest(
     runId: pkg.runId,
     source: pkg.source,
     axes: pkg.axes,
+    comparisonEligibility: pkg.comparisonEligibility,
     status: pkg.status,
     diff: pkg.diff,
     metrics: pkg.metrics,

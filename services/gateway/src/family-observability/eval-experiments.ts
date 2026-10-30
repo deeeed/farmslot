@@ -1,8 +1,10 @@
 // eval-experiments.ts — Family observability projection of eval experiment packages
 
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  evalComparisonEligibility,
   type EvalExperimentManifest,
   type EvalExperimentProjection,
   type EvalPackageSource,
@@ -87,6 +89,7 @@ async function experimentManifestProjection(
       sourceBacklinks: sourceBacklinksForSource(source),
       candidateStrategyFingerprint: input.candidateStrategyFingerprint,
       axes: input.axes,
+      comparisonEligibility: { status: 'invalid', reason: missingReason },
       status: 'draft',
       diff: {
         source: 'unavailable',
@@ -161,6 +164,7 @@ async function experimentManifestProjection(
       sourceBacklinks: sourceBacklinksForSource(pkg.source),
       candidateStrategyFingerprint: input.candidateStrategyFingerprint,
       axes: input.axes ?? pkg.axes,
+      comparisonEligibility: evalComparisonEligibility({ ...pkg, role: input.role }),
       status: pkg.status,
       diff: pkg.diff,
       metrics: pkg.metrics,
@@ -225,13 +229,21 @@ export async function buildEvalExperimentProjections(
 ): Promise<EvalExperimentProjection[]> {
   const byEvalKey = new Map<string, { projection: EvalExperimentProjection; updatedAt: string }>();
   for (const run of familyRuns) {
-    if (!run.taskFile) continue;
-    const raw = await readOptionalRetainedRunText(run, EXPERIMENT_MANIFEST_RELATIVE_PATH);
-    if (raw === undefined) continue;
-    const manifestPath = path.join(
-      await retainedRunTaskDirectory(run),
-      EXPERIMENT_MANIFEST_RELATIVE_PATH,
-    );
+    const canonical = run.engineState?.evalExperiment?.experimentManifestPath;
+    let raw: string | undefined;
+    let manifestPath: string;
+    if (canonical && (await fileExists(canonical))) {
+      raw = await readFile(canonical, 'utf8');
+      manifestPath = canonical;
+    } else {
+      if (!run.taskFile) continue;
+      raw = await readOptionalRetainedRunText(run, EXPERIMENT_MANIFEST_RELATIVE_PATH);
+      if (raw === undefined) continue;
+      manifestPath = path.join(
+        await retainedRunTaskDirectory(run),
+        EXPERIMENT_MANIFEST_RELATIVE_PATH,
+      );
+    }
     const parsed = JSON.parse(raw);
     if (!isEvalExperimentManifest(parsed)) continue;
     const existing = byEvalKey.get(parsed.experimentKey);
