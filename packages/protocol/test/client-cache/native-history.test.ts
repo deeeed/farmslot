@@ -323,7 +323,7 @@ import type { ResourceReadResult } from '../../src/client-cache/types.js';
 interface HeldNativeRead {
   params: unknown;
   signal: AbortSignal;
-  resolve(value: NativeSessionReadResult): void;
+  resolve(value: NativeSessionReadResult, revision?: number): void;
   reject(code: string): void;
 }
 class NativeTransport extends ResourceCacheConformanceTransport {
@@ -350,7 +350,7 @@ class NativeTransport extends ResourceCacheConformanceTransport {
       const read: HeldNativeRead = {
         params,
         signal,
-        resolve: (data) =>
+        resolve: (data, revision = 0) =>
           resolve({
             data: data as T,
             resourceState: {
@@ -359,7 +359,7 @@ class NativeTransport extends ResourceCacheConformanceTransport {
                 Methods.NATIVE_SESSION_READ,
                 params,
                 this.connection.scope.principalId!,
-              ).map((key) => ({ key, revision: 0 })),
+              ).map((key) => ({ key, revision })),
             },
           }),
         reject: (code) => reject(Object.assign(new Error(code), { code })),
@@ -414,6 +414,67 @@ test('several observers share the history read and reconnect performs no command
   }
 });
 
+test('history stays actionable while a change rereads it; failed and offline history waits', async () => {
+  const transport = new NativeTransport(storeScope);
+  transport.setConnection({ connected: true, id: 1 });
+  const cache = createGatewayResourceCache({ transport });
+  const query = nativeHistoryQuery(target, 'owner-a');
+  const stop = cache.observe(query, () => {});
+  const change = (revision: number) =>
+    transport.publish({
+      version: 1,
+      epoch: 'conformance-epoch',
+      changes: [{ key: query.dependencies[0], revision, kind: 'updated' }],
+    });
+  const canAct = () => {
+    const state = cache.read(query);
+    return nativeHistoryCanAct(state, state.data, transport.connection.connected);
+  };
+  const reread = async (settle: (read: HeldNativeRead) => void) => {
+    const read = await transport.nextNative();
+    const settled = cache.retry(query);
+    settle(read);
+    await settled;
+  };
+  try {
+    await reread((read) => read.resolve(page([event(1, 'first')])));
+    assert(canAct());
+
+    change(1);
+    assert.equal(cache.read(query).status, 'stale');
+    assert(canAct(), 'a change notice keeps current history actionable');
+    await reread((read) => {
+      change(2);
+      read.resolve(page([event(2, 'second')]), 1);
+    });
+    assert.equal(cache.read(query).status, 'stale');
+    assert(canAct(), 'a reply that trails a write made during its read stays actionable');
+    await reread((read) => read.resolve(page([event(3, 'third')]), 2));
+    assert.equal(cache.read(query).status, 'ready');
+
+    change(3);
+    await reread((read) => read.reject('RESOURCE_OBSERVATION_CHANGED'));
+    assert(canAct(), 'a read superseded by a newer write still trails only that write');
+
+    change(4);
+    await reread((read) => read.reject('NATIVE_SOURCE_UNAVAILABLE'));
+    assert.equal(cache.read(query).status, 'stale');
+    assert(!canAct(), 'a failed reread waits for a current read');
+
+    const recovered = cache.retry(query);
+    (await transport.nextNative()).resolve(page([event(4, 'fourth')]), 4);
+    assert.equal((await recovered).status, 'ready');
+    transport.setConnection({ connected: false }, 'network');
+    assert.equal(cache.read(query).status, 'stale');
+    assert(!canAct(), 'offline history waits for a current read');
+    transport.setConnection({ connected: true, id: 2 });
+    assert(canAct(), 'after reconnecting, the due reread does not lock input, as for held lists');
+  } finally {
+    stop();
+    await cache.dispose();
+  }
+});
+
 test('eleven opened sessions persist ten canonical histories; cold data keeps original age', async () => {
   const transport = new NativeTransport(storeScope);
   transport.setConnection({ connected: true, id: 1 });
@@ -446,6 +507,7 @@ test('eleven opened sessions persist ten canonical histories; cold data keeps or
     try {
       const restored = await cold.retry(lastQuery);
       assert.equal(restored.status, 'stale');
+      assert(!nativeHistoryCanAct(restored, restored.data, offline.connection.connected));
       assert.equal(restored.observedAt, original.observedAt);
       assert.deepEqual(restored.data, original.data);
       assert.equal(offline.requestCount, 0);
@@ -513,13 +575,23 @@ test('lease variants share one durable session entry but cannot hydrate each oth
 });
 
 import { nativeHistoryCanAct } from '../../src/client-cache/native-history.js';
-test('cold, stale, unsupported and replaced rendered snapshots disable real command eligibility', () => {
+test('cold, saved, unsupported and replaced rendered snapshots disable real command eligibility', () => {
   const saved = page([event(1, 'saved')]);
-  for (const status of ['loading', 'stale', 'error', 'unsupported'])
-    assert(!nativeHistoryCanAct({ status, data: saved }, saved, true));
-  assert(!nativeHistoryCanAct({ status: 'ready', data: saved }, saved, false));
-  assert(!nativeHistoryCanAct({ status: 'ready', data: { ...saved } }, saved, true));
-  assert(nativeHistoryCanAct({ status: 'ready', data: saved }, saved, true));
+  const now = Date.parse('2026-10-30T00:00:00Z');
+  for (const status of ['loading', 'error', 'unsupported'] as const)
+    assert(!nativeHistoryCanAct({ status, data: saved }, saved, true, now));
+  assert(!nativeHistoryCanAct({ status: 'ready', data: saved }, saved, false, now));
+  assert(!nativeHistoryCanAct({ status: 'ready', data: { ...saved } }, saved, true, now));
+  assert(nativeHistoryCanAct({ status: 'ready', data: saved }, saved, true, now));
+  // A reread that is only due keeps input usable; saved data does not.
+  assert(nativeHistoryCanAct({ status: 'stale', data: saved }, saved, true, now));
+  assert(!nativeHistoryCanAct({ status: 'stale', data: saved }, saved, false, now));
+  const failed = { code: 'NATIVE_SOURCE_UNAVAILABLE', message: 'unavailable' };
+  assert(!nativeHistoryCanAct({ status: 'stale', data: saved, error: failed }, saved, true, now));
+  const superseded = { code: 'RESOURCE_OBSERVATION_CHANGED', message: 'changed' };
+  const recent = { status: 'stale' as const, data: saved, error: superseded, observedAt: now };
+  assert(nativeHistoryCanAct(recent, saved, true, now + 59_999));
+  assert(!nativeHistoryCanAct(recent, saved, true, now + 60_000));
 });
 
 test('turn status records do not consume the 200 logical message allowance', () => {
