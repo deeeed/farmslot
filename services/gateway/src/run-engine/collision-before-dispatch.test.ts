@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
-import type { Run, RunStep } from '@farmslot/protocol';
+import type { AgentContext, NativeWorkerSessionBinding, Run, RunStep } from '@farmslot/protocol';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'collision-before-dispatch-'));
 const project = 'collision-proof';
@@ -55,7 +55,7 @@ type AttemptOptions = {
   dispatchStartedAt?: string;
   stamp?: 'owner' | 'none' | 'truncated';
   project?: string;
-  fields?: Partial<Run>;
+  fields?: (run: Run) => Partial<Run>;
 };
 
 /** An earlier attempt with the given outcome and step statuses, and the task dir it wrote. */
@@ -72,7 +72,7 @@ async function attempt(
   });
   created.push(run.id);
   updateRun(run.id, {
-    ...options.fields,
+    ...options.fields?.(run),
     status,
     taskFile: options.taskFile ?? null,
     steps: run.steps.map((step) => ({
@@ -90,6 +90,83 @@ async function attempt(
   );
   return getRun(run.id)!;
 }
+
+const nativeBinding: NativeWorkerSessionBinding = {
+  sessionId: 'native-session',
+  executionNodeId: 'fixture-node',
+  ownerPrincipalId: 'fixture-person',
+  leaseId: 'fixture-lease',
+  commandId: 'fixture-command',
+};
+const workerContext = (run: Run, launch: Partial<AgentContext>): AgentContext => ({
+  id: 'dev',
+  role: 'dev',
+  label: 'Dev',
+  status: 'failed',
+  slotId: null,
+  runId: run.id,
+  ...launch,
+});
+
+/** Records a dispatch leaves on the run; replay from prepare resets the dispatch step only. */
+const dispatchRecords: Array<[string, string, (run: Run) => Partial<Run>]> = [
+  [
+    'KEEP-TASK-EXECUTION',
+    'its task execution',
+    (run) => ({
+      engineState: {
+        taskExecution: { taskFile: 'tasks/feat/keep/TASK.md', startedAt: run.createdAt },
+      },
+    }),
+  ],
+  ['KEEP-WORKTREE-HEAD', 'its worktree head', () => ({ worktreeHeadAtDispatch: 'a'.repeat(40) })],
+  [
+    'KEEP-REVIEW-DISPATCH',
+    "a slot-free review's dispatch generation",
+    () => ({ engineState: { workspaceReviewDispatchGeneration: 1 } }),
+  ],
+  [
+    'KEEP-RUNNER-SESSION',
+    'its runner session',
+    (run) => ({ metrics: { ...run.metrics, runnerSessionId: 'runner-session' } }),
+  ],
+  [
+    'KEEP-LAUNCHED-WORKER',
+    'a launched worker context',
+    (run) => ({ agentContexts: [workerContext(run, { startedAt: run.createdAt })] }),
+  ],
+  [
+    'KEEP-NATIVE-RESTART',
+    "a native worker's session history",
+    (run) => ({ agentContexts: [workerContext(run, { nativeSessionHistory: [nativeBinding] })] }),
+  ],
+];
+
+for (const [ticket, record, fields] of dispatchRecords) {
+  test(`an attempt replayed from prepare after its dispatch keeps the decision: ${record}`, async () => {
+    await attempt(
+      ticket,
+      'failed',
+      { 'write-task': 'done', prepare: 'failed', dispatch: 'pending' },
+      { fields },
+    );
+    const { current, choice } = await redispatch(ticket);
+    const decision = await pendingCollision(current.id);
+    assert.equal(resolveEngineDecision(decision.id, 'abort'), true);
+    await assert.rejects(choice, /Aborted: task dir collision/);
+  });
+}
+
+test('a dir the redispatching run wrote itself keeps the collision decision', async () => {
+  const current = createRun({ flowType: 'dev', project, ticketOrPr: 'KEEP-SELF' });
+  created.push(current.id);
+  await taskDir('KEEP-SELF', JSON.stringify({ version: 1, ownerRunId: current.id }));
+  const { existingDirs, ticketSlug } = await precheckTaskDirCollision(current);
+  const choice = handleCollisionDecision(current.id, current, existingDirs, ticketSlug);
+  const decision = await pendingCollision(current.id);
+  assert.equal(resolveEngineDecision(decision.id, 'abort'), true);
+  await assert.rejects(choice, /Aborted: task dir collision/);
+});
 
 async function redispatch(ticket: string) {
   const current = createRun({ flowType: 'dev', project, ticketOrPr: ticket });
@@ -149,29 +226,6 @@ for (const [ticket, name, setup] of [
         'failed',
         { 'write-task': 'done', prepare: 'done', dispatch: 'done' },
         { dispatchStartedAt: new Date().toISOString() },
-      ),
-  ],
-  [
-    'KEEP-REPLAYED',
-    'an attempt replayed from prepare after its dispatch',
-    // Replay resets dispatch to pending; the records its first dispatch left remain.
-    (ticket: string) =>
-      attempt(
-        ticket,
-        'failed',
-        { 'write-task': 'done', prepare: 'failed', dispatch: 'pending' },
-        {
-          taskFile: `tasks/feat/${ticket.toLowerCase()}/TASK.md`,
-          fields: {
-            worktreeHeadAtDispatch: 'a'.repeat(40),
-            engineState: {
-              taskExecution: {
-                taskFile: `tasks/feat/${ticket.toLowerCase()}/TASK.md`,
-                startedAt: new Date().toISOString(),
-              },
-            },
-          },
-        },
       ),
   ],
   [

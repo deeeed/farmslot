@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type AgentContext,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   Events,
@@ -577,6 +578,17 @@ export function buildCollisionSuccessorParams(
   };
 }
 
+/** A worker context that ever launched; a native restart keeps only its session history. */
+function contextLaunched(context: AgentContext): boolean {
+  return Boolean(
+    context.startedAt ||
+    context.runnerSessionId ||
+    context.runnerSessionArchive ||
+    context.nativeSession ||
+    context.nativeSessionHistory?.length,
+  );
+}
+
 /**
  * A run that failed or was cancelled before any worker launched. Replay resets the dispatch
  * step's timing, so the records a dispatch leaves on the run also count as having reached it.
@@ -591,7 +603,7 @@ function endedBeforeDispatch(run: Run): boolean {
     run.engineState?.workspaceReviewDispatchGeneration !== undefined ||
     run.worktreeHeadAtDispatch ||
     run.metrics?.runnerSessionId ||
-    run.agentContexts?.some((context) => context.startedAt || context.runnerSessionId)
+    run.agentContexts?.some(contextLaunched)
   );
 }
 
