@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Synchronize the gateway API reference with protocol 0.74.3.
+
 - Document resource revision stamps and the resource change event in the generated gateway API reference.
 
 - Document shared CI-watch card status and exact monitor deadlines.
