@@ -13,6 +13,7 @@ import {
 import {
   nativeCommandLockSettled,
   nativeHistoryCanAct,
+  nativeHistoryCanSend,
   nativeHistoryQuery,
   nativeObservationQuery,
   nativeSendLabel,
@@ -290,7 +291,8 @@ export function useNativeConversationController(params: NativeConversationParams
     executionNodeId: node,
     ...(workerControl ? { worker: workerControl } : {}),
   };
-  const assertCurrentControls = () => {
+  /** `history`: "exact" for actions on the snapshot on screen; "current" for a new message. */
+  const assertCurrentControls = (history: 'exact' | 'current' = 'exact') => {
     const live = useConnectionStore.getState();
     if (
       !client ||
@@ -304,13 +306,12 @@ export function useNativeConversationController(params: NativeConversationParams
       live.authorityEpoch !== authorityEpoch
     )
       throw new Error('The conversation connection changed. Reopen it before acting.');
+    const observation = historyQuery ? getResourceCache()?.read(historyQuery) : undefined;
     if (
       !historyQuery ||
-      !nativeHistoryCanAct(
-        getResourceCache()?.read(historyQuery),
-        snapshot,
-        live.status === 'connected',
-      )
+      !(history === 'exact'
+        ? nativeHistoryCanAct(observation, snapshot, live.status === 'connected')
+        : nativeHistoryCanSend(observation, live.status === 'connected'))
     )
       throw new Error('Wait for current conversation history before acting.');
     if (!params.runId) return;
@@ -329,14 +330,14 @@ export function useNativeConversationController(params: NativeConversationParams
     !params.runId,
     assertCurrentControls,
   );
-  const mutate = async (action: () => Promise<void>) => {
+  const mutate = async (action: () => Promise<void>, history: 'exact' | 'current' = 'exact') => {
     if (!client || !writable || mutation.current) return;
     mutation.current = true;
     setBusy(true);
     setError('');
     try {
       await conversationStorage.transition(storageKey, async () => {
-        assertCurrentControls();
+        assertCurrentControls(history);
         await action();
       });
     } catch (cause) {
@@ -364,19 +365,19 @@ export function useNativeConversationController(params: NativeConversationParams
       draftRef.current = '';
       setDraft('');
       await persist('', command, responsesRef.current);
-      assertCurrentControls();
+      assertCurrentControls('current');
       const { generation: _, ...request } = command;
       await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
-    });
+    }, 'current');
   const retry = () =>
     mutate(async () => {
       const command = pendingRef.current;
       if (!command || !session || command.generation !== session.generation) return;
       await persist(draftRef.current, command, responsesRef.current);
-      assertCurrentControls();
+      assertCurrentControls('current');
       const { generation: _, ...request } = command;
       await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
-    });
+    }, 'current');
   const respond = (requestId: string, response: NativeSessionResponse) =>
     mutate(async () => {
       const request = snapshot?.pendingRequests.find((item) => item.request?.id === requestId);

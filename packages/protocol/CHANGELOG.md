@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- `nativeSendLabel` gives a native composer's send action for a session state: "Send" when idle, "Queue message" for the next turn while a turn runs or waits on a request, none when the session takes no input.
+- `nativeSendLabel` gives a native composer's send action for a session state: "Send" when idle, "Queue message" for the next turn while a turn runs or waits on a request, none when the session takes no input. `nativeHistoryCanSend` is the held-data rule for sending a message: current, complete history, without `nativeHistoryCanAct`'s requirement that it be the exact snapshot on screen, so a newer read landing while a turn streams does not refuse a queued message.
 - `NativeSessionEvent.response`, optional, on `approval.resolved`: the response the host delivered for the request (`decision` or `answers`); absent when the host did not deliver one. `nativeTimeline` keeps each resolved request as a `resolution` entry, "Approved: …", "Declined: …", "Answered: question → answer" or "Resolved: …". Cached native history keeps them, and a snapshot saved by an older reader is read again from its start, once.
 - `FamilyObservabilitySnapshot.latestRunId` is optional: a reference-only eval family has no runs yet.
 - `nativeTimelineRows` adds a summary row for each finished turn's tool calls ("Worked for 4m 12s · 6 tools", "Stopped after …", "Failed after …") just before the turn's end, and marks those tools with it; tools keep their keys, and messages, statuses and a running turn stay as they are. A turn also ends where its host stopped (`session.closed`). `nativeWatchTools` and `nativeFoldWatched` decide that a turn seen running in a live read starts open.

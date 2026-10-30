@@ -843,7 +843,10 @@ test('lease variants share one durable session entry but cannot hydrate each oth
   );
 });
 
-import { nativeHistoryCanAct } from '../../src/client-cache/native-history.js';
+import {
+  nativeHistoryCanAct,
+  nativeHistoryCanSend,
+} from '../../src/client-cache/native-history.js';
 test('cold, saved, unsupported and replaced rendered snapshots disable real command eligibility', () => {
   const saved = page([event(1, 'saved')]);
   const now = Date.parse('2026-10-30T00:00:00Z');
@@ -905,4 +908,22 @@ test('tool events do not consume the 200 conversation message allowance', () => 
   const retained = nativeTimeline(retainNativeMessages(events));
   assert.equal(retained.filter((entry) => entry.kind === 'assistant').length, 200);
   assert.equal(retained[0].event.commandId, 'command-5');
+});
+
+test('a newer read while a turn streams refuses an answer on the old snapshot, not a message', () => {
+  const now = Date.parse('2026-10-30T00:00:00Z');
+  const resourceState = { epoch: 'epoch', dependencies: [] };
+  const rendered = page([event(1, 'counting')]);
+  // The worker kept streaming: the cache holds a newer read than the one on screen.
+  const newer = {
+    status: 'ready' as const,
+    data: page([event(1, 'counting'), event(2, ' on')]),
+    resourceState,
+  };
+  assert(!nativeHistoryCanAct(newer, rendered, true, now));
+  assert(nativeHistoryCanSend(newer, true, now));
+  // Saved, offline or incomplete history still waits.
+  assert(!nativeHistoryCanSend({ status: 'stale', data: rendered }, true, now), 'restored');
+  assert(!nativeHistoryCanSend(newer, false, now));
+  assert(!nativeHistoryCanSend({ ...newer, data: { ...newer.data, hasMore: true } }, true, now));
 });
