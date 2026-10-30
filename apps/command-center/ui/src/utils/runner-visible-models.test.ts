@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { RunnerVisibleModelState } from '@farmslot/protocol';
 
@@ -82,6 +83,12 @@ test('views share one owner-scoped observation that follows the gateway owner ke
   gateway.connect();
   await flush();
   const reads = () => fake.requests.filter(({ method }) => method === 'runner.visibleModels.get');
+  const nextRead = async (previousCount: number) => {
+    const deadline = Date.now() + 1000;
+    while (reads().length === previousCount && Date.now() < deadline) await delay(1);
+    assert.ok(reads().length > previousCount, 'Invalidation must start a new current read');
+    return reads().at(-1)!;
+  };
   const errors: string[] = [];
   const first = watchVisibleModels((error) => errors.push(error));
   const second = watchVisibleModels(() => {});
@@ -126,20 +133,21 @@ test('views share one owner-scoped observation that follows the gateway owner ke
   };
   await t.test('retry keeps the last failure until a successful current observation', async () => {
     holdRead = true;
+    const beforeFailure = reads().length;
     change();
-    await flush();
-    socket.failure(reads().at(-1)!.id, {
+    const failed = await nextRead(beforeFailure);
+    socket.failure(failed.id, {
       code: 'UNAVAILABLE',
       message: 'Visible models unavailable',
     });
     await flush();
     assert.equal(errors.at(-1), 'Visible models unavailable');
     holdRead = true;
+    const beforeRetry = reads().length;
     change();
-    await flush();
+    const pending = await nextRead(beforeRetry);
     assert.equal(errors.at(-1), 'Visible models unavailable');
     holdRead = false;
-    const pending = reads().at(-1)!;
     socket.response(
       pending.id,
       { runners: [state('claude', models, models[0])] },
