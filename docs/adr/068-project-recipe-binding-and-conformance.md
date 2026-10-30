@@ -207,3 +207,17 @@ Preserve original task provenance and evidence. Record the package version, modu
 ### Public surface and consequences
 
 The existing recipe/task routes and `withTaskProjectHost` in `@farmslot/recipe-cli/harness` own selection and reporting. The recipe skill's executable resolver consumes that host instead of enforcing a second version lock. No new flag, provider registry or approval flow is added. The [runtime-provider specification](../reference/project-recipe-contract.md#pool-selected-runtime-providers) defines the warning and actual-execution record. Qualify the matching CLI and provider installations before rollout.
+
+## Amendment 7: Task initialization after prepare, 2026-10-31
+
+**Status:** Accepted by the lead under delegated amendment authority, 2026-10-31. Implementation: [#1615](https://github.com/deeeed/farmslot/pull/1615). Earlier decisions retain their status.
+
+### Decision and rationale
+
+Move Amendment 5's node initialization after prepare. Write-task still resolves the branch, template and ticket data, and freezes the exact input it would have submitted. It MUST NOT invoke the node producer. The task initializes once prepare has checked out and installed the slot, or before dispatch when prepare is skipped or absent. Step order is unchanged, and write-task does not sync the slot.
+
+The producer imports the project's recipe provider from the slot checkout and retains its installed dependency closure. A slot left on an older branch therefore failed at write-task, before prepare could move it: three production runs refused with a missing declared dependency or a missing provider export. Static tasks follow the same path, so there is one initialization route.
+
+### Public surface and consequences
+
+No CLI command, flag, SDK export or private request field is added. The frozen input stays in the gateway task directory, never reaches the worker and is removed after initialization. A retry submits the same frozen input or verifies the completed initialization; it never renders the task again. The gateway tracks this with an internal `engineState.taskInit` run marker. Tasks initialized at write-task before this amendment are only verified. The [hosted task specification](../reference/project-recipe-contract.md#hosted-task-initialization) defines timing, transport and required checks.

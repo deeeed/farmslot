@@ -549,7 +549,9 @@ if (process.argv[2] === 'serve') {
     assert.ok(address && typeof address !== 'string');
     await new Promise<void>((resolve) => port.close(() => resolve()));
     const loader = path.join(scratch, 'checkpoint.mjs');
-    const checkpoint = `{ const result = await executeWriteTaskStep(runId, run, {broadcastFn,stepPartialIO}); const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.written',String(getRun(runId).engineState?.generation??0));const until=Date.now()+90000;while(!fs.existsSync(${JSON.stringify(out)}+'/'+runId+'.release')){if(Date.now()>until)throw new Error('Proof checkpoint timed out');await new Promise(resolve=>setTimeout(resolve,50));}return result;}`;
+    // Held once the task initializes (ADR-068 Amendment 7): replays skip prepare, so
+    // initialization runs in its skip branch or at dispatch entry, before worker launch.
+    const checkpoint = `const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.written',String(getRun(runId)?.engineState?.generation??0));const until=Date.now()+90000;while(!fs.existsSync(${JSON.stringify(out)}+'/'+runId+'.release')){if(Date.now()>until)throw new Error('Proof checkpoint timed out');await new Promise(resolve=>setTimeout(resolve,50));}`;
     const renewCheckpoint = `const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.renewed','renewed');const until=Date.now()+90000;while(getRun(runId)?.status!=='cancelled'){if(Date.now()>until)throw new Error('Renewal proof timed out');await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Proof stopped after native checkpoint commit');`;
     const reviewCheckpoint = `{ const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.pre-review','held');const until=Date.now()+90000;while(getRun(runId)?.status!=='cancelled'){if(Date.now()>until)throw new Error('Review scheduling proof timed out');await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Proof review scheduling cancelled'); }`;
     const inlineCheckpoint = nativeInline
@@ -559,7 +561,7 @@ if (process.argv[2] === 'serve') {
     const inlineFinish = `  if(result?.success){const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.inline-complete',JSON.stringify(result));while(!signal.aborted)await new Promise(resolve=>setTimeout(resolve,50));}return result;\n}\n\nexport async function rerunFailedChecks`;
     writeFileSync(
       loader,
-      `import{registerHooks}from'node:module';import assert from'node:assert/strict';registerHooks({load(url,context,next){const result=next(url,context);const before=String(result.source);if(url.endsWith('/services/gateway/src/run-engine/post-dispatch-steps.ts')){const after=before.replace('await completeBranchMaintenance(current);', 'await completeBranchMaintenance(current);'+${JSON.stringify(renewCheckpoint)});assert.notEqual(after,before);return{...result,source:after};}if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='renewal'&&url.endsWith('/services/gateway/src/run-engine/branch-maintenance.ts')){const after=before.replace('await commitRunPublication(', 'await ((_id,_build,_assert)=>Promise.resolve(owner))(');assert.notEqual(after,before);return{...result,source:after};}if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='writer'&&url.endsWith('/services/gateway/src/tasks/writer.ts')){const after=before.replace('? await publicationBaseForRun(run, defaultBranch)', '? defaultBranch');assert.notEqual(after,before);return{...result,source:after};}if(url.endsWith('/services/gateway/src/ci-monitor/inline-fix.ts')){let after=before.replace('// Delete old CI-FIX-SIGNAL.json so we can detect fresh completion',${JSON.stringify(inlineCheckpoint)});assert.notEqual(after,before);if(${nativeInline}){after=after.replace('const alive = await isWorkerSessionAlive(slotId, runner, runId);',${JSON.stringify(inlineObserve)}).replace('  return result;\\n}\\n\\nexport async function rerunFailedChecks',${JSON.stringify(inlineFinish)});} if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='inline'){const fixed=after.replace('await publicationBaseForRun(run, defaultBranch)','defaultBranch');assert.notEqual(fixed,after);after=fixed;}return{...result,source:after};}if(!url.endsWith('/services/gateway/src/run-engine/orchestrator.ts'))return result;const after=before.replace('return executeWriteTaskStep(runId, run, { broadcastFn, stepPartialIO });',${JSON.stringify(checkpoint)}).replace('case S.REVIEW:', 'case S.REVIEW:'+${JSON.stringify(reviewCheckpoint)});assert.notEqual(after,before);return{...result,source:after};}});`,
+      `import{registerHooks}from'node:module';import assert from'node:assert/strict';registerHooks({load(url,context,next){const result=next(url,context);const before=String(result.source);if(url.endsWith('/services/gateway/src/run-engine/post-dispatch-steps.ts')){const after=before.replace('await completeBranchMaintenance(current);', 'await completeBranchMaintenance(current);'+${JSON.stringify(renewCheckpoint)});assert.notEqual(after,before);return{...result,source:after};}if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='renewal'&&url.endsWith('/services/gateway/src/run-engine/branch-maintenance.ts')){const after=before.replace('await commitRunPublication(', 'await ((_id,_build,_assert)=>Promise.resolve(owner))(');assert.notEqual(after,before);return{...result,source:after};}if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='writer'&&url.endsWith('/services/gateway/src/tasks/writer.ts')){const after=before.replace('? await publicationBaseForRun(run, defaultBranch)', '? defaultBranch');assert.notEqual(after,before);return{...result,source:after};}if(url.endsWith('/services/gateway/src/ci-monitor/inline-fix.ts')){let after=before.replace('// Delete old CI-FIX-SIGNAL.json so we can detect fresh completion',${JSON.stringify(inlineCheckpoint)});assert.notEqual(after,before);if(${nativeInline}){after=after.replace('const alive = await isWorkerSessionAlive(slotId, runner, runId);',${JSON.stringify(inlineObserve)}).replace('  return result;\\n}\\n\\nexport async function rerunFailedChecks',${JSON.stringify(inlineFinish)});} if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='inline'){const fixed=after.replace('await publicationBaseForRun(run, defaultBranch)','defaultBranch');assert.notEqual(fixed,after);after=fixed;}return{...result,source:after};}if(url.endsWith('/services/gateway/src/run-engine/task-sync.ts')){const done='await rm(path.join(taskDir, TASK_INIT_INPUT), { force: true });';const after=before.replace(done,done+${JSON.stringify(checkpoint)});assert.notEqual(after,before);return{...result,source:after};}if(!url.endsWith('/services/gateway/src/run-engine/orchestrator.ts'))return result;const after=before.replace('case S.REVIEW:', 'case S.REVIEW:'+${JSON.stringify(reviewCheckpoint)});assert.notEqual(after,before);return{...result,source:after};}});`,
     );
     env = {
       ...env,
@@ -619,12 +621,17 @@ if (process.argv[2] === 'serve') {
         git('push', 'origin', 'feat/upstream');
         git('checkout', 'trunk');
       }
-      rpc('run.replayStep', { runId: entry.id, stepName: 'write-task', triggeredBy: 'operator' });
+      rpc('run.replayStep', {
+        runId: entry.id,
+        stepName: 'write-task',
+        triggeredBy: 'operator',
+        skipPrepare: true,
+      });
       await wait(() => {
         const run = rpc('run.get', { runId: entry.id }).run;
         if (run.status === 'failed') throw new Error(run.error);
         return existsSync(path.join(out, entry.id + '.written'));
-      }, 'write-task');
+      }, 'write-task and task initialization');
       let run = rpc('run.get', { runId: entry.id }).run;
       assert.ok(run.taskFile);
       let task = readFileSync(run.taskFile, 'utf8');
@@ -632,10 +639,20 @@ if (process.argv[2] === 'serve') {
       const publicationBase = task.match(/^PUBLICATION_BASE: (.+)$/m)?.[1];
       assert.equal(publicationBase, entry.expected);
       assert.ok(checklist.includes('origin/' + entry.expected));
+      assert.equal(run.engineState?.taskInit?.status, 'initialized');
+      // update-branch has no PREPARE: its dispatch step starts, then initializes the task.
       assert.ok(
-        run.steps
-          .filter((step: { name: string }) => ['prepare', 'dispatch'].includes(step.name))
-          .every((step: { startedAt?: string }) => !step.startedAt),
+        !(run.agentContexts ?? []).some(
+          (context: {
+            runId?: string;
+            promptDeliveryStartedAt?: string;
+            nativeSession?: unknown;
+            runnerSessionId?: string | null;
+          }) =>
+            context.runId === run.id &&
+            (context.promptDeliveryStartedAt || context.nativeSession || context.runnerSessionId),
+        ),
+        'checkpoint precedes worker launch',
       );
       json(path.join(out, entry.id + '.json'), { run, task, checklist });
       results.push({
@@ -677,7 +694,12 @@ if (process.argv[2] === 'serve') {
             }),
           /TARGET_CHANGED/,
         );
-        rpc('run.replayStep', { runId: entry.id, stepName: 'write-task', triggeredBy: 'operator' });
+        rpc('run.replayStep', {
+          runId: entry.id,
+          stepName: 'write-task',
+          triggeredBy: 'operator',
+          skipPrepare: true,
+        });
         await wait(() => {
           const replayed: Run = rpc('run.get', { runId: entry.id }).run;
           if (replayed.status === 'failed')
@@ -735,7 +757,12 @@ if (process.argv[2] === 'serve') {
         // Preserve durable operation inputs and the real push; restart before renewal.
         await stopGateway();
         await startGateway();
-        rpc('run.replayStep', { runId: entry.id, stepName: 'write-task', triggeredBy: 'operator' });
+        rpc('run.replayStep', {
+          runId: entry.id,
+          stepName: 'write-task',
+          triggeredBy: 'operator',
+          skipPrepare: true,
+        });
         await wait(() => {
           const restarted: Run = rpc('run.get', { runId: entry.id }).run;
           if (restarted.status === 'failed') throw new Error(restarted.error ?? 'Restart refused');

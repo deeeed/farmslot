@@ -12,6 +12,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -1272,14 +1273,26 @@ try {
         skipPrepare: true,
       });
       runtimeRunId = runtime.run.id;
-      await wait(
+      // ADR-068 Amendment 7: the authored task initializes in prepare's skip branch.
+      const initialized = await wait(
         () => rpc('run.get', { runId: runtimeRunId }).run,
-        (value) => value.steps.some((step) => step.name === 'write-task' && step.status === 'done'),
+        (value) => {
+          // The marker stays set, so a fast later dispatch failure cannot hide it.
+          if (value.engineState?.taskInit?.status === 'initialized') return true;
+          assert.notEqual(value.status, 'failed', value.error);
+          return false;
+        },
         'tmux pre-written task runtime',
       );
       assert.ok(
         existsSync(path.join(runtimeTaskDir, 'mark')),
         'tmux pre-written task runtime must be initialized',
+      );
+      const launched = initialized.steps.find((step) => step.name === 'dispatch')?.startedAt;
+      assert.ok(
+        !launched ||
+          Math.floor(statSync(path.join(runtimeTaskDir, 'mark')).mtimeMs) <= Date.parse(launched),
+        'tmux pre-written task runtime must be initialized before worker launch',
       );
       for (const [file, contents] of Object.entries(runtimeOriginal))
         assert.equal(

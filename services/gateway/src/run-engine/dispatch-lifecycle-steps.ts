@@ -37,6 +37,7 @@ import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
 import { ensureRunStack } from './stack-base.js';
 import { createSubStepCollector, type SubStepCollector } from './sub-step-collector.js';
+import { completeRunTaskInitialization } from './task-sync.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
@@ -324,6 +325,7 @@ export async function executePrepareStep(
   }
   if (skipPrepare) {
     console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (${skipReason})`);
+    await completeRunTaskInitialization(runId);
     return { inputs, outputs: { skipped: true, reason: skipReason } };
   }
 
@@ -518,6 +520,8 @@ export async function executePrepareStep(
   } finally {
     activeMonitors.delete(runId);
   }
+  // The node producer imports project tooling from this prepared checkout.
+  await completeRunTaskInitialization(runId, { emit: emitWithBroadcast });
 
   stepPartialIO.delete(runId);
   // Enrich with slot metadata
@@ -578,6 +582,10 @@ export async function executeDispatchStep(
   context: DispatchStepContext,
 ): Promise<StepIO> {
   const { blockedRunError, stepPartialIO } = context;
+  // Restore the slot binding first: update-branch has no PREPARE step, and restart
+  // recovery can mark one done before its task initialized.
+  ensureRunSlotBinding(runId);
+  await completeRunTaskInitialization(runId, { onlyPending: true });
   const bound = ensureRunSlotBinding(runId);
   const taskExecution = taskExecutionAtDispatch(bound);
   // Every delivery branch below spreads `current.engineState`, so record first.

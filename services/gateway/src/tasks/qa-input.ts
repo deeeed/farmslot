@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
@@ -11,8 +11,8 @@ export async function writeQaInput(taskDir: string, run: Run): Promise<void> {
   if (!run.qa || !run.executionTemplate) {
     throw new Error('QA task requires an admitted profile and execution-template snapshot');
   }
-  await writeFile(
-    path.join(taskDir, QA_INPUT),
+  const file = path.join(taskDir, QA_INPUT);
+  const text =
     JSON.stringify(
       {
         version: 1,
@@ -27,9 +27,17 @@ export async function writeQaInput(taskDir: string, run: Run): Promise<void> {
       },
       null,
       2,
-    ) + '\n',
-    { flag: 'wx' },
-  );
+    ) + '\n';
+  try {
+    await writeFile(file, text, { flag: 'wx' });
+  } catch (error) {
+    // A retried initialization writes the same admitted input again.
+    if (
+      (error as NodeJS.ErrnoException).code !== 'EEXIST' ||
+      (await readFile(file, 'utf8')) !== text
+    )
+      throw error;
+  }
 }
 
 export function buildQaTaskSection(taskDir: string, run: Run): string {

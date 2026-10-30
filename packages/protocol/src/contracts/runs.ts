@@ -3086,6 +3086,9 @@ export interface RunEngineState {
   /** Persisted before branch mutations. A matching false value proves an early
    * prepare failure never reached branch setup; absent historical state is unknown. */
   prepareBranch?: { slotId: string; branch: string; started: boolean };
+  /** Write-task leaves this task pending; the node initializes it on the prepared
+   * checkout (ADR-068 Amendment 7). Absent on tasks initialized at write-task. */
+  taskInit?: { taskFile: string; status: 'pending' | 'initialized' };
   /** Runtime hints set by dispatch UI (e.g. skipPrepare) or engine (warmRecovery on crash resume).
    * `nudgeReuse` is set when the operator picks "Nudge worker" in the dispatch wizard or the
    * branch-affinity decision card; FIND_SLOT honors it to bind the busy slot, and DISPATCH
