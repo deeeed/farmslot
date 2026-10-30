@@ -24,12 +24,16 @@ import {
   NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
   nativeDeliveryLabel,
+  nativeEntryPreview,
   type NativeFollow,
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
+  type NativeMessagePreview,
+  nativeMessagePreview,
+  nativeMessageToggleLabel,
   nativeObservationQuery,
   nativeTimeline,
   type NativeTranscript,
@@ -178,6 +182,8 @@ export class NativeSessionView extends LitElement {
   };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
+  /** Long messages the reader expanded, by command, so a send keeps its state once confirmed. */
+  @state() private expandedMessages = new Set<string>();
   @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
   /** The selection the timeline DOM was last rendered for. */
   private renderedRevision = -1;
@@ -380,6 +386,24 @@ export class NativeSessionView extends LitElement {
           ${label}
         </button>`
       : nothing;
+  }
+
+  private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: string) {
+    if (!preview) return html`<span class="body">${text}</span>`;
+    const expanded = this.expandedMessages.has(key);
+    return html`<span class="body">${expanded ? text : preview.text}</span>
+      <button
+        class="message-toggle"
+        data-testid="native-message-toggle"
+        aria-expanded=${expanded ? 'true' : 'false'}
+        @click=${() => {
+          const next = new Set(this.expandedMessages);
+          if (!next.delete(key)) next.add(key);
+          this.expandedMessages = next;
+        }}
+      >
+        ${nativeMessageToggleLabel(preview, expanded)}
+      </button>`;
   }
 
   private scrollTimelineToEnd() {
@@ -754,6 +778,7 @@ export class NativeSessionView extends LitElement {
 
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
+    this.expandedMessages = new Set();
     this.follow = NATIVE_FOLLOW_LATEST;
     this.selectedId = id;
     this.selectedNodeId = executionNodeId;
@@ -1281,7 +1306,11 @@ ${JSON.stringify(
                                           timestamp: entry.event.at,
                                         } satisfies ChatMessage}
                                       ></chat-message>`
-                                    : html`<span class="body">${entry.text}</span>`}
+                                    : this.renderMessageBody(
+                                        entry.text,
+                                        nativeEntryPreview(entry),
+                                        entry.event.commandId ?? String(entry.key),
+                                      )}
                                 </div>
                                 ${entry.event.type === 'error' && entry.event.data
                                   ? html`<details>
@@ -1300,7 +1329,11 @@ ${JSON.stringify(
                       ? html`<article class="user">
                           <span class="meta">You · Delivery unconfirmed</span>
                           <div class="text">
-                            <span class="body">${this.localCommand.text}</span>
+                            ${this.renderMessageBody(
+                              this.localCommand.text,
+                              nativeMessagePreview(this.localCommand.text),
+                              this.localCommand.commandId,
+                            )}
                           </div>
                         </article>`
                       : nothing}

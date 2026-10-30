@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - `nativeWork` finds the turn a native session is running, when it started and its current tool; `nativeWorkLabel` gives "Working · 1m 12s · Bash".
+- `nativeMessagePreview` gives the first 8 lines (at most 600 characters) of a native conversation message over 12 lines or 900 characters, with its line count; `nativeEntryPreview` applies it to user messages only, and `nativeMessageToggleLabel` gives the "Show all · N lines" or "Show less" label.
 - `NativeFollow`, `NATIVE_FOLLOW_LATEST`, `nativeFollowScrolled`, `nativeFollowGrew` and `nativeFollowLabel` track whether a native conversation reader follows new output and how many entries arrived while they read further up.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

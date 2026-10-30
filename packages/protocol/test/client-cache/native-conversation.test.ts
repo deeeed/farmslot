@@ -6,9 +6,12 @@ import {
   NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
   nativeDeliveryLabel,
+  nativeEntryPreview,
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
+  nativeMessagePreview,
+  nativeMessageToggleLabel,
   nativeTimeline,
   nativeWork,
   nativeWorkLabel,
@@ -229,6 +232,46 @@ test('a reader who scrolls up keeps their place and counts new entries until the
   assert.equal(nativeFollowScrolled(follow, 300), follow, 'scrolling elsewhere keeps the count');
   assert.equal(nativeFollowGrew(follow, 0), follow);
   assert.deepEqual(nativeFollowScrolled(follow, 10), NATIVE_FOLLOW_LATEST, 'back at the end');
+});
+
+test('a long message shows its first lines until expanded; short ones show in full', () => {
+  const lines = (count: number) =>
+    Array.from({ length: count }, (_, i) => `- step ${i}`).join('\n');
+  assert.equal(nativeMessagePreview('Fix the flaky test.'), undefined);
+  // Collapsing would hide only a few lines or characters.
+  assert.equal(nativeMessagePreview(lines(12)), undefined);
+  assert.equal(nativeMessagePreview('x'.repeat(900)), undefined);
+  // A prompt read from a file ends in a newline; it is not a hidden line.
+  assert.equal(nativeMessagePreview(`${lines(12)}\n`), undefined);
+  assert.equal(nativeMessagePreview(lines(13))?.lines, 13);
+  const preview = nativeMessagePreview(`${lines(200)}\n`);
+  assert(preview);
+  assert.equal(preview.lines, 200);
+  // Cut at a line end: the label carries the count, no ellipsis.
+  assert.equal(preview.text, lines(8));
+  assert.equal(nativeMessageToggleLabel(preview, false), 'Show all · 200 lines');
+  assert.equal(nativeMessageToggleLabel(preview, true), 'Show less');
+  const wide = nativeMessagePreview('x'.repeat(5000));
+  assert(wide);
+  assert.equal(wide.lines, 1);
+  assert.equal(wide.text, `${'x'.repeat(600)}…`);
+  assert.equal(nativeMessageToggleLabel(wide, false), 'Show all · 1 line');
+  // A cut never splits an emoji.
+  assert.equal(
+    nativeMessagePreview(`${'x'.repeat(599)}😀${'x'.repeat(400)}`)?.text,
+    `${'x'.repeat(599)}…`,
+  );
+});
+
+test('only user messages collapse', () => {
+  const long = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n');
+  const [user, assistant] = nativeTimeline([
+    event(1, 'command.submitted', long),
+    event(2, 'text.delta', long),
+  ]);
+  assert(user?.kind === 'user' && assistant?.kind === 'assistant');
+  assert.equal(nativeEntryPreview(user)?.lines, 200);
+  assert.equal(nativeEntryPreview(assistant), undefined);
 });
 
 test('a running turn reports when it started and the tool it runs now', () => {

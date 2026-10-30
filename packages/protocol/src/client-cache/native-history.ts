@@ -472,6 +472,41 @@ export function nativeFollowLabel(state: NativeFollow): string | undefined {
   return state.unseen ? `Latest · ${state.unseen} new` : 'Latest';
 }
 
+const NATIVE_MESSAGE_PREVIEW_LINES = 8;
+const NATIVE_MESSAGE_PREVIEW_CHARS = 600;
+// A message collapses only when that hides a real amount, never a line or a few characters.
+const NATIVE_MESSAGE_COLLAPSE_LINES = 12;
+const NATIVE_MESSAGE_COLLAPSE_CHARS = 900;
+
+export interface NativeMessagePreview {
+  text: string;
+  lines: number;
+}
+
+/** A long message (a worker's dispatch prompt) shows its start until the reader expands it. */
+export function nativeMessagePreview(text: string): NativeMessagePreview | undefined {
+  // A trailing newline is not a line the reader sees.
+  const body = text.replace(/\n+$/, '');
+  const lines = body.split('\n');
+  if (body.length <= NATIVE_MESSAGE_COLLAPSE_CHARS && lines.length <= NATIVE_MESSAGE_COLLAPSE_LINES)
+    return undefined;
+  const head = lines.slice(0, NATIVE_MESSAGE_PREVIEW_LINES).join('\n');
+  if (head.length <= NATIVE_MESSAGE_PREVIEW_CHARS) return { text: head, lines: lines.length };
+  // Cut inside a line: mark it, without splitting a surrogate pair.
+  const cut = head.slice(0, NATIVE_MESSAGE_PREVIEW_CHARS).replace(/[\uD800-\uDBFF]$/, '');
+  return { text: `${cut.trimEnd()}…`, lines: lines.length };
+}
+
+/** Only the reader's own messages collapse; assistant, tool and status entries show in full. */
+export function nativeEntryPreview(entry: NativeTimelineEntry): NativeMessagePreview | undefined {
+  return entry.kind === 'user' ? nativeMessagePreview(entry.text) : undefined;
+}
+
+export function nativeMessageToggleLabel(preview: NativeMessagePreview, expanded: boolean): string {
+  if (expanded) return 'Show less';
+  return `Show all · ${preview.lines} ${preview.lines === 1 ? 'line' : 'lines'}`;
+}
+
 export interface NativeWork {
   /** When the open turn started, in ms. */
   since: number;
