@@ -50,6 +50,7 @@ import {
   forgetGatewayProfileSecret,
   type GatewayProfile,
   type GatewayProfileAuthMode,
+  type GatewayProfileLoginOptions,
   isLegacyPresetGatewayUrl,
   mergeGatewayProfiles,
   prepareGatewayProfileLogin,
@@ -106,6 +107,7 @@ interface ConnectionStore {
     secret?: string,
     personSession?: PersonSessionAuth,
     verification?: GatewayAuthConnectResult,
+    options?: GatewayProfileLoginOptions,
   ) => Promise<void>;
   setProfileAuth: (
     profileId: string,
@@ -297,9 +299,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   setActiveProfile: async (profileId: string) => {
     const profile = get().profiles.find((candidate) => candidate.id === profileId);
     if (!profile) return;
-    await AsyncStorage.setItem(ACTIVE_GATEWAY_PROFILE_KEY, profile.id);
-    await AsyncStorage.setItem(GATEWAY_URL_KEY, profile.url);
+    // A login that cannot be read must not become the saved selection a restart opens.
     const auth = await authCredentialsForProfile(profile);
+    await AsyncStorage.multiSet([
+      [ACTIVE_GATEWAY_PROFILE_KEY, profile.id],
+      [GATEWAY_URL_KEY, profile.url],
+    ]);
     await AsyncStorage.removeItem(SIGNED_OUT_KEY);
     set({ signedOut: false });
     const authMode = profile.authMode ?? 'none';
@@ -338,6 +343,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     secret?: string,
     personSession?: PersonSessionAuth,
     verification?: GatewayAuthConnectResult,
+    options: GatewayProfileLoginOptions = {},
   ) => {
     const normalizedProfile: GatewayProfile = {
       ...profile,
@@ -351,10 +357,15 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           ? (profile.secretStorageKey ?? profileSecretStorageKey(profile.id))
           : undefined,
     };
-    const login = await prepareGatewayProfileLogin(normalizedProfile, secret, personSession);
+    const login = await prepareGatewayProfileLogin(
+      normalizedProfile,
+      secret,
+      personSession,
+      options,
+    );
     if (personSession) {
       const current = await readGatewayProfilePersonSession(normalizedProfile);
-      if (current && current.session.id !== personSession.session.id)
+      if (current && current.session.id !== personSession.session.id && !options.replacePersonLogin)
         throw new Error('Sign out this device before replacing its person login.');
       await login.credentials.sessionStorage.save(personSession);
       const result =

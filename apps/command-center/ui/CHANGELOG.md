@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The Companion pairing QR comes with its pair link: Open in Companion, Copy link and Copy adb command (`adb shell am start` for a device on adb), for the production, preview or development build. Same code and expiry as the QR; when the code expires, the QR and link give way to a note.
 - Native conversation messages no longer start with a blank line and an indent. Line breaks and spacing inside a message stay as written.
 - The native conversation takes its transcript, delivery label and input-lock helpers from the shared client cache instead of its own copy. No behaviour change.
 - The native conversation message box, Send / Queue message and request answers no longer lock, dropping what you were typing, each time a streaming worker writes. They follow the same rule as other held data and wait for a current read only while history is saved: restored from storage, offline, after a failed read, or reads superseded for 60 s.
