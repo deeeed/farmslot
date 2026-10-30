@@ -17,6 +17,7 @@ import {
   nativeObservationQuery,
   nativeTimeline,
   type NativeTranscript,
+  nativeWork,
   resourceQuery,
 } from '@farmslot/protocol/client-cache';
 
@@ -417,6 +418,7 @@ export function useNativeConversationController(params: NativeConversationParams
       }
     });
   const entries = nativeTimeline(transcript.events);
+  const work = nativeWork(transcript.events);
   const canSend = writable && session?.state === 'idle' && !pending && !busy && !!draft.trim();
   const proof = useRef({
     focused,
@@ -482,6 +484,7 @@ export function useNativeConversationController(params: NativeConversationParams
       resume: resume.viewModel,
       session,
       entries,
+      work,
       requests: snapshot?.pendingRequests ?? [],
       responses,
       draft,

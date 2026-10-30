@@ -95,8 +95,11 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
 
 /** Client projection metadata. Never sent as a native RPC parameter. */
 export interface NativeHistorySnapshot extends NativeSessionReadResult {
-  historyRead: { pageReadCount: number; pageAfters: number[] };
+  historyRead: { pageReadCount: number; pageAfters: number[]; projection?: number };
 }
+
+/** Bumped when retention keeps more: a snapshot saved by an older reader is read again from its start, once. */
+const NATIVE_HISTORY_PROJECTION = 2;
 
 export const NATIVE_HISTORY_MESSAGES = 200;
 export const NATIVE_HISTORY_SESSIONS = 10;
@@ -136,10 +139,16 @@ export function retainNativeMessages(events: NativeSessionEvent[]): NativeSessio
     .reverse()
     .filter((entry) => entry.kind !== 'status' || ++statuses <= NATIVE_HISTORY_MESSAGES)
     .reverse();
-  return retained.map((entry) => ({
+  const kept = retained.map((entry) => ({
     ...entry.event,
     ...(entry.kind === 'assistant' || entry.kind === 'user' ? { text: entry.text } : {}),
   }));
+  // A running turn's start is not a timeline entry, but its working time is counted from it.
+  // Appended: the timeline skips it and nativeWork compares sequences, so its place does not
+  // matter, and sorting would move tool cards that finished out of order.
+  const turn = nativeOpenTurn(events);
+  if (!turn || kept.some((item) => item.sequence === turn.sequence)) return kept;
+  return [...kept, turn];
 }
 
 export function sameNativeHistoryIdentity(
@@ -201,11 +210,14 @@ export async function readNativeHistory(
   request: NativeHistoryReader,
   signal: AbortSignal,
 ): Promise<ResourceReadResult<NativeHistorySnapshot>> {
-  let retained = previous;
-  let cursor = previous?.cursor;
+  const previousRead = (previous as NativeHistorySnapshot | undefined)?.historyRead;
+  // Saved by a reader that dropped the running turn's start: keep its identity, reread its events.
+  const replay =
+    previousRead !== undefined && previousRead.projection !== NATIVE_HISTORY_PROJECTION;
+  let retained = previous && replay ? { ...previous, events: [] } : previous;
+  let cursor = replay ? undefined : previous?.cursor;
   let stamp: ResourceReadStamp | undefined;
   let first = true;
-  const previousRead = (previous as NativeHistorySnapshot | undefined)?.historyRead;
   let pageReadCount = previousRead?.pageReadCount ?? 0;
   let pageAfters = previousRead?.pageAfters ?? [];
   for (let pages = 0; pages < 1000; pages++) {
@@ -268,7 +280,10 @@ export async function readNativeHistory(
     cursor = page.cursor;
     if (!page.hasMore)
       return {
-        data: { ...retained, historyRead: { pageReadCount, pageAfters } },
+        data: {
+          ...retained,
+          historyRead: { pageReadCount, pageAfters, projection: NATIVE_HISTORY_PROJECTION },
+        },
         resourceState: stamp,
       };
   }
@@ -505,4 +520,51 @@ export function nativeEntryPreview(entry: NativeTimelineEntry): NativeMessagePre
 export function nativeMessageToggleLabel(preview: NativeMessagePreview, expanded: boolean): string {
   if (expanded) return 'Show less';
   return `Show all · ${preview.lines} ${preview.lines === 1 ? 'line' : 'lines'}`;
+}
+
+export interface NativeWork {
+  /** When the open turn started, in ms. */
+  since: number;
+  /** The tool the turn is running now. */
+  tool?: string;
+}
+
+/** The start of the turn still running, if any. A restarted host cannot continue a turn. */
+function nativeOpenTurn(events: NativeSessionEvent[]): NativeSessionEvent | undefined {
+  let turn: NativeSessionEvent | undefined;
+  for (const event of events) {
+    if (event.type === 'turn.started') turn = event;
+    else if (['turn.completed', 'session.closed', 'session.started'].includes(event.type))
+      turn = undefined;
+  }
+  return turn;
+}
+
+/** The turn in progress, if any: when it started and the tool it is running now. */
+export function nativeWork(events: NativeSessionEvent[]): NativeWork | undefined {
+  const turn = nativeOpenTurn(events);
+  if (!turn) return undefined;
+  const tools = new Map<string, string>();
+  for (const event of events) {
+    if (event.sequence <= turn.sequence || !event.nativeId || !event.tool) continue;
+    if (event.type === 'tool.started') tools.set(event.nativeId, event.tool.name);
+    else if (event.type === 'tool.completed') tools.delete(event.nativeId);
+  }
+  return { since: Date.parse(turn.at), tool: [...tools.values()].at(-1) };
+}
+
+/**
+ * "Working · 1m 12s · Bash": how long the turn has run, and its current tool.
+ * `since` is the execution host's clock: a client clock ahead of it overstates the time by the skew.
+ */
+export function nativeWorkLabel(work: NativeWork, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - work.since) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const elapsed =
+    minutes >= 60
+      ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+      : minutes
+        ? `${minutes}m ${seconds % 60}s`
+        : `${seconds}s`;
+  return `Working · ${elapsed}${work.tool ? ` · ${work.tool}` : ''}`;
 }
