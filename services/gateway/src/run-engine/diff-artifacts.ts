@@ -226,7 +226,7 @@ async function resolveDiffCaptureSettings(project: string): Promise<{
   }
 }
 
-async function resolveProjectSourceDiffFilter(project: string): Promise<{
+export async function resolveProjectSourceDiffFilter(project: string): Promise<{
   sourceFilter: SourceDiffFilter;
   configSource: 'project' | 'gateway-default';
   configFallbackReason?: string;

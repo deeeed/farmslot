@@ -709,24 +709,26 @@ async function slotPrepareInner(
     // `gh pr create` defaults to refs/remotes/origin/HEAD when --base is omitted, so a drifted
     // symbolic ref silently produces wrong-base PRs. Reset it every prepare and hard-fail if
     // it still doesn't match — this is the single gate per CLAUDE.md.
-    step('origin-head', `Resetting origin/HEAD to ${defaultBranch}...`);
-    await execOnSlot(
-      vars,
-      `cd ${shellQuote(vars.remoteRepo)} && git remote set-head origin ${shellQuote(defaultBranch)} 2>/dev/null`,
-    );
-    const originHead = (
+    if (!opts?.blindBaseSha) {
+      step('origin-head', `Resetting origin/HEAD to ${defaultBranch}...`);
       await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null`,
-      )
-    ).stdout.trim();
-    const expectedHead = `refs/remotes/origin/${defaultBranch}`;
-    if (originHead !== expectedHead) {
-      throw new Error(
-        `origin/HEAD is '${originHead || 'unset'}' (expected '${expectedHead}'). Refusing to dispatch — gh pr create would default to the wrong base.`,
+        `cd ${shellQuote(vars.remoteRepo)} && git remote set-head origin ${shellQuote(defaultBranch)} 2>/dev/null`,
       );
+      const originHead = (
+        await execOnSlot(
+          vars,
+          `cd ${shellQuote(vars.remoteRepo)} && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null`,
+        )
+      ).stdout.trim();
+      const expectedHead = `refs/remotes/origin/${defaultBranch}`;
+      if (originHead !== expectedHead) {
+        throw new Error(
+          `origin/HEAD is '${originHead || 'unset'}' (expected '${expectedHead}'). Refusing to dispatch — gh pr create would default to the wrong base.`,
+        );
+      }
+      step('origin-head', `origin/HEAD = ${expectedHead}`);
     }
-    step('origin-head', `origin/HEAD = ${expectedHead}`);
   }
 
   // A requested start ref must resolve to structured provenance on every branch
@@ -735,11 +737,20 @@ async function slotPrepareInner(
   const resolveRequestedStartRef = async () => {
     if (!opts?.startRef) return;
     step('start-ref', `Resolving base ref ${opts.startRef.requestedRef}...`);
-    resolvedStartRef = await resolveStartRefInRepo({
-      repo: vars.remoteRepo,
-      requestedRef: opts.startRef.requestedRef,
-      exec: (command) => execOnSlot(vars, command),
-    });
+    if (opts.blindBaseSha) {
+      if (!opts.preserveBranch || opts.startRef.requestedRef !== opts.blindBaseSha)
+        throw new Error('Blind prepare must preserve its verified base branch.');
+      resolvedStartRef = {
+        requestedRef: opts.blindBaseSha,
+        resolvedSha: opts.blindBaseSha,
+        resolvedAt: new Date().toISOString(),
+      };
+    } else
+      resolvedStartRef = await resolveStartRefInRepo({
+        repo: vars.remoteRepo,
+        requestedRef: opts.startRef.requestedRef,
+        exec: (command) => execOnSlot(vars, command),
+      });
     step(
       'start-ref',
       `Base ref ${resolvedStartRef.requestedRef} resolved to ${resolvedStartRef.resolvedSha}`,

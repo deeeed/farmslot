@@ -23,6 +23,7 @@ import {
 } from '../../evals/package-store.js';
 import { fetchGitHubPR, fetchPRDiffFiles } from '../../external/github.js';
 import { loadProjectConfig } from '../../fleet/state.js';
+import { ghRequest } from '../../integrations/github-client.js';
 import { getAllRuns, getRun } from '../../runs/store.js';
 import {
   assertTicketRefMatchesProjectRepo,
@@ -105,19 +106,6 @@ function buildDiffProvenance(
   };
 }
 
-function renderReferenceDiff(files: Awaited<ReturnType<typeof fetchPRDiffFiles>>): string {
-  if (files.length === 0) return '# No source diff available for the reference PR\n';
-  return files
-    .map((file) =>
-      [
-        `## ${file.filename}`,
-        `status: ${file.status} (+${file.additions} -${file.deletions})`,
-        file.patch?.trim() || '_patch unavailable_',
-      ].join('\n\n'),
-    )
-    .join('\n\n');
-}
-
 async function resolveMergedPrSource(project: string, ref: string): Promise<ResolvedEvalSource> {
   const projectConfig = await loadProjectConfig(project);
   const normalizedRef = normalizeTicketRef(ref);
@@ -132,7 +120,15 @@ async function resolveMergedPrSource(project: string, ref: string): Promise<Reso
   if (!pr.merged || !pr.mergedAt)
     throw new Error(`Eval source requires a merged PR: ${resolvedRef}`);
 
-  const diffFiles = await fetchPRDiffFiles(parsed.repo, pr.number);
+  const [diffFiles, rawDiff] = await Promise.all([
+    fetchPRDiffFiles(parsed.repo, pr.number),
+    ghRequest([
+      'api',
+      `repos/${parsed.repo}/pulls/${pr.number}`,
+      '--header',
+      'Accept: application/vnd.github.diff',
+    ]),
+  ]);
   const diff = buildDiffProvenance(
     parsed.repo,
     pr.number,
@@ -162,7 +158,7 @@ async function resolveMergedPrSource(project: string, ref: string): Promise<Reso
     diff,
     contextArtifacts: [],
     packageArtifacts: [],
-    diffText: renderReferenceDiff(diffFiles),
+    diffText: rawDiff.stdout,
     mergedPr: {
       repo: parsed.repo,
       prNumber: pr.number,

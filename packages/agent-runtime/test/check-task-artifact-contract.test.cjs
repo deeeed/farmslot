@@ -74,6 +74,53 @@ const selectionStarted = performance.now();
 const selectedTask = makeTaskDir('farmslot-agent-selected-attempt-');
 const selectedRoot = path.join(selectedTask, 'artifacts', 'recipe-runs', 'current');
 try {
+  const manifestContract = path.join(selectedTask, 'manifest-contract.json');
+  writeFileSync(
+    manifestContract,
+    JSON.stringify({
+      schemaVersion: 1,
+      flowType: 'dev',
+      recordedEvidenceContractVersion: 1,
+      commands: { complete: { artifacts: ['artifacts/evidence-manifest.json'] } },
+    }),
+  );
+  writeFileSync(
+    path.join(selectedTask, 'artifacts/evidence-manifest.json'),
+    JSON.stringify({ version: 1, summary: 'State-only proof from an explicit output directory.' }),
+  );
+  const missingSelection = spawnSync(
+    process.execPath,
+    [checker, selectedTask, '--contract', manifestContract, '--terminal', 'complete'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(missingSelection.status, 1, 'contract 1 must not complete on the legacy package');
+  assert.match(missingSelection.stderr, /latest-valid-recipe-run.json.*RECIPE_TASK_DIR/s);
+  const legacyContract = JSON.parse(readFileSync(manifestContract, 'utf8'));
+  legacyContract.recordedEvidenceContractVersion = 0;
+  writeFileSync(manifestContract, JSON.stringify(legacyContract));
+  const legacySelection = spawnSync(
+    process.execPath,
+    [checker, selectedTask, '--contract', manifestContract, '--terminal', 'complete'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(legacySelection.status, 0, legacySelection.stderr);
+  legacyContract.recordedEvidenceContractVersion = 1;
+  writeFileSync(manifestContract, JSON.stringify(legacyContract));
+  // Contract 1 does not invent a recipe requirement for backend-only tasks.
+  renameSync(
+    path.join(selectedTask, 'artifacts/recipe.json'),
+    path.join(selectedTask, 'artifacts/recipe.saved.json'),
+  );
+  const withoutRecipe = spawnSync(
+    process.execPath,
+    [checker, selectedTask, '--contract', manifestContract, '--terminal', 'complete'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(withoutRecipe.status, 0, withoutRecipe.stderr);
+  renameSync(
+    path.join(selectedTask, 'artifacts/recipe.saved.json'),
+    path.join(selectedTask, 'artifacts/recipe.json'),
+  );
   mkdirSync(path.dirname(selectedRoot), { recursive: true });
   renameSync(path.join(selectedTask, 'artifacts', 'recipe-run'), selectedRoot);
   const { recordRecipeAttemptSelection } = require('../scripts/retained-recipe-attempt.cjs');
@@ -91,16 +138,6 @@ try {
   writeFileSync(
     path.join(selectedTask, 'artifacts/evidence-manifest.json'),
     '{invalid old manifest',
-  );
-  const manifestContract = path.join(selectedTask, 'manifest-contract.json');
-  writeFileSync(
-    manifestContract,
-    JSON.stringify({
-      schemaVersion: 1,
-      flowType: 'dev',
-      recordedEvidenceContractVersion: 1,
-      commands: { complete: { artifacts: ['artifacts/evidence-manifest.json'] } },
-    }),
   );
   let selectedResult = spawnSync(
     process.execPath,
@@ -154,7 +191,11 @@ try {
     path.join(selectedTask, 'artifacts/evidence-manifest.json'),
     JSON.stringify({ version: 1, standalone: [] }),
   );
-  selectedResult = spawnSync(process.execPath, [checker, selectedTask], { encoding: 'utf8' });
+  selectedResult = spawnSync(
+    process.execPath,
+    [checker, selectedTask, '--contract', manifestContract, '--terminal', 'complete'],
+    { encoding: 'utf8' },
+  );
   assert.equal(selectedResult.status, 0, selectedResult.stderr);
   renameSync(nested, selectedRoot);
   writeFileSync(selectedPointerPath, selectedPointer);

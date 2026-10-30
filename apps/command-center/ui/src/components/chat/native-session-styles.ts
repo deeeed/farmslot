@@ -184,12 +184,17 @@ export const nativeSessionStyles = css`
   }
   pre,
   .text {
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
     margin: 6px 0;
     font: inherit;
     line-height: 1.55;
+  }
+  /* The message keeps its spacing; the template indentation around it does not render. */
+  pre,
+  .text .body,
+  .text chat-message .cm-bubble > span {
+    white-space: pre-wrap;
   }
   details {
     border: 1px solid ${unsafeCSS(colors.bgCardHover)};

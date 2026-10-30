@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import {
   type CandidateStrategy,
+  type EvalBlindTrial,
+  evalComparisonEligibility,
   type EvalExperimentCreateParams,
   type EvalExperimentCreateResult,
   type EvalExperimentManifest,
@@ -35,6 +37,14 @@ import { getQueueSnapshot, tryDispatchNext } from '../backlog/dispatch-queue.js'
 import { loadProjectVars } from '../core/config.js';
 import { getOrchestratorTaskRoot } from '../core/index.js';
 import {
+  assertBlindProblem,
+  FULL_COMMIT,
+  referenceCommits,
+  referenceInputMarkers,
+  sourceComparisonDiff,
+  stablePatchId,
+} from '../evals/blind-inputs.js';
+import {
   CANDIDATE_PACKAGE_FILENAME,
   computeCandidateStrategyFingerprint,
   computeExperimentKey,
@@ -46,6 +56,7 @@ import {
   readResultPackageManifest,
   REFERENCE_PACKAGE_FILENAME,
   RESULT_PACKAGE_DIR,
+  sha256Text,
   unavailableDiff,
   visualEvidenceFromArtifacts,
   writeEvalExperimentManifest,
@@ -53,9 +64,8 @@ import {
   writeResultPackageManifest,
 } from '../evals/package-store.js';
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
-import { fetchGitHubPR } from '../external/github.js';
-import { loadProjectConfig } from '../fleet/state.js';
 import { buildSmartBranch, ticketSlug } from '../intelligence/engine.js';
+import { resolveProjectSourceDiffFilter } from '../run-engine/diff-artifacts.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { TEMPLATE_PROVENANCE_INPUT } from '../tasks/writer.js';
 
@@ -123,19 +133,6 @@ function commitMetadataFromDiff(diff: FamilyDiffProvenance): FamilyInputCommitMe
   return metadata;
 }
 
-function startRefSourceForReferencePackage(
-  referencePackage: ResultPackageManifest,
-): RunStartRefSource {
-  const source = referencePackage.source;
-  if (source.kind === 'merged-pr')
-    return { kind: 'merged-pr', repo: source.repo, prNumber: source.prNumber };
-  if (source.kind === 'package' && source.packagePath)
-    return { kind: 'package', packagePath: source.packagePath };
-  if (source.kind === 'git-ref')
-    return { kind: 'git-ref', repository: source.repository, ref: source.ref };
-  return { kind: 'manual' };
-}
-
 function sourceBaseSha(source: EvalPackageSource): string | undefined {
   if (source.kind === 'merged-pr' || source.kind === 'git-ref') return source.baseSha;
   return undefined;
@@ -149,69 +146,41 @@ function packagedReferenceBase(referencePackage: ResultPackageManifest): string 
   );
 }
 
-async function priorRunReplayBase(
-  source: Extract<EvalPackageSource, { kind: 'prior-run' }>,
-  project: string,
-): Promise<{ requestedRef: string; source: RunStartRefSource; auto: boolean } | undefined> {
-  const originalRun = getRun(source.runId);
-  const originalStartRef =
-    originalRun?.startRef?.resolvedSha ?? originalRun?.startRef?.requestedRef;
-  if (originalStartRef?.trim()) {
-    return {
-      requestedRef: originalStartRef.trim(),
-      source: originalRun?.startRef?.source ?? { kind: 'manual' },
-      auto: true,
-    };
-  }
-
-  if (originalRun?.prNumber === undefined) return undefined;
-  const projectConfig = await loadProjectConfig(project);
-  const repo = projectConfig?.ci?.repo;
-  if (!repo) return undefined;
-
-  const pr = await fetchGitHubPR(`${repo}#${originalRun.prNumber}`);
-  if (!pr.baseSha?.trim()) return undefined;
-  return {
-    requestedRef: pr.baseSha.trim(),
-    source: { kind: 'merged-pr', repo, prNumber: originalRun.prNumber },
-    auto: true,
-  };
-}
-
-function referenceSourceLabel(source: EvalPackageSource): string {
-  if (source.kind === 'prior-run') return `prior run ${source.runId.slice(0, 8)}`;
-  if (source.kind === 'package') return `package ${source.packageId}`;
-  if (source.kind === 'merged-pr') return `${source.repo}#${source.prNumber}`;
-  return source.ref;
-}
-
-async function candidateStartRefForReferencePackage(
+function candidateStartRefForReferencePackage(
   params: Pick<EvalTrialStartParams, 'startRef'>,
-  project: string,
   referencePackage: ResultPackageManifest,
-): Promise<{ requestedRef: string; source: RunStartRefSource; auto: boolean }> {
-  const explicit = params.startRef?.trim();
-  if (explicit) return { requestedRef: explicit, source: { kind: 'manual' }, auto: false };
+): { requestedRef: string; source: RunStartRefSource; auto: boolean } {
+  const base = packagedReferenceBase(referencePackage);
+  if (!base || !FULL_COMMIT.test(base))
+    throw new Error("A blind trial requires the reference package's verified full base commit.");
+  if (params.startRef?.trim() && params.startRef.trim() !== base)
+    throw new Error("A blind trial must start at the reference package's verified base commit.");
+  return { requestedRef: base, source: { kind: 'manual' }, auto: !params.startRef?.trim() };
+}
 
-  const packagedBase = packagedReferenceBase(referencePackage);
-  if (packagedBase?.trim()) {
-    return {
-      requestedRef: packagedBase.trim(),
-      source: startRefSourceForReferencePackage(referencePackage),
-      auto: true,
-    };
+async function referenceDiffText(
+  reference: ResultPackageManifest,
+  evalRoot: string,
+): Promise<string> {
+  if (!reference.diff.artifactPath)
+    throw new Error('A native reference diff is required for a blind trial.');
+  const roots = [evalRoot];
+  if (reference.source.kind === 'package' && reference.source.packagePath)
+    roots.push(path.dirname(path.dirname(path.dirname(reference.source.packagePath))));
+  if (reference.source.kind === 'prior-run' && reference.source.taskFile)
+    roots.push(path.dirname(reference.source.taskFile));
+  for (const root of roots) {
+    const file = path.resolve(root, reference.diff.artifactPath);
+    const relative = path.relative(root, file);
+    if (relative.startsWith('..') || path.isAbsolute(relative))
+      throw new Error('Reference diff must be a retained package artifact.');
+    try {
+      return await readFile(file, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
-
-  const source = referencePackage.source;
-  if (source.kind === 'prior-run') {
-    const replayBase = await priorRunReplayBase(source, project);
-    if (replayBase) return replayBase;
-  }
-
-  const sourceLabel = referenceSourceLabel(source);
-  throw new Error(
-    `Eval replay requires a concrete reference base commit/startRef before launch; ${sourceLabel} has no baseline.baseSha, source.baseSha, diff.baseSha, original startRef, or resolvable PR base. Recreate the Reference from a merged PR with base metadata, or pass an explicit startRef.`,
-  );
+  throw new Error('The retained reference diff is unavailable; recreate the reference package.');
 }
 
 function buildReferencePackage(input: {
@@ -360,12 +329,17 @@ export async function evalExperimentCreate(
     let currentManifest = experimentManifest;
     if (
       currentManifest.datasetId !== params.datasetId ||
-      currentManifest.datasetItemId !== params.datasetItemId
+      currentManifest.datasetItemId !== params.datasetItemId ||
+      (!currentManifest.case.problemStatement && Boolean(params.objective?.trim()))
     ) {
       currentManifest = {
         ...currentManifest,
         datasetId: params.datasetId,
         datasetItemId: params.datasetItemId,
+        case: {
+          ...currentManifest.case,
+          problemStatement: currentManifest.case.problemStatement ?? params.objective?.trim(),
+        },
         updatedAt: new Date().toISOString(),
       };
       await writeEvalExperimentManifest(experimentManifestPath, currentManifest);
@@ -414,6 +388,7 @@ export async function evalExperimentCreate(
       source: resolved.source,
       taskProfile: params.taskProfile,
       objectiveHash,
+      problemStatement: params.objective?.trim() || undefined,
       referencePackageId: referencePackage.packageId,
       referencePackageHash: referencePackage.packageHash,
       referencePackagePath,
@@ -481,28 +456,6 @@ function assertEvalTrialStartParams(params: EvalTrialStartParams): void {
     throw new Error('Invalid eval.trial.start params: missing axes');
   if (!isEvalPackageAxes(params.axes))
     throw new Error('Invalid candidate axes: expected EvalPackageAxes');
-}
-
-async function readReferencePrInput(
-  experimentManifestPath: string,
-): Promise<{ title?: string; body?: string; url?: string } | null> {
-  const manifestDir = path.dirname(experimentManifestPath);
-  const candidates = [
-    path.join(path.dirname(manifestDir), 'inputs', 'reference-pr.json'),
-    path.join(manifestDir, 'inputs', 'reference-pr.json'),
-  ];
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(await readFile(candidate, 'utf-8')) as {
-        title?: string;
-        body?: string;
-        url?: string;
-      };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    }
-  }
-  return null;
 }
 
 async function resolveCandidateSource(
@@ -631,68 +584,12 @@ async function writeCandidateInputs(input: {
   }
 }
 
-function evalReplayTitle(
-  referencePackage: ResultPackageManifest,
-  referencePrInput: { title?: string } | null,
-  candidateStrategyFingerprint: string,
-): string {
-  const title = referencePrInput?.title?.trim();
-  if (title) return title;
-  const source = referencePackage.source;
-  if (source.kind === 'merged-pr') {
-    return source.title?.trim() || `Replay merged PR ${source.repo}#${source.prNumber}`;
-  }
-  return `Eval replay ${candidateStrategyFingerprint.slice(0, 8)}`;
-}
-
-function evalReplayDescription(
-  referencePackage: ResultPackageManifest,
-  referencePrInput: { body?: string; url?: string } | null,
-  candidateStrategyFingerprint: string,
-): string {
-  const source = referencePackage.source;
-  const body = referencePrInput?.body?.trim();
-  if (source.kind === 'merged-pr' && body) {
-    return [
-      `Artifact-only replay for ${source.repo}#${source.prNumber}.`,
-      referencePrInput?.url ? `Reference PR: ${referencePrInput.url}` : '',
-      body,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-  }
-  return `Eval replay ${candidateStrategyFingerprint.slice(0, 8)}`;
-}
-
-function evalReplayAcceptanceCriteria(referencePackage: ResultPackageManifest): string[] {
-  if (referencePackage.source.kind === 'merged-pr') {
-    return [
-      'Recreate the behavior documented by the reference PR and produce local artifacts only.',
-    ];
-  }
-  return ['Replay the same task format as the reference and produce local artifacts only.'];
-}
-
-function buildEvalReplayTicketData(input: {
-  originalRun?: Run;
-  referencePackage: ResultPackageManifest;
-  referencePrInput: { title?: string; body?: string; url?: string } | null;
-  candidateStrategyFingerprint: string;
-}): RunTicketData {
-  if (input.originalRun?.ticketData) return input.originalRun.ticketData;
+function buildBlindTicketData(problem: string): RunTicketData {
   return {
-    source: input.referencePackage.source.kind === 'merged-pr' ? 'github' : 'manual',
-    title: evalReplayTitle(
-      input.referencePackage,
-      input.referencePrInput,
-      input.candidateStrategyFingerprint,
-    ),
-    description: evalReplayDescription(
-      input.referencePackage,
-      input.referencePrInput,
-      input.candidateStrategyFingerprint,
-    ),
-    acceptanceCriteria: evalReplayAcceptanceCriteria(input.referencePackage),
+    source: 'manual',
+    title: problem.split('\n')[0].slice(0, 200),
+    description: problem,
+    acceptanceCriteria: ['Satisfy the supplied problem statement and retain local artifacts.'],
     affectedArea: 'eval',
     stepsToReproduce: [],
     screenshots: [],
@@ -723,11 +620,7 @@ export async function evalTrialStart(
     );
   const evalCase = experimentManifest.case;
   const referencePackage = await readResultPackageManifest(evalCase.referencePackagePath);
-  const candidateStartRef = await candidateStartRefForReferencePackage(
-    params,
-    params.project,
-    referencePackage,
-  );
+  const candidateStartRef = candidateStartRefForReferencePackage(params, referencePackage);
   const axesDefaults = axesWithExecutionDefaults(params.axes, params);
   const templateResolution = await resolveCandidateTemplateProvenance(
     params.project,
@@ -768,6 +661,27 @@ export async function evalTrialStart(
   if (dedupedResult) return dedupedResult;
 
   const evalRoot = path.dirname(path.dirname(params.experimentManifestPath));
+  const markers = referenceInputMarkers(
+    referencePackage,
+    params.experimentManifestPath,
+    evalCase.referencePackagePath,
+  );
+  const problem = assertBlindProblem(evalCase.problemStatement, markers);
+  const { sourceFilter } = await resolveProjectSourceDiffFilter(params.project);
+  const referencePatchId = await stablePatchId(
+    sourceComparisonDiff(await referenceDiffText(referencePackage, evalRoot), sourceFilter),
+  );
+  const commits = referenceCommits(referencePackage);
+  if (!referencePatchId || commits.length === 0)
+    throw new Error('A blind trial requires a nonempty reference patch and head identity.');
+  const blind: EvalBlindTrial = {
+    version: 1,
+    baseSha: candidateStartRef.requestedRef,
+    problemDigest: sha256Text(problem),
+    referenceCommits: commits,
+    referencePatchId,
+    forbiddenInputs: markers,
+  };
   const candidateDir = path.join(
     evalRoot,
     'candidates',
@@ -789,6 +703,7 @@ export async function evalTrialStart(
     }),
     packageHash: '',
     status: 'draft',
+    comparisonEligibility: { status: 'pending', reason: 'First output has not been captured.' },
     createdAt: new Date().toISOString(),
     project: params.project,
     familyId: experimentManifest.familyId,
@@ -829,16 +744,7 @@ export async function evalTrialStart(
   });
 
   const flowType = evalCase.taskProfile;
-  const originalRun =
-    referencePackage.source.kind === 'prior-run'
-      ? getRun(referencePackage.source.runId)
-      : undefined;
-  const referencePrInput =
-    referencePackage.source.kind === 'merged-pr'
-      ? await readReferencePrInput(params.experimentManifestPath)
-      : null;
-  const ticketOrPr =
-    originalRun?.ticketOrPr ?? syntheticEvalTicket(experimentManifest.experimentKey);
+  const ticketOrPr = syntheticEvalTicket(experimentManifest.experimentKey);
   const branch = buildSmartBranch(
     flowType,
     ticketOrPr,
@@ -846,14 +752,10 @@ export async function evalTrialStart(
     undefined,
     variant,
   );
-  const ticketData = buildEvalReplayTicketData({
-    originalRun,
-    referencePackage,
-    referencePrInput,
-    candidateStrategyFingerprint,
-  });
+  const ticketData = buildBlindTicketData(problem);
   const evalEngineState = {
     evalExperiment: {
+      blind,
       capGroupId: params.capGroupId,
       suiteId: params.suiteId,
       experimentId: experimentManifest.experimentId,
@@ -988,6 +890,7 @@ export async function evalTrialResultGet(
   return {
     run,
     candidatePackage,
+    comparisonEligibility: evalComparisonEligibility(candidatePackage),
     candidatePackagePath: link.packagePath,
     experimentManifest,
   };

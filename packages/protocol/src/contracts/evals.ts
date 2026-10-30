@@ -254,6 +254,62 @@ export interface ResultPackageMetrics {
   sessionTotalTokens?: number;
 }
 
+export interface EvalComparisonEligibility {
+  status: 'pending' | 'eligible' | 'contaminated' | 'invalid';
+  reason?: string;
+  firstOutputHeadSha?: string;
+  candidatePatchId?: string;
+  referencePatchId?: string;
+}
+
+/** Gateway provenance; reference material must never be copied into worker inputs. */
+export interface EvalBlindTrial {
+  version: 1;
+  baseSha: string;
+  problemDigest: string;
+  invalidReason?: string;
+  referenceCommits: string[];
+  referencePatchId: string;
+  forbiddenInputs: string[];
+  isolation?: {
+    slotId: string;
+    slotEpoch: number;
+    capsulePath: string;
+    verifiedAt?: string;
+  };
+  firstOutput?: {
+    headSha: string;
+    capturedAt: string;
+    diffPath: string;
+    diffSha256: string;
+    patchId: string;
+    diff: FamilyDiffProvenance;
+  };
+}
+
+export function isEvalComparisonEligibility(value: unknown): value is EvalComparisonEligibility {
+  return (
+    isPlainRecord(value) &&
+    (value.status === 'pending' ||
+      value.status === 'eligible' ||
+      value.status === 'contaminated' ||
+      value.status === 'invalid') &&
+    isOptionalString(value.reason) &&
+    isOptionalString(value.firstOutputHeadSha) &&
+    isOptionalString(value.candidatePatchId) &&
+    isOptionalString(value.referencePatchId)
+  );
+}
+
+export function evalComparisonEligibility(value: {
+  comparisonEligibility?: EvalComparisonEligibility;
+  role?: EvalPackageRole;
+}): EvalComparisonEligibility {
+  if (value.comparisonEligibility) return value.comparisonEligibility;
+  if (value.role === 'reference') return { status: 'eligible' };
+  return { status: 'invalid', reason: 'Blind trial provenance is missing.' };
+}
+
 export interface ResultPackageManifest {
   version: 1;
   kind: 'result-package';
@@ -283,6 +339,7 @@ export interface ResultPackageManifest {
   templateProvenance?: PortableTemplateProvenance;
   harnessLifecycle?: EvalHarnessLifecycle;
   missingData: string[];
+  comparisonEligibility?: EvalComparisonEligibility;
 }
 
 export interface EvalRubricManifest {
@@ -297,6 +354,8 @@ export interface EvalCase {
   source: EvalPackageSource;
   taskProfile: EvalTaskProfile;
   objectiveHash: string;
+  /** Explicit ticket/problem text, separate from the gateway-only reference answer. */
+  problemStatement?: string;
   referencePackageId: string;
   referencePackageHash: string;
   referencePackagePath: string;
@@ -324,6 +383,7 @@ export interface ExperimentTrial {
   startedAt?: string;
   completedAt?: string;
   missingData: string[];
+  comparisonEligibility?: EvalComparisonEligibility;
 }
 
 export interface EvalExperimentManifest {
@@ -346,6 +406,7 @@ export interface EvalExperimentManifest {
 }
 
 export interface ResultPackageProjection {
+  comparisonEligibility?: EvalComparisonEligibility;
   caseId?: string;
   strategyId?: string;
   trialId?: string;
@@ -787,6 +848,11 @@ function isFamilyObservabilityArtifactShallow(
 
 export function isResultPackageManifest(value: unknown): value is ResultPackageManifest {
   if (!isPlainRecord(value)) return false;
+  if (
+    value.comparisonEligibility != null &&
+    !isEvalComparisonEligibility(value.comparisonEligibility)
+  )
+    return false;
   if (value.version !== 1 || value.kind !== 'result-package') return false;
   if (typeof value.packageId !== 'string' || typeof value.packageHash !== 'string') return false;
   if (value.status !== 'draft' && value.status !== 'final') return false;
@@ -867,6 +933,7 @@ function isEvalCase(value: unknown): value is EvalCase {
     typeof value.referencePackageHash === 'string' &&
     typeof value.referencePackagePath === 'string' &&
     isOptionalString(value.label) &&
+    isOptionalString(value.problemStatement) &&
     (value.metadata == null || isEvalMetadata(value.metadata))
   );
 }
@@ -888,6 +955,11 @@ function isExperimentTrialStatus(value: unknown): value is ExperimentTrialStatus
 
 function isExperimentTrial(value: unknown): value is ExperimentTrial {
   if (!isPlainRecord(value)) return false;
+  if (
+    value.comparisonEligibility != null &&
+    !isEvalComparisonEligibility(value.comparisonEligibility)
+  )
+    return false;
   return (
     typeof value.trialId === 'string' &&
     typeof value.strategyId === 'string' &&

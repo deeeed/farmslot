@@ -20,9 +20,14 @@ import {
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
 import {
+  appendNativePage,
+  nativeCommandLockSettled,
+  nativeDeliveryLabel,
   nativeHistoryCanAct,
   nativeHistoryQuery,
   nativeObservationQuery,
+  nativeTimeline,
+  type NativeTranscript,
   type ResourceQuery,
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
@@ -46,13 +51,6 @@ import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-cont
 
 import type { NativeProfileSelection } from './native-profiles.js';
 import { renderNativeSessionHeader } from './native-session-header.js';
-import {
-  appendNativePage,
-  nativeCommandLockSettled,
-  nativeDeliveryLabel,
-  nativeTimeline,
-  type NativeTranscript,
-} from './native-session-model.js';
 import { observeNativeResource } from './native-session-observation.js';
 import { renderNativeSessionRequest } from './native-session-request.js';
 import { nativeSessionStyles } from './native-session-styles.js';
@@ -766,7 +764,6 @@ export class NativeSessionView extends LitElement {
     return (
       this.connected &&
       this.inputAllowed &&
-      this.caughtUp &&
       !this.invalidDelivery &&
       !this.busy &&
       !this.localCommand &&
@@ -868,7 +865,6 @@ export class NativeSessionView extends LitElement {
     return (
       !this.connected ||
       !this.inputAllowed ||
-      !this.caughtUp ||
       !this.requests.some(
         (current) =>
           current.request?.id === event.request?.id && current.generation === event.generation,
@@ -1200,7 +1196,7 @@ ${JSON.stringify(
                                           timestamp: entry.event.at,
                                         } satisfies ChatMessage}
                                       ></chat-message>`
-                                    : entry.text}
+                                    : html`<span class="body">${entry.text}</span>`}
                                 </div>
                                 ${entry.event.type === 'error' && entry.event.data
                                   ? html`<details>
@@ -1218,7 +1214,9 @@ ${JSON.stringify(
                     )
                       ? html`<article class="user">
                           <span class="meta">You · Delivery unconfirmed</span>
-                          <div class="text">${this.localCommand.text}</div>
+                          <div class="text">
+                            <span class="body">${this.localCommand.text}</span>
+                          </div>
                         </article>`
                       : nothing}
                     ${!this.transcript.events.length
