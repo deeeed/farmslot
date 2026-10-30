@@ -22,9 +22,14 @@ permissions:
   pull-requests: read
 
 jobs:
+  # Every job in this repo's workflows runs on ubuntu-24.04, not ubuntu-latest. ubuntu-26.04 (latest
+  # from 2026-10-30) breaks CI twice: its uutils mkdir is not exclusive under concurrency, so the
+  # mkdir lock in scripts/lib/node-cli-refresh.sh admits several holders (deploy-node.test), and a
+  # tmux pane reports the server's cwd instead of its -c dir right after new-session (services/node
+  # tmux.test). Move to 26.04 deliberately, once both are fixed.
   changes:
     name: Detect changed quality targets
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       repo: ${{ steps.filter.outputs.repo }}
       package_readiness: ${{ steps.filter.outputs.package_readiness }}
@@ -253,7 +258,7 @@ jobs:
     name: Repository quality guards
     needs: changes
     if: needs.changes.outputs.repo == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
@@ -341,7 +346,7 @@ jobs:
     name: Package publish readiness
     needs: changes
     if: needs.changes.outputs.package_readiness == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
@@ -415,7 +420,7 @@ jobs:
     name: Command Center quality gates
     needs: changes
     if: needs.changes.outputs.command_center == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
       run:
@@ -471,7 +476,7 @@ jobs:
     name: Companion quality gates
     needs: changes
     if: needs.changes.outputs.companion == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
@@ -499,7 +504,7 @@ jobs:
     name: Docs quality gates
     needs: changes
     if: needs.changes.outputs.docs == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -533,7 +538,7 @@ jobs:
     name: CLI package quality
     needs: changes
     if: needs.changes.outputs.cli == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -564,7 +569,7 @@ jobs:
     name: React Native adapter package quality
     needs: changes
     if: needs.changes.outputs.adapter_rn == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -587,7 +592,7 @@ jobs:
     name: Shared review and dispatch package quality
     needs: changes
     if: needs.changes.outputs.review_dispatch == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -607,7 +612,7 @@ jobs:
     name: Protocol package quality
     needs: changes
     if: needs.changes.outputs.protocol == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -630,7 +635,7 @@ jobs:
     name: Agent runtime package quality
     needs: changes
     if: needs.changes.outputs.agent_runtime == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -653,7 +658,7 @@ jobs:
     name: Capabilities package quality
     needs: changes
     if: needs.changes.outputs.capabilities == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -676,7 +681,7 @@ jobs:
     name: Recipe runner package quality
     needs: changes
     if: needs.changes.outputs.recipe_runner == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -699,7 +704,7 @@ jobs:
     name: Recipe CLI package quality
     needs: changes
     if: needs.changes.outputs.recipe_cli == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -722,7 +727,7 @@ jobs:
     name: Adapter SDK package quality
     needs: changes
     if: needs.changes.outputs.adapter_sdk == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -745,7 +750,7 @@ jobs:
     name: Node adapter package quality
     needs: changes
     if: needs.changes.outputs.adapter_node == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -768,7 +773,7 @@ jobs:
     name: Web adapter package quality
     needs: changes
     if: needs.changes.outputs.adapter_web == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -791,7 +796,7 @@ jobs:
     name: Skills package quality
     needs: changes
     if: needs.changes.outputs.skills == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -814,7 +819,7 @@ jobs:
     name: Theme package quality
     needs: changes
     if: needs.changes.outputs.theme == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -837,7 +842,7 @@ jobs:
     name: Gateway service shard ${{ matrix.shard }}
     needs: changes
     if: needs.changes.outputs.gateway == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -873,7 +878,7 @@ jobs:
     name: Gateway service quality
     needs: [changes, gateway-shards]
     if: always() && needs.changes.outputs.gateway == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Checkout
@@ -896,7 +901,7 @@ jobs:
     name: Node service quality
     needs: changes
     if: needs.changes.outputs.node == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:

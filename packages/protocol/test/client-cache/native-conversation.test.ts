@@ -13,6 +13,8 @@ import {
   nativeMessagePreview,
   nativeMessageToggleLabel,
   nativeTimeline,
+  nativeWork,
+  nativeWorkLabel,
 } from '../../src/client-cache/native-history.js';
 import type { NativeSessionEvent, NativeSessionReadResult } from '../../src/rpc/native-session.js';
 
@@ -270,4 +272,34 @@ test('only user messages collapse', () => {
   assert(user?.kind === 'user' && assistant?.kind === 'assistant');
   assert.equal(nativeEntryPreview(user)?.lines, 200);
   assert.equal(nativeEntryPreview(assistant), undefined);
+});
+
+test('a running turn reports when it started and the tool it runs now', () => {
+  const at = (sequence: number, type: NativeSessionEvent['type'], extra = {}) => ({
+    ...event(sequence, type),
+    at: new Date(Date.UTC(2026, 9, 30, 10, 0, sequence)).toISOString(),
+    ...extra,
+  });
+  const bash = { nativeId: 'tool-1', tool: { name: 'Bash' } };
+  const read = { nativeId: 'tool-2', tool: { name: 'Read' } };
+  const started = Date.UTC(2026, 9, 30, 10, 0, 2);
+  const events = [at(1, 'command.accepted'), at(2, 'turn.started'), at(3, 'tool.started', bash)];
+  assert.equal(nativeWork(events.slice(0, 1)), undefined, 'no turn yet');
+  assert.deepEqual(nativeWork(events), { since: started, tool: 'Bash' });
+  events.push(at(4, 'tool.started', read), at(5, 'tool.completed', read));
+  assert.deepEqual(nativeWork(events), { since: started, tool: 'Bash' }, 'the open tool stays');
+  events.push(at(6, 'tool.completed', bash));
+  assert.deepEqual(nativeWork(events), { since: started, tool: undefined });
+  events.push(at(7, 'turn.completed'));
+  assert.equal(nativeWork(events), undefined);
+  events.push(at(8, 'turn.started'));
+  assert.deepEqual(nativeWork(events), { since: Date.UTC(2026, 9, 30, 10, 0, 8), tool: undefined });
+  events.push(at(9, 'session.closed'));
+  assert.equal(nativeWork(events), undefined);
+
+  assert.equal(nativeWorkLabel({ since: 0 }, 0), 'Working · 0s');
+  assert.equal(nativeWorkLabel({ since: 0 }, 59_999), 'Working · 59s');
+  assert.equal(nativeWorkLabel({ since: 0, tool: 'Bash' }, 72_000), 'Working · 1m 12s · Bash');
+  assert.equal(nativeWorkLabel({ since: 0 }, 3_780_000), 'Working · 1h 3m');
+  assert.equal(nativeWorkLabel({ since: 10_000 }, 0), 'Working · 0s', 'a clock behind the gateway');
 });
