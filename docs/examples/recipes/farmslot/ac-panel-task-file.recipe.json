@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "FARMSLOT_LAYOUT_AC_PANEL=1 FARMSLOT_AC_PANEL_WIDTH=1280 FARMSLOT_LAYOUT_EVIDENCE=\"${FARMSLOT_LAYOUT_EVIDENCE:?}/1280\" node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
         "timeout_ms": 300000,
-        "intent": "Before a task file exists, require no AC panel and no task.progress read while write-task runs. Publish the written task through fixture snapshots and require the criterion to arrive in the held row without changing the pipeline height. Keep a real ledger read error visible after the task exists, then recover; a task without criteria leaves no row; a run opened after its task exists holds no row while its first read loads. Record 1280px; the next nodes own distinct 414px and slot-free review runs.",
+        "intent": "Before a task file exists, require no AC panel and no task.progress read while write-task runs. Publish the written task through fixture snapshots, keep the row held while its first read is in flight, and require the criterion to arrive in that row without changing the pipeline height. Keep a real ledger read error visible after the task exists, then recover; a task without criteria leaves no row; a run opened after its task exists holds no row while its first read loads. Record 1280px; the next nodes own distinct 414px and slot-free review runs.",
         "next": "prove414"
       },
       "result": {

@@ -155,7 +155,20 @@ export async function proveAcPanel({
           !frames.some((f) => f.method === 'task.progress' && !f.mode.startsWith('ac-written')),
           'An unwritten task must not be read',
         );
+      // write-task records the task; the row stays held while its first read is in flight.
+      transition('ac-written-loading');
+      const writtenLoading = await until(
+        (v) => v.runId === runId && v.taskFile && (before || v.progressLoading),
+        'written-loading',
+      );
+      await shot('written-loading');
+      if (!before)
+        assert(
+          writtenLoading.slotHeld && writtenLoading.reservedHeight === unwritten.reservedHeight,
+          'The row stays held while the written task first loads',
+        );
       const revision = transition('ac-written');
+      releaseReplies();
       const written = await until(
         (v) =>
           v.taskFile &&
@@ -217,6 +230,7 @@ export async function proveAcPanel({
         width,
         subject: review ? 'review' : 'slot',
         unwritten,
+        writtenLoading,
         written,
         movement,
         failed,

@@ -337,7 +337,9 @@ wss.on('connection', (socket) =>
     }
     if (
       (refetchProof && holdingReplies) ||
-      (acPanelProof && mode === 'ac-opened-loading' && request.method === 'task.progress')
+      (acPanelProof &&
+        ['ac-written-loading', 'ac-opened-loading'].includes(mode) &&
+        request.method === 'task.progress')
     )
       heldReplies.push(() => {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
