@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { SlotVars } from '../../core/index.js';
 import { GitHubHttpError } from '../../integrations/github-errors.js';
 
 import {
@@ -253,6 +254,34 @@ test('prepare fails closed when a remote cannot be refreshed', async (t) => {
     /Cannot verify remote commits.*branches untouched/,
   );
   assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+});
+
+// Slots whose worktrees share one repository fetch at once; git refuses the
+// loser's tracking-ref update in either of these two forms.
+const refRaces = [
+  "error: cannot lock ref 'refs/remotes/origin/main': is at 92c802b8 but expected a7310937\n" +
+    ' ! a7310937..92c802b8  main       -> origin/main  (unable to update local ref)',
+  "error: cannot lock ref 'refs/remotes/origin/main': Unable to create '/slot/.git/refs/remotes/origin/main.lock': File exists.",
+];
+
+test('prepare retries a fetch only while it loses a ref to a concurrent fetch in the shared repo', async () => {
+  const vars = { slotId: 'macpro-echobridge-3', remoteRepo: '/slot' } as SlotVars;
+  const failure = (stderr: string) => ({ stdout: '', stderr, exitCode: 1 });
+  for (const [outcomes, refused] of [
+    [[failure(refRaces[0]!), undefined], false],
+    [[failure(refRaces[1]!), undefined], false],
+    [[failure(refRaces[0]!), failure(refRaces[1]!), failure(refRaces[0]!)], true],
+    [[failure('fatal: unable to access the remote')], true],
+  ] as const) {
+    let fetches = 0;
+    const prepared = assertPrepareCommitsPublished(vars, BRANCH, async (_slot, command) => {
+      if (!command.includes(' fetch --all ')) return { stdout: '', stderr: '', exitCode: 0 };
+      return outcomes[fetches++] ?? { stdout: '', stderr: '', exitCode: 0 };
+    });
+    if (refused) await assert.rejects(prepared, /Cannot verify remote commits.*branches untouched/);
+    else await prepared;
+    assert.equal(fetches, outcomes.length);
+  }
 });
 
 test('prepare refuses an unreadable commit graph rather than assuming no work', async (t) => {
