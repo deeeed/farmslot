@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Dispatch keeps probing a runtime it just booted until its launch budget ends, so an iOS simulator that is still busy after `simctl boot` no longer fails one 5-second health check.
 - Prepare retries its remote fetch when another slot sharing the same repository moved a tracking ref first, instead of failing with "cannot lock ref".
 - Task files tell workers to mark complete with criteria awaiting human review; the run gate collects that review.
 - Blind eval trials check their commit signatures from the frozen trial base, so a finished worker no longer fails MONITOR on the removed `origin/main`.
