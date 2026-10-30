@@ -645,12 +645,13 @@ export async function freezeEvalFirstOutputPackage(
   const frozen = await readFrozenEvalFirstOutputPackage(run);
   if (frozen) return frozen;
   const link = run.engineState?.evalExperiment;
-  if (!link?.blind?.firstOutput || link.blind.invalidReason)
+  if (!link?.blind?.firstOutput)
     throw new Error('Eval judging requires a verified frozen first output');
   const current = await readResultPackageManifest(link.packagePath);
   if (current.status === 'final')
     throw new Error('A finalized historical eval cannot be judged again');
   if (
+    !link.blind.invalidReason &&
     run.agentContexts?.some(
       (context) =>
         context.role === 'review' &&
@@ -705,7 +706,11 @@ export async function finalizeEvalResultPackageForRun(
           throw new Error(`Frozen eval worker evidence changed: ${expected.path}`);
       }
       const review = run.steps.find(({ name }) => name === 'review')?.outputs;
-      if (review?.verdict !== 'pass' && review?.verdict !== 'issues')
+      const invalidSkipped =
+        frozen.comparisonEligibility?.status === 'invalid' &&
+        review?.skipped === true &&
+        review.reason === 'eval-first-output-invalid';
+      if (!invalidSkipped && review?.verdict !== 'pass' && review?.verdict !== 'issues')
         throw new Error('The eval first-output judge has no completed verdict');
       const paths = new Set(
         Array.isArray(review.attempts)

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Judge eval trials once on their frozen first output and retain findings without worker fix rounds or person decisions.
+- Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
 - Preserve acceptance-contract task writes across a CI-watch handoff when the parent releases its slot.
 - Keep reference answers out of eval workers and exclude contaminated first outputs from comparisons.
 

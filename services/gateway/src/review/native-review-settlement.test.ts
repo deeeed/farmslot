@@ -435,6 +435,8 @@ mock.module('./snapshots.js', {
     ...snapshots,
     captureReviewSnapshot: async (...args: Parameters<typeof snapshots.captureReviewSnapshot>) => {
       snapshotRange = args[4];
+      if (snapshotRange?.frozenContribution)
+        return { snapshot: snapshotRange.frozenContribution.snapshot, artifactPaths: [] };
       return {
         snapshot: {
           source: 'local-git',
@@ -537,8 +539,9 @@ test('an eval pins the blind range and records its only judge before settling th
   const result = await review(run.id);
   assert.equal(result.verdict, 'issues');
   assert.equal(dispatchCalls, before + 1);
-  assert.equal(snapshotRange?.committedBaseSha, 'b'.repeat(40));
-  assert.equal(snapshotRange?.committedHeadSha, 'a'.repeat(40));
+  assert.equal(snapshotRange?.frozenContribution?.snapshot.baseSha, 'b'.repeat(40));
+  assert.equal(snapshotRange?.frozenContribution?.snapshot.headSha, 'a'.repeat(40));
+  assert.equal(snapshotRange?.frozenContribution?.diffText, 'first contribution\n');
   assert.equal(judgeRecordedBeforeStop, true);
   const receipt = await readEvalJudgeReceipt(getRun(run.id)!);
   assert.equal(receipt?.result.verdict, 'issues');

@@ -376,7 +376,7 @@ Freeze the first worker output before review can change it. Compare its stable p
 
 **Status:** Accepted, lead-approved amendment.
 
-**Decision.** A completed eval worker output receives one review as a judge. Findings are measurements: both passing and issues verdicts finish the artifact-only trial without a fix handoff, another review or a person decision. Eval review axes and disabled production review settings do not suppress this judge. Production review and fix loops retain their existing policy.
+**Decision.** A valid completed eval worker output receives one review as a judge. Invalid blind trials retain their package and reason without judging. Findings are measurements: both passing and issues verdicts finish the artifact-only trial without a fix handoff, another review or a person decision. Eval review axes and disabled production review settings do not suppress this judge. Production review and fix loops retain their existing policy.
 
 Freeze the worker's contribution, evidence, native usage, cost and elapsed worker phase before judging. The final package combines those frozen worker facts with the judge's verdict and findings by severity. Unavailable measurements remain unknown. Replays reuse a completed judge; infrastructure failures remain separate from model quality. Completed historical packages retain their bytes.
 

@@ -613,6 +613,17 @@ for (const verdict of ['pass', 'issues'] as const) {
     );
     await writeFile(reportPath, 'First worker report\n');
     await assert.rejects(finalizeEvalResultPackageForRun(run), /judge has no completed verdict/);
+    run.steps = [
+      {
+        name: 'review',
+        status: 'done',
+        outputs: {
+          skipped: true,
+          reason: 'eval-first-output-invalid',
+        },
+      },
+    ];
+    await assert.rejects(finalizeEvalResultPackageForRun(run), /judge has no completed verdict/);
     const judgePath = 'artifacts/eval-first-output/review-loop-1/review-result.json';
     await mkdir(path.join(root, 'task/artifacts/eval-first-output/review-loop-1'), {
       recursive: true,
@@ -657,6 +668,47 @@ test('unavailable first-output measurements stay unknown instead of inheriting l
   const run = await firstOutputFixture(root, makeRun(root));
   const frozen = await freezeEvalFirstOutputPackage(run, {});
   assert.deepEqual(frozen.metrics, {});
+});
+
+test('an invalid blind trial retains its frozen package and reason without a judge', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'eval-invalid-output-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = await firstOutputFixture(root, makeRun(root));
+  run.engineState!.evalExperiment!.blind!.invalidReason = 'Reference isolation was not preserved';
+  run.agentContexts = [
+    {
+      id: 'late-judge',
+      role: 'review',
+      runId: run.id,
+      slotId: run.slotId!,
+      label: 'Review before the output was frozen',
+      status: 'complete',
+      runnerSessionId: 'old-session',
+      updatedAt: run.updatedAt,
+    },
+  ];
+  const frozen = await freezeEvalFirstOutputPackage(run, {});
+  assert.equal(frozen.comparisonEligibility?.status, 'invalid');
+  assert.equal(
+    frozen.comparisonEligibility?.reason,
+    run.engineState!.evalExperiment!.blind!.invalidReason,
+  );
+  run.steps = [
+    {
+      name: 'review',
+      status: 'done',
+      outputs: {
+        skipped: true,
+        reason: 'eval-first-output-invalid',
+      },
+    },
+  ];
+  const final = await finalizeEvalResultPackageForRun(run);
+  assert.ok(final);
+  assert.equal(final.status, 'final');
+  assert.deepEqual(final.comparisonEligibility, frozen.comparisonEligibility);
+  assert.deepEqual(final.validationEvidence, frozen.validationEvidence);
+  assert.deepEqual(final.reviewEvidence, []);
 });
 
 test('finalizeEvalResultPackageForRun rejects removed evalPackage engine state loudly', async () => {

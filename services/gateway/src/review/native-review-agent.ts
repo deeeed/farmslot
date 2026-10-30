@@ -14,7 +14,7 @@ import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.j
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
-import { recordEvalJudgeResult } from '../evals/judge.js';
+import { readEvalReviewContribution, recordEvalJudgeResult } from '../evals/judge.js';
 import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
@@ -412,8 +412,7 @@ async function runNativeReviewAttempt(
             lastReviewedHeadSha: retained?.lastReviewedHeadSha,
             ...(original.engineState?.evalExperiment?.blind?.firstOutput
               ? {
-                  committedBaseSha: original.engineState.evalExperiment.blind.baseSha,
-                  committedHeadSha: original.engineState.evalExperiment.blind.firstOutput.headSha,
+                  frozenContribution: await readEvalReviewContribution(original),
                 }
               : {}),
           })));
@@ -523,7 +522,9 @@ async function runNativeReviewAttempt(
                 deltaUnavailable: delta?.deltaUnavailable,
                 priorIssues: input.rereview!.priorIssues,
               }) + template
-            : `## COLD review range\n\nReview the complete PR diff ${snapshot.snapshot.baseSha}..${snapshot.snapshot.headSha} in ${taskDir}/${snapshot.snapshot.diffPath}.\n\n` +
+            : (original.engineState?.evalExperiment
+                ? `Review the frozen first-output patch in ${taskDir}/${snapshot.snapshot.diffPath}, including its uncommitted and untracked source.\n\n`
+                : `## COLD review range\n\nReview the complete PR diff ${snapshot.snapshot.baseSha}..${snapshot.snapshot.headSha} in ${taskDir}/${snapshot.snapshot.diffPath}.\n\n`) +
               template;
         admit();
         await writeTextFileOnSlot(

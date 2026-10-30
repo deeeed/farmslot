@@ -718,7 +718,15 @@ export async function executeReviewStep(
       outputs: { skipped: true, reason: 'pr-complete-has-no-reviewer' },
     };
 
-  if (evalJudge) await freezeEvalWorkerFacts(current, context);
+  if (evalJudge) {
+    await freezeEvalWorkerFacts(current, context);
+    const invalidReason = getRun(runId)?.engineState?.evalExperiment?.blind?.invalidReason;
+    if (invalidReason)
+      return {
+        inputs,
+        outputs: { skipped: true, reason: 'eval-first-output-invalid', invalidReason },
+      };
+  }
 
   if (!evalJudge && isLightweightInteractiveDevRun(current)) {
     console.log(

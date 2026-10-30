@@ -27,7 +27,7 @@ Normative reference for [ADR-030 Amendment 1](../adr/030-replay-provenance-and-r
 
 ## First-output judging
 
-- A completed first worker output receives exactly one configured/default reviewer as a judge, including when a review axis says none or production review is disabled.
+- A valid completed first worker output receives exactly one configured/default reviewer as a judge, including when a review axis says none or production review is disabled. Invalid blind trials retain their package and reason without judging.
 - Freeze worker evidence and native worker usage before the judge starts. Worker elapsed time ends at the first terminal output; reviewer time and usage remain separate. Missing measurements stay unknown.
 - Preserve the judge's verdict and findings by severity. Passing and issues verdicts both finalize the artifact-only package automatically. No worker fix, send-back decision or second review follows an eval judge.
 - A replay reuses the completed judge for the same frozen output. An in-flight review keeps its existing recovery identity. Changed worker evidence cannot replace the frozen facts.

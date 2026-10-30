@@ -11,8 +11,8 @@ import {
 import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import type { ReviewResult } from '../review/orchestrator.js';
-import { parseReviewSnapshotArtifact } from '../review/snapshots.js';
-import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
+import { type FrozenReviewContribution, parseReviewSnapshotArtifact } from '../review/snapshots.js';
+import { atomicWriteTextFile, sha256Text } from '../run-engine/diff-artifact-utils.js';
 
 export interface EvalJudgeReceipt {
   contextId?: string;
@@ -24,6 +24,31 @@ function receiptPath(run: Run): string {
   const link = run.engineState?.evalExperiment;
   if (!link) throw new Error('Eval experiment is missing');
   return path.join(path.dirname(link.packagePath), 'first-output-judge.json');
+}
+
+/** The frozen patch includes dirty and untracked source that commit endpoints omit. */
+export async function readEvalReviewContribution(run: Run): Promise<FrozenReviewContribution> {
+  const blind = run.engineState?.evalExperiment?.blind;
+  const first = blind?.firstOutput;
+  if (!blind || !first) throw new Error('The eval first-output contribution is missing');
+  const diffText = await readFile(first.diffPath, 'utf8');
+  if (sha256Text(diffText) !== first.diffSha256)
+    throw new Error('The frozen eval contribution changed');
+  return {
+    snapshot: {
+      source: 'local-git',
+      baseSha: blind.baseSha,
+      headSha: first.headSha,
+      diffHash: first.diffSha256,
+      capturedAt: first.capturedAt,
+      diffStat: {
+        files: first.diff.files,
+        additions: first.diff.additions,
+        deletions: first.diff.deletions,
+      },
+    },
+    diffText,
+  };
 }
 
 function nullableString(value: unknown): value is string | null | undefined {
@@ -117,6 +142,7 @@ export async function readEvalJudgeReceipt(run: Run): Promise<EvalJudgeReceipt |
     !snapshot ||
     snapshot.source !== 'local-git' ||
     snapshot.headSha !== first.headSha ||
+    snapshot.diffHash !== first.diffSha256 ||
     snapshot.baseSha !== blind.baseSha
   )
     throw new Error('Eval judge receipt has invalid review provenance');
@@ -173,6 +199,7 @@ export async function recordEvalJudgeResult(
   if (
     !first ||
     result.reviewSnapshot?.headSha !== first.headSha ||
+    result.reviewSnapshot.diffHash !== first.diffSha256 ||
     result.reviewSnapshot.baseSha !== run.engineState.evalExperiment.blind?.baseSha ||
     result.retryCount !== 0
   )

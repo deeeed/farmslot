@@ -1996,6 +1996,49 @@ for (const mode of ['autonomous', 'interactive'] as const) {
   }
 }
 
+for (const mode of ['autonomous', 'interactive'] as const) {
+  test(`an invalid ${mode} eval retains facts without launching a judge or decision`, async (t) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'eval-invalid-review-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const run = createRun({
+      flowType: 'fix-bug',
+      mode,
+      project: 'generic-project',
+      ticketOrPr: 'EVAL-INVALID',
+      slotId: 'eval-slot',
+      completionPolicy: 'artifact-only',
+    });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    const fixture = await firstOutputFixture(root, getRun(run.id)!);
+    fixture.engineState!.evalExperiment!.blind!.invalidReason = 'Isolation failed before judging';
+    updateRun(run.id, { taskFile: fixture.taskFile, engineState: fixture.engineState });
+    const io = await executeReviewStep(run.id, {
+      ...restartReplayContext(),
+      readEvalWorkerProgress: async () => ({ kind: 'idle' }),
+      captureEvalWorkerOutput: async () => 1,
+      extractEvalWorkerCost: async () => ({
+        costUsd: null,
+        turns: null,
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        cacheCreation: null,
+        cacheRead: null,
+        actualModel: null,
+      }),
+      executeReviewForRun: async () => assert.fail('Invalid samples must not launch a judge'),
+      createEngineDecision: async () => assert.fail('Invalid samples must not wait for a person'),
+    });
+    assert.equal(io.outputs?.reason, 'eval-first-output-invalid');
+    assert.equal(io.outputs?.invalidReason, 'Isolation failed before judging');
+    assert.equal(
+      (await readFrozenEvalFirstOutputPackage(getRun(run.id)!))?.comparisonEligibility?.status,
+      'invalid',
+    );
+    assert.deepEqual(getRun(run.id)?.decisions, []);
+  });
+}
+
 test('only a flow whose COMPLETE ends the run defers its slot release to the engine', () => {
   // The branch that decides whether COMPLETE performs its own release or hands
   // it to the terminal transition. review-pr ends at COMPLETE, so releasing
