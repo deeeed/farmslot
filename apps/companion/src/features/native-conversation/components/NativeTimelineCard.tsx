@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
-import type { NativeTimelineEntry } from '@farmslot/protocol/client-cache';
+import { nativeMessagePreview, type NativeTimelineEntry } from '@farmslot/protocol/client-cache';
 
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
 export function NativeTimelineCard({ entry }: { entry: NativeTimelineEntry }) {
   const [expanded, setExpanded] = useState(false);
+  const preview = entry.kind === 'user' ? nativeMessagePreview(entry.text) : undefined;
   return (
     <View style={[styles.card, entry.kind === 'user' && styles.user]}>
       <Text style={styles.muted}>
@@ -41,9 +42,24 @@ export function NativeTimelineCard({ entry }: { entry: NativeTimelineEntry }) {
           ) : null}
         </>
       ) : (
-        <Text selectable style={entry.kind === 'status' ? styles.muted : styles.text}>
-          {entry.text}
-        </Text>
+        <>
+          <Text selectable style={entry.kind === 'status' ? styles.muted : styles.text}>
+            {preview && !expanded ? preview.text : entry.text}
+          </Text>
+          {preview ? (
+            <Pressable
+              testID="companion-native-message-toggle"
+              accessibilityRole="button"
+              accessibilityState={{ expanded }}
+              style={styles.messageToggle}
+              onPress={() => setExpanded(!expanded)}
+            >
+              <Text style={styles.buttonText}>
+                {expanded ? 'Show less' : `Show all · ${preview.lines} lines`}
+              </Text>
+            </Pressable>
+          ) : null}
+        </>
       )}
     </View>
   );

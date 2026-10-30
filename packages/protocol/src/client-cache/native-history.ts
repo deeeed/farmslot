@@ -441,3 +441,23 @@ export function nativeCommandLockSettled(
     )
   );
 }
+
+const NATIVE_MESSAGE_PREVIEW_LINES = 8;
+const NATIVE_MESSAGE_PREVIEW_CHARS = 600;
+
+export interface NativeMessagePreview {
+  text: string;
+  lines: number;
+}
+
+/** A long message (a worker's dispatch prompt) shows its start until the reader expands it. */
+export function nativeMessagePreview(text: string): NativeMessagePreview | undefined {
+  const lines = text.split('\n');
+  if (text.length <= NATIVE_MESSAGE_PREVIEW_CHARS && lines.length <= NATIVE_MESSAGE_PREVIEW_LINES)
+    return undefined;
+  const head = lines.slice(0, NATIVE_MESSAGE_PREVIEW_LINES).join('\n');
+  return {
+    text: `${head.slice(0, NATIVE_MESSAGE_PREVIEW_CHARS).trimEnd()}…`,
+    lines: lines.length,
+  };
+}

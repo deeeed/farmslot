@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `nativeMessagePreview` gives the first 8 lines (at most 600 characters) of a long native conversation message, with its line count.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.4 - 2026-10-30

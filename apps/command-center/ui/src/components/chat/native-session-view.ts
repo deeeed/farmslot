@@ -26,8 +26,10 @@ import {
   nativeDeliveryLabel,
   nativeHistoryCanAct,
   nativeHistoryQuery,
+  nativeMessagePreview,
   nativeObservationQuery,
   nativeTimeline,
+  type NativeTimelineEntry,
   type NativeTranscript,
   type ResourceQuery,
   type ResourceQueryState,
@@ -162,6 +164,8 @@ export class NativeSessionView extends LitElement {
   };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
+  /** Long messages the reader expanded, by timeline key. */
+  @state() private expandedMessages = new Set<number>();
 
   private timeline() {
     if (this.timelineEvents !== this.transcript.events) {
@@ -290,6 +294,25 @@ export class NativeSessionView extends LitElement {
   private timelineAtEnd() {
     const timeline = this.renderRoot.querySelector('.timeline');
     return !timeline || timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
+  }
+
+  private renderMessageBody(entry: NativeTimelineEntry) {
+    const preview = entry.kind === 'user' ? nativeMessagePreview(entry.text) : undefined;
+    if (!preview) return html`<span class="body">${entry.text}</span>`;
+    const expanded = this.expandedMessages.has(entry.key);
+    return html`<span class="body">${expanded ? entry.text : preview.text}</span>
+      <button
+        class="message-toggle"
+        data-testid="native-message-toggle"
+        aria-expanded=${expanded ? 'true' : 'false'}
+        @click=${() => {
+          const next = new Set(this.expandedMessages);
+          if (!next.delete(entry.key)) next.add(entry.key);
+          this.expandedMessages = next;
+        }}
+      >
+        ${expanded ? 'Show less' : `Show all · ${preview.lines} lines`}
+      </button>`;
   }
 
   private scrollTimelineToEnd() {
@@ -655,6 +678,7 @@ export class NativeSessionView extends LitElement {
 
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
+    this.expandedMessages = new Set();
     this.selectedId = id;
     this.selectedNodeId = executionNodeId;
     this.responseAttempts = new Set();
@@ -1190,7 +1214,7 @@ ${JSON.stringify(
                                           timestamp: entry.event.at,
                                         } satisfies ChatMessage}
                                       ></chat-message>`
-                                    : html`<span class="body">${entry.text}</span>`}
+                                    : this.renderMessageBody(entry)}
                                 </div>
                                 ${entry.event.type === 'error' && entry.event.data
                                   ? html`<details>
