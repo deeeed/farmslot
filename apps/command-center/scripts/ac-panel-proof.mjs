@@ -78,7 +78,7 @@ export async function proveAcPanel({
   const { width, runId } = acPanelCase();
   // Each accepted state stays on screen long enough to read in the recording.
   async function shot(state) {
-    await delay(1000);
+    await delay(750);
     await cdp(
       'screenshot',
       target,
