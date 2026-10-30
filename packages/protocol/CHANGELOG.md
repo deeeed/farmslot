@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `NativeTranscript`, `appendNativePage`, `nativeDeliveryLabel` and `nativeCommandLockSettled` move into the client cache, replacing the copies Command Center and Companion each kept.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.3 - 2026-10-30

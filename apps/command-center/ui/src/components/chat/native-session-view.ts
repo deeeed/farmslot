@@ -21,9 +21,14 @@ import {
 } from '@farmslot/protocol';
 import { sourceObservationAge } from '@farmslot/protocol';
 import {
+  appendNativePage,
+  nativeCommandLockSettled,
+  nativeDeliveryLabel,
   nativeHistoryCanAct,
   nativeHistoryQuery,
   nativeObservationQuery,
+  nativeTimeline,
+  type NativeTranscript,
   type ResourceQuery,
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
@@ -47,13 +52,6 @@ import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-cont
 
 import type { NativeProfileSelection } from './native-profiles.js';
 import { renderNativeSessionHeader } from './native-session-header.js';
-import {
-  appendNativePage,
-  nativeCommandLockSettled,
-  nativeDeliveryLabel,
-  nativeTimeline,
-  type NativeTranscript,
-} from './native-session-model.js';
 import { observeNativeResource } from './native-session-observation.js';
 import { renderNativeSessionRequest } from './native-session-request.js';
 import { nativeSessionStyles } from './native-session-styles.js';
