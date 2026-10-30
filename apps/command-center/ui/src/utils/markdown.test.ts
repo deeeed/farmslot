@@ -25,6 +25,12 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
       '[![CI](https://example.com/badge.svg)](https://example.com/actions)',
       '[**![Deploy](https://example.com/deploy.svg)**](https://example.com/deploys)',
       '[![](https://example.com/empty.svg)](https://example.com/runs)',
+      '[![](https://example.com/icon.svg) Docs](https://example.com/docs)',
+      '[![ ](https://example.com/blank.svg)](https://example.com/q?a=1&b="2")',
+      '[![CI][badge]][ci]',
+      '',
+      '[badge]: https://example.com/ci.svg',
+      '[ci]: https://example.com/ci',
       '',
       '<details>',
       '<summary>Evidence</summary>',
@@ -45,7 +51,11 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
   assert.match(html, />A &amp; B&#39;s<\/a>/, 'alt text is escaped once');
   // A linked image (a badge) keeps the outer link and shows its alt text.
   assert.match(html, /<a href="https:\/\/example.com\/actions">CI<\/a>/);
-  assert.doesNotMatch(html, /badge\.svg|deploy\.svg|empty\.svg/);
+  assert.doesNotMatch(html, /badge\.svg|deploy\.svg|empty\.svg|icon\.svg|blank\.svg|ci\.svg/);
+  // A link with its own text gets no URL added; a blank alt is no alt; reference links work too.
+  assert.match(html, /<a href="https:\/\/example.com\/docs"> Docs<\/a>/);
+  assert.match(html, />https:\/\/example.com\/q\?a=1&amp;b=&quot;2&quot;<\/a>/);
+  assert.match(html, /<a href="https:\/\/example.com\/ci">CI<\/a>/);
   // Inside emphasis too, and with no alt text the link shows its own URL instead of nothing.
   assert.match(html, /<a href="https:\/\/example.com\/deploys"><strong>Deploy<\/strong><\/a>/);
   assert.match(html, /<a href="https:\/\/example.com\/runs">https:\/\/example.com\/runs<\/a>/);
