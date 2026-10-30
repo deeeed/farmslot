@@ -3,7 +3,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { HANDOFF_INPUT, readTaskProvenance } from '@farmslot/agent-runtime';
+import { HANDOFF_INPUT } from '@farmslot/agent-runtime';
 import {
   type ArtifactRef,
   Events,
@@ -16,7 +16,6 @@ import {
   type ReviewGatePayload,
   type Run,
   type RunTicketData,
-  type TemplateProvenance,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
@@ -44,12 +43,12 @@ import {
   configuredPrepareProfileNames,
   resolvePrepareProfile,
 } from '../methods/slot/prepare-profile.js';
-import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
-import { initializeExistingTaskRuntime } from '../tasks/existing-runtime.js';
+import { getRun, listRuns, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
 import {
   PREVIOUS_REVIEW_JSON_INPUT,
   PREVIOUS_REVIEW_MD_INPUT,
+  readFrozenTaskInit,
   TaskCollisionError,
   writeTaskFile,
 } from '../tasks/writer.js';
@@ -135,34 +134,13 @@ export function prepareProfileDecisionLabel(
     : run.prepareProfile?.trim() || 'full';
 }
 
-async function readTemplateProvenanceForTask(
-  taskFilePath: string,
-): Promise<TemplateProvenance | null> {
-  const taskDir = path.dirname(taskFilePath);
-  const provenance = readTaskProvenance(taskDir);
-  if (!provenance?.templateProvenance) return null;
-  const parsed = {
-    ...provenance.templateProvenance,
-    ...(provenance.executionTemplate ? { executionTemplate: provenance.executionTemplate } : {}),
-  } as TemplateProvenance;
-  if (parsed.kind !== 'task-template' || typeof parsed.contentHash !== 'string') {
-    throw new Error(`Invalid template provenance in ${path.join(taskDir, HANDOFF_INPUT)}`);
-  }
-  return parsed;
-}
-
-/** Task-dir files the shared producer writes, for run step outputs. */
-function taskDocumentArtifacts(
-  taskDir: string,
-  options: { includeChecklist: boolean },
-): ArtifactRef[] {
+/** Task-dir files the shared producer writes at initialization, for run step outputs. */
+function taskDocumentArtifacts(options: { includeChecklist: boolean }): ArtifactRef[] {
   const artifacts: ArtifactRef[] = [];
-  if (options.includeChecklist && existsSync(path.join(taskDir, EXECUTION_CHECKLIST_DOCUMENT))) {
+  if (options.includeChecklist) {
     artifacts.push({ path: EXECUTION_CHECKLIST_DOCUMENT, purpose: 'execution-checklist' });
   }
-  if (existsSync(path.join(taskDir, HANDOFF_INPUT))) {
-    artifacts.push({ path: HANDOFF_INPUT, purpose: 'handoff-metadata' });
-  }
+  artifacts.push({ path: HANDOFF_INPUT, purpose: 'handoff-metadata' });
   return artifacts;
 }
 
@@ -510,9 +488,20 @@ export async function executeWriteTaskStep(
     flowType: current.flowType,
     hasTicketData: !!current.ticketData,
   };
+  // The node initializes the task after prepare checks out and installs the slot
+  // (ADR-068 Amendment 7).
+  const recordPendingTask = (taskFile: string) =>
+    persistRunNow(
+      updateRun(runId, {
+        taskFile,
+        engineState: { ...getRun(runId)!.engineState, taskInit: { taskFile, status: 'pending' } },
+      }),
+      'task initialization pending',
+    );
   // Skip if taskFile already provided
   if (current.taskFile) {
-    await initializeExistingTaskRuntime(current);
+    if (current.engineState?.taskInit?.taskFile !== current.taskFile)
+      await recordPendingTask(current.taskFile);
     console.log(`[run-engine] taskFile already set, skipping write-task`);
     const templateName =
       current.templateProvenance?.templateName ??
@@ -530,19 +519,10 @@ export async function executeWriteTaskStep(
         task_id: current.ticketOrPr,
       });
     }
-    const templateProvenance = await readTemplateProvenanceForTask(current.taskFile);
-    if (templateProvenance) {
-      updateRun(runId, {
-        templateProvenance,
-        ...(templateProvenance.executionTemplate
-          ? { executionTemplate: templateProvenance.executionTemplate }
-          : {}),
-      });
-    }
     const artifacts: ArtifactRef[] = [
       { path: 'TASK.md', purpose: 'task-md' },
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
-      ...taskDocumentArtifacts(path.dirname(current.taskFile), {
+      ...taskDocumentArtifacts({
         includeChecklist:
           !isLightweightInteractiveDevRun(current) ||
           existsSync(path.join(path.dirname(current.taskFile), EXECUTION_CHECKLIST_DOCUMENT)),
@@ -752,9 +732,7 @@ export async function executeWriteTaskStep(
       );
     }
     artifacts.push(
-      ...taskDocumentArtifacts(path.dirname(taskFilePath), {
-        includeChecklist: !isLightweightInteractiveDevRun(afterWrite),
-      }),
+      ...taskDocumentArtifacts({ includeChecklist: !isLightweightInteractiveDevRun(afterWrite) }),
     );
     if (afterWrite.repeatReviewContext && resolveReviewMode({ run: afterWrite }) === 'warm') {
       artifacts.push(
@@ -795,7 +773,7 @@ export async function executeWriteTaskStep(
       extraVars,
       onProgress: emitWithBroadcast,
     });
-    updateRun(runId, { taskFile: taskFilePath });
+    await recordPendingTask(taskFilePath);
   } catch (err) {
     if (err instanceof TaskCollisionError) {
       // Returns 'create-new' if the operator chose to fork; other actions
@@ -807,7 +785,7 @@ export async function executeWriteTaskStep(
         extraVars,
         onProgress: emitWithBroadcast,
       });
-      updateRun(runId, { taskFile: taskFilePath });
+      await recordPendingTask(taskFilePath);
       collision = true;
     } else {
       throw err;
@@ -828,12 +806,10 @@ export async function executeWriteTaskStep(
       );
     }
   }
-  const templateProvenance = await readTemplateProvenanceForTask(taskFilePath);
+  // Initialization adds the node's execution-template reference.
   updateRun(runId, {
-    templateProvenance,
-    ...(templateProvenance?.executionTemplate
-      ? { executionTemplate: templateProvenance.executionTemplate }
-      : {}),
+    templateProvenance: (await readFrozenTaskInit(taskFilePath)).input.task.handoff
+      .templateProvenance,
   });
   // Capture review-input artifacts after collision handling so they are
   // written under the final task path, not an abandoned TASK.md location.

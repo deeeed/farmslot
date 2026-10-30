@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -89,7 +89,11 @@ import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
 } from './execution-template-catalog.js';
-import { initializeHostedTaskOnSlot, syncHostedTaskSidecars } from './hosted-task-init.js';
+import {
+  type HostedTaskInput,
+  initializeHostedTaskOnSlot,
+  syncHostedTaskSidecars,
+} from './hosted-task-init.js';
 import {
   buildPlanningContextSection,
   resolveRunPlanningContext,
@@ -112,6 +116,8 @@ export const PREVIOUS_REVIEW_JSON_INPUT = 'inputs/previous-review.json';
 export const PREVIOUS_REVIEW_MD_INPUT = 'inputs/previous-review.md';
 export const STATIC_REVIEW_INSTRUCTIONS_DIR = 'inputs/review-instructions';
 export const RUNTIME_CAPABILITY_CATALOG_INPUT = 'inputs/runtime-capability-catalog.json';
+/** Frozen node task-init input: a task-root file no sidecar copy carries to the worker. */
+export const TASK_INIT_INPUT = '.task-init.json';
 
 export function buildRuntimeCapabilityTaskSection(
   taskDir: string,
@@ -698,7 +704,6 @@ export async function writeTaskFile(
     skipCollisionCheck?: boolean;
     extraVars?: Record<string, string>;
     onProgress?: WriteTaskProgressFn;
-    initializeTask?: typeof initializeHostedTaskOnSlot;
   },
 ): Promise<string> {
   if (!run.slotId) throw new Error('No slot assigned — cannot write task');
@@ -1366,7 +1371,7 @@ export async function writeTaskFile(
         }),
     artifactOnlyReplay: artifactOnlyReplayForRun(run),
   };
-  if (run.acceptanceContractVersion === 1 && !opts?.initializeTask) {
+  if (run.acceptanceContractVersion === 1) {
     const checker = await agentRuntimeScriptForSlot(slotVars, 'acceptance-contract.cjs');
     const capability = await execOnSlot(
       slotVars,
@@ -1378,32 +1383,19 @@ export async function writeTaskFile(
         'PR-completion acceptance requires runtime contract version 1; update the node before dispatch.',
       );
   }
-  templateProvenance.executionTemplate = await (opts?.initializeTask ?? initializeHostedTaskOnSlot)(
-    slotVars,
-    taskAbsDir,
-    {
-      binding: projectVars.projectJson.recipe?.provider ? 'project' : 'static',
-      task: taskData,
-      template: configuredTemplate,
-    },
-  );
-  if (run.acceptanceContractVersion === 1) {
-    const taskDir = opts?.initializeTask ? taskAbsDir : taskData.taskDir;
-    await syncAcceptanceExecutionContract(
-      run,
-      opts?.initializeTask ? ORCHESTRATOR_LOCALITY : slotVars,
-      taskDir,
-      taskAbsDir,
-      async () =>
-        Boolean(opts?.initializeTask) || ownsRunTaskWrite(await readSlotRow(run.slotId!), run.id),
-      [],
-    );
-  }
-
-  await writeQaInput(taskAbsDir, {
-    ...run,
-    executionTemplate: templateProvenance.executionTemplate ?? run.executionTemplate,
-  });
+  // The node producer imports project tooling from the slot checkout, which prepare
+  // has not checked out or installed yet: freeze its input (ADR-068 Amendment 7).
+  const input: HostedTaskInput = {
+    binding: projectVars.projectJson.recipe?.provider ? 'project' : 'static',
+    task: taskData,
+    template: configuredTemplate,
+  };
+  const frozen = JSON.stringify({ runId: run.id, slotId: run.slotId, input });
+  if (Buffer.byteLength(frozen) > 8 * 1024 * 1024)
+    throw new Error('Hosted task request exceeds 8 MiB.');
+  const frozenPath = path.join(taskAbsDir, TASK_INIT_INPUT);
+  await writeFile(`${frozenPath}.tmp`, frozen, { mode: 0o600 });
+  await rename(`${frozenPath}.tmp`, frozenPath);
 
   // Download Jira image attachments to assets/
   if (run.ticketData?.jiraKey) {
@@ -1426,9 +1418,49 @@ export async function writeTaskFile(
     }
   }
 
-  if (!opts?.initializeTask) await syncHostedTaskSidecars(slotVars, taskAbsDir, taskData.taskDir);
-  console.log(`[task-writer] wrote ${taskFilePath}`);
+  console.log(`[task-writer] froze task initialization for ${taskFilePath}`);
   return taskFilePath;
+}
+
+export async function readFrozenTaskInit(
+  taskFile: string,
+): Promise<{ runId: string; slotId: string; input: HostedTaskInput }> {
+  return JSON.parse(await readFile(path.join(path.dirname(taskFile), TASK_INIT_INPUT), 'utf8'));
+}
+
+/** Submit the frozen input on the prepared slot, then write what reads the produced task. */
+export async function initializeWrittenTask(
+  run: Run,
+  opts?: { initializeTask?: typeof initializeHostedTaskOnSlot },
+): Promise<void> {
+  if (!run.slotId || !run.taskFile) throw new Error('Task initialization requires its slot');
+  const taskAbsDir = path.dirname(run.taskFile);
+  const frozen = await readFrozenTaskInit(run.taskFile);
+  if (frozen.runId !== run.id || frozen.slotId !== run.slotId)
+    throw new Error('The frozen task input belongs to another run or slot; replay write-task.');
+  const slotVars = await loadSlotVars(run.slotId);
+  const executionTemplate = await (opts?.initializeTask ?? initializeHostedTaskOnSlot)(
+    slotVars,
+    taskAbsDir,
+    frozen.input,
+  );
+  if (run.acceptanceContractVersion === 1) {
+    const taskDir = opts?.initializeTask ? taskAbsDir : frozen.input.task.taskDir;
+    await syncAcceptanceExecutionContract(
+      run,
+      opts?.initializeTask ? ORCHESTRATOR_LOCALITY : slotVars,
+      taskDir,
+      taskAbsDir,
+      async () =>
+        Boolean(opts?.initializeTask) || ownsRunTaskWrite(await readSlotRow(run.slotId!), run.id),
+      [],
+    );
+  }
+
+  await writeQaInput(taskAbsDir, { ...run, executionTemplate });
+
+  if (!opts?.initializeTask)
+    await syncHostedTaskSidecars(slotVars, taskAbsDir, frozen.input.task.taskDir);
 }
 
 /**

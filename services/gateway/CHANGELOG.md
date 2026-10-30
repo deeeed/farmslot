@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Initialize a run's task on the slot after prepare checks out and installs it, so a slot left on an older branch no longer fails write-task with missing provider dependencies (ADR-068 Amendment 7).
 - Launch and resume Codex workers without the startup update check, so a worker never self-updates inside its pane and misses its ready window.
 - Judge eval trials once on their complete frozen first output, retaining findings or invalid-trial evidence without worker fix rounds or person decisions.
 - Allow a requested re-review at the same HEAD when a package refresh changed only the run artifacts its open findings cite.
