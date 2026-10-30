@@ -22,8 +22,13 @@ import {
 import { sourceObservationAge } from '@farmslot/protocol';
 import {
   appendNativePage,
+  NATIVE_FOLLOW_LATEST,
   nativeCommandLockSettled,
   nativeDeliveryLabel,
+  type NativeFollow,
+  nativeFollowGrew,
+  nativeFollowLabel,
+  nativeFollowScrolled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
   nativeObservationQuery,
@@ -162,6 +167,7 @@ export class NativeSessionView extends LitElement {
   };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
+  @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
 
   private timeline() {
     if (this.timelineEvents !== this.transcript.events) {
@@ -250,7 +256,7 @@ export class NativeSessionView extends LitElement {
     this.historyQuery = query;
     this.historyStop = observeNativeResource(query, (state) => {
       if (!this.isConnected || revision !== this.revision) return;
-      const follow = this.timelineAtEnd();
+      const before = this.timeline().length;
       this.historyObservation = state;
       const page = state.data;
       this.session = page?.session;
@@ -282,15 +288,23 @@ export class NativeSessionView extends LitElement {
           this.localCommand = undefined;
         }
       }
-      if (follow) void this.updateComplete.then(() => this.scrollTimelineToEnd());
+      this.followTimeline(before);
     });
   }
 
-  /** A reader at the end of the transcript keeps new output in view. */
-  private timelineAtEnd() {
-    const timeline = this.renderRoot.querySelector('.timeline');
-    return !timeline || timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
+  /** A reader at the end keeps new output in view; one who scrolled up counts what arrived. */
+  private followTimeline(before: number) {
+    this.follow = nativeFollowGrew(this.follow, this.timeline().length - before);
+    if (this.follow.following) void this.updateComplete.then(() => this.scrollTimelineToEnd());
   }
+
+  private readonly timelineScrolled = (event: Event) => {
+    const timeline = event.currentTarget as HTMLElement;
+    this.follow = nativeFollowScrolled(
+      this.follow,
+      timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight,
+    );
+  };
 
   private scrollTimelineToEnd() {
     const timeline = this.renderRoot.querySelector('.timeline');
@@ -604,7 +618,7 @@ export class NativeSessionView extends LitElement {
           this.historyScope = scope;
         }
         this.pollError = '';
-        const nearBottom = this.timelineAtEnd();
+        const before = this.timeline().length;
         this.transcript = appendNativePage(this.transcript, page);
         for (const event of page.events) {
           if (event.type === 'approval.resolved' && event.request) {
@@ -638,8 +652,8 @@ export class NativeSessionView extends LitElement {
             this.localCommand = undefined;
           }
         }
+        this.followTimeline(before);
         await this.updateComplete;
-        if (nearBottom) this.scrollTimelineToEnd();
         if (!page.hasMore) break;
       }
     } catch (error) {
@@ -655,6 +669,7 @@ export class NativeSessionView extends LitElement {
 
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
+    this.follow = NATIVE_FOLLOW_LATEST;
     this.selectedId = id;
     this.selectedNodeId = executionNodeId;
     this.responseAttempts = new Set();
@@ -1144,7 +1159,11 @@ export class NativeSessionView extends LitElement {
                   : 'conversation-only'}"
               >
                 <section class="conversation">
-                  <div class="timeline" aria-label="Agent conversation">
+                  <div
+                    class="timeline"
+                    aria-label="Agent conversation"
+                    @scroll=${this.timelineScrolled}
+                  >
                     ${repeat(
                       this.timeline(),
                       (entry) => entry.key,
@@ -1216,6 +1235,20 @@ ${JSON.stringify(
                           ${this.caughtUp ? 'Send a task to begin.' : 'Loading conversation…'}
                         </p>`
                       : nothing}
+                    <div class="jump-anchor">
+                      ${nativeFollowLabel(this.follow)
+                        ? html`<button
+                            class="jump-latest"
+                            data-testid="native-jump-latest"
+                            @click=${() => {
+                              this.follow = NATIVE_FOLLOW_LATEST;
+                              this.scrollTimelineToEnd();
+                            }}
+                          >
+                            ${nativeFollowLabel(this.follow)}
+                          </button>`
+                        : nothing}
+                    </div>
                   </div>
                   <div class="composer">
                     ${this.receipts.some(

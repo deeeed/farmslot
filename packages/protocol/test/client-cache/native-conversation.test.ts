@@ -208,3 +208,25 @@ test('late acceptance restores the user prompt before its assistant response', (
     ],
   );
 });
+
+import {
+  NATIVE_FOLLOW_LATEST,
+  nativeFollowGrew,
+  nativeFollowLabel,
+  nativeFollowScrolled,
+} from '../../src/client-cache/native-history.js';
+test('a reader who scrolls up keeps their place and counts new entries until they jump back', () => {
+  let follow = NATIVE_FOLLOW_LATEST;
+  assert.equal(nativeFollowLabel(follow), undefined);
+  assert.equal(nativeFollowGrew(follow, 3), follow, 'a following reader stays caught up');
+  follow = nativeFollowScrolled(follow, 79);
+  assert.deepEqual(follow, NATIVE_FOLLOW_LATEST, 'within the slack still follows');
+  follow = nativeFollowScrolled(follow, 400);
+  assert.deepEqual(follow, { following: false, unseen: 0 });
+  assert.equal(nativeFollowLabel(follow), 'Latest');
+  follow = nativeFollowGrew(nativeFollowGrew(follow, 2), 1);
+  assert.equal(nativeFollowLabel(follow), 'Latest · 3 new');
+  assert.equal(nativeFollowScrolled(follow, 300), follow, 'scrolling elsewhere keeps the count');
+  assert.equal(nativeFollowGrew(follow, 0), follow);
+  assert.deepEqual(nativeFollowScrolled(follow, 10), NATIVE_FOLLOW_LATEST, 'back at the end');
+});

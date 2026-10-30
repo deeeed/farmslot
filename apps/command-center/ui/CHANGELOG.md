@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Scrolled up in a live native conversation, a "Latest · N new" button appears at the bottom of the transcript when new output arrives; it jumps back to the end and follows again. Your place is kept until you tap it.
 - The native conversation takes its transcript, delivery label and input-lock helpers from the shared client cache instead of its own copy. No behaviour change.
 - The native conversation message box, Send / Queue message and request answers no longer lock, dropping what you were typing, each time a streaming worker writes. They follow the same rule as other held data and wait for a current read only while history is saved: restored from storage, offline, after a failed read, or reads superseded for 60 s.
 - Alert only for current needs-you conditions. Completed dispatches stay in their current slot/run views and monitor violations stay in history; neither produces an informational browser alert.
