@@ -4,6 +4,11 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A finished turn's tool calls in a native conversation fold behind one row at the end of the turn, "Worked for 4m 12s · 6 tools", that opens them in place. A turn you watched run stays open, with any tool you opened still open.
+- Chat messages (native conversations, the chat panel and worker history) render markdown through the shared sanitized renderer: lists, links, fenced code with its language, tables. A tag written in a message, such as `<details>`, shows as text instead of being rendered, and an image shows as a link, so a message never makes the page load a URL by itself. An image inside a link, even wrapped in bold or italics, shows as that link's text; a badge with no alt text and nothing else in its link shows the link's URL.
+- While a native session runs a turn, its status row shows how long it has worked and the tool it runs now ("Working · 1m 12s · Bash") instead of "Live · running".
+- Wait for a written task before reading or showing its acceptance criteria, slot-free reviews included, and hold their collapsed row on the run page from write-task until they load, so they arrive without a jump. Real read failures still show.
+- A long message in a native conversation, such as a worker's dispatch prompt, shows its first lines with "Show all · N lines" instead of filling the transcript.
 - Scrolled up in a native conversation, a "Latest" button at the bottom of the transcript jumps back to the end and follows again; it counts entries that arrive meanwhile ("Latest · 2 new"). Your place is kept until you tap it.
 - The Companion pairing QR comes with its pair link: Open in Companion, Copy link and Copy adb command (`adb shell am start` for a device on adb), for the production, preview or development build. Same code and expiry as the QR; when the code expires, the QR and link give way to a note.
 - Native conversation messages no longer start with a blank line and an indent. Line breaks and spacing inside a message stay as written.

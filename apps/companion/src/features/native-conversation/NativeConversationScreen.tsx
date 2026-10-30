@@ -14,9 +14,11 @@ import type { NativeSessionInfo } from '@farmslot/protocol';
 import {
   NATIVE_FOLLOW_LATEST,
   nativeDeliveryLabel,
+  nativeFoldWatched,
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
+  nativeWatchTools,
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
@@ -24,7 +26,9 @@ import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { NativeProfilePicker } from './components/NativeProfilePicker';
 import { NativeRequestCard } from './components/NativeRequestCard';
 import { NativeSessionSetup } from './components/NativeSessionSetup';
+import { NativeSessionState } from './components/NativeSessionState';
 import { NativeTimelineCard } from './components/NativeTimelineCard';
+import { NativeWorkCard } from './components/NativeWorkCard';
 import { nativeStyles as styles } from './styles/native-conversation.styles';
 import type { useNativeConversationController } from './use-native-conversation-controller';
 
@@ -41,11 +45,35 @@ export function NativeConversationScreen({
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollView>(null);
   const [follow, setFollow] = useState(NATIVE_FOLLOW_LATEST);
+  const viewport = useRef({ offset: 0, height: 0 });
+  const distanceFromEnd = (contentHeight: number) =>
+    contentHeight - viewport.current.offset - viewport.current.height;
+  /** The reader opened or closed an entry, so the next size change is theirs, not new output. */
+  const disclosed = useRef(false);
+  const disclose = () => {
+    disclosed.current = true;
+  };
+  const watchedTools = useRef(new Set<number>());
+  /** Folds the reader opened or closed, by the key of the entry that ended the turn. */
+  const [foldOpen, setFoldOpen] = useState(new Map<number, boolean>());
   const entryCount = useRef(vm.entries.length);
   useEffect(() => {
     entryCount.current = vm.entries.length;
+    watchedTools.current = new Set();
+    setFoldOpen(new Map());
     setFollow(NATIVE_FOLLOW_LATEST);
   }, [vm.session?.id]);
+  const live = vm.historyObservation.status === 'ready';
+  useEffect(() => {
+    nativeWatchTools(vm.rows, watchedTools.current, live);
+  }, [vm.rows, live]);
+  const folds = new Map(
+    vm.rows.flatMap((row) => (row.kind === 'work' ? [[row.key, row] as const] : [])),
+  );
+  const foldIsOpen = (key: number) => {
+    const fold = folds.get(key);
+    return foldOpen.get(key) ?? (fold ? nativeFoldWatched(fold, watchedTools.current) : true);
+  };
   useEffect(() => {
     const added = vm.entries.length - entryCount.current;
     entryCount.current = vm.entries.length;
@@ -67,7 +95,7 @@ export function NativeConversationScreen({
             {!vm.connected
               ? 'Gateway disconnected'
               : vm.session
-                ? `${vm.session.runner} · ${vm.session.model ?? 'Default model'} · ${vm.session.state}`
+                ? `${vm.session.runner} · ${vm.session.model ?? 'Default model'}`
                 : 'Start a conversation or continue an existing one.'}
           </Text>
           {vm.historyObservation.error || vm.inventoryObservation.error ? (
@@ -81,6 +109,10 @@ export function NativeConversationScreen({
             </Pressable>
           ) : null}
         </View>
+        {/* Kept while disconnected, with the last state and no clock, so the conversation never moves. */}
+        {vm.session ? (
+          <NativeSessionState state={vm.session.state} work={vm.connected ? vm.work : undefined} />
+        ) : null}
         {selected ? (
           <ResourceReadStatus observation={vm.historyObservation} label="conversation history" />
         ) : null}
@@ -113,14 +145,25 @@ export function NativeConversationScreen({
           ref={scroll}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          onLayout={(event) => {
+            viewport.current.height = event.nativeEvent.layout.height;
+          }}
           onScroll={(event) => {
             const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-            const distance = contentSize.height - contentOffset.y - layoutMeasurement.height;
+            viewport.current = { offset: contentOffset.y, height: layoutMeasurement.height };
+            const distance = distanceFromEnd(contentSize.height);
             setFollow((current) => nativeFollowScrolled(current, distance));
           }}
           scrollEventThrottle={100}
-          onContentSizeChange={() => {
-            if (follow.following && selected) scroll.current?.scrollToEnd({ animated: false });
+          onContentSizeChange={(_, height) => {
+            if (disclosed.current) {
+              // Keep the reader's place; follow again only if the end is still in view.
+              disclosed.current = false;
+              const distance = distanceFromEnd(height);
+              setFollow((current) => nativeFollowScrolled(current, distance));
+            } else if (follow.following && selected) {
+              scroll.current?.scrollToEnd({ animated: false });
+            }
           }}
         >
           {!selected ? (
@@ -220,9 +263,26 @@ export function NativeConversationScreen({
                   </Pressable>
                 </>
               ) : null}
-              {vm.entries.map((entry) => (
-                <NativeTimelineCard key={entry.key} entry={entry} />
-              ))}
+              {vm.rows.map((row) =>
+                row.kind === 'work' ? (
+                  <NativeWorkCard
+                    key={`work:${row.key}`}
+                    label={row.label}
+                    open={foldIsOpen(row.key)}
+                    onToggle={() => {
+                      disclose();
+                      setFoldOpen(new Map(foldOpen).set(row.key, !foldIsOpen(row.key)));
+                    }}
+                  />
+                ) : (
+                  <NativeTimelineCard
+                    key={row.key}
+                    entry={row.entry}
+                    onDisclosure={disclose}
+                    hidden={row.fold !== undefined && !foldIsOpen(row.fold)}
+                  />
+                ),
+              )}
               {vm.requests.map((request) => (
                 <NativeRequestCard
                   key={`${request.generation}:${request.request?.id}`}

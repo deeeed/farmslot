@@ -21,6 +21,13 @@ import {
   mockRuns,
 } from '../ui/src/dev/mock-data.ts';
 
+import {
+  acPanelCase,
+  acPanelProgress,
+  acPanelRun,
+  acPanelUnwrittenError,
+  proveAcPanel,
+} from './ac-panel-proof.mjs';
 import { nativePanelFixture, proveNativePanel } from './native-panel-proof.mjs';
 import { proveRefetchNotices, recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
@@ -46,6 +53,8 @@ let revision = 0;
 let mode = 'empty';
 const refetchProof = process.env.FARMSLOT_LAYOUT_REFETCH === '1';
 const nativePanelProof = process.env.FARMSLOT_LAYOUT_NATIVE_PANEL === '1';
+const acPanelProof = process.env.FARMSLOT_LAYOUT_AC_PANEL === '1';
+const acCase = acPanelProof ? acPanelCase() : undefined;
 const legacyProof = process.env.FARMSLOT_LAYOUT_BEFORE === '1';
 const uiRoot = process.env.FARMSLOT_LAYOUT_UI_ROOT ?? path.join(source, 'apps/command-center/ui');
 assert(
@@ -128,11 +137,27 @@ for (const item of gateRun.decisions) {
     createdAt: new Date(now).toISOString(),
   };
 }
-function observedRun() {
+function observedRun(params) {
+  if (acPanelProof) return acPanelRun(mode, fixtureRun, params?.runId);
   if (!refetchProof) return fixtureRun;
   return structuredClone(gateRun);
 }
 const values = {
+  ...(acPanelProof
+    ? {
+        'runtime.posture.status': (params) => ({
+          runId: params?.runId ?? acCase.runId,
+          slotId: acPanelRun(mode, fixtureRun, params?.runId).slotId,
+          state: {
+            posture: 'active',
+            policySource: 'framework-default',
+            capabilities: [],
+            workerRetained: false,
+            updatedAt: new Date(now).toISOString(),
+          },
+        }),
+      }
+    : {}),
   ...(nativePanelProof
     ? {
         'native.session.read': nativeFixture.page,
@@ -152,12 +177,13 @@ const values = {
     run:
       params?.runId === 'terminal-run'
         ? { ...terminalRun, status: mode === 'terminal-finished' ? 'done' : 'monitoring' }
-        : observedRun(),
+        : observedRun(params),
   }),
   'run.recipeRunsForRun': () => ({ recipeRuns: [], selectedRecipeRunId: null }),
   'config.templateOptions': () => ({ options: [] }),
   'runner.visibleModels.get': () => ({ runners: [] }),
-  'task.progress': () => ({ markdown: '', structured: null }),
+  'task.progress': (params) =>
+    acPanelProof ? acPanelProgress(mode, params) : { markdown: '', structured: null },
   'decision.list': () => ({
     decisions: mode === 'decision' ? [decision, { ...decision, id: 'same-subject' }] : [],
   }),
@@ -217,9 +243,12 @@ wss.on('connection', (socket) =>
     const frame = {
       at: Date.now(),
       method: request.method,
-      ...(nativePanelProof ? { mode, revision } : {}),
+      ...(nativePanelProof || acPanelProof ? { mode, revision } : {}),
       ...(request.method === 'run.get'
         ? { params: { runId: request.params?.runId, view: request.params?.view } }
+        : {}),
+      ...(acPanelProof && request.method === 'task.progress'
+        ? { params: { runId: request.params?.runId, slotId: request.params?.slotId } }
         : {}),
     };
     frames.push(frame);
@@ -255,6 +284,13 @@ wss.on('connection', (socket) =>
       reply.payload = { version: 1, sequence: request.params.sequence, applied: true };
     else if (request.method === 'gateway.ping') reply.payload = { ok: true };
     else if (
+      acPanelProof &&
+      request.method === 'task.progress' &&
+      !acPanelRun(mode, fixtureRun, request.params?.runId).taskFile
+    ) {
+      reply.ok = false;
+      reply.error = { code: 'INTERNAL_ERROR', message: acPanelUnwrittenError() };
+    } else if (
       nativePanelProof &&
       request.method === 'native.session.read' &&
       ['native-error', 'native-changed', 'native-quiet-changed'].includes(mode)
@@ -299,7 +335,12 @@ wss.on('connection', (socket) =>
         message: `Fixture does not supply ${request.method}`,
       };
     }
-    if (refetchProof && holdingReplies)
+    if (
+      (refetchProof && holdingReplies) ||
+      (acPanelProof &&
+        ['ac-written-loading', 'ac-opened-loading'].includes(mode) &&
+        request.method === 'task.progress')
+    )
       heldReplies.push(() => {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(reply));
       });
@@ -424,6 +465,16 @@ function transition(next) {
           { family: 'configuration', scope: 'farm' },
         ]
       : []),
+    ...(acPanelProof
+      ? [
+          { family: 'run', runId: acCase.runId },
+          ...(resourceDependenciesForRead(
+            'task.progress',
+            { slotId: acCase.slotId ?? '', runId: acCase.runId },
+            'layout-fixture',
+          ) ?? []),
+        ]
+      : []),
     ...(nativePanelProof
       ? [
           { family: 'run', runId: 'layout-run' },
@@ -531,6 +582,19 @@ try {
       expected: 'original layout jump',
       shift,
       samples,
+    });
+  } else if (acPanelProof) {
+    await proveAcPanel({
+      cdp,
+      target,
+      browserCall,
+      emulation,
+      transition,
+      output,
+      save,
+      frames,
+      viewport,
+      releaseReplies,
     });
   } else if (nativePanelProof) {
     await proveNativePanel({
@@ -713,7 +777,11 @@ if (failure || cleanupFailures.length)
 console.log(
   JSON.stringify({
     result: 'PASS',
-    widths: refetchProof && process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1' ? [1280] : [1280, 414],
+    widths: acPanelProof
+      ? [acCase.width]
+      : refetchProof && process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1'
+        ? [1280]
+        : [1280, 414],
     observationRequests: frames.length,
     scope: 'isolated protocol fixture presentation',
   }),

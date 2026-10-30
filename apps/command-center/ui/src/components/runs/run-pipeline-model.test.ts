@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import {
+  acceptanceRowHeldRunId,
   activeTaskProgressStepId,
   computeLayout,
   currentPipelineNodeId,
@@ -11,6 +12,8 @@ import {
   isPublicationReviewProgressActive,
   pipelineDetachedProgressVisible,
   publicationReviewStepForName,
+  runAwaitsTaskSource,
+  runHasTaskSource,
   selectedStepShowsLiveTaskProgress,
   stepInspectorTaskProgress,
 } from './run-pipeline-model.js';
@@ -36,6 +39,75 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     ...overrides,
   };
 }
+
+test('a selected slot alone is not a written task; the assigned task path admits progress', () => {
+  const waiting = makeRun({
+    taskFile: null,
+    status: 'preparing',
+    steps: [{ name: 'write-task', status: 'running' }],
+  });
+  assert.equal(runHasTaskSource(waiting), false);
+  assert.equal(runHasTaskSource({ ...waiting, taskFile: 'tasks/example/TASK.md' }), true);
+  assert.equal(runHasTaskSource(null), false);
+});
+
+test('a slot-free review has no task source until write-task records its task file', () => {
+  const review = makeRun({
+    slotId: null,
+    taskFile: null,
+    status: 'preparing',
+    steps: [{ name: 'write-task', status: 'running' }],
+    reviewWorkspace: {
+      workspaceId: 'review-1',
+      machine: 'fixture-node',
+      executionNodeId: 'fixture-node',
+      checkoutPath: '/workspace/source',
+      taskPath: '/workspace/task',
+      artifactPath: '/workspace/task/artifacts',
+    },
+  });
+  assert.equal(runHasTaskSource(review), false);
+  assert.equal(runAwaitsTaskSource(review), true);
+  assert.equal(runHasTaskSource({ ...review, taskFile: '/workspace/task/TASK.md' }), true);
+});
+
+test('only a live run before its task is recorded awaits one', () => {
+  const writing = makeRun({
+    taskFile: null,
+    status: 'preparing',
+    steps: [{ name: 'write-task', status: 'running' }],
+  });
+  assert.equal(runAwaitsTaskSource(writing), true);
+  assert.equal(runAwaitsTaskSource({ ...writing, taskFile: 'tasks/example/TASK.md' }), false);
+  assert.equal(runAwaitsTaskSource({ ...writing, status: 'cancelled' }), false);
+  assert.equal(
+    runAwaitsTaskSource({ ...writing, steps: [{ name: 'write-task', status: 'failed' }] }),
+    false,
+  );
+  assert.equal(runAwaitsTaskSource({ ...writing, steps: [] }), false);
+});
+
+test("the criteria row is held from write-task through that run's first task read only", () => {
+  const writing = makeRun({
+    id: 'run-1',
+    taskFile: null,
+    status: 'preparing',
+    steps: [{ name: 'write-task', status: 'running' }],
+  });
+  const written = {
+    ...writing,
+    taskFile: 'tasks/example/TASK.md',
+    steps: [{ name: 'write-task', status: 'done' as const }],
+  };
+  assert.equal(acceptanceRowHeldRunId(writing, null, false), 'run-1');
+  assert.equal(acceptanceRowHeldRunId(written, 'run-1', true), 'run-1');
+  assert.equal(acceptanceRowHeldRunId(written, 'run-1', false), null);
+  // Opened after its task exists, finished or live: the first read holds nothing.
+  assert.equal(acceptanceRowHeldRunId(written, null, true), null);
+  assert.equal(acceptanceRowHeldRunId({ ...written, status: 'done' }, null, true), null);
+  assert.equal(acceptanceRowHeldRunId({ ...written, id: 'run-2' }, 'run-1', true), null);
+  assert.equal(acceptanceRowHeldRunId(null, 'run-1', true), null);
+});
 
 test('a publication fix has one current worker node instead of the enclosing gate', () => {
   const run = makeRun({

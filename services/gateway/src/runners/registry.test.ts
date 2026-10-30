@@ -1844,7 +1844,18 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
       assert.match(cmd, /model_reasoning_effort="high"/);
+      assert.match(cmd, /--config 'check_for_update_on_startup=false'/);
       assert.doesNotMatch(cmd, /'Read TASK\.md and execute\.'/);
+    });
+
+    it('never lets a pool-dispatched worker check for a Codex update at launch', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}',
+        codexPath: '/opt/bin/codex',
+      });
+      const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
+      assert.match(cmd, /\/opt\/bin\/codex [^&]*--config 'check_for_update_on_startup=false'/);
+      assert.equal(cmd.match(/check_for_update_on_startup/g)?.length, 1);
     });
 
     it('routes through expandDispatchCmd when dispatch_cmd is runner-aware via {codex_path}', () => {
@@ -2387,14 +2398,10 @@ describe('buildLaunchCommand', () => {
 });
 
 describe('buildRunnerSessionReloadCommand', () => {
-  it('suppresses startup updates only when the resume caller requests it', () => {
+  it('never checks for a Codex update when a worker session resumes', () => {
     const vars = makeVars({ dispatchCmd: '', codexPath: '/opt/bin/codex' });
-    const normal = buildRunnerSessionReloadCommand(vars, 'codex', 'gpt-5', 'session');
-    const managed = buildRunnerSessionReloadCommand(vars, 'codex', 'gpt-5', 'session', {
-      skipUpdateCheck: true,
-    });
-    assert.doesNotMatch(normal, /check_for_update_on_startup/);
-    assert.match(managed, /check_for_update_on_startup=false/);
+    const command = buildRunnerSessionReloadCommand(vars, 'codex', 'gpt-5', 'session');
+    assert.equal(command.match(/check_for_update_on_startup=false/g)?.length, 1);
   });
 
   it('restores task recipe provenance before resuming a persisted runner', () => {
@@ -2437,7 +2444,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /export CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/runtime\/codex-home'/);
     assert.match(
       cmd,
-      /\/opt\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" resume --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --model gpt-5 'codex-session'$/,
+      /\/opt\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" resume --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --config 'check_for_update_on_startup=false' --model gpt-5 'codex-session'$/,
     );
   });
 

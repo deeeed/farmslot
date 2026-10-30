@@ -1,0 +1,86 @@
+import type { AgentContext } from '@farmslot/protocol';
+
+import type { SlotVars } from '../core/config.js';
+import { execOnSlot } from '../core/exec.js';
+import { tmuxShellSnippet } from '../core/tmux.js';
+
+import {
+  probeRunnerDescendantPid,
+  verifyExactLiveRunnerSessionBinding,
+} from './session-process.js';
+
+export type RetainedWorkerProgressTarget =
+  | { state: 'absent' }
+  | { state: 'present'; target: string }
+  | { state: 'unknown'; reason: string };
+
+interface RetainedWorkerProgressReaders {
+  exec: typeof execOnSlot;
+  probe: typeof probeRunnerDescendantPid;
+  binding: typeof verifyExactLiveRunnerSessionBinding;
+}
+
+/** A missing pane is not a busy turn; a resumed worker must prove its saved conversation. */
+export async function readRetainedWorkerProgressTarget(
+  vars: SlotVars,
+  context: AgentContext,
+  readers: RetainedWorkerProgressReaders = {
+    exec: execOnSlot,
+    probe: probeRunnerDescendantPid,
+    binding: verifyExactLiveRunnerSessionBinding,
+  },
+): Promise<RetainedWorkerProgressTarget> {
+  const target = context.target;
+  const runner = context.runner;
+  const sessionId = context.runnerSessionId;
+  const sessionPath = context.runnerSessionPath;
+  if (!target?.paneId || !runner || !sessionId || !sessionPath)
+    return { state: 'unknown', reason: 'Recorded worker pane or session identity is incomplete' };
+  const listed = await readers.exec(
+    vars,
+    tmuxShellSnippet("list-panes -a -F '#{session_name}\t#{pane_id}\t#{pane_pid}'"),
+    { timeout: 10_000 },
+  );
+  if (listed.exitCode !== 0 || !listed.stdout.trim())
+    return { state: 'unknown', reason: 'Worker pane inventory is unavailable' };
+  const panes = listed.stdout
+    .trim()
+    .split('\n')
+    .map((line) => {
+      const [session, paneId, panePid] = line.split('\t');
+      return { session, paneId, panePid };
+    });
+  if (
+    panes.some(
+      ({ session, paneId, panePid }) =>
+        !session || !/^%\d+$/.test(paneId ?? '') || !/^\d+$/.test(panePid ?? ''),
+    )
+  )
+    return { state: 'unknown', reason: 'Worker pane inventory is incomplete' };
+  if (panes.some(({ paneId }) => paneId === target.paneId))
+    return {
+      state: 'unknown',
+      reason: 'Recorded worker pane still exists; progress is unconfirmed',
+    };
+  let resumed: string | undefined;
+  for (const pane of panes.filter(({ session }) => session === target.session)) {
+    const process = await readers.probe(vars, pane.panePid!, runner, { timeout: 10_000 });
+    if (process.state === 'unknown')
+      return { state: 'unknown', reason: process.reason ?? 'Worker process probe is unavailable' };
+    if (process.state === 'absent') continue;
+    const binding = await readers.binding(vars, runner, {
+      paneId: pane.paneId!,
+      runnerPid: process.pid,
+      slotId: vars.slotId,
+      expectedSessionId: sessionId,
+      expectedSessionPath: sessionPath,
+    });
+    if (!binding.ok || resumed)
+      return {
+        state: 'unknown',
+        reason: 'Replacement worker conversation is unconfirmed or ambiguous',
+      };
+    resumed = pane.paneId;
+  }
+  return resumed ? { state: 'present', target: resumed } : { state: 'absent' };
+}

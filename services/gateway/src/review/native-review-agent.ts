@@ -14,6 +14,7 @@ import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.j
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { readEvalReviewContribution, recordEvalJudgeResult } from '../evals/judge.js';
 import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
@@ -409,6 +410,11 @@ async function runNativeReviewAttempt(
             mode: input.mode,
             baseRef,
             lastReviewedHeadSha: retained?.lastReviewedHeadSha,
+            ...(original.engineState?.evalExperiment?.blind?.firstOutput
+              ? {
+                  frozenContribution: await readEvalReviewContribution(original),
+                }
+              : {}),
           })));
       if (
         !snapshot?.snapshot.baseSha ||
@@ -516,7 +522,9 @@ async function runNativeReviewAttempt(
                 deltaUnavailable: delta?.deltaUnavailable,
                 priorIssues: input.rereview!.priorIssues,
               }) + template
-            : `## COLD review range\n\nReview the complete PR diff ${snapshot.snapshot.baseSha}..${snapshot.snapshot.headSha} in ${taskDir}/${snapshot.snapshot.diffPath}.\n\n` +
+            : (original.engineState?.evalExperiment
+                ? `Review the frozen first-output patch in ${taskDir}/${snapshot.snapshot.diffPath}, including its uncommitted and untracked source.\n\n`
+                : `## COLD review range\n\nReview the complete PR diff ${snapshot.snapshot.baseSha}..${snapshot.snapshot.headSha} in ${taskDir}/${snapshot.snapshot.diffPath}.\n\n`) +
               template;
         admit();
         await writeTextFileOnSlot(
@@ -858,6 +866,49 @@ async function runNativeReviewAttempt(
     );
     const completedAt = new Date().toISOString();
     admit();
+    if (original.engineState?.evalExperiment && !feedback.incomplete) {
+      const artifactPaths = [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths];
+      const reviewerSessionId = context.runnerSessionId;
+      await withNativeReviewMutation(() =>
+        recordEvalJudgeResult(
+          original,
+          {
+            ...feedback,
+            reviewId: lineage,
+            reviewerSessionId,
+            runner,
+            model,
+            effort: input.effort,
+            mode: 'cold',
+            validationDepth,
+            retryCount: 0,
+            maxRetries: 0,
+            reviewSnapshot: reviewSnapshot.snapshot,
+            usage: unavailableRunnerSessionUsage({
+              runner,
+              runnerSessionId: reviewerSessionId ?? null,
+              runnerSessionPath: null,
+              error: 'Native reviewer usage accounting is unavailable',
+            }),
+            attempts: [
+              {
+                mode: 'cold',
+                loopNumber: 1,
+                verdict: feedback.verdict,
+                issues: feedback.issues,
+                unresolvedCount: feedback.issues.length,
+                validationDepth,
+                reviewSnapshot: reviewSnapshot.snapshot,
+                artifactPaths,
+                startedAt,
+                completedAt,
+              },
+            ],
+          },
+          contextId,
+        ),
+      );
+    }
     await withNativeReviewMutation(() =>
       upsertAgentContext(
         runId,

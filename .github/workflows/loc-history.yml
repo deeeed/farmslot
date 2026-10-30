@@ -18,7 +18,7 @@ concurrency:
 jobs:
   record:
     name: Record framework LOC snapshot
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     defaults:
       run:

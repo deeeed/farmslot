@@ -45,6 +45,8 @@ export const nativeStyles = StyleSheet.create({
   },
   buttonText: { color: colors.accent, fontWeight: '700', fontSize: fonts.sizeSm },
   disabled: { opacity: 0.45 },
+  messageToggle: { minHeight: 44, justifyContent: 'center' },
+  hidden: { display: 'none' },
   input: {
     color: colors.textPrimary,
     backgroundColor: colors.bgCard,

@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit';
 
 import type { NativeSessionInfo } from '@farmslot/protocol';
-import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
+import type { NativeWork, ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import './native-read-status-view.js';
 
@@ -31,6 +31,7 @@ interface NativeSessionHeaderContext {
   observedAt?: number;
   historyObservation?: ResourceQueryState<unknown>;
   unsupported?: boolean;
+  work?: NativeWork;
   refresh(): void;
   toggleWorkspace(): void;
 }

@@ -56,3 +56,21 @@ test('a pending retry keeps the outage status until the caller observes recovery
   assert.equal(nativeReadStatus({ ...current, unsupported: true }).state, 'unsupported');
   assert.equal(nativeReadStatus({ ...current, observedAt: undefined }).age, 'No history read yet');
 });
+
+test('a running turn shows how long it has worked and its current tool', () => {
+  const work = { since: 28_000, tool: 'Bash' };
+  assert.equal(
+    nativeReadStatus({ ...current, sessionState: 'running', work }).text,
+    'Working · 1m 12s · Bash',
+  );
+  assert.equal(
+    nativeReadStatus({ ...current, sessionState: 'running', work: { since: 95_000 } }).text,
+    'Working · 5s',
+  );
+  // A turn the session no longer runs (closed, failed, or waiting on the reader) keeps the state word.
+  assert.equal(
+    nativeReadStatus({ ...current, sessionState: 'waiting', work }).text,
+    'Live · waiting',
+  );
+  assert.equal(nativeReadStatus({ ...current, sessionState: 'running' }).text, 'Live · running');
+});
