@@ -138,9 +138,9 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
 }
 
 /**
- * Statuses after the worker's last turn in which nothing has relaunched it: a capture
- * there (a reviewer reading the output, a refresh while a result decision waits) must
- * not turn finished output back into running output.
+ * Statuses that can follow the worker's last turn: a capture there (a reviewer reading the
+ * output, a refresh while a result decision waits) must not turn finished output back into
+ * running output, unless the monitor is running again for a relaunched worker.
  */
 const AFTER_WORKER_STATUSES: readonly RunStatus[] = [
   'monitoring',
@@ -152,17 +152,26 @@ const AFTER_WORKER_STATUSES: readonly RunStatus[] = [
   'completing',
 ];
 
+/** The current monitor step is watching a worker: not started yet, or relaunched. */
+function monitorActive(run: Run): boolean {
+  const status = run.steps.find((step) => step.name === PipelineSteps.MONITOR)?.status;
+  return status === 'pending' || status === 'running';
+}
+
 /** The current monitor step ended on the worker's own completion signal. */
 function monitorSawWorkerFinish(run: Run): boolean {
   const monitor = run.steps.find((step) => step.name === PipelineSteps.MONITOR);
-  const signal = monitor?.outputs?.workerSignal as { status?: unknown } | undefined;
-  return monitor?.status === 'done' && (signal?.status === 'complete' || signal?.status === 'done');
+  const signal = monitor?.outputs?.workerSignal;
+  const status =
+    signal && typeof signal === 'object' ? (signal as { status?: unknown }).status : undefined;
+  return monitor?.status === 'done' && (status === 'complete' || status === 'done');
 }
 
 function outputWorkerFinished(run: Run, workerFinished: boolean): boolean {
   return (
     workerFinished ||
     (AFTER_WORKER_STATUSES.includes(run.status) &&
+      !monitorActive(run) &&
       (Boolean(run.output?.workerFinished) || monitorSawWorkerFinish(run))) ||
     Boolean(run.completedAt) ||
     isTerminalRunStatus(run.status)

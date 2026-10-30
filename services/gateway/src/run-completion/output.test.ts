@@ -288,7 +288,14 @@ test('a failed manual refresh does not mark an active worker finished', async (t
     false,
     'an active retry must not inherit completion from its previous attempt',
   );
-  updateRun(run.id, { status: 'completing', output: { ...failed.output!, workerFinished: true } });
+  // Completion only starts after the monitor has finished.
+  updateRun(run.id, {
+    status: 'completing',
+    output: { ...failed.output!, workerFinished: true },
+    steps: getRun(run.id)!.steps.map((step) =>
+      step.name === 'monitor' ? { ...step, status: 'done' } : step,
+    ),
+  });
   assert.equal(
     failRunOutputCapture(run.id, new Error('Gate refresh failed')).output?.workerFinished,
     true,
@@ -573,14 +580,15 @@ test('a reviewer or refresh capture keeps the artifact-only output review COMPLE
   assert.equal(pendingReview().length, 1, 'a refresh restores the output review COMPLETE needs');
   assert.equal(getRun(run.id)!.output?.workerFinished, true);
 
-  updateRun(run.id, { status: 'fixing' });
-  await captureRunOutput(run.id);
-  assert.equal(getRun(run.id)!.output?.workerFinished, false, 'a relaunched worker is running');
-  assert.equal(pendingReview().length, 0);
+  // Send-back relaunches the worker into a fresh monitor; its last capture still says finished.
   updateRun(run.id, {
     status: 'monitoring',
     steps: [{ name: 'monitor', status: 'running' }, ...getRun(run.id)!.steps.slice(1)],
   });
   await captureRunOutput(run.id);
   assert.equal(getRun(run.id)!.output?.workerFinished, false, 'a re-entered monitor is running');
+  assert.equal(pendingReview().length, 0);
+  updateRun(run.id, { status: 'fixing', steps: [finished, ...getRun(run.id)!.steps.slice(1)] });
+  await captureRunOutput(run.id);
+  assert.equal(getRun(run.id)!.output?.workerFinished, false, 'a review fix worker is running');
 });
