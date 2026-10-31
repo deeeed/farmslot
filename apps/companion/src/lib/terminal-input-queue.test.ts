@@ -272,3 +272,23 @@ test('a batch the gateway reports uncertain, or one bound for another instance, 
   assert.deepEqual(attempts, [undefined, 'gw1']);
   assert.deepEqual(holds, ['make deploy\r', 'pwd\r']);
 });
+
+// A refusal comes back the same every time; retrying it would stall the keys behind it.
+test('a batch the gateway refused with an error code is held, not retried every few seconds', async () => {
+  const attempts: string[] = [];
+  const holds: Array<string | null> = [];
+  const queue = createTerminalInputQueue(
+    async (data, _assertActive, markSent) => {
+      attempts.push(data);
+      markSent('gw1');
+      throw Object.assign(new Error('Open the worktree terminal before typing'), {
+        code: 'INTERNAL_ERROR',
+      });
+    },
+    { retryDelayMs: () => 0, onHold: (held) => holds.push(held && held.data) },
+  );
+  void queue.write('ls\r');
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(attempts, ['ls\r']);
+  assert.deepEqual(holds, ['ls\r']);
+});

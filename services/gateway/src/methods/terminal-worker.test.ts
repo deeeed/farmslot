@@ -12,7 +12,7 @@ import {
   terminalWorkerUnsubscribeKey,
 } from './terminal-worker.js';
 
-function fakeNode(methodReplies: Record<string, unknown>) {
+function fakeNode(methodReplies: Record<string, unknown>, id?: string) {
   const sent: Array<{ id: string; method: string; params: unknown }> = [];
   const ws = {
     readyState: 1,
@@ -26,7 +26,7 @@ function fakeNode(methodReplies: Record<string, unknown>) {
       });
     },
   };
-  const nodeId = `test-node-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const nodeId = id ?? `test-node-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   registerNode(nodeId, 1234, ws as never, '0.6.0', '0.6.0');
   return { nodeId, sent, ws };
 }
@@ -71,6 +71,26 @@ test('worker terminal input writes each sequenced batch once', async () => {
     assert.deepEqual(
       node.sent.map((frame) => (frame.params as { text: string }).text),
       ['make deploy\r', 'ls\r'],
+    );
+  } finally {
+    unregisterByWs(node.ws as never);
+  }
+});
+
+// Input that never left the gateway (its node was gone) is written by the resend once it is back.
+test('worker input refused for a disconnected node is written by its resend', async () => {
+  const nodeId = `test-node-gone-${Date.now()}`;
+  const worker = { nodeId, session: 's', window: '0', pane: '0', target: '%44' };
+  await assert.rejects(
+    terminalWorkerInput({ worker, data: 'ls\r', seq: { stream: 'q2', n: 1 } }),
+    /not connected/,
+  );
+  const node = fakeNode({ 'tmux.send': { sent: true } }, nodeId);
+  try {
+    await terminalWorkerInput({ worker, data: 'ls\r', seq: { stream: 'q2', n: 1 } });
+    assert.deepEqual(
+      node.sent.map((frame) => (frame.params as { text: string }).text),
+      ['ls\r'],
     );
   } finally {
     unregisterByWs(node.ws as never);

@@ -74,8 +74,7 @@ export async function terminalWorkerInput(params: TerminalWorkerInputParams): Pr
     await assertTmuxWorkerControlAllowed(params.worker);
     await writeSequencedInput(key, params.seq, async (dispatched) => {
       if (hasPty(key)) return writePty(key, params.data);
-      dispatched();
-      await sendWorkerTerminalInput(params.worker, params.data);
+      await sendWorkerTerminalInput(params.worker, params.data, dispatched);
     });
   });
 }

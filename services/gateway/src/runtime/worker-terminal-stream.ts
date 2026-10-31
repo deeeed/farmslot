@@ -42,9 +42,16 @@ export async function captureWorkerTerminal(
   return payload.lines.filter((line): line is string => typeof line === 'string');
 }
 
-export async function sendWorkerTerminalInput(worker: TmuxWorkerRef, data: string): Promise<void> {
+/** `dispatched` runs once the node is known and the request is about to leave the gateway. */
+export async function sendWorkerTerminalInput(
+  worker: TmuxWorkerRef,
+  data: string,
+  dispatched?: () => void,
+): Promise<void> {
+  const node = requireNode(worker);
+  dispatched?.();
   await sendNodeRequest(
-    requireNode(worker),
+    node,
     'tmux.send',
     { session: worker.target, text: data, enter: false },
     { timeout: 5_000 },

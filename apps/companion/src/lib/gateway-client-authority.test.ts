@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test, { mock } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 
 import type { AppStateStatus } from 'react-native';
 
@@ -776,81 +776,116 @@ test(
   },
 );
 
+/**
+ * Types `make deploy` through the worker hook on a gateway that numbers input as instance gw1,
+ * closes the socket after the frame went out, and reconnects to `nextInstance`.
+ */
+async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
+  const original = globalThis.WebSocket;
+  Object.assign(globalThis, { WebSocket: Socket });
+  const { GatewayClient } = await import('./gateway-client');
+  const client = new GatewayClient('ws://localhost:19779', { token: 'admin' });
+  const numbered = (instance: string) => ({
+    ...auth('admin', 'farm'),
+    capabilities: { ...auth('admin', 'farm').capabilities, terminalInputSequence: { instance } },
+  });
+  const connection = { activeProfileId: 'arthur-lan', principalId: 'arthur' };
+  const hook = mountHook<
+    [typeof client, { nodeId: string; session: string; target: string }, object]
+  >(
+    new URL('../features/terminal/use-worker-terminal-input.ts', import.meta.url),
+    'useWorkerTerminalInput',
+    {
+      '@farmslot/protocol': { Methods },
+      '../../lib/terminal-input-queue': inputQueue,
+      '../../store/connection': {
+        useConnectionStore: Object.assign(
+          (select: (state: typeof connection) => unknown) => select(connection),
+          { getState: () => connection },
+        ),
+      },
+    },
+  );
+  const holds: unknown[] = [];
+  const cleanup = () => {
+    hook.cleanup();
+    client.disconnect();
+    Object.assign(globalThis, { WebSocket: original });
+  };
+  try {
+    client.connect();
+    const first = Socket.sockets.at(-1)!;
+    first.open();
+    first.response(first.sent[0].id, numbered('gw1'));
+    await settle();
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { write } = hook.render(
+      client,
+      { nodeId: 'mini', session: 'mmt-3', target: '%19' },
+      {
+        onHold: (held: unknown) => holds.push(held),
+      },
+    ) as { write: (data: string) => Promise<void> };
+    const typed = write('make deploy\r');
+    typed.catch(() => undefined);
+    await settle();
+    const sent = first.sent.find((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT)!;
+    first.close(1006);
+    await settle();
+    t.mock.timers.tick(1_000);
+    await settle();
+    const second = Socket.sockets.at(-1)!;
+    assert.notEqual(second, first);
+    second.open();
+    second.response(second.sent[0].id, numbered(nextInstance));
+    await settle();
+    // The queue retried while the socket was down; let its backoff run out.
+    for (let step = 0; step < 8; step++) {
+      t.mock.timers.tick(1_000);
+      await settle();
+    }
+    return { sent, second, holds, typed, cleanup };
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
 // A socket close after the frame went out: the capability is gone by the time the request fails,
 // so the safety of a resend must come from the instance that received the frame.
 test(
   'worker keys cut off by a socket close are resent with the same number to the same gateway',
   { timeout: 4000 },
   async (t) => {
-    const original = globalThis.WebSocket;
-    Object.assign(globalThis, { WebSocket: Socket });
-    const { GatewayClient } = await import('./gateway-client');
-    const client = new GatewayClient('ws://localhost:19779', { token: 'admin' });
-    const sequenced = (id: string) => ({
-      ...auth(id, 'farm'),
-      capabilities: {
-        ...auth(id, 'farm').capabilities,
-        terminalInputSequence: { instance: 'gw1' },
-      },
-    });
-    const connection = { activeProfileId: 'arthur-lan', principalId: 'arthur' };
-    const hook = mountHook<
-      [typeof client, { nodeId: string; session: string; target: string }, object]
-    >(
-      new URL('../features/terminal/use-worker-terminal-input.ts', import.meta.url),
-      'useWorkerTerminalInput',
-      {
-        '@farmslot/protocol': { Methods },
-        '../../lib/terminal-input-queue': inputQueue,
-        '../../store/connection': {
-          useConnectionStore: Object.assign(
-            (select: (state: typeof connection) => unknown) => select(connection),
-            { getState: () => connection },
-          ),
-        },
-      },
-    );
-    const holds: unknown[] = [];
+    const run = await lostReplyThenReconnect(t, 'gw1');
     try {
-      client.connect();
-      const first = Socket.sockets.at(-1)!;
-      first.open();
-      first.response(first.sent[0].id, sequenced('admin'));
-      await settle();
-      t.mock.timers.enable({ apis: ['setTimeout'] });
-      const { write } = hook.render(
-        client,
-        { nodeId: 'mini', session: 'mmt-3', target: '%19' },
-        {
-          onHold: (held: unknown) => holds.push(held),
-        },
-      ) as { write: (data: string) => Promise<void> };
-      const typed = write('make deploy\r');
-      await settle();
-      const sent = first.sent.find((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT)!;
-      first.close(1006);
-      await settle();
-      t.mock.timers.tick(1_000);
-      await settle();
-      const second = Socket.sockets.at(-1)!;
-      assert.notEqual(second, first);
-      second.open();
-      second.response(second.sent[0].id, sequenced('admin'));
-      await settle();
-      // The queue retried while the socket was down; let its backoff run out.
-      for (let step = 0; step < 8; step++) {
-        t.mock.timers.tick(1_000);
-        await settle();
-      }
-      const resent = second.sent.find((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT)!;
-      assert.deepEqual(resent.params, sent.params, 'same keys, same stream and number');
-      second.response(resent.id, { sent: true });
-      await typed;
-      assert.deepEqual(holds, []);
+      const resent = run.second.sent.find(
+        (frame) => frame.method === Methods.TERMINAL_WORKER_INPUT,
+      )!;
+      assert.deepEqual(resent.params, run.sent.params, 'same keys, same stream and number');
+      run.second.response(resent.id, { sent: true });
+      await run.typed;
+      assert.deepEqual(run.holds, []);
     } finally {
-      hook.cleanup();
-      client.disconnect();
-      Object.assign(globalThis, { WebSocket: original });
+      run.cleanup();
+    }
+  },
+);
+
+// After a gateway restart the new process has no record of number 1, so it must not get it.
+test(
+  'worker keys cut off by a socket close are held when a different gateway instance answers',
+  { timeout: 4000 },
+  async (t) => {
+    const run = await lostReplyThenReconnect(t, 'gw2');
+    try {
+      assert.equal(
+        run.second.sent.some((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT),
+        false,
+      );
+      assert.equal(run.holds.length, 1);
+    } finally {
+      run.cleanup();
     }
   },
 );

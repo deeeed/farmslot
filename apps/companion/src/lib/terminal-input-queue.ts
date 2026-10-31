@@ -90,10 +90,10 @@ const retryBackoffMs = (attempt: number) => Math.min(250 * 2 ** attempt, 4_000);
  * - a batch that failed before it was written (`markSent` not called) is resent as is;
  * - a batch written to a gateway instance that drops repeated numbers (`markSent(instance)`) is
  *   resent as is to that instance, which acknowledges it without typing it again;
- * - a batch written to a gateway without that (`markSent(null)`), one the gateway reports as
- *   uncertain (TERMINAL_INPUT_UNCERTAIN), or one that would go to another instance
- *   (`TerminalInputNeedsDecisionError`) may already be in the pane, so it is held: nothing else
- *   goes out until the user resends or discards it.
+ * - a batch written to a gateway without that (`markSent(null)`), one the gateway answered with
+ *   an error code (a refusal, or TERMINAL_INPUT_UNCERTAIN), or one that would go to another
+ *   instance (`TerminalInputNeedsDecisionError`) is held: nothing else goes out until the user
+ *   resends or discards it.
  */
 export function createTerminalInputQueue(
   send: (
@@ -175,7 +175,11 @@ export function createTerminalInputQueue(
         return;
       }
       if (sentNow !== undefined) batch.sentTo = sentNow;
-      if (batch.sentTo === null || needsDecision(error)) {
+      // A gateway that answered with an error code refused the keys (the pane does not have
+      // them), and the same refusal would come back: the user decides. Only a failure without an
+      // answer (closed socket, background pause, timeout) is resent on its own.
+      const refused = sentNow !== undefined && hasGatewayCode(error);
+      if (batch.sentTo === null || refused || needsDecision(error)) {
         held = batch;
         onHold?.({ data: batch.data, error });
         return;
@@ -243,14 +247,12 @@ export function assertSafeResend(sentTo: string | null | undefined, instance: st
   if (sentTo !== undefined && sentTo !== instance) throw new TerminalInputNeedsDecisionError();
 }
 
+function hasGatewayCode(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && Boolean(error.code);
+}
+
 function needsDecision(error: unknown): boolean {
-  return (
-    error instanceof TerminalInputNeedsDecisionError ||
-    (typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      error.code === 'TERMINAL_INPUT_UNCERTAIN')
-  );
+  return error instanceof TerminalInputNeedsDecisionError;
 }
 
 function newStreamId(): string {
