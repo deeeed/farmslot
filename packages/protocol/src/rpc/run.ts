@@ -697,7 +697,7 @@ export interface RunOverrideClaimParams {
 export interface RunAttestBeforeAttemptParams {
   runId: string;
   decisionId: string;
-  /** Task-local attempt, `artifacts/recipe-runs/<recipeRunId>`. */
+  /** Task-local attempt path under `artifacts/recipe-runs/`: `<id>` or the harness's `attempts/<id>`. */
   recipeRunId: string;
   /** The displayed gate package, when the gate has one; checked only at commit. */
   packageHash?: string;

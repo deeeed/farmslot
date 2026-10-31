@@ -47,7 +47,9 @@ export async function runAttestBeforeAttempt(
   const approver = authorize();
   const reason = params.reason?.trim();
   if (!reason) throw new Error('A before attestation requires a written reason.');
-  if (!/^[A-Za-z0-9][\w.-]*$/u.test(params.recipeRunId ?? ''))
+  // A path under recipe-runs/ (`<id>` or the harness's `attempts/<id>`). Every segment
+  // starts with a letter or digit, so `..`, hidden, empty and absolute segments are refused.
+  if (!/^[A-Za-z0-9][\w.-]*(?:\/[A-Za-z0-9][\w.-]*)*$/u.test(params.recipeRunId ?? ''))
     throw new Error('Name one recipe attempt under artifacts/recipe-runs/.');
   const attemptRoot = `recipe-runs/${params.recipeRunId}`;
   const run = getRun(params.runId);

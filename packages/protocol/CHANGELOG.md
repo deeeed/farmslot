@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `RunAttestBeforeAttemptParams.recipeRunId` documents the attempt path under `artifacts/recipe-runs/`, including the harness's `attempts/<id>` layout.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.6 - 2026-11-01
