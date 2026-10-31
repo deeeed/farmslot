@@ -16,6 +16,7 @@ import {
   runBundleStore,
   warnRunBundleCapacity,
 } from '../../run-completion/retained-artifacts.js';
+import { captureMissingRunEpisodes } from '../../run-completion/run-episode.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
   diskBytes,
@@ -192,6 +193,12 @@ export async function runRetentionPass(
     }
   }
   const runs = await getAllRunsWithArchived();
+  if (options.apply && !options.roots) {
+    // ADR-039 Amendment 4: capture episodes the run-end effect missed; never blocks archival.
+    await captureMissingRunEpisodes(runs).catch((error) =>
+      console.error(`[run-episode] retry pass failed: ${(error as Error).message}`),
+    );
+  }
   const context = await retentionContext(runs, options.now, deps);
   const { plan, removable } = await planRunRetention(runs, context, roots, deps.holdsSlot);
   if (!options.apply) return plan;

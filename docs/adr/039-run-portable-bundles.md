@@ -450,3 +450,59 @@ read-only retention-plan script remain the consumers. Run records use the existi
 `links` field for a local manifest reference; no public package or RPC change.
 The private `@farmslot/run-bundle` housekeeping selector is consumed by gateway
 admission, capture and hourly archival. No worker protocol changes.
+
+## Amendment 4: 2026-11-01 run-end episode capture
+
+**Status:** Accepted, lead-approved amendment (2026-11-01).
+**Specification:** [Run episodes](../reference/run-episodes.md).
+
+### Decision
+
+Every run that ends (done, failed or cancelled) records one small episode: a
+`farmslot-episode-v1` JSON describing the run as input, trajectory and labels.
+The ADR-053 transition router writes it through the advisory `episode-capture`
+effect, which runs after `backlog-settle` and after the slot teardown, so it never
+delays a slot. A failure is recorded on the transition result and never blocks or
+reverts the terminal state. The hourly retention pass retries it: each pass
+captures every ended run updated since the last pass whose episode is missing or
+describes an older revision. A failure keeps that pass's watermark at the failed
+run.
+
+An episode lists references, not copies. Each file is a task-relative path plus
+the sha256 that the run's output inventory or a retained bundle manifest already
+recorded, with the bundle digest when a retained copy holds the bytes. Capture
+reads only those small manifests. It never opens, re-reads or re-hashes an
+artifact, and an inventory entry without a recorded digest is counted, not hashed.
+Media is counted and follows the existing retention policy.
+
+- **Input:** ticket, branch, start ref, dispatch head, PR, and the task, checklist,
+  diff and action-manifest files.
+- **Trajectory:** the recipe documents, every recipe-run directory the inventory
+  names (failed attempts included), agent contexts with their session-archive
+  digests (ADR-056), steps and recovery attempts.
+- **Labels:** outcome, failed step, error, decisions, review results,
+  recipe-quality outputs, and evidence and acceptance manifests.
+
+Retained bundles are immutable and digest-addressed, so the episode lives beside
+the run record rather than inside a bundle: `<runs dir>/episodes/<run-id>.json`.
+Like the record, it is kept forever. Earlier attempts' bytes stay where the run
+left them and are preserved by Amendment 3's task-dir archival; the episode's
+digests verify them. The schema is project-neutral, and a project contributes
+only its pack (action manifests and recipes).
+
+### Rationale and consequences
+
+A run's training value used to depend on which side store survived. Analytics
+rows outlive records, bundles keep only the selected attempt, and transcripts
+link to runs only through session ids. One capture point at run end makes every
+future run a complete episode for one small file write, using digests that
+already exist. Offline tools derive app maps and recipe scores from episodes; the
+gateway computes neither.
+
+### Public surface
+
+- `<runs dir>/episodes/<run-id>.json` (`farmslot-episode-v1`), plus the retry
+  pass's `episodes/watermark.json`. No new RPC and no protocol type.
+- `farmslot runs bundle retain <runId>` also rewrites that run's episode, so a
+  backfilled capture's digests reach it.
+- The `episode-capture` effect outcome appears on terminal transition results.

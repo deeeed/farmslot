@@ -27,6 +27,7 @@ import { withTerminalTeardown } from '../run-engine/terminal-teardown-registry.j
 import { getRun, updateRun } from '../runs/store.js';
 import { schedulerTick } from '../work-graph/store.js';
 
+import { episodeCaptureEffect } from './episode-capture-effect.js';
 import {
   effectFailed,
   routeRunTransition,
@@ -116,7 +117,7 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
     {
       name: 'slot-cleanup',
       severity: 'advisory',
-      // Last, and the whole reason this module exists: tmux teardown is slow and
+      // The last teardown, and the whole reason this module exists: tmux teardown is slow and
       // the terminal state was already published through `onMutated`, so no
       // client waits on it.
       apply: async ({ run }) => {
@@ -138,6 +139,8 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
         return 'ok';
       },
     },
+    // After the teardown, so writing history never delays the slot.
+    episodeCaptureEffect,
   ];
 }
 
