@@ -359,6 +359,27 @@ at the frozen full-review base, falling back to the dispatch baseline when no fu
 review snapshot is available. A warm review delta MUST NOT supply that base. Captures keep their original attempt
 paths; no copies are relabelled as another execution.
 
+Under ADR-062 Amendment 21, when a before side cannot be recorded clean at that
+base, a credential-backed person MAY attest one attempt captured by the same
+run, `artifacts/recipe-runs/<recipeRunId>/`, as before-only evidence at an
+unresolved publish gate: `run.attestBeforeAttempt`, or `farmslot run gate
+<runId> --action attest-before-attempt --recipe-run <id> --reason <text>`. The
+Run records the attempt root, the sha256 of its `artifact-manifest.json`, the
+decision id, reason, approver and time; task and recipe files never carry it.
+The RPC MUST refuse a blank reason, an attempt without a valid artifact
+manifest in the run's checkout, a resolved or non-ready gate, and, at commit, a
+package hash other than the one displayed. While the attempt's current manifest
+digest equals the recorded one, admission MUST skip only the baseline
+`git_ref`, `dirty` and `branch` match for that attempt's before-only
+declarations. Ownership, captured digests, closure, secret scan and publication
+approval still apply; its after and standalone captures still need the clean
+selected head. Any manifest change lapses the attestation. It resolves no gate
+and changes no claim verdict. The publication package MUST bind the admitted
+attestation ids, so a new attestation changes its hash and needs approval again.
+PR evidence MUST label only those before sides "Before: operator-attested", with
+the reason, actor and time as one line of inert text. Run-bundle import drops
+attestations.
+
 The selected successful attempt remains the sole claim-verdict source. Additional
 media MUST NOT merge sibling claim ledgers, satisfy the selected attempt's missing
 claims or grant visual judgment authority to a different execution. All consumed

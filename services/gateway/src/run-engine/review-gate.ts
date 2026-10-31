@@ -45,6 +45,7 @@ import {
   type SessionCostSnapshot,
   uploadArtifacts,
 } from '../run-completion/orchestrator.js';
+import { capturedBeforeAttemptAttestations } from '../run-completion/publication-artifacts.js';
 import { retainedRunArtifactManifest } from '../run-completion/retained-artifacts.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import {
@@ -203,14 +204,21 @@ export async function executeReviewGate(runId: string): Promise<void> {
   let lowCaptions: LowCaption[] = [];
   if (reviewArtifactUrls.size > 0) {
     try {
+      const evidenceRun = getRun(runId)!;
       const manifest =
-        (await readEvidenceManifest(getRun(runId)!)) ??
-        autoDetectEvidenceManifest(reviewArtifactUrls);
+        (await readEvidenceManifest(evidenceRun)) ?? autoDetectEvidenceManifest(reviewArtifactUrls);
       if (manifest) {
         lowCaptions = collectLowCaptions(manifest);
         try {
           assertCaptionConfidence(manifest);
-          evidenceMarkdown = buildEvidenceSection(manifest, reviewArtifactUrls);
+          evidenceMarkdown = buildEvidenceSection(
+            manifest,
+            reviewArtifactUrls,
+            capturedBeforeAttemptAttestations(
+              evidenceRun,
+              evidenceRun.output?.artifactManifest ?? [],
+            ),
+          );
         } catch (err) {
           if (err instanceof EvidenceCaptionError) {
             console.warn(`[run-engine] evidence gate blocked posting: ${err.message}`);

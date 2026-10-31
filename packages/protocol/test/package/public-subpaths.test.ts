@@ -272,6 +272,7 @@ for (const [name, actual, expected] of [
       sessionCommand: Methods.RUN_SESSION_COMMAND,
       resolveDecision: Methods.RUN_RESOLVE_DECISION,
       overrideClaim: Methods.RUN_OVERRIDE_CLAIM,
+      attestBeforeAttempt: Methods.RUN_ATTEST_BEFORE_ATTEMPT,
       reviewVisualClaim: Methods.RUN_REVIEW_VISUAL_CLAIM,
       grade: Methods.RUN_GRADE,
       getGrade: Methods.RUN_GET_GRADE,

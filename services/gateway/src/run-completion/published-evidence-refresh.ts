@@ -205,6 +205,7 @@ async function refreshPublishedEvidenceLocked(
       : {}),
     checkAuthorChecklist: false,
     evidenceManifest: manifest,
+    beforeAttemptAttestationIds: prepared.beforeAttemptAttestationIds ?? [],
     validateBody: async () => {
       await verifyFrozenPublicationEvidence(
         run,
