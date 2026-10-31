@@ -523,6 +523,38 @@ test('admission charges a bundle its recorded bytes and measures only a bundle w
   assert.equal(await recorded(), await treeBytes(bundle));
 });
 
+test('a bundle retention has moved aside stays charged until archived, without a record', async (t) => {
+  const f = await fixture(t);
+  const aside = path.join(f.store.root, 'sha256', '.retention-0f1e2d3c');
+  await mkdir(aside, { recursive: true });
+  await writeFile(path.join(aside, 'payload.bin'), Buffer.alloc(60_000));
+  const policy = {
+    maxBundleBytes: 64_000,
+    maxStoreBytes: 64_000,
+    metadataReserveBytes: 4_000,
+    mediaRetentionDays: 30,
+  };
+  await assert.rejects(
+    reserveRunBundleMetadata(f.store, f.run.id, policy),
+    /capacity is exhausted/,
+  );
+  await rm(aside, { recursive: true });
+  await reserveRunBundleMetadata(f.store, f.run.id, policy);
+});
+
+test('a repair re-derives a stale record from the manifest before charging restored media', async (t) => {
+  const f = await fixture(t);
+  const result = await materializeRunBundle(f.request);
+  const bundle = path.join(f.store.root, 'sha256', result.ref.bundleDigest);
+  const usage = path.join(f.store.root, 'usage', `${result.ref.bundleDigest}.json`);
+  // As if a crash had left the record behind the payloads, with the video to restore again.
+  await rm(path.join(bundle, `tasks/${result.ref.taskKey}/artifacts/capture.mp4`));
+  await writeFile(usage, JSON.stringify({ bytes: 1 }));
+  await materializeRunBundle(f.request);
+  const { bytes } = JSON.parse(await readFile(usage, 'utf8')) as { bytes: number };
+  assert.equal(bytes, await treeBytes(bundle));
+});
+
 test('a dead store lease is recovered and concurrent retries publish the same immutable capture', async (t) => {
   const f = await fixture(t);
   const lock = path.join(f.store.runsDir, 'bundle-store.lock');
