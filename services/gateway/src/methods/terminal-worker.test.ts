@@ -117,6 +117,25 @@ test('worker input refused by a closing node socket is written by its resend', a
   }
 });
 
+// Once the node's socket took the request, the node may have typed it whatever its answer.
+test('worker input that failed after the node socket took it is not written again', async () => {
+  const node = fakeNode({ 'tmux.send': new Error("can't find pane: %46") });
+  const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%46' };
+  try {
+    await assert.rejects(
+      terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q4', n: 1 } }),
+      /can't find pane/,
+    );
+    await assert.rejects(
+      terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q4', n: 1 } }),
+      (error: unknown) => (error as { code?: string }).code === 'TERMINAL_INPUT_UNCERTAIN',
+    );
+    assert.equal(node.sent.length, 1);
+  } finally {
+    unregisterByWs(node.ws as never);
+  }
+});
+
 test('worker terminal subscribe requires pool config before PTY attach', async () => {
   const node = fakeNode({});
   const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%43' };
