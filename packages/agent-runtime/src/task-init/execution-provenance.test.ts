@@ -114,6 +114,14 @@ test('a repin replaces the selection and receipt; the previous pin keeps the ori
     ...input,
     selectedConfiguration: '{"identity":null}',
   });
+  const pins = path.dirname(previous.pin);
+  // Equal retained bytes refuse before a pin exists, whatever moved outside the tooling.
+  fs.writeFileSync(path.join(root, 'product.ts'), 'ordinary product change');
+  assert.throws(() => repinTaskExecution(taskDir, input, previous, root), {
+    code: 'TASK_REPIN_UNCHANGED',
+  });
+  assert.deepEqual(fs.readdirSync(pins), [path.basename(previous.pin)]);
+  assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), previous);
   fs.writeFileSync(path.join(provider, 'action.mjs'), 'export default 2;\n');
   const changed = { ...input, selectedConfiguration: '{"identity":null,"repinned":true}' };
   assert.throws(() =>
@@ -121,13 +129,14 @@ test('a repin replaces the selection and receipt; the previous pin keeps the ori
       taskDir,
       { ...changed, inputs: [...input.inputs, path.join(root, 'missing')] },
       previous,
+      root,
     ),
   );
   assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), previous);
   assert.deepEqual(fs.readdirSync(path.join(taskDir, 'inputs')), ['recipe-binding.json']);
   assert.deepEqual(fs.readdirSync(path.join(taskDir, 'artifacts')), ['harness-provenance.json']);
 
-  const receipt = repinTaskExecution(taskDir, changed, previous);
+  const receipt = repinTaskExecution(taskDir, changed, previous, root);
   assert.notEqual(receipt.pin, previous.pin);
   assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
   assert.equal(

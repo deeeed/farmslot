@@ -7,7 +7,6 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { sourceChangedSince } from '../src/harness/execution-provenance.js';
 import {
   acquireCheckoutLock,
   type CheckoutLockFailure,
@@ -471,25 +470,6 @@ describe('library provenance', () => {
     assert.deepEqual(await gitLibraryProvenance(root), { revision, dirty: false });
     fs.writeFileSync(path.join(root, 'recipes', 'smoke.recipe.json'), '{"changed":true}\n');
     assert.deepEqual(await gitLibraryProvenance(root), { revision, dirty: true });
-  });
-
-  test('a source changed since a commit ignores HEAD moves elsewhere', () => {
-    const root = repo();
-    const provider = path.join(root, 'recipe');
-    fs.mkdirSync(provider);
-    fs.writeFileSync(path.join(provider, 'provider.mjs'), 'export {};\n');
-    git(root, 'add', '.');
-    git(root, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'fixture');
-    const recorded = git(root, 'rev-parse', 'HEAD');
-    fs.writeFileSync(path.join(root, 'product.ts'), 'product\n');
-    git(root, 'add', '.');
-    git(root, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'product');
-    assert.equal(sourceChangedSince(provider, recorded), false);
-    fs.writeFileSync(path.join(provider, 'actions.json'), '{}\n');
-    assert.equal(sourceChangedSince(provider, recorded), true);
-    git(root, 'add', '.');
-    git(root, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'provider');
-    assert.equal(sourceChangedSince(provider, recorded), true);
   });
 
   test('omits Git facts for a plain or untracked directory', async () => {

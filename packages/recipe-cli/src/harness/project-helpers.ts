@@ -20,7 +20,6 @@ import {
   resolveHarnessContext,
 } from './context.js';
 import { ProjectBindingError } from './context-state.js';
-import { sourceChangedSince } from './execution-provenance.js';
 import {
   type ProjectRecipeHost,
   type ProjectRecipeHostOptions,
@@ -263,8 +262,9 @@ export interface TaskRepinResult {
 
 /**
  * ADR-068 Amendment 8: the operator's explicit repin after the task's own checkout
- * changed its provider. The fresh selection must keep the recorded project, app,
- * domain, adapter, target, pack and checkout; everything is checked before mutation.
+ * changed its provider. The fresh selection must keep everything recorded except
+ * tooling bytes and configuration, and the checkout's retained tooling must differ;
+ * every refusal leaves the task unchanged.
  */
 export async function repinSelectedTask(
   options: ProjectRecipeHostOptions,
@@ -285,10 +285,9 @@ export async function repinSelectedTask(
   if (!recorded || !selection.provider || !selection.checkoutRoot)
     return refuse('TASK_REPIN_UNSUPPORTED', 'An unbound task has no project provider to repin.');
   const checkout = selection.checkoutRoot;
-  const providerRoot = selection.provider.root;
   const owned = (file: string): boolean =>
     file === checkout || file.startsWith(`${checkout}${path.sep}`);
-  if (!owned(providerRoot))
+  if (!owned(selection.provider.root))
     refuse('TASK_REPIN_UNSUPPORTED', 'Only a provider inside the task checkout can be repinned.');
   const selectors = [
     '--target',
@@ -311,44 +310,27 @@ export async function repinSelectedTask(
       if (!current)
         return refuse('TASK_REPIN_UNSUPPORTED', 'The checkout selected no project provider.');
       // Only tooling bytes and configuration follow the checkout; the selection stays.
-      const kept = (value: TaskProjectSelection, binding: TaskRecipeBindingIdentity) =>
-        JSON.stringify([
-          binding.project,
-          binding.app,
-          binding.domain,
-          binding.adapter,
-          binding.target,
-          binding.libraries.map((library) => [library.name, library.path]),
-          value.packRoot,
-          value.checkoutRoot,
-          value.provider,
-          value.manifest ?? null,
-          value.runtimeDir,
-          value.farmRuntimeDir,
-          value.artifactDir,
-        ]);
-      if (kept(fresh, current) !== kept(selection, recorded))
-        refuse('TASK_BINDING_CHANGED', 'The task selection changed; a repin keeps it.');
-      // Compare bytes against the recorded commit: every product commit moves HEAD.
-      const changed = (
-        before: RecipeConformanceSource,
-        after: RecipeConformanceSource,
-        root: string,
-      ) =>
-        before.head && !before.dirtyDigest && after.head
-          ? sourceChangedSince(root, before.head)
-          : before.sourceFingerprint !== after.sourceFingerprint;
-      const libraryChanged = current.libraries.some((library, index) => {
-        const before = recorded.libraries[index]!;
-        return (
-          library.path !== undefined &&
-          owned(library.path) &&
-          changed(before, library, library.path)
-        );
+      const kept = (value: TaskProjectSelection, binding: TaskRecipeBindingIdentity) => ({
+        project: binding.project,
+        app: binding.app,
+        domain: binding.domain,
+        adapter: binding.adapter,
+        target: binding.target,
+        libraries: binding.libraries.map((library) => [library.name, library.path]),
+        pack: value.packRoot,
+        checkout: value.checkoutRoot,
+        provider: value.provider,
+        manifest: value.manifest ?? null,
+        runtimeDir: value.runtimeDir,
+        farmRuntimeDir: value.farmRuntimeDir,
+        artifactDir: value.artifactDir,
       });
-      if (!changed(recorded.provider, current.provider, providerRoot) && !libraryChanged)
-        refuse('TASK_REPIN_UNCHANGED', 'The task checkout has not changed its provider.');
-      return { previous, receipt: repinTask(taskDir, execution, previous) };
+      const before = kept(selection, recorded);
+      const after = kept(fresh, current);
+      for (const field of Object.keys(before) as (keyof typeof before)[])
+        if (JSON.stringify(before[field]) !== JSON.stringify(after[field]))
+          refuse('TASK_BINDING_CHANGED', `The task ${field} changed; a repin keeps the selection.`);
+      return { previous, receipt: repinTask(taskDir, execution, previous, checkout) };
     },
   );
 }

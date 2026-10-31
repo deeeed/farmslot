@@ -331,8 +331,9 @@ export function repinTask(
   taskDir: string,
   execution: TaskExecutionInput,
   previous: TaskExecutionProvenance,
+  checkoutRoot: string,
 ): TaskExecutionProvenance {
-  const receipt = repinTaskExecution(taskDir, execution, previous);
+  const receipt = repinTaskExecution(taskDir, execution, previous, checkoutRoot);
   followRepinnedMarker(taskDir, previous, receipt);
   return receipt;
 }

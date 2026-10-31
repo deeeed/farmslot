@@ -230,7 +230,7 @@ No CLI command, flag, SDK export or private request field is added. The frozen i
 
 An operator MAY repin a task whose own checkout changed its recipe provider. Amendment 3 freezes the provider at task initialization, and verification never repins. That is right for packaged providers, but a provider inside the product checkout is often what the task changes. A task that adds bridge actions to such a provider cannot run its recipe through the harness, and only a harness run records the acceptance status that `mark complete` requires. Run ba397e2c stopped this way, and a fresh task would discard its checklist state and evidence.
 
-The repin is explicit. Verification, resume and initialization still never repin. It runs only for a provider inside the task's recorded checkout, and only when that provider's content, or a library inside the checkout, changed since the recorded commit. The rest of the recorded selection MUST match. The current receipt MUST verify first. Every refusal happens before mutation.
+The repin is explicit. Verification, resume and initialization still never repin. It runs only for a provider inside the task's recorded checkout, and only when the tooling it retains from the checkout differs in bytes from the previous pin. The rest of the recorded selection MUST match. The current receipt MUST verify first. Every refusal happens before mutation.
 
 The repin adopts the branch's provider, including its task gates, so the operator reviews that provider change first. The command is an operator action by policy: the CLI cannot tell an operator from a worker using the same account. The task's frozen terminal contract and the gateway's gates still apply.
 

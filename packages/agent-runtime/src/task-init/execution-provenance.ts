@@ -72,6 +72,8 @@ export class TaskProvenanceError extends Error {
 }
 
 const receiptFile = 'artifacts/harness-provenance.json';
+const within = (root: string, file: string): boolean =>
+  file === root || file.startsWith(`${root}${path.sep}`);
 const pinPaths = new WeakMap<TaskExecutionInput, Map<string, string>>();
 // The shared machine home expands `~`; a raw FARMSLOT_HOME would resolve
 // against the task checkout and retain the tooling inside the product source.
@@ -225,8 +227,6 @@ export function verifyTaskExecutionProvenance(
     );
   }
   const inputsRoot = fs.realpathSync(path.join(taskDir, 'inputs'));
-  const within = (root: string, file: string): boolean =>
-    file === root || file.startsWith(`${root}${path.sep}`);
   const distribution = fs.realpathSync(value.retainedInputs[0]!.path);
   if (
     value.package.name !== '@farmslot/cli' ||
@@ -296,12 +296,14 @@ export function retainTaskExecution(
  * ADR-068 Amendment 8: an explicit repin after the task's own checkout changed its
  * provider. The caller verified `previous`. A new pin retains the current selection
  * and replaces the task's selection and receipt; the previous pin keeps the original
- * receipt and retires with the task.
+ * receipt and retires with the task. Tooling retained from the checkout must differ
+ * from the previous pin's bytes, or the repin refuses before the new pin exists.
  */
 export function repinTaskExecution(
   taskDir: string,
   input: TaskExecutionInput,
   previous: TaskExecutionProvenance,
+  checkoutRoot: string,
 ): TaskExecutionProvenance {
   // Producer additions, such as a template root outside the pack, are retained again.
   const inputsRoot = path.join(previous.pin, 'inputs');
@@ -309,15 +311,16 @@ export function repinTaskExecution(
     .filter((entry) => path.dirname(path.dirname(entry.path)) === inputsRoot)
     .map((entry) => entry.source)
     .filter((source) => fs.existsSync(source));
-  return writeTaskExecution(taskDir, input, carried, previous.pin);
+  return writeTaskExecution(taskDir, input, carried, { previous, checkoutRoot });
 }
 
 function writeTaskExecution(
   taskDir: string,
   input: TaskExecutionInput,
   additionalInputs: readonly string[],
-  previousPin?: string,
+  repin?: { previous: TaskExecutionProvenance; checkoutRoot: string },
 ): TaskExecutionProvenance {
+  const previousPin = repin?.previous.pin;
   const distribution = fs.realpathSync(input.distributionRoot);
   const packageRoot = fs.realpathSync(input.packageRoot);
   const executable = fs.realpathSync(input.executable);
@@ -419,6 +422,23 @@ function writeTaskExecution(
       bindingIdentity: input.bindingIdentity,
       retainedInputs,
     };
+    if (repin) {
+      // Retained digests are path-independent, so equal bytes mean an unchanged checkout.
+      const checkout = fs.realpathSync(repin.checkoutRoot);
+      const task = fs.realpathSync(taskDir);
+      const checkoutTooling = (inputs: readonly TaskRetainedInput[]) =>
+        JSON.stringify(
+          inputs
+            .filter((entry) => within(checkout, entry.source) && !within(task, entry.source))
+            .map((entry) => [entry.source, entry.sha256])
+            .sort(),
+        );
+      if (checkoutTooling(retainedInputs) === checkoutTooling(repin.previous.retainedInputs))
+        throw new TaskProvenanceError(
+          'TASK_REPIN_UNCHANGED',
+          'The task checkout has not changed its retained tooling.',
+        );
+    }
     fs.writeFileSync(
       path.join(staging, 'provenance.json'),
       JSON.stringify({
