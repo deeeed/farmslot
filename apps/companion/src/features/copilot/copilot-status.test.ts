@@ -5,7 +5,7 @@ import type { CopilotRuntimeSession } from '@farmslot/protocol';
 
 import { copilotStatusLine } from './copilot-status';
 
-// Review r1: a cold start with the gateway down read "Finding Co-Pilot…" forever.
+// A cold start with the gateway down must not read "Finding Co-Pilot…" forever.
 test('offline, Co-Pilot shows its saved status or nothing, never a read that cannot happen', () => {
   const saved: Pick<CopilotRuntimeSession, 'status'> = { status: 'running' };
   assert.equal(copilotStatusLine(null, false, true), '');

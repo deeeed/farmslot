@@ -61,7 +61,7 @@ test('a connected reread in flight or a fresh superseded read stays quiet', () =
   assert.equal(read(superseded, 111_000).length, 2);
 });
 
-// Review r1: a screen with no banner (a stack route over the tabs) still says why it is empty.
+// A screen with no banner (a stack route over the tabs) still says why it is empty.
 test('offline, a read with nothing to show says Offline once, unless the banner does', () => {
   const failed = {
     status: 'error',

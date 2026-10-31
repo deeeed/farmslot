@@ -5,7 +5,7 @@ import { nativeConversationError } from './native-conversation-error';
 
 const errors = { action: '', read: 'Connection closed', creation: '', resume: '' };
 
-// Review r1: the raw read error stacked under the "Offline" heading.
+// A read the outage failed must not stack its raw error under the "Offline" heading.
 test('offline, a native conversation keeps its own errors and drops the read the outage failed', () => {
   assert.equal(nativeConversationError(errors, false, true), '');
   assert.equal(nativeConversationError(errors, true, true), 'Connection closed');
