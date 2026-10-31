@@ -97,7 +97,7 @@ test('exhausted external contention names the lock and does not poison later wor
   assert.equal(await withRunBundleStoreLock(store, async () => 'available'), 'available');
 });
 
-test('a wait behind a stalled holder in this process fails visibly instead of hanging', async (t) => {
+test('waiters behind a holder past its limit fail naming it and stay queued behind it', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'retained-lock-stall-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const store = await openRunBundleStore({
@@ -105,21 +105,46 @@ test('a wait behind a stalled holder in this process fails visibly instead of ha
     home: path.join(root, 'home'),
     create: true,
   });
+  const acquire = lockfile.lock;
+  let acquisitions = 0;
+  t.mock.method(lockfile, 'lock', (file: string, options?: LockOptions) => {
+    acquisitions += 1;
+    return acquire(file, options);
+  });
+  const warn = t.mock.method(console, 'warn', () => {});
   let finish!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    void withRunBundleStoreLock(store, async () => {
-      resolve();
+  let entered!: () => void;
+  const holding = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const holder = withRunBundleStoreLock(
+    store,
+    async () => {
+      entered();
       await new Promise<void>((done) => {
         finish = done;
       });
-    });
-  });
-  await entered;
+    },
+    { label: 'capture of run stuck', holdLimitMs: 50 },
+  );
+  await holding;
+  const stalled = (error: NodeJS.ErrnoException) =>
+    error.code === 'ELOCKED' &&
+    /held by capture of run stuck .*past its 0s limit/.test(error.message);
+  const first = withRunBundleStoreLock(store, async () => 'never');
+  const second = withRunBundleStoreLock(store, async () => 'never');
+  await assert.rejects(first, stalled);
+  await assert.rejects(second, stalled);
+  // A caller arriving after those timeouts still queues behind the holder, not the file lock.
   await assert.rejects(
-    withRunBundleStoreLock(store, async () => 'never', { queueTimeoutMs: 50 }),
-    (error: NodeJS.ErrnoException) =>
-      error.code === 'ELOCKED' && /still held by another operation/.test(error.message),
+    withRunBundleStoreLock(store, async () => 'never'),
+    stalled,
+  );
+  assert.equal(acquisitions, 1, 'no waiter reached the file lock while the holder ran');
+  assert.ok(
+    warn.mock.calls.some((call) => /held by capture of run stuck/.test(String(call.arguments[0]))),
   );
   finish();
+  await holder;
   assert.equal(await withRunBundleStoreLock(store, async () => 'next'), 'next');
 });
