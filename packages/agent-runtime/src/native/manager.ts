@@ -1079,9 +1079,6 @@ export class NativeSessionManager {
         if (steered && ['unknown', 'accepted'].includes(steered.state)) settle(steered);
       }
       record.steering?.clear();
-      const start = record.turnStart;
-      record.turnStart = undefined;
-      if (start) this.checkpointAfter(record, start);
     }
     if (event.type === 'session.closed') {
       if (event.data?.processStopped === true) record.info.processStopped = true;
@@ -1132,7 +1129,13 @@ export class NativeSessionManager {
       }
     }
     this.persist(record, enriched);
-    if (event.type === 'turn.completed') this.scheduleQueuedInput(record);
+    if (event.type === 'turn.completed') {
+      const start = record.turnStart;
+      record.turnStart = undefined;
+      // Only once turn.completed is durable: its changes follow it in the journal.
+      if (start) this.checkpointAfter(record, start);
+      this.scheduleQueuedInput(record);
+    }
   }
 
   private owned(owner: string, id: string, observations?: ProcessMetadataCache): SessionRecord {
@@ -1588,7 +1591,7 @@ export class NativeSessionManager {
   private checkpointsOf(record: SessionRecord): Promise<NativeCheckpoints | undefined> {
     if (!record.checkpoints) {
       const opened = NativeCheckpoints.open(record.info.cwd, record.info.id, {
-        indexDir: join(this.root, 'checkpoints', record.info.id),
+        indexDir: this.checkpointDirectory(record),
       });
       record.checkpoints = opened;
       opened.catch(() => {
@@ -1598,14 +1601,19 @@ export class NativeSessionManager {
     return record.checkpoints;
   }
 
+  private checkpointDirectory(record: SessionRecord): string {
+    return join(this.root, 'checkpoints', record.info.id);
+  }
+
   /** Waits until `deadline` for the last turn's `turn.changes`; later, reports it unavailable. */
   private async finishTurnChanges(record: SessionRecord, deadline: number): Promise<void> {
     const end = record.turnEnd;
     if (!end) return;
+    const left = Math.max(0, deadline - Date.now());
     if (
       (await withinMs(
         end.done.then(() => true),
-        deadline - Date.now(),
+        left,
       )) === undefined
     )
       end.abandon(
@@ -1625,18 +1633,24 @@ export class NativeSessionManager {
     record.turnStart = undefined;
     // A read-only checkout is never written, so its turns change nothing to checkpoint.
     if (record.readOnlyCheckout) return;
+    const late = {
+      commandId,
+      unavailable: `The checkpoint before this turn took longer than ${NATIVE_CHECKPOINT_WAIT_MS / 1000} s`,
+    };
+    // The previous turn's checkpoint used the whole wait: none is started that would go unused.
+    if (Date.now() >= deadline) {
+      if (record.checkpoints) record.turnStart = late;
+      return;
+    }
+    // `null`: the working directory is not in a Git working tree, so its turns report nothing.
     const taken = (async () => {
       const checkpoints = await this.checkpointsOf(record);
-      return checkpoints && { from: await checkpoints.take() };
+      return checkpoints ? { from: await checkpoints.take() } : null;
     })().catch((error: unknown) => ({
       unavailable: `The checkpoint before this turn failed: ${(error as Error).message}`,
     }));
-    const start = await withinMs(taken, deadline - Date.now());
-    if (start === undefined)
-      record.turnStart = {
-        commandId,
-        unavailable: `The checkpoint before this turn took longer than ${NATIVE_CHECKPOINT_WAIT_MS / 1000} s`,
-      };
+    const start = await withinMs(taken, Math.max(0, deadline - Date.now()));
+    if (start === undefined) record.turnStart = late;
     else if (start) record.turnStart = { commandId, ...start };
   }
 
@@ -1676,6 +1690,8 @@ export class NativeSessionManager {
 
   /** Deletes the session's checkpoints; a failure is shown and the next close tries again. */
   private async dropCheckpoints(record: SessionRecord): Promise<void> {
+    // A session that never took one (outside Git, read-only, no turn) has no index directory.
+    if (!record.checkpoints && !existsSync(this.checkpointDirectory(record))) return;
     try {
       await (await this.checkpointsOf(record))?.remove();
     } catch (error) {

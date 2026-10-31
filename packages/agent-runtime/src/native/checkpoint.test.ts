@@ -176,7 +176,7 @@ test("the session's index keeps what it hashed, and follows the worktree index w
 test('a directory outside Git has no checkpoints', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'native-checkpoint-plain-'));
   try {
-    assert.equal(await NativeCheckpoints.open(cwd, 'session'), undefined);
+    assert.equal(await NativeCheckpoints.open(cwd, 'session', { indexDir: indexDir() }), undefined);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

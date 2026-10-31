@@ -1,5 +1,4 @@
-import { copyFile, lstat, mkdir, mkdtemp, rm, stat, utimes } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { copyFile, lstat, mkdir, rm, stat, utimes } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { NativeTurnChanges, NativeTurnFile } from '@farmslot/protocol';
@@ -47,13 +46,12 @@ export class NativeCheckpoints {
 
   /**
    * Checkpoints for a session whose working directory is in a Git working tree, or none.
-   * `indexDir` holds the session's index (a fresh temporary directory by default); `remove`
-   * deletes it with the refs.
+   * `indexDir` holds the session's index; `remove` deletes it with the refs.
    */
   static async open(
     cwd: string,
     sessionId: string,
-    options: { kept?: number; indexDir?: string } = {},
+    options: { indexDir: string; kept?: number },
   ): Promise<NativeCheckpoints | undefined> {
     const located = await git(cwd, ['rev-parse', '--show-toplevel', '--absolute-git-dir']).catch(
       () => undefined,
@@ -65,8 +63,7 @@ export class NativeCheckpoints {
       .split('\n')
       .filter(Boolean)
       .sort();
-    const indexDir =
-      options.indexDir ?? (await mkdtemp(path.join(tmpdir(), 'farmslot-checkpoint-')));
+    const { indexDir } = options;
     await mkdir(indexDir, { recursive: true, mode: 0o700 });
     return new NativeCheckpoints(
       root,
