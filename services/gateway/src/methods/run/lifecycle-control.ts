@@ -385,9 +385,10 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   const { readSlotRow } = await import('../../core/index.js');
   let fence = { before: await readSlotRow(slotId) };
   let checkoutHasLocalWork = false;
+  const unconfirmedStops: string[] = [];
   try {
     await releaseRunOwnedCapabilities(run);
-    const runtimeBlocker = await shutdownRunSlotResources(run);
+    const runtimeBlocker = await shutdownRunSlotResources(run, unconfirmedStops);
     blocker = await recordSlotTeardownBlocker(run, workerBlocker ?? runtimeBlocker);
     // A blind trial's original Git comes back while the run still owns the slot;
     // a failure holds the slot for retry rather than leaving it on the isolated Git.
@@ -432,7 +433,9 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     }
     fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');
-    const released = await releaseRunSlotOwnership(run, fence, blocker);
+    const released = await releaseRunSlotOwnership(run, fence, blocker, {
+      stopUnconfirmed: !workerBlocker && unconfirmedStops.length > 0,
+    });
     if (released && (run.status === 'done' || retainedCandidate) && !checkoutHasLocalWork) {
       const { reuseSafeIdleSlot } = await import('../../run-lifecycle/safe-idle-slot.js');
       const result = await reuseSafeIdleSlot(slotId, broadcastEvent, {
