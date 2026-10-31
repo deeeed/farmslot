@@ -15,14 +15,23 @@ import type {
 } from './observability-types.js';
 import { probeRunnerDescendantPid } from './session-process.js';
 
-/** Stream native task identities with bounded records, never tool stdout or prose. */
+/**
+ * Stream native task identities with bounded records, never tool stdout or prose.
+ *
+ * The transcript is append-only, so each read resumes where the last one stopped: a
+ * per-transcript cache on the node keeps the byte offset and the task identities found so
+ * far, and only appended complete lines are parsed. A shorter file (truncation), another
+ * inode (rotation) or changed bytes before the offset (an in-place rewrite) restart from
+ * byte zero. A trailing partial line is left for the next read. `bytesRead` reports the
+ * bytes parsed by this read.
+ */
 export function buildClaudeBackgroundProbeCommand(
   sessionId: string,
   transcript: string,
   maxRecordBytes = 32 * 1024 * 1024,
 ): string {
   return `python3 - <<'PY'
-import json, os
+import hashlib, json, os, tempfile
 import xml.etree.ElementTree as ET
 
 session = ${JSON.stringify(sessionId)}
@@ -37,17 +46,69 @@ finished = set()
 stop_calls = set()
 stop_results = set()
 matched_session = False
+cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'farmslot', 'claude-background')
+cache_path = os.path.join(cache_dir, hashlib.sha256(transcript.encode()).hexdigest() + '.json')
+TAIL = 4096
+def tail_digest(stream, offset):
+    start = max(0, offset - TAIL)
+    stream.seek(start)
+    return hashlib.sha256(stream.read(offset - start)).hexdigest()
+def load_cache(stream, st):
+    try:
+        with open(cache_path) as cached:
+            cache = json.load(cached)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(cache, dict) or cache.get('v') != 1 or cache.get('session') != session:
+        return None
+    if cache.get('dev') != st.st_dev or cache.get('ino') != st.st_ino:
+        return None  # rotated: another file at this path
+    offset = cache.get('offset')
+    if not isinstance(offset, int) or offset < 0 or offset > st.st_size:
+        return None  # truncated
+    if tail_digest(stream, offset) != cache.get('tail'):
+        return None  # rewritten in place
+    return cache
+def save_cache(stream, st, offset):
+    data = {
+        'v': 1, 'session': session, 'dev': st.st_dev, 'ino': st.st_ino, 'offset': offset,
+        'tail': tail_digest(stream, offset), 'matched': matched_session,
+        'launched': sorted(launched), 'finished': sorted(finished),
+        'stop_calls': sorted(stop_calls), 'stop_results': sorted(stop_results),
+    }
+    try:
+        os.makedirs(cache_dir, mode=0o700, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(dir=cache_dir, prefix='.tmp-')
+        with os.fdopen(handle, 'w') as out:
+            json.dump(data, out)
+        os.replace(temporary, cache_path)
+    except OSError:
+        pass  # without a cache the next read scans from byte zero, as before
 try:
     with open(transcript, 'rb') as stream:
         before = os.fstat(stream.fileno())
+        cache = load_cache(stream, before)
+        offset = 0
+        if cache:
+            offset = cache['offset']
+            matched_session = cache.get('matched') is True
+            launched = {tuple(entry) for entry in cache.get('launched', [])}
+            finished = {tuple(entry) for entry in cache.get('finished', [])}
+            stop_calls = {tuple(entry) for entry in cache.get('stop_calls', [])}
+            stop_results = {tuple(entry) for entry in cache.get('stop_results', [])}
+        stream.seek(offset)
         consumed = 0
+        partial = False
         while True:
             line = stream.readline(${maxRecordBytes} + 1)
             if not line:
                 break
-            consumed += len(line)
-            if len(line) > ${maxRecordBytes} or not line.endswith(b'\\n'):
+            if len(line) > ${maxRecordBytes}:
                 unknown()
+            if not line.endswith(b'\\n'):
+                partial = True  # still being written; the next read resumes before it
+                break
+            consumed += len(line)
             try:
                 record = json.loads(line)
             except (ValueError, UnicodeError):
@@ -97,15 +158,16 @@ try:
                 if task and tool and notification.findtext('status') in ('completed', 'failed', 'killed'):
                     finished.add((task, tool))
         after = os.fstat(stream.fileno())
+        save_cache(stream, before, offset + consumed)
 except OSError:
     unknown()
-if consumed != before.st_size or (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+if partial or offset + consumed != before.st_size or (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
     unknown()
 if not matched_session:
     unknown()
 stopped = {task for tool, task in stop_calls & stop_results}
 pending = any(task not in stopped and (task, tool) not in finished for task, tool in launched)
-print(json.dumps({'state': 'active' if pending else 'idle', 'observedAt': before.st_mtime_ns / 1000000}))
+print(json.dumps({'state': 'active' if pending else 'idle', 'observedAt': before.st_mtime_ns / 1000000, 'bytesRead': consumed}))
 PY`;
 }
 
