@@ -345,34 +345,9 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
 
 export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResult> {
   const { withTerminalTeardown } = await import('../../run-engine/terminal-teardown-registry.js');
-  const result = run.slotId
-    ? await withTerminalTeardown(run.slotId, () => releaseCompletedRunSlotOnce(run))
-    : await releaseCompletedRunSlotOnce(run);
-  return result.released || !run.slotId ? releaseFinishedBlindTrial(run, result) : result;
-}
-
-/** A released blind trial slot still needs its isolated Git restored before reuse. */
-async function releaseFinishedBlindTrial(
-  run: Run,
-  result: SlotReleaseResult,
-): Promise<SlotReleaseResult> {
-  const { releaseFinishedBlindTrialSlot } = await import('../slot/release.js');
-  const { recordSlotTeardownSkipped } = await import('../../run-lifecycle/slot-teardown.js');
-  try {
-    const blind = await releaseFinishedBlindTrialSlot(
-      getRun(run.id) ?? run,
-      (await import('../../server.js')).broadcastEvent,
-    );
-    if (!blind) return result;
-    // The checkout went back to idle, so a retained-checkout note no longer applies.
-    if (!blind.released) return { released: false, skipped: blind.reason };
-    await recordSlotTeardownSkipped(run, null);
-    return { released: true };
-  } catch (error) {
-    const reason = `Blind trial Git was not restored: ${(error as Error).message}`;
-    await recordSlotTeardownSkipped(run, reason);
-    return { released: false, skipped: reason };
-  }
+  return run.slotId
+    ? withTerminalTeardown(run.slotId, () => releaseCompletedRunSlotOnce(run))
+    : releaseCompletedRunSlotOnce(run);
 }
 
 async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult> {
@@ -396,6 +371,7 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   }
   const {
     recordSlotTeardownBlocker,
+    recordSlotTeardownSkipped,
     fenceRunSlotCleanup,
     RunOwnedResourceCleanupError,
     releaseRunOwnedCapabilities,
@@ -413,7 +389,15 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     await releaseRunOwnedCapabilities(run);
     const runtimeBlocker = await shutdownRunSlotResources(run);
     blocker = await recordSlotTeardownBlocker(run, workerBlocker ?? runtimeBlocker);
-    if (!blocker && run.status === 'done') {
+    // A blind trial's original Git comes back while the run still owns the slot;
+    // a failure holds the slot for retry rather than leaving it on the isolated Git.
+    const { restoreFinishedBlindTrialGit } = await import('../../evals/blind-trial.js');
+    if (!blocker) {
+      blocker = await restoreFinishedBlindTrialGit(run);
+      if (blocker) await recordSlotTeardownSkipped(run, blocker);
+    }
+    const retainedCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
+    if (!blocker && (run.status === 'done' || retainedCandidate)) {
       const before = await readSlotRow(slotId);
       const { ownsRunSlotCleanup, updateSlotStatusIf } = await import('../../core/index.js');
       const { reuseSafeIdleSlot } = await import('../../run-lifecycle/safe-idle-slot.js');
@@ -436,11 +420,11 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
             epoch: Number(before?.slot_epoch) || 0,
             runId: run.id,
             recordRunId: run.id,
+            retainedCandidate,
           },
         );
         if (result.kind === 'ready') return { released: true };
         checkoutHasLocalWork = result.kind === 'local-work';
-        const { recordSlotTeardownSkipped } = await import('../../run-lifecycle/slot-teardown.js');
         await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
         if ((await readSlotRow(slotId))?.workspace_recovery)
           return { released: false, skipped: result.reason };
@@ -449,17 +433,16 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');
     const released = await releaseRunSlotOwnership(run, fence, blocker);
-    if (released && run.status === 'done' && !checkoutHasLocalWork) {
+    if (released && (run.status === 'done' || retainedCandidate) && !checkoutHasLocalWork) {
       const { reuseSafeIdleSlot } = await import('../../run-lifecycle/safe-idle-slot.js');
       const result = await reuseSafeIdleSlot(slotId, broadcastEvent, {
         epoch: Number(fence.before?.slot_epoch) || 0,
         runId: null,
         recordRunId: run.id,
+        retainedCandidate,
       });
-      if (result.kind !== 'ready') {
-        const { recordSlotTeardownSkipped } = await import('../../run-lifecycle/slot-teardown.js');
+      if (result.kind !== 'ready')
         await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
-      }
     }
     const { loadFleetStatus } = await import('../../fleet/state.js');
     broadcastEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });

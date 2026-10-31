@@ -135,7 +135,7 @@ mock.module('../terminal-attachment.js', {
 
 const realRuns = await import('../../runs/store.js');
 const { buildBlindGitCommand } = await import('../../evals/blind-git.js');
-const { releaseFinishedBlindTrialSlot, slotRelease } = await import('./release.js');
+const { slotRelease } = await import('./release.js');
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-C', cwd, ...args], { env: gitEnv, encoding: 'utf8' }).trim();
@@ -333,45 +333,6 @@ test('a done blind trial whose slot pointer was cleared releases its own isolate
   );
   assert.equal(gitStatus('config', '--get', 'farmslot.blindRun'), 1);
   assert.equal(git(repo, 'rev-parse', `refs/heads/${BRANCH}`), candidate);
-});
-
-test('a finished blind trial returns its slot on its original Git without a manual release', async () => {
-  const { spec, candidate } = blindSlot('finished', 'trial-finished');
-  await detachedTrial(spec, { status: 'done' });
-  const trial = realRuns.getRun(spec.runId)!;
-
-  assert.deepEqual(await releaseFinishedBlindTrialSlot(trial, () => {}), { released: true });
-  assert.equal(gitStatus('config', '--get', 'farmslot.blindRun'), 1);
-  assert.equal(
-    git(repo, 'config', '--get', 'remote.origin.fetch'),
-    '+refs/heads/*:refs/remotes/origin/*',
-  );
-  assert.equal(git(repo, 'rev-parse', `refs/heads/${BRANCH}`), candidate);
-  assert.equal(git(repo, 'branch', '--show-current'), 'main');
-  assert.equal(slotRow.lifecycle, 'ready');
-  // Already restored: nothing more to do.
-  assert.equal(await releaseFinishedBlindTrialSlot(trial, () => {}), undefined);
-});
-
-test('a blind trial that keeps its workspace for completion replay is not auto-released', async () => {
-  const { spec, candidate } = blindSlot('refused', 'trial-refused');
-  await detachedTrial(spec, {
-    status: 'failed',
-    steps: [
-      {
-        name: 'complete',
-        status: 'failed',
-        outputs: { gatePrerequisiteRefusal: { reason: 'frozen evidence changed' } },
-      },
-    ],
-  });
-
-  assert.equal(
-    await releaseFinishedBlindTrialSlot(realRuns.getRun(spec.runId)!, () => {}),
-    undefined,
-  );
-  assert.equal(git(repo, 'config', '--get', 'farmslot.blindRun'), 'trial-refused');
-  assert.equal(git(repo, 'rev-parse', 'HEAD'), candidate);
 });
 
 test('a release for another run leaves a blind slot it does not own untouched', async () => {

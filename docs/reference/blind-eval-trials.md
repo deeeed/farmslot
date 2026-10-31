@@ -16,7 +16,7 @@ Normative reference for [ADR-030 Amendments 1 to 3](../adr/030-replay-provenance
 - Before worker launch, verify that reference commits are unavailable, remote URLs are absent and fetch protocols are disabled. Recheck the boundary at dispatch and first-output capture.
 - Existing slot Git metadata is retained outside the worker checkout under the trial's lease. Preparation and recovery must not fetch into the isolated repository.
 - Teardown stops the owned worker, retains its candidate commits, then restores the original Git metadata before ordinary slot cleanup. Restoration is bound to the original run and slot ownership. A failed restoration keeps the slot fenced.
-- A finished trial's slot returns to idle on its original Git when its run ends, keeping the candidate branch. A run that retains its workspace for completion replay or a result decision keeps it until that is settled; a cancelled trial kept for replay is restored when its slot is reclaimed.
+- A finished trial's run-end cleanup restores the original Git while the run still owns the slot; a failed restoration holds the slot for retry. With the first output frozen, the checkout then returns to idle and the candidate branch stays. A run that retains its workspace for completion replay or a result decision keeps it until that is settled; a cancelled trial kept for replay is restored when its slot is reclaimed.
 
 ## Worker boundary
 

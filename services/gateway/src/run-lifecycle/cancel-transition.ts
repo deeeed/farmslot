@@ -305,18 +305,26 @@ export function defaultCancelCollaborators({
           }
         }
         // Keep replay by default; on-demand selection releases the confirmed owned cleanup.
-        const kept = await releaseRunSlotOwnership(run, fence, blocker, { keepForReplay });
-        if (blocker) return { skipped: blocker };
+        // A reclaimed blind trial gets its original Git back while it still owns the slot.
+        let releaseBlocker = blocker;
+        if (!releaseBlocker && !keepForReplay) {
+          const { restoreFinishedBlindTrialGit } = await import('../evals/blind-trial.js');
+          releaseBlocker = await restoreFinishedBlindTrialGit(run);
+          if (releaseBlocker) await recordSlotTeardownSkipped(run, releaseBlocker);
+        }
+        const kept = await releaseRunSlotOwnership(run, fence, releaseBlocker, { keepForReplay });
+        if (releaseBlocker) return { skipped: releaseBlocker };
         if (!kept) return { skipped: 'Slot ownership changed during cancellation' };
-        if (!keepForReplay) {
-          // A reclaimed blind trial must leave the slot on its original Git.
-          const { releaseFinishedBlindTrialSlot } = await import('../methods/slot/release.js');
-          const blind = await releaseFinishedBlindTrialSlot(
-            getRun(run.id) ?? run,
-            broadcastTransitionEvent,
-          );
-          if (blind && !blind.released)
-            return { skipped: blind.reason ?? 'Blind trial Git was not restored' };
+        if (!keepForReplay && run.engineState?.evalExperiment?.blind?.firstOutput) {
+          const { reuseSafeIdleSlot } = await import('./safe-idle-slot.js');
+          const result = await reuseSafeIdleSlot(run.slotId!, broadcastTransitionEvent, {
+            epoch: Number(fence.before?.slot_epoch) || 0,
+            runId: null,
+            recordRunId: run.id,
+            retainedCandidate: true,
+          });
+          if (result.kind !== 'ready')
+            await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
         }
         await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
         console.log(

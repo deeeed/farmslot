@@ -321,15 +321,9 @@ mock.module('../fleet/resource-manager.js', {
 });
 
 const realRelease = await import('../methods/slot/release.js');
-let blindReleases: string[] = [];
-let blindRelease: { released: boolean; reason?: string } | undefined;
 mock.module('../methods/slot/release.js', {
   namedExports: {
     ...realRelease,
-    releaseFinishedBlindTrialSlot: async (target: Run) => {
-      blindReleases.push(target.id);
-      return blindRelease;
-    },
     killSlotAgents: async (slotId: string) => {
       slotAgentKills.push(slotId);
       if (slotAgentKillError) throw slotAgentKillError;
@@ -343,14 +337,34 @@ let idleReturnResult: import('./safe-idle-slot.js').SafeIdleSlotResult = {
   reason: 'No fixture Git checkout',
 };
 let idleReturnCalls = 0;
+let idleReturnRetained: (boolean | undefined)[] = [];
 let onIdleReturn: (() => void) | undefined;
 mock.module('./safe-idle-slot.js', {
   namedExports: {
     ...safeIdle,
-    reuseSafeIdleSlot: async () => {
+    reuseSafeIdleSlot: async (
+      _slotId: string,
+      _emit: unknown,
+      expected?: { retainedCandidate?: boolean },
+    ) => {
       idleReturnCalls++;
+      idleReturnRetained.push(expected?.retainedCandidate);
       onIdleReturn?.();
       return idleReturnResult;
+    },
+  },
+});
+const realBlindTrial = await import('../evals/blind-trial.js');
+let blindRestores: string[] = [];
+let blindRestoreResult: string | null = null;
+let onBlindRestore: (() => void) | undefined;
+mock.module('../evals/blind-trial.js', {
+  namedExports: {
+    ...realBlindTrial,
+    restoreFinishedBlindTrialGit: async (target: Run) => {
+      blindRestores.push(target.id);
+      onBlindRestore?.();
+      return blindRestoreResult;
     },
   },
 });
@@ -372,8 +386,11 @@ const run = {
 const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENTITY}'`));
 
 beforeEach(() => {
-  blindReleases = [];
-  blindRelease = undefined;
+  blindRestores = [];
+  blindRestoreResult = null;
+  onBlindRestore = undefined;
+  idleReturnRetained = [];
+  run.engineState = undefined;
   run.status = 'cancelled';
   idleReturnResult = { kind: 'unavailable', reason: 'No fixture Git checkout' };
   idleReturnCalls = 0;
@@ -1123,38 +1140,58 @@ for (const state of ['successor', 'handoff'] as const) {
   });
 }
 
+function asFinishedBlindTrial() {
+  run.engineState = {
+    evalExperiment: {
+      blind: { firstOutput: { headSha: 'c'.repeat(40) } },
+    },
+  } as unknown as Run['engineState'];
+}
+
 for (const status of ['done', 'failed'] as const) {
-  test(`a ${status} blind trial restores and returns its slot once the run gives it up`, async () => {
+  test(`a ${status} blind trial gets its Git back while it owns the slot, then returns it idle`, async () => {
     run.status = status;
-    blindRelease = { released: true };
+    asFinishedBlindTrial();
+    idleReturnResult = { kind: 'ready' };
     assert.deepEqual(await releaseCompletedRunSlot(run), { released: true });
-    assert.deepEqual(blindReleases, [RUN_ID]);
-    assert.equal(runUpdates.at(-1)?.slotTeardownSkipped, undefined);
-    blindReleases = [];
-    blindRelease = { released: false, reason: 'restore refused' };
-    slotRow = { current_run_id: RUN_ID, slot_epoch: 2 };
-    assert.deepEqual(await releaseCompletedRunSlot(run), {
-      released: false,
-      skipped: 'restore refused',
-    });
+    assert.deepEqual(blindRestores, [RUN_ID]);
+    assert.deepEqual(idleReturnRetained, [true], 'its retained candidate needs no confirmation');
   });
 }
 
-test('a blind trial whose run keeps the slot is never force-released', async () => {
+test('a blind trial whose Git cannot be restored keeps the slot held for retry', async () => {
   run.status = 'done';
-  configuredResources = slotRuntimeResources();
-  shutdownFailure = 'dev-server';
-  blindRelease = { released: true };
+  asFinishedBlindTrial();
+  blindRestoreResult = 'Blind trial Git was not restored: Cannot read the blind trial Git marker';
+  idleReturnResult = { kind: 'ready' };
+  const result = await releaseCompletedRunSlot(run);
+  assert.equal(result.released, false);
+  assert.match(result.skipped ?? '', /Cannot read the blind trial Git marker/);
+  assert.equal(idleReturnCalls, 0);
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.match(String(slotRow?.held_reason), /Cannot read the blind trial Git marker/);
+  assert.equal(slotRow?.cleanup_run_id, RUN_ID, 'occupied-slot recovery can retry it');
+});
+
+test('a selection that takes the slot during restoration keeps its new owner', async () => {
+  run.status = 'done';
+  asFinishedBlindTrial();
+  onBlindRestore = () => {
+    slotRow = { ...slotRow, current_run_id: 'successor', slot_epoch: 2 };
+  };
+  blindRestoreResult = 'Blind trial Git was not restored: slot ownership changed';
   assert.equal((await releaseCompletedRunSlot(run)).released, false);
-  assert.deepEqual(blindReleases, []);
+  assert.equal(slotRow?.current_run_id, 'successor');
+  assert.equal(slotRow?.slot_epoch, 2);
+});
+
+test('a cancelled blind trial keeps its isolation for replay and gets its Git back on reclaim', async () => {
+  asFinishedBlindTrial();
   const cancel = defaultCancelCollaborators();
-  run.status = 'cancelled';
-  shutdownFailure = null;
-  slotRow = { current_run_id: RUN_ID, slot_epoch: 1 };
   await cancel.releaseCapabilities(run);
   await cancel.releaseSlot(run);
   assertKeptForReplay();
-  assert.deepEqual(blindReleases, [], 'a cancelled trial keeps its isolation for replay');
+  assert.deepEqual(blindRestores, []);
   otherRuns = [
     {
       ...run,
@@ -1163,8 +1200,10 @@ test('a blind trial whose run keeps the slot is never force-released', async () 
       steps: [{ name: 'find-slot', status: 'running' }],
     },
   ];
+  idleReturnResult = { kind: 'ready' };
   assert.equal(await reclaimCancelledSlot(SLOT_ID, 'requester'), true);
-  assert.deepEqual(blindReleases, [RUN_ID], 'reclaiming it restores the trial Git');
+  assert.deepEqual(blindRestores, [RUN_ID]);
+  assert.deepEqual(idleReturnRetained, [true]);
 });
 
 test('the engine cleans up a successful CI end that deferred no slot release', async () => {

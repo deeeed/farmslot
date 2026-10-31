@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- A finished blind eval trial returns its slot to idle on the original Git when its run ends, keeping the candidate branch, so no manual release is needed. A cancelled trial kept for replay is restored when its slot is reclaimed.
+- A finished blind eval trial's run-end cleanup restores its original Git while the run still owns the slot, then returns the checkout to idle and keeps the candidate branch, so no manual release is needed. A failed restoration holds the slot for retry; a cancelled trial kept for replay is restored when its slot is reclaimed.
 - Autonomous artifact-only dev and fix-bug runs outside comparison replays get the run contract, with a local commit and no push, so a worker no longer finishes uncommitted and blocks at completion. Comparison replays keep their replay guardrails.
 - Blind eval workers start without GitHub credentials and inside a macOS sandbox that cannot read other slot checkouts or retained blind Git metadata. A recorded GitHub access attempt invalidates the trial; nodes without `sandbox-exec`, native workers and runner tiers with their own sandbox are refused.
 - Releasing a slot whose blind eval trial (failed or done) lost its slot pointer while the repository stayed on the isolated Git restores the original repository and the candidate branch first, and refuses when that trial's run record is gone instead of resetting the only copy of the candidate commits.
