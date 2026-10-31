@@ -281,6 +281,7 @@ export default function TerminalScreen() {
   const terminalDirectInput = useTerminalPrefsStore((s) => s.terminalDirectInput);
   const setTerminalDirectInput = useTerminalPrefsStore((s) => s.setTerminalDirectInput);
   const inputLineRef = useRef<TerminalInputLineHandle>(null);
+  const resetInputLine = useCallback(() => inputLineRef.current?.reset(), []);
   const [focusInputLineOnOpen, setFocusInputLineOnOpen] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
   const [lineCount, setLineCount] = useState<(typeof LINE_COUNT_OPTIONS)[number]>(50);
@@ -491,6 +492,7 @@ export default function TerminalScreen() {
     requireTarget: requireTerminalTarget,
     setControlError,
     setInputError: setSnapshotError,
+    onKeysDropped: resetInputLine,
     commandCount: inputCommands,
   });
 

@@ -4,14 +4,16 @@ import {
   formatTerminalInputRecord,
   isTerminalInputStream,
   parseTerminalInputRecord,
-  staleTerminalInputRecords,
+  TERMINAL_INPUT_RECORD_PREFIX,
+  TERMINAL_INPUT_RECORD_STREAMS,
   terminalInputRecordOption,
   type TerminalInputSequence,
 } from '@farmslot/protocol';
 
-import type { ExecResult } from '../core/exec.js';
+import { execLocal,type ExecResult } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { nodeExec } from '../fleet/node-rpc.js';
 
 /**
  * Names this gateway process in `capabilities.terminalInputSequence`. Clients from before pane
@@ -33,15 +35,17 @@ interface Written {
 /** Where a batch is typed. */
 export interface InputLanding {
   /** Types the keys; calls `dispatched` just before handing them to another host. */
-  write: (dispatched: () => void) => Promise<void> | void;
+  write: (dispatched: () => void, seq?: TerminalInputSequence) => Promise<void> | void;
   /** That host types each (pane, stream, n) once, so a write that may have typed is resent. */
   typesOnce?: boolean;
   /** The pane's own record of typed batches, which outlives this process. */
   record?: PaneInputRecord;
+  /** `write` records `seq` on the pane in the same command that types it. */
+  recordsOnWrite?: boolean;
 }
 
 export interface PaneInputRecord {
-  /** The last batch of `stream` typed into the pane, or null when none is recorded. */
+  /** The last batch of `stream` typed into the pane, or null when none is recorded; throws when unreadable. */
   read: (stream: string) => Promise<number | null>;
   /** Records `seq` once its keys are in the pane. */
   write: (seq: TerminalInputSequence) => Promise<void>;
@@ -49,6 +53,8 @@ export interface PaneInputRecord {
 
 const chains = new Map<string, Promise<void>>();
 const written = new Map<string, Map<string, Written>>();
+/** Pane record writes still on their way, in order per pane. */
+const recording = new Map<string, Promise<void>>();
 
 /**
  * Runs input for one pane in arrival order. A batch resent after a lost reply therefore waits
@@ -72,66 +78,94 @@ export async function runInputInOrder(pane: string, operation: () => Promise<voi
 
 /**
  * Writes one input batch at most once per sequence number; run it inside `runInputInOrder`.
- * Numbers written by this process are remembered here. When this process knows nothing of the
- * stream (a restart) or its last write ended without an answer, the pane's record decides; a
- * landing that types each number once is simply sent the batch again. Only a remote write with
- * neither (a node predating `terminalInputSequence`) is refused with TERMINAL_INPUT_UNCERTAIN.
+ * Numbers written by this process are remembered here, so a known repeat is acknowledged before
+ * `landing` is resolved. When this process knows nothing of the stream (a restart) or its last
+ * write ended without an answer, the pane's record decides; a landing that types each number once
+ * is simply sent the batch again. Only a remote write with neither (a node predating
+ * `terminalInputSequence`) is refused with TERMINAL_INPUT_UNCERTAIN. A record that cannot be read
+ * fails the batch untyped, for the client to retry.
  */
 export async function writeSequencedInput(
   pane: string,
   seq: TerminalInputSequence | undefined,
-  landing: InputLanding,
+  landing: InputLanding | (() => Promise<InputLanding>),
 ): Promise<void> {
+  const resolve = async () => (typeof landing === 'function' ? landing() : landing);
   if (!seq) {
-    await landing.write(() => undefined);
+    await (await resolve()).write(() => undefined);
     return;
   }
   assertSequence(seq);
   const last = written.get(pane)?.get(seq.stream);
-  if (landing.record && (!last || (last.uncertain && seq.n === last.n))) {
-    const recorded = await readRecord(landing.record, pane, seq.stream);
+  const unsure = !last || (last.uncertain && seq.n === last.n);
+  if (last && seq.n <= last.n && !unsure) return;
+  const target = await resolve();
+  if (unsure && target.record) {
+    await recording.get(pane);
+    const recorded = await target.record.read(seq.stream);
     if (recorded !== null && recorded >= seq.n) {
       remember(pane, { stream: seq.stream, n: recorded }, false);
       return;
     }
-  } else if (last && seq.n <= last.n) {
-    if (seq.n < last.n || !last.uncertain) return;
-    if (!landing.typesOnce)
-      throw new GatewayMethodError(
-        'TERMINAL_INPUT_UNCERTAIN',
-        'This input may already have reached the terminal: its earlier write ended without an answer.',
-      );
+  } else if (unsure && last && !target.typesOnce) {
+    throw new GatewayMethodError(
+      'TERMINAL_INPUT_UNCERTAIN',
+      'This input may already have reached the terminal: its earlier write ended without an answer.',
+    );
   }
   let remote = false;
   try {
-    await landing.write(() => {
+    await target.write(() => {
       remote = true;
-    });
+    }, seq);
   } catch (error) {
     if (remote) remember(pane, seq, true);
     throw error;
   }
   remember(pane, seq, false);
-  // A restart between the write above and this record forgets the batch.
-  await landing.record?.write(seq).catch((error: unknown) => {
-    // The keys are in the pane: an error answer would only get them typed again.
-    console.warn(
-      `[terminal-input] ${pane}: typed but not recorded on the pane: ${errorText(error)}`,
-    );
+  if (target.record && !target.recordsOnWrite) recordInOrder(pane, target.record, seq);
+}
+
+/**
+ * Records a batch on its pane without holding up the reply: a client resends only when the reply
+ * is lost, and this process remembers the batch meanwhile. A restart before the record lands
+ * forgets that batch.
+ */
+function recordInOrder(pane: string, record: PaneInputRecord, seq: TerminalInputSequence): void {
+  const current = (recording.get(pane) ?? Promise.resolve())
+    .then(() => record.write(seq))
+    .catch((error: unknown) => {
+      // The keys are in the pane: failing the batch would only get them typed again.
+      console.warn(
+        `[terminal-input] ${pane}: typed but not recorded on the pane: ${errorText(error)}`,
+      );
+    });
+  recording.set(pane, current);
+  void current.then(() => {
+    if (recording.get(pane) === current) recording.delete(pane);
   });
 }
 
-async function readRecord(
-  record: PaneInputRecord,
-  pane: string,
-  stream: string,
-): Promise<number | null> {
-  try {
-    return await record.read(stream);
-  } catch (error) {
-    console.warn(`[terminal-input] ${pane}: pane record unreadable, writing: ${errorText(error)}`);
-    return null;
-  }
+export async function inputRecordsSettledForTests(): Promise<void> {
+  await Promise.all(recording.values());
+}
+
+/**
+ * tmux arguments, to follow `"$TMUX_BIN" ` in a shell command, that record `seq` on pane
+ * `target` and drop the records beyond the TERMINAL_INPUT_RECORD_STREAMS most recently written.
+ * The command fails only when the record was not set.
+ */
+export function tmuxInputRecordArgs(target: string, seq: TerminalInputSequence): string {
+  const pane = shellQuote(target);
+  const option = shellQuote(terminalInputRecordOption(seq.stream));
+  const value = shellQuote(formatTerminalInputRecord(seq.n, Date.now()));
+  // `show-options -p` lists `@farmslot-input-<stream> <n>:<ms>`; sort by time, unset the rest.
+  const prune =
+    `"$TMUX_BIN" show-options -p -t ${pane}` +
+    ` | sed -n 's/^\\(${TERMINAL_INPUT_RECORD_PREFIX}[A-Za-z0-9_-]*\\) "*[0-9]*:\\([0-9]*\\)"*$/\\2 \\1/p'` +
+    ` | sort -rn | tail -n +${TERMINAL_INPUT_RECORD_STREAMS + 1}` +
+    ` | while read -r _ name; do "$TMUX_BIN" set-option -p -u -t ${pane} "$name"; done`;
+  return `set-option -p -t ${pane} ${option} ${value} && ${prune}`;
 }
 
 /**
@@ -142,9 +176,8 @@ export function tmuxPaneInputRecord(
   target: string,
   run: (command: string) => Promise<ExecResult>,
 ): PaneInputRecord {
-  const pane = shellQuote(target);
-  const tmux = async (command: string) => {
-    const result = await run(tmuxShellSnippet(command));
+  const checked = async (command: string) => {
+    const result = await run(command);
     if (result.exitCode !== 0)
       throw new Error(`tmux failed: ${result.stderr?.trim() || `exit ${result.exitCode}`}`);
     return result.stdout;
@@ -152,18 +185,29 @@ export function tmuxPaneInputRecord(
   return {
     read: async (stream) =>
       parseTerminalInputRecord(
-        await tmux(`show-options -pqv -t ${pane} ${shellQuote(terminalInputRecordOption(stream))}`),
+        await checked(
+          tmuxShellSnippet(
+            `show-options -pqv -t ${shellQuote(target)} ${shellQuote(terminalInputRecordOption(stream))}`,
+          ),
+        ),
       ),
-    write: async ({ stream, n }) => {
-      const option = shellQuote(terminalInputRecordOption(stream));
-      const value = shellQuote(formatTerminalInputRecord(n, Date.now()));
-      const options = await tmux(
-        `set-option -p -t ${pane} ${option} ${value} && "$TMUX_BIN" show-options -p -t ${pane}`,
-      );
-      for (const stale of staleTerminalInputRecords(options))
-        await tmux(`set-option -p -u -t ${pane} ${shellQuote(stale)}`);
+    write: async (seq) => {
+      await checked(tmuxShellSnippet(tmuxInputRecordArgs(target, seq)));
     },
   };
+}
+
+/** The record of a pane on `machine`: read and written through its node, or here when local. */
+export function machinePaneInputRecord(
+  target: string,
+  machine: string,
+  local: boolean,
+): PaneInputRecord {
+  return tmuxPaneInputRecord(target, (command) =>
+    local
+      ? execLocal(command, { timeout: 5_000 })
+      : nodeExec(machine, command, undefined, { timeout: 5_000 }),
+  );
 }
 
 function errorText(error: unknown): string {
@@ -202,4 +246,5 @@ export function inputSequenceSizeForTests(): { panes: number; streams: number } 
 export function resetInputSequencesForTests(): void {
   chains.clear();
   written.clear();
+  recording.clear();
 }

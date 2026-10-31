@@ -23,7 +23,12 @@ import {
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
-import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  resolveTmuxSession,
+  shellQuote,
+  tmuxSendTextCommand,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
@@ -40,7 +45,9 @@ import {
 } from '../runtime/pty-stream.js';
 import {
   type InputLanding,
+  machinePaneInputRecord,
   runInputInOrder,
+  tmuxInputRecordArgs,
   tmuxPaneInputRecord,
   writeSequencedInput,
 } from '../runtime/terminal-input-sequence.js';
@@ -392,15 +399,16 @@ export async function terminalInput(
     : `slot:${params.slotId}`;
   await runInputInOrder(key, async () => {
     await assertAccess?.();
-    await writeSequencedInput(key, params.seq, await terminalInputLanding(params));
+    await writeSequencedInput(key, params.seq, () => terminalInputLanding(params));
   });
 }
 
 async function terminalInputLanding(params: TerminalInputParams): Promise<InputLanding> {
   if (isWorkspaceTerminal(params)) {
+    const { key, run, session, sshTarget } = await resolveWorkspaceTerminal(params);
     return {
-      write: async () => {
-        const { key } = await resolveWorkspaceTerminal(params);
+      record: machinePaneInputRecord(session, run.reviewWorkspace!.machine, !sshTarget),
+      write: () => {
         if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
         writePty(key, params.data);
       },
@@ -418,7 +426,8 @@ async function terminalInputLanding(params: TerminalInputParams): Promise<InputL
   // Poll mode (remote): send via agent tmux.send
   return {
     record,
-    write: async (dispatched) => {
+    recordsOnWrite: true,
+    write: async (dispatched, seq) => {
       await assertInteractiveTargetReady(
         params.slotId,
         resolved.target,
@@ -432,12 +441,33 @@ async function terminalInputLanding(params: TerminalInputParams): Promise<InputL
       // Raw input can contain a whole buffered word such as "Up" or "Enter".
       // Reuse the literal text path so tmux never interprets it as a named key.
       dispatched();
-      await sendKeys(params.slotId, resolved.target, params.data, false, undefined, {
-        noRetry: true,
-      });
+      if (!seq) {
+        await sendKeys(params.slotId, resolved.target, params.data, false, undefined, {
+          noRetry: true,
+        });
+        return;
+      }
+      // The slot host records the batch in the same command that types it, so a reply lost
+      // after typing still leaves the record for the resend to find.
+      const result = await execOnSlot(
+        await loadSlotVars(params.slotId),
+        [
+          tmuxSendTextCommand(resolved.target, params.data, { typeFailureExitCode: 1 }),
+          `"$TMUX_BIN" ${tmuxInputRecordArgs(resolved.target, seq)} || echo "${NOT_RECORDED}" >&2`,
+        ].join('\n'),
+        { timeout: 5_000, noRetry: true },
+      );
+      if (result.exitCode !== 0)
+        throw new Error(
+          `tmux send-keys to ${resolved.target} failed: ${result.stderr?.trim() || result.stdout?.trim() || `exit ${result.exitCode}`}`,
+        );
+      if (result.stderr?.includes(NOT_RECORDED))
+        console.warn(`[terminal-input] slot:${params.slotId}: ${NOT_RECORDED}`);
     },
   };
 }
+
+const NOT_RECORDED = 'typed but not recorded on the pane';
 
 export async function terminalResize(params: TerminalResizeParams): Promise<void> {
   if (isWorkspaceTerminal(params)) {

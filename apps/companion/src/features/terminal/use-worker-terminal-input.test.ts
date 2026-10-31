@@ -5,13 +5,16 @@ import { Methods, type TmuxWorkerRef } from '@farmslot/protocol';
 
 import { mountHook } from '../../hooks/hook-harness.fixtures';
 import {
+  assertResendable,
   createTerminalInputQueue,
+  resendScope,
   TerminalInputCancelledError,
 } from '../../lib/terminal-input-queue';
 
 interface FakeClient {
   connectionGeneration: number;
-  terminalInputSequence?: boolean;
+  terminalInputSequence?: { instance: string; durable: boolean } | null;
+  connectionState?: string;
   request(
     method: string,
     params: { worker: TmuxWorkerRef; data: string; seq?: { stream: string; n: number } },
@@ -29,7 +32,9 @@ const connectionStore = Object.assign(
 const dependencies = {
   '@farmslot/protocol': { Methods },
   '../../lib/terminal-input-queue': {
+    assertResendable,
     createTerminalInputQueue,
+    resendScope,
     TerminalInputCancelledError,
   },
   '../../store/connection': { useConnectionStore: connectionStore },
@@ -208,7 +213,7 @@ test(
     let loseReply = true;
     const client: FakeClient = {
       connectionGeneration: 1,
-      terminalInputSequence: true,
+      terminalInputSequence: { instance: 'gw1', durable: true },
       async request(_method, params, _timeout, options) {
         options?.onSent?.();
         pane.push({ data: params.data, n: params.seq?.n });

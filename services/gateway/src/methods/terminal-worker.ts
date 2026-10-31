@@ -9,8 +9,7 @@ import type {
   TmuxWorkerRef,
 } from '@farmslot/protocol';
 
-import { execLocal, isLocal } from '../core/exec.js';
-import { nodeExec } from '../fleet/node-rpc.js';
+import { isLocal } from '../core/exec.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import {
   hasPty,
@@ -20,9 +19,9 @@ import {
   writePty,
 } from '../runtime/pty-stream.js';
 import {
-  type PaneInputRecord,
+  type InputLanding,
+  machinePaneInputRecord,
   runInputInOrder,
-  tmuxPaneInputRecord,
   writeSequencedInput,
 } from '../runtime/terminal-input-sequence.js';
 import {
@@ -79,27 +78,26 @@ export async function terminalWorkerInput(params: TerminalWorkerInputParams): Pr
   // In order per pane, so a batch resent after a lost reply waits for the original.
   await runInputInOrder(`worker:${key}`, async () => {
     await assertTmuxWorkerControlAllowed(params.worker);
-    await writeSequencedInput(
-      key,
-      params.seq,
-      hasPty(key)
-        ? { write: () => writePty(key, params.data), record: workerPaneRecord(params.worker) }
-        : {
-            write: (dispatched) =>
-              sendWorkerTerminalInput(params.worker, params.data, dispatched, params.seq),
-            typesOnce: workerNodeTypesInputOnce(params.worker),
-          },
-    );
+    await writeSequencedInput(key, params.seq, () => workerInputLanding(key, params));
   });
 }
 
-/** The worker pane's input record, kept by tmux on the worker's machine. */
-function workerPaneRecord(worker: TmuxWorkerRef): PaneInputRecord {
-  return tmuxPaneInputRecord(worker.target, async (command) =>
-    (await resolveWorkerPtyOptions(worker)).sshTarget
-      ? nodeExec(worker.nodeId, command, undefined, { timeout: 5_000 })
-      : execLocal(command, { timeout: 5_000 }),
-  );
+async function workerInputLanding(
+  key: string,
+  { worker, data, seq }: TerminalWorkerInputParams,
+): Promise<InputLanding> {
+  if (hasPty(key)) {
+    const local = !(await resolveWorkerPtyOptions(worker)).sshTarget;
+    // The worker pane keeps its own record of typed input, on the worker's machine.
+    return {
+      write: () => writePty(key, data),
+      record: machinePaneInputRecord(worker.target, worker.nodeId, local),
+    };
+  }
+  return {
+    write: (dispatched) => sendWorkerTerminalInput(worker, data, dispatched, seq),
+    typesOnce: workerNodeTypesInputOnce(worker),
+  };
 }
 
 export async function terminalWorkerResize(params: TerminalWorkerResizeParams): Promise<void> {

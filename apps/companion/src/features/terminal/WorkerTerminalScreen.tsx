@@ -422,7 +422,10 @@ export default function WorkerTerminalScreen() {
       writeWorkerInput(data).then(
         () => setError(withoutKeysRetryingNotice),
         (err: unknown) => {
-          if (!(err instanceof TerminalInputCancelledError)) setError(getErrorMessage(err));
+          if (err instanceof TerminalInputCancelledError) return;
+          // Keys that failed for good never reached the pane as typed: the line starts over.
+          inputLineRef.current?.reset();
+          setError(getErrorMessage(err));
         },
       );
     },

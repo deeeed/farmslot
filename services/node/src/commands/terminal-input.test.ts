@@ -3,7 +3,11 @@ import { execFile } from 'node:child_process';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
-import { createTerminalInputWriter, requireInputSequence } from './terminal-input.js';
+import {
+  createTerminalInputWriter,
+  requireInputSequence,
+  tmuxKeepsPaneOptions,
+} from './terminal-input.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -12,6 +16,7 @@ function fakeTmux() {
   const typed: string[] = [];
   const options = new Map<string, Map<string, string>>();
   let failRecord = false;
+  let failRead = false;
   const run = async (args: string[]): Promise<string> => {
     const [command, ...rest] = args;
     const pane = rest[rest.indexOf('-t') + 1]!;
@@ -21,8 +26,10 @@ function fakeTmux() {
       typed.push(`${pane} ${rest[2]}`);
       return '';
     }
-    if (command === 'show-options' && rest[0] === '-pqv')
+    if (command === 'show-options' && rest[0] === '-pqv') {
+      if (failRead) throw new Error('tmux timed out');
       return paneOptions.get(rest.at(-1)!) ?? '';
+    }
     if (command === 'show-options')
       return [...paneOptions].map(([name, value]) => `${name} ${value}\n`).join('');
     if (command === 'set-option') {
@@ -40,6 +47,7 @@ function fakeTmux() {
     run,
     now: () => ++clock,
     failRecords: () => (failRecord = true),
+    failReads: (fail: boolean) => (failRead = fail),
   };
 }
 
@@ -84,12 +92,37 @@ test('a resend that arrives while the original is being typed waits for it', asy
   assert.deepEqual(tmux.typed, ['%7 echo once\r']);
 });
 
-test('keys typed but not recorded still report typed', async () => {
+// The keys are in the pane, so the node still answers typed, and remembers them itself.
+test('keys typed but not recorded report typed, and their resend is not typed', async () => {
   const tmux = fakeTmux();
   const sendOnce = createTerminalInputWriter(tmux.run, tmux.now);
   tmux.failRecords();
   assert.equal(await sendOnce('%7', 'ls\r', false, { stream: 'q1', n: 1 }), true);
+  assert.equal(await sendOnce('%7', 'ls\r', false, { stream: 'q1', n: 1 }), false);
   assert.deepEqual(tmux.typed, ['%7 ls\r']);
+});
+
+// Not knowing what the pane has, typing could type it twice: the batch fails for a retry.
+test('a record that cannot be read fails the batch untyped; a later read decides', async () => {
+  const tmux = fakeTmux();
+  await createTerminalInputWriter(tmux.run, tmux.now)('%7', 'make\r', false, {
+    stream: 'q1',
+    n: 1,
+  });
+  const restarted = createTerminalInputWriter(tmux.run, tmux.now);
+  tmux.failReads(true);
+  await assert.rejects(restarted('%7', 'make\r', false, { stream: 'q1', n: 1 }), /timed out/);
+  tmux.failReads(false);
+  assert.equal(await restarted('%7', 'make\r', false, { stream: 'q1', n: 1 }), false);
+  assert.deepEqual(tmux.typed, ['%7 make\r']);
+});
+
+test('the node offers numbered input only on tmux that keeps pane options', () => {
+  assert.equal(tmuxKeepsPaneOptions('tmux 3.5a\n'), true);
+  assert.equal(tmuxKeepsPaneOptions('tmux next-3.6'), true);
+  assert.equal(tmuxKeepsPaneOptions('tmux master'), true);
+  assert.equal(tmuxKeepsPaneOptions('tmux 2.9a'), false);
+  assert.equal(tmuxKeepsPaneOptions(''), false);
 });
 
 test('a pane keeps records for its 16 most recently written streams', async () => {
@@ -166,6 +199,7 @@ test('real tmux types a resent batch once and keeps the record on the pane', asy
       /^2:\d+\n?$/,
     );
   } finally {
-    await tmux(['kill-session', '-t', session]);
+    // The runner's private server; a session that already ended leaves nothing to kill.
+    await tmux(['kill-session', '-t', session]).catch(() => undefined);
   }
 });

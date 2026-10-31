@@ -821,16 +821,20 @@ test(
 
 /**
  * Types `make deploy` through the worker hook on a gateway that numbers input as instance gw1,
- * closes the socket after the frame went out, and reconnects to `nextInstance`.
+ * closes the socket after the frame went out, and reconnects to `nextInstance`. `durable`: both
+ * gateways keep the record on the pane.
  */
-async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
+async function lostReplyThenReconnect(t: TestContext, nextInstance: string, durable: boolean) {
   const original = globalThis.WebSocket;
   Object.assign(globalThis, { WebSocket: Socket });
   const { GatewayClient } = await import('./gateway-client');
   const client = new GatewayClient('ws://localhost:19779', { token: 'admin' });
   const numbered = (instance: string) => ({
     ...auth('admin', 'farm'),
-    capabilities: { ...auth('admin', 'farm').capabilities, terminalInputSequence: { instance } },
+    capabilities: {
+      ...auth('admin', 'farm').capabilities,
+      terminalInputSequence: { instance, durable },
+    },
   });
   const connection = { activeProfileId: 'arthur-lan', principalId: 'arthur' };
   const hook = mountHook<[typeof client, { nodeId: string; session: string; target: string }]>(
@@ -865,6 +869,8 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
       target: '%19',
     }) as { write: (data: string) => Promise<void> };
     const typed = write('make deploy\r');
+    // Handled here so a drop during the reconnect waits for the test's own assertion.
+    typed.catch(() => undefined);
     await settle();
     const sent = first.sent.find((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT)!;
     first.close(1006);
@@ -891,15 +897,15 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
 // A socket close after the frame went out: the capability is gone by the time the request fails,
 // so the safety of a resend must come from the gateway that received the frame. The pane records
 // each number it was typed, so a restarted gateway drops the repeat as the same one would.
-for (const [nextInstance, gateway] of [
-  ['gw1', 'the same gateway'],
-  ['gw2', 'a restarted gateway'],
+for (const [nextInstance, durable, gateway] of [
+  ['gw1', false, 'the same gateway'],
+  ['gw2', true, 'a restarted gateway that keeps records on the pane'],
 ] as const)
   test(
     `worker keys cut off by a socket close are resent with the same number to ${gateway}`,
     { timeout: 4000 },
     async (t) => {
-      const run = await lostReplyThenReconnect(t, nextInstance);
+      const run = await lostReplyThenReconnect(t, nextInstance, durable);
       try {
         const resent = run.second.sent.find(
           (frame) => frame.method === Methods.TERMINAL_WORKER_INPUT,
@@ -912,3 +918,22 @@ for (const [nextInstance, gateway] of [
       }
     },
   );
+
+// A gateway from before pane records (#1667) kept them in its process: after its restart the
+// batch may already be in the pane, so it is dropped with a message instead of typed twice.
+test(
+  'worker keys cut off by a socket close are dropped when a gateway without durable records restarted',
+  { timeout: 4000 },
+  async (t) => {
+    const run = await lostReplyThenReconnect(t, 'gw2', false);
+    try {
+      assert.equal(
+        run.second.sent.some((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT),
+        false,
+      );
+    } finally {
+      run.cleanup();
+    }
+    await assert.rejects(run.typed, inputQueue.TerminalInputMaybeTypedError);
+  },
+);

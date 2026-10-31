@@ -151,6 +151,11 @@ export async function tmuxOutput(args: string[]): Promise<string> {
   return stdout;
 }
 
+/** `tmux -V`, or an empty string when tmux cannot run. */
+export async function tmuxVersion(): Promise<string> {
+  return tmuxOutput(['-V']).catch(() => '');
+}
+
 export async function resizePane(target: string, cols: number, rows: number): Promise<void> {
   await execFileAsync(TMUX, ['resize-pane', '-t', target, '-x', String(cols), '-y', String(rows)], {
     timeout: 5000,

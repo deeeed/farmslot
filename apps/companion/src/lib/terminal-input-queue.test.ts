@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  assertResendable,
   createTerminalInputQueue,
   keysRetryingNotice,
+  resendScope,
   TerminalInputCancelledError,
   TerminalInputMaybeTypedError,
   terminalInputRetryDelayMs,
@@ -93,7 +95,7 @@ test(
     const queue = createTerminalInputQueue(
       async (data, _assertActive, markSent) => {
         pane.push(data);
-        markSent(false);
+        markSent('nowhere');
         if (loseReply) {
           loseReply = false;
           throw new Error('Request terminal.input timed out after 10000ms');
@@ -172,7 +174,7 @@ test(
     const queue = createTerminalInputQueue(
       async (data, _assertActive, markSent, seq) => {
         requests.push({ data, n: seq.n, stream: seq.stream });
-        markSent(true);
+        markSent('anywhere');
         if (loseReply) {
           loseReply = false;
           await typedDuringRetry.promise;
@@ -229,7 +231,7 @@ test(
     const queue = createTerminalInputQueue(
       async (data, _assertActive, markSent, seq) => {
         requests.push({ data, n: seq.n });
-        markSent(true);
+        markSent('anywhere');
         if (restarts-- > 0) throw new Error('Connection closed');
       },
       { retryDelayMs: () => 0 },
@@ -244,6 +246,59 @@ test(
   },
 );
 
+// A gateway from before pane records keeps them in its process: a restart cannot drop the repeat.
+test(
+  'a batch taken by a gateway without durable records goes again only to that instance',
+  { timeout: 5_000 },
+  async () => {
+    const requests: string[] = [];
+    let instance = 'gw1';
+    const queue = createTerminalInputQueue(
+      async (data, _assertActive, markSent, _seq, sentTo) => {
+        assertResendable(sentTo, { instance, durable: false });
+        requests.push(data);
+        markSent(resendScope({ instance, durable: false }));
+        if (requests.length === 1) {
+          instance = 'gw2';
+          throw new Error('Connection closed');
+        }
+      },
+      { retryDelayMs: () => 0 },
+    );
+    const dropped = assert.rejects(queue.write('make deploy\r'), (error: unknown) => {
+      assert.ok(error instanceof TerminalInputMaybeTypedError);
+      assert.match(error.message, /the gateway restarted/);
+      return true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await queue.write('ls\r');
+    await dropped;
+    assert.deepEqual(requests, ['make deploy\r', 'ls\r']);
+  },
+);
+
+test(
+  'a malformed request is dropped with its own error; later keys go out',
+  { timeout: 5_000 },
+  async () => {
+    const requests: string[] = [];
+    const invalid = Object.assign(new Error('seq needs a stream'), { code: 'INVALID_PARAMS' });
+    const queue = createTerminalInputQueue(
+      async (data, _assertActive, markSent) => {
+        requests.push(data);
+        markSent('anywhere');
+        if (requests.length === 1) throw invalid;
+      },
+      { retryDelayMs: () => 0 },
+    );
+    const dropped = assert.rejects(queue.write('x'), (error: unknown) => error === invalid);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await queue.write('y');
+    await dropped;
+    assert.deepEqual(requests, ['x', 'y']);
+  },
+);
+
 // Only a node predating numbered input answers this: the batch is dropped, the keys behind it go.
 test(
   'a batch the gateway reports uncertain is dropped with a notice; later keys go out',
@@ -253,7 +308,7 @@ test(
     const queue = createTerminalInputQueue(
       async (data, _assertActive, markSent) => {
         requests.push(data);
-        markSent(true);
+        markSent('anywhere');
         if (requests.length === 1)
           throw Object.assign(new Error('may already be in the terminal'), {
             code: 'TERMINAL_INPUT_UNCERTAIN',
@@ -280,7 +335,7 @@ test(
     const queue = createTerminalInputQueue(
       async (data, _assertActive, markSent) => {
         requests.push(data);
-        markSent(true);
+        markSent('anywhere');
         if (requests.length <= 2)
           throw Object.assign(new Error('No PTY or agent available for slot demo-work-1'), {
             code: 'INTERNAL_ERROR',

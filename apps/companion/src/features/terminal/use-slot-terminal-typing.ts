@@ -27,6 +27,8 @@ interface SlotTerminalTypingOptions {
   requireTarget: (input: boolean) => { current: () => boolean };
   setControlError: Dispatch<SetStateAction<string | null>>;
   setInputError: (message: string) => void;
+  /** Keys that failed for good never reached the pane as typed: the input line starts over. */
+  onKeysDropped: () => void;
   /** Counts input commands for the development proof. */
   commandCount: MutableRefObject<number>;
 }
@@ -44,6 +46,7 @@ export function useSlotTerminalTyping({
   requireTarget,
   setControlError,
   setInputError,
+  onKeysDropped,
   commandCount,
 }: SlotTerminalTypingOptions) {
   const input = useTerminalInput(target, targetRef, disabledReason, {
@@ -63,14 +66,24 @@ export function useSlotTerminalTyping({
         const captured = requireTarget(true);
         write(data).then(clearKeysRetrying, (error: unknown) => {
           // Only leaving the terminal discards unsent input; failures are retried in order.
-          if (!(error instanceof TerminalInputCancelledError) && captured.current())
+          if (!(error instanceof TerminalInputCancelledError) && captured.current()) {
+            onKeysDropped();
             setInputError(`Terminal input failed: ${errorText(error)}`);
+          }
         });
       } catch (error) {
         setInputError(errorText(error));
       }
     },
-    [clearKeysRetrying, connected, disabledReason, requireTarget, setInputError, write],
+    [
+      clearKeysRetrying,
+      connected,
+      disabledReason,
+      onKeysDropped,
+      requireTarget,
+      setInputError,
+      write,
+    ],
   );
 
   const sendControlKey = useCallback(

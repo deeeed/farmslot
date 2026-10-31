@@ -59,7 +59,11 @@ import {
   startMetricsSubscription,
   stopMetricsSubscription,
 } from './commands/system-metrics.js';
-import { createTerminalInputWriter, requireInputSequence } from './commands/terminal-input.js';
+import {
+  createTerminalInputWriter,
+  requireInputSequence,
+  tmuxKeepsPaneOptions,
+} from './commands/terminal-input.js';
 import * as tmux from './commands/tmux.js';
 import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
 import {
@@ -182,7 +186,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       gatewayUrl: GATEWAY_URL,
       execCancellation: true,
       conditionalWrites: true,
-      terminalInputSequence: true,
+      terminalInputSequence: tmuxKeepsPaneOptions(await tmux.tmuxVersion()),
       observationCapabilities: { workers: 1, files: 1, workspace: 1 },
     });
     if (ws !== socket) {
