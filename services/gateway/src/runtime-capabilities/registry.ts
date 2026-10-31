@@ -726,11 +726,10 @@ export class RuntimeCapabilityRegistry {
       );
       if (!result.ok) {
         // A hook that refuses because its process already exited leaves nothing to stop.
-        const gone = await this.options.providerProcessesGone?.(
-          lease.slotId,
-          entry,
-          lease.providerProcesses,
-        );
+        // A probe that can't tell keeps the hook's failure.
+        const gone = await this.options
+          .providerProcessesGone?.(lease.slotId, entry, lease.providerProcesses)
+          .catch(() => false);
         return gone
           ? { ok: true, detail: `Provider processes had already exited; ${result.detail ?? ''}` }
           : result;

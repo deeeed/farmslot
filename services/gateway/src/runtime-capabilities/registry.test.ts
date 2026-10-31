@@ -2262,7 +2262,7 @@ test('warm cleanup uses the current provider instance after a cold release and r
 
 test('a release hook that finds its provider already stopped releases the lease', async (t) => {
   const frame = { pid: 52393, group: 52393, identity: 'born', resourceId: 'browser' };
-  let gone = false;
+  let gone: boolean | Error = false;
   const checked: unknown[] = [];
   const { registry, actions } = await fixture(t, [entry('web')], {
     captureProviderProcesses: async () => [frame],
@@ -2272,31 +2272,36 @@ test('a release hook that finds its provider already stopped releases the lease'
         : { ok: true },
     providerProcessesGone: async (_slotId, _entry, frames) => {
       checked.push(frames);
+      if (gone instanceof Error) throw gone;
       return gone;
     },
   });
   assert.equal((await acquire(registry, 'web', 'owner')).ok, true);
-  // A refusal while the provider may still run stays a durable failure that blocks the slot.
-  const refused = await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: false });
-  assert.equal(refused.ok, false);
-  let lease = (await registry.status({ slotId: SLOT })).leases[0];
-  assert.equal(lease.state, 'error');
-  assert.match(lease.cleanupFailure ?? '', /No running browser found/);
-  assert.equal((await acquire(registry, 'web', 'next')).ok, false);
+  // While the provider may still run, or the probe can't tell (a spawn failure), the refusal
+  // stays a durable failure that blocks the slot.
+  for (const uncertain of [false, new Error('Provider process identity capture failed')]) {
+    gone = uncertain;
+    const refused = await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: false });
+    assert.equal(refused.ok, false);
+    const lease = (await registry.status({ slotId: SLOT })).leases[0];
+    assert.equal(lease.state, 'error');
+    assert.match(lease.cleanupFailure ?? '', /No running browser found/);
+    assert.equal((await acquire(registry, 'web', 'next')).ok, false);
+  }
 
   gone = true;
   const released = await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: false });
   assert.equal(released.ok, true);
   assert.deepEqual(released.effects, ['release web']);
-  lease = (await registry.status({ slotId: SLOT })).leases.find(
+  const lease = (await registry.status({ slotId: SLOT })).leases.find(
     (entry) => entry.owner.runId === 'owner',
   )!;
   assert.equal(lease.state, 'released');
   assert.equal(lease.cleanupFailure, undefined);
-  assert.deepEqual(checked, [[frame], [frame]]);
+  assert.deepEqual(checked, [[frame], [frame], [frame]]);
   assert.deepEqual(
     actions.filter((action) => action === 'web.release'),
-    ['web.release', 'web.release'],
+    ['web.release', 'web.release', 'web.release'],
   );
   assert.equal((await acquire(registry, 'web', 'next')).ok, true);
 });
