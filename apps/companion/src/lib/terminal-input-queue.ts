@@ -46,15 +46,19 @@ export function resendScope(sequencing: TerminalInputSequencing | null): Termina
 }
 
 /**
- * Before a batch is written again: a gateway from before pane records (#1667) keeps them in its
- * process, so only that instance can drop the repeat. Remove once every gateway is durable.
+ * Before a batch is written again: only a gateway with durable records drops a repeat whichever
+ * instance took the batch. One from before pane records (#1667) keeps them in its process, so
+ * only that instance can; one without numbering cannot at all.
  */
 export function assertResendable(
   sentTo: TerminalInputResend | undefined,
   sequencing: TerminalInputSequencing | null,
 ): void {
-  if (typeof sentTo === 'object' && sequencing?.instance !== sentTo.onlyTo)
-    throw new TerminalInputMaybeTypedError(new Error('the gateway restarted'));
+  const dropsRepeat =
+    sentTo === undefined ||
+    (sentTo === 'anywhere' && sequencing?.durable === true) ||
+    (typeof sentTo === 'object' && sequencing?.instance === sentTo.onlyTo);
+  if (!dropsRepeat) throw new TerminalInputMaybeTypedError(new Error('the gateway restarted'));
 }
 
 interface InputWaiter {

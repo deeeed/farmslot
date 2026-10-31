@@ -824,16 +824,21 @@ test(
  * closes the socket after the frame went out, and reconnects to `nextInstance`. `durable`: both
  * gateways keep the record on the pane.
  */
-async function lostReplyThenReconnect(t: TestContext, nextInstance: string, durable: boolean) {
+async function lostReplyThenReconnect(
+  t: TestContext,
+  nextInstance: string,
+  durable: boolean,
+  nextDurable = durable,
+) {
   const original = globalThis.WebSocket;
   Object.assign(globalThis, { WebSocket: Socket });
   const { GatewayClient } = await import('./gateway-client');
   const client = new GatewayClient('ws://localhost:19779', { token: 'admin' });
-  const numbered = (instance: string) => ({
+  const numbered = (instance: string, keepsRecords = durable) => ({
     ...auth('admin', 'farm'),
     capabilities: {
       ...auth('admin', 'farm').capabilities,
-      terminalInputSequence: { instance, durable },
+      terminalInputSequence: { instance, durable: keepsRecords },
     },
   });
   const connection = { activeProfileId: 'arthur-lan', principalId: 'arthur' };
@@ -880,7 +885,7 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string, dura
     const second = Socket.sockets.at(-1)!;
     assert.notEqual(second, first);
     second.open();
-    second.response(second.sent[0].id, numbered(nextInstance));
+    second.response(second.sent[0].id, numbered(nextInstance, nextDurable));
     await settle();
     // The queue retried while the socket was down; let its backoff run out.
     for (let step = 0; step < 8; step++) {
@@ -926,6 +931,24 @@ test(
   { timeout: 4000 },
   async (t) => {
     const run = await lostReplyThenReconnect(t, 'gw2', false);
+    try {
+      assert.equal(
+        run.second.sent.some((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT),
+        false,
+      );
+    } finally {
+      run.cleanup();
+    }
+    await assert.rejects(run.typed, inputQueue.TerminalInputMaybeTypedError);
+  },
+);
+
+// Rolled back to a gateway that keeps records in memory: it has none of the durable gateway's.
+test(
+  'worker keys cut off by a socket close are dropped when the gateway rolled back to memory records',
+  { timeout: 4000 },
+  async (t) => {
+    const run = await lostReplyThenReconnect(t, 'gw2', true, false);
     try {
       assert.equal(
         run.second.sent.some((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT),

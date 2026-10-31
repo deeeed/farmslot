@@ -100,19 +100,26 @@ export async function writeSequencedInput(
   const unsure = !last || (last.uncertain && seq.n === last.n);
   if (last && seq.n <= last.n && !unsure) return;
   const target = await resolve();
-  if (unsure && target.record) {
+  let record = target.record;
+  if (unsure && record) {
     await recording.get(pane);
-    const recorded = await target.record.read(seq.stream);
+    const recorded = await record.read(seq.stream).catch((error: unknown) => {
+      // A host whose tmux keeps no pane options: input there falls back to this process's memory.
+      if (!(error instanceof PaneRecordUnsupportedError)) throw error;
+      record = undefined;
+      return null;
+    });
     if (recorded !== null && recorded >= seq.n) {
       remember(pane, { stream: seq.stream, n: recorded }, false);
       return;
     }
+    if (!record && last && !target.typesOnce) throw uncertain();
   } else if (unsure && last && !target.typesOnce) {
-    throw new GatewayMethodError(
-      'TERMINAL_INPUT_UNCERTAIN',
-      'This input may already have reached the terminal: its earlier write ended without an answer.',
-    );
+    throw uncertain();
   }
+  // A write that records on the pane itself (slot send-keys, a node) must not be overtaken by
+  // an earlier batch's record still on its way, which would lower the record.
+  if (target.recordsOnWrite || target.typesOnce) await recording.get(pane);
   let remote = false;
   try {
     await target.write(() => {
@@ -123,8 +130,18 @@ export async function writeSequencedInput(
     throw error;
   }
   remember(pane, seq, false);
-  if (target.record && !target.recordsOnWrite) recordInOrder(pane, target.record, seq);
+  if (record && !target.recordsOnWrite) recordInOrder(pane, record, seq);
 }
+
+function uncertain(): GatewayMethodError {
+  return new GatewayMethodError(
+    'TERMINAL_INPUT_UNCERTAIN',
+    'This input may already have reached the terminal: its earlier write ended without an answer.',
+  );
+}
+
+/** tmux before 3.0 keeps no pane options: it refuses `-p` whatever the pane. */
+export class PaneRecordUnsupportedError extends Error {}
 
 /**
  * Records a batch on its pane without holding up the reply: a client resends only when the reply
@@ -135,6 +152,7 @@ function recordInOrder(pane: string, record: PaneInputRecord, seq: TerminalInput
   const current = (recording.get(pane) ?? Promise.resolve())
     .then(() => record.write(seq))
     .catch((error: unknown) => {
+      if (error instanceof PaneRecordUnsupportedError) return;
       // The keys are in the pane: failing the batch would only get them typed again.
       console.warn(
         `[terminal-input] ${pane}: typed but not recorded on the pane: ${errorText(error)}`,
@@ -159,14 +177,19 @@ export function tmuxInputRecordArgs(target: string, seq: TerminalInputSequence):
   const pane = shellQuote(target);
   const option = shellQuote(terminalInputRecordOption(seq.stream));
   const value = shellQuote(formatTerminalInputRecord(seq.n, Date.now()));
-  // `show-options -p` lists `@farmslot-input-<stream> <n>:<ms>`; sort by time, unset the rest.
   const prune =
-    `"$TMUX_BIN" show-options -p -t ${pane}` +
-    ` | sed -n 's/^\\(${TERMINAL_INPUT_RECORD_PREFIX}[A-Za-z0-9_-]*\\) "*[0-9]*:\\([0-9]*\\)"*$/\\2 \\1/p'` +
-    ` | sort -rn | tail -n +${TERMINAL_INPUT_RECORD_STREAMS + 1}` +
-    ` | while read -r _ name; do "$TMUX_BIN" set-option -p -u -t ${pane} "$name"; done`;
+    `"$TMUX_BIN" show-options -p -t ${pane} | ${STALE_RECORDS_FILTER}` +
+    ` | while read -r name; do "$TMUX_BIN" set-option -p -u -t ${pane} "$name"; done`;
   return `set-option -p -t ${pane} ${option} ${value} && ${prune}`;
 }
+
+/**
+ * Shell filter from `show-options -p` lines to the record options to unset, as protocol
+ * `staleTerminalInputRecords` picks them: all but the most recently written.
+ */
+export const STALE_RECORDS_FILTER =
+  `sed -n 's/^\\(${TERMINAL_INPUT_RECORD_PREFIX}[A-Za-z0-9_-]*\\) "*[0-9]*:\\([0-9]*\\)"*$/\\2 \\1/p'` +
+  ` | sort -rn | tail -n +${TERMINAL_INPUT_RECORD_STREAMS + 1} | cut -d ' ' -f 2`;
 
 /**
  * The record of tmux pane `target`, read and written by `run` on the pane's host (a shell
@@ -178,9 +201,11 @@ export function tmuxPaneInputRecord(
 ): PaneInputRecord {
   const checked = async (command: string) => {
     const result = await run(command);
-    if (result.exitCode !== 0)
-      throw new Error(`tmux failed: ${result.stderr?.trim() || `exit ${result.exitCode}`}`);
-    return result.stdout;
+    if (result.exitCode === 0) return result.stdout;
+    const message = `tmux failed: ${result.stderr?.trim() || `exit ${result.exitCode}`}`;
+    throw /unknown (flag|option)|usage:/i.test(result.stderr ?? '')
+      ? new PaneRecordUnsupportedError(message)
+      : new Error(message);
   };
   return {
     read: async (stream) =>

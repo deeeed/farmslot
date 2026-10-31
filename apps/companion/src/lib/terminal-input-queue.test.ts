@@ -277,6 +277,24 @@ test(
   },
 );
 
+test('a batch goes again only to a gateway that can drop it as a repeat', () => {
+  const durable = { instance: 'gw2', durable: true };
+  const memory = { instance: 'gw2', durable: false };
+  const refused = (sentTo: Parameters<typeof assertResendable>[0], to: typeof durable | null) =>
+    assert.throws(() => assertResendable(sentTo, to), TerminalInputMaybeTypedError);
+  // Never written: anywhere.
+  assertResendable(undefined, null);
+  // Taken by a durable gateway: to any durable instance, not to a rolled-back or unnumbered one.
+  assertResendable('anywhere', durable);
+  refused('anywhere', memory);
+  refused('anywhere', null);
+  // Taken by a gateway that keeps records in memory: to that instance only.
+  assertResendable({ onlyTo: 'gw2' }, memory);
+  refused({ onlyTo: 'gw1' }, memory);
+  refused({ onlyTo: 'gw1' }, durable);
+  refused('nowhere', durable);
+});
+
 test(
   'a malformed request is dropped with its own error; later keys go out',
   { timeout: 5_000 },

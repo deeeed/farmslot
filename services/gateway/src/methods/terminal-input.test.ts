@@ -132,13 +132,25 @@ mock.module('../runtime/workspace-terminal.js', {
       await workspaceBeforeResolve(params.runId);
       return {
         key: workspace.workspaceTerminalKey(params.runId),
-        run: { reviewWorkspace: { machine: pool.machine } },
+        run: { id: params.runId },
         session: `review-shell-${params.runId}`,
       };
     },
+    // The review shell's pane record, as the owner's node keeps it.
+    workspacePaneInputRecord: (_run: unknown, session: string) => ({
+      read: async (stream: string) => {
+        const value = slotHost.options.get(`${session} ${stream}`);
+        return value === undefined ? null : Number(value);
+      },
+      write: async ({ stream, n }: { stream: string; n: number }) => {
+        slotHost.options.set(`${session} ${stream}`, String(n));
+      },
+    }),
   },
 });
 const { terminalInput } = await import('./terminal.js');
+const { inputRecordsSettledForTests, resetInputSequencesForTests } =
+  await import('../runtime/terminal-input-sequence.js');
 
 function deferred() {
   let resolve!: () => void;
@@ -229,6 +241,23 @@ test('slot input whose reply was lost after typing is not typed again by its res
   await terminalInput({ ...batch, data: 'ls\r', seq: { stream: 's2', n: 2 } });
   assert.deepEqual(sent, ['make deploy\r', 'ls\r']);
   assert.match(slotHost.options.get('@farmslot-input-s2') ?? '', /^2:\d+$/);
+});
+
+// A gateway restart forgets what it typed; the review shell's pane still knows.
+test('worktree input recorded on its pane is not typed again after a restart', async () => {
+  sent.length = 0;
+  const batch = {
+    slotId: '',
+    runId: 'recorded-workspace',
+    data: 'make\r',
+    seq: { stream: 'w1', n: 1 },
+  };
+  await terminalInput(batch);
+  await inputRecordsSettledForTests();
+  resetInputSequencesForTests();
+  await terminalInput(batch);
+  assert.deepEqual(sent, ['make\r']);
+  assert.equal(slotHost.options.get('review-shell-recorded-workspace w1'), '1');
 });
 
 test('workspace input reserves each run before delayed resolution and leaves other runs independent', async () => {

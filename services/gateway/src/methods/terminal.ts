@@ -45,7 +45,6 @@ import {
 } from '../runtime/pty-stream.js';
 import {
   type InputLanding,
-  machinePaneInputRecord,
   runInputInOrder,
   tmuxInputRecordArgs,
   tmuxPaneInputRecord,
@@ -55,6 +54,7 @@ import { sendKeys, snapshot, subscribe, unsubscribe } from '../runtime/tmux-stre
 import {
   isWorkspaceTerminal,
   resolveWorkspaceTerminal,
+  workspacePaneInputRecord,
   workspaceTerminalKey,
   workspaceTerminalOperation,
 } from '../runtime/workspace-terminal.js';
@@ -405,9 +405,9 @@ export async function terminalInput(
 
 async function terminalInputLanding(params: TerminalInputParams): Promise<InputLanding> {
   if (isWorkspaceTerminal(params)) {
-    const { key, run, session, sshTarget } = await resolveWorkspaceTerminal(params);
+    const { key, run, session } = await resolveWorkspaceTerminal(params);
     return {
-      record: machinePaneInputRecord(session, run.reviewWorkspace!.machine, !sshTarget),
+      record: workspacePaneInputRecord(run, session),
       write: () => {
         if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
         writePty(key, params.data);
