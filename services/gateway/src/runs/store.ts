@@ -384,12 +384,13 @@ export async function commitRunReviewBudgetExtension(
 /** Commit the receipt before publishing its effective row. Shares the existing per-run write queue. */
 type RunEvidenceReceipt =
   | import('@farmslot/protocol').ClaimUntestableOverrideReceipt
-  | import('@farmslot/protocol').RecipeVisualJudgmentReceipt;
+  | import('@farmslot/protocol').RecipeVisualJudgmentReceipt
+  | import('@farmslot/protocol').BeforeAttemptAttestation;
 
 async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
   id: string,
-  field: 'claimOverrideReceipts' | 'visualJudgmentReceipts',
-  outputField: 'claimOverrideReceiptIds' | 'visualJudgmentReceiptIds',
+  field: 'claimOverrideReceipts' | 'visualJudgmentReceipts' | 'beforeAttemptAttestations',
+  outputField: 'claimOverrideReceiptIds' | 'visualJudgmentReceiptIds' | undefined,
   build: (run: Run) => R,
   assertCurrent: (run: Run) => void | Promise<void>,
   outputReceiptIds?: (snapshot: Run) => string[],
@@ -424,7 +425,7 @@ async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
       ? prior.map((entry) => (entry.id === receipt!.id ? receipt! : entry))
       : [...prior, receipt];
     const snapshot: Run = { ...run, [field]: receipts };
-    if (outputReceiptIds) {
+    if (outputReceiptIds && outputField) {
       const ids = outputReceiptIds(snapshot);
       snapshot.decisions = run.decisions.map((decision) =>
         decision.id === receipt!.decisionId &&
@@ -443,7 +444,7 @@ async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
       throw error;
     }
     Object.assign(run, { [field]: receipts });
-    if (outputReceiptIds) {
+    if (outputReceiptIds && outputField) {
       const projected = snapshot.decisions.find(
         ({ id: decisionId }) => decisionId === receipt!.decisionId,
       )?.payload;
@@ -494,6 +495,15 @@ export function commitRunVisualJudgment(
     assertCurrent,
     outputReceiptIds,
   );
+}
+
+/** An attestation is durable before a package preparation can admit its attempt. */
+export function commitRunBeforeAttemptAttestation(
+  id: string,
+  build: (run: Run) => import('@farmslot/protocol').BeforeAttemptAttestation,
+  assertCurrent: (run: Run) => void,
+): Promise<import('@farmslot/protocol').BeforeAttemptAttestation> {
+  return commitRunEvidenceReceipt(id, 'beforeAttemptAttestations', undefined, build, assertCurrent);
 }
 
 /**
@@ -1292,6 +1302,11 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
     !isDeepStrictEqual(partial.claimOverrideReceipts, run.claimOverrideReceipts)
   )
     throw new Error('Claim override receipts require the verified gateway writer');
+  if (
+    'beforeAttemptAttestations' in partial &&
+    !isDeepStrictEqual(partial.beforeAttemptAttestations, run.beforeAttemptAttestations)
+  )
+    throw new Error('Before attempt attestations require the verified gateway writer');
   if (
     'reviewPublication' in partial &&
     !isDeepStrictEqual(partial.reviewPublication?.direct, run.reviewPublication?.direct)

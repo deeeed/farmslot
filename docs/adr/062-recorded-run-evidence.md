@@ -1129,3 +1129,54 @@ Extend the shared protocol and existing registry, contract resolver, completion 
 - `@farmslot/review-dispatch` 0.19.0 extends the existing acceptance presentation for both clients. Source links, exclusions, pending instructions and inherited proof use that shared projection.
 
 Release the protocol, runtime and shared consumers before opting project templates in. Existing runs and selected pins retain their contracts. This amendment adds no project, harness, network or deployment default.
+
+## Amendment 21 (2026-10-31): Operator-attested before attempts
+
+**Status:** Accepted (lead, 2026-10-31). F276.
+**Specification:** [Consumers and publication](../reference/recorded-run-evidence.md#consumers-and-publication).
+
+### Decision
+
+Some before sides cannot be recorded clean at the publication baseline, for
+example when the recipe needs files the change adds. At an unresolved publish
+gate, a credential-backed person may attest one recipe attempt captured by the
+same run, `artifacts/recipe-runs/<recipeRunId>/`, as before-only evidence, with
+a written reason.
+
+The gateway records the attestation on the Run, never in task or recipe files:
+attempt root, the sha256 of its `artifact-manifest.json`, decision id, reason,
+approver and time. When the gate shows a package, the attestation commits only
+against the package hash the operator was shown. The record does not keep that
+hash, because admitting the before side changes it. Admission then accepts that
+attempt's before-only declarations without the baseline `git_ref`/`dirty`/`branch`
+match. Ownership, captured digests, closure, secret scan and publication
+approval still apply. After and standalone evidence still require the clean
+selected head.
+
+The attestation applies only while the attempt's manifest digest matches. Any
+change to the attempt needs a new attestation. It resolves no gate; the operator
+retries the gate to rebuild the package. The package binds the admitted
+attestation ids, so a later attestation needs approval again. It never satisfies
+or changes a claim verdict. PR evidence labels that before side "Before: operator-attested" with
+the reason, actor and time. Run-bundle import drops attestations, as it drops
+claim override receipts.
+
+### Rationale and consequences
+
+Amendment 19 keeps before captures honest by binding them to the unchanged
+baseline. Without an exception path, a change whose recipe depends on its own
+files can only publish with no before side, or the worker has to fake a clean
+baseline. The attestation reuses the untestable-override receipt model
+(Amendment 4): a gateway-owned, person-backed receipt bound to content digests.
+No new package format or evidence pointer is added. The attestation is
+disclosed wherever the before side is shown. Admission compares the manifest
+digest the ownership walk already computes; recording reads one manifest from
+the run's checkout.
+
+### Public surface
+
+`run.attestBeforeAttempt` (`RunAttestBeforeAttemptParams`: `runId`,
+`decisionId`, `recipeRunId`, `reason`, optional `packageHash`) and
+`Run.beforeAttemptAttestations` in `@farmslot/protocol`. The shared gate action
+`attest-before-attempt` routes to it, and `farmslot run gate <runId> --action
+attest-before-attempt --recipe-run <id> --reason <text>` is the CLI surface.

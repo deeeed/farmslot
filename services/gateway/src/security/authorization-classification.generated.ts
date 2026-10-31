@@ -274,6 +274,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.adopt': { classification: 'admin' },
   'run.adoptPublishedPr': { classification: 'admin' },
   'run.archive': { classification: 'admin' },
+  'run.attestBeforeAttempt': { classification: 'admin' },
   'run.autoRecovery.stop': { classification: 'admin' },
   'run.backfillSummaries': { classification: 'admin' },
   'run.bulkDelete': { classification: 'admin' },

@@ -39,6 +39,26 @@ export interface ClaimUntestableOverrideReceipt {
   overriddenAt: string;
 }
 
+export const ATTEST_BEFORE_ATTEMPT_ACTION = 'attest-before-attempt';
+
+/**
+ * ADR-062 Amendment 21: a person admits one same-run recipe attempt as before-only
+ * evidence without the baseline match. Owned by the gateway Run store; it lapses
+ * once the attempt's artifact-manifest.json bytes change.
+ */
+export interface BeforeAttemptAttestation {
+  id: string;
+  runId: string;
+  decisionId: string;
+  /** Artifacts-relative attempt root, `recipe-runs/<recipeRunId>`. */
+  attemptRoot: string;
+  /** Hex sha256 of the attempt's artifact-manifest.json. */
+  manifestSha256: string;
+  approver: EvidenceAttestationApprover;
+  reason: string;
+  attestedAt: string;
+}
+
 /** Callers establish trust by loading receipts from the gateway store and checking actual bytes. */
 export interface ClaimOverrideAuthority {
   runId: string;

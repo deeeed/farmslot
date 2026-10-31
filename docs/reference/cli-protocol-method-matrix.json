@@ -1543,6 +1543,11 @@
       "note": "farmslot run gate --action mark-untestable records a verified human exception without resolving the gate.",
       "command": "farmslot run gate --action mark-untestable"
     },
+    "run.attestBeforeAttempt": {
+      "surface": "typed-command",
+      "note": "Records a verified person attestation of a same-run before-only attempt without resolving the gate.",
+      "command": "farmslot run gate --action attest-before-attempt"
+    },
     "run.reviewVisualClaim": {
       "surface": "typed-command",
       "command": "farmslot run gate --action confirm-visual|reject-visual",

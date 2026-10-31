@@ -255,6 +255,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.adopt`                             | admin          |                                                                                    |
 | `run.adoptPublishedPr`                  | admin          |                                                                                    |
 | `run.archive`                           | admin          |                                                                                    |
+| `run.attestBeforeAttempt`               | admin          |                                                                                    |
 | `run.autoRecovery.stop`                 | admin          |                                                                                    |
 | `run.backfillSummaries`                 | admin          |                                                                                    |
 | `run.bulkDelete`                        | admin          |                                                                                    |
