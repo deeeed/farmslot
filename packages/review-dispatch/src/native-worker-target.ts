@@ -40,14 +40,18 @@ export function selectedNativeWorkerTarget(
 ): NativeWorkerViewTarget | undefined {
   const selected = targets.find((target) => nativeWorkerAttemptKey(target) === selectedKey);
   if (selected) return selected;
-  const live = targets.filter(
-    (target) =>
-      !target.readOnly &&
-      !target.binding.closedAt &&
-      !target.binding.releasedAt &&
-      !target.binding.recovery,
-  );
+  const live = targets.filter(nativeWorkerTargetLive);
   return live.length === 1 ? live[0] : undefined;
+}
+
+/** A worker conversation that still takes input: not history, closed, released or recovering. */
+export function nativeWorkerTargetLive(target: NativeWorkerViewTarget): boolean {
+  return (
+    !target.readOnly &&
+    !target.binding.closedAt &&
+    !target.binding.releasedAt &&
+    !target.binding.recovery
+  );
 }
 
 export function nativeWorkerViewPin(target: NativeWorkerViewTarget): NativeWorkerControlTarget {

@@ -726,12 +726,16 @@ export function nativeCommandText(tool: NativeSessionTool | undefined): string |
   if (text === undefined) return undefined;
   const output = terminalLinesFromText(text.replace(/[\r\n]+$/, ''));
   if (!output.join('')) return command;
-  const hidden = Math.max(0, output.length - NATIVE_TOOL_OUTPUT_LINES);
+  return [command, ...nativeTailLines(output, NATIVE_TOOL_OUTPUT_LINES)].join('\n');
+}
+
+/** The last `max` lines, after a "… 12 earlier lines" line when some were left out. */
+export function nativeTailLines(lines: string[], max: number): string[] {
+  const hidden = Math.max(0, lines.length - max);
   return [
-    command,
     ...(hidden ? [`… ${hidden} earlier ${hidden === 1 ? 'line' : 'lines'}`] : []),
-    ...output.slice(hidden),
-  ].join('\n');
+    ...lines.slice(hidden),
+  ];
 }
 
 /**

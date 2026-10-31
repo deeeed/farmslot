@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publication receipts fence their reasons with the shared protocol `markdownFence`; line endings inside a reason are normalised.
 - COMPLETE resumes a retained capture's interrupted media transfer before it validates the selected evidence, so a gateway restart between the report commit and the media copy no longer refuses completion with "Retained artifact is missing, pruned or changed" while the slot still holds the media.
 - A finished run whose slot shutdown hook fails (for example a browser that is already gone) records the unconfirmed stop once and keeps the slot held with that reason, instead of rerunning the whole teardown on every reconcile. An operator release clears the hold, and slot cleanup reruns the stop.
 - A project can set `slot_selection.physical_devices: "on-request"` so automatic slot selection (preview, find-slot, affinity, the dispatch queue) skips physical device slots, an `android-device` without an `android-emu` AVD, unless the run passes run.create `requiredCapabilities`. Explicit slots, operator picks and one-slot operator allowlists bypass it. run.create `requiredCapabilities` become the run's slot capability requirements, and a replay adds the devices of the slot it leaves (ADR-054 amendment, 2026-10-31).
