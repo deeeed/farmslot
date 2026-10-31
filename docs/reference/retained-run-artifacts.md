@@ -71,6 +71,10 @@ existing manifest `missingData` and the capture result. A partial capture is nev
 presented as a complete evidence closure. An available retained report remains
 readable with that limitation; package integrity failures remain non-waivable.
 
+## Run-end episodes
+
+Every ended run also records a reference-only episode beside its record, built from the digests in its output inventory and the manifests of the bundles above. See [Run episodes](run-episodes.md) (ADR-039 Amendment 4).
+
 ## References and readers
 
 Protocol owns `RunArtifactBundleRef`, containing the owning store identity,

@@ -318,6 +318,15 @@ exactly one wins. Sessions on a host that removes queued commands report
 whose worker messages are acceptance sources, where the gateway refuses removal. An older
 host refuses the method as unknown
 ([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)).
+A send with `delivery: 'steer'` (host method `steer`; `native.worker.steer` under the
+worker's lease) adds the message to the running turn when the adapter declares
+`capabilities.steer`, the session is `running`, no request is pending and no submission is in
+flight; otherwise it is an ordinary send. The intent is journaled before the runner write. The
+runner's reply is acceptance, an error reply fails the command without a resend, and a lost reply
+(the runner stopped, or the request timed out) stays unknown. The receipt carries `steered: true` and settles with the turn it
+joined. Codex steers with `turn/steer` (`expectedTurnId`, the command ID as
+`clientUserMessageId`); Claude and ACP do not declare `steer`. An older host refuses the method
+as unknown.
 `read` accepts `after` and `limit`, returns a cursor and `hasMore`, and exposes the
 latest 100 receipts. Older IDs remain deduplicated across process generations;
 a missing receipt in a page does not mean the command was never submitted. Consume each page once and
@@ -341,6 +350,16 @@ item to `other`. ACP maps the tool call's `kind`: `execute` to `command` (with
 `search` to `search`, `fetch` to `web` and any other value to `other`, with its
 `locations` as paths. An ACP update that omits them keeps the call's earlier values, and a
 call that never sends a kind has none.
+
+A `plan.updated` event carries the runner's whole plan, which replaces its earlier plan of
+the same kind in that turn
+([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)):
+a `checklist` of steps (`pending`, `in-progress` or `completed`, with an optional note) or a
+`proposal` in markdown. Codex maps `turn/plan/updated` to a checklist (its `explanation` is
+the note) and a completed `plan` item to a proposal, ignoring the item's streamed deltas; it
+starts each thread with `tools.update_plan.enabled`, without which the app-server sends no
+plan updates. ACP
+maps a `plan` update to a checklist, dropping entry `priority`. Claude sends no plans yet.
 
 After runner or host failure, reads expose failure and recovery instructions.
 Explicit `create` with the recorded `resumeSessionId` retains the Farmslot session

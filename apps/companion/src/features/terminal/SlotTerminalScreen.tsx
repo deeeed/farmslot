@@ -84,13 +84,7 @@ import {
   isWorkerProgressActive,
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
-import { slotTerminalRunnerPane, type TerminalControlKey } from '../../lib/terminal-controls';
-import {
-  type HeldTerminalInput,
-  keysRetryingNotice,
-  TerminalInputCancelledError,
-  withoutKeysRetryingNotice,
-} from '../../lib/terminal-input-queue';
+import { slotTerminalRunnerPane } from '../../lib/terminal-controls';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import { appendTerminalTailText, terminalTailLinesFromText } from '../../lib/terminal-tail';
 import {
@@ -159,8 +153,7 @@ import {
   type XtermTerminalViewHandle,
 } from './components/terminal-history-viewer';
 import { slotTerminalStyles as styles } from './styles/slot-terminal.styles';
-import { useTerminalControlKeys } from './use-terminal-control-keys';
-import { useTerminalInput } from './use-terminal-input';
+import { useSlotTerminalTyping } from './use-slot-terminal-typing';
 import { useTerminalProof, useTerminalRunContext } from './use-terminal-run-context';
 
 const LINE_COUNT_OPTIONS = [25, 50, 100, 200] as const;
@@ -491,17 +484,16 @@ export default function TerminalScreen() {
       ? 'Read-only · terminal ended'
       : null;
 
-  const [heldInput, setHeldInput] = useState<HeldTerminalInput | null>(null);
-  const terminalInput = useTerminalInput(
-    terminalTargetParams,
-    terminalTargetParamsRef,
-    terminalInputDisabledReason,
-    {
-      onRetry: (error, attempt) => setControlError((c) => keysRetryingNotice(error, attempt) ?? c),
-      onHold: setHeldInput,
-    },
-  );
-  const sendTerminalInput = terminalInput.write;
+  const typing = useSlotTerminalTyping({
+    connected: Boolean(client),
+    target: terminalTargetParams,
+    targetRef: terminalTargetParamsRef,
+    disabledReason: terminalInputDisabledReason,
+    requireTarget: requireTerminalTarget,
+    setControlError,
+    setInputError: setSnapshotError,
+    commandCount: inputCommands,
+  });
 
   const loadInitialSnapshot = useCallback(async () => {
     const target = terminalTargetParamsRef.current;
@@ -529,31 +521,6 @@ export default function TerminalScreen() {
       setSnapshotError(`Snapshot failed: ${getErrorMessage(error)}`);
     }
   }, [client, replaceTerminalTail, terminalContext.scopeKey]);
-
-  const clearKeysRetrying = useCallback(() => setControlError(withoutKeysRetryingNotice), []);
-
-  const handleTerminalInput = useCallback(
-    (data: string) => {
-      if (terminalInputDisabledReason || !client) return;
-      try {
-        const captured = requireTerminalTarget(true);
-        sendTerminalInput(data).then(clearKeysRetrying, (error: unknown) => {
-          // Only leaving the terminal discards unsent input; failures are retried in order.
-          if (!(error instanceof TerminalInputCancelledError) && captured.current())
-            setSnapshotError(`Terminal input failed: ${getErrorMessage(error)}`);
-        });
-      } catch (error) {
-        setSnapshotError(getErrorMessage(error));
-      }
-    },
-    [
-      clearKeysRetrying,
-      client,
-      requireTerminalTarget,
-      sendTerminalInput,
-      terminalInputDisabledReason,
-    ],
-  );
 
   const handleTerminalResize = useCallback(
     (size: TerminalSize) => {
@@ -715,39 +682,6 @@ export default function TerminalScreen() {
     return contextRef.current.requireRun();
   }, []);
 
-  const sendControlKey = useCallback(
-    async (control: TerminalControlKey) => {
-      if (!client || terminalInputDisabledReason) return;
-      let captured: ReturnType<typeof requireTerminalTarget>;
-      try {
-        captured = requireTerminalTarget(true);
-      } catch (error) {
-        setControlError(getErrorMessage(error));
-        return;
-      }
-      setControlError(null);
-      inputCommands.current++;
-      void Haptics.impactAsync(
-        control.danger ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light,
-      );
-      try {
-        await sendTerminalInput(control.data);
-        clearKeysRetrying();
-      } catch (error) {
-        if (!(error instanceof TerminalInputCancelledError) && captured.current())
-          setControlError(`Control failed: ${getErrorMessage(error)}`);
-      }
-    },
-    [
-      clearKeysRetrying,
-      client,
-      requireTerminalTarget,
-      sendTerminalInput,
-      terminalInputDisabledReason,
-    ],
-  );
-  const controlKeys = useTerminalControlKeys(sendControlKey);
-
   useTerminalProof({
     focused,
     run: targetRun,
@@ -756,7 +690,7 @@ export default function TerminalScreen() {
     terminalTarget: terminalContext.target ?? undefined,
     terminalInputDisabledReason,
     terminalStream: streamMode,
-    terminalControlBusy: controlKeys.busy,
+    terminalControlBusy: typing.controlKeys.busy,
     terminalControlError: controlError,
     terminalSnapshotError: snapshotError,
     readTerminalText: () => terminalViewRef.current?.inspect?.() ?? Promise.resolve(''),
@@ -840,7 +774,11 @@ export default function TerminalScreen() {
   ]);
 
   const sendTerminalText = useCallback(
-    async (text: string, setError: (message: string | null) => void): Promise<boolean> => {
+    async (
+      text: string,
+      setError: (message: string | null) => void,
+      onSent?: () => void,
+    ): Promise<boolean> => {
       const trimmedText = text.trim();
       if (!client || !trimmedText || isSending || terminalInputDisabledReason) return false;
       let command: ReturnType<typeof beginTerminalCommand>;
@@ -855,7 +793,7 @@ export default function TerminalScreen() {
         setIsSending(true);
         inputCommands.current++;
         const request = terminalTextRequest(command.target, message);
-        await client.request(request.method, request.params);
+        await client.request(request.method, request.params, undefined, { onSent });
         if (!command.current()) return false;
         if (pendingOperatorMessage.current === message) pendingOperatorMessage.current = null;
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -947,7 +885,7 @@ export default function TerminalScreen() {
   const showInputBar =
     !native.target &&
     !native.unavailable &&
-    (showTerminalControls || Boolean(controlError) || Boolean(heldInput));
+    (showTerminalControls || Boolean(controlError) || Boolean(typing.heldInput));
   const showVoiceComposer =
     !native.target &&
     !native.unavailable &&
@@ -1399,9 +1337,11 @@ export default function TerminalScreen() {
       setVoiceMessage('Open the suggested target before sending this voice draft.');
       return;
     }
-    // The draft is sent as a submitted line, so the input line starts over as it goes out.
-    inputLineRef.current?.reset();
-    const sent = await sendTerminalText(voiceEditableInstruction, setVoiceWarning);
+    // The draft is sent as a submitted line, so the input line starts over once it has gone out;
+    // a refused send leaves it as it was.
+    const sent = await sendTerminalText(voiceEditableInstruction, setVoiceWarning, () =>
+      inputLineRef.current?.reset(),
+    );
     if (sent) {
       resetVoiceCopilotAfterSend('Sent. Tap mic to dictate another instruction.');
     }
@@ -1896,7 +1836,7 @@ export default function TerminalScreen() {
           directInput: terminalDirectInput,
           initialText: lines.join('\r\n'),
           mode: terminalViewMode,
-          onInput: handleTerminalInput,
+          onInput: typing.typeKeys,
           onResize: handleTerminalResize,
           rawHistoryText: terminalTailTextRef.current,
           readOnlyReason: terminalInputDisabledReason,
@@ -2050,11 +1990,11 @@ export default function TerminalScreen() {
       {showInputBar && (
         <View style={[styles.composer, { paddingBottom: spacing.sm + insets.bottom }]}>
           <TerminalHeldInput
-            held={heldInput}
-            onResend={terminalInput.resend}
+            held={typing.heldInput}
+            onResend={typing.resend}
             onDiscard={() => {
               inputLineRef.current?.reset();
-              terminalInput.discard();
+              typing.discard();
             }}
           />
           {showTerminalControls && (
@@ -2064,16 +2004,16 @@ export default function TerminalScreen() {
                   ref={inputLineRef}
                   autoFocus={focusInputLineOnOpen}
                   disabled={Boolean(terminalInputDisabledReason)}
-                  onSend={handleTerminalInput}
+                  onSend={typing.typeKeys}
                 />
               )}
               <TerminalControlKeyBar
-                activeLabel={controlKeys.activeLabel}
+                activeLabel={typing.controlKeys.activeLabel}
                 disabled={Boolean(terminalInputDisabledReason)}
                 directInput={terminalDirectInput}
                 onPress={(control) => {
                   inputLineRef.current?.reset();
-                  controlKeys.press(control);
+                  typing.controlKeys.press(control);
                 }}
                 runnerPane={slotTerminalRunnerPane(slot, tmuxWindows)}
                 onToggleDirectInput={() => setTerminalDirectInput(!terminalDirectInput)}

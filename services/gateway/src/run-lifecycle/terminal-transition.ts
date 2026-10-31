@@ -27,6 +27,7 @@ import { withTerminalTeardown } from '../run-engine/terminal-teardown-registry.j
 import { getRun, updateRun } from '../runs/store.js';
 import { schedulerTick } from '../work-graph/store.js';
 
+import { EPISODE_AFTER_CALLER_RELEASE, episodeCaptureEffect } from './episode-capture-effect.js';
 import {
   effectFailed,
   routeRunTransition,
@@ -59,6 +60,11 @@ export interface TerminalTransitionCollaborators {
   cleanupSlot: ((run: Run) => Promise<void>) | null;
   /** Owned static workspace cleanup is independent of a slot lease. */
   cleanupWorkspace?: ((run: Run) => Promise<void>) | null;
+  /**
+   * False when the caller releases the slot after this transition returns; that
+   * caller captures the episode after its release (`captureEpisodeAfterRelease`).
+   */
+  captureEpisode?: boolean;
   /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */
   emit(run: Run): void | Promise<void>;
 }
@@ -116,7 +122,7 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
     {
       name: 'slot-cleanup',
       severity: 'advisory',
-      // Last, and the whole reason this module exists: tmux teardown is slow and
+      // The last teardown, and the whole reason this module exists: tmux teardown is slow and
       // the terminal state was already published through `onMutated`, so no
       // client waits on it.
       apply: async ({ run }) => {
@@ -138,6 +144,10 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
         return 'ok';
       },
     },
+    // After the teardown, so writing history never delays the slot.
+    episodeCaptureEffect(
+      collaborators.captureEpisode === false ? EPISODE_AFTER_CALLER_RELEASE : undefined,
+    ),
   ];
 }
 
@@ -259,6 +269,7 @@ export function operatorCompletionCollaborators(
     cleanupEvalHarness: null,
     cleanupWorkspace: null,
     cleanupSlot: null,
+    captureEpisode: false,
     emit: async (run) => {
       await publish(run);
     },

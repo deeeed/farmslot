@@ -19,6 +19,8 @@ export interface NativeSessionCapabilities {
   structuredResultSchemas?: NativeResultSchema[];
   /** Set by the host: `native.session.cancel` removes a queued message. Absent on older hosts. */
   cancelQueued?: boolean;
+  /** Set by the adapter: a send with `delivery: 'steer'` can join the running turn. */
+  steer?: boolean;
 }
 
 export interface NativeSessionCreateParams {
@@ -86,6 +88,12 @@ export interface NativeSessionReadParams extends NativeSessionTargetParams {
 export interface NativeSessionSendParams extends NativeSessionTargetParams {
   commandId: string;
   text: string;
+  /**
+   * `steer`: add the message to the running turn when the session can take it there
+   * (`capabilities.steer`, a running turn, no pending request); otherwise it is sent as usual.
+   * An older host refuses it rather than queueing it.
+   */
+  delivery?: 'steer';
 }
 export interface NativeSessionSendResult {
   commandId: string;
@@ -96,6 +104,8 @@ export interface NativeSessionSendResult {
   state: NativeCommandState;
   /** True only after native protocol evidence confirms acceptance. */
   accepted: boolean;
+  /** Added to the running turn; it completes with that turn. */
+  steered?: true;
 }
 /** Removes a message still queued for the next turn. A submitted message is refused: stop the turn. */
 export interface NativeSessionCancelParams extends NativeSessionTargetParams {
@@ -113,6 +123,8 @@ export interface NativeCommandReceipt {
   submitted: boolean;
   accepted: boolean;
   queued?: boolean;
+  /** Added to the running turn; it completes with that turn. */
+  steered?: true;
   /** `cancelled`: removed from the queue by `native.session.cancel` before submission. */
   outcome?: 'completed' | 'failed' | 'interrupted' | 'cancelled';
   structuredResult?: NativeStructuredResult;
@@ -180,6 +192,7 @@ export const NativeSessionEventTypes = {
   APPROVAL_REQUESTED: 'approval.requested',
   APPROVAL_RESOLVED: 'approval.resolved',
   QUESTION_REQUESTED: 'question.requested',
+  PLAN_UPDATED: 'plan.updated',
   TURN_COMPLETED: 'turn.completed',
   SESSION_CLOSED: 'session.closed',
   ERROR: 'error',
@@ -199,6 +212,20 @@ export interface NativeSessionTool {
   /** Files the tool reads, edits or searches. */
   paths?: string[];
 }
+
+export interface NativePlanStep {
+  text: string;
+  status: 'pending' | 'in-progress' | 'completed';
+}
+/**
+ * A runner's plan, normalized by its adapter. Each `plan.updated` carries the whole plan and
+ * replaces the earlier plan of the same kind in that turn.
+ */
+export type NativeSessionPlan =
+  /** The runner's working steps, with an optional note. */
+  | { kind: 'checklist'; steps: NativePlanStep[]; text?: string }
+  /** A plan proposed before acting, as markdown. */
+  | { kind: 'proposal'; text: string };
 
 export interface NativeSessionEvent {
   sessionId: string;
@@ -230,6 +257,8 @@ export interface NativeSessionEvent {
    * runner resolved the request without one, so its decision is unknown.
    */
   response?: NativeSessionResponse;
+  /** On `plan.updated`. */
+  plan?: NativeSessionPlan;
   status?: 'completed' | 'failed' | 'interrupted';
   /** Only a schema-bound completed provider turn may supply this value. */
   structuredResult?: NativeStructuredResult;

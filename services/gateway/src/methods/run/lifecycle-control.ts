@@ -31,6 +31,7 @@ import {
   cancelTransitionDeps,
   defaultCancelCollaborators,
 } from '../../run-lifecycle/cancel-transition.js';
+import { captureEpisodeAfterRelease } from '../../run-lifecycle/episode-capture-effect.js';
 import {
   operatorCompletionCollaborators,
   terminalTransitionDeps,
@@ -300,9 +301,18 @@ export async function runForceCompleteTransitionLocked(
   return { run: getRun(params.runId) ?? transition.run, effects: transition.effects };
 }
 
+/** The operator completion's slot release, then its episode (ADR-039 Amendment 4). */
 export async function collectCompletedRunSlotReleaseEffect(
   run: Run,
   releaseSlot: typeof releaseCompletedRunSlot = releaseCompletedRunSlot,
+): Promise<RunTransitionEffectOutcome[]> {
+  const release = await releaseCompletedRunSlotEffect(run, releaseSlot);
+  return [...release, await captureEpisodeAfterRelease(run.id)];
+}
+
+async function releaseCompletedRunSlotEffect(
+  run: Run,
+  releaseSlot: typeof releaseCompletedRunSlot,
 ): Promise<RunTransitionEffectOutcome[]> {
   if (!run.slotId) return [{ name: 'slot-release', status: 'skipped', detail: 'no slot bound' }];
   try {

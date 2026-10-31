@@ -13,7 +13,8 @@ import {
   PIPELINE_VISUAL_RESULT_SCHEMA,
 } from '@farmslot/protocol';
 
-import { JsonLineProcess } from './process.js';
+import { nativeChecklist } from './plan.js';
+import { JsonLineProcess, NativeRequestRefused } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
 import { validateNativeWorkerFilesystemPolicy } from './worker-launch.js';
 
@@ -22,6 +23,11 @@ const { codexWorkspaceTrustConfig } = createRequire(import.meta.url)(
 ) as { codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string };
 
 const READ_ONLY_PROFILE = 'farmslot-read-only-source';
+/**
+ * The app-server leaves Codex's plan tool off unless the thread enables it; without it a turn
+ * sends no `turn/plan/updated` (measured on 0.166). The tool only reports progress.
+ */
+const CODEX_PLAN_TOOL = { 'tools.update_plan.enabled': true };
 
 /** Git's shared metadata can live outside a linked worktree's writable root. */
 async function gitWritableRoot(cwd: string, env?: NodeJS.ProcessEnv): Promise<string | undefined> {
@@ -147,6 +153,7 @@ export const codexNativeAdapter: NativeAdapter = {
     resume: true,
     structuredResultSchemas: [PIPELINE_VISUAL_RESULT_SCHEMA, PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA],
     resumeAcrossWorkspaces: true,
+    steer: true,
   },
   async start(options, emit) {
     let nativeSessionId = '';
@@ -255,6 +262,14 @@ export const codexNativeAdapter: NativeAdapter = {
                 structuredResultError = 'Native schema-constrained result was not JSON';
               }
             }
+            // A plan-mode turn's proposed plan. Its streamed deltas need not match the final text.
+            const proposal = itemType === 'plan' && optionalString(item.text);
+            if (method === 'item/completed' && proposal)
+              publish({
+                type: 'plan.updated',
+                nativeId: wireString(item.id),
+                plan: { kind: 'proposal', text: proposal },
+              });
             if (!['userMessage', 'agentMessage', 'reasoning', 'plan'].includes(itemType)) {
               const tool = {
                 name: itemType,
@@ -275,6 +290,12 @@ export const codexNativeAdapter: NativeAdapter = {
             }
             break;
           }
+          case 'turn/plan/updated':
+            publish({
+              type: 'plan.updated',
+              plan: nativeChecklist(params.plan, 'step', params.explanation),
+            });
+            break;
           case 'serverRequest/resolved':
             requests.delete(String(params.requestId));
             publish({ type: 'approval.resolved', nativeId: String(params.requestId) });
@@ -337,6 +358,7 @@ export const codexNativeAdapter: NativeAdapter = {
             ? {
                 approvalPolicy: 'never',
                 config: {
+                  ...CODEX_PLAN_TOOL,
                   default_permissions: READ_ONLY_PROFILE,
                   [`permissions.${READ_ONLY_PROFILE}`]: {
                     filesystem: Object.fromEntries([
@@ -354,9 +376,10 @@ export const codexNativeAdapter: NativeAdapter = {
                     : 'untrusted'),
                 sandbox:
                   options.safetyTier === 'dangerous' ? 'danger-full-access' : 'workspace-write',
-                ...(gitRoot
-                  ? { config: { 'sandbox_workspace_write.writable_roots': [gitRoot] } }
-                  : {}),
+                config: {
+                  ...CODEX_PLAN_TOOL,
+                  ...(gitRoot ? { 'sandbox_workspace_write.writable_roots': [gitRoot] } : {}),
+                },
               }),
         }),
       );
@@ -411,6 +434,25 @@ export const codexNativeAdapter: NativeAdapter = {
           type: 'command.accepted',
           commandId: id,
           turnId: wireString(wireObject(result.turn).id),
+          text,
+        });
+      },
+      // Joins the running turn. Its events stay stamped with the turn's own command.
+      async steer(text, id) {
+        if (!turnId)
+          throw new NativeRequestRefused('Codex has no running turn to add the message to');
+        const result = wireObject(
+          await process.request('turn/steer', {
+            threadId: nativeSessionId,
+            input: [{ type: 'text', text }],
+            expectedTurnId: turnId,
+            clientUserMessageId: id,
+          }),
+        );
+        publish({
+          type: 'command.accepted',
+          commandId: id,
+          turnId: wireString(result.turnId),
           text,
         });
       },
