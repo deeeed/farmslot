@@ -529,11 +529,23 @@ export function nativeSendLabel(
   return undefined;
 }
 
+/**
+ * Steer is offered while a turn runs, with no request waiting for an answer, on a session whose
+ * runner can take a message into it. The host would queue it otherwise.
+ */
+export function nativeSteerAvailable(
+  session: NativeSessionInfo | undefined,
+  pendingRequests: readonly unknown[] = [],
+): boolean {
+  return !!session?.capabilities.steer && session.state === 'running' && !pendingRequests.length;
+}
+
 export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {
   if (!receipt) return 'Delivery unknown';
   if (receipt.queued) return 'Queued for the next turn';
   if (receipt.outcome === 'interrupted') return 'Interrupted';
   if (receipt.outcome === 'cancelled') return 'Removed';
+  if (receipt.steered && receipt.state === 'accepted') return 'Added to the running turn';
   switch (receipt.state) {
     case 'pending':
       return 'Submitting';
@@ -594,19 +606,27 @@ export function nativeMessageCancelable(
   );
 }
 
-/** A confirmed replacement generation must not inherit the old browser input lock. */
+/**
+ * Whether a client may release the one message it holds. It settles when its turn ends, and
+ * earlier once the runner accepted it and the conversation shows it: nothing is left to hold it
+ * for, so the reader can queue or steer the next message while that turn runs. A confirmed
+ * replacement generation must not inherit the old browser input lock.
+ */
 export function nativeCommandLockSettled(
   command: { commandId: string; generation: string },
   currentGeneration: string,
   receipt?: NativeCommandReceipt,
   events: NativeSessionEvent[] = [],
 ): boolean {
+  const own =
+    !!receipt &&
+    receipt.commandId === command.commandId &&
+    receipt.generation === command.generation;
   return (
     command.generation !== currentGeneration ||
-    (!!receipt &&
-      receipt.commandId === command.commandId &&
-      receipt.generation === command.generation &&
-      ['completed', 'failed'].includes(receipt.state)) ||
+    (own &&
+      (['completed', 'failed'].includes(receipt.state) ||
+        (receipt.accepted && nativeMessageShown(events, command.commandId)))) ||
     events.some(
       (event) =>
         event.type === 'turn.completed' &&

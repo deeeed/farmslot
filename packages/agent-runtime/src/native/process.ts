@@ -45,6 +45,12 @@ function withoutBase64Payloads(value: unknown): unknown {
 }
 
 /** JSON framing only. Human-readable stderr never supplies session state. */
+/**
+ * The runner answered a request with an error, or its adapter refused before writing it: the
+ * runner did not take it. Any other failure (exit, timeout) leaves acceptance unknown.
+ */
+export class NativeRequestRefused extends Error {}
+
 export class JsonLineProcess {
   readonly child: ChildProcessWithoutNullStreams;
   private nextId = 0;
@@ -131,7 +137,7 @@ export class JsonLineProcess {
         const request = this.pending.get(message.id)!;
         clearTimeout(request.timer);
         this.pending.delete(message.id);
-        if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+        if (message.error) request.reject(new NativeRequestRefused(JSON.stringify(message.error)));
         else request.resolve(message.result);
         return;
       }

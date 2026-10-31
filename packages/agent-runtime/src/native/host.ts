@@ -16,6 +16,7 @@ import {
   NATIVE_WORKER_RESPOND,
   NATIVE_WORKER_RESUME,
   NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
   NATIVE_WORKER_TRANSFER,
 } from './worker-launch.js';
 
@@ -88,6 +89,10 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
             value = await manager.send(p.owner, p.id, p.commandId, p.text);
             break;
+          case NATIVE_WORKER_STEER:
+            manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
+            value = await manager.steer(p.owner, p.id, p.commandId, p.text);
+            break;
           case NATIVE_WORKER_CANCEL_COMMAND:
             manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
             value = manager.cancelCommand(p.owner, p.id, p.commandId);
@@ -115,6 +120,10 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
           case 'send':
             manager.assertUnmanagedSession(p.owner, p.id);
             value = await manager.send(p.owner, p.id, p.commandId, p.text);
+            break;
+          case 'steer':
+            manager.assertUnmanagedSession(p.owner, p.id);
+            value = await manager.steer(p.owner, p.id, p.commandId, p.text);
             break;
           case 'cancelCommand':
             manager.assertUnmanagedSession(p.owner, p.id);

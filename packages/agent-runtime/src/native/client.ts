@@ -29,6 +29,7 @@ import {
   NATIVE_WORKER_RESPOND,
   NATIVE_WORKER_RESUME,
   NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
   NATIVE_WORKER_TRANSFER,
   type NativeWorkerCancelResult,
   type NativeWorkerCancelTarget,
@@ -207,6 +208,15 @@ export class NativeSessionClient {
       text,
     });
   }
+  steerWorker(owner: string, target: NativeWorkerTarget, commandId: string, text: string) {
+    return this.call<NativeSessionSendResult>({
+      method: NATIVE_WORKER_STEER,
+      owner,
+      ...this.workerTarget(target),
+      commandId,
+      text,
+    });
+  }
   cancelCommandWorker(owner: string, target: NativeWorkerTarget, commandId: string) {
     return this.call<NativeCommandReceipt>({
       method: NATIVE_WORKER_CANCEL_COMMAND,
@@ -281,6 +291,10 @@ export class NativeSessionClient {
   }
   send(owner: string, id: string, commandId: string, text: string) {
     return this.call<NativeSessionSendResult>({ method: 'send', owner, id, commandId, text });
+  }
+  /** An older host refuses this as an unknown method instead of queueing the message. */
+  steer(owner: string, id: string, commandId: string, text: string) {
+    return this.call<NativeSessionSendResult>({ method: 'steer', owner, id, commandId, text });
   }
   /** An older host refuses this as an unknown method. */
   cancelCommand(owner: string, id: string, commandId: string) {
