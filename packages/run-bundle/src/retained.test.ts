@@ -27,6 +27,7 @@ import {
   readRunBundleAvailability,
   reserveRunBundleMetadata,
   resolveRunBundleEntry,
+  runBundleHousekeepingPaths,
 } from './retained.js';
 
 async function fixture(t: TestContext) {
@@ -535,6 +536,62 @@ test('GC retains an active prepared capture after a newer output advances the Ru
   await assert.rejects(readRetainedRunBundle(f.store, prepared.ref, f.run.id), { code: 'ENOENT' });
 });
 
+test("housekeeping selects an active run's superseded captures for archival but keeps its live ones", async (t) => {
+  const f = await fixture(t);
+  f.run.status = 'human-gating';
+  const commit: MaterializeRunBundleRequest['commit'] = async (ref) => {
+    f.run.artifactBundle = ref;
+    await writeFile(path.join(f.store.runsDir, `${f.run.id}.json`), JSON.stringify(f.run));
+  };
+  const capture = (key: string) =>
+    materializeRunBundle({ ...f.request, captureKey: key, manifestDigest: key, commit });
+  const archivable = async () =>
+    (await runBundleHousekeepingPaths(f.store))
+      .filter((entry) => entry.store === 'run-bundles')
+      .map((entry) => `${path.basename(entry.path)}:${entry.runId}`)
+      .sort();
+  // Captured before generations were recorded, then the run advanced: only the newest stays.
+  const legacy = await capture('legacy:package');
+  f.run.engineState = { generation: 1 };
+  const superseded = await capture('generation-1:package');
+  f.run.engineState = { generation: 2 };
+  const prepared = await capture('generation-2:package');
+  const output = await capture('generation-2:output');
+  const owned = (...captures: Array<{ ref: RunArtifactBundleRef }>) =>
+    captures.map((entry) => `${entry.ref.bundleDigest}:${f.run.id}`).sort();
+  assert.deepEqual(await archivable(), owned(legacy, superseded));
+
+  // A newer generation keeps only its own captures and the run's newest one.
+  f.run.engineState = { generation: 3 };
+  await commit(output.ref, []);
+  assert.deepEqual(await archivable(), owned(legacy, superseded, prepared));
+
+  // Interrupted archive staging is not a bundle, and archived captures take their intents along.
+  await mkdir(path.join(f.store.root, 'sha256', `.retention-${'0'.repeat(8)}`));
+  const selection = (await runBundleHousekeepingPaths(f.store)).filter(
+    (entry) => entry.store === 'run-bundles' || entry.path.includes('bundle-intents'),
+  );
+  assert.equal(selection.filter((entry) => entry.store === 'bundle-intents').length, 3);
+  // Each bundle follows its intents, so a host interrupted after the intents leaves only the
+  // bundle, which the next pass selects again; a same-key capture starts over either way.
+  for (const [index, entry] of selection.entries())
+    if (entry.store === 'bundle-intents')
+      assert.equal(
+        selection.slice(index).some((later) => later.store === 'run-bundles'),
+        true,
+      );
+  for (const entry of selection.filter((item) => item.store === 'bundle-intents'))
+    await rm(entry.path, { force: true });
+  assert.equal(
+    (await runBundleHousekeepingPaths(f.store)).filter((entry) => entry.store === 'run-bundles')
+      .length,
+    3,
+  );
+  const recaptured = await capture('legacy:package');
+  const bundle = await readRetainedRunBundle(f.store, recaptured.ref, f.run.id);
+  assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+});
+
 test('a cached manifest cannot hide loss of the retained bundle directory', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);
@@ -793,6 +850,22 @@ test('near-full storage commits the report before media admission and fills the 
   assert.deepEqual(repaired.ref, partial.ref);
   assert.deepEqual(repaired.missingData, []);
   assert.equal(transfers, 1);
+});
+
+test('media that outgrew its captured size is recorded as changed without failing the capture', async (t) => {
+  const f = await fixture(t);
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const result = await materializeRunBundle({
+    ...f.request,
+    acquireMedia: async () => {
+      throw Object.assign(new Error('File copy exceeds its admitted byte capacity.'), {
+        code: 'EFBIG',
+      });
+    },
+  });
+  assert.ok(result.missingData.includes('changed:artifacts/capture.mp4'));
+  const bundle = await readRetainedRunBundle(f.store, result.ref, f.run.id);
+  assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
 });
 
 test('acquisition media under FARMSLOT_PROJECTS_DIR is charged like the default projects dir', async (t) => {
