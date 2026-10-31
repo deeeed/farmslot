@@ -10,7 +10,7 @@ import {
   type TerminalInputSequence,
 } from '@farmslot/protocol';
 
-import { execLocal,type ExecResult } from '../core/exec.js';
+import { execLocal, type ExecResult } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { nodeExec } from '../fleet/node-rpc.js';
@@ -100,20 +100,14 @@ export async function writeSequencedInput(
   const unsure = !last || (last.uncertain && seq.n === last.n);
   if (last && seq.n <= last.n && !unsure) return;
   const target = await resolve();
-  let record = target.record;
+  const record = target.record;
   if (unsure && record) {
     await recording.get(pane);
-    const recorded = await record.read(seq.stream).catch((error: unknown) => {
-      // A host whose tmux keeps no pane options: input there falls back to this process's memory.
-      if (!(error instanceof PaneRecordUnsupportedError)) throw error;
-      record = undefined;
-      return null;
-    });
+    const recorded = await record.read(seq.stream);
     if (recorded !== null && recorded >= seq.n) {
       remember(pane, { stream: seq.stream, n: recorded }, false);
       return;
     }
-    if (!record && last && !target.typesOnce) throw uncertain();
   } else if (unsure && last && !target.typesOnce) {
     throw uncertain();
   }
@@ -140,8 +134,16 @@ function uncertain(): GatewayMethodError {
   );
 }
 
-/** tmux before 3.0 keeps no pane options: it refuses `-p` whatever the pane. */
-export class PaneRecordUnsupportedError extends Error {}
+/**
+ * tmux before 3.0 keeps no pane options, so no batch typed there is ever recorded: numbered input
+ * is refused rather than typed again after a restart.
+ */
+function recordsUnsupported(): GatewayMethodError {
+  return new GatewayMethodError(
+    'TERMINAL_INPUT_UNSUPPORTED',
+    'Typing here needs tmux 3.0 or later on this host, which keeps the record of typed input.',
+  );
+}
 
 /**
  * Records a batch on its pane without holding up the reply: a client resends only when the reply
@@ -152,7 +154,6 @@ function recordInOrder(pane: string, record: PaneInputRecord, seq: TerminalInput
   const current = (recording.get(pane) ?? Promise.resolve())
     .then(() => record.write(seq))
     .catch((error: unknown) => {
-      if (error instanceof PaneRecordUnsupportedError) return;
       // The keys are in the pane: failing the batch would only get them typed again.
       console.warn(
         `[terminal-input] ${pane}: typed but not recorded on the pane: ${errorText(error)}`,
@@ -203,8 +204,9 @@ export function tmuxPaneInputRecord(
     const result = await run(command);
     if (result.exitCode === 0) return result.stdout;
     const message = `tmux failed: ${result.stderr?.trim() || `exit ${result.exitCode}`}`;
+    // tmux before 3.0 refuses `-p` with its usage.
     throw /unknown (flag|option)|usage:/i.test(result.stderr ?? '')
-      ? new PaneRecordUnsupportedError(message)
+      ? recordsUnsupported()
       : new Error(message);
   };
   return {

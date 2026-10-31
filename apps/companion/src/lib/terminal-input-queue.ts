@@ -123,7 +123,8 @@ export const terminalInputRetryDelayMs = (attempt: number, answered: boolean) =>
  * gateway without numbering (`markSent('nowhere')`), one bound for another instance than the one
  * that took it (`assertResendable`), or one answered TERMINAL_INPUT_UNCERTAIN by a gateway whose
  * node predates numbering, is dropped with TerminalInputMaybeTypedError and the queue moves on.
- * A malformed request (INVALID_PARAMS) is dropped with its error.
+ * A request the gateway can never take (INVALID_PARAMS, or TERMINAL_INPUT_UNSUPPORTED on a host
+ * whose tmux keeps no record of typed input) is dropped with its error.
  */
 export function createTerminalInputQueue(
   send: (
@@ -196,10 +197,13 @@ export function createTerminalInputQueue(
         batch.sentTo === 'nowhere' ||
         code === 'TERMINAL_INPUT_UNCERTAIN' ||
         code === 'INVALID_PARAMS' ||
+        code === 'TERMINAL_INPUT_UNSUPPORTED' ||
         error instanceof TerminalInputMaybeTypedError
       ) {
         const dropped =
-          code === 'INVALID_PARAMS' || error instanceof TerminalInputMaybeTypedError
+          error instanceof TerminalInputMaybeTypedError ||
+          code === 'INVALID_PARAMS' ||
+          code === 'TERMINAL_INPUT_UNSUPPORTED'
             ? error
             : new TerminalInputMaybeTypedError(error);
         batch.waiters.forEach((waiter) => waiter.reject(dropped));

@@ -11,7 +11,6 @@ import {
   inputRecordsSettledForTests,
   inputSequenceSizeForTests,
   type PaneInputRecord,
-  PaneRecordUnsupportedError,
   resetInputSequencesForTests,
   runInputInOrder,
   STALE_RECORDS_FILTER,
@@ -282,33 +281,27 @@ test('a record still on its way never lowers the record of a later batch', async
   assert.deepEqual(typed, ['make\r', 'deploy\r']);
 });
 
-// tmux before 3.0 keeps no pane options: input there behaves as before pane records.
-test('a host without pane options falls back to memory and refuses an uncertain resend', async () => {
+// tmux before 3.0 keeps no pane options: nothing typed there is recorded, so a restarted gateway
+// could not tell a resend from new keys. Numbered input there is refused, never typed blind.
+test('a host without pane options refuses numbered input', async () => {
   resetInputSequencesForTests();
   const typed: string[] = [];
-  const unsupported: PaneInputRecord = {
-    read: async () => {
-      throw new PaneRecordUnsupportedError('tmux failed: unknown flag -p');
-    },
-    write: async () => {
-      throw new PaneRecordUnsupportedError('tmux failed: unknown flag -p');
-    },
-  };
-  const write = writer('slot:mmt-8', typed, { record: unsupported });
-  await write('ls\r', { stream: 'a', n: 1 });
-  await assert.rejects(write('make\r', { stream: 'a', n: 2 }, 'remote-timeout'), /timed out/);
-  await assert.rejects(write('make\r', { stream: 'a', n: 2 }), (error: unknown) => {
-    assert.equal((error as { code?: string }).code, 'TERMINAL_INPUT_UNCERTAIN');
-    return true;
-  });
-  await inputRecordsSettledForTests();
-  assert.deepEqual(typed, ['ls\r', 'make\r']);
   const old = tmuxPaneInputRecord('dev:0', async () => ({
     exitCode: 1,
     stdout: '',
     stderr: 'show-options: unknown option -- p\nusage: show-options [-gqsvw] [-t target]',
   }));
-  await assert.rejects(old.read('a'), PaneRecordUnsupportedError);
+  const unsupported = (error: unknown) => {
+    assert.equal((error as { code?: string }).code, 'TERMINAL_INPUT_UNSUPPORTED');
+    assert.match((error as Error).message, /tmux 3\.0 or later/);
+    return true;
+  };
+  await assert.rejects(old.read('a'), unsupported);
+  const write = writer('slot:mmt-8', typed, { record: old });
+  await assert.rejects(write('ls\r', { stream: 'a', n: 1 }), unsupported);
+  // Unnumbered input (an older client) is typed as before.
+  await write('ls\r');
+  assert.deepEqual(typed, ['ls\r']);
 });
 
 test('the shell prune and the node pick the same stale records', async () => {

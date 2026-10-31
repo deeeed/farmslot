@@ -155,7 +155,11 @@ export async function tmuxOutput(args: string[]): Promise<string> {
 export const TMUX_VERSION = (() => {
   try {
     return execFileSync(TMUX, ['-V'], { timeout: 2000 }).toString().trim();
-  } catch {
+  } catch (error) {
+    // Without a version the node does not offer numbered input; say why.
+    console.warn(
+      `[tmux] tmux -V failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return '';
   }
 })();

@@ -295,27 +295,31 @@ test('a batch goes again only to a gateway that can drop it as a repeat', () => 
   refused('nowhere', durable);
 });
 
-test(
-  'a malformed request is dropped with its own error; later keys go out',
-  { timeout: 5_000 },
-  async () => {
-    const requests: string[] = [];
-    const invalid = Object.assign(new Error('seq needs a stream'), { code: 'INVALID_PARAMS' });
-    const queue = createTerminalInputQueue(
-      async (data, _assertActive, markSent) => {
-        requests.push(data);
-        markSent('anywhere');
-        if (requests.length === 1) throw invalid;
-      },
-      { retryDelayMs: () => 0 },
-    );
-    const dropped = assert.rejects(queue.write('x'), (error: unknown) => error === invalid);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await queue.write('y');
-    await dropped;
-    assert.deepEqual(requests, ['x', 'y']);
-  },
-);
+for (const [code, message] of [
+  ['INVALID_PARAMS', 'seq needs a stream'],
+  ['TERMINAL_INPUT_UNSUPPORTED', 'Typing here needs tmux 3.0 or later on this host'],
+] as const)
+  test(
+    `a ${code} refusal is dropped with its own error; later keys go out`,
+    { timeout: 5_000 },
+    async () => {
+      const requests: string[] = [];
+      const invalid = Object.assign(new Error(message), { code });
+      const queue = createTerminalInputQueue(
+        async (data, _assertActive, markSent) => {
+          requests.push(data);
+          markSent('anywhere');
+          if (requests.length === 1) throw invalid;
+        },
+        { retryDelayMs: () => 0 },
+      );
+      const dropped = assert.rejects(queue.write('x'), (error: unknown) => error === invalid);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await queue.write('y');
+      await dropped;
+      assert.deepEqual(requests, ['x', 'y']);
+    },
+  );
 
 // Only a node predating numbered input answers this: the batch is dropped, the keys behind it go.
 test(
