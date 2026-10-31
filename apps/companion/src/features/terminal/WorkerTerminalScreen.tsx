@@ -35,6 +35,10 @@ import {
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
+import {
+  TerminalInputLine,
+  type TerminalInputLineHandle,
+} from '../../components/TerminalInputLine';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
@@ -152,10 +156,9 @@ export default function WorkerTerminalScreen() {
   const [windowPickerPanes, setWindowPickerPanes] = useState<TmuxWorkerSummary[]>([]);
   const [windowPickerError, setWindowPickerError] = useState<string | null>(null);
   const [windowPickerLoading, setWindowPickerLoading] = useState(false);
-  const allowTerminalTouchKeyboard = useTerminalPrefsStore((s) => s.allowTerminalTouchKeyboard);
-  const setAllowTerminalTouchKeyboard = useTerminalPrefsStore(
-    (s) => s.setAllowTerminalTouchKeyboard,
-  );
+  const terminalDirectInput = useTerminalPrefsStore((s) => s.terminalDirectInput);
+  const setTerminalDirectInput = useTerminalPrefsStore((s) => s.setTerminalDirectInput);
+  const inputLineRef = useRef<TerminalInputLineHandle>(null);
   const tmuxPrefixOption = useTerminalPrefsStore((s) => s.tmuxPrefix);
   const tmuxPrefix = TMUX_PREFIX_BYTES[tmuxPrefixOption];
   const orientationControls = useTerminalOrientationControls(terminalFullscreen);
@@ -413,6 +416,15 @@ export default function WorkerTerminalScreen() {
       });
     },
     [client, worker, requireWorkerInventory, writeWorkerInput],
+  );
+
+  // A key from the key bar or tmux shortcuts changes the pane's line, so the input line starts over.
+  const sendKey = useCallback(
+    (data: string) => {
+      inputLineRef.current?.reset();
+      sendInput(data);
+    },
+    [sendInput],
   );
 
   const openWindowPicker = useCallback(async () => {
@@ -810,14 +822,14 @@ export default function WorkerTerminalScreen() {
         <View style={styles.terminalArea}>
           <TerminalViewSurface
             ref={terminalRef}
-            allowTouchKeyboard={allowTerminalTouchKeyboard}
+            directInput={terminalDirectInput}
             initialText={lines.join('\r\n')}
             mode={terminalViewMode}
             onInput={sendInput}
             onResize={resize}
             rawHistoryText={terminalTailTextRef.current}
             readOnlyReason={
-              !worker ? 'Missing worker target' : status !== 'connected' ? 'Not connected' : null
+              !worker ? 'Missing worker target' : !heldConnected ? 'Not connected' : null
             }
           />
         </View>
@@ -956,7 +968,7 @@ export default function WorkerTerminalScreen() {
         {showTmuxShortcuts ? (
           <WorkerTmuxShortcutPanel
             disabled={!workerReady}
-            onSend={sendInput}
+            onSend={sendKey}
             tmuxPrefix={tmuxPrefix}
             onOpenWindowPicker={() => void openWindowPicker()}
           />
@@ -971,12 +983,15 @@ export default function WorkerTerminalScreen() {
           onSelect={selectWindow}
         />
         <View style={styles.keyBar}>
+          {terminalDirectInput ? null : (
+            <TerminalInputLine ref={inputLineRef} disabled={!workerReady} onSend={sendInput} />
+          )}
           <TerminalControlKeyBar
             label={null}
             runnerPane={worker}
-            touchKeyboardEnabled={allowTerminalTouchKeyboard}
-            onPress={(control) => sendInput(control.data)}
-            onToggleTouchKeyboard={() => setAllowTerminalTouchKeyboard(!allowTerminalTouchKeyboard)}
+            directInput={terminalDirectInput}
+            onPress={(control) => sendKey(control.data)}
+            onToggleDirectInput={() => setTerminalDirectInput(!terminalDirectInput)}
           />
         </View>
       </View>

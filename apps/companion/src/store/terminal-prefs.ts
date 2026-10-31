@@ -25,7 +25,8 @@ export const TMUX_PREFIX_BYTES: Record<TmuxPrefixOption, string> = {
 const DEFAULT_PREFIX: TmuxPrefixOption = 'C-a';
 
 export interface TerminalPrefs {
-  allowTerminalTouchKeyboard: boolean;
+  /** Type in the terminal itself instead of the input line. Off by default, a new key, so an old setting does not carry over. */
+  terminalDirectInput: boolean;
   tmuxPrefix: TmuxPrefixOption;
   /** Device-level keys shown in the Yours row of every terminal. */
   customKeys: TerminalCustomKey[];
@@ -36,7 +37,7 @@ export interface TerminalPrefs {
 interface TerminalPrefsStore extends TerminalPrefs {
   initialized: boolean;
   init: () => Promise<void>;
-  setAllowTerminalTouchKeyboard: (value: boolean) => void;
+  setTerminalDirectInput: (value: boolean) => void;
   setTmuxPrefix: (value: TmuxPrefixOption) => void;
   /** Returns the validation error, or null once the key is saved. */
   addCustomKey: (draft: TerminalCustomKey) => string | null;
@@ -54,7 +55,7 @@ function isTmuxPrefixOption(value: unknown): value is TmuxPrefixOption {
 export function parseTerminalPrefs(raw: string | null): TerminalPrefs {
   const parsed = raw ? (JSON.parse(raw) as Record<string, unknown> | null) : null;
   return {
-    allowTerminalTouchKeyboard: parsed?.allowTerminalTouchKeyboard === true,
+    terminalDirectInput: parsed?.terminalDirectInput === true,
     tmuxPrefix: isTmuxPrefixOption(parsed?.tmuxPrefix) ? parsed.tmuxPrefix : DEFAULT_PREFIX,
     customKeys: normalizeTerminalCustomKeys(parsed?.customKeys),
     runnerKeyOverrides: normalizeRunnerKeyOverrides(parsed?.runnerKeyOverrides),
@@ -63,7 +64,7 @@ export function parseTerminalPrefs(raw: string | null): TerminalPrefs {
 
 export function serializeTerminalPrefs(prefs: TerminalPrefs): string {
   return JSON.stringify({
-    allowTerminalTouchKeyboard: prefs.allowTerminalTouchKeyboard,
+    terminalDirectInput: prefs.terminalDirectInput,
     tmuxPrefix: prefs.tmuxPrefix,
     customKeys: prefs.customKeys,
     runnerKeyOverrides: prefs.runnerKeyOverrides,
@@ -89,7 +90,7 @@ export const useTerminalPrefsStore = create<TerminalPrefsStore>((set, get) => {
         set({ initialized: true });
       }
     },
-    setAllowTerminalTouchKeyboard: (value) => update({ allowTerminalTouchKeyboard: value }),
+    setTerminalDirectInput: (value) => update({ terminalDirectInput: value }),
     setTmuxPrefix: (value) => update({ tmuxPrefix: value }),
     addCustomKey: (draft) => {
       const result = addTerminalCustomKey(get().customKeys, draft);

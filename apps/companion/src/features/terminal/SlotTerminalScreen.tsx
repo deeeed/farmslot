@@ -53,6 +53,10 @@ import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
+import {
+  TerminalInputLine,
+  type TerminalInputLineHandle,
+} from '../../components/TerminalInputLine';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   type ArtifactManifestEntry,
@@ -275,10 +279,10 @@ export default function TerminalScreen() {
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const slot = useFleetStore((s) => s.fleet?.slots.find((entry) => entry.slot === slotId));
-  const allowTerminalTouchKeyboard = useTerminalPrefsStore((s) => s.allowTerminalTouchKeyboard);
-  const setAllowTerminalTouchKeyboard = useTerminalPrefsStore(
-    (s) => s.setAllowTerminalTouchKeyboard,
-  );
+  const terminalDirectInput = useTerminalPrefsStore((s) => s.terminalDirectInput);
+  const setTerminalDirectInput = useTerminalPrefsStore((s) => s.setTerminalDirectInput);
+  const inputLineRef = useRef<TerminalInputLineHandle>(null);
+  const [focusInputLineOnOpen, setFocusInputLineOnOpen] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
   const [lineCount, setLineCount] = useState<(typeof LINE_COUNT_OPTIONS)[number]>(50);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -1683,11 +1687,15 @@ export default function TerminalScreen() {
             targetWarning={targetWarning}
             terminalInputDisabled={Boolean(terminalInputDisabledReason)}
             voiceRecorderBusy={voiceRecorderBusy}
-            onOpenTmux={() => setShowTerminalControls(true)}
+            onOpenTmux={() => {
+              setFocusInputLineOnOpen(false);
+              setShowTerminalControls(true);
+            }}
             onOpenContext={() => setShowTerminalOptions(true)}
             onOpenVoice={handleFloatingVoicePress}
             onOpenKeyboard={() => {
-              setAllowTerminalTouchKeyboard(true);
+              if (showTerminalControls) inputLineRef.current?.focus();
+              setFocusInputLineOnOpen(true);
               setShowTerminalControls(true);
             }}
           />
@@ -1864,7 +1872,7 @@ export default function TerminalScreen() {
         onTmuxAction={runTmuxAction}
         terminal={{
           ref: terminalViewRef,
-          allowTouchKeyboard: allowTerminalTouchKeyboard,
+          directInput: terminalDirectInput,
           initialText: lines.join('\r\n'),
           mode: terminalViewMode,
           onInput: handleTerminalInput,
@@ -2022,15 +2030,24 @@ export default function TerminalScreen() {
         <View style={[styles.composer, { paddingBottom: spacing.sm + insets.bottom }]}>
           {showTerminalControls && (
             <View style={styles.controlPanel}>
+              {terminalDirectInput ? null : (
+                <TerminalInputLine
+                  ref={inputLineRef}
+                  autoFocus={focusInputLineOnOpen}
+                  disabled={Boolean(terminalInputDisabledReason)}
+                  onSend={handleTerminalInput}
+                />
+              )}
               <TerminalControlKeyBar
                 activeLabel={activeControlKey}
                 disabled={isSendingControl || Boolean(terminalInputDisabledReason)}
-                touchKeyboardEnabled={allowTerminalTouchKeyboard}
-                onPress={(control) => void sendControlKey(control)}
+                directInput={terminalDirectInput}
+                onPress={(control) => {
+                  inputLineRef.current?.reset();
+                  void sendControlKey(control);
+                }}
                 runnerPane={slotTerminalRunnerPane(slot, tmuxWindows)}
-                onToggleTouchKeyboard={() =>
-                  setAllowTerminalTouchKeyboard(!allowTerminalTouchKeyboard)
-                }
+                onToggleDirectInput={() => setTerminalDirectInput(!terminalDirectInput)}
               />
               {slotId ? (
                 <TmuxControlPanel
