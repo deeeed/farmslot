@@ -421,7 +421,8 @@ export async function refreshArtifactMirror(
       workerPublicationReadIO(vars),
       workerArtifactsDir,
       run.recordedEvidenceContractVersion ?? 0,
-      publicationBaselineContext(run),
+      // Newly declared attempts are not in any earlier capture yet.
+      publicationBaselineContext(run, null),
     );
   }
   const workerPointerPath = path.join(workerArtifactsDir, 'latest-valid-recipe-run.json');

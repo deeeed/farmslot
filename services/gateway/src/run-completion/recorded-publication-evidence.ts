@@ -121,7 +121,7 @@ export async function recordedPublicationDependencies(
       if (
         isAdditional &&
         baseline?.inventory
-          .find((entry) => entry.path === artifactPath)
+          ?.find((entry) => entry.path === artifactPath)
           ?.sha256?.replace(/^sha256:/u, '') !==
           input.artifactDigests[file]?.replace(/^sha256:/u, '')
       )
