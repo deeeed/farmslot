@@ -359,8 +359,7 @@ async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<numb
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
-/** Bytes the store charges against `maxStoreBytes`, including staged captures. */
-export async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
+async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
   let bytes = 0;
   for (const entry of await readdir(store.root, { withFileTypes: true })) {
     const file = path.join(store.root, entry.name);
@@ -483,6 +482,25 @@ export function resolveRetainedRunBundleRef(
 }
 
 /** Reserve lightweight output capacity before starting work, under the capture/GC lock. */
+export interface RunBundleAdmissionUsage {
+  store: number;
+  reservations: number;
+  /** Gateway task trees; archival of bundles cannot free these. */
+  acquisition: number;
+  total: number;
+}
+
+/** What capture admission charges against `maxStoreBytes`, split by what holds it. */
+export async function runBundleAdmissionUsage(
+  store: RunBundleStore,
+  farmslotRoot: string,
+): Promise<RunBundleAdmissionUsage> {
+  const stored = await chargedStoreBytes(store);
+  const reservations = await reservedMetadataBytes(store);
+  const acquisition = (await acquisitionBytes(farmslotRoot)).bytes;
+  return { store: stored, reservations, acquisition, total: stored + reservations + acquisition };
+}
+
 export async function reserveRunBundleMetadata(
   store: RunBundleStore,
   runId: string,
@@ -867,7 +885,7 @@ export async function readRetainedRunBundle(
 export interface RunBundleHousekeepingPath {
   path: string;
   runId: string;
-  store: 'bundle-reservations' | 'bundle-intents' | 'bundle-staging';
+  store: 'bundle-reservations' | 'bundle-intents' | 'bundle-staging' | 'run-bundles';
 }
 
 /** Metadata/staging selection shared by the standalone collector and archive-only gateway. Caller holds the bundle lock. */
@@ -958,6 +976,20 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
     if (activeStages.has(name) || now - (await stat(directory)).mtimeMs < 86_400_000) continue;
     cleanup.push({ path: directory, runId: 'bundle-housekeeping', store: 'bundle-staging' });
   }
+  // A bundle no run references and no live capture pins is superseded storage: archive it.
+  const digestRoot = path.join(store.root, 'sha256');
+  await mkdir(digestRoot, { recursive: true });
+  for (const digest of await readdir(digestRoot)) {
+    if (referenced.has(digest) || pinned.has(digest)) continue;
+    const directory = bundleDirectory(store, digest);
+    let runId = 'bundle-housekeeping';
+    try {
+      runId = parseManifest(directory).runs[0]?.originalRunId ?? runId;
+    } catch {
+      // An unreadable manifest is still unreferenced storage.
+    }
+    cleanup.push({ path: directory, runId, store: 'run-bundles' });
+  }
   return { cleanup, referenced, pinned, committedIntents };
 }
 
@@ -984,6 +1016,8 @@ export async function collectRunBundleGarbage(
     );
     let housekeepingBytes = 0;
     for (const entry of cleanup) {
+      // This standalone collector removes unreferenced bundles itself, with their intents.
+      if (entry.store === 'run-bundles') continue;
       if (entry.store === 'bundle-staging') housekeepingBytes += await physicalBytes(entry.path);
       await rm(entry.path, { recursive: true, force: true });
     }

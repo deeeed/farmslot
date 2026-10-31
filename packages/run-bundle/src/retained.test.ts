@@ -27,6 +27,7 @@ import {
   readRunBundleAvailability,
   reserveRunBundleMetadata,
   resolveRunBundleEntry,
+  runBundleHousekeepingPaths,
 } from './retained.js';
 
 async function fixture(t: TestContext) {
@@ -535,7 +536,7 @@ test('GC retains an active prepared capture after a newer output advances the Ru
   await assert.rejects(readRetainedRunBundle(f.store, prepared.ref, f.run.id), { code: 'ENOENT' });
 });
 
-test("GC releases captures from an active run's earlier generations but keeps its current ones", async (t) => {
+test("housekeeping selects an active run's superseded captures for archival but keeps its live ones", async (t) => {
   const f = await fixture(t);
   f.run.status = 'human-gating';
   const commit: MaterializeRunBundleRequest['commit'] = async (ref) => {
@@ -544,26 +545,26 @@ test("GC releases captures from an active run's earlier generations but keeps it
   };
   const capture = (key: string) =>
     materializeRunBundle({ ...f.request, captureKey: key, manifestDigest: key, commit });
+  const archivable = async () =>
+    (await runBundleHousekeepingPaths(f.store))
+      .filter((entry) => entry.store === 'run-bundles')
+      .map((entry) => `${path.basename(entry.path)}:${entry.runId}`)
+      .sort();
+  // Captured before generations were recorded, then the run advanced: only the newest stays.
+  const legacy = await capture('legacy:package');
   f.run.engineState = { generation: 1 };
   const superseded = await capture('generation-1:package');
   f.run.engineState = { generation: 2 };
   const prepared = await capture('generation-2:package');
   const output = await capture('generation-2:output');
-  await collectRunBundleGarbage(f.store);
-  await assert.rejects(readRetainedRunBundle(f.store, superseded.ref, f.run.id), {
-    code: 'ENOENT',
-  });
-  for (const kept of [prepared, output]) {
-    const bundle = await readRetainedRunBundle(f.store, kept.ref, f.run.id);
-    assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
-  }
+  const owned = (...captures: Array<{ ref: RunArtifactBundleRef }>) =>
+    captures.map((entry) => `${entry.ref.bundleDigest}:${f.run.id}`).sort();
+  assert.deepEqual(await archivable(), owned(legacy, superseded));
 
   // A newer generation keeps only its own captures and the run's newest one.
   f.run.engineState = { generation: 3 };
   await commit(output.ref, []);
-  await collectRunBundleGarbage(f.store);
-  await assert.rejects(readRetainedRunBundle(f.store, prepared.ref, f.run.id), { code: 'ENOENT' });
-  await readRetainedRunBundle(f.store, output.ref, f.run.id);
+  assert.deepEqual(await archivable(), owned(legacy, superseded, prepared));
 });
 
 test('a cached manifest cannot hide loss of the retained bundle directory', async (t) => {
