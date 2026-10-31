@@ -60,6 +60,7 @@ export class NativeWorkerHistory {
         accepted,
         outcome,
         queued,
+        steered,
         structuredResult,
       } = command;
       this.commands.set(commandId, {
@@ -70,6 +71,7 @@ export class NativeWorkerHistory {
         accepted,
         outcome,
         ...(queued ? { queued } : {}),
+        ...(steered ? { steered } : {}),
         ...(structuredResult ? { structuredResult: structuredClone(structuredResult) } : {}),
       });
       if (!this.commandLeases.has(commandId))

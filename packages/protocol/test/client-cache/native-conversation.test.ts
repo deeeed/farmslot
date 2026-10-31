@@ -519,6 +519,8 @@ test('Steer is offered while a turn runs on a host whose runner can take a messa
   const session = page([]).session;
   const steering = { ...session, capabilities: { ...session.capabilities, steer: true } };
   assert.equal(nativeSteerAvailable({ ...steering, state: 'running' }), true);
+  // A request waiting for an answer: the host would queue the message, so Steer waits too.
+  assert.equal(nativeSteerAvailable({ ...steering, state: 'running' }, [{}]), false);
   // An older host, or a runner without steering, reports no capability: only Queue message.
   assert.equal(nativeSteerAvailable({ ...session, state: 'running' }), false);
   // Idle sends start a turn; a turn waiting on a request queues the message instead.

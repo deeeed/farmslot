@@ -5,6 +5,7 @@ import {
   NATIVE_WORKER_SEND,
   NATIVE_WORKER_STEER,
 } from '@farmslot/agent-runtime/native';
+import { nativeSendDelivery } from '@farmslot/agent-runtime/native/service';
 import {
   type AgentContext,
   isTerminalRunStatus,
@@ -151,9 +152,7 @@ async function routePinnedWorkerInput(
     leaseId: target.leaseId,
   };
   const acceptanceRecorded = nativeWorkerRecordsAcceptance(run, context);
-  const steer = method === Methods.NATIVE_SESSION_SEND && params.delivery !== undefined;
-  if (steer && params.delivery !== 'steer')
-    throw new GatewayMethodError('INVALID_PARAMS', "delivery must be 'steer'");
+  const steer = method === Methods.NATIVE_SESSION_SEND && nativeSendDelivery(params) === 'steer';
   // The acceptance ledger records an instruction for the next turn; it cannot join a running one.
   if (steer && acceptanceRecorded)
     throw new GatewayMethodError(

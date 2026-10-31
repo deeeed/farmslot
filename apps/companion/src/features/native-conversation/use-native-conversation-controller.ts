@@ -561,7 +561,7 @@ export function useNativeConversationController(params: NativeConversationParams
       connected: heldConnected,
       writable,
       canSend,
-      canSteer: canSend && nativeSteerAvailable(session),
+      canSteer: canSend && nativeSteerAvailable(session, snapshot?.pendingRequests),
       steerable: !!session?.capabilities.steer,
       sendLabel: sendLabel ?? 'Send',
       canStop:

@@ -1529,7 +1529,7 @@ ${JSON.stringify(
                             title="Add this message to the running turn"
                             ?disabled=${!this.canSend ||
                             !this.draft.trim() ||
-                            !nativeSteerAvailable(session)}
+                            !nativeSteerAvailable(session, this.requests)}
                             @click=${() => this.send('steer')}
                           >
                             Steer

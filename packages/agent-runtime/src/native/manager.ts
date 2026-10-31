@@ -31,6 +31,7 @@ import {
   nativeProfileEnvironment,
   requireNativeProfile,
 } from './account-profiles.js';
+import { NativeRequestRefused } from './process.js';
 import { journalProcesses, type ProcessIdentity } from './process-tree.js';
 import { nativeRunnerDefinitions as adapters } from './registry.js';
 import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandbox.js';
@@ -225,6 +226,8 @@ interface SessionRecord {
   // Retain receipts for the session lifetime so old command IDs stay idempotent.
   commands: Map<string, StoredCommand>;
   pendingRequests: Map<string, NativeSessionEvent>;
+  /** Commands steered into the running turn; they settle with it. */
+  steering?: Set<string>;
   context: Record<string, string>;
   sending: boolean;
 }
@@ -1049,22 +1052,21 @@ export class NativeSessionManager {
     if (event.type === 'turn.completed') {
       if (record.info.state !== 'closing') record.info.state = 'idle';
       record.pendingRequests.clear();
-      const command = event.commandId && record.commands.get(event.commandId);
-      if (command) {
+      const settle = (command: StoredCommand) => {
         command.state = event.status === 'completed' ? 'completed' : 'failed';
         command.outcome = event.status;
+      };
+      const command = event.commandId && record.commands.get(event.commandId);
+      if (command) {
+        settle(command);
         command.structuredResult = structuredResult;
       }
       // Messages added to this turn end with it, so they never hold up queued input.
-      for (const steered of record.commands.values())
-        if (
-          steered.steered &&
-          steered.generation === record.info.generation &&
-          ['unknown', 'accepted'].includes(steered.state)
-        ) {
-          steered.state = event.status === 'completed' ? 'completed' : 'failed';
-          steered.outcome = event.status;
-        }
+      for (const id of record.steering ?? []) {
+        const steered = record.commands.get(id);
+        if (steered && ['unknown', 'accepted'].includes(steered.state)) settle(steered);
+      }
+      record.steering?.clear();
     }
     if (event.type === 'session.closed') {
       if (event.data?.processStopped === true) record.info.processStopped = true;
@@ -1332,21 +1334,24 @@ export class NativeSessionManager {
       leaseId: record.info.workerLeaseId,
     };
     record.commands.set(commandId, command);
+    (record.steering ??= new Set()).add(commandId);
     // A crash after this durable reservation must never trigger a resend.
     this.append(record, { type: 'command.submitted', commandId, text });
     try {
       await adapter.steer(text, commandId);
     } catch (error) {
-      // A runner that is still up refused it. One that stopped may have taken it: unknown stays.
-      if (
-        record.adapter === adapter &&
-        !['closing', 'closed', 'failed'].includes(record.info.state)
-      )
+      // Only a refusal proves the runner did not take it; a lost reply (exit, timeout) may have.
+      const refused = error instanceof NativeRequestRefused;
+      if (refused) {
         command.state = 'failed';
+        command.outcome = 'failed';
+      }
       this.append(record, {
         type: 'error',
         commandId,
-        text: `The runner did not add the message to its turn: ${(error as Error).message}`,
+        text: refused
+          ? `The runner did not add the message to its turn: ${error.message}`
+          : `No reply from the runner; whether it added the message is unknown: ${(error as Error).message}`,
       });
     }
     return {

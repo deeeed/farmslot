@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- The native host steers: `steer` (and `native.worker.steer` under the worker's lease) adds a message to the running turn when the adapter declares `capabilities.steer`, the session runs and no request is pending; otherwise it is an ordinary send. The intent is journaled first, a runner refusal fails the command without a resend, and a steered command settles with its turn. Codex declares `steer` and uses `turn/steer`. A host started before the upgrade refuses the method as unknown.
+- The native host steers: `steer` (and `native.worker.steer` under the worker's lease) adds a message to the running turn when the adapter declares `capabilities.steer`, the session runs and no request is pending; otherwise it is an ordinary send. The intent is journaled first; a runner's error reply fails the command without a resend, while a lost reply (exit, timeout) stays unknown; and a steered command settles with its turn. Worker reads keep `steered` on receipts. Codex declares `steer` and uses `turn/steer`. A host started before the upgrade refuses the method as unknown.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.39.16 - 2026-11-01

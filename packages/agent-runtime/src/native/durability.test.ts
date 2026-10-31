@@ -66,7 +66,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   },600);
  }
  if(m.id===7 && !m.method){fs.appendFileSync('decisions',JSON.stringify(m.result)+'\\n');send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'completed'}}});}
- if(m.method==='turn/steer'){fs.appendFileSync('steers',m.params.input[0].text+'\\n');if(m.params.input[0].text==='refuse')return send({id:m.id,error:{code:-32600,message:'no active turn to steer'}});return send({id:m.id,result:{turnId:m.params.expectedTurnId}});}
+ if(m.method==='turn/steer'){fs.appendFileSync('steers',m.params.input[0].text+'\\n');if(m.params.input[0].text==='exit')process.exit(1);if(m.params.input[0].text==='refuse')return send({id:m.id,error:{code:-32600,message:'no active turn to steer'}});return send({id:m.id,result:{turnId:m.params.expectedTurnId}});}
  if(m.method==='turn/interrupt'){clearTimeout(timer);send({id:m.id,result:{}});send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'interrupted'}}});}
 });`;
 const delay = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1986,6 +1986,36 @@ test('while a request waits for an answer, a steered message is queued instead',
     assert.equal(queued.steered, undefined);
     assert.equal(existsSync(join(fixture.cwd, 'steers')), false);
   } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+  }
+});
+
+test('a steer whose runner stopped before replying stays unknown, and is never resent', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+  const receipt = () =>
+    manager.read('owner', session.id).commands.find((command) => command.commandId === 'exit');
+  try {
+    await manager.send('owner', session.id, 'first', 'first');
+    await until(() => manager.read('owner', session.id).session.state === 'running');
+    // The runner exits with a tool child still running: the reply is lost, not a refusal.
+    assert.equal((await manager.steer('owner', session.id, 'exit', 'exit')).state, 'unknown');
+    await until(() =>
+      ['closed', 'failed'].includes(manager.read('owner', session.id).session.state),
+    );
+    assert.deepEqual([receipt()?.state, receipt()?.steered], ['unknown', true]);
+    assert.equal(readFileSync(join(fixture.cwd, 'steers'), 'utf8'), 'exit\n');
+    const reloaded = new NativeSessionManager(fixture.root)
+      .read('owner', session.id)
+      .commands.find((command) => command.commandId === 'exit');
+    assert.equal(reloaded?.state, 'unknown');
+  } finally {
+    // The tool child outlives its runner here; never leave it running.
+    const descendant = join(fixture.cwd, 'descendant');
+    const pid = existsSync(descendant) ? Number(readFileSync(descendant, 'utf8')) : 0;
+    if (pid && alive(pid)) process.kill(pid, 'SIGKILL');
     for (const item of manager.list('owner')) await manager.close('owner', item.id);
     fixture.restore();
   }

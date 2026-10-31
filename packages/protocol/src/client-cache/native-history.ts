@@ -491,9 +491,15 @@ export function nativeSendLabel(
   return undefined;
 }
 
-/** Steer is offered while a turn runs on a session whose runner can take a message into it. */
-export function nativeSteerAvailable(session: NativeSessionInfo | undefined): boolean {
-  return !!session?.capabilities.steer && session.state === 'running';
+/**
+ * Steer is offered while a turn runs, with no request waiting for an answer, on a session whose
+ * runner can take a message into it. The host would queue it otherwise.
+ */
+export function nativeSteerAvailable(
+  session: NativeSessionInfo | undefined,
+  pendingRequests: readonly unknown[] = [],
+): boolean {
+  return !!session?.capabilities.steer && session.state === 'running' && !pendingRequests.length;
 }
 
 export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {

@@ -13,7 +13,7 @@ import {
   PIPELINE_VISUAL_RESULT_SCHEMA,
 } from '@farmslot/protocol';
 
-import { JsonLineProcess } from './process.js';
+import { JsonLineProcess, NativeRequestRefused } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
 import { validateNativeWorkerFilesystemPolicy } from './worker-launch.js';
 
@@ -417,7 +417,8 @@ export const codexNativeAdapter: NativeAdapter = {
       },
       // Joins the running turn. Its events stay stamped with the turn's own command.
       async steer(text, id) {
-        if (!turnId) throw new Error('Codex has no running turn to add the message to');
+        if (!turnId)
+          throw new NativeRequestRefused('Codex has no running turn to add the message to');
         const result = wireObject(
           await process.request('turn/steer', {
             threadId: nativeSessionId,

@@ -20,6 +20,12 @@ export class NativeSessionMethodError extends Error {
   }
 }
 
+/** A send's `delivery`: `steer`, or none for an ordinary send. */
+export function nativeSendDelivery(params: Record<string, unknown>): 'steer' | undefined {
+  if (params.delivery === undefined || params.delivery === 'steer') return params.delivery;
+  throw new NativeSessionMethodError('INVALID_PARAMS', "delivery must be 'steer'");
+}
+
 function string(params: Record<string, unknown>, key: string): string {
   const value = params[key];
   if (typeof value !== 'string' || !value.trim())
@@ -144,9 +150,7 @@ export async function routeNativeSession(
         );
       case Methods.NATIVE_SESSION_SEND: {
         const commandId = string(p, 'commandId');
-        if (p.delivery !== undefined && p.delivery !== 'steer')
-          throw new NativeSessionMethodError('INVALID_PARAMS', "delivery must be 'steer'");
-        return p.delivery === 'steer'
+        return nativeSendDelivery(p) === 'steer'
           ? await client.steer(principal, string(p, 'sessionId'), commandId, string(p, 'text'))
           : await client.send(principal, string(p, 'sessionId'), commandId, string(p, 'text'));
       }
