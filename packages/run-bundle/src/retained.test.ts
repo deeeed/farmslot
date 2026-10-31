@@ -980,19 +980,38 @@ test('a later bundle that deferred the media does not hide an earlier stored cop
   });
   assert.ok(deferred.missingData.includes('media-capacity:artifacts/capture.mp4'));
   assert.equal(transfers, 1);
-  const output = {
-    artifactBundle: deferred.ref,
+  const output = (ref: RunArtifactBundleRef) => ({
+    artifactBundle: ref,
     capturedAt: f.run.createdAt,
     workerFinished: true,
     artifactManifest: [...request.artifacts],
     manifestDigest: 'original-inventory',
-  };
+  });
+  // The deferred bundle is looked up first; its listed-but-absent video is skipped.
   await materializeRunBundle({
     ...request,
-    run: { ...f.run, artifactBundle: stored.ref, output },
+    run: { ...f.run, artifactBundle: deferred.ref, output: output(stored.ref) },
     captureKey: 'generation-3:original-inventory',
   });
   assert.equal(transfers, 1, 'the stored copy was used, not the slot');
+  // A referenced bundle that has left the store (no manifest, nothing cached) is skipped too.
+  const archived = { ...stored.ref, bundleDigest: 'f'.repeat(64) };
+  await materializeRunBundle({
+    ...request,
+    run: { ...f.run, artifactBundle: archived, output: output(stored.ref) },
+    captureKey: 'generation-4:original-inventory',
+  });
+  assert.equal(transfers, 1, 'an archived candidate falls through to the next copy');
+  // Once capacity recovers, a repair stores the deferred video in that same bundle; its
+  // manifest still lists it as deferred, and a later recapture uses it all the same.
+  await materializeRunBundle({ ...request, captureKey: 'generation-2:original-inventory' });
+  assert.equal(transfers, 2);
+  await materializeRunBundle({
+    ...request,
+    run: { ...f.run, artifactBundle: deferred.ref },
+    captureKey: 'generation-5:original-inventory',
+  });
+  assert.equal(transfers, 2, 'the repaired copy in the deferred bundle was used');
 });
 
 test('a projects dir inside the root sandbox is charged once', async (t) => {
