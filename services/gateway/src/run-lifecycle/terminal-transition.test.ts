@@ -4,10 +4,13 @@ import { setImmediate } from 'node:timers/promises';
 
 import type { Run } from '@farmslot/protocol';
 
+import { readRunEpisode } from '../run-completion/run-episode.js';
 import { isTerminalTeardownInFlight } from '../run-engine/terminal-teardown-registry.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
+import { EPISODE_AFTER_CALLER_RELEASE } from './episode-capture-effect.js';
 import {
+  operatorCompletionCollaborators,
   routeTerminalRunTransition,
   type TerminalTransitionCollaborators,
   terminalTransitionDeps,
@@ -441,3 +444,46 @@ for (const kind of ['supersede', 'force-complete', 'output-close'] as const) {
     );
   });
 }
+
+test('an ended run records its episode after the teardown; a blocked run has none yet', async () => {
+  const done = await drive(run({ id: 'run_episode_done' }), {
+    runId: 'run_episode_done',
+    kind: 'complete',
+    actor: 'engine',
+    patch: TERMINAL_PATCHES.complete,
+  }).result;
+  assert.deepEqual(done.effects.at(-1), { name: 'episode-capture', status: 'ok' });
+  assert.equal((await readRunEpisode('run_episode_done'))?.status, 'done');
+
+  const blocked = await drive(run({ id: 'run_episode_blocked' }), {
+    runId: 'run_episode_blocked',
+    kind: 'block',
+    actor: 'engine',
+    patch: TERMINAL_PATCHES.block,
+  }).result;
+  assert.equal(
+    blocked.effects.find((effect) => effect.name === 'episode-capture')?.status,
+    'skipped',
+  );
+  assert.equal(await readRunEpisode('run_episode_blocked'), undefined);
+});
+
+test("an operator completion's transition leaves the episode to its caller", async () => {
+  assert.equal(operatorCompletionCollaborators(async () => {}).captureEpisode, false);
+  const result = await drive(
+    run({ id: 'run_episode_operator' }),
+    {
+      runId: 'run_episode_operator',
+      kind: 'complete',
+      actor: 'operator',
+      patch: TERMINAL_PATCHES.complete,
+    },
+    { captureEpisode: false, cleanupSlot: null },
+  ).result;
+  assert.deepEqual(result.effects.at(-1), {
+    name: 'episode-capture',
+    status: 'skipped',
+    detail: EPISODE_AFTER_CALLER_RELEASE,
+  });
+  assert.equal(await readRunEpisode('run_episode_operator'), undefined);
+});

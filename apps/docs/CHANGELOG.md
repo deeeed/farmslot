@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document `native.session.cancel`, which removes a queued native message, in the generated gateway API reference.
+
 - List `run.attestBeforeAttempt` in the generated gateway API reference (ADR-062 Amendment 21).
 
 - Document `farmslot task repin` in the generated Recipe CLI reference.

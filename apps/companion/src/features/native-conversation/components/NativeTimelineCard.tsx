@@ -99,10 +99,13 @@ export function NativePendingMessageCard({
   text,
   delivery,
   onDisclosure,
+  edit,
 }: {
   text: string;
   delivery: string;
   onDisclosure: () => void;
+  /** A queued message the host can still remove: Edit takes it back into the composer. */
+  edit?: { disabled: boolean; onPress: () => void };
 }) {
   return (
     <View testID="companion-native-pending-message" style={[styles.card, styles.user]}>
@@ -112,6 +115,18 @@ export function NativePendingMessageCard({
         preview={nativeMessagePreview(text)}
         onDisclosure={onDisclosure}
       />
+      {edit ? (
+        <Pressable
+          testID="companion-native-edit"
+          accessibilityRole="button"
+          accessibilityState={{ disabled: edit.disabled }}
+          disabled={edit.disabled}
+          style={[styles.messageToggle, edit.disabled && styles.disabled]}
+          onPress={edit.onPress}
+        >
+          <Text style={styles.buttonText}>Edit</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

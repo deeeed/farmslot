@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.16 - 2026-11-01
+
+- The native host removes a queued message on request (`cancelCommand`, and `native.worker.cancelCommand` under the worker's lease), persisting it as failed, never submitted and `cancelled` before it replies. A message already submitted, unknown, settled or of another lease is refused. Sessions on this host report `capabilities.cancelQueued`; a host started before the upgrade refuses the request as an unknown method.
+
 ## 0.39.15 - 2026-10-31
 
 - A native session supervisor stops its host and exits when its home directory is removed, instead of running on with its process census (`ps` about ten times a second). Tests and smokes that delete their temp home no longer leak native host stacks.

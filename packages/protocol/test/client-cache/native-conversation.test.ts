@@ -12,6 +12,7 @@ import {
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
+  nativeMessageCancelable,
   nativeMessageDropped,
   nativeMessagePreview,
   nativeMessageShown,
@@ -26,7 +27,11 @@ import {
   nativeWorkLabel,
   retainNativeMessages,
 } from '../../src/client-cache/native-history.js';
-import type { NativeSessionEvent, NativeSessionReadResult } from '../../src/rpc/native-session.js';
+import type {
+  NativeCommandReceipt,
+  NativeSessionEvent,
+  NativeSessionReadResult,
+} from '../../src/rpc/native-session.js';
 
 function event(
   sequence: number,
@@ -451,6 +456,38 @@ test('a message the host failed without submitting it is dropped; a delivered on
   assert.equal(nativeMessageDropped(receipt('completed', true)), false);
   // No receipt for this generation: the host may still send it after a resume.
   assert.equal(nativeMessageDropped(), false);
+});
+
+test('a queued message can be taken back while its host removes queued messages', () => {
+  const session = page([]).session;
+  const host = { ...session, capabilities: { ...session.capabilities, cancelQueued: true } };
+  const queued: NativeCommandReceipt = {
+    commandId: 'command',
+    generation: 'generation',
+    state: 'pending',
+    queued: true,
+    submitted: false,
+    accepted: false,
+  };
+  assert.equal(nativeMessageCancelable(host, queued), true);
+  // An older host does not report the capability, so its session offers no Edit.
+  assert.equal(nativeMessageCancelable(session, queued), false);
+  assert.equal(nativeMessageCancelable(undefined, queued), false);
+  assert.equal(nativeMessageCancelable(host), false);
+  // Submitted, or queued in another generation: only Stop applies.
+  const submitted = { ...queued, queued: false, state: 'unknown' as const, submitted: true };
+  assert.equal(nativeMessageCancelable(host, submitted), false);
+  assert.equal(nativeMessageCancelable(host, { ...queued, generation: 'previous' }), false);
+  // Removed: failed and never submitted, so its text goes back to the composer.
+  const removed = {
+    ...queued,
+    queued: false,
+    state: 'failed' as const,
+    outcome: 'cancelled' as const,
+  };
+  assert.equal(nativeMessageCancelable(host, removed), false);
+  assert.equal(nativeMessageDropped(removed), true);
+  assert.equal(nativeDeliveryLabel(removed), 'Removed');
 });
 
 test('late acceptance restores the user prompt before its assistant response', () => {

@@ -9,7 +9,8 @@ import type {
 import { exportRunsToBundle, importBundle, listBundle } from '@farmslot/run-bundle';
 
 import { farmslotRoot } from '../projects/repo-root.js';
-import { loadAllRuns } from '../runs/store.js';
+import { captureRunEpisode } from '../run-completion/run-episode.js';
+import { getRun, loadAllRuns } from '../runs/store.js';
 
 export async function runBundleExport(
   params: RunBundleExportParams,
@@ -52,5 +53,15 @@ export async function runBundleRetain(
 ): Promise<import('@farmslot/protocol').RunBundleRetainResult> {
   if (!params.runId?.trim()) throw new Error('Invalid run.bundle.retain params: missing runId');
   const { retainRunArtifacts } = await import('../run-completion/retained-artifacts.js');
-  return retainRunArtifacts(params.runId);
+  const result = await retainRunArtifacts(params.runId);
+  // ADR-039 Amendment 4 backfill: an ended run's episode picks up the digests just retained.
+  // Advisory like every episode write: the retain itself succeeded and stays reported as such.
+  const run = getRun(params.runId);
+  if (run)
+    await captureRunEpisode(run).catch((error) =>
+      console.warn(
+        `[run-episode] ${run.id}: refresh after retain failed: ${(error as Error).message}`,
+      ),
+    );
+  return result;
 }

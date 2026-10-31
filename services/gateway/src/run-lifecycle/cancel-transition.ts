@@ -15,6 +15,7 @@ import { cancelNativeRunWorkers } from '../runners/native/worker.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { schedulerTick } from '../work-graph/store.js';
 
+import { episodeCaptureEffect } from './episode-capture-effect.js';
 import {
   fenceRunSlotCleanup,
   recordSlotTeardownSkipped,
@@ -139,7 +140,7 @@ function cancelEffects(collaborators: CancelCollaborators): {
       {
         name: 'slot-release',
         severity: 'advisory',
-        // Last: tmux teardown is slow, and the terminal state was already published
+        // The last teardown: tmux teardown is slow, and the terminal state was already published
         // through `onMutated`, so Command Center does not wait on it.
         apply: async ({ run }) => {
           if (!run.slotId) return 'skipped';
@@ -158,6 +159,8 @@ function cancelEffects(collaborators: CancelCollaborators): {
           return 'ok';
         },
       },
+      // After the teardown, so writing history never delays the slot.
+      episodeCaptureEffect(),
     ],
   };
 }
