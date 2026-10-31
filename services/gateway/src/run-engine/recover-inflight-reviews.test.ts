@@ -777,6 +777,109 @@ test('a reviewer launch no session accepted settles failed after the bound, not 
   assert.ok(warn.mock.calls.length > 0);
 });
 
+test('a launch the host accepted but the gateway never recorded is adopted, not failed', async (t) => {
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'owner';
+  t.after(() => {
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  });
+  const vars = makeVars({ remoteRepo: os.tmpdir() });
+  const run = createRun(
+    {
+      project: 'example-mobile-farm',
+      flowType: 'dev',
+      ticketOrPr: 'UNIT-ACCEPTED-LAUNCH',
+      slotId: vars.slotId,
+    },
+    { nativeOwnerPrincipalId: 'owner' },
+  );
+  const launchRequestedAt = '2026-10-31T14:24:56.032Z';
+  const context = reviewerContext({
+    runId: run.id,
+    slotId: vars.slotId,
+    status: 'launching',
+    artifactScope: 'pipeline-review',
+    attemptStartedAt: '2026-10-31T14:21:12.844Z',
+    nativeSession: {
+      sessionId: 'native-session',
+      commandId: 'launch-command',
+      generation: 'launch-generation',
+      leaseId: 'lease',
+      executionNodeId: 'node',
+      ownerPrincipalId: 'owner',
+      launchRequestedAt,
+    },
+  });
+  t.after(async () => {
+    updateRun(run.id, {
+      agentContexts: [
+        {
+          ...context,
+          status: 'failed',
+          nativeSession: { ...context.nativeSession!, closedAt: new Date().toISOString() },
+        },
+      ],
+    });
+    await deleteTestRunIfPresent(run.id);
+  });
+  updateRun(run.id, { agentContexts: [context], engineState: { publishGate: { reviews: [] } } });
+  t.mock.method(console, 'warn', () => {});
+  // The host accepted the launch command; a restart lost the gateway's acceptance write.
+  const snapshot: NativeSessionReadResult = {
+    session: {
+      id: 'native-session',
+      generation: 'launch-generation',
+      hostPid: 10,
+      runner: 'claude',
+      nativeSessionId: 'conversation',
+      ownerPrincipalId: 'owner',
+      executionNodeId: 'node',
+      accountContextId: 'account',
+      cwd: '/tmp/fixture',
+      executable: 'claude',
+      version: 'fixture',
+      mode: 'default',
+      accountMode: 'native',
+      state: 'running',
+      capabilities: {
+        modes: ['default'],
+        streaming: true,
+        tools: true,
+        approvals: false,
+        questions: false,
+        interrupt: true,
+        resume: true,
+      },
+    },
+    events: [],
+    cursor: 0,
+    hasMore: false,
+    pendingRequests: [],
+    commands: [
+      {
+        commandId: 'launch-command',
+        generation: 'launch-generation',
+        state: 'accepted',
+        submitted: true,
+        accepted: true,
+      },
+    ],
+  };
+  await recoverInflightPublicationReviews(run.id, vars.slotId, {
+    now: () => Date.parse(launchRequestedAt) + 30 * 60_000,
+    readers: {
+      slot: async () => vars,
+      config: async () => ({ enabled: true }),
+      package: async () => undefined,
+      native: async () => snapshot,
+    },
+  });
+  const adopted = getRun(run.id)!.agentContexts![0]!;
+  assert.equal(adopted.status, 'working', 'a running reviewer is never failed by the bound');
+  assert.ok(adopted.nativeSession?.acceptedAt);
+});
+
 test('reviewerContextIsSettled terminalizes persisted and superseded reviewer ghosts', () => {
   const working = reviewerContext({
     status: 'working',
