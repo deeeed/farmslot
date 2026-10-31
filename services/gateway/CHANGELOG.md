@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Releasing a runtime capability whose provider process already exited no longer fails when the project's stop hook finds nothing to stop. The lease is released once no owned pidfile names a running process and no process captured at acquire survives, so a lease the worker stopped through the runtime hook stops blocking new leases. A provider that may still be running keeps the failure.
 - Autonomous artifact-only dev and fix-bug runs outside comparison replays get the run contract, with a local commit and no push, so a worker no longer finishes uncommitted and blocks at completion. Comparison replays keep their replay guardrails.
 - Blind eval workers start without GitHub credentials and inside a macOS sandbox that cannot read other slot checkouts or retained blind Git metadata. A recorded GitHub access attempt invalidates the trial; nodes without `sandbox-exec`, native workers and runner tiers with their own sandbox are refused.
 - Releasing a slot whose blind eval trial (failed or done) lost its slot pointer while the repository stayed on the isolated Git restores the original repository and the candidate branch first, and refuses when that trial's run record is gone instead of resetting the only copy of the candidate commits.

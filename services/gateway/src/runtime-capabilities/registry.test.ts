@@ -364,6 +364,9 @@ async function fixture(
     checkProviderCleanup?: ConstructorParameters<
       typeof RuntimeCapabilityRegistry
     >[0]['checkProviderCleanup'];
+    providerProcessesGone?: ConstructorParameters<
+      typeof RuntimeCapabilityRegistry
+    >[0]['providerProcessesGone'];
   } = {},
 ) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-registry-'));
@@ -383,6 +386,7 @@ async function fixture(
     onCommit: options.onCommit,
     captureProviderProcesses: options.captureProviderProcesses,
     checkProviderCleanup: options.checkProviderCleanup,
+    providerProcessesGone: options.providerProcessesGone,
     catalogForSlot:
       options.catalogForSlot ??
       (async (slotId) => ({
@@ -2254,6 +2258,47 @@ test('warm cleanup uses the current provider instance after a cold release and r
   assert.equal((await acquire(registry, 'app', 'second')).ok, true);
   await registry.release({ slotId: SLOT, ownerRunId: 'second', keepWarm: true });
   assert.equal((await registry.stopWarmProviders(SLOT, ['app'])).failures.length, 0);
+});
+
+test('a release hook that finds its provider already stopped releases the lease', async (t) => {
+  const frame = { pid: 52393, group: 52393, identity: 'born', resourceId: 'browser' };
+  let gone = false;
+  const checked: unknown[] = [];
+  const { registry, actions } = await fixture(t, [entry('web')], {
+    captureProviderProcesses: async () => [frame],
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'web.release'
+        ? { ok: false, detail: 'No running browser found' }
+        : { ok: true },
+    providerProcessesGone: async (_slotId, _entry, frames) => {
+      checked.push(frames);
+      return gone;
+    },
+  });
+  assert.equal((await acquire(registry, 'web', 'owner')).ok, true);
+  // A refusal while the provider may still run stays a durable failure that blocks the slot.
+  const refused = await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: false });
+  assert.equal(refused.ok, false);
+  let lease = (await registry.status({ slotId: SLOT })).leases[0];
+  assert.equal(lease.state, 'error');
+  assert.match(lease.cleanupFailure ?? '', /No running browser found/);
+  assert.equal((await acquire(registry, 'web', 'next')).ok, false);
+
+  gone = true;
+  const released = await registry.release({ slotId: SLOT, ownerRunId: 'owner', keepWarm: false });
+  assert.equal(released.ok, true);
+  assert.deepEqual(released.effects, ['release web']);
+  lease = (await registry.status({ slotId: SLOT })).leases.find(
+    (entry) => entry.owner.runId === 'owner',
+  )!;
+  assert.equal(lease.state, 'released');
+  assert.equal(lease.cleanupFailure, undefined);
+  assert.deepEqual(checked, [[frame], [frame]]);
+  assert.deepEqual(
+    actions.filter((action) => action === 'web.release'),
+    ['web.release', 'web.release'],
+  );
+  assert.equal((await acquire(registry, 'web', 'next')).ok, true);
 });
 
 test('identity capture failure settles acquisition and records uncertain cleanup', async (t) => {

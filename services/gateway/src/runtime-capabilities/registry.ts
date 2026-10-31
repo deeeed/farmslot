@@ -124,6 +124,12 @@ export interface RuntimeCapabilityRegistryOptions {
     entry: RuntimeCapabilityCatalogEntry,
     processes: RuntimeCapabilityLease['providerProcesses'],
   ) => Promise<string | null>;
+  /** Whether nothing the provider started is still running, so its release has nothing to stop. */
+  providerProcessesGone?: (
+    slotId: string,
+    entry: RuntimeCapabilityCatalogEntry,
+    processes: RuntimeCapabilityLease['providerProcesses'],
+  ) => Promise<boolean>;
   runAction: (
     slotId: string,
     action: RuntimeCapabilityProviderActionRef,
@@ -718,7 +724,17 @@ export class RuntimeCapabilityRegistry {
         lease.parameters,
         entry,
       );
-      if (!result.ok) return result;
+      if (!result.ok) {
+        // A hook that refuses because its process already exited leaves nothing to stop.
+        const gone = await this.options.providerProcessesGone?.(
+          lease.slotId,
+          entry,
+          lease.providerProcesses,
+        );
+        return gone
+          ? { ok: true, detail: `Provider processes had already exited; ${result.detail ?? ''}` }
+          : result;
+      }
       // A successful hook can lose its pidfile while the captured process survives.
       // Recheck the same identities before reporting the provider released.
       const residual = await this.options.checkProviderCleanup?.(
