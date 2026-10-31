@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  repinTask,
+  resumeTaskRepin,
   type TaskExecutionInput,
   type TaskExecutionProvenance,
   type TaskRecipeBindingIdentity,
@@ -84,7 +86,10 @@ function identity(value: unknown): value is TaskRecipeBindingIdentity | null {
 function readSelection(taskDir: string): TaskProjectSelection {
   const file = path.join(taskDir, 'inputs/recipe-binding.json');
   if (!fs.existsSync(file)) verifyTaskExecutionProvenance(taskDir, null);
-  const value: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return parseSelection(JSON.parse(fs.readFileSync(file, 'utf8')));
+}
+
+function parseSelection(value: unknown): TaskProjectSelection {
   if (!isRecord(value) || !identity(value.identity))
     throw new Error('Invalid retained task binding.');
   if (value.identity === null) return { identity: null };
@@ -248,6 +253,86 @@ export async function projectTaskExecution(
 export function verifySelectedTask(taskDir: string): TaskExecutionProvenance {
   const selection = readSelection(taskDir);
   return verifyTaskExecutionProvenance(taskDir, selection.identity);
+}
+
+export interface TaskRepinResult {
+  previous: TaskExecutionProvenance;
+  receipt: TaskExecutionProvenance;
+}
+
+/**
+ * ADR-068 Amendment 8: the operator's explicit repin after the task's own checkout
+ * changed its provider. The fresh selection must keep everything recorded except
+ * tooling bytes and configuration, and the checkout's retained tooling must differ;
+ * every refusal leaves the task unchanged.
+ */
+export async function repinSelectedTask(
+  options: ProjectRecipeHostOptions,
+  taskDir: string,
+  install: Omit<TaskExecutionInput, 'bindingIdentity' | 'inputs'>,
+): Promise<TaskRepinResult> {
+  const resumed = resumeTaskRepin(taskDir);
+  if (resumed) {
+    verifySelectedTask(taskDir);
+    return resumed;
+  }
+  const selection = readSelection(taskDir);
+  const previous = verifyTaskExecutionProvenance(taskDir, selection.identity);
+  const recorded = selection.identity;
+  const refuse = (code: string, message: string): never => {
+    throw new ProjectBindingError(code, message, 'initialize a separate task');
+  };
+  if (!recorded || !selection.provider || !selection.checkoutRoot)
+    return refuse('TASK_REPIN_UNSUPPORTED', 'An unbound task has no project provider to repin.');
+  const checkout = selection.checkoutRoot;
+  const owned = (file: string): boolean =>
+    file === checkout || file.startsWith(`${checkout}${path.sep}`);
+  if (!owned(selection.provider.root))
+    refuse('TASK_REPIN_UNSUPPORTED', 'Only a provider inside the task checkout can be repinned.');
+  const selectors = [
+    '--target',
+    checkout,
+    '--project',
+    recorded.project,
+    '--adapter',
+    recorded.adapter,
+    ...(recorded.app ? ['--app', recorded.app] : []),
+  ];
+  return withProjectRecipeHostContext(
+    { ...options, tokens: [...selectors, ...options.tokens] },
+    async (host) => {
+      const policy = host.provider.commandOptions?.task;
+      if (!policy || !Array.isArray(policy.stepGates))
+        refuse('TASK_REPIN_UNSUPPORTED', 'The selected provider does not declare task gates.');
+      const execution = await projectTaskExecution(host, install);
+      const fresh = parseSelection(JSON.parse(execution.selectedConfiguration ?? 'null'));
+      const current = fresh.identity;
+      if (!current)
+        return refuse('TASK_REPIN_UNSUPPORTED', 'The checkout selected no project provider.');
+      // Only tooling bytes and configuration follow the checkout; the selection stays.
+      const kept = (value: TaskProjectSelection, binding: TaskRecipeBindingIdentity) => ({
+        project: binding.project,
+        app: binding.app,
+        domain: binding.domain,
+        adapter: binding.adapter,
+        target: binding.target,
+        libraries: binding.libraries.map((library) => [library.name, library.path]),
+        pack: value.packRoot,
+        checkout: value.checkoutRoot,
+        provider: value.provider,
+        manifest: value.manifest ?? null,
+        runtimeDir: value.runtimeDir,
+        farmRuntimeDir: value.farmRuntimeDir,
+        artifactDir: value.artifactDir,
+      });
+      const before = kept(selection, recorded);
+      const after = kept(fresh, current);
+      for (const field of Object.keys(before) as (keyof typeof before)[])
+        if (JSON.stringify(before[field]) !== JSON.stringify(after[field]))
+          refuse('TASK_BINDING_CHANGED', `The task ${field} changed; a repin keeps the selection.`);
+      return { previous, receipt: repinTask(taskDir, execution, previous, checkout) };
+    },
+  );
 }
 
 export async function withTaskProjectHost<T>(

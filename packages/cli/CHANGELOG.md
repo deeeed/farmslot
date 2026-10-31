@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot task repin <task-dir>` lets an operator repin a task whose own branch changed its recipe provider, so the harness can run the new actions without a fresh task. It refuses before any change when the selection changed or the provider did not (ADR-068 Amendment 8).
+
 - Remove the retired PR-completion visual-review capability from hosted task contracts.
 
 - Use in-memory CLI transforms so a large shared disk cache does not consume hosted task initialization budgets.

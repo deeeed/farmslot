@@ -26,7 +26,7 @@ test('canonical helper names appear in grammar and generated completions', () =>
   const tree = commandTree(cli());
   assert.deepEqual(
     tree.find((entry) => entry.name === 'task')?.subs.map((entry) => entry.name),
-    ['init', 'verify', 'mark', 'closeout'],
+    ['init', 'verify', 'repin', 'mark', 'closeout'],
   );
   assert.deepEqual(
     tree.find((entry) => entry.name === 'review')?.subs.map((entry) => entry.name),

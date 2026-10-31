@@ -6,7 +6,7 @@
 // own retained installation.
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -30,12 +30,14 @@ import type {
 
 import { applyArtifactOnlyTaskPolicy, type ArtifactOnlyReplay } from './artifact-only.js';
 import {
+  completeInterruptedRepin,
+  repinTaskExecution,
   retainTaskExecution,
   type TaskExecutionInput,
   taskExecutionPin,
   type TaskExecutionProvenance,
 } from './execution-provenance.js';
-import { installedTaskCommands, quoteTaskPath } from './runtime-command.js';
+import { installedTaskCommands, retainedMarkCommand } from './runtime-command.js';
 import {
   buildBranchUpdateGuardCommand,
   buildBranchUpdateInstructions,
@@ -46,7 +48,13 @@ import {
   type HandoffMetadata,
   type HandoffSourceKind,
 } from './task-document.js';
-import { writeTaskDir, type WriteTaskDirInput, type WrittenTaskDir } from './write.js';
+import {
+  buildMarkShim,
+  MARK_SHIM,
+  writeTaskDir,
+  type WriteTaskDirInput,
+  type WrittenTaskDir,
+} from './write.js';
 
 export { applyArtifactOnlyTaskPolicy } from './artifact-only.js';
 export * from './artifact-only-guard.js';
@@ -299,7 +307,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     checklistMarkdown,
     fixedMarkCommand: executionProvenance !== undefined,
     markCommand: executionProvenance
-      ? `${quoteTaskPath(executionProvenance.resolvedExecutable)} task mark`
+      ? retainedMarkCommand(executionProvenance.resolvedExecutable)
       : spec.markCommand,
     handoff: handoffMetadata,
     terminalContract,
@@ -312,6 +320,45 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     handoffMetadata,
     ...(executionProvenance ? { executionProvenance } : {}),
   };
+}
+
+/**
+ * ADR-068 Amendment 8: retain the task checkout's changed provider in a new pin and
+ * point the generated marker at its CLI. The caller verified `previous` and the
+ * selection change. Documents, checklist state, acceptance identity and evidence stay.
+ */
+export function repinTask(
+  taskDir: string,
+  execution: TaskExecutionInput,
+  previous: TaskExecutionProvenance,
+  checkoutRoot: string,
+): TaskExecutionProvenance {
+  const receipt = repinTaskExecution(taskDir, execution, previous, checkoutRoot);
+  followRepinnedMarker(taskDir, previous, receipt);
+  return receipt;
+}
+
+/** Finish a repin stopped between its renames; null when none is pending. */
+export function resumeTaskRepin(
+  taskDir: string,
+): { previous: TaskExecutionProvenance; receipt: TaskExecutionProvenance } | null {
+  const resumed = completeInterruptedRepin(taskDir);
+  if (resumed) followRepinnedMarker(taskDir, resumed.previous, resumed.receipt);
+  return resumed;
+}
+
+// An authored marker stays as written; the generated one follows the new pin.
+function followRepinnedMarker(
+  taskDir: string,
+  previous: TaskExecutionProvenance,
+  receipt: TaskExecutionProvenance,
+): void {
+  const mark = path.join(taskDir, MARK_SHIM);
+  const shim = (executable: string) => buildMarkShim(retainedMarkCommand(executable), true);
+  if (!existsSync(mark) || readFileSync(mark, 'utf8') !== shim(previous.resolvedExecutable)) return;
+  const staged = `${mark}.${path.basename(receipt.pin)}`;
+  writeFileSync(staged, shim(receipt.resolvedExecutable), { mode: 0o755 });
+  renameSync(staged, mark);
 }
 
 export interface TaskProvenance {

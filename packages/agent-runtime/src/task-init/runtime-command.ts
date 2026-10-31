@@ -18,6 +18,11 @@ export function quoteTaskPath(word: string): string {
   return `'${word.replace(/'/g, `'"'"'`)}'`;
 }
 
+/** The fixed marker command of a task that retains its CLI. */
+export function retainedMarkCommand(executable: string): string {
+  return `${quoteTaskPath(executable)} task mark`;
+}
+
 export function installedTaskCommands(mapPath?: (file: string) => string): {
   AC_CMD: string;
   ARTIFACT_CHECK_CMD: string;

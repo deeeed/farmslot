@@ -672,6 +672,8 @@ Commands:
   init [options] <task-dir>                   Create a task from an execution template
   verify <task-dir>                           Verify retained task tooling without
                                               running it
+  repin <task-dir>                            Repin the task to the provider its
+                                              checkout changed (operator)
   mark [options] <task-dir> <step> [args...]  Mark task progress through provider gates
   closeout [options] <task-dir>               Stage task closeout under project policy
   help [command]                              display help for command
@@ -732,6 +734,17 @@ Options:
 Usage: farmslot task verify [options] <task-dir>
 
 Verify retained task tooling without running it
+
+Options:
+  -h, --help  display help for command
+```
+
+## farmslot task repin
+
+```text
+Usage: farmslot task repin [options] <task-dir>
+
+Repin the task to the provider its checkout changed (operator)
 
 Options:
   -h, --help  display help for command

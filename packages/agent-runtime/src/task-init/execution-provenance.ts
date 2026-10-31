@@ -72,6 +72,8 @@ export class TaskProvenanceError extends Error {
 }
 
 const receiptFile = 'artifacts/harness-provenance.json';
+const within = (root: string, file: string): boolean =>
+  file === root || file.startsWith(`${root}${path.sep}`);
 const pinPaths = new WeakMap<TaskExecutionInput, Map<string, string>>();
 // The shared machine home expands `~`; a raw FARMSLOT_HOME would resolve
 // against the task checkout and retain the tooling inside the product source.
@@ -225,8 +227,6 @@ export function verifyTaskExecutionProvenance(
     );
   }
   const inputsRoot = fs.realpathSync(path.join(taskDir, 'inputs'));
-  const within = (root: string, file: string): boolean =>
-    file === root || file.startsWith(`${root}${path.sep}`);
   const distribution = fs.realpathSync(value.retainedInputs[0]!.path);
   if (
     value.package.name !== '@farmslot/cli' ||
@@ -289,6 +289,38 @@ export function retainTaskExecution(
   if (fs.existsSync(path.join(taskDir, receiptFile))) {
     return verifyTaskExecutionProvenance(taskDir, input.bindingIdentity);
   }
+  return writeTaskExecution(taskDir, input, additionalInputs);
+}
+
+/**
+ * ADR-068 Amendment 8: an explicit repin after the task's own checkout changed its
+ * provider. The caller verified `previous`. A new pin retains the current selection
+ * and replaces the task's selection and receipt; the previous pin keeps the original
+ * receipt and retires with the task. Tooling retained from the checkout must differ
+ * from the previous pin's bytes, or the repin refuses before the new pin exists.
+ */
+export function repinTaskExecution(
+  taskDir: string,
+  input: TaskExecutionInput,
+  previous: TaskExecutionProvenance,
+  checkoutRoot: string,
+): TaskExecutionProvenance {
+  // Producer additions, such as a template root outside the pack, are retained again.
+  const inputsRoot = path.join(previous.pin, 'inputs');
+  const carried = previous.retainedInputs
+    .filter((entry) => path.dirname(path.dirname(entry.path)) === inputsRoot)
+    .map((entry) => entry.source)
+    .filter((source) => fs.existsSync(source));
+  return writeTaskExecution(taskDir, input, carried, { previous, checkoutRoot });
+}
+
+function writeTaskExecution(
+  taskDir: string,
+  input: TaskExecutionInput,
+  additionalInputs: readonly string[],
+  repin?: { previous: TaskExecutionProvenance; checkoutRoot: string },
+): TaskExecutionProvenance {
+  const previousPin = repin?.previous.pin;
   const distribution = fs.realpathSync(input.distributionRoot);
   const packageRoot = fs.realpathSync(input.packageRoot);
   const executable = fs.realpathSync(input.executable);
@@ -310,6 +342,11 @@ export function retainTaskExecution(
     );
   fs.mkdirSync(store, { recursive: true });
   const staging = fs.mkdtempSync(path.join(store, '.staging-'));
+  const selection = path.resolve(taskDir, 'inputs/recipe-binding.json');
+  const receiptPath = path.join(taskDir, receiptFile);
+  // A repin stages its replacement selection and receipt until the new pin exists.
+  const staged = (file: string): string => (previousPin ? stagedRepinFile(file, pin) : file);
+  let swapped = false;
   try {
     const cli = retainTaskInput(distribution, path.join(staging, 'cli'), [
       path.resolve(taskDir),
@@ -350,12 +387,11 @@ export function retainTaskExecution(
     }
     fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
     if (input.selectedConfiguration !== undefined) {
-      const selection = path.resolve(taskDir, 'inputs/recipe-binding.json');
-      fs.writeFileSync(selection, input.selectedConfiguration, { flag: 'wx' });
+      fs.writeFileSync(staged(selection), input.selectedConfiguration, { flag: 'wx' });
       retainedInputs.push({
         source: selection,
         path: selection,
-        sha256: taskInputDigest(selection),
+        sha256: taskInputDigest(staged(selection)),
       });
     }
     const retainedPackage = path.join(pin, 'cli', path.relative(distribution, packageRoot));
@@ -386,18 +422,75 @@ export function retainTaskExecution(
       bindingIdentity: input.bindingIdentity,
       retainedInputs,
     };
+    if (repin) {
+      // Retained digests are path-independent, so equal bytes mean an unchanged checkout.
+      const checkout = fs.realpathSync(repin.checkoutRoot);
+      const task = fs.realpathSync(taskDir);
+      const checkoutTooling = (inputs: readonly TaskRetainedInput[]) =>
+        JSON.stringify(
+          inputs
+            .filter((entry) => within(checkout, entry.source) && !within(task, entry.source))
+            .map((entry) => [entry.source, entry.sha256])
+            .sort(),
+        );
+      if (checkoutTooling(retainedInputs) === checkoutTooling(repin.previous.retainedInputs))
+        throw new TaskProvenanceError(
+          'TASK_REPIN_UNCHANGED',
+          'The task checkout has not changed its retained tooling.',
+        );
+    }
     fs.writeFileSync(
       path.join(staging, 'provenance.json'),
-      JSON.stringify({ taskDir: fs.realpathSync(taskDir), receipt }) + '\n',
+      JSON.stringify({
+        taskDir: fs.realpathSync(taskDir),
+        receipt,
+        ...(previousPin ? { previousPin } : {}),
+      }) + '\n',
       { mode: 0o444, flag: 'wx' },
     );
     fs.renameSync(staging, pin);
     fs.mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
-    fs.writeFileSync(path.join(taskDir, receiptFile), JSON.stringify(receipt, null, 2) + '\n', {
+    fs.writeFileSync(staged(receiptPath), JSON.stringify(receipt, null, 2) + '\n', {
       flag: 'wx',
     });
+    if (previousPin) {
+      // The receipt names its pin, so an interrupted swap can be finished by resumeTaskRepin.
+      fs.renameSync(staged(receiptPath), receiptPath);
+      swapped = true;
+      if (input.selectedConfiguration !== undefined) fs.renameSync(staged(selection), selection);
+    }
     return receipt;
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
+    if (previousPin) {
+      fs.rmSync(staged(receiptPath), { force: true });
+      if (!swapped) fs.rmSync(staged(selection), { force: true });
+    }
   }
+}
+
+const stagedRepinFile = (file: string, pin: string): string => `${file}.${path.basename(pin)}`;
+
+/**
+ * Finish a repin stopped after its receipt swap by installing the selection its new pin
+ * staged. Returns the previous and current receipts, or null when no repin is pending.
+ */
+export function completeInterruptedRepin(
+  taskDir: string,
+): { previous: TaskExecutionProvenance; receipt: TaskExecutionProvenance } | null {
+  const receipt: unknown = JSON.parse(fs.readFileSync(path.join(taskDir, receiptFile), 'utf8'));
+  if (!isReceipt(receipt)) return null;
+  const selection = path.resolve(taskDir, 'inputs/recipe-binding.json');
+  const staged = stagedRepinFile(selection, receipt.pin);
+  if (!fs.existsSync(staged)) return null;
+  const authority = (pin: string): unknown =>
+    JSON.parse(fs.readFileSync(path.join(pin, 'provenance.json'), 'utf8'));
+  const current = authority(receipt.pin);
+  const previous =
+    isRecord(current) && typeof current.previousPin === 'string'
+      ? authority(current.previousPin)
+      : undefined;
+  if (!isRecord(previous) || !isReceipt(previous.receipt)) return null;
+  fs.renameSync(staged, selection);
+  return { previous: previous.receipt, receipt };
 }

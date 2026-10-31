@@ -221,3 +221,19 @@ The producer imports the project's recipe provider from the slot checkout and re
 ### Public surface and consequences
 
 No CLI command, flag, SDK export or private request field is added. The frozen input stays in the gateway task directory, never reaches the worker and is removed after initialization. A retry submits the same frozen input or verifies the completed initialization; it never renders the task again. The gateway tracks this with an internal `engineState.taskInit` run marker. Tasks initialized at write-task before this amendment are only verified. The [hosted task specification](../reference/project-recipe-contract.md#hosted-task-initialization) defines timing, transport and required checks.
+
+## Amendment 8: Repin a branch-changed provider, 2026-10-31
+
+**Status:** Proposed. Earlier decisions retain their status.
+
+### Decision and rationale
+
+An operator MAY repin a task whose own checkout changed its recipe provider. Amendment 3 freezes the provider at task initialization, and verification never repins. That is right for packaged providers, but a provider inside the product checkout is often what the task changes. A task that adds bridge actions to such a provider cannot run its recipe through the harness, and only a harness run records the acceptance status that `mark complete` requires. Run ba397e2c stopped this way, and a fresh task would discard its checklist state and evidence.
+
+The repin is explicit. Verification, resume and initialization still never repin. It runs only for a provider inside the task's recorded checkout, and only when the tooling it retains from the checkout differs in bytes from the previous pin. The rest of the recorded selection MUST match. The current receipt MUST verify first. Every refusal happens before mutation.
+
+The repin adopts the branch's provider, including its task gates, so the operator reviews that provider change first. The command is an operator action by policy: the CLI cannot tell an operator from a worker using the same account. The task's frozen terminal contract and the gateway's gates still apply.
+
+### Public surface and consequences
+
+`farmslot task repin <task-dir>` is an operator command on the execution node, run while the worker is idle. It reselects the recorded project from the task checkout and retains the current inputs in a new pin through the same producer as initialization, with the installed CLI that runs the repin. `mark` then runs that CLI, while commands rendered into the task documents keep the previous pin's. It then replaces `inputs/recipe-binding.json`, `artifacts/harness-provenance.json` and the generated marker. Task documents, checklist state, acceptance identities and evidence are unchanged. The previous pin keeps the original receipt, and the new pin's authority file names it. Both retire with the task directory. The receipt schema is unchanged. `@farmslot/agent-runtime` exports `repinTask` and `@farmslot/recipe-cli/harness` exports `repinSelectedTask`. The gateway's task mirror is not refreshed: the node copy is authoritative and the gateway checks only that a receipt exists. The [retained-tooling specification](../reference/project-recipe-contract.md#task-identity-and-gates) defines the checks.
