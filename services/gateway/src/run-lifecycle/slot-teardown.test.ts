@@ -362,6 +362,14 @@ mock.module('../evals/blind-trial.js', {
   namedExports: {
     ...realBlindTrial,
     restoreFinishedBlindTrialGit: async (target: Run) => {
+      // A blind trial's restore runs before the run gives the slot up.
+      if (target.engineState?.evalExperiment?.blind) {
+        assert.ok(
+          slotRow?.current_run_id === target.id || slotRow?.cleanup_run_id === target.id,
+          'restored while the run owns the slot',
+        );
+        assert.notEqual(slotRow?.lifecycle, 'ready');
+      }
       blindRestores.push(target.id);
       onBlindRestore?.();
       return blindRestoreResult;
@@ -1141,11 +1149,48 @@ for (const state of ['successor', 'handoff'] as const) {
 }
 
 function asFinishedBlindTrial() {
+  const headSha = 'c'.repeat(40);
   run.engineState = {
     evalExperiment: {
-      blind: { firstOutput: { headSha: 'c'.repeat(40) } },
+      experimentId: 'experiment',
+      experimentKey: 'key',
+      experimentManifestPath: '/gateway/experiment.json',
+      packagePath: '/gateway/candidate.json',
+      candidateStrategyFingerprint: 'fingerprint',
+      trialId: RUN_ID,
+      blind: {
+        version: 1,
+        baseSha: 'b'.repeat(40),
+        problemDigest: 'problem',
+        referenceCommits: ['d'.repeat(40)],
+        referencePatchId: 'reference',
+        forbiddenInputs: [],
+        isolation: {
+          slotId: SLOT_ID,
+          slotEpoch: 1,
+          capsulePath: '/slots/.farmslot-blind-evals/capsule',
+          verifiedAt: '2026-10-31T00:00:00.000Z',
+        },
+        firstOutput: {
+          headSha,
+          capturedAt: '2026-10-31T00:10:00.000Z',
+          diffPath: '/gateway/first-output.diff',
+          diffSha256: 'e'.repeat(64),
+          patchId: 'candidate',
+          diff: {
+            source: 'artifact',
+            available: true,
+            kind: 'contribution',
+            baseSha: 'b'.repeat(40),
+            headSha,
+            files: 1,
+            additions: 1,
+            deletions: 0,
+          },
+        },
+      },
     },
-  } as unknown as Run['engineState'];
+  };
 }
 
 for (const status of ['done', 'failed'] as const) {
