@@ -106,11 +106,25 @@ test('a supervisor whose home is removed stops its host instead of running on', 
     assert.equal(alive(host), false, 'the host stopped');
     assert.equal(alive(supervisor), false, 'the supervisor exited');
   } finally {
-    for (const pid of stack()) process.kill(pid, 'SIGKILL');
-    const deadline = Date.now() + 2_000;
-    while (stack().length && Date.now() < deadline)
+    // The detached supervisor leads its own process group, which its host and census
+    // `ps` join; killing the group reaches a host forked after a snapshot. A host whose
+    // group is gone is killed directly. Teardown is confirmed, never assumed.
+    const kill = (pid: number) => {
+      for (const target of [-pid, pid])
+        try {
+          process.kill(target, 'SIGKILL');
+        } catch (error) {
+          if (!['ESRCH', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? ''))
+            throw error;
+        }
+    };
+    const deadline = Date.now() + 3_000;
+    while (stack().length && Date.now() < deadline) {
+      stack().forEach(kill);
       await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     fixture.restore();
+    assert.deepEqual(stack(), [], 'no supervisor or host outlives the test');
   }
 });
 
