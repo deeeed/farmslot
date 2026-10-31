@@ -3,8 +3,12 @@
 ## Unreleased
 
 - The native host checkpoints a session's Git working tree before and after each turn, as commits under `refs/farmslot/native/<sessionId>/` built in a temporary index (the worktree, its index, `HEAD` and branches are untouched), and appends `turn.changes` after the turn. Delivery waits for the start checkpoint at most 5 s. A session keeps its last 100 checkpoints, and its refs are deleted at close. The node service answers `native.session.turn.diff` for a file a `turn.changes` event lists. Read-only reviewer sessions take no checkpoints.
-- Codex and ACP adapters send `plan.updated`: Codex `turn/plan/updated` and ACP `plan` updates as checklists, a completed Codex `plan` item as a proposal. They were dropped before. Codex threads start with its plan tool enabled (`tools.update_plan.enabled`), which the app-server otherwise leaves off.
+- The native host steers: `steer` (and `native.worker.steer` under the worker's lease) adds a message to the running turn when the adapter declares `capabilities.steer`, the session runs and no request is pending; otherwise it is an ordinary send. The intent is journaled first; a runner's error reply fails the command without a resend, while a lost reply (exit, timeout) stays unknown; and a steered command settles with its turn. Worker reads keep `steered` on receipts. Codex declares `steer` and uses `turn/steer`. A host started before the upgrade refuses the method as unknown.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.39.17 - 2026-11-01
+
+- Codex and ACP adapters send `plan.updated`: Codex `turn/plan/updated` and ACP `plan` updates as checklists, a completed Codex `plan` item as a proposal. They were dropped before. Codex threads start with its plan tool enabled (`tools.update_plan.enabled`), which the app-server otherwise leaves off.
 
 ## 0.39.16 - 2026-11-01
 

@@ -33,6 +33,7 @@ import {
   requireNativeProfile,
 } from './account-profiles.js';
 import { NATIVE_CHECKPOINT_WAIT_MS, NativeCheckpoints, withinMs } from './checkpoint.js';
+import { NativeRequestRefused } from './process.js';
 import { journalProcesses, type ProcessIdentity } from './process-tree.js';
 import { nativeRunnerDefinitions as adapters } from './registry.js';
 import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandbox.js';
@@ -227,6 +228,8 @@ interface SessionRecord {
   // Retain receipts for the session lifetime so old command IDs stay idempotent.
   commands: Map<string, StoredCommand>;
   pendingRequests: Map<string, NativeSessionEvent>;
+  /** Commands steered into the running turn; they settle with it. */
+  steering?: Set<string>;
   context: Record<string, string>;
   sending: boolean;
   /** A read-only checkout: no checkpoints. */
@@ -1061,12 +1064,21 @@ export class NativeSessionManager {
     if (event.type === 'turn.completed') {
       if (record.info.state !== 'closing') record.info.state = 'idle';
       record.pendingRequests.clear();
-      const command = event.commandId && record.commands.get(event.commandId);
-      if (command) {
+      const settle = (command: StoredCommand) => {
         command.state = event.status === 'completed' ? 'completed' : 'failed';
         command.outcome = event.status;
+      };
+      const command = event.commandId && record.commands.get(event.commandId);
+      if (command) {
+        settle(command);
         command.structuredResult = structuredResult;
       }
+      // Messages added to this turn end with it, so they never hold up queued input.
+      for (const id of record.steering ?? []) {
+        const steered = record.commands.get(id);
+        if (steered && ['unknown', 'accepted'].includes(steered.state)) settle(steered);
+      }
+      record.steering?.clear();
       const start = record.turnStart;
       record.turnStart = undefined;
       if (start) record.turnEnd = this.checkpointAfter(record, start);
@@ -1263,6 +1275,7 @@ export class NativeSessionManager {
         state: existing.state,
         commandId,
         ...(existing.queued ? { queued: true } : {}),
+        ...(existing.steered ? { steered: true } : {}),
       };
     }
     if (!record.adapter || ['starting', 'closing', 'closed', 'failed'].includes(record.info.state))
@@ -1299,6 +1312,70 @@ export class NativeSessionManager {
       accepted: false,
       leaseId: record.info.workerLeaseId,
     });
+  }
+
+  /**
+   * Adds the message to the running turn when the runner can take it there: the adapter steers,
+   * a turn runs, no request is pending and no submission is in flight. Otherwise it is an
+   * ordinary send. The intent is journaled before the runner write, like any submission; a
+   * refusal fails the command and nothing is resent. It completes with the turn it joined.
+   */
+  async steer(
+    owner: string,
+    id: string,
+    commandId: string,
+    text: string,
+  ): Promise<NativeSessionSendResult> {
+    const record = this.owned(owner, id);
+    const adapter = record.adapter;
+    if (
+      record.commands.has(commandId) ||
+      !adapter?.steer ||
+      !record.info.capabilities.steer ||
+      record.info.state !== 'running' ||
+      record.pendingRequests.size ||
+      record.sending
+    )
+      return this.send(owner, id, commandId, text);
+    this.assertAccountCurrent(record);
+    const command: StoredCommand = {
+      text,
+      commandId,
+      generation: record.info.generation,
+      state: 'unknown',
+      submitted: true,
+      accepted: false,
+      steered: true,
+      leaseId: record.info.workerLeaseId,
+    };
+    record.commands.set(commandId, command);
+    (record.steering ??= new Set()).add(commandId);
+    // A crash after this durable reservation must never trigger a resend.
+    this.append(record, { type: 'command.submitted', commandId, text });
+    try {
+      await adapter.steer(text, commandId);
+    } catch (error) {
+      // Only a refusal proves the runner did not take it; a lost reply (exit, timeout) may have.
+      const refused = error instanceof NativeRequestRefused;
+      if (refused) {
+        command.state = 'failed';
+        command.outcome = 'failed';
+      }
+      this.append(record, {
+        type: 'error',
+        commandId,
+        text: refused
+          ? `The runner did not add the message to its turn: ${error.message}`
+          : `No reply from the runner; whether it added the message is unknown: ${(error as Error).message}`,
+      });
+    }
+    return {
+      commandId,
+      submitted: command.submitted,
+      accepted: command.accepted,
+      state: command.state,
+      steered: true,
+    };
   }
 
   private async submitCommand(

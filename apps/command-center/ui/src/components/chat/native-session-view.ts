@@ -46,6 +46,7 @@ import {
   nativePlanOpen,
   nativePlanStepMark,
   nativeSendLabel,
+  nativeSteerAvailable,
   nativeTimeline,
   type NativeTimelineEntry,
   type NativeTimelineRow,
@@ -1150,7 +1151,8 @@ ${JSON.stringify(
     );
   }
 
-  private async send() {
+  /** `steer`: the message joins the running turn when the host can take it there. */
+  private async send(delivery?: 'steer') {
     if (!this.canSend || !this.draft.trim() || !this.session) return;
     const command: LocalCommand = {
       sessionId: this.session.id,
@@ -1175,6 +1177,7 @@ ${JSON.stringify(
         executionNodeId: command.executionNodeId,
         commandId: command.commandId,
         text: command.text,
+        ...(delivery ? { delivery } : {}),
         ...(this.worker ? { worker: this.workerControl } : {}),
       });
     } catch (error) {
@@ -1661,10 +1664,22 @@ ${JSON.stringify(
                         class="primary"
                         data-testid="native-send"
                         ?disabled=${!this.canSend || !this.draft.trim()}
-                        @click=${this.send}
+                        @click=${() => this.send()}
                       >
                         ${nativeSendLabel(session.state) ?? 'Send'}
                       </button>
+                      ${session.capabilities.steer
+                        ? html`<button
+                            data-testid="native-steer"
+                            title="Add this message to the running turn"
+                            ?disabled=${!this.canSend ||
+                            !this.draft.trim() ||
+                            !nativeSteerAvailable(session, this.requests)}
+                            @click=${() => this.send('steer')}
+                          >
+                            Steer
+                          </button>`
+                        : nothing}
                       <button
                         data-testid="native-stop"
                         ?disabled=${!this.connected ||

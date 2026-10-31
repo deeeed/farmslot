@@ -21,6 +21,7 @@ export {
   NATIVE_WORKER_RESUME,
   NATIVE_WORKER_SEND,
   NATIVE_WORKER_STATE,
+  NATIVE_WORKER_STEER,
   NATIVE_WORKER_TRANSFER,
   type NativeWorkerCancelResult,
   type NativeWorkerCancelTarget,

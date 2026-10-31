@@ -21,6 +21,7 @@ import {
   NATIVE_WORKER_RESPOND,
   NATIVE_WORKER_RESUME,
   NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
   NATIVE_WORKER_TRANSFER,
   type NativeWorkerLaunch,
   type NativeWorkerResumeParams,
@@ -71,7 +72,7 @@ export type HostRequest =
       launch: NativeWorkerLaunch;
     }
   | {
-      method: typeof NATIVE_WORKER_SEND;
+      method: typeof NATIVE_WORKER_SEND | typeof NATIVE_WORKER_STEER;
       owner: string;
       id: string;
       generation: string;
@@ -117,7 +118,7 @@ export type HostRequest =
     }
   | { method: 'list'; owner: string }
   | { method: 'read'; owner: string; id: string; after?: number; limit?: number }
-  | { method: 'send'; owner: string; id: string; commandId: string; text: string }
+  | { method: 'send' | 'steer'; owner: string; id: string; commandId: string; text: string }
   | { method: 'cancelCommand'; owner: string; id: string; commandId: string }
   | {
       method: 'respond';
@@ -221,6 +222,7 @@ export function decodeRequest(value: unknown): HostRequest {
   if (
     [
       NATIVE_WORKER_SEND,
+      NATIVE_WORKER_STEER,
       NATIVE_WORKER_CANCEL_COMMAND,
       NATIVE_WORKER_CLOSE,
       NATIVE_WORKER_CONFIRM_STOPPED,
@@ -236,7 +238,7 @@ export function decodeRequest(value: unknown): HostRequest {
     };
     if (method === NATIVE_WORKER_TRANSFER)
       return { method, ...target, launch: decodeNativeWorkerLaunch(p.launch) };
-    if (method === NATIVE_WORKER_SEND)
+    if (method === NATIVE_WORKER_SEND || method === NATIVE_WORKER_STEER)
       return { method, ...target, commandId: string(p, 'commandId'), text: string(p, 'text') };
     if (method === NATIVE_WORKER_CANCEL_COMMAND)
       return { method, ...target, commandId: string(p, 'commandId') };
@@ -257,7 +259,7 @@ export function decodeRequest(value: unknown): HostRequest {
       return { method, owner, id, leaseId: string(p, 'leaseId'), after: p.after, limit: p.limit };
     return { method, owner, id, after: p.after, limit: p.limit };
   }
-  if (method === 'send')
+  if (method === 'send' || method === 'steer')
     return { method, owner, id, commandId: string(p, 'commandId'), text: string(p, 'text') };
   if (method === 'cancelCommand') return { method, owner, id, commandId: string(p, 'commandId') };
   if (method === 'close' || method === 'interrupt') return { method, owner, id };

@@ -318,6 +318,15 @@ exactly one wins. Sessions on a host that removes queued commands report
 whose worker messages are acceptance sources, where the gateway refuses removal. An older
 host refuses the method as unknown
 ([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)).
+A send with `delivery: 'steer'` (host method `steer`; `native.worker.steer` under the
+worker's lease) adds the message to the running turn when the adapter declares
+`capabilities.steer`, the session is `running`, no request is pending and no submission is in
+flight; otherwise it is an ordinary send. The intent is journaled before the runner write. The
+runner's reply is acceptance, an error reply fails the command without a resend, and a lost reply
+(the runner stopped, or the request timed out) stays unknown. The receipt carries `steered: true` and settles with the turn it
+joined. Codex steers with `turn/steer` (`expectedTurnId`, the command ID as
+`clientUserMessageId`); Claude and ACP do not declare `steer`. An older host refuses the method
+as unknown.
 `read` accepts `after` and `limit`, returns a cursor and `hasMore`, and exposes the
 latest 100 receipts. Older IDs remain deduplicated across process generations;
 a missing receipt in a page does not mean the command was never submitted. Consume each page once and

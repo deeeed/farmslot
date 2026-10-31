@@ -159,7 +159,11 @@ export async function routeNativeWorkerRead(method: string, params: Record<strin
     throw new GatewayMethodError('NATIVE_SESSION_ERROR', 'Native worker history scope changed');
   const context = run.agentContexts?.find((item) => item.id === target.contextId);
   if (!nativeWorkerRecordsAcceptance(run, context)) return result;
-  // Removal is refused here, so a client must not offer it.
-  const { cancelQueued: _withheld, ...capabilities } = result.session.capabilities;
+  // Removal and steering are refused here, so a client must not offer them.
+  const {
+    cancelQueued: _cancelWithheld,
+    steer: _steerWithheld,
+    ...capabilities
+  } = result.session.capabilities;
   return { ...result, session: { ...result.session, capabilities } };
 }
