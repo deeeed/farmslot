@@ -1905,3 +1905,59 @@ test('a removal is durable, and the removed message never reaches the runner', a
     fixture.restore();
   }
 });
+
+test('each turn reports what it changed in its Git working tree, and close drops its checkpoints', async () => {
+  const fixture = setup();
+  const repo = mkdtempSync(join(tmpdir(), 'native-turn-repo-'));
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
+  );
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@localhost', ...args], {
+      cwd: repo,
+      env,
+      encoding: 'utf8',
+    });
+  git('init', '-q', '-b', 'main');
+  writeFileSync(join(repo, 'README.md'), 'base\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: repo });
+  const refs = () =>
+    git('for-each-ref', '--format=%(refname)', `refs/farmslot/native/${session.id}/`).trim();
+  // The turn streams hundreds of deltas: read every page.
+  const events = () => {
+    const all: NativeSessionEvent[] = [];
+    for (let after = 0; ; ) {
+      const page = manager.read('owner', session.id, after, 500);
+      all.push(...page.events);
+      if (!page.hasMore) return all;
+      after = page.cursor;
+    }
+  };
+  try {
+    await manager.send('owner', session.id, 'first', 'first');
+    await until(() => events().some((event) => event.type === 'turn.changes'));
+    const event = events().find((item) => item.type === 'turn.changes')!;
+    assert.equal(event.commandId, 'first');
+    // What the runner wrote during the turn; the file it wrote before the turn is not the turn's.
+    assert.deepEqual(event.changes!.files.map((file) => [file.path, file.status]).sort(), [
+      ['descendant', 'added'],
+      ['effects', 'added'],
+      ['inputs', 'added'],
+      ['native-turn.json', 'added'],
+    ]);
+    assert.ok(event.changes!.from && event.changes!.to);
+    // The reader's index and HEAD never moved.
+    assert.equal(git('diff', '--cached', '--name-only'), '');
+    assert.equal(git('rev-list', '--count', 'HEAD').trim(), '1');
+    assert.notEqual(refs(), '');
+    await manager.close('owner', session.id);
+    assert.equal(refs(), '');
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

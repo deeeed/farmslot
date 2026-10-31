@@ -24,6 +24,7 @@ export const NATIVE_WORKER_READ_METHODS: readonly string[] = [
   Methods.NATIVE_SESSION_WORKSPACE_READ,
   Methods.NATIVE_SESSION_WORKSPACE_CHANGES,
   Methods.NATIVE_SESSION_WORKSPACE_DIFF,
+  Methods.NATIVE_SESSION_TURN_DIFF,
 ];
 
 function readTarget(value: unknown): NativeWorkerControlTarget {

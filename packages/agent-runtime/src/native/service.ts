@@ -2,9 +2,11 @@ import {
   isNativeResultSchema,
   Methods,
   type NativeSessionCreateParams,
+  type NativeSessionInfo,
   type NativeSessionResponse,
 } from '@farmslot/protocol';
 
+import { nativeTurnDiff } from './checkpoint.js';
 import type { NativeSessionClient } from './client.js';
 import { NATIVE_PROFILE_METHODS, routeNativeProfile } from './profile-service.js';
 import { nativeWorkspaceChanges, nativeWorkspaceDiff, nativeWorkspaceList } from './workspace.js';
@@ -18,6 +20,29 @@ export class NativeSessionMethodError extends Error {
     super(message);
     this.name = 'NativeSessionMethodError';
   }
+}
+
+/** One changed file's diff between the checkpoints of the `turn.changes` event at `sequence`. */
+async function turnDiff(
+  client: NativeSessionClient,
+  principal: string,
+  session: NativeSessionInfo,
+  params: Record<string, unknown>,
+  path: string,
+): Promise<string> {
+  const sequence = params.sequence;
+  if (typeof sequence !== 'number' || !Number.isInteger(sequence) || sequence < 1)
+    throw new NativeSessionMethodError('INVALID_PARAMS', 'sequence must be a positive integer');
+  const [event] = (await client.read(principal, session.id, sequence - 1, 1)).events;
+  const changes = event?.sequence === sequence && event.type === 'turn.changes' && event.changes;
+  if (!changes || !changes.from || !changes.to || !changes.files.some((file) => file.path === path))
+    throw new NativeSessionMethodError('INVALID_PARAMS', 'That turn lists no such changed file');
+  return nativeTurnDiff(session.cwd, changes.from, changes.to, path).catch((error: unknown) => {
+    // Retention deleted the checkpoint, and Git collected it.
+    if (/bad object|unknown revision|invalid object/i.test((error as Error).message))
+      throw new NativeSessionMethodError('NOT_FOUND', "This turn's changes are no longer retained");
+    throw error;
+  });
 }
 
 function string(params: Record<string, unknown>, key: string): string {
@@ -53,7 +78,8 @@ export async function routeNativeSession(
       case Methods.NATIVE_SESSION_WORKSPACE_LIST:
       case Methods.NATIVE_SESSION_WORKSPACE_READ:
       case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
-      case Methods.NATIVE_SESSION_WORKSPACE_DIFF: {
+      case Methods.NATIVE_SESSION_WORKSPACE_DIFF:
+      case Methods.NATIVE_SESSION_TURN_DIFF: {
         const sessionId = string(p, 'sessionId');
         const inspect = async () => {
           const { session } = await client.read(principal, sessionId, undefined, 1);
@@ -80,7 +106,9 @@ export async function routeNativeSession(
           result = await nativeWorkspaceChanges(session.cwd);
         else {
           const path = string(p, 'path');
-          if (method === Methods.NATIVE_SESSION_WORKSPACE_LIST)
+          if (method === Methods.NATIVE_SESSION_TURN_DIFF)
+            result = { path, diff: await turnDiff(client, principal, session, p, path) };
+          else if (method === Methods.NATIVE_SESSION_WORKSPACE_LIST)
             result = await nativeWorkspaceList(session.cwd, path);
           else if (method === Methods.NATIVE_SESSION_WORKSPACE_DIFF)
             result = { path, diff: await nativeWorkspaceDiff(session.cwd, path) };

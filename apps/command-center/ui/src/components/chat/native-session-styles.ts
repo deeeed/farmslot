@@ -280,6 +280,17 @@ export const nativeSessionStyles = css`
   .plan-copy {
     min-height: 44px;
   }
+  /* A turn's changed files; each opens its diff below it. */
+  .turn-files {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+  }
+  .turn-file {
+    min-height: 44px;
+    width: 100%;
+    text-align: left;
+  }
   .composer {
     flex-shrink: 0;
     max-height: 70%;

@@ -18,6 +18,7 @@ import {
   type NativeSessionResponse,
   type NativeSessionSendResult,
   type NativeSessionTool,
+  type NativeSessionTurnDiffResult,
   type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
 import {
@@ -201,6 +202,8 @@ export class NativeSessionView extends LitElement {
   @state() private expandedMessages = new Set<string>();
   /** The proposed plan last copied, by entry key, and whether the copy worked. */
   @state() private planCopy?: { key: number; copied: boolean };
+  /** Turn file diffs the reader opened, by `sequence:path`; each is fetched once. */
+  @state() private turnDiffs = new Map<string, { diff?: string; error?: string }>();
   @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
   /** The selection the timeline DOM was last rendered for. */
   private renderedRevision = -1;
@@ -466,28 +469,30 @@ export class NativeSessionView extends LitElement {
           </details>`
         : entry.kind === 'plan'
           ? this.renderPlan(entry, planOpen)
-          : html`<span class="meta"
-                >${entry.kind === 'user'
-                  ? 'You'
-                  : entry.kind === 'assistant'
-                    ? session.runner
-                    : entry.event.at}</span
-              >
-              <div class="text">
-                ${entry.kind === 'assistant'
-                  ? this.renderMarkdown(entry, entry.text)
-                  : this.renderMessageBody(
-                      entry.text,
-                      nativeEntryPreview(entry),
-                      entry.event.commandId ?? String(entry.key),
-                    )}
-              </div>
-              ${entry.event.type === 'error' && entry.event.data
-                ? html`<details>
-                    <summary>Error details</summary>
-                    <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
-                  </details>`
-                : nothing}`}
+          : entry.kind === 'changes'
+            ? this.renderTurnChanges(entry)
+            : html`<span class="meta"
+                  >${entry.kind === 'user'
+                    ? 'You'
+                    : entry.kind === 'assistant'
+                      ? session.runner
+                      : entry.event.at}</span
+                >
+                <div class="text">
+                  ${entry.kind === 'assistant'
+                    ? this.renderMarkdown(entry, entry.text)
+                    : this.renderMessageBody(
+                        entry.text,
+                        nativeEntryPreview(entry),
+                        entry.event.commandId ?? String(entry.key),
+                      )}
+                </div>
+                ${entry.event.type === 'error' && entry.event.data
+                  ? html`<details>
+                      <summary>Error details</summary>
+                      <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
+                    </details>`
+                  : nothing}`}
     </article>`;
   }
 
@@ -544,6 +549,71 @@ export class NativeSessionView extends LitElement {
       >
         ${nativePlanCopyLabel(copied)}
       </button>`;
+  }
+
+  /** What a turn changed in the working tree; each file opens its diff between the turn's checkpoints. */
+  private renderTurnChanges(entry: NativeTimelineEntry) {
+    const changes = entry.event.changes!;
+    if (!changes.files.length) return html`<span class="meta">${entry.text}</span>`;
+    return html`<details>
+      <summary>${entry.text}</summary>
+      <ul class="turn-files">
+        ${changes.files.map((file) => {
+          const opened = this.turnDiffs.get(`${entry.event.sequence}:${file.path}`);
+          return html`<li>
+            <button
+              class="turn-file"
+              data-testid="native-turn-file"
+              aria-expanded=${opened ? 'true' : 'false'}
+              @click=${(event: Event) =>
+                void this.toggleInPlace(event.currentTarget, !!opened, () =>
+                  this.toggleTurnDiff(entry.event.sequence, file.path),
+                )}
+            >
+              ${file.status === 'added'
+                ? 'Added'
+                : file.status === 'deleted'
+                  ? 'Deleted'
+                  : 'Changed'}
+              ${file.path}
+              ${file.additions === undefined
+                ? nothing
+                : html`<span class="meta">+${file.additions} −${file.deletions}</span>`}
+            </button>
+            ${opened ? html`<pre>${opened.diff ?? opened.error ?? 'Loading…'}</pre>` : nothing}
+          </li>`;
+        })}
+      </ul>
+    </details>`;
+  }
+
+  private toggleTurnDiff(sequence: number, path: string) {
+    const key = `${sequence}:${path}`;
+    const next = new Map(this.turnDiffs);
+    if (next.delete(key)) {
+      this.turnDiffs = next;
+      return;
+    }
+    this.turnDiffs = next.set(key, {});
+    const session = this.session;
+    if (!session) return;
+    const revision = this.revision;
+    const settle = (value: { diff?: string; error?: string }) => {
+      if (revision === this.revision && this.turnDiffs.has(key))
+        this.turnDiffs = new Map(this.turnDiffs).set(key, value);
+    };
+    this.api
+      .request<NativeSessionTurnDiffResult>(Methods.NATIVE_SESSION_TURN_DIFF, {
+        sessionId: session.id,
+        executionNodeId: session.executionNodeId,
+        sequence,
+        path,
+        ...(this.worker ? { worker: this.workerControl } : {}),
+      })
+      .then(
+        (result) => settle({ diff: result.diff || 'No text changes (a binary or mode change).' }),
+        (error: unknown) => settle({ error: (error as Error).message }),
+      );
   }
 
   /** A command shows what it ran and its last lines, its raw input and output one tap away. */
@@ -982,6 +1052,7 @@ ${JSON.stringify(
     this.revision++;
     this.expandedMessages = new Set();
     this.planCopy = undefined;
+    this.turnDiffs = new Map();
     this.watchedTools = new Set();
     this.foldOpen = new Map();
     this.follow = NATIVE_FOLLOW_LATEST;

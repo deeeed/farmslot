@@ -24,6 +24,7 @@ import {
   type NativeSessionResponse,
   type NativeSessionSendResult,
   nativeStructuredResult,
+  type NativeTurnChanges,
 } from '@farmslot/protocol';
 
 import {
@@ -31,6 +32,7 @@ import {
   nativeProfileEnvironment,
   requireNativeProfile,
 } from './account-profiles.js';
+import { NATIVE_CHECKPOINT_WAIT_MS, NativeCheckpoints, withinMs } from './checkpoint.js';
 import { journalProcesses, type ProcessIdentity } from './process-tree.js';
 import { nativeRunnerDefinitions as adapters } from './registry.js';
 import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandbox.js';
@@ -227,6 +229,14 @@ interface SessionRecord {
   pendingRequests: Map<string, NativeSessionEvent>;
   context: Record<string, string>;
   sending: boolean;
+  /** A read-only checkout: no checkpoints. */
+  readOnlyCheckout?: boolean;
+  /** Git checkpoints around each turn, or none (no Git working tree). Opened by the first turn. */
+  checkpoints?: Promise<NativeCheckpoints | undefined>;
+  /** The running turn's checkpoint before it, or why there is none. */
+  turnStart?: { commandId: string; from?: string; unavailable?: string };
+  /** The previous turn's checkpoint after it, still being taken. */
+  turnEnd?: Promise<void>;
 }
 
 /** Runs only inside the local host. Synchronous fsync orders intent before native input. */
@@ -640,6 +650,8 @@ export class NativeSessionManager {
       throw error;
     }
     try {
+      // A read-only checkout is never written, so its turns change nothing to checkpoint.
+      record.readOnlyCheckout = !!filesystemPolicy;
       record.startupAbort = new AbortController();
       record.startup = transport.adapter.start(
         {
@@ -1055,6 +1067,9 @@ export class NativeSessionManager {
         command.outcome = event.status;
         command.structuredResult = structuredResult;
       }
+      const start = record.turnStart;
+      record.turnStart = undefined;
+      if (start) record.turnEnd = this.checkpointAfter(record, start);
     }
     if (event.type === 'session.closed') {
       if (event.data?.processStopped === true) record.info.processStopped = true;
@@ -1300,6 +1315,7 @@ export class NativeSessionManager {
     try {
       // A crash after this durable reservation must never trigger a resend.
       this.append(record, { type: 'command.submitted', commandId, text });
+      await this.checkpointBefore(record, commandId);
       await record.adapter!.send(text, commandId);
       return {
         submitted: command.submitted,
@@ -1477,5 +1493,56 @@ export class NativeSessionManager {
     cancelQueued();
     if (!['closed', 'failed'].includes(this.owned(owner, id).info.state))
       this.append(record, { type: 'session.closed' });
+    // A closed session's turn diffs are no longer retained, including a last turn's still being taken.
+    await record.turnEnd;
+    await (await record.checkpoints)?.remove().catch(() => undefined);
+  }
+
+  /**
+   * The checkpoint a turn starts from, after the previous turn's end checkpoint. Delivery waits
+   * for it at most NATIVE_CHECKPOINT_WAIT_MS; slower, the turn reports its changes unavailable.
+   */
+  private async checkpointBefore(record: SessionRecord, commandId: string): Promise<void> {
+    if (record.readOnlyCheckout) return;
+    record.checkpoints ??= NativeCheckpoints.open(record.info.cwd, record.info.id).catch(
+      () => undefined,
+    );
+    const taken = (async () => {
+      await record.turnEnd;
+      const checkpoints = await record.checkpoints;
+      return checkpoints && { from: await checkpoints.take() };
+    })().catch((error: unknown) => ({
+      unavailable: `The checkpoint before this turn failed: ${(error as Error).message}`,
+    }));
+    const start = await withinMs(taken, NATIVE_CHECKPOINT_WAIT_MS);
+    record.turnStart =
+      start === undefined
+        ? (await record.checkpoints) && {
+            commandId,
+            unavailable: `The checkpoint before this turn took longer than ${NATIVE_CHECKPOINT_WAIT_MS / 1000} s`,
+          }
+        : start && { commandId, ...start };
+  }
+
+  /** The turn's checkpoint after it, and `turn.changes` between the two. */
+  private async checkpointAfter(
+    record: SessionRecord,
+    start: NonNullable<SessionRecord['turnStart']>,
+  ): Promise<void> {
+    let changes: NativeTurnChanges;
+    try {
+      const checkpoints = await record.checkpoints;
+      changes =
+        start.from && checkpoints
+          ? await checkpoints.changes(start.from, await checkpoints.take())
+          : { files: [], unavailable: start.unavailable ?? 'No checkpoint before this turn' };
+    } catch (error) {
+      changes = {
+        files: [],
+        unavailable: `The checkpoint after this turn failed: ${(error as Error).message}`,
+      };
+    }
+    if (this.sessions.get(record.info.id) === record)
+      this.append(record, { type: 'turn.changes', commandId: start.commandId, changes });
   }
 }

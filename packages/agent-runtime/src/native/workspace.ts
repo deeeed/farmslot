@@ -13,7 +13,13 @@ const execFile = promisify(execFileCallback);
 const STATUS_OUTPUT_LIMIT = 8 * WORKSPACE_TEXT_LIMIT;
 const DIFF_TOO_LARGE = 'Diff exceeds the 1 MiB viewer limit.';
 
-async function git(cwd: string, args: string[], maxBuffer = WORKSPACE_TEXT_LIMIT): Promise<string> {
+/** `env`: Git variables this call sets itself, such as a temporary index; inherited ones are dropped. */
+export async function git(
+  cwd: string,
+  args: string[],
+  maxBuffer = WORKSPACE_TEXT_LIMIT,
+  env: Record<string, string> = {},
+): Promise<string> {
   try {
     const { stdout } = await execFile(
       'git',
@@ -31,9 +37,12 @@ async function git(cwd: string, args: string[], maxBuffer = WORKSPACE_TEXT_LIMIT
         maxBuffer,
         timeout: 15_000,
         // Explicit directory arguments cannot be redirected by inherited Git plumbing variables.
-        env: Object.fromEntries(
-          Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
-        ),
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
+          ),
+          ...env,
+        },
       },
     );
     return stdout;

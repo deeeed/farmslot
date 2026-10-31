@@ -25,6 +25,7 @@ import {
   type NativeTimelineRow,
   nativeTimelineRows,
   nativeToolLabel,
+  nativeTurnChangesText,
   nativeWatchTools,
   nativeWork,
   nativeWorkLabel,
@@ -806,4 +807,46 @@ test('a plan updates in place in its turn, folds to its progress when the turn e
   const long = Array.from({ length: 40 }, (_, index) => `${index + 1}. Step.`).join('\n');
   assert.ok(nativeEntryPreview(nativeTimeline([plan(1, { kind: 'proposal', text: long })])[0]));
   assert.equal(nativeEntryPreview(entries[1]), undefined);
+});
+
+test('the files a turn changed are one entry after it, summed, or why they are unavailable', () => {
+  const changes = {
+    ...event(4, 'turn.changes'),
+    changes: {
+      from: 'a'.repeat(40),
+      to: 'b'.repeat(40),
+      files: [
+        { path: 'src/a.ts', status: 'modified' as const, additions: 3, deletions: 1 },
+        { path: 'logo.png', status: 'added' as const },
+      ],
+    },
+  };
+  const timeline = nativeTimeline([event(3, 'turn.completed'), changes]);
+  assert.deepEqual(
+    timeline.map((entry) => [entry.kind, entry.key, entry.text]),
+    [
+      ['status', 3, 'Turn completed'],
+      ['changes', 4, 'Changed 2 files · +3 −1'],
+    ],
+  );
+  // Cached history keeps it.
+  assert.deepEqual(
+    retainNativeMessages([event(3, 'turn.completed'), changes]).map((item) => item.type),
+    ['turn.completed', 'turn.changes'],
+  );
+  assert.equal(nativeTurnChangesText({ files: [] }), 'No file changes');
+  assert.equal(
+    nativeTurnChangesText({
+      files: [{ path: 'a', status: 'deleted', additions: 0, deletions: 2 }],
+    }),
+    'Changed 1 file · +0 −2',
+  );
+  assert.equal(
+    nativeTurnChangesText({ files: changes.changes.files, truncated: true }),
+    'Changed 2+ files · +3 −1',
+  );
+  assert.equal(
+    nativeTurnChangesText({ files: [], unavailable: 'The checkpoint after this turn failed' }),
+    'Changes unavailable: The checkpoint after this turn failed',
+  );
 });

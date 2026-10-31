@@ -214,6 +214,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `native.session.read`                   | native           | read-only     | —      | —      | Native Session Read gateway method.                   |
 | `native.session.respond`                | native           | bounded-write | —      | —      | Native Session Respond gateway method.                |
 | `native.session.send`                   | native           | bounded-write | —      | —      | Native Session Send gateway method.                   |
+| `native.session.turn.diff`              | native           | bounded-write | —      | —      | Native Session Turn Diff gateway method.              |
 | `native.session.workspace.changes`      | native           | bounded-write | —      | —      | Native Session Workspace Changes gateway method.      |
 | `native.session.workspace.diff`         | native           | bounded-write | —      | —      | Native Session Workspace Diff gateway method.         |
 | `native.session.workspace.list`         | native           | read-only     | —      | —      | Native Session Workspace List gateway method.         |

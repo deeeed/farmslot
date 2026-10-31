@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- `native.session.turn.diff` returns a file's diff for one native turn, for a standalone session or a pinned worker through the same read fence as the workspace reads.
 - A fleet refresh checks every slot's agent on a machine with two execs (one tmux pane listing, one process snapshot walked from each pane) instead of three or more per slot. A full refresh of the dev farm's 89 checked slots drops from about 267 execs and 89 `ps` runs to 6 execs and 3 `ps` runs.
 - Every run that ends now records one small episode at `.runs/episodes/<run-id>.json` (`farmslot-episode-v1`, ADR-039 Amendment 4). It lists the run's input, recipe attempts, agents, review results and decisions as paths plus the sha256 already held by the output inventory or retained bundle manifests; no artifact is re-read or re-hashed. An advisory `episode-capture` effect writes it after the slot teardown; an operator completion, which releases its slot after the transition, writes it right after that release. The hourly retention pass retries any run still missing one, ahead of its archival work, and `farmslot runs bundle retain` refreshes it.
 - `run.attestBeforeAttempt` names an attempt by its path under `artifacts/recipe-runs/`, so an attempt in the harness's `attempts/<id>` layout can be attested. Every path segment must start with a letter or digit, which refuses `..`, hidden, empty and absolute segments.

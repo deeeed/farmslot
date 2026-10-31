@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The native host checkpoints a session's Git working tree before and after each turn, as commits under `refs/farmslot/native/<sessionId>/` built in a temporary index (the worktree, its index, `HEAD` and branches are untouched), and appends `turn.changes` after the turn. Delivery waits for the start checkpoint at most 5 s. A session keeps its last 100 checkpoints, and its refs are deleted at close. The node service answers `native.session.turn.diff` for a file a `turn.changes` event lists. Read-only reviewer sessions take no checkpoints.
 - Codex and ACP adapters send `plan.updated`: Codex `turn/plan/updated` and ACP `plan` updates as checklists, a completed Codex `plan` item as a proposal. They were dropped before. Codex threads start with its plan tool enabled (`tools.update_plan.enabled`), which the app-server otherwise leaves off.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

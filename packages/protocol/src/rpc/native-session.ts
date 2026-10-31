@@ -182,6 +182,7 @@ export const NativeSessionEventTypes = {
   QUESTION_REQUESTED: 'question.requested',
   PLAN_UPDATED: 'plan.updated',
   TURN_COMPLETED: 'turn.completed',
+  TURN_CHANGES: 'turn.changes',
   SESSION_CLOSED: 'session.closed',
   ERROR: 'error',
 } as const;
@@ -214,6 +215,26 @@ export type NativeSessionPlan =
   | { kind: 'checklist'; steps: NativePlanStep[]; text?: string }
   /** A plan proposed before acting, as markdown. */
   | { kind: 'proposal'; text: string };
+export interface NativeTurnFile {
+  /** Relative to the repository root. */
+  path: string;
+  status: 'added' | 'modified' | 'deleted';
+  /** Absent for a binary file. */
+  additions?: number;
+  deletions?: number;
+}
+/**
+ * What a turn changed in the session's Git working tree: the host's checkpoints before and after
+ * it (`from`, `to`) and the files that differ. `unavailable` says why there are none to show.
+ */
+export interface NativeTurnChanges {
+  from?: string;
+  to?: string;
+  files: NativeTurnFile[];
+  /** More files changed than are listed. */
+  truncated?: boolean;
+  unavailable?: string;
+}
 
 export interface NativeSessionEvent {
   sessionId: string;
@@ -247,6 +268,8 @@ export interface NativeSessionEvent {
   response?: NativeSessionResponse;
   /** On `plan.updated`. */
   plan?: NativeSessionPlan;
+  /** On `turn.changes`, for the turn of `commandId`. */
+  changes?: NativeTurnChanges;
   status?: 'completed' | 'failed' | 'interrupted';
   /** Only a schema-bound completed provider turn may supply this value. */
   structuredResult?: NativeStructuredResult;
@@ -309,6 +332,16 @@ export interface NativeWorkspaceListResult {
 export interface NativeWorkspaceChangesResult {
   files: Array<{ path: string; status: string }>;
   truncated?: boolean;
+}
+/** One file's diff between a turn's checkpoints: the `turn.changes` event at `sequence`. */
+export interface NativeSessionTurnDiffParams extends NativeSessionTargetParams {
+  sequence: number;
+  /** One of that event's `files`. */
+  path: string;
+}
+export interface NativeSessionTurnDiffResult {
+  path: string;
+  diff: string;
 }
 export interface NativeWorkspaceReadResult {
   path: string;
