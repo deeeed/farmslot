@@ -572,8 +572,21 @@ test("housekeeping selects an active run's superseded captures for archival but 
     (entry) => entry.store === 'run-bundles' || entry.path.includes('bundle-intents'),
   );
   assert.equal(selection.filter((entry) => entry.store === 'bundle-intents').length, 3);
-  // A host archives them; a later capture with the same key starts over instead of failing.
-  for (const entry of selection) await rm(entry.path, { recursive: true, force: true });
+  // Each bundle follows its intents, so a host interrupted after the intents leaves only the
+  // bundle, which the next pass selects again; a same-key capture starts over either way.
+  for (const [index, entry] of selection.entries())
+    if (entry.store === 'bundle-intents')
+      assert.equal(
+        selection.slice(index).some((later) => later.store === 'run-bundles'),
+        true,
+      );
+  for (const entry of selection.filter((item) => item.store === 'bundle-intents'))
+    await rm(entry.path, { force: true });
+  assert.equal(
+    (await runBundleHousekeepingPaths(f.store)).filter((entry) => entry.store === 'run-bundles')
+      .length,
+    3,
+  );
   const recaptured = await capture('legacy:package');
   const bundle = await readRetainedRunBundle(f.store, recaptured.ref, f.run.id);
   assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');

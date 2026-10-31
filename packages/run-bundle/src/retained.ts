@@ -992,9 +992,10 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
     } catch {
       // An unreadable manifest is still unreferenced storage.
     }
-    archivable.push({ path: directory, runId, store: 'run-bundles' });
+    // Intents first: a host interrupted between entries leaves the bundle to select again.
     for (const intent of committedIntents.get(digest) ?? [])
       archivable.push({ path: intent, runId, store: 'bundle-intents' });
+    archivable.push({ path: directory, runId, store: 'run-bundles' });
   }
   return { cleanup, archivable, referenced, pinned, committedIntents };
 }
