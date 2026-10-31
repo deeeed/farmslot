@@ -39,7 +39,7 @@ import {
   slotReleasingFenceFields,
   updateSlotStatusIf,
 } from '../core/state.js';
-import { evalWorkerBlockedReason } from '../evals/blocked-first-output.js';
+import { completedRunOutcome } from '../evals/blocked-first-output.js';
 import { withNodeReconnectWait, withoutNodeReconnectWait } from '../fleet/node-rpc.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
@@ -1350,12 +1350,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       patch: {
         status: 'done',
         completedAt: new Date().toISOString(),
-        // A blind eval worker that blocked itself finished its trial, not its task.
-        metrics: {
-          ...finalRun.metrics,
-          outcome: evalWorkerBlockedReason(finalRun) ? 'partial' : 'success',
-          durationMs,
-        },
+        metrics: { ...finalRun.metrics, outcome: completedRunOutcome(finalRun), durationMs },
       },
       collaborators: terminalCollaborators(
         Events.RUN_COMPLETED,

@@ -10,3 +10,8 @@ export function evalWorkerBlockedReason(run: Pick<Run, 'steps'>): string | undef
   ];
   return typeof reason === 'string' ? reason : undefined;
 }
+
+/** A run's outcome when it ends done: a blind eval worker that blocked itself finished its trial, not its task. */
+export function completedRunOutcome(run: Pick<Run, 'steps'>): 'partial' | 'success' {
+  return evalWorkerBlockedReason(run) ? 'partial' : 'success';
+}
