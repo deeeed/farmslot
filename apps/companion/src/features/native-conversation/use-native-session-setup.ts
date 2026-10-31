@@ -11,7 +11,9 @@ import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { getResourceCache, getResourceNativeOwnerId } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent } from '../../store/held-connection';
 
 import { useNativeProfileSelection } from './use-native-profile-selection';
 
@@ -128,8 +130,8 @@ export function useNativeSessionSetup(enabled: boolean) {
       profiles: profiles.viewModel,
       creating,
       controlsDisabled: creating || !catalogReady,
-      catalogError: catalogObservation.error?.message,
-      error: error || catalogObservation.error?.message,
+      catalogError: readErrorMessage(catalogObservation, heldConnectionCurrent()),
+      error: error || readErrorMessage(catalogObservation, heldConnectionCurrent()),
       canCreate:
         enabled &&
         status === 'connected' &&

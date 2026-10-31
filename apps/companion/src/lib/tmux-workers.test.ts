@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type {
+  TmuxWorkerListResult,
   TmuxWorkerNodeResult,
   TmuxWorkerSummary,
   TmuxWorkerWatchEntry,
@@ -10,6 +11,7 @@ import type {
 import {
   buildTmuxWorkerRows,
   filterTmuxWorkerNodes,
+  inventoryLacksPane,
   tmuxWorkerNodeSummaryLabel,
   tmuxWorkerRefFromRouteParams,
   tmuxWorkerRouteParams,
@@ -247,4 +249,30 @@ test('tmux worker watch presentation supports stale entries', () => {
     paneId: '%4',
     title: 'omx · %4',
   });
+});
+
+test('inventoryLacksPane blocks only when the node read lists its panes without this one', () => {
+  const open = worker().ref;
+  const inventory = (...nodes: TmuxWorkerNodeResult[]): TmuxWorkerListResult => ({
+    observedAt: 1,
+    nodes,
+    workers: nodes.flatMap((entry) => entry.workers),
+  });
+
+  // No inventory yet, a slow or failed read, or a node read that failed: keys still go out.
+  assert.equal(inventoryLacksPane(undefined, open), false);
+  assert.equal(inventoryLacksPane(inventory(), open), false);
+  assert.equal(inventoryLacksPane(inventory(node({ ok: false, workers: [] })), open), false);
+  assert.equal(inventoryLacksPane(inventory(node({ hiddenWorkers: 3, workers: [] })), open), false);
+  assert.equal(inventoryLacksPane(inventory(node()), open), false);
+
+  // The node answered and no longer lists the pane.
+  assert.equal(inventoryLacksPane(inventory(node({ workers: [] })), open), true);
+  assert.equal(
+    inventoryLacksPane(
+      inventory(node({ workers: [worker({ ref: { ...open, target: 'omx:1.3', paneId: '%5' } })] })),
+      open,
+    ),
+    true,
+  );
 });

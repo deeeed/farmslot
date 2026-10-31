@@ -1,8 +1,10 @@
-import type {
-  TmuxWorkerNodeResult,
-  TmuxWorkerRef,
-  TmuxWorkerSummary,
-  TmuxWorkerWatchEntry,
+import {
+  type TmuxWorkerListResult,
+  type TmuxWorkerNodeResult,
+  type TmuxWorkerRef,
+  tmuxWorkerRefsMatch,
+  type TmuxWorkerSummary,
+  type TmuxWorkerWatchEntry,
 } from '@farmslot/protocol';
 
 import { type GlobalFilters, normalizeFilters } from '../store/filters';
@@ -392,4 +394,17 @@ export function tmuxWorkerWatchEntrySubtitle(entry: TmuxWorkerWatchEntry): strin
   return [title, entry.item.statusLabel, entry.item.branch, entry.item.cwd, entry.item.command]
     .filter(Boolean)
     .join(' · ');
+}
+
+/** True only when a node's own read lists its panes and this one is not among them. */
+export function inventoryLacksPane(
+  data: TmuxWorkerListResult | undefined,
+  worker: TmuxWorkerRef,
+): boolean {
+  const node = data?.nodes.find((entry) => entry.nodeId === worker.nodeId);
+  return Boolean(
+    node?.ok &&
+    !node.hiddenWorkers &&
+    !node.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker)),
+  );
 }

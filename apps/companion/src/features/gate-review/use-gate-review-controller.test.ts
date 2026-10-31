@@ -8,6 +8,7 @@ import * as reviewDispatch from '@farmslot/review-dispatch';
 import { mountHook } from '../../hooks/hook-harness.fixtures';
 import * as connectionAuthority from '../../lib/connection-authority';
 import * as decisionResolve from '../../lib/decision-resolve';
+import { readErrorMessage } from '../../lib/resource-read-status';
 
 import type { GateReviewScreenState, useGateReviewController } from './use-gate-review-controller';
 
@@ -24,7 +25,8 @@ interface Request {
   params: Record<string, unknown>;
 }
 
-const { acceptanceCriterionId, APPROVE_PUBLISH_ACTION, HUMAN_GATE_DECISION_TYPE, Methods } = protocol;
+const { acceptanceCriterionId, APPROVE_PUBLISH_ACTION, HUMAN_GATE_DECISION_TYPE, Methods } =
+  protocol;
 const params = { runId: 'run-1', decisionId: 'gate-1' };
 const confirmId = acceptanceCriterionId(0);
 const skipId = acceptanceCriterionId(1);
@@ -194,6 +196,8 @@ function gateWorld({ online = true, runBound = true } = {}) {
         assertNativeRunReady: () => undefined,
       },
       '../../store/connection': { useConnectionStore: store },
+      '../../store/held-connection': { heldConnectionCurrent: () => true },
+      '../../lib/resource-read-status': { readErrorMessage },
       '../../store/decisions': {
         useDecisionStore: (select: (value: { observation: unknown }) => unknown) =>
           select({ observation: { status: world.decisionsCurrent ? 'ready' : 'stale' } }),

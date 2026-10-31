@@ -51,9 +51,11 @@ import {
   usePRPushDeviceState,
 } from '../../lib/pr-push-device';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { useAttentionPrefsStore } from '../../store/attention-prefs';
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
+import { heldConnectionCurrent } from '../../store/held-connection';
 import { useRunStore } from '../../store/runs';
 
 type Tab = 'monitors' | 'reviews' | 'rules' | 'policies' | 'attention';
@@ -202,7 +204,12 @@ export function usePRAutomationController(
   useEffect(() => {
     const states = [watchesState, rulesState, queueState, pushState];
     setLoading(states.some((state) => state.status === 'loading'));
-    setError(states.flatMap((state) => (state.error ? [state.error.message] : [])).join('; '));
+    setError(
+      states
+        .map((state) => readErrorMessage(state, heldConnectionCurrent()))
+        .filter((message): message is string => Boolean(message))
+        .join('; '),
+    );
     if (!client || !watchesState.data || !rulesState.data || !queueState.data || !pushState.data) {
       setSnapshot(undefined);
       return;

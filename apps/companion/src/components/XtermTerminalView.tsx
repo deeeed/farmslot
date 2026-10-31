@@ -9,6 +9,7 @@ import React, {
 import { StyleSheet, View } from 'react-native';
 import WebView, { type WebViewMessageEvent } from 'react-native-webview';
 
+import { SILENCE_TERMINAL_QUERIES_JS } from '../lib/terminal-queries';
 import { colors, fonts } from '../lib/theme';
 
 export type TerminalSize = { cols: number; rows: number };
@@ -22,7 +23,8 @@ export type XtermTerminalViewHandle = {
 };
 
 type XtermTerminalViewProps = {
-  allowTouchKeyboard?: boolean;
+  /** Type in the terminal itself and scroll tmux with the wheel; off, input comes from the screen's input line. */
+  directInput?: boolean;
   initialText: string;
   onInput: (data: string) => void;
   onResize: (size: TerminalSize) => void;
@@ -38,7 +40,7 @@ type WebTerminalMessage =
 
 export const XtermTerminalView = forwardRef<XtermTerminalViewHandle, XtermTerminalViewProps>(
   function XtermTerminalView(
-    { allowTouchKeyboard = false, initialText, onInput, onResize, readOnlyReason = null },
+    { directInput = false, initialText, onInput, onResize, readOnlyReason = null },
     ref,
   ) {
     const webViewRef = useRef<WebView>(null);
@@ -107,8 +109,8 @@ export const XtermTerminalView = forwardRef<XtermTerminalViewHandle, XtermTermin
     const html = useMemo(() => terminalHtml(), []);
 
     useEffect(() => {
-      sendMessage('touchKeyboard', allowTouchKeyboard);
-    }, [allowTouchKeyboard, sendMessage]);
+      sendMessage('directInput', directInput);
+    }, [directInput, sendMessage]);
 
     useEffect(() => {
       sendMessage('readOnly', readOnlyReason ?? '');
@@ -298,6 +300,7 @@ function terminalHtml(): string {
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.min.js"></script>
   <script>
+    ${SILENCE_TERMINAL_QUERIES_JS}
     (function () {
       var term = null;
       var fitAddon = null;
@@ -308,7 +311,7 @@ function terminalHtml(): string {
       var terminalElement = document.getElementById('terminal');
       var queue = [];
       var readOnly = false;
-      var allowTouchKeyboard = false;
+      var directInput = false;
       var readonly = document.getElementById('readonly');
       var lastSize = { cols: 80, rows: 24 };
       var touchScrollY = null;
@@ -328,23 +331,33 @@ function terminalHtml(): string {
         status.style.display = text ? 'block' : 'none';
       }
 
+      // Keys reach the terminal only in direct input mode; otherwise the screen's input line sends them.
+      function stdinDisabled() {
+        return readOnly || !directInput;
+      }
+
+      function applyInputMode() {
+        if (fallbackInput) {
+          fallbackInput.disabled = stdinDisabled();
+          fallbackInput.placeholder = readOnly ? readonly.textContent : 'type command…';
+          if (fallback.style.display === 'block') fallbackInput.style.display = stdinDisabled() ? 'none' : 'block';
+        }
+        if (term) {
+          term.options.disableStdin = stdinDisabled();
+          term.options.cursorBlink = !stdinDisabled();
+        }
+      }
+
       function setReadOnly(text) {
         readOnly = Boolean(text);
         readonly.textContent = text || '';
         readonly.style.display = text ? 'block' : 'none';
-        if (fallbackInput) {
-          fallbackInput.disabled = readOnly;
-          fallbackInput.placeholder = readOnly ? text : 'type command…';
-        }
-        if (term) {
-          term.options.disableStdin = readOnly;
-          term.options.cursorBlink = !readOnly;
-        }
+        applyInputMode();
       }
 
       function writeFallback(text, replace) {
         fallback.style.display = 'block';
-        fallbackInput.style.display = readOnly ? 'none' : 'block';
+        fallbackInput.style.display = stdinDisabled() ? 'none' : 'block';
         if (replace) fallback.textContent = text || '';
         else fallback.textContent += text || '';
         fallback.scrollTop = fallback.scrollHeight;
@@ -422,7 +435,9 @@ function terminalHtml(): string {
       }
 
       function wheelInputForRows(rows, clientX, clientY) {
-        if (!term || rows === 0 || readOnly) return '';
+        // Wheel input scrolls tmux into copy-mode, where typed keys stop reaching the shell, so only
+        // direct input mode sends it; otherwise scrolling stays in the terminal's own buffer.
+        if (!term || rows === 0 || stdinDisabled()) return '';
         var pos = terminalCellFromPoint(clientX, clientY);
         var button = rows < 0 ? 64 : 65;
         var count = Math.max(1, Math.min(8, Math.abs(rows)));
@@ -450,7 +465,7 @@ function terminalHtml(): string {
 
       function handleTerminalTouchStart(event) {
         if (!term || event.touches.length !== 1) return;
-        if (!allowTouchKeyboard) suppressTouchDefault(event);
+        if (!directInput) suppressTouchDefault(event);
         touchScrollY = event.touches[0].clientY;
         touchScrollDistance = 0;
         touchScrollRemainderRows = 0;
@@ -470,7 +485,7 @@ function terminalHtml(): string {
       }
 
       function handleTerminalTouchEnd(event) {
-        if (!allowTouchKeyboard) {
+        if (!directInput) {
           suppressTouchDefault(event);
           lastTouchEndAt = Date.now();
         }
@@ -490,7 +505,7 @@ function terminalHtml(): string {
       }
 
       function suppressTouchPointerFocus(event) {
-        if (allowTouchKeyboard) return;
+        if (directInput) return;
         if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
         event.stopPropagation();
         event.preventDefault();
@@ -559,8 +574,9 @@ function terminalHtml(): string {
           setReadOnly(payload);
           return;
         }
-        if (message.type === 'touchKeyboard') {
-          allowTouchKeyboard = message.payload === true;
+        if (message.type === 'directInput') {
+          directInput = message.payload === true;
+          applyInputMode();
         }
       }
 
@@ -577,7 +593,7 @@ function terminalHtml(): string {
       function bootFallback(reason) {
         term = null;
         fitAddon = null;
-        fallbackInput.style.display = readOnly ? 'none' : 'block';
+        fallbackInput.style.display = stdinDisabled() ? 'none' : 'block';
         setStatus(reason);
         markReady();
       }
@@ -588,11 +604,11 @@ function terminalHtml(): string {
           return;
         }
         term = new window.Terminal({
-          cursorBlink: !readOnly,
+          cursorBlink: !stdinDisabled(),
           convertEol: false,
           fontFamily: ${JSON.stringify(fonts.mono + ', Menlo, Monaco, Consolas, monospace')},
           fontSize: 11,
-          disableStdin: readOnly,
+          disableStdin: stdinDisabled(),
           lineHeight: 1.18,
           scrollback: 5000,
           theme: {
@@ -615,8 +631,9 @@ function terminalHtml(): string {
           term.loadAddon(fitAddon);
         }
         term.open(terminalElement);
+        silenceTerminalQueries(term);
         term.onData(function (data) {
-          if (!readOnly) post({ type: 'input', data: data });
+          if (!stdinDisabled()) post({ type: 'input', data: data });
         });
         terminalElement.addEventListener('touchstart', handleTerminalTouchStart, { passive: false, capture: true });
         terminalElement.addEventListener('touchmove', handleTerminalTouchMove, { passive: false, capture: true });
@@ -644,7 +661,7 @@ function terminalHtml(): string {
 
       if (fallbackInput) {
         fallbackInput.addEventListener('keydown', function (event) {
-          if (readOnly) return;
+          if (stdinDisabled()) return;
           if (event.key === 'Enter') {
             event.preventDefault();
             var value = fallbackInput.value;
