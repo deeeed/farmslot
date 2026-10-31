@@ -86,6 +86,31 @@ function setup() {
   };
 }
 
+test('a supervisor whose home is removed stops its host instead of running on', async () => {
+  const fixture = setup();
+  let supervisor = 0;
+  let host = 0;
+  try {
+    await new NativeSessionClient(fixture.root).list('owner');
+    supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
+    host = readJson<{ pid: number }>(join(fixture.root, 'worker.json')).pid;
+    rmSync(fixture.root, { recursive: true, force: true });
+    const deadline = Date.now() + 4_000;
+    while ((alive(supervisor) || alive(host)) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(alive(host), false, 'the host stopped');
+    assert.equal(alive(supervisor), false, 'the supervisor exited');
+  } finally {
+    // Never leave a failed run's stack behind.
+    for (const [pid, signal] of [
+      [host, 'SIGKILL'],
+      [supervisor, 'SIGTERM'],
+    ] as const)
+      if (pid && alive(pid)) process.kill(pid, signal);
+    fixture.restore();
+  }
+});
+
 for (const mode of ['startup', 'periodic', 'persistent'] as const) {
   test(`supervisor ${mode} census failure stops its host and preserves cleanup truth`, async () => {
     const fixture = setup();

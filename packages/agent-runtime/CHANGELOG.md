@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A native session supervisor stops its host and exits when its home directory is removed, instead of running on with its process census (`ps` about ten times a second). Tests and smokes that delete their temp home no longer leak native host stacks.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.39.14 - 2026-10-31

@@ -1,6 +1,6 @@
 import { fork } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -132,6 +132,8 @@ function settle(): void {
   void cleanup().then(
     () => process.exit(1),
     (error: Error) => {
+      // A removed home has nowhere to journal; its host and descendants are already stopped.
+      if (!existsSync(root)) process.exit(1);
       durableWrite(join(root, 'cleanup.json'), {
         hostPid: child.pid,
         state: 'unknown',
@@ -163,6 +165,19 @@ try {
 } catch (error) {
   stopHost(error);
 }
+
+// A host whose home was deleted (a test's temp root, a removed farm home) has no
+// client left and would run, with its process census, forever. Stop it instead.
+const ownerFile = join(lock, 'owner.json');
+const stopIfHomeRemoved = () => {
+  if (!existsSync(ownerFile)) stopHost(new Error(`Native session home ${root} was removed`));
+};
+try {
+  watch(root, stopIfHomeRemoved).on('error', stopIfHomeRemoved).unref();
+} catch {
+  stopIfHomeRemoved();
+}
+setInterval(stopIfHomeRemoved, 60_000).unref();
 
 async function cleanup(): Promise<void> {
   stopObservingTree?.();
