@@ -929,40 +929,51 @@ interface ReadyGatePackageDependencies {
   readReviewFixSignal?: ReviewFixSignalReader;
   readProgress?: typeof readRunProgress;
   /** Bounded wait for a busy owned worker; tests shorten it. */
-  workerIdleWait?: { pollMs: number; timeoutMs: number };
+  workerIdleWait?: { pollMs: number; maxPollMs: number; timeoutMs: number };
 }
 
-// A compaction or a last turn finishes in minutes; past this the operator sees why.
-const WORKER_IDLE_WAIT = { pollMs: 10_000, timeoutMs: 15 * 60_000 };
+// A compaction or a last turn finishes in minutes; past this the operator sees why. Polls
+// back off (10 s, 20 s, 40 s, then every 60 s): each reads the worker's transcript state.
+const WORKER_IDLE_WAIT = { pollMs: 10_000, maxPollMs: 60_000, timeoutMs: 15 * 60_000 };
 
 /**
- * Waits for the owned worker to go idle so the gate builds its own package instead of
- * leaving an "unavailable" card that only Retry Gate clears.
+ * Waits for a worker that is making progress to go idle, so the gate builds its own
+ * package instead of leaving an "unavailable" card only Retry Gate clears. A worker that
+ * cannot go idle by itself (at a prompt, pane unproven) or a gate park ends the wait at
+ * once with the card; a replay, pause or cancel aborts it.
  */
 async function waitForOwnedWorkerIdle(
   runId: string,
   generation: number,
   dependencies: ReadyGatePackageDependencies,
 ): Promise<'idle' | 'abort' | 'timeout'> {
-  const { pollMs, timeoutMs } = dependencies.workerIdleWait ?? WORKER_IDLE_WAIT;
+  const { pollMs, maxPollMs, timeoutMs } = dependencies.workerIdleWait ?? WORKER_IDLE_WAIT;
   const readProgress = dependencies.readProgress ?? readRunProgress;
   const deadline = Date.now() + timeoutMs;
   updateRunStep(runId, S.HUMAN_GATE, {
     detail: 'Preparing operator decision: waiting for the owned worker to be idle',
   });
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-    const latest = getRun(runId);
-    if (
-      !latest ||
-      runSupersededSince(latest, generation) ||
-      latest.status === 'paused' ||
-      latest.status === 'cancelled'
-    )
-      return 'abort';
-    if ((await readProgress(latest)).kind === 'idle') return 'idle';
+  for (let delay = pollMs; Date.now() < deadline; delay = Math.min(delay * 2, maxPollMs)) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    const before = getRun(runId);
+    if (runSupersededSince(before, generation)) return 'abort';
+    if (isGateParkInFlightOrFreed(before!)) return 'timeout';
+    const progress = await readProgress(before!);
+    // The probe awaited a remote read: an operator may have replayed or cancelled meanwhile.
+    if (runSupersededSince(getRun(runId), generation)) return 'abort';
+    if (progress.kind === 'idle') return 'idle';
+    if (progress.kind !== 'making-progress') return 'timeout';
   }
   return 'timeout';
+}
+
+/** A publication the operator adopted ends this gate; its continuation is checked first. */
+async function adoptedPublicationGateEnd(run: Run): Promise<string | undefined> {
+  if (!run.engineState?.publishGate?.humanPublicationAdoption) return undefined;
+  const { assertAdoptedPublicationContinuation } =
+    await import('../run-completion/human-publication.js');
+  await assertAdoptedPublicationContinuation(run);
+  return 'superseded-by-publication-adoption';
 }
 
 export async function executeReadyGate(
@@ -971,12 +982,8 @@ export async function executeReadyGate(
 ): Promise<string> {
   let current = getRun(runId)!;
   const generation = current.engineState?.generation ?? 0;
-  if (current.engineState?.publishGate?.humanPublicationAdoption) {
-    const { assertAdoptedPublicationContinuation } =
-      await import('../run-completion/human-publication.js');
-    await assertAdoptedPublicationContinuation(current);
-    return 'superseded-by-publication-adoption';
-  }
+  const adoptedAtEntry = await adoptedPublicationGateEnd(current);
+  if (adoptedAtEntry) return adoptedAtEntry;
   const artifactOnly = isArtifactOnlyRun(current);
 
   // Find PR + CI repo
@@ -1026,6 +1033,9 @@ export async function executeReadyGate(
           if (waited === 'abort') return 'abort';
           if (waited === 'idle') {
             current = getRun(runId)!;
+            // An adoption can land while the gate waited for the worker.
+            const adopted = await adoptedPublicationGateEnd(current);
+            if (adopted) return adopted;
             continue;
           }
         }

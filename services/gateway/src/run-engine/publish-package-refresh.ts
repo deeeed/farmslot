@@ -402,7 +402,11 @@ async function refreshPublishPackageTransitionLocked(
       'Current publication HEAD is unknown; retain the gate and restore source access',
     );
   const progress = slotAvailable ? await progressReader(run) : null;
-  if (progress && progress.kind !== 'idle') throw new OwnedWorkerBusyError();
+  if (progress?.kind === 'making-progress') throw new OwnedWorkerBusyError();
+  if (progress && progress.kind !== 'idle')
+    throw new BlockedRunError(
+      'Wait for the owned worker to be idle before refreshing its publication package',
+    );
   const selectedBefore =
     params.selectedEvidenceKeys ??
     oldPayload.prPackage?.selectedEvidenceKeys ??
