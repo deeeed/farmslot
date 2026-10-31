@@ -12,3 +12,11 @@ export class BlockedRunError extends Error {
     this.detail = detail;
   }
 }
+
+/** The owned worker is busy (e.g. compacting); its publication package can be built once it is idle. */
+export class OwnedWorkerBusyError extends BlockedRunError {
+  constructor() {
+    super('Wait for the owned worker to be idle before refreshing its publication package');
+    this.name = 'OwnedWorkerBusyError';
+  }
+}

@@ -16,10 +16,11 @@ import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 import { GatewayMethodError } from '../core/method-error.js';
 import { admitReviewRound, settleReviewRoundNoVerdict } from '../review/review-round-budget.js';
 import { TerminalReviewArtifactError } from '../review/terminal-result.js';
+import type { RunProgressObservation } from '../runners/run-progress.js';
 import { createRun, getAllRuns, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { resolveEngineDecision, setEngineDecisionRuntime } from './engine-decisions.js';
-import { BlockedRunError } from './errors.js';
+import { BlockedRunError, OwnedWorkerBusyError } from './errors.js';
 import {
   executePublishGateReviewPlan,
   executeReadyGate,
@@ -985,6 +986,50 @@ test(
     assert.equal(await execution, 'abort');
   },
 );
+
+test('a gate that finds its worker busy waits for it to go idle and builds the package itself', async (t) => {
+  const { run, next } = sourceGateFixture(t);
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  let builds = 0;
+  const progress: RunProgressObservation['kind'][] = ['making-progress', 'idle'];
+  const execution = executeReadyGate(run.id, {
+    ensurePackage: async () => {
+      if (++builds === 1) throw new OwnedWorkerBusyError(); // compacting when the gate opened
+      return prepared;
+    },
+    readProgress: async (): Promise<RunProgressObservation> => ({
+      kind: progress.shift() ?? 'idle',
+    }),
+    workerIdleWait: { pollMs: 1, timeoutMs: 2_000 },
+  });
+  const card = await next(execution);
+  assert.equal(builds, 2, 'the package was built once the worker went idle');
+  assert.doesNotMatch(card.description, /unavailable/);
+  assert.ok(card.payload?.kind === 'ready' && card.payload.prPackage);
+  assert.equal(resolveEngineDecision(card.id, 'abort'), true);
+  assert.equal(await execution, 'abort');
+});
+
+test('a worker still busy after the bounded wait leaves the visible Retry Gate card', async (t) => {
+  const { run, next } = sourceGateFixture(t);
+  const execution = executeReadyGate(run.id, {
+    ensurePackage: async () => {
+      throw new OwnedWorkerBusyError();
+    },
+    readProgress: async (): Promise<RunProgressObservation> => ({ kind: 'making-progress' }),
+    workerIdleWait: { pollMs: 1, timeoutMs: 20 },
+  });
+  const card = await next(execution);
+  assert.match(card.description, /Wait for the owned worker to be idle/);
+  assert.deepEqual(
+    card.actions.map((entry) => entry.id),
+    ['hold'],
+  );
+  assert.equal(resolveEngineDecision(card.id, 'abort'), true);
+  assert.equal(await execution, 'abort');
+});
 
 test('Retry Gate reports preparation while its second source read is pending', async (t) => {
   let release!: () => void;

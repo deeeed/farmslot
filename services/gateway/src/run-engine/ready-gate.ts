@@ -96,6 +96,7 @@ import {
   readyGateCurrentDescription,
 } from '../run-completion/ready-gate-package.js';
 import { runnerDefaultModel } from '../runners/registry.js';
+import { readRunProgress } from '../runners/run-progress.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
@@ -116,7 +117,7 @@ import {
 } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { createEngineDecision } from './engine-decisions.js';
-import { BlockedRunError } from './errors.js';
+import { BlockedRunError, OwnedWorkerBusyError } from './errors.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
@@ -926,6 +927,42 @@ interface ReadyGatePackageDependencies {
   createDecision?: typeof createEngineDecision;
   rebindSlot?: typeof rebindUnownedPublicationSlot;
   readReviewFixSignal?: ReviewFixSignalReader;
+  readProgress?: typeof readRunProgress;
+  /** Bounded wait for a busy owned worker; tests shorten it. */
+  workerIdleWait?: { pollMs: number; timeoutMs: number };
+}
+
+// A compaction or a last turn finishes in minutes; past this the operator sees why.
+const WORKER_IDLE_WAIT = { pollMs: 10_000, timeoutMs: 15 * 60_000 };
+
+/**
+ * Waits for the owned worker to go idle so the gate builds its own package instead of
+ * leaving an "unavailable" card that only Retry Gate clears.
+ */
+async function waitForOwnedWorkerIdle(
+  runId: string,
+  generation: number,
+  dependencies: ReadyGatePackageDependencies,
+): Promise<'idle' | 'abort' | 'timeout'> {
+  const { pollMs, timeoutMs } = dependencies.workerIdleWait ?? WORKER_IDLE_WAIT;
+  const readProgress = dependencies.readProgress ?? readRunProgress;
+  const deadline = Date.now() + timeoutMs;
+  updateRunStep(runId, S.HUMAN_GATE, {
+    detail: 'Preparing operator decision: waiting for the owned worker to be idle',
+  });
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    const latest = getRun(runId);
+    if (
+      !latest ||
+      runSupersededSince(latest, generation) ||
+      latest.status === 'paused' ||
+      latest.status === 'cancelled'
+    )
+      return 'abort';
+    if ((await readProgress(latest)).kind === 'idle') return 'idle';
+  }
+  return 'timeout';
 }
 
 export async function executeReadyGate(
@@ -951,6 +988,7 @@ export async function executeReadyGate(
   const decide = dependencies.createDecision ?? createEngineDecision;
   let preparedPackage: ReadyGatePrPackage | undefined;
   let recoveredAction: string | undefined;
+  let workerIdleWaited = false;
   if (publicationApprovalGate) {
     for (;;) {
       updateRunStep(runId, S.HUMAN_GATE, {
@@ -981,6 +1019,16 @@ export async function executeReadyGate(
         preparedPackage = await (dependencies.ensurePackage ?? ensureCurrentPublishPackage)(runId);
         break;
       } catch (error) {
+        if (error instanceof OwnedWorkerBusyError && !workerIdleWaited) {
+          // Once per gate pass: a worker still busy after the bounded wait gets the card below.
+          workerIdleWaited = true;
+          const waited = await waitForOwnedWorkerIdle(runId, generation, dependencies);
+          if (waited === 'abort') return 'abort';
+          if (waited === 'idle') {
+            current = getRun(runId)!;
+            continue;
+          }
+        }
         // Unavailable source is a durable operator wait, never permission to fail
         // the run and tear down its retained worker, slot or proof.
         const message = `Publication package is unavailable: ${error instanceof Error ? error.message : String(error)}. Restore the owned source and retry this gate.`;
@@ -1019,6 +1067,7 @@ export async function executeReadyGate(
           return 'abort';
         if (recoveredAction === CONTINUE_REVIEW_FIX_ACTION) return recoveredAction;
         current = latest!;
+        workerIdleWaited = false; // a Retry Gate waits for a busy worker again
       }
     }
     const approved = getRun(runId)!;
