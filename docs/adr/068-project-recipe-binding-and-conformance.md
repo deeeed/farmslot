@@ -224,7 +224,7 @@ No CLI command, flag, SDK export or private request field is added. The frozen i
 
 ## Amendment 8: Repin a branch-changed provider, 2026-10-31
 
-**Status:** Proposed. Earlier decisions retain their status.
+**Status:** Accepted by the lead under delegated amendment authority, 2026-10-31. Implementation: [#1633](https://github.com/deeeed/farmslot/pull/1633). Earlier decisions retain their status.
 
 ### Decision and rationale
 
