@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- `native.session.cancel` removes a queued native message, for a standalone session or a pinned worker through the same fence as a worker message. It refuses instructions Farmslot sent itself (tasks, subtasks, recoveries, run instructions and completion feedback) and messages on a run that records them for acceptance; that run's worker reads leave out `cancelQueued`, so clients offer no Edit there.
 - Replaying COMPLETE or the human gate keeps the run's output review decision, so the replayed COMPLETE no longer refuses with "A captured output review is required". A task-generation replay still drops it, because it recaptures the output.
 - A gate replay, recovery or restart no longer re-sends a worker's whole artifacts directory: the worker artifact copy keeps local files whose size and sha256 already match and transfers only changed ones (media still goes through acquisition).
 - The hourly run retention pass names itself to run-bundle store-lock waiters and declares a 60-minute hold limit, so captures queued behind a long pass keep waiting instead of failing at the store lock's 15-minute default.
