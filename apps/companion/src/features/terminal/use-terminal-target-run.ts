@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Methods, type Run, type RunForSlotResult, type RunGetResult } from '@farmslot/protocol';
-import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
+import { canActOn, resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { getResourceCache, getResourceWorkspaceKey } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { targetWarningForRun } from '../../lib/terminal-target';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent } from '../../store/held-connection';
 
 type TerminalTargetResult = RunGetResult | RunForSlotResult;
 interface TargetReadFailure {
@@ -44,8 +46,8 @@ export function useTerminalTargetRun(slotId: string, runId?: string) {
   const warning =
     failure?.key === key && failure.observation === observation
       ? failure.message
-      : observation.error
-        ? `Could not verify run target: ${observation.error.message}`
+      : readErrorMessage(observation, heldConnectionCurrent())
+        ? `Could not verify run target: ${readErrorMessage(observation, heldConnectionCurrent())}`
         : applyRun(run);
   const refresh = useCallback(async (): Promise<{ warning: string | null; run: Run | null }> => {
     const sequence = ++request.current;
@@ -63,7 +65,7 @@ export function useTerminalTargetRun(slotId: string, runId?: string) {
       await cache.retry(query);
       if (!ownsRequest()) return { warning: null, run: null };
       const observed = cache.read(query);
-      if (observed.status !== 'ready' || !observed.data)
+      if (!canActOn(observed, true) || !observed.data)
         throw new Error(observed.error?.message ?? 'Wait for a current run target before acting.');
       setFailure(undefined);
       return { warning: applyRun(observed.data.run), run: observed.data.run };

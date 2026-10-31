@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot run gate <runId> --action attest-before-attempt --recipe-run <id> --reason <text>` attests a recipe attempt from the same run as before-only evidence at a publish gate (ADR-062 Amendment 21).
+
 - `farmslot task repin <task-dir>` lets an operator repin a task whose own branch changed its recipe provider, so the harness can run the new actions without a fresh task. It refuses before any change when the selection changed or the provider did not (ADR-068 Amendment 8).
 
 - Remove the retired PR-completion visual-review capability from hosted task contracts.

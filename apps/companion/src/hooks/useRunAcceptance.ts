@@ -201,6 +201,7 @@ export function useRunAcceptance(
           currentReviewIdentity.current !== reviewIdentity
         )
           throw new Error('The review context changed. Open the current evidence before acting.');
+        // Verdicts bind to evidence: they still act on a current read.
         if (!progressQuery || getResourceCache()?.read(progressQuery).status !== 'ready')
           throw new Error('Wait for current acceptance data before acting.');
         const currentEvidence = evidenceQuery ? getResourceCache()?.read(evidenceQuery) : undefined;

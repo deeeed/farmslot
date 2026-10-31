@@ -62,6 +62,8 @@ export const NATIVE_WORKER_INTERRUPT = 'native.worker.interrupt';
 export const NATIVE_WORKER_TRANSFER = 'native.worker.transfer';
 export const NATIVE_WORKER_CANCEL = 'native.worker.cancel';
 export const NATIVE_WORKER_READ = 'native.worker.read';
+/** Removes a queued command. `native.worker.cancel` cancels a worker launch instead. */
+export const NATIVE_WORKER_CANCEL_COMMAND = 'native.worker.cancelCommand';
 export const NATIVE_WORKER_METHODS: readonly string[] = [
   NATIVE_WORKER_READ,
   NATIVE_WORKER_STATE,
@@ -74,6 +76,7 @@ export const NATIVE_WORKER_METHODS: readonly string[] = [
   NATIVE_WORKER_INTERRUPT,
   NATIVE_WORKER_TRANSFER,
   NATIVE_WORKER_CANCEL,
+  NATIVE_WORKER_CANCEL_COMMAND,
 ];
 
 export interface NativeWorkerTarget {

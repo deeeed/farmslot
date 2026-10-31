@@ -8,9 +8,11 @@ import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { spacing } from '../../lib/theme';
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent } from '../../store/held-connection';
 
 import { backlogPlanningQuery } from './planning-resources';
 
@@ -49,7 +51,7 @@ export function useBacklogDetailController(itemId: string | undefined) {
   );
   const error = !itemId
     ? 'Backlog item id is required.'
-    : (observation.error?.message ??
+    : (readErrorMessage(observation, heldConnectionCurrent()) ??
       specError ??
       (observation.status === 'ready' && !item ? `Backlog item ${itemId} was not found.` : null));
   useEffect(() => {

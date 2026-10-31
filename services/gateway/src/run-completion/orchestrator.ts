@@ -94,6 +94,7 @@ import {
   readGitHubPrTemplate,
 } from './pr-template.js';
 import {
+  capturedBeforeAttemptAttestations,
   postProcessPRBody,
   publicationBaselineContext,
   publishSelectedEvidence,
@@ -926,6 +927,10 @@ export async function prepareCompletionPackageTransitionLocked(
       );
     },
   });
+  // Bound like override receipts: a new attestation changes the package and needs re-approval.
+  const beforeAttemptAttestationIds = capturedBeforeAttemptAttestations(run, evidenceManifest).map(
+    ({ id }) => id,
+  );
   const basePackage: Omit<ReadyGatePrPackage, 'packageHash'> = {
     artifactBundle: retained.ref,
     id: packageId,
@@ -947,6 +952,7 @@ export async function prepareCompletionPackageTransitionLocked(
     validationSummaryPath: validation.path,
     validationSummaryHash: validation.hash,
     ...(deterministicChecks.length ? { deterministicChecks } : {}),
+    ...(beforeAttemptAttestationIds.length ? { beforeAttemptAttestationIds } : {}),
     reviewArtifactIds: reviews.flatMap((review) => review.artifactPaths ?? [review.id]),
     dispatchMode: run.mode,
     gatePolicy: gatePolicyForRun(run),
@@ -1688,6 +1694,7 @@ export async function publishCompletionPackage(
         failOnError: true,
         baseBody: publicationPackage.draftBody,
         evidenceManifest,
+        beforeAttemptAttestationIds: approvedPackage.beforeAttemptAttestationIds ?? [],
         validateBody: async (body) => {
           await verifyFrozenPublicationEvidence(
             latestRun,

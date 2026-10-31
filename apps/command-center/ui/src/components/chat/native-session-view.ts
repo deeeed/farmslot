@@ -34,6 +34,7 @@ import {
   nativeFollowScrolled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
+  nativeMessageCancelable,
   nativeMessageDropped,
   type NativeMessagePreview,
   nativeMessagePreview,
@@ -1041,7 +1042,11 @@ ${JSON.stringify(
   }
 
   private async sessionAction(
-    method: typeof Methods.NATIVE_SESSION_INTERRUPT | typeof Methods.NATIVE_SESSION_CLOSE,
+    method:
+      | typeof Methods.NATIVE_SESSION_INTERRUPT
+      | typeof Methods.NATIVE_SESSION_CLOSE
+      | typeof Methods.NATIVE_SESSION_CANCEL,
+    params: { commandId?: string } = {},
   ) {
     if (!this.session || this.busy || !this.connected || !this.inputAllowed) return;
     const revision = this.revision;
@@ -1051,6 +1056,7 @@ ${JSON.stringify(
       await this.api.request(method, {
         sessionId: this.session.id,
         executionNodeId: this.session.executionNodeId,
+        ...params,
         ...(this.worker ? { worker: this.workerControl } : {}),
       });
     } catch (error) {
@@ -1059,6 +1065,14 @@ ${JSON.stringify(
       if (revision === this.revision) this.busy = false;
       this.schedule(0);
     }
+  }
+
+  /** Edit: the host removes the queued message, and its release puts the text back here. */
+  private async editQueued() {
+    const commandId = this.localCommand?.commandId;
+    const receipt = this.receipts.find((item) => item.commandId === commandId);
+    if (commandId && nativeMessageCancelable(this.session, receipt))
+      await this.sessionAction(Methods.NATIVE_SESSION_CANCEL, { commandId });
   }
 
   private async respond(event: NativeSessionEvent, response: NativeSessionResponse) {
@@ -1433,6 +1447,16 @@ ${JSON.stringify(
                               this.localCommand.commandId,
                             )}
                           </div>
+                          ${nativeMessageCancelable(session, lastReceipt)
+                            ? html`<button
+                                class="message-toggle"
+                                data-testid="native-edit"
+                                ?disabled=${!this.connected || !this.inputAllowed || this.busy}
+                                @click=${() => this.editQueued()}
+                              >
+                                Edit
+                              </button>`
+                            : nothing}
                         </article>`
                       : nothing}
                     ${!this.transcript.events.length

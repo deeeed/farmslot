@@ -188,6 +188,7 @@ const nativeOwnerMethods = new Set([
   'native.session.send',
   'native.session.respond',
   'native.session.interrupt',
+  'native.session.cancel',
   'native.session.close',
   'native.session.workspace.list',
   'native.session.workspace.read',

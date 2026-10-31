@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { Methods } from '@farmslot/protocol';
+import { canActOn } from '@farmslot/protocol/client-cache';
 import { FleetRefreshViewModel } from '@farmslot/review-dispatch';
 
 import { currentFarmConnection } from '../../lib/connection-authority';
@@ -22,7 +23,7 @@ export function fleetRefreshRequest(client: GatewayClient) {
       const state = await cache.retry(nativeFleetQuery);
       if (!current() || cache !== getResourceCache() || owner !== getResourceWorkspaceKey())
         throw new Error('Farm connection changed; inspect again');
-      if (state.status !== 'ready' || !state.data)
+      if (!canActOn(state, true) || !state.data)
         throw new Error(state.error?.message ?? 'Wait for a current fleet read before acting.');
       return state.data as T;
     }

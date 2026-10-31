@@ -82,6 +82,7 @@ export const forbiddenPlanningMethods = [
   'native.session.respond',
   'native.session.close',
   'native.session.interrupt',
+  'native.session.cancel',
 ];
 export async function exclusiveJson(file, value) {
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx', mode: 0o600 });

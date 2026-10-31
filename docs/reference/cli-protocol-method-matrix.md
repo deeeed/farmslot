@@ -293,6 +293,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `native.session.send`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
 | `native.session.respond`           | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
 | `native.session.interrupt`         | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.session.cancel`            | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
 | `native.session.close`             | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
 | `native.session.catalog`           | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
 | `native.session.workspace.list`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
@@ -484,6 +485,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `run.forSlot`                  | typed-command | `farmslot run for-slot`                                    |     |                                                                                                                     |
 | `run.resolveDecision`          | typed-command | `farmslot run`                                             | yes |                                                                                                                     |
 | `run.overrideClaim`            | typed-command | `farmslot run gate --action mark-untestable`               |     | farmslot run gate --action mark-untestable records a verified human exception without resolving the gate.           |
+| `run.attestBeforeAttempt`      | typed-command | `farmslot run gate --action attest-before-attempt`         |     | Records a verified person attestation of a same-run before-only attempt without resolving the gate.                 |
 | `run.reviewVisualClaim`        | typed-command | `farmslot run gate --action confirm-visual\|reject-visual` |     | Record authenticated visual meaning for captured evidence without resolving the gate.                               |
 | `run.probeWorkerSignal`        | rpc-only      |                                                            |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                      |
 | `run.sessionCommand`           | typed-command | `farmslot run session`                                     |     |                                                                                                                     |

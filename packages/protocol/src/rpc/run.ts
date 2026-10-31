@@ -42,6 +42,7 @@ export const RunMethods = {
   forSlot: Methods.RUN_FOR_SLOT,
   resolveDecision: Methods.RUN_RESOLVE_DECISION,
   overrideClaim: Methods.RUN_OVERRIDE_CLAIM,
+  attestBeforeAttempt: Methods.RUN_ATTEST_BEFORE_ATTEMPT,
   reviewVisualClaim: Methods.RUN_REVIEW_VISUAL_CLAIM,
   probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,
   sessionCommand: Methods.RUN_SESSION_COMMAND,
@@ -690,6 +691,22 @@ export interface RunOverrideClaimParams {
   recipeRunId: string;
   snapshotIdentity: string;
   reason: string;
+}
+
+/** Admit one same-run recipe attempt as before-only evidence without resolving the gate. */
+export interface RunAttestBeforeAttemptParams {
+  runId: string;
+  decisionId: string;
+  /** Task-local attempt path under `artifacts/recipe-runs/`: `<id>` or the harness's `attempts/<id>`. */
+  recipeRunId: string;
+  /** The displayed gate package, when the gate has one; checked only at commit. */
+  packageHash?: string;
+  reason: string;
+}
+
+export interface RunAttestBeforeAttemptResult {
+  run: Run;
+  attestation: import('../recipe/claim-overrides.js').BeforeAttemptAttestation;
 }
 
 /** Record evidence meaning without resolving a gate or changing the original package. */

@@ -88,6 +88,7 @@ import {
 } from '../methods/run/admin.js';
 import { runAdopt } from '../methods/run/adopt.js';
 import { runAdoptPublishedPr } from '../methods/run/adopt-published-pr.js';
+import { runAttestBeforeAttempt } from '../methods/run/before-attestations.js';
 import { runOverrideClaim } from '../methods/run/claim-overrides.js';
 import { runReviewVisualClaim } from '../methods/run/claim-reviews.js';
 import {
@@ -177,6 +178,14 @@ export async function routeRunMethod(
         runOverrideClaim(p as import('@farmslot/protocol').RunOverrideClaimParams, emit, {
           authorizeEvidenceAttestation: context.authorizeEvidenceAttestation,
         }),
+      );
+    case Methods.RUN_ATTEST_BEFORE_ATTEMPT:
+      return handled(
+        runAttestBeforeAttempt(
+          p as import('@farmslot/protocol').RunAttestBeforeAttemptParams,
+          emit,
+          { authorizeEvidenceAttestation: context.authorizeEvidenceAttestation },
+        ),
       );
     // Runs
     case Methods.RUN_CREATE:
