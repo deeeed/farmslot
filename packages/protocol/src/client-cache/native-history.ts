@@ -491,11 +491,17 @@ export function nativeSendLabel(
   return undefined;
 }
 
+/** Steer is offered while a turn runs on a session whose runner can take a message into it. */
+export function nativeSteerAvailable(session: NativeSessionInfo | undefined): boolean {
+  return !!session?.capabilities.steer && session.state === 'running';
+}
+
 export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {
   if (!receipt) return 'Delivery unknown';
   if (receipt.queued) return 'Queued for the next turn';
   if (receipt.outcome === 'interrupted') return 'Interrupted';
   if (receipt.outcome === 'cancelled') return 'Removed';
+  if (receipt.steered && receipt.state === 'accepted') return 'Added to the running turn';
   switch (receipt.state) {
     case 'pending':
       return 'Submitting';

@@ -18,6 +18,7 @@ import {
   nativeMessageShown,
   nativeMessageToggleLabel,
   nativeSendLabel,
+  nativeSteerAvailable,
   nativeTimeline,
   type NativeTimelineRow,
   nativeTimelineRows,
@@ -488,6 +489,29 @@ test('a queued message can be taken back while its host removes queued messages'
   assert.equal(nativeMessageCancelable(host, removed), false);
   assert.equal(nativeMessageDropped(removed), true);
   assert.equal(nativeDeliveryLabel(removed), 'Removed');
+});
+
+test('Steer is offered while a turn runs on a host whose runner can take a message into it', () => {
+  const session = page([]).session;
+  const steering = { ...session, capabilities: { ...session.capabilities, steer: true } };
+  assert.equal(nativeSteerAvailable({ ...steering, state: 'running' }), true);
+  // An older host, or a runner without steering, reports no capability: only Queue message.
+  assert.equal(nativeSteerAvailable({ ...session, state: 'running' }), false);
+  // Idle sends start a turn; a turn waiting on a request queues the message instead.
+  for (const state of ['idle', 'waiting', 'closed'] as const)
+    assert.equal(nativeSteerAvailable({ ...steering, state }), false);
+  assert.equal(nativeSteerAvailable(undefined), false);
+  const steered: NativeCommandReceipt = {
+    commandId: 'more',
+    generation: 'generation',
+    state: 'accepted',
+    submitted: true,
+    accepted: true,
+    steered: true,
+  };
+  assert.equal(nativeDeliveryLabel(steered), 'Added to the running turn');
+  assert.equal(nativeDeliveryLabel({ ...steered, state: 'completed' }), 'Completed');
+  assert.equal(nativeDeliveryLabel({ ...steered, state: 'failed' }), 'Failed');
 });
 
 test('late acceptance restores the user prompt before its assistant response', () => {

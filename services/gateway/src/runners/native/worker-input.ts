@@ -3,6 +3,7 @@ import {
   NATIVE_WORKER_INTERRUPT,
   NATIVE_WORKER_RESPOND,
   NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
 } from '@farmslot/agent-runtime/native';
 import {
   type AgentContext,
@@ -150,6 +151,15 @@ async function routePinnedWorkerInput(
     leaseId: target.leaseId,
   };
   const acceptanceRecorded = nativeWorkerRecordsAcceptance(run, context);
+  const steer = method === Methods.NATIVE_SESSION_SEND && params.delivery !== undefined;
+  if (steer && params.delivery !== 'steer')
+    throw new GatewayMethodError('INVALID_PARAMS', "delivery must be 'steer'");
+  // The acceptance ledger records an instruction for the next turn; it cannot join a running one.
+  if (steer && acceptanceRecorded)
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      'This run records worker messages for acceptance; a message cannot join the running turn',
+    );
   if (method === Methods.NATIVE_SESSION_SEND && acceptanceRecorded && slotId) {
     if (typeof params.commandId !== 'string' || typeof params.text !== 'string')
       throw new GatewayMethodError('INVALID_PARAMS', 'Worker message requires commandId and text');
@@ -176,11 +186,11 @@ async function routePinnedWorkerInput(
     };
   }
   if (method === Methods.NATIVE_SESSION_SEND)
-    return routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_SEND, {
-      ...nativeTarget,
-      commandId: params.commandId,
-      text: params.text,
-    });
+    return routeNativeExecution(
+      binding.ownerPrincipalId,
+      steer ? NATIVE_WORKER_STEER : NATIVE_WORKER_SEND,
+      { ...nativeTarget, commandId: params.commandId, text: params.text },
+    );
   if (method === Methods.NATIVE_SESSION_RESPOND)
     return routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_RESPOND, {
       ...nativeTarget,

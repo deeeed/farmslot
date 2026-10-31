@@ -144,7 +144,11 @@ export async function routeNativeSession(
         );
       case Methods.NATIVE_SESSION_SEND: {
         const commandId = string(p, 'commandId');
-        return await client.send(principal, string(p, 'sessionId'), commandId, string(p, 'text'));
+        if (p.delivery !== undefined && p.delivery !== 'steer')
+          throw new NativeSessionMethodError('INVALID_PARAMS', "delivery must be 'steer'");
+        return p.delivery === 'steer'
+          ? await client.steer(principal, string(p, 'sessionId'), commandId, string(p, 'text'))
+          : await client.send(principal, string(p, 'sessionId'), commandId, string(p, 'text'));
       }
       case Methods.NATIVE_SESSION_RESPOND: {
         const response: NativeSessionResponse = {};

@@ -1055,6 +1055,16 @@ export class NativeSessionManager {
         command.outcome = event.status;
         command.structuredResult = structuredResult;
       }
+      // Messages added to this turn end with it, so they never hold up queued input.
+      for (const steered of record.commands.values())
+        if (
+          steered.steered &&
+          steered.generation === record.info.generation &&
+          ['unknown', 'accepted'].includes(steered.state)
+        ) {
+          steered.state = event.status === 'completed' ? 'completed' : 'failed';
+          steered.outcome = event.status;
+        }
     }
     if (event.type === 'session.closed') {
       if (event.data?.processStopped === true) record.info.processStopped = true;
@@ -1248,6 +1258,7 @@ export class NativeSessionManager {
         state: existing.state,
         commandId,
         ...(existing.queued ? { queued: true } : {}),
+        ...(existing.steered ? { steered: true } : {}),
       };
     }
     if (!record.adapter || ['starting', 'closing', 'closed', 'failed'].includes(record.info.state))
@@ -1284,6 +1295,67 @@ export class NativeSessionManager {
       accepted: false,
       leaseId: record.info.workerLeaseId,
     });
+  }
+
+  /**
+   * Adds the message to the running turn when the runner can take it there: the adapter steers,
+   * a turn runs, no request is pending and no submission is in flight. Otherwise it is an
+   * ordinary send. The intent is journaled before the runner write, like any submission; a
+   * refusal fails the command and nothing is resent. It completes with the turn it joined.
+   */
+  async steer(
+    owner: string,
+    id: string,
+    commandId: string,
+    text: string,
+  ): Promise<NativeSessionSendResult> {
+    const record = this.owned(owner, id);
+    const adapter = record.adapter;
+    if (
+      record.commands.has(commandId) ||
+      !adapter?.steer ||
+      !record.info.capabilities.steer ||
+      record.info.state !== 'running' ||
+      record.pendingRequests.size ||
+      record.sending
+    )
+      return this.send(owner, id, commandId, text);
+    this.assertAccountCurrent(record);
+    const command: StoredCommand = {
+      text,
+      commandId,
+      generation: record.info.generation,
+      state: 'unknown',
+      submitted: true,
+      accepted: false,
+      steered: true,
+      leaseId: record.info.workerLeaseId,
+    };
+    record.commands.set(commandId, command);
+    // A crash after this durable reservation must never trigger a resend.
+    this.append(record, { type: 'command.submitted', commandId, text });
+    try {
+      await adapter.steer(text, commandId);
+    } catch (error) {
+      // A runner that is still up refused it. One that stopped may have taken it: unknown stays.
+      if (
+        record.adapter === adapter &&
+        !['closing', 'closed', 'failed'].includes(record.info.state)
+      )
+        command.state = 'failed';
+      this.append(record, {
+        type: 'error',
+        commandId,
+        text: `The runner did not add the message to its turn: ${(error as Error).message}`,
+      });
+    }
+    return {
+      commandId,
+      submitted: command.submitted,
+      accepted: command.accepted,
+      state: command.state,
+      steered: true,
+    };
   }
 
   private async submitCommand(

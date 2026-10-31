@@ -379,6 +379,18 @@ export function NativeConversationScreen({
             >
               <Text style={styles.buttonText}>{vm.sendLabel}</Text>
             </Pressable>
+            {vm.steerable ? (
+              <Pressable
+                testID="companion-native-steer"
+                accessibilityRole="button"
+                accessibilityHint="Adds this message to the running turn"
+                disabled={!vm.canSteer}
+                style={[styles.button, !vm.canSteer && styles.disabled]}
+                onPress={() => void actions.send('steer')}
+              >
+                <Text style={styles.buttonText}>Steer</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               testID="companion-native-stop"
               accessibilityRole="button"

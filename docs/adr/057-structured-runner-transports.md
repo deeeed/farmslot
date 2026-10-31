@@ -321,7 +321,7 @@ Hosts keep their loaded code until stopped, so a session started on an older hos
 
 ## Amendment 9: queued messages, steering, plans and per-turn changes, 2026-10-31
 
-**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in this change; steering, plans and per-turn changes follow in their own changes.
+**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in #1658; part 3 (steer) implemented in this change; plans and per-turn changes follow in their own changes.
 
 ### Decision
 
@@ -336,12 +336,28 @@ Hosts keep their loaded code until stopped, so a session started on an older hos
 
 Clients show Edit on the queued message they sent while `nativeMessageCancelable` holds: the session reports `capabilities.cancelQueued`, and the receipt is queued, unsubmitted and of the session's current generation. The host reports the capability; the gateway withholds it from a pinned worker's read on a run whose worker messages are acceptance sources, since it refuses removal there.
 
+**Steer.** `native.session.send` accepts `delivery: 'steer'`. The host adds the message to the running turn only if all of these hold, and otherwise sends it as usual:
+
+- the adapter declares `capabilities.steer`;
+- the session is `running` (its turn is known);
+- no request is pending and no submission is in flight.
+
+The intent is journaled before the write to the runner, as for any submission. The runner's reply is acceptance; a refusal (the turn ended first) fails the command, and nothing is resent. A lost reply from a runner that stopped stays unknown. The receipt carries `steered: true`, and the command completes or fails with the turn it joined, so it never holds up queued input. The turn's own events stay stamped with the command that started it.
+
+Codex declares `steer` and calls `turn/steer` with the turn as `expectedTurnId` and the command ID as `clientUserMessageId`. Claude and ACP declare nothing: Claude's "now" priority ends the turn, and ACP has no mid-turn input. Clients offer Steer next to "Queue message" while `nativeSteerAvailable` holds (the capability and a running turn); a session that cannot steer keeps "Queue message" and Stop.
+
+Steering reaches the host as its own method (`steer`, and `native.worker.steer` under the worker's lease), so a host started before this change refuses it as an unknown method instead of dropping the field and queueing the message. A pinned worker's steer passes the same gateway fence as its other messages. On a run that records worker messages for acceptance the gateway refuses it, since that ledger records an instruction for the next turn, and withholds `steer` from that worker's read.
+
 ### Rationale and consequences
 
 A queued message could be dropped only by closing the session. The queue lives in the host, so removal needs no runner support.
 
 Hosts keep their loaded code until stopped. A session on an older host reports no `cancelQueued`, so clients hide Edit and keep "Queue message" and Stop; that host refuses `native.session.cancel` as an unknown method. Older clients show a removed message as "Failed" and return its text to the composer.
 
+Waiting for the turn to end delayed a correction until the work it corrected was done. Steering lets the reader adjust a running turn. Older clients never send `delivery`, and a client never offers Steer without the capability.
+
 ### Public surface
 
 `native.session.cancel` (`NativeSessionCancelParams`, `NativeSessionCancelResult`), the receipt outcome `cancelled`, `NativeSessionCapabilities.cancelQueued` and the client-cache predicate `nativeMessageCancelable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `cancelCommand` and `native.worker.cancelCommand`, so it needs a release; native hosts started after it support removal. The gateway adds the method to its worker input fence, authorization map and native method lists, and withholds the capability where it refuses removal; Companion adds it to its workspace method list. No CLI flag or harness change. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) defines the boundary.
+
+Steer: `NativeSessionSendParams.delivery`, `NativeSessionCapabilities.steer`, the receipt flag `steered` and the client-cache predicate `nativeSteerAvailable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `steer` and `native.worker.steer` and the Codex `turn/steer` call, so it needs a release; sessions started on a host after it can steer. The gateway routes a worker steer through its input fence and withholds the capability where it refuses it. No new gateway method.

@@ -20,6 +20,7 @@ import {
   nativeMessageShown,
   nativeObservationQuery,
   nativeSendLabel,
+  nativeSteerAvailable,
   nativeTimeline,
   nativeTimelineRows,
   type NativeTranscript,
@@ -361,7 +362,8 @@ export function useNativeConversationController(params: NativeConversationParams
       }
     }
   };
-  const send = () =>
+  /** `steer`: the message joins the running turn when the host can take it there. */
+  const send = (delivery?: 'steer') =>
     mutate(async () => {
       if (!session || !nativeSendLabel(session.state) || pendingRef.current || !draft.trim())
         return;
@@ -381,7 +383,11 @@ export function useNativeConversationController(params: NativeConversationParams
         assertCurrentControls('current');
         issued = true;
         const { generation: _, ...request } = command;
-        await client!.request(Methods.NATIVE_SESSION_SEND, request, 30_000);
+        await client!.request(
+          Methods.NATIVE_SESSION_SEND,
+          { ...request, ...(delivery ? { delivery } : {}) },
+          30_000,
+        );
       } catch (cause) {
         // Never sent: the message goes back to the composer instead of waiting on a delivery.
         if (!issued) {
@@ -555,6 +561,8 @@ export function useNativeConversationController(params: NativeConversationParams
       connected: heldConnected,
       writable,
       canSend,
+      canSteer: canSend && nativeSteerAvailable(session),
+      steerable: !!session?.capabilities.steer,
       sendLabel: sendLabel ?? 'Send',
       canStop:
         writable &&
