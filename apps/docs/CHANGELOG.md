@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document `native.session.cancel`, which removes a queued native message, in the generated gateway API reference.
+
 - Document `farmslot task repin` in the generated Recipe CLI reference.
 
 - Synchronize the gateway API reference with protocol 0.74.3.
