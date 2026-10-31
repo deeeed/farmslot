@@ -118,6 +118,9 @@ function takeVoiceLiveWindow(points: WaveformPoint[]): WaveformPoint[] {
   return points.slice(Math.max(0, points.length - VOICE_LIVE_BARS_WINDOW));
 }
 
+/** The worker inventory's first read has not arrived yet; not a failure to report. */
+class InventoryPendingError extends Error {}
+
 export default function WorkerTerminalScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -223,6 +226,9 @@ export default function WorkerTerminalScreen() {
     );
   const requireWorkerInventory = useCallback(() => {
     const current = workerQuery ? getResourceCache()?.read(workerQuery) : undefined;
+    // The first read is still on its way: nothing failed, so callers stay quiet.
+    if (current && current.data === undefined && !current.error)
+      throw new InventoryPendingError('Wait for current worker inventory before acting.');
     if (
       !focused ||
       !client ||
@@ -395,7 +401,7 @@ export default function WorkerTerminalScreen() {
       try {
         requireWorkerInventory();
       } catch (error) {
-        setError(getErrorMessage(error));
+        if (!(error instanceof InventoryPendingError)) setError(getErrorMessage(error));
         return;
       }
       writeWorkerInput(data).catch((err: unknown) => {
@@ -496,15 +502,19 @@ export default function WorkerTerminalScreen() {
     writeWorkerInput,
   ]);
 
+  const pendingSize = useRef<TerminalSize | null>(null);
   const resize = useCallback(
     (size: TerminalSize) => {
       if (!client || !worker) return;
       try {
         requireWorkerInventory();
       } catch (error) {
-        setError(getErrorMessage(error));
+        // Sent again once the inventory arrives; a first read is not an error.
+        pendingSize.current = size;
+        if (!(error instanceof InventoryPendingError)) setError(getErrorMessage(error));
         return;
       }
+      pendingSize.current = null;
       client
         .request(
           Methods.TERMINAL_WORKER_RESIZE,
@@ -515,6 +525,10 @@ export default function WorkerTerminalScreen() {
     },
     [client, worker, requireWorkerInventory],
   );
+
+  useEffect(() => {
+    if (workerReady && pendingSize.current) resize(pendingSize.current);
+  }, [workerReady, resize]);
 
   const promptOpenMicrophoneSettings = useCallback((message: string) => {
     Alert.alert('Microphone required', message, [
