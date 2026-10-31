@@ -10,6 +10,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { isLocal } from '../core/exec.js';
+import { getNode } from '../fleet/machine-registry.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import {
   hasPty,
@@ -22,6 +23,7 @@ import {
   type InputLanding,
   machinePaneInputRecord,
   runInputInOrder,
+  UNRECORDED_PANE,
   writeSequencedInput,
 } from '../runtime/terminal-input-sequence.js';
 import {
@@ -94,9 +96,12 @@ async function workerInputLanding(
       record: machinePaneInputRecord(worker.target, worker.nodeId, local),
     };
   }
+  if (!getNode(worker.nodeId)) throw new Error(`node ${worker.nodeId} is not connected`);
+  const typesOnce = workerNodeTypesInputOnce(worker);
   return {
     write: (dispatched) => sendWorkerTerminalInput(worker, data, dispatched, seq),
-    typesOnce: workerNodeTypesInputOnce(worker),
+    typesOnce,
+    ...(typesOnce ? {} : { record: UNRECORDED_PANE }),
   };
 }
 

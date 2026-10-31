@@ -30,6 +30,8 @@ interface Written {
   n: number;
   /** The remote write was dispatched and ended without an answer: it may have been typed. */
   uncertain: boolean;
+  /** That write records the batch on the pane with its keys, so the pane record decides. */
+  recordedWithKeys?: boolean;
 }
 
 /** Where a batch is typed. */
@@ -99,6 +101,8 @@ export async function writeSequencedInput(
   const last = written.get(pane)?.get(seq.stream);
   const unsure = !last || (last.uncertain && seq.n === last.n);
   if (last && seq.n <= last.n && !unsure) return;
+  // A write that may have typed without recording it: nothing can tell, so it is not sent again.
+  if (unsure && last?.uncertain && !last.recordedWithKeys) throw uncertain();
   const target = await resolve();
   const record = target.record;
   if (unsure && record) {
@@ -120,7 +124,7 @@ export async function writeSequencedInput(
       remote = true;
     }, seq);
   } catch (error) {
-    if (remote) remember(pane, seq, true);
+    if (remote) remember(pane, seq, true, Boolean(target.recordsOnWrite || target.typesOnce));
     throw error;
   }
   remember(pane, seq, false);
@@ -138,12 +142,21 @@ function uncertain(): GatewayMethodError {
  * tmux before 3.0 keeps no pane options, so no batch typed there is ever recorded: numbered input
  * is refused rather than typed again after a restart.
  */
-function recordsUnsupported(): GatewayMethodError {
-  return new GatewayMethodError(
-    'TERMINAL_INPUT_UNSUPPORTED',
-    'Needs tmux 3.0 or later on this host',
-  );
+function recordsUnsupported(message = 'Needs tmux 3.0 or later on this host'): GatewayMethodError {
+  return new GatewayMethodError('TERMINAL_INPUT_UNSUPPORTED', message);
 }
+
+/**
+ * For a pane typed through a node that keeps no record (one predating `terminalInputSequence`,
+ * or on tmux before 3.0): a batch this process has no memory of may be a resend after a restart,
+ * so it is refused; batches after one this process typed go through.
+ */
+export const UNRECORDED_PANE: PaneInputRecord = {
+  read: async () => {
+    throw recordsUnsupported('Needs an updated node with tmux 3.0 or later');
+  },
+  write: async () => {},
+};
 
 /**
  * Records a batch on its pane without holding up the reply: a client resends only when the reply
@@ -249,12 +262,17 @@ function assertSequence(seq: TerminalInputSequence): void {
     );
 }
 
-function remember(pane: string, seq: TerminalInputSequence, uncertain: boolean): void {
+function remember(
+  pane: string,
+  seq: TerminalInputSequence,
+  uncertain: boolean,
+  recordedWithKeys = false,
+): void {
   const streams = written.get(pane) ?? new Map<string, Written>();
   written.delete(pane);
   written.set(pane, streams);
   streams.delete(seq.stream);
-  streams.set(seq.stream, { n: seq.n, uncertain });
+  streams.set(seq.stream, { n: seq.n, uncertain, recordedWithKeys });
   if (streams.size > MAX_STREAMS_PER_PANE) dropOldest(streams);
   if (written.size > MAX_PANES) dropOldest(written);
 }

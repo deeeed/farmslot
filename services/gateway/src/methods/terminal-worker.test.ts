@@ -80,7 +80,7 @@ test('worker terminal snapshot/input/resize route to node tmux RPC by worker ref
 
 // A batch the phone resends after a lost reply must not be typed into the pane twice.
 test('worker terminal input writes each sequenced batch once', async () => {
-  const node = fakeNode({ 'tmux.send': { sent: true } });
+  const node = fakeNode({ 'tmux.send': { sent: true } }, undefined, true);
   const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%43' };
   try {
     await terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q1', n: 1 } });
@@ -103,7 +103,7 @@ test('worker input refused for a disconnected node is written by its resend', as
     terminalWorkerInput({ worker, data: 'ls\r', seq: { stream: 'q2', n: 1 } }),
     /not connected/,
   );
-  const node = fakeNode({ 'tmux.send': { sent: true } }, nodeId);
+  const node = fakeNode({ 'tmux.send': { sent: true } }, nodeId, true);
   try {
     await terminalWorkerInput({ worker, data: 'ls\r', seq: { stream: 'q2', n: 1 } });
     assert.deepEqual(
@@ -117,7 +117,7 @@ test('worker input refused for a disconnected node is written by its resend', as
 
 // A node still registered while its socket closes: nothing left the gateway, so nothing is uncertain.
 test('worker input refused by a closing node socket is written by its resend', async () => {
-  const node = fakeNode({ 'tmux.send': { sent: true } });
+  const node = fakeNode({ 'tmux.send': { sent: true } }, undefined, true);
   const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%45' };
   try {
     node.ws.readyState = 2;
@@ -135,20 +135,21 @@ test('worker input refused by a closing node socket is written by its resend', a
   }
 });
 
-// A node predating `terminalInputSequence` may have typed it whatever its answer, and cannot tell.
-test('older node: worker input that failed after the node socket took it is not sent again', async () => {
-  const node = fakeNode({ 'tmux.send': new Error("can't find pane: %46") });
+// A node predating `terminalInputSequence` keeps no record: after a gateway restart a batch could
+// be a resend of one it typed, so numbered input this process has no memory of is refused.
+test('older node: numbered input with no record here is refused; unnumbered input goes', async () => {
+  const node = fakeNode({ 'tmux.send': { sent: true } });
   const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%46' };
   try {
     await assert.rejects(
       terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q4', n: 1 } }),
-      /can't find pane/,
+      (error: unknown) => (error as { code?: string }).code === 'TERMINAL_INPUT_UNSUPPORTED',
     );
-    await assert.rejects(
-      terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q4', n: 1 } }),
-      (error: unknown) => (error as { code?: string }).code === 'TERMINAL_INPUT_UNCERTAIN',
+    await terminalWorkerInput({ worker, data: 'ls\r' });
+    assert.deepEqual(
+      node.sent.map((frame) => (frame.params as { text: string }).text),
+      ['ls\r'],
     );
-    assert.equal(node.sent.length, 1);
   } finally {
     unregisterByWs(node.ws as never);
   }

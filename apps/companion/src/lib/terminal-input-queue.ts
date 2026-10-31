@@ -112,6 +112,9 @@ export function withoutKeysRetryingNotice(current: string | null): string | null
   return isKeysRetryingNotice(current) ? null : current;
 }
 
+/** Refusals that never change: the batch is dropped with the gateway's own error. */
+const NEVER_TAKEN = new Set(['INVALID_PARAMS', 'TERMINAL_INPUT_UNSUPPORTED']);
+
 /** A gateway's error answer (a refusal, a pane not ready) waits longer than a lost connection. */
 export const terminalInputRetryDelayMs = (attempt: number, answered: boolean) =>
   Math.min(250 * 2 ** attempt, answered ? 30_000 : 4_000);
@@ -195,17 +198,15 @@ export function createTerminalInputQueue(
       }
       if (sent !== undefined) batch.sentTo = sent;
       const code = gatewayCode(error);
+      const neverTaken = code !== undefined && NEVER_TAKEN.has(code);
       if (
         batch.sentTo === 'nowhere' ||
         code === 'TERMINAL_INPUT_UNCERTAIN' ||
-        code === 'INVALID_PARAMS' ||
-        code === 'TERMINAL_INPUT_UNSUPPORTED' ||
+        neverTaken ||
         error instanceof TerminalInputMaybeTypedError
       ) {
         const dropped =
-          error instanceof TerminalInputMaybeTypedError ||
-          code === 'INVALID_PARAMS' ||
-          code === 'TERMINAL_INPUT_UNSUPPORTED'
+          neverTaken || error instanceof TerminalInputMaybeTypedError
             ? error
             : new TerminalInputMaybeTypedError(error);
         batch.waiters.forEach((waiter) => waiter.reject(dropped));
@@ -256,7 +257,6 @@ function gatewayCode(error: unknown): string | undefined {
     ? String(error.code || '') || undefined
     : undefined;
 }
-
 
 function newStreamId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;

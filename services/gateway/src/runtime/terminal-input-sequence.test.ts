@@ -323,6 +323,21 @@ test('the shell prune and the node pick the same stale records', async () => {
   assert.deepEqual(fromShell, staleTerminalInputRecords(listing).sort());
 });
 
+// The pane record says nothing of a write whose host does not record with the keys.
+test('a write that may have typed unrecorded is not resent, even where a record exists', async () => {
+  resetInputSequencesForTests();
+  const typed: string[] = [];
+  await assert.rejects(
+    writer('mini:%9', typed)('make\r', { stream: 'a', n: 1 }, 'remote-timeout'),
+    /timed out/,
+  );
+  await assert.rejects(
+    writer('mini:%9', typed, { record: paneRecord() })('make\r', { stream: 'a', n: 1 }),
+    (error: unknown) => (error as { code?: string }).code === 'TERMINAL_INPUT_UNCERTAIN',
+  );
+  assert.deepEqual(typed, ['make\r']);
+});
+
 test('a known repeat is acknowledged without resolving where it would land', async () => {
   resetInputSequencesForTests();
   const typed: string[] = [];
