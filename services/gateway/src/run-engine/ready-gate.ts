@@ -954,7 +954,7 @@ async function waitForOwnedWorkerIdle(
     detail: 'Preparing operator decision: waiting for the owned worker to be idle',
   });
   for (let delay = pollMs; Date.now() < deadline; delay = Math.min(delay * 2, maxPollMs)) {
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(delay, deadline - Date.now())));
     const before = getRun(runId);
     if (runSupersededSince(before, generation)) return 'abort';
     if (isGateParkInFlightOrFreed(before!)) return 'timeout';
