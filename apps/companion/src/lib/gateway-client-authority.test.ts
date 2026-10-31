@@ -827,7 +827,6 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
       },
     ) as { write: (data: string) => Promise<void> };
     const typed = write('make deploy\r');
-    typed.catch(() => undefined);
     await settle();
     const sent = first.sent.find((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT)!;
     first.close(1006);
@@ -887,5 +886,7 @@ test(
     } finally {
       run.cleanup();
     }
+    // Held keys stay pending until the user decides or the terminal goes away.
+    await assert.rejects(run.typed, inputQueue.TerminalInputCancelledError);
   },
 );

@@ -175,8 +175,8 @@ export function createTerminalInputQueue(
         return;
       }
       if (sentNow !== undefined) batch.sentTo = sentNow;
-      // A gateway that answered with an error code refused the keys (the pane does not have
-      // them), and the same refusal would come back: the user decides. Only a failure without an
+      // The gateway answered with an error (a refusal, or a remote write that may have typed the
+      // keys); the same answer would come back, so the user decides. Only a failure without an
       // answer (closed socket, background pause, timeout) is resent on its own.
       const refused = sentNow !== undefined && hasGatewayCode(error);
       if (batch.sentTo === null || refused || needsDecision(error)) {

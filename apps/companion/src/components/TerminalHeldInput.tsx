@@ -13,10 +13,11 @@ export function heldInputPreview(data: string, max = 40): string {
 }
 
 /**
- * Keys that may already be in the pane: nothing more is sent until the user resends or discards
- * them. A gateway instance that numbers input resends them on its own; this shows only when that
- * cannot be known: a gateway without `terminalInputSequence`, a different instance after a
- * restart, or a remote node that never answered (TERMINAL_INPUT_UNCERTAIN).
+ * Keys the gateway did not confirm: nothing more is sent until the user resends or discards them.
+ * A gateway instance that numbers input resends a lost reply on its own; this shows when it
+ * cannot: the gateway answered with an error (a refusal, or TERMINAL_INPUT_UNCERTAIN after a
+ * remote write that may have typed them), the gateway lacks `terminalInputSequence`, or a
+ * different instance answers after a restart.
  */
 export function TerminalHeldInput({
   held,

@@ -268,7 +268,8 @@ test('a batch the gateway reports uncertain, or one bound for another instance, 
     { retryDelayMs: () => 0, onHold: (held) => holds.push(held && held.data) },
   );
   void restarted.write('pwd\r');
-  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  for (let wait = 0; holds.length < 2 && wait < 100; wait++)
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(attempts, [undefined, 'gw1']);
   assert.deepEqual(holds, ['make deploy\r', 'pwd\r']);
 });
@@ -288,7 +289,9 @@ test('a batch the gateway refused with an error code is held, not retried every 
     { retryDelayMs: () => 0, onHold: (held) => holds.push(held && held.data) },
   );
   void queue.write('ls\r');
-  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  for (let wait = 0; holds.length === 0 && wait < 100; wait++)
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  await new Promise<void>((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(attempts, ['ls\r']);
   assert.deepEqual(holds, ['ls\r']);
 });
