@@ -551,8 +551,11 @@ export async function runBundleAdmissionUsage(
   store: RunBundleStore,
   farmslotRoot: string,
 ): Promise<RunBundleAdmissionUsage> {
-  const stored = await chargedStoreBytes(store);
-  const reservations = await reservedMetadataBytes(store);
+  // Store accounting can record a legacy bundle's bytes, which only ever happens under the lock.
+  const { stored, reservations } = await withRunBundleStoreLock(store, async () => ({
+    stored: await chargedStoreBytes(store),
+    reservations: await reservedMetadataBytes(store),
+  }));
   const acquisition = (await acquisitionBytes(farmslotRoot)).bytes;
   return { store: stored, reservations, acquisition, total: stored + reservations + acquisition };
 }

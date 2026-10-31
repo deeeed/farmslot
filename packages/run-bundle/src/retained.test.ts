@@ -29,7 +29,9 @@ import {
   readRunBundleAvailability,
   reserveRunBundleMetadata,
   resolveRunBundleEntry,
+  runBundleAdmissionUsage,
   runBundleHousekeepingPaths,
+  withRunBundleStoreLock,
 } from './retained.js';
 
 async function fixture(t: TestContext) {
@@ -566,6 +568,33 @@ test('a bundle retention has moved aside is charged its record, measured once if
   await rm(path.join(f.store.root, 'reservations', 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee.json'));
   await writeFile(path.join(aside, 'unrecorded.bin'), Buffer.alloc(60_000));
   await reserveRunBundleMetadata(f.store, 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee', policy);
+});
+
+test('capacity usage reads store accounting under the store lock', async (t) => {
+  const f = await fixture(t);
+  let release!: () => void;
+  let entered!: () => void;
+  const holding = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const holder = withRunBundleStoreLock(f.store, async () => {
+    entered();
+    await new Promise<void>((done) => {
+      release = done;
+    });
+  });
+  await holding;
+  let settled = false;
+  const usage = runBundleAdmissionUsage(f.store, f.root).then((result) => {
+    settled = true;
+    return result;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(settled, false, 'a usage read waits for the store lock');
+  release();
+  await holder;
+  const { store, reservations, acquisition, total } = await usage;
+  assert.equal(total, store + reservations + acquisition);
 });
 
 test('a repair re-derives a stale record from the manifest before charging restored media', async (t) => {
