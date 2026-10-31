@@ -210,7 +210,11 @@ export async function executeReviewGate(runId: string): Promise<void> {
         lowCaptions = collectLowCaptions(manifest);
         try {
           assertCaptionConfidence(manifest);
-          evidenceMarkdown = buildEvidenceSection(manifest, reviewArtifactUrls);
+          evidenceMarkdown = buildEvidenceSection(
+            manifest,
+            reviewArtifactUrls,
+            getRun(runId)?.beforeAttemptAttestations,
+          );
         } catch (err) {
           if (err instanceof EvidenceCaptionError) {
             console.warn(`[run-engine] evidence gate blocked posting: ${err.message}`);

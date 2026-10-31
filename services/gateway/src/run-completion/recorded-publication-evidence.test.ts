@@ -32,7 +32,8 @@ const { allSelectedEvidenceKeysForPublication, assertPublicationEvidenceSelectio
   await import('./publication-evidence-policy.js');
 const { expandPublicationEvidenceSelection, readEvidenceManifest, publishSelectedEvidence } =
   await import('./publication-artifacts.js');
-const { publicationBaselineContext } = await import('./publication-artifacts.js');
+const { publicationBaselineContext, resolvePublicationManifest } =
+  await import('./publication-artifacts.js');
 const { computeReadyGatePackageHash } = await import('./ready-gate-package.js');
 
 const { makeRun, makeReadyGatePackage, retainRunFixture, overwriteRetainedFixture } =
@@ -936,6 +937,87 @@ test('baseline declarations refuse other roles, source changes and incomplete ca
     ),
     /closure is invalid|Baseline closure is missing or changed/,
   );
+});
+
+test('an operator attestation admits a dirty PR-head attempt as before-only evidence until its manifest changes', async (t) => {
+  const f = await sameHeadFixture(t);
+  const directory = path.join(f.taskDir, 'artifacts', f.baselineRoot);
+  const setFile = async (file: string, bytes: string) => {
+    await writeFile(path.join(directory, file), bytes);
+    f.inventory.find((entry) => entry.path === `artifacts/${f.baselineRoot}/${file}`)!.sha256 =
+      digest(Buffer.from(bytes));
+  };
+  // The before recipe needs files the change adds, so it ran at the PR head with local changes.
+  await setFile(
+    'product-provenance.json',
+    JSON.stringify({ ...f.provenance, git_ref: f.headSha, dirty: true }),
+  );
+  await retainRunFixture(f.run);
+  await assert.rejects(readEvidenceManifest(f.run), /product-provenance\.json.*git_ref/);
+
+  const manifestBytes = await readFile(path.join(directory, 'artifact-manifest.json'), 'utf8');
+  f.run.beforeAttemptAttestations = [
+    {
+      id: 'attestation',
+      runId: f.run.id,
+      decisionId: 'gate',
+      attemptRoot: f.baselineRoot,
+      manifestSha256: digest(Buffer.from(manifestBytes)),
+      approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'credential' },
+      reason: 'The recipe needs files this change adds.',
+      attestedAt: '2026-10-31T05:00:00.000Z',
+    },
+  ];
+  // The worker preflight reads before any capture pins the bytes.
+  const preflight = () =>
+    resolvePublicationManifest(
+      f.taskDir,
+      undefined,
+      undefined,
+      1,
+      publicationBaselineContext(f.run, null),
+    );
+  assert.ok(await preflight());
+  const effective = await readEvidenceManifest(f.run);
+  assert.equal(effective?.before_after_pairs?.[0]?.before, `${f.baselineRoot}/proof.png`);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    effective,
+    1,
+    publicationBaselineContext(f.run),
+  );
+  assert.ok(inventory.some((entry) => entry.path === `artifacts/${f.baselineRoot}/proof.png`));
+  await retainRunFixture(f.run);
+  const keys = [`artifacts/${f.baselineRoot}/proof.png`, `artifacts/${f.headRoot}/proof.png`];
+  await verifyFrozenPublicationEvidence(f.run, inventory, keys);
+
+  // After and standalone captures from the attested attempt still need the clean selected head.
+  for (const declaration of [
+    {
+      version: 1,
+      standalone: [{ label: 'Attested attempt', file: `${f.baselineRoot}/proof.png` }],
+    },
+    {
+      ...f.declaration,
+      before_after_pairs: f.declaration.before_after_pairs.map((pair) => ({
+        ...pair,
+        before: pair.after,
+        after: pair.before,
+      })),
+    },
+  ]) {
+    await writeFile(f.declarationPath, JSON.stringify(declaration));
+    await retainRunFixture(f.run);
+    await assert.rejects(readEvidenceManifest(f.run), /failed dirty validation/);
+  }
+  await writeFile(f.declarationPath, JSON.stringify(f.declaration));
+
+  // A re-captured attempt has new manifest bytes; the attestation no longer applies.
+  await setFile('artifact-manifest.json', JSON.stringify(JSON.parse(manifestBytes), null, 2));
+  await retainRunFixture(f.run);
+  await assert.rejects(readEvidenceManifest(f.run), /product-provenance\.json.*git_ref/);
+  await assert.rejects(preflight(), /product-provenance\.json.*git_ref/);
 });
 
 test('selected recorded media freezes the complete execution input and selection manifest', async (t) => {

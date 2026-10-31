@@ -5,6 +5,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 ## Unreleased
 
 - Retained media that grew past its captured size since capture is recorded as `changed:` missing data instead of failing the whole capture, as content that changed at the same size already was.
+- Importing a bundle drops the run's before-attempt attestations, as it drops claim override receipts, so imported metadata never becomes this gateway's attestation authority.
+
 - An active run's committed captures stop pinning their bundles once superseded: only the run's current generation and its newest capture stay pinned. Housekeeping now lists bundles no run references and no live capture pins (`run-bundles` entries) for the host to archive, and `runBundleAdmissionUsage` reports what capture admission charges against the cap.
 
 - Return the acquisition scan's file count and elapsed time for completion logging, without another tree walk.

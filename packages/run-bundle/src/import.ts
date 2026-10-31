@@ -91,6 +91,7 @@ function loadBundledRun(bundleDir: string, runPath: string, manifest: RunBundleM
   const run = JSON.parse(readFileSync(filePath, 'utf-8')) as Run;
   // Imported audit metadata cannot become this gateway's verified override authority.
   delete run.claimOverrideReceipts;
+  delete run.beforeAttemptAttestations;
   return run;
 }
 

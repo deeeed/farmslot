@@ -496,6 +496,34 @@ export function commitRunVisualJudgment(
   );
 }
 
+/** An attestation is durable before a package preparation can admit its attempt. */
+export async function commitRunBeforeAttemptAttestation(
+  id: string,
+  build: (run: Run) => import('@farmslot/protocol').BeforeAttemptAttestation,
+  assertCurrent: (run: Run) => void,
+): Promise<import('@farmslot/protocol').BeforeAttemptAttestation> {
+  let attestation: import('@farmslot/protocol').BeforeAttemptAttestation | undefined;
+  await enqueueRunWrite(id, async () => {
+    const run = runs.get(id);
+    if (!run) throw new Error('Run is unavailable');
+    assertCurrent(run);
+    attestation = build(run);
+    const prior = run.beforeAttemptAttestations ?? [];
+    if (prior.some((entry) => entry.id === attestation!.id)) return;
+    const attestations = [...prior, attestation];
+    await persistBody(run, { ...run, beforeAttemptAttestations: attestations }, true);
+    try {
+      assertCurrent(run);
+    } catch (error) {
+      await persistBody(run);
+      throw error;
+    }
+    run.beforeAttemptAttestations = attestations;
+    updateRun(id, {});
+  });
+  return attestation!;
+}
+
 /**
  * Drop a never-durable (or abandonable) in-memory Run without analytics gating.
  * Used when queue handoff fails after create but before the run file lands.
@@ -1292,6 +1320,11 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
     !isDeepStrictEqual(partial.claimOverrideReceipts, run.claimOverrideReceipts)
   )
     throw new Error('Claim override receipts require the verified gateway writer');
+  if (
+    'beforeAttemptAttestations' in partial &&
+    !isDeepStrictEqual(partial.beforeAttemptAttestations, run.beforeAttemptAttestations)
+  )
+    throw new Error('Before attempt attestations require the verified gateway writer');
   if (
     'reviewPublication' in partial &&
     !isDeepStrictEqual(partial.reviewPublication?.direct, run.reviewPublication?.direct)

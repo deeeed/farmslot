@@ -3,6 +3,7 @@ import path from 'node:path';
 export { validateEvidenceManifest } from '@farmslot/agent-runtime/scripts/evidence-manifest.cjs';
 
 import {
+  type BeforeAttemptAttestation,
   type EvidenceManifest,
   type EvidenceManifestPair,
   type EvidenceManifestStandalone,
@@ -254,6 +255,7 @@ export function manifestPrefersVideo(manifest: EvidenceManifest | null | undefin
 export function buildEvidenceSection(
   manifest: EvidenceManifest,
   artifactUrls: Map<string, string>,
+  beforeAttemptAttestations: readonly BeforeAttemptAttestation[] = [],
 ): string | null {
   const lines: string[] = [];
   // The engine's pre-review status list is superseded by the Visual judgments table.
@@ -310,6 +312,25 @@ export function buildEvidenceSection(
     isRunArtifactImagePath(file)
       ? `<img src="${url}" alt="${label}" width="320" />`
       : `<a href="${url}">${label}</a>`;
+  // ADR-062 Amendment 21: disclose a before side admitted by operator attestation.
+  const attestedBefore = (file?: string) => {
+    const artifact = file && normalizeEvidenceManifestArtifactPath(file, { mediaOnly: false });
+    const attested = beforeAttemptAttestations
+      .filter(({ attemptRoot }) => artifact?.startsWith(`artifacts/${attemptRoot}/`))
+      .at(-1);
+    return attested
+      ? `${attested.reason} (${attested.approver.displayName}, ${attested.attestedAt})`
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+      : undefined;
+  };
+  const beforeHeading = (file?: string) => {
+    const attested = attestedBefore(file);
+    return attested
+      ? `<em>Before: operator-attested</em><br/><sub>${attested}</sub>`
+      : '<em>Before</em>';
+  };
 
   if (pairs.length || standalone.length) {
     // Before/after pairs: side-by-side HTML table for clean comparison
@@ -328,16 +349,17 @@ export function buildEvidenceSection(
             return [
               labelCell,
               `<tr>`,
-              `<td align="center" valign="top" width="50%"><em>Before</em><br/>${media(pair.before!, beforeUrl, 'before')}</td>`,
+              `<td align="center" valign="top" width="50%">${beforeHeading(pair.before!)}<br/>${media(pair.before!, beforeUrl, 'before')}</td>`,
               `<td align="center" valign="top" width="50%"><em>After</em><br/>${media(pair.after!, afterUrl, 'after')}</td>`,
               `</tr>`,
             ].join('\n');
           }
           const url = beforeUrl ?? afterUrl!;
           const which = beforeUrl ? 'Before' : 'After';
+          const heading = beforeUrl ? beforeHeading(pair.before!) : '<em>After</em>';
           return [
             labelCell,
-            `<tr><td colspan="2" align="center" valign="top"><em>${which}</em><br/>${media((beforeUrl ? pair.before : pair.after)!, url, which.toLowerCase())}</td></tr>`,
+            `<tr><td colspan="2" align="center" valign="top">${heading}<br/>${media((beforeUrl ? pair.before : pair.after)!, url, which.toLowerCase())}</td></tr>`,
           ].join('\n');
         })
         .filter(Boolean);
@@ -402,12 +424,16 @@ export function buildEvidenceSection(
     if (videoBeforeUrl && videoAfterUrl) {
       lines.push(
         '<table>',
-        `<tr><td align="center" width="50%"><em>Before</em><br/><a href="${videoBeforeUrl}">${videos?.before}</a></td>`,
+        `<tr><td align="center" width="50%">${beforeHeading(videos?.before)}<br/><a href="${videoBeforeUrl}">${videos?.before}</a></td>`,
         `<td align="center" width="50%"><em>After</em><br/><a href="${videoAfterUrl}">${videos?.after}</a></td></tr>`,
         '</table>',
       );
     } else {
-      if (videoBeforeUrl) lines.push(`- Before: [${videos?.before}](${videoBeforeUrl})`);
+      const attested = attestedBefore(videos?.before);
+      if (videoBeforeUrl)
+        lines.push(
+          `- Before${attested ? ` (operator-attested: ${attested})` : ''}: [${videos?.before}](${videoBeforeUrl})`,
+        );
       if (videoAfterUrl) lines.push(`- After: [${videos?.after}](${videoAfterUrl})`);
     }
   }

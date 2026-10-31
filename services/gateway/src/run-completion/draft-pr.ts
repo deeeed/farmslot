@@ -199,7 +199,7 @@ async function applyLocalEvidencePreview(
   if (!manifest) return body;
   const section = (await projectHasNoArtifactsRepo(run))
     ? buildUnhostedEvidenceSection(run, manifest)
-    : buildEvidenceSection(manifest, manifestUrls);
+    : buildEvidenceSection(manifest, manifestUrls, run.beforeAttemptAttestations);
   const warnings = ambiguousEvidenceManifestPaths(artifacts, manifestFromFile).map(
     (entry) => `ambiguous evidence path ${entry.path}: matches ${entry.matches.join(', ')}`,
   );

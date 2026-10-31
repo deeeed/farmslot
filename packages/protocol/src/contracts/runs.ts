@@ -2784,6 +2784,8 @@ export interface Run {
   /** Append-only gateway-authorised human exceptions; engine evidence stays immutable. */
   claimOverrideReceipts?: import('../recipe/claim-overrides.js').ClaimUntestableOverrideReceipt[];
   visualJudgmentReceipts?: import('../recipe/claim-reviews.js').RecipeVisualJudgmentReceipt[];
+  /** Append-only gateway-authorised before-only attempt attestations (ADR-062 Amendment 21). */
+  beforeAttemptAttestations?: import('../recipe/claim-overrides.js').BeforeAttemptAttestation[];
   /** ADR-069 provisional inputs. These never claim an execution receipt. */
   sourcePlan?: import('../sources/contracts.js').RunSourcePlan;
   /** Gateway-owned caller choices for revalidation before source-dependent effects. */

@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import {
   type ArtifactRef,
+  type BeforeAttemptAttestation,
   type HumanPublicationAdoptionReceipt,
   isRecord,
   isRunArtifactMediaPath,
@@ -825,6 +826,8 @@ export interface PublicationBaselineContext {
   branch?: string | null;
   /** Null is the worker preflight before the mirror copy; capture admission pins the bytes. */
   inventory: readonly ArtifactRef[] | null;
+  /** Run-owned attestations that waive only the baseline match (ADR-062 Amendment 21). */
+  beforeAttemptAttestations?: readonly BeforeAttemptAttestation[];
 }
 
 export function publicationBaselineContext(
@@ -847,6 +850,9 @@ export function publicationBaselineContext(
     baseSha: fullReviewBase ?? run.worktreeHeadAtDispatch ?? undefined,
     branch: run.branch,
     inventory,
+    beforeAttemptAttestations: run.beforeAttemptAttestations?.filter(
+      ({ runId }) => runId === run.id,
+    ),
   };
 }
 
@@ -953,10 +959,10 @@ export async function assertPublicationManifestOwnership(
                 );
               }
             }
+            const manifestDigest = createHash('sha256').update(manifestBytes).digest('hex');
             if (
               (pinned &&
-                (capturedDigest('artifact-manifest.json') !==
-                  createHash('sha256').update(manifestBytes).digest('hex') ||
+                (capturedDigest('artifact-manifest.json') !== manifestDigest ||
                   !capturedDigest(path.posix.relative(directory, relativeFile)))) ||
               !provenanceBytes ||
               (pinned &&
@@ -1014,13 +1020,22 @@ export async function assertPublicationManifestOwnership(
               headSha = selected.git_ref;
             }
             const expectedSha = beforeOnly ? baseline?.baseSha : headSha;
+            // An attestation of these exact attempt bytes waives only the baseline match.
+            const attested =
+              beforeOnly &&
+              baseline?.beforeAttemptAttestations?.some(
+                (attestation) =>
+                  attestation.attemptRoot === directory &&
+                  attestation.manifestSha256 === manifestDigest,
+              );
             const invalidProvenanceField =
-              ((!expectedSha || provenance.git_ref !== expectedSha) && 'git_ref') ||
-              (provenance.dirty !== false && 'dirty') ||
-              (baseline?.branch &&
-                provenance.branch !== baseline.branch &&
-                provenance.branch !== 'detached' &&
-                'branch');
+              !attested &&
+              (((!expectedSha || provenance.git_ref !== expectedSha) && 'git_ref') ||
+                (provenance.dirty !== false && 'dirty') ||
+                (baseline?.branch &&
+                  provenance.branch !== baseline.branch &&
+                  provenance.branch !== 'detached' &&
+                  'branch'));
             if (invalidProvenanceField)
               throw new RecordedEvidenceReadError(
                 'evidence-selection-invalid',
@@ -1408,7 +1423,11 @@ export async function postProcessPRBody(
         'No visual evidence selected for publication.',
       );
     } else if (selectedArtifactUrls && selectedArtifactUrls.size > 0 && manifest) {
-      const evidenceSection = buildEvidenceSection(manifest, selectedArtifactUrls);
+      const evidenceSection = buildEvidenceSection(
+        manifest,
+        selectedArtifactUrls,
+        run.beforeAttemptAttestations,
+      );
       if (evidenceSection) {
         body = replaceMarkdownSection(body, '## **Screenshots/Recordings**', evidenceSection);
       }

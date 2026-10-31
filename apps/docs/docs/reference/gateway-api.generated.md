@@ -299,6 +299,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.adopt`                             | run              | bounded-write | —      | —      | Run Adopt gateway method.                             |
 | `run.adoptPublishedPr`                  | run              | bounded-write | —      | —      | Run AdoptPublishedPr gateway method.                  |
 | `run.archive`                           | run              | bounded-write | —      | —      | Run Archive gateway method.                           |
+| `run.attestBeforeAttempt`               | run              | bounded-write | —      | —      | Run AttestBeforeAttempt gateway method.               |
 | `run.autoRecovery.stop`                 | run              | bounded-write | —      | —      | Run AutoRecovery Stop gateway method.                 |
 | `run.backfillSummaries`                 | run              | bounded-write | —      | —      | Run BackfillSummaries gateway method.                 |
 | `run.bulkDelete`                        | run              | bounded-write | —      | —      | Run BulkDelete gateway method.                        |

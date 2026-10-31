@@ -37,6 +37,54 @@ test('buildEvidenceSection matches artifact-prefixed manifest paths to uploaded 
   assert.match(section, /https:\/\/cdn\/after\.mp4/);
 });
 
+test('buildEvidenceSection labels an operator-attested before side with reason, actor and time', () => {
+  const section = buildEvidenceSection(
+    {
+      before_after_pairs: [
+        {
+          label: 'AC-1',
+          before: 'recipe-runs/attested/ac1-before.png',
+          after: 'recipe-runs/head/ac1-after.png',
+        },
+        { label: 'AC-2', before: 'artifacts/recipe-runs/clean/ac2-before.png' },
+        { label: 'AC-3', before: 'recipe-runs/attested/ac3-before.png' },
+      ],
+      videos: { before: 'recipe-runs/attested/before.mp4' },
+    },
+    new Map([
+      ['ac1-before.png', 'https://cdn/ac1-before.png'],
+      ['ac1-after.png', 'https://cdn/ac1-after.png'],
+      ['ac2-before.png', 'https://cdn/ac2-before.png'],
+      ['ac3-before.png', 'https://cdn/ac3-before.png'],
+      ['before.mp4', 'https://cdn/before.mp4'],
+    ]),
+    [
+      {
+        id: 'attestation',
+        runId: 'run',
+        decisionId: 'gate',
+        attemptRoot: 'recipe-runs/attested',
+        manifestSha256: 'f'.repeat(64),
+        approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'credential' },
+        reason: 'The recipe needs <Bridge> files this change adds.',
+        attestedAt: '2026-10-31T05:00:00.000Z',
+      },
+    ],
+  );
+
+  assert(section);
+  const disclosure =
+    'The recipe needs &lt;Bridge&gt; files this change adds. (Reviewer, 2026-10-31T05:00:00.000Z)';
+  const label = `<em>Before: operator-attested</em><br/><sub>${disclosure}</sub>`;
+  assert.equal(section.split(label).length - 1, 2);
+  assert.match(section, /<em>Before<\/em><br\/><img src="https:\/\/cdn\/ac2-before\.png"/);
+  assert.ok(
+    section.includes(
+      `- Before (operator-attested: ${disclosure}): [recipe-runs/attested/before.mp4](https://cdn/before.mp4)`,
+    ),
+  );
+});
+
 test('buildEvidenceSection keeps headless summary but never renders proof documents as images', () => {
   const section = buildEvidenceSection(
     {
