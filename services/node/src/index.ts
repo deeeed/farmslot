@@ -186,7 +186,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       gatewayUrl: GATEWAY_URL,
       execCancellation: true,
       conditionalWrites: true,
-      terminalInputSequence: tmuxKeepsPaneOptions(await tmux.tmuxVersion()),
+      terminalInputSequence: tmuxKeepsPaneOptions(tmux.TMUX_VERSION),
       observationCapabilities: { workers: 1, files: 1, workspace: 1 },
     });
     if (ws !== socket) {

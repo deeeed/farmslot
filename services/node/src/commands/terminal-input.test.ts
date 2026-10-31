@@ -177,9 +177,22 @@ test('real tmux types a resent batch once and keeps the record on the pane', asy
     throw error;
   }
   const session = `farmslot_input_once_${process.pid}_${Date.now()}`;
-  await tmux(['new-session', '-d', '-s', session, 'cat']);
+  // Other test files share the server, which exits with their last session: a session created
+  // as it exits is lost, so it is checked and created again.
+  let pane = '';
+  for (let attempt = 1; !pane; attempt++) {
+    try {
+      pane = (
+        await tmux(['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', session, 'cat'])
+      ).trim();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await tmux(['has-session', '-t', session]);
+    } catch (error) {
+      pane = '';
+      if (attempt === 3) throw error;
+    }
+  }
   try {
-    const pane = (await tmux(['display-message', '-p', '-t', session, '#{pane_id}'])).trim();
     const sendOnce = createTerminalInputWriter(tmux);
     assert.equal(await sendOnce(pane, 'ONCE', false, { stream: 'q1', n: 1 }), true);
     assert.equal(

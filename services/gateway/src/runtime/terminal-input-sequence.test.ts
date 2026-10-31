@@ -277,9 +277,20 @@ test('real tmux: slot send-keys types and records once; records stay bounded', a
     return;
   }
   const session = `farmslot_slot_input_${process.pid}_${Date.now()}`;
-  await shell(`tmux new-session -d -s ${session} cat`);
+  // Other test files share the server, which exits with their last session: a session created
+  // as it exits is lost, so it is checked and created again.
+  let pane = '';
+  for (let attempt = 1; !pane; attempt++) {
+    try {
+      pane = (await shell(`tmux new-session -d -P -F '#{pane_id}' -s ${session} cat`)).trim();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await shell(`tmux has-session -t ${session}`);
+    } catch (error) {
+      pane = '';
+      if (attempt === 3) throw error;
+    }
+  }
   try {
-    const pane = (await shell(`tmux display-message -p -t ${session} '#{pane_id}'`)).trim();
     const record = tmuxPaneInputRecord(pane, (command) => execLocal(command, { timeout: 5_000 }));
     // The slot write: keys and record in one command, as terminal.input sends it.
     const sendOnce = (text: string, n: number) =>
