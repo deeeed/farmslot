@@ -4,6 +4,8 @@ import test from 'node:test';
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import type { ExecResult, Run } from '@farmslot/protocol';
 
+import { runContractSection } from '../tasks/run-contract.js';
+
 import { completionVerificationMode, inspectWorktreePublishState } from './push-verification.js';
 
 const shape = (over: Partial<Run>): Run =>
@@ -19,6 +21,14 @@ test('autonomous dev requires a commit but not a push', () => {
   // before it is meant to. Uncommitted work is the real loss: it exists only in
   // the slot worktree. Run 32909fa2 completed with 26 files uncommitted.
   assert.equal(completionVerificationMode(shape({ flowType: 'dev' })), 'commit');
+});
+
+test('an artifact-only dev run that must commit is told to commit', () => {
+  // Stability run ef32f8e7 (validation lane, artifact-only) got no commit rule in
+  // TASK.md, followed its skill's "commit only when requested", and was blocked here.
+  const run = shape({ flowType: 'dev', completionPolicy: 'artifact-only', lane: 'validation' });
+  assert.equal(completionVerificationMode(run), 'commit');
+  assert.match(runContractSection(run, 'temp/tasks/t') ?? '', /Commit the change locally/);
 });
 
 test('interactive dev is operator-owned and verified elsewhere', () => {
