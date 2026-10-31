@@ -55,7 +55,13 @@ export async function runBundleRetain(
   const { retainRunArtifacts } = await import('../run-completion/retained-artifacts.js');
   const result = await retainRunArtifacts(params.runId);
   // ADR-039 Amendment 4 backfill: an ended run's episode picks up the digests just retained.
+  // Advisory like every episode write: the retain itself succeeded and stays reported as such.
   const run = getRun(params.runId);
-  if (run) await captureRunEpisode(run);
+  if (run)
+    await captureRunEpisode(run).catch((error) =>
+      console.warn(
+        `[run-episode] ${run.id}: refresh after retain failed: ${(error as Error).message}`,
+      ),
+    );
   return result;
 }

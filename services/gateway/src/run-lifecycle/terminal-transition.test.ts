@@ -8,7 +8,9 @@ import { readRunEpisode } from '../run-completion/run-episode.js';
 import { isTerminalTeardownInFlight } from '../run-engine/terminal-teardown-registry.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
+import { EPISODE_AFTER_CALLER_RELEASE } from './episode-capture-effect.js';
 import {
+  operatorCompletionCollaborators,
   routeTerminalRunTransition,
   type TerminalTransitionCollaborators,
   terminalTransitionDeps,
@@ -464,4 +466,24 @@ test('an ended run records its episode after the teardown; a blocked run has non
     'skipped',
   );
   assert.equal(await readRunEpisode('run_episode_blocked'), undefined);
+});
+
+test('an operator completion leaves its episode to the pass that follows its own slot release', async () => {
+  assert.equal(operatorCompletionCollaborators(async () => {}).captureEpisode, false);
+  const result = await drive(
+    run({ id: 'run_episode_operator' }),
+    {
+      runId: 'run_episode_operator',
+      kind: 'complete',
+      actor: 'operator',
+      patch: TERMINAL_PATCHES.complete,
+    },
+    { captureEpisode: false, cleanupSlot: null },
+  ).result;
+  assert.deepEqual(result.effects.at(-1), {
+    name: 'episode-capture',
+    status: 'skipped',
+    detail: EPISODE_AFTER_CALLER_RELEASE,
+  });
+  assert.equal(await readRunEpisode('run_episode_operator'), undefined);
 });

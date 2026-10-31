@@ -57,6 +57,11 @@ test('an episode references inventory and bundle digests by role, never media by
         sha256: SHA(2),
         bytes: 20,
       },
+      'tasks/key-1/artifacts/recipe-runs/r1/evidence-manifest.json': {
+        path: 'tasks/key-1/artifacts/recipe-runs/r1/evidence-manifest.json',
+        sha256: SHA(14),
+        bytes: 30,
+      },
       'tasks/key-1/artifacts/recipe-runs/r1/video/full-run.mp4': {
         path: 'tasks/key-1/artifacts/recipe-runs/r1/video/full-run.mp4',
         sha256: SHA(3),
@@ -92,7 +97,7 @@ test('an episode references inventory and bundle digests by role, never media by
       } as Run['output'],
     }),
     [bundle],
-    ['c'.repeat(64)],
+    [{ digest: 'c'.repeat(64), error: 'Retained bundle manifest digest mismatch.' }],
     NOW,
   );
 
@@ -101,7 +106,7 @@ test('an episode references inventory and bundle digests by role, never media by
     episode.trajectory.recipeRuns.map(({ dir, files }) => [dir, files.map((file) => file.sha256)]),
     [
       ['artifacts/recipe-runs/r0', [SHA(5), SHA(6)]],
-      ['artifacts/recipe-runs/r1', [SHA(2), SHA(1)]],
+      ['artifacts/recipe-runs/r1', [SHA(14), SHA(2), SHA(1)]],
     ],
   );
   const retained = episode.trajectory.recipeRuns[1].files.find((file) =>
@@ -118,7 +123,8 @@ test('an episode references inventory and bundle digests by role, never media by
   );
   assert.deepEqual(
     episode.labels.evidence.map((file) => file.sha256),
-    [SHA(10)],
+    // An attempt's own evidence manifest is a label too, not only part of the attempt.
+    [SHA(10), SHA(14)],
   );
   assert.deepEqual(
     episode.trajectory.recipes.map((file) => file.sha256),
@@ -130,7 +136,9 @@ test('an episode references inventory and bundle digests by role, never media by
   );
   assert.equal(episode.sources.media, 2);
   assert.equal(episode.sources.undigested, 1);
-  assert.deepEqual(episode.sources.unreadableBundles, ['c'.repeat(64)]);
+  assert.deepEqual(episode.sources.unreadableBundles, [
+    { digest: 'c'.repeat(64), error: 'Retained bundle manifest digest mismatch.' },
+  ]);
   assert.equal(episode.labels.failedStep, 'review');
   assert.equal(episode.labels.outcome, 'failure');
 });

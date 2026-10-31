@@ -6,8 +6,7 @@
 // task-relative path plus the sha256 that the output inventory or a retained
 // bundle manifest already recorded. Nothing here reads or hashes an artifact.
 
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -24,6 +23,7 @@ import {
   runBundleRefs,
 } from '@farmslot/run-bundle';
 
+import { writeAtomicJSON } from '../core/atomic-json.js';
 import { runsDirectory } from '../runs/store.js';
 
 export const RUN_EPISODE_SCHEMA = 'farmslot-episode-v1';
@@ -78,7 +78,7 @@ export interface RunEpisode {
   };
   sources: {
     bundles: string[];
-    unreadableBundles: string[];
+    unreadableBundles: { digest: string; error: string }[];
     /** Inventory entries without a recorded sha256, left out rather than hashed now. */
     undigested: number;
     /** Media files are counted, not listed; their retention follows the bundle policy. */
@@ -144,7 +144,7 @@ function collectFiles(
 export function buildRunEpisode(
   run: Run,
   bundles: readonly EpisodeBundle[],
-  unreadableBundles: readonly string[],
+  unreadableBundles: readonly { digest: string; error: string }[],
   capturedAt: string,
 ): RunEpisode {
   const { files, undigested } = collectFiles(run, bundles);
@@ -169,11 +169,13 @@ export function buildRunEpisode(
       media++;
       continue;
     }
+    // Evidence and acceptance manifests are labels wherever they sit, including inside an attempt.
+    if (EVIDENCE_FILES.has(base)) evidence.push(ref);
     const owner = recipeRuns.find(({ dir }) => file.startsWith(`${dir}/`));
     if (owner) owner.files.push(ref);
     else if (base.includes('review-result') && base.endsWith('.json')) reviews.push(ref);
     else if (base.startsWith('recipe-quality')) recipeQuality.push(ref);
-    else if (EVIDENCE_FILES.has(base)) evidence.push(ref);
+    else if (EVIDENCE_FILES.has(base)) continue;
     else if (isRecipeDocument(base, file)) recipes.push(ref);
     else if (
       INPUT_FILES.has(base) ||
@@ -259,13 +261,6 @@ function episodeFile(runId: string): string {
   return path.join(runEpisodeDir(), `${runId}.json`);
 }
 
-async function writeJsonAtomically(file: string, value: unknown): Promise<void> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const temp = `${file}.${randomUUID()}.tmp`;
-  await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  await rename(temp, file);
-}
-
 async function readJson<T>(file: string): Promise<T | undefined> {
   try {
     return JSON.parse(await readFile(file, 'utf8')) as T;
@@ -288,7 +283,7 @@ export async function captureRunEpisode(run: Run, now = new Date()): Promise<Run
     refs.set(local.bundleDigest, local);
   }
   const bundles: EpisodeBundle[] = [];
-  const unreadable: string[] = [];
+  const unreadable: { digest: string; error: string }[] = [];
   if (refs.size) {
     // Loaded on demand: the transition modules that run this effect must not pull in capture.
     const { runBundleStore } = await import('./retained-artifacts.js');
@@ -302,13 +297,17 @@ export async function captureRunEpisode(run: Run, now = new Date()): Promise<Run
           taskKey: ref.taskKey,
           entries: snapshot.manifest.entries,
         });
-      } catch {
-        unreadable.push(ref.bundleDigest);
+      } catch (error) {
+        // A moved, pruned or foreign bundle must not lose the episode: its digest and reason
+        // are recorded, and the inventory still names the files.
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[run-episode] ${run.id}: bundle ${ref.bundleDigest} unreadable: ${message}`);
+        unreadable.push({ digest: ref.bundleDigest, error: message });
       }
     }
   }
   const episode = buildRunEpisode(run, bundles, unreadable, now.toISOString());
-  await writeJsonAtomically(episodeFile(run.id), episode);
+  await writeAtomicJSON(episodeFile(run.id), episode);
   return episode;
 }
 
@@ -316,7 +315,8 @@ export async function captureRunEpisode(run: Run, now = new Date()): Promise<Run
  * The hourly retry: capture every ended run updated since the last pass whose
  * episode is missing or describes an older revision. Only recently updated runs
  * are visited. A failure keeps the watermark at that run, so the next pass
- * retries it.
+ * retries it. `now` must be taken before `runs` was loaded, so an update in
+ * between is seen by the next pass.
  */
 export async function captureMissingRunEpisodes(
   runs: readonly Run[],
@@ -342,6 +342,6 @@ export async function captureMissingRunEpisodes(
       console.error(`[run-episode] capture failed for ${run.id}: ${(error as Error).message}`);
     }
   }
-  await writeJsonAtomically(watermarkFile, { since: oldestFailure ?? now });
+  await writeAtomicJSON(watermarkFile, { since: oldestFailure ?? now });
   return { captured, failed };
 }

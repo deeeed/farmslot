@@ -160,7 +160,7 @@ function cancelEffects(collaborators: CancelCollaborators): {
         },
       },
       // After the teardown, so writing history never delays the slot.
-      episodeCaptureEffect,
+      episodeCaptureEffect(),
     ],
   };
 }

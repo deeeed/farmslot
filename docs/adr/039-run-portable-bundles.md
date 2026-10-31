@@ -463,7 +463,11 @@ Every run that ends (done, failed or cancelled) records one small episode: a
 The ADR-053 transition router writes it through the advisory `episode-capture`
 effect, which runs after `backlog-settle` and after the slot teardown, so it never
 delays a slot. A failure is recorded on the transition result and never blocks or
-reverts the terminal state. The hourly retention pass retries it: each pass
+reverts the terminal state. An operator completion (force complete, output close,
+a result decision, adoption, re-review or supersede) releases its slot only after
+the router returns and its locks are free, so its transition skips the effect and
+the hourly pass captures the episode after that release. The hourly retention
+pass also retries every other run: each pass
 captures every ended run updated since the last pass whose episode is missing or
 describes an older revision. A failure keeps that pass's watermark at the failed
 run.

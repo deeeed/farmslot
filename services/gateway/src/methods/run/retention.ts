@@ -192,10 +192,11 @@ export async function runRetentionPass(
       await warnRunBundleCapacity();
     }
   }
+  const loadedAt = Date.now();
   const runs = await getAllRunsWithArchived();
   if (options.apply && !options.roots) {
     // ADR-039 Amendment 4: capture episodes the run-end effect missed; never blocks archival.
-    await captureMissingRunEpisodes(runs).catch((error) =>
+    await captureMissingRunEpisodes(runs, loadedAt).catch((error) =>
       console.error(`[run-episode] retry pass failed: ${(error as Error).message}`),
     );
   }
