@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document `farmslot task repin` in the generated Recipe CLI reference.
+
 - Synchronize the gateway API reference with protocol 0.74.3.
 
 - Document resource revision stamps and the resource change event in the generated gateway API reference.
