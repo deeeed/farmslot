@@ -35,6 +35,8 @@ export interface NativeAdapterSession {
   nativeSessionId: string;
   capabilities?: NativeSessionCapabilities;
   send(text: string, commandId: string): Promise<void>;
+  /** Adds input to the running turn (`capabilities.steer`); rejects when the runner refuses it. */
+  steer?(text: string, commandId: string): Promise<void>;
   respond(requestId: string, response: NativeSessionResponse): Promise<void>;
   interrupt(): Promise<void>;
   close(): Promise<void>;

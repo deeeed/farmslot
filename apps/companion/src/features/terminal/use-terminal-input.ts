@@ -2,6 +2,7 @@ import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef } from 'r
 
 import type { GatewayClient } from '../../lib/gateway-client';
 import {
+  assertSafeResend,
   createTerminalInputQueue,
   type TerminalInput,
   TerminalInputCancelledError,
@@ -76,20 +77,27 @@ export function useTerminalInput(
           );
         };
         const queue = createTerminalInputQueue(
-          async (batch, assertActive, markSent) => {
+          async (batch, assertActive, markSent, seq, sentTo) => {
             // Each attempt belongs to the connection it starts on; one stopped before it was
             // sent is retried in order on the next.
             const generation = selectedClient.connectionGeneration;
             const assertCurrent = () => {
               assertActive();
               if (!isCurrent(generation)) throw new TerminalInputCancelledError();
+              // Only a live connection says which instance would receive the frame; the last
+              // check runs connected, just before the frame is written.
+              if (selectedClient.connectionState === 'connected')
+                assertSafeResend(sentTo, selectedClient.terminalInputSequenceInstance);
             };
             assertCurrent();
             await selectedClient.request(
               'terminal.input',
-              { ...selectedTarget, data: batch },
+              { ...selectedTarget, data: batch, seq },
               10_000,
-              { assertCurrent, onSent: markSent },
+              {
+                assertCurrent,
+                onSent: () => markSent(selectedClient.terminalInputSequenceInstance),
+              },
             );
           },
           {

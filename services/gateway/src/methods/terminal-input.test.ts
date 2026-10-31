@@ -169,6 +169,17 @@ test('a refused input rejects its caller without poisoning the next input', asyn
   assert.deepEqual(sent, ['good', 'later']);
 });
 
+// A batch the phone resends after a lost reply must not be typed into the slot pane twice.
+test('slot input writes each sequenced batch once and still writes unsequenced input', async () => {
+  sent.length = 0;
+  await terminalInput({ slotId: 'routing', data: 'make deploy\r', seq: { stream: 's1', n: 1 } });
+  await terminalInput({ slotId: 'routing', data: 'make deploy\r', seq: { stream: 's1', n: 1 } });
+  await terminalInput({ slotId: 'routing', data: 'ls\r', seq: { stream: 's1', n: 2 } });
+  await terminalInput({ slotId: 'routing', data: 'x' });
+  await terminalInput({ slotId: 'routing', data: 'x' });
+  assert.deepEqual(sent, ['make deploy\r', 'ls\r', 'x', 'x']);
+});
+
 test('workspace input reserves each run before delayed resolution and leaves other runs independent', async () => {
   sent.length = 0;
   const first = deferred();

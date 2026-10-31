@@ -34,6 +34,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='malformed')return result(prompt,{});
   if(text==='error')return send({id:prompt,error:{code:-32000,message:'fixture failure'}});
   if(text==='silent')return;
+  if(text==='plan'){
+   update({sessionUpdate:'plan',entries:[{content:'Inspect',priority:'high',status:'in_progress'},{content:'Report',priority:'low',status:'pending'}]});
+   update({sessionUpdate:'plan',entries:[{content:'Inspect',priority:'high',status:'completed'},{content:'Report',priority:'low',status:'completed'}]});
+   return result(prompt,{stopReason:'end_turn'});
+  }
   if(text==='shell'){
    update({sessionUpdate:'tool_call',toolCallId:'shell1',title:'Run command',kind:'execute',status:'pending',rawInput:{}});
    update({sessionUpdate:'tool_call_update',toolCallId:'shell1',title:'Run npm test',rawInput:{command:'npm test'}});
@@ -138,6 +143,45 @@ test('a Cursor shell call keeps its kind when an update adds the command', async
     assert.deepEqual(
       [tool?.kind, tool?.command, tool?.output],
       ['command', 'npm test', { exitCode: 0, stdout: 'ok\n', stderr: '' }],
+    );
+  } finally {
+    await session.close();
+    f.cleanup();
+  }
+});
+
+test('an ACP plan update is the whole checklist, without its priorities', async () => {
+  const f = setup();
+  const events: NativeEventInput[] = [];
+  const session = await grokNativeAdapter.start(f, (event) => events.push(event));
+  try {
+    await session.send('plan', 'c1');
+    await until(() => events.some((e) => e.type === 'turn.completed'));
+    const plans = events.filter((e) => e.type === 'plan.updated');
+    assert.deepEqual(
+      plans.map((e) => [e.commandId, e.plan]),
+      [
+        [
+          'c1',
+          {
+            kind: 'checklist',
+            steps: [
+              { text: 'Inspect', status: 'in-progress' },
+              { text: 'Report', status: 'pending' },
+            ],
+          },
+        ],
+        [
+          'c1',
+          {
+            kind: 'checklist',
+            steps: [
+              { text: 'Inspect', status: 'completed' },
+              { text: 'Report', status: 'completed' },
+            ],
+          },
+        ],
+      ],
     );
   } finally {
     await session.close();

@@ -38,6 +38,7 @@ import {
   unsubscribePty,
   writePty,
 } from '../runtime/pty-stream.js';
+import { runInputInOrder, writeSequencedInput } from '../runtime/terminal-input-sequence.js';
 import { sendKeys, snapshot, subscribe, unsubscribe } from '../runtime/tmux-stream.js';
 import {
   isWorkspaceTerminal,
@@ -375,8 +376,6 @@ async function resolveMachine(slotId: string): Promise<string | undefined> {
   return undefined;
 }
 
-const terminalInputChains = new Map<string, Promise<void>>();
-
 export async function terminalInput(
   params: TerminalInputParams,
   assertAccess?: () => Promise<void>,
@@ -386,25 +385,18 @@ export async function terminalInput(
   const key = isWorkspaceTerminal(params)
     ? workspaceTerminalKey(params.runId!)
     : `slot:${params.slotId}`;
-  const previous = terminalInputChains.get(key) ?? Promise.resolve();
-  const operation = previous.then(async () => {
+  await runInputInOrder(key, async () => {
     await assertAccess?.();
-    await writeTerminalInput(params);
+    await writeSequencedInput(key, params.seq, (dispatched) =>
+      writeTerminalInput(params, dispatched),
+    );
   });
-  // The caller receives its own failure; later input must not inherit that rejection.
-  const settled = operation.then(
-    () => undefined,
-    () => undefined,
-  );
-  terminalInputChains.set(key, settled);
-  try {
-    await operation;
-  } finally {
-    if (terminalInputChains.get(key) === settled) terminalInputChains.delete(key);
-  }
 }
 
-async function writeTerminalInput(params: TerminalInputParams): Promise<void> {
+async function writeTerminalInput(
+  params: TerminalInputParams,
+  dispatched: () => void,
+): Promise<void> {
   if (isWorkspaceTerminal(params)) {
     const { key } = await resolveWorkspaceTerminal(params);
     if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
@@ -431,6 +423,7 @@ async function writeTerminalInput(params: TerminalInputParams): Promise<void> {
   if (machine && getNode(machine)) {
     // Raw input can contain a whole buffered word such as "Up" or "Enter".
     // Reuse the literal text path so tmux never interprets it as a named key.
+    dispatched();
     await sendKeys(params.slotId, resolved.target, params.data, false, undefined, {
       noRetry: true,
     });

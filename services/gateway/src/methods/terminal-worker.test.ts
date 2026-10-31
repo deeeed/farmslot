@@ -12,10 +12,10 @@ import {
   terminalWorkerUnsubscribeKey,
 } from './terminal-worker.js';
 
-function fakeNode(methodReplies: Record<string, unknown>) {
+function fakeNode(methodReplies: Record<string, unknown>, id?: string) {
   const sent: Array<{ id: string; method: string; params: unknown }> = [];
   const ws = {
-    readyState: 1,
+    readyState: 1 as number,
     send(raw: string) {
       const frame = JSON.parse(raw) as { id: string; method: string; params: unknown };
       sent.push(frame);
@@ -26,7 +26,7 @@ function fakeNode(methodReplies: Record<string, unknown>) {
       });
     },
   };
-  const nodeId = `test-node-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const nodeId = id ?? `test-node-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   registerNode(nodeId, 1234, ws as never, '0.6.0', '0.6.0');
   return { nodeId, sent, ws };
 }
@@ -55,6 +55,82 @@ test('worker terminal snapshot/input/resize route to node tmux RPC by worker ref
         { method: 'tmux.resize', params: { target: '%42', cols: 100, rows: 30 } },
       ],
     );
+  } finally {
+    unregisterByWs(node.ws as never);
+  }
+});
+
+// A batch the phone resends after a lost reply must not be typed into the pane twice.
+test('worker terminal input writes each sequenced batch once', async () => {
+  const node = fakeNode({ 'tmux.send': { sent: true } });
+  const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%43' };
+  try {
+    await terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q1', n: 1 } });
+    await terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q1', n: 1 } });
+    await terminalWorkerInput({ worker, data: 'ls\r', seq: { stream: 'q1', n: 2 } });
+    assert.deepEqual(
+      node.sent.map((frame) => (frame.params as { text: string }).text),
+      ['make deploy\r', 'ls\r'],
+    );
+  } finally {
+    unregisterByWs(node.ws as never);
+  }
+});
+
+// Input that never left the gateway (its node was gone) is written by the resend once it is back.
+test('worker input refused for a disconnected node is written by its resend', async () => {
+  const nodeId = `test-node-gone-${Date.now()}`;
+  const worker = { nodeId, session: 's', window: '0', pane: '0', target: '%44' };
+  await assert.rejects(
+    terminalWorkerInput({ worker, data: 'ls\r', seq: { stream: 'q2', n: 1 } }),
+    /not connected/,
+  );
+  const node = fakeNode({ 'tmux.send': { sent: true } }, nodeId);
+  try {
+    await terminalWorkerInput({ worker, data: 'ls\r', seq: { stream: 'q2', n: 1 } });
+    assert.deepEqual(
+      node.sent.map((frame) => (frame.params as { text: string }).text),
+      ['ls\r'],
+    );
+  } finally {
+    unregisterByWs(node.ws as never);
+  }
+});
+
+// A node still registered while its socket closes: nothing left the gateway, so nothing is uncertain.
+test('worker input refused by a closing node socket is written by its resend', async () => {
+  const node = fakeNode({ 'tmux.send': { sent: true } });
+  const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%45' };
+  try {
+    node.ws.readyState = 2;
+    await assert.rejects(
+      terminalWorkerInput({ worker, data: 'pwd\r', seq: { stream: 'q3', n: 1 } }),
+    );
+    node.ws.readyState = 1;
+    await terminalWorkerInput({ worker, data: 'pwd\r', seq: { stream: 'q3', n: 1 } });
+    assert.deepEqual(
+      node.sent.map((frame) => (frame.params as { text: string }).text),
+      ['pwd\r'],
+    );
+  } finally {
+    unregisterByWs(node.ws as never);
+  }
+});
+
+// Once the node's socket took the request, the node may have typed it whatever its answer.
+test('worker input that failed after the node socket took it is not written again', async () => {
+  const node = fakeNode({ 'tmux.send': new Error("can't find pane: %46") });
+  const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%46' };
+  try {
+    await assert.rejects(
+      terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q4', n: 1 } }),
+      /can't find pane/,
+    );
+    await assert.rejects(
+      terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q4', n: 1 } }),
+      (error: unknown) => (error as { code?: string }).code === 'TERMINAL_INPUT_UNCERTAIN',
+    );
+    assert.equal(node.sent.length, 1);
   } finally {
     unregisterByWs(node.ws as never);
   }

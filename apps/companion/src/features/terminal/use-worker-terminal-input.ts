@@ -4,6 +4,7 @@ import { Methods, type TmuxWorkerRef } from '@farmslot/protocol';
 
 import type { GatewayClient } from '../../lib/gateway-client';
 import {
+  assertSafeResend,
   createTerminalInputQueue,
   type TerminalInput,
   TerminalInputCancelledError,
@@ -41,7 +42,7 @@ export function useWorkerTerminalInput(
         queueRef.current = {
           key,
           queue: createTerminalInputQueue(
-            async (batch, assertActive, markSent) => {
+            async (batch, assertActive, markSent, seq, sentTo) => {
               const generation = client.connectionGeneration;
               // Rechecked after any wait for the connection or a token refresh, before sending.
               const assertCurrent = () => {
@@ -53,12 +54,20 @@ export function useWorkerTerminalInput(
                   current.principalId !== principalId
                 )
                   throw new TerminalInputCancelledError();
+                // Only a live connection says which instance would receive the frame; the last
+                // check runs connected, just before the frame is written.
+                if (client.connectionState === 'connected')
+                  assertSafeResend(sentTo, client.terminalInputSequenceInstance);
               };
               assertCurrent();
-              await client.request(Methods.TERMINAL_WORKER_INPUT, { worker, data: batch }, 10_000, {
-                assertCurrent,
-                onSent: markSent,
-              });
+              // Older gateways ignore `seq`; the instance that received the frame says whether a
+              // resend after a lost reply can be dropped as a repeat.
+              await client.request(
+                Methods.TERMINAL_WORKER_INPUT,
+                { worker, data: batch, seq },
+                10_000,
+                { assertCurrent, onSent: () => markSent(client.terminalInputSequenceInstance) },
+              );
             },
             {
               onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt),
