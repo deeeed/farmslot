@@ -37,7 +37,7 @@ test('a slow first request batches fast typing and Enter in exact order, with on
 });
 
 // Arthur's rule: a keystroke is never dropped.
-test('a failed request keeps its keys and the keys typed behind it, and retries them in order', async () => {
+test('a request that failed before it was sent is retried in order with the keys typed behind it', async () => {
   const first = deferred();
   const sent: string[] = [];
   const retries: number[] = [];
@@ -50,7 +50,7 @@ test('a failed request keeps its keys and the keys typed behind it, and retries 
   );
   const a = queue.write('a');
   const b = queue.write('b');
-  first.reject(new Error('offline'));
+  first.reject(new Error('Not connected'));
   await Promise.all([a, b]);
   assert.deepEqual(sent, ['a', 'ab']);
   assert.deepEqual(retries, [0]);
@@ -64,7 +64,7 @@ test('a synchronous send failure is retried and later input follows it', async (
   const queue = createTerminalInputQueue(
     (data) => {
       sent.push(data);
-      if (refusals-- > 0) throw new Error('refused');
+      if (refusals-- > 0) throw new Error('refused before sending');
       return Promise.resolve();
     },
     { retryDelayMs: () => 0 },
@@ -73,6 +73,56 @@ test('a synchronous send failure is retried and later input follows it', async (
   assert.deepEqual(sent, ['x', 'xy', 'xy']);
   await queue.write('ok');
   assert.deepEqual(sent, ['x', 'xy', 'xy', 'ok']);
+});
+
+// A lost reply after the frame went out: the pane may already have run the command.
+test('input that failed after it was sent is held, never resent on its own', async () => {
+  const pane: string[] = [];
+  const holds: Array<string | null> = [];
+  let loseReply = true;
+  const queue = createTerminalInputQueue(
+    async (data, _assertActive, markSent) => {
+      pane.push(data);
+      markSent();
+      if (loseReply) {
+        loseReply = false;
+        throw new Error('Request terminal.input timed out after 10000ms');
+      }
+    },
+    { retryDelayMs: () => 0, onHold: (held) => holds.push(held ? held.data : null) },
+  );
+  const once = queue.write('echo ONCE\r');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const next = queue.write('pwd\r');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(pane, ['echo ONCE\r'], 'nothing goes out while input is held');
+  assert.deepEqual(holds, ['echo ONCE\r']);
+
+  queue.resend();
+  await Promise.all([once, next]);
+  assert.deepEqual(pane, ['echo ONCE\r', 'echo ONCE\rpwd\r'], 'resend keeps the typed order');
+  assert.deepEqual(holds, ['echo ONCE\r', null]);
+});
+
+test('discarding held input drops only it; the keys typed since go out', async () => {
+  const pane: string[] = [];
+  let loseReply = true;
+  const queue = createTerminalInputQueue(async (data, _assertActive, markSent) => {
+    pane.push(data);
+    markSent();
+    if (loseReply) {
+      loseReply = false;
+      throw new Error('Connection closed');
+    }
+  });
+  const held = queue.write('make deploy\r');
+  const discarded = assert.rejects(held, TerminalInputCancelledError);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const next = queue.write('ls\r');
+  queue.discard();
+  await discarded;
+  await next;
+  assert.deepEqual(pane, ['make deploy\r', 'ls\r']);
 });
 
 test('keys waiting to be retried are dropped only when their target goes away', async () => {

@@ -35,6 +35,7 @@ import {
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
+import { TerminalHeldInput } from '../../components/TerminalHeldInput';
 import {
   TerminalInputLine,
   type TerminalInputLineHandle,
@@ -46,7 +47,11 @@ import { usePersistentFlag } from '../../lib/held-connection';
 import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-actions';
 import { getResourceCache } from '../../lib/resource-cache';
 import { savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
-import { KEYS_RETRYING_MESSAGE, TerminalInputCancelledError } from '../../lib/terminal-input-queue';
+import {
+  type HeldTerminalInput,
+  KEYS_RETRYING_MESSAGE,
+  TerminalInputCancelledError,
+} from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
   appendTerminalTailText,
@@ -401,9 +406,14 @@ export default function WorkerTerminalScreen() {
     }, [selectedVoiceModelId]),
   );
 
-  const writeWorkerInput = useWorkerTerminalInput(client, worker, (failure, attempt) => {
-    if (attempt >= 1) setError(`${KEYS_RETRYING_MESSAGE}: ${getErrorMessage(failure)}`);
+  const [heldInput, setHeldInput] = useState<HeldTerminalInput | null>(null);
+  const workerInput = useWorkerTerminalInput(client, worker, {
+    onRetry: (failure, attempt) => {
+      if (attempt >= 1) setError(`${KEYS_RETRYING_MESSAGE}: ${getErrorMessage(failure)}`);
+    },
+    onHold: setHeldInput,
   });
+  const writeWorkerInput = workerInput.write;
   const sendInput = useCallback(
     (data: string) => {
       if (!client || !worker) return;
@@ -988,6 +998,11 @@ export default function WorkerTerminalScreen() {
           onSelect={selectWindow}
         />
         <View style={styles.keyBar}>
+          <TerminalHeldInput
+            held={heldInput}
+            onResend={workerInput.resend}
+            onDiscard={workerInput.discard}
+          />
           {terminalDirectInput ? null : (
             <TerminalInputLine ref={inputLineRef} disabled={!workerReady} onSend={sendInput} />
           )}

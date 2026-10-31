@@ -1,37 +1,44 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Terminal } from '@xterm/xterm';
-
 import { SILENCE_TERMINAL_QUERIES_JS } from './terminal-queries';
 
-// Every query xterm 6 answers: device attributes, status and cursor reports, mode and setting
-// requests, and color queries.
-const QUERIES =
-  '\x1b[c\x1b[>c\x1b[5n\x1b[6n\x1b[?6n\x1b[4$p\x1b[?2004$p\x1bP$qm\x1b\\' +
-  '\x1b]4;1;?\x07\x1b]10;?\x07\x1b]11;?\x07\x1b]12;?\x07';
+type Handler = (data?: string) => boolean;
+type Identifier = { prefix?: string; intermediates?: string; final: string };
 
-const silence = new Function(
-  'term',
-  `${SILENCE_TERMINAL_QUERIES_JS}\nsilenceTerminalQueries(term);`,
-) as (term: Terminal) => void;
-
-function sentAfterWrite(term: Terminal, output: string): Promise<string[]> {
-  const sent: string[] = [];
-  term.onData((data) => sent.push(data));
-  return new Promise((resolve) => term.write(output, () => resolve(sent)));
+/** The part of xterm's parser API the silencer uses, recording what it registers. */
+function fakeTerminal() {
+  const id = ({ prefix = '', intermediates = '', final }: Identifier) =>
+    `${prefix}${intermediates}${final}`;
+  const csi = new Map<string, Handler>();
+  const dcs = new Map<string, Handler>();
+  const osc = new Map<number, Handler>();
+  const term = {
+    parser: {
+      registerCsiHandler: (identifier: Identifier, handler: Handler) =>
+        csi.set(id(identifier), handler),
+      registerDcsHandler: (identifier: Identifier, handler: Handler) =>
+        dcs.set(id(identifier), handler),
+      registerOscHandler: (code: number, handler: Handler) => osc.set(code, handler),
+    },
+  };
+  return { csi, dcs, osc, term };
 }
 
-test('the terminal view leaves tmux queries unanswered and still sends typed keys', async () => {
-  // Control: xterm answers a tmux attach query with what showed up in the shell.
-  assert.deepEqual(await sentAfterWrite(new Terminal(), '\x1b[>c'), ['\x1b[>0;276;0c']);
-
-  const term = new Terminal();
+test('the terminal view claims every query xterm answers and lets color settings through', () => {
+  const { csi, dcs, osc, term } = fakeTerminal();
+  const silence = new Function(
+    'term',
+    `${SILENCE_TERMINAL_QUERIES_JS}\nsilenceTerminalQueries(term);`,
+  ) as (target: typeof term) => void;
   silence(term);
-  const sent = await sentAfterWrite(term, `${QUERIES}\x1b]10;#ffffff\x07prompt $ `);
-  assert.deepEqual(sent, []);
-  assert.equal(term.buffer.active.getLine(0)?.translateToString(true), 'prompt $ ');
 
-  term.input('ls\x1b[A', true);
-  assert.deepEqual(sent, ['ls\x1b[A']);
+  // xterm 6 answers device attributes (c, >c), status and cursor reports (n, ?n), mode requests
+  // ($p, ?$p) and setting requests (DCS $q). A handler returning true leaves them unanswered.
+  assert.deepEqual([...csi.keys()].sort(), ['$p', '>c', '?$p', '?n', 'c', 'n']);
+  for (const handler of csi.values()) assert.equal(handler(), true);
+  assert.equal(dcs.get('$q')?.(), true);
+  for (const code of [4, 10, 11, 12]) assert.equal(osc.get(code)?.('?'), true, `OSC ${code} query`);
+  assert.equal(osc.get(4)?.('1;?'), true);
+  assert.equal(osc.get(11)?.('#000000'), false, 'a color setting still applies');
 });

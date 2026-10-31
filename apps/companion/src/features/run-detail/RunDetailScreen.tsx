@@ -186,18 +186,17 @@ export default function RunDetailScreen() {
   const taskProgress = progressObservation.data?.structured ?? null;
   const acceptanceStatus = progressObservation.data?.acceptanceStatus ?? null;
   const acceptanceCriteria = progressObservation.data?.acceptanceCriteria ?? null;
-  const acceptanceStatusError =
-    readErrorMessage(progressObservation, heldConnectionCurrent()) ??
-    progressObservation.data?.acceptanceStatusError ??
-    null;
-  const taskProgressError = readErrorMessage(progressObservation, heldConnectionCurrent())
-    ? `Task progress unavailable: ${readErrorMessage(progressObservation, heldConnectionCurrent())}`
+  const progressReadError = readErrorMessage(progressObservation, heldConnectionCurrent());
+  const taskProgressError = progressReadError
+    ? `Task progress unavailable: ${progressReadError}`
     : null;
+  const acceptanceStatusError =
+    progressReadError ?? progressObservation.data?.acceptanceStatusError ?? null;
   const error =
     actionError ??
     readErrorMessage(runObservation, heldConnectionCurrent()) ??
     readErrorMessage(recipeObservation, heldConnectionCurrent()) ??
-    readErrorMessage(progressObservation, heldConnectionCurrent()) ??
+    progressReadError ??
     null;
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [replayingStepName, setReplayingStepName] = useState<string | null>(null);

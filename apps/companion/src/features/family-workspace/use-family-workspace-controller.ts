@@ -198,8 +198,9 @@ export function useFamilyWorkspaceController() {
   }, [selectedFullRun?.id, selectedFullRun?.slotId, selectedFullRun?.reviewWorkspace?.workspaceId]);
   const progressObservation = useResourceQuery(progressQuery);
   const taskProgress = progressObservation.data?.structured ?? null;
-  const taskProgressError = readErrorMessage(progressObservation, heldConnectionCurrent())
-    ? `Task progress unavailable: ${readErrorMessage(progressObservation, heldConnectionCurrent())}`
+  const progressReadError = readErrorMessage(progressObservation, heldConnectionCurrent());
+  const taskProgressError = progressReadError
+    ? `Task progress unavailable: ${progressReadError}`
     : null;
   const familyRunIdsKey = (
     snapshot?.runs.map(({ runId }) => runId) ?? (selectedId ? [selectedId] : [])
@@ -256,7 +257,7 @@ export function useFamilyWorkspaceController() {
     actionError ??
     readErrorMessage(familyObservation, heldConnectionCurrent()) ??
     readErrorMessage(selectedRunObservation, heldConnectionCurrent()) ??
-    readErrorMessage(progressObservation, heldConnectionCurrent()) ??
+    progressReadError ??
     recipeObservations.find((observed) => observed.error)?.error?.message ??
     null;
   const retryFamily = useCallback(async () => {

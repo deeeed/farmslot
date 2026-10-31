@@ -264,8 +264,9 @@ export default function DecisionDetailScreen({
   }, [sourceRun?.id, sourceRun?.slotId, sourceRun?.reviewWorkspace?.workspaceId]);
   const progressObservation = useResourceQuery(progressQuery);
   const taskProgress = progressObservation.data?.structured ?? null;
-  const taskProgressError = readErrorMessage(progressObservation, heldConnectionCurrent())
-    ? `Task progress unavailable: ${readErrorMessage(progressObservation, heldConnectionCurrent())}`
+  const progressReadError = readErrorMessage(progressObservation, heldConnectionCurrent());
+  const taskProgressError = progressReadError
+    ? `Task progress unavailable: ${progressReadError}`
     : null;
   const sourceDecision = sourceRun?.decisions.find(({ id }) => id === resolvedDecisionId);
   const decision = useMemo<DecisionDetail | null>(
@@ -283,7 +284,7 @@ export default function DecisionDetailScreen({
   const error =
     actionError ??
     readErrorMessage(sourceObservation, heldConnectionCurrent()) ??
-    readErrorMessage(progressObservation, heldConnectionCurrent()) ??
+    progressReadError ??
     readErrorMessage(decisionsObservation, heldConnectionCurrent()) ??
     (decisionsObservation.status === 'ready' &&
     (!sourceRunId || sourceObservation.status === 'ready') &&

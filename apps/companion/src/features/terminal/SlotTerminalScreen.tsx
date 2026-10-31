@@ -53,6 +53,7 @@ import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
+import { TerminalHeldInput } from '../../components/TerminalHeldInput';
 import {
   TerminalInputLine,
   type TerminalInputLineHandle,
@@ -84,7 +85,11 @@ import {
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { slotTerminalRunnerPane, type TerminalControlKey } from '../../lib/terminal-controls';
-import { KEYS_RETRYING_MESSAGE, TerminalInputCancelledError } from '../../lib/terminal-input-queue';
+import {
+  type HeldTerminalInput,
+  KEYS_RETRYING_MESSAGE,
+  TerminalInputCancelledError,
+} from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import { appendTerminalTailText, terminalTailLinesFromText } from '../../lib/terminal-tail';
 import {
@@ -333,8 +338,9 @@ export default function TerminalScreen() {
   }, [targetRun?.id, targetRun?.slotId, targetRun?.reviewWorkspace?.workspaceId, contextId, role]);
   const progressObservation = useResourceQuery(progressQuery);
   const taskProgress = progressObservation.data?.structured ?? null;
-  const taskProgressError = readErrorMessage(progressObservation, heldConnectionCurrent())
-    ? `Task progress unavailable: ${readErrorMessage(progressObservation, heldConnectionCurrent())}`
+  const progressReadError = readErrorMessage(progressObservation, heldConnectionCurrent());
+  const taskProgressError = progressReadError
+    ? `Task progress unavailable: ${progressReadError}`
     : null;
   const terminalTargetParams = slotId || runId ? terminalContext.target : null;
   const contextRef = useRef(terminalContext);
@@ -484,14 +490,19 @@ export default function TerminalScreen() {
       ? 'Read-only · terminal ended'
       : null;
 
-  const sendTerminalInput = useTerminalInput(
+  const [heldInput, setHeldInput] = useState<HeldTerminalInput | null>(null);
+  const terminalInput = useTerminalInput(
     terminalTargetParams,
     terminalTargetParamsRef,
     terminalInputDisabledReason,
-    (error, attempt) => {
-      if (attempt >= 1) setControlError(`${KEYS_RETRYING_MESSAGE}: ${getErrorMessage(error)}`);
+    {
+      onRetry: (error, attempt) => {
+        if (attempt >= 1) setControlError(`${KEYS_RETRYING_MESSAGE}: ${getErrorMessage(error)}`);
+      },
+      onHold: setHeldInput,
     },
   );
+  const sendTerminalInput = terminalInput.write;
 
   const loadInitialSnapshot = useCallback(async () => {
     const target = terminalTargetParamsRef.current;
@@ -939,7 +950,9 @@ export default function TerminalScreen() {
     voiceStatus !== 'transcribing' &&
     !voiceRecorderBusy;
   const showInputBar =
-    !native.target && !native.unavailable && (showTerminalControls || Boolean(controlError));
+    !native.target &&
+    !native.unavailable &&
+    (showTerminalControls || Boolean(controlError) || Boolean(heldInput));
   const showVoiceComposer =
     !native.target &&
     !native.unavailable &&
@@ -2039,6 +2052,11 @@ export default function TerminalScreen() {
 
       {showInputBar && (
         <View style={[styles.composer, { paddingBottom: spacing.sm + insets.bottom }]}>
+          <TerminalHeldInput
+            held={heldInput}
+            onResend={terminalInput.resend}
+            onDiscard={terminalInput.discard}
+          />
           {showTerminalControls && (
             <View style={styles.controlPanel}>
               {terminalDirectInput ? null : (

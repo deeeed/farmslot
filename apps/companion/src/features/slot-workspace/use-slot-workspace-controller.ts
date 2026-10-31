@@ -155,8 +155,9 @@ export function useSlotWorkspaceController() {
   }, [currentRun?.id, currentRun?.slotId, currentRun?.reviewWorkspace?.workspaceId]);
   const progressObservation = useResourceQuery(progressQuery);
   const taskProgress = progressObservation.data ?? null;
-  const taskProgressError = readErrorMessage(progressObservation, heldConnectionCurrent())
-    ? `Task progress unavailable: ${readErrorMessage(progressObservation, heldConnectionCurrent())}`
+  const progressReadError = readErrorMessage(progressObservation, heldConnectionCurrent());
+  const taskProgressError = progressReadError
+    ? `Task progress unavailable: ${progressReadError}`
     : null;
   const recipeQuery = useMemo(
     () =>

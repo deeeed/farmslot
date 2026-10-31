@@ -1,10 +1,12 @@
-import { type RefObject, useCallback, useLayoutEffect, useRef } from 'react';
+import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 
 import type { GatewayClient } from '../../lib/gateway-client';
 import {
   createTerminalInputQueue,
+  type TerminalInput,
   TerminalInputCancelledError,
   type TerminalInputQueue,
+  type TerminalInputQueueOptions,
 } from '../../lib/terminal-input-queue';
 import type { CompanionTerminalTargetParams } from '../../lib/terminal-target';
 import { useConnectionStore } from '../../store/connection';
@@ -24,16 +26,16 @@ export function useTerminalInput(
   target: CompanionTerminalTargetParams | null,
   targetRef: RefObject<CompanionTerminalTargetParams | null>,
   disabledReason: string | null,
-  onRetry?: (error: unknown, attempt: number) => void,
-): (data: string) => Promise<void> {
+  events: Pick<TerminalInputQueueOptions, 'onRetry' | 'onHold'> = {},
+): TerminalInput {
   const client = useConnectionStore((state) => state.client);
   const profileId = useConnectionStore((state) => state.activeProfileId);
   const principalId = useConnectionStore((state) => state.principalId);
   const queueRef = useRef<{ key: string; client: GatewayClient; queue: TerminalInputQueue } | null>(
     null,
   );
-  const onRetryRef = useRef(onRetry);
-  onRetryRef.current = onRetry;
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
   const disabledRef = useRef(disabledReason);
   disabledRef.current = disabledReason;
   const key = targetKey(target);
@@ -46,7 +48,7 @@ export function useTerminalInput(
     [client, profileId, principalId, key, disabledReason],
   );
 
-  return useCallback(
+  const write = useCallback(
     async (data: string) => {
       const connection = useConnectionStore.getState();
       const selectedClient = connection.client;
@@ -74,9 +76,9 @@ export function useTerminalInput(
           );
         };
         const queue = createTerminalInputQueue(
-          async (batch, assertActive) => {
-            // Each attempt belongs to the connection it starts on; one cut off by a reconnect is
-            // retried in order on the next, never dropped.
+          async (batch, assertActive, markSent) => {
+            // Each attempt belongs to the connection it starts on; one stopped before it was
+            // sent is retried in order on the next.
             const generation = selectedClient.connectionGeneration;
             const assertCurrent = () => {
               assertActive();
@@ -87,10 +89,13 @@ export function useTerminalInput(
               'terminal.input',
               { ...selectedTarget, data: batch },
               10_000,
-              { assertCurrent },
+              { assertCurrent, onSent: markSent },
             );
           },
-          { onRetry: (error, attempt) => onRetryRef.current?.(error, attempt) },
+          {
+            onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt),
+            onHold: (held) => eventsRef.current.onHold?.(held),
+          },
         );
         queueRef.current = { key: selectedKey, client: selectedClient, queue };
       }
@@ -105,4 +110,7 @@ export function useTerminalInput(
     },
     [targetRef],
   );
+  const resend = useCallback(() => queueRef.current?.queue.resend(), []);
+  const discard = useCallback(() => queueRef.current?.queue.discard(), []);
+  return useMemo(() => ({ write, resend, discard }), [write, resend, discard]);
 }

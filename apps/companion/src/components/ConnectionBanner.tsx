@@ -3,11 +3,13 @@ import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { connectionHealthCanRetry } from '../lib/connection-liveness';
-import { usePersistentFlag } from '../lib/held-connection';
 import { retryNativeDecisions } from '../lib/run-collections';
 import { colors, fonts, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
+import { useHeldConnection } from '../store/held-connection';
 import { useRunStore } from '../store/runs';
+
+import { useVisibleConnectionBanner } from './connection-banner-visibility';
 
 interface ConnectionBannerProps {
   compact?: boolean;
@@ -21,6 +23,14 @@ interface BannerContent {
   tone: BannerTone;
 }
 
+function outageBannerContent(lastProbeError: string | null): BannerContent {
+  return {
+    title: 'Disconnected from gateway',
+    detail: lastProbeError ?? 'Retry, or switch to another LAN, tailnet, or remote profile.',
+    tone: 'disconnected',
+  };
+}
+
 function resolveBannerContent(
   healthStatus: ReturnType<typeof useConnectionStore.getState>['healthStatus'],
   lastProbeError: string | null,
@@ -30,13 +40,7 @@ function resolveBannerContent(
   gatewayUrl: string,
   activeProfileAuthMode: string,
 ): BannerContent | null {
-  if (healthStatus === 'disconnected') {
-    return {
-      title: 'Disconnected from gateway',
-      detail: lastProbeError ?? 'Retry, or switch to another LAN, tailnet, or remote profile.',
-      tone: 'disconnected',
-    };
-  }
+  if (healthStatus === 'disconnected') return outageBannerContent(lastProbeError);
   if (healthStatus === 'connecting') {
     return {
       title: 'Connecting to gateway…',
@@ -123,12 +127,13 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
     activeProfileAuthMode ?? 'none',
   );
 
-  // Saved data is the normal state: connecting, proving the socket or downloading runs is
-  // routine background work and never shows. A disconnect or failing sync shows only once it
-  // has persisted past the shared grace.
-  const failing = banner?.tone === 'disconnected' || banner?.tone === 'syncError';
-  const persistentFailure = usePersistentFlag(failing);
-  if (!banner || !failing || !persistentFailure) return null;
+  const heldConnected = useHeldConnection();
+  const visible = useVisibleConnectionBanner(banner, {
+    held: heldConnected,
+    stuck: banner?.tone === 'syncError' || healthStatus === 'socket-up-not-proven',
+    outage: outageBannerContent(lastProbeError),
+  });
+  if (!visible) return null;
   const canRetry = connectionHealthCanRetry(
     healthStatus,
     transportStatus,
@@ -147,9 +152,9 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
       style={[
         styles.banner,
         compact && styles.compactBanner,
-        banner.tone === 'connecting'
+        visible.tone === 'connecting'
           ? styles.connecting
-          : banner.tone === 'syncError'
+          : visible.tone === 'syncError'
             ? styles.syncError
             : styles.disconnected,
       ]}
@@ -160,9 +165,9 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
             styles.statusDot,
             {
               backgroundColor:
-                banner.tone === 'connecting'
+                visible.tone === 'connecting'
                   ? colors.statusWarn
-                  : banner.tone === 'syncError'
+                  : visible.tone === 'syncError'
                     ? colors.statusWarn
                     : colors.statusFail,
             },
@@ -170,11 +175,11 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
         />
         <View style={styles.textBlock}>
           <Text style={styles.text} numberOfLines={2}>
-            {banner.title}
+            {visible.title}
           </Text>
           {!compact && (
             <Text style={styles.detailText} numberOfLines={2}>
-              {banner.detail}
+              {visible.detail}
             </Text>
           )}
         </View>
