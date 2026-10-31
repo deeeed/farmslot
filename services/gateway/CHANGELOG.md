@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A slot copy that would exceed its admitted byte capacity fails with `EFBIG`, so restoring an older run bundle records media the worker has since rewritten as changed instead of failing reviewer recovery with "File copy exceeds its admitted byte capacity."
 - The publish package preflight on the worker no longer refuses before/after evidence from a recipe attempt the run has not captured yet. It still checks that attempt's provenance (clean, at the base for before evidence and at the selected head for after evidence); capture admission pins the copied bytes.
 - The run-bundle store no longer fills silently until gates refuse their media. Housekeeping before every admission and capture, and the hourly pass, now archive bundles no run references and no live capture pins (journaled to the run archive, never deleted). The hourly pass posts a `run-bundle.capacity` farm warning once admission's charge (bundles, reservations and task trees) passes 70% of the cap.
 - COMPLETE resumes a retained capture's interrupted media transfer before it validates the selected evidence, so a gateway restart between the report commit and the media copy no longer refuses completion with "Retained artifact is missing, pruned or changed" while the slot still holds the media.

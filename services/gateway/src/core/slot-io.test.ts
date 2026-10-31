@@ -1239,7 +1239,7 @@ test('admitted byte limits refuse local overflow and remote growth before excess
     slotCopyFile({ host: 'localhost', machine: 'local', sshTarget: '' }, source, destination, {
       maxBytes: 4,
     }),
-    /admitted byte capacity/,
+    { code: 'EFBIG', message: /admitted byte capacity/ },
   );
   assert.equal(existsSync(destination), false);
   const remote = {
@@ -1260,7 +1260,7 @@ test('admitted byte limits refuse local overflow and remote growth before excess
   };
   await assert.rejects(
     slotCopyFile(remote, '/video', destination, { maxBytes: 4, verifyRemoteHash: false }),
-    /admitted byte capacity/,
+    { code: 'EFBIG', message: /admitted byte capacity/ },
   );
   if (existsSync(destination)) assert.ok((await readFile(destination)).length <= 4);
 });
