@@ -47,6 +47,7 @@ import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-acti
 import { getResourceCache } from '../../lib/resource-cache';
 import { savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
 import {
+  isKeysRetryingNotice,
   keysRetryingNotice,
   TerminalInputCancelledError,
   withoutKeysRetryingNotice,
@@ -838,7 +839,11 @@ export default function WorkerTerminalScreen() {
             </Pressable>
           </View>
         ) : null}
-        {visibleError ? <Text style={styles.error}>{visibleError}</Text> : null}
+        {visibleError ? (
+          <Text style={isKeysRetryingNotice(visibleError) ? styles.notice : styles.error}>
+            {visibleError}
+          </Text>
+        ) : null}
         <View style={styles.terminalArea}>
           <TerminalViewSurface
             ref={terminalRef}

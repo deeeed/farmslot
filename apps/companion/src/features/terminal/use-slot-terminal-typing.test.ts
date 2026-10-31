@@ -37,7 +37,7 @@ test('keys dropped for good reset the input line and say why; keys sent leave it
   try {
     const resets: number[] = [];
     const errors: string[] = [];
-    let controlError: string | null = 'Keys not delivered yet, retrying in order: timed out';
+    let controlError: string | null = 'Sending…';
     const target = { slotId: 'mmt-3' };
     const typing = hook.render({
       connected: true,
@@ -60,7 +60,7 @@ test('keys dropped for good reset the input line and say why; keys sent leave it
     await flush();
     assert.deepEqual(resets, [1]);
     // One message, in the keys' slot: the drop replaces their waiting notice.
-    assert.match(controlError ?? '', /^Terminal input failed: Keys may have reached the terminal/);
+    assert.equal(controlError, 'Keys not resent; check the terminal');
     assert.deepEqual(errors, []);
     // Leaving the terminal is not a drop: the line goes with it.
     outcome = Promise.reject(new inputQueue.TerminalInputCancelledError());

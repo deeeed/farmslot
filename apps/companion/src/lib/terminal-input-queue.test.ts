@@ -106,7 +106,8 @@ test(
     const once = queue.write('echo ONCE\r');
     const dropped = assert.rejects(once, (error: unknown) => {
       assert.ok(error instanceof TerminalInputMaybeTypedError);
-      assert.match(error.message, /may have reached the terminal.*timed out/);
+      assert.equal(error.message, 'Keys not resent; check the terminal');
+      assert.match(String((error.cause as Error).message), /timed out/);
       return true;
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -158,7 +159,7 @@ test('disconnect or target disposal rejects buffered input and never replays it 
 test('keys still waiting are mentioned from the second failure and cleared once they go through', () => {
   assert.equal(keysRetryingNotice(new Error('Not connected'), 0), null, 'one failure is a blip');
   const notice = keysRetryingNotice(new Error('Not connected'), 1);
-  assert.equal(notice, 'Keys not delivered yet, retrying in order: Not connected');
+  assert.equal(notice, 'Sending…');
   assert.equal(withoutKeysRetryingNotice(notice), null);
   assert.equal(withoutKeysRetryingNotice('Pane gone'), 'Pane gone', 'other errors stay');
 });
@@ -267,7 +268,7 @@ test(
     );
     const dropped = assert.rejects(queue.write('make deploy\r'), (error: unknown) => {
       assert.ok(error instanceof TerminalInputMaybeTypedError);
-      assert.match(error.message, /the gateway restarted/);
+      assert.match(String((error.cause as Error).message), /the gateway restarted/);
       return true;
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -297,7 +298,7 @@ test('a batch goes again only to a gateway that can drop it as a repeat', () => 
 
 for (const [code, message] of [
   ['INVALID_PARAMS', 'seq needs a stream'],
-  ['TERMINAL_INPUT_UNSUPPORTED', 'Typing here needs tmux 3.0 or later on this host'],
+  ['TERMINAL_INPUT_UNSUPPORTED', 'Needs tmux 3.0 or later on this host'],
 ] as const)
   test(
     `a ${code} refusal is dropped with its own error; later keys go out`,
@@ -379,10 +380,7 @@ test(
       [0, true],
       [1, true],
     ]);
-    assert.deepEqual(retries, [
-      'quiet',
-      'Keys not delivered yet, retrying in order: No PTY or agent available for slot demo-work-1',
-    ]);
+    assert.deepEqual(retries, ['quiet', 'Sending…']);
   },
 );
 

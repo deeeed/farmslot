@@ -141,7 +141,7 @@ function uncertain(): GatewayMethodError {
 function recordsUnsupported(): GatewayMethodError {
   return new GatewayMethodError(
     'TERMINAL_INPUT_UNSUPPORTED',
-    'Typing here needs tmux 3.0 or later on this host, which keeps the record of typed input.',
+    'Needs tmux 3.0 or later on this host',
   );
 }
 

@@ -14,9 +14,7 @@ export class TerminalInputCancelledError extends Error {
  */
 export class TerminalInputMaybeTypedError extends Error {
   constructor(cause: unknown) {
-    super(
-      `Keys may have reached the terminal and were not sent again (${errorText(cause)}); check it before typing them again`,
-    );
+    super('Keys not resent; check the terminal', { cause });
     this.name = 'TerminalInputMaybeTypedError';
   }
 }
@@ -97,17 +95,21 @@ export interface TerminalInputQueueOptions {
 }
 
 /** Shown once a request has failed twice; cleared when the keys go through. */
-const KEYS_RETRYING_MESSAGE = 'Keys not delivered yet, retrying in order';
+const KEYS_RETRYING_MESSAGE = 'Sending…';
 
 /** The notice for retry `attempt` of keys not yet sent, or null while it is still a blip. */
-export function keysRetryingNotice(error: unknown, attempt: number): string | null {
-  if (attempt < 1) return null;
-  return `${KEYS_RETRYING_MESSAGE}: ${error instanceof Error ? error.message : String(error)}`;
+export function keysRetryingNotice(_error: unknown, attempt: number): string | null {
+  return attempt < 1 ? null : KEYS_RETRYING_MESSAGE;
+}
+
+/** The keys-waiting notice, shown muted: nothing has failed yet. */
+export function isKeysRetryingNotice(current: string | null): boolean {
+  return current === KEYS_RETRYING_MESSAGE;
 }
 
 /** Clears the keys-retrying notice once the keys go through; any other error stays. */
 export function withoutKeysRetryingNotice(current: string | null): string | null {
-  return current?.startsWith(KEYS_RETRYING_MESSAGE) ? null : current;
+  return isKeysRetryingNotice(current) ? null : current;
 }
 
 /** A gateway's error answer (a refusal, a pane not ready) waits longer than a lost connection. */
@@ -255,9 +257,6 @@ function gatewayCode(error: unknown): string | undefined {
     : undefined;
 }
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function newStreamId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;

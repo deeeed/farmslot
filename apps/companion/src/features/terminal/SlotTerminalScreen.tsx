@@ -84,7 +84,7 @@ import {
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { slotTerminalRunnerPane } from '../../lib/terminal-controls';
-import { withoutKeysRetryingNotice } from '../../lib/terminal-input-queue';
+import { isKeysRetryingNotice, withoutKeysRetryingNotice } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import { appendTerminalTailText, terminalTailLinesFromText } from '../../lib/terminal-tail';
 import {
@@ -2025,7 +2025,15 @@ export default function TerminalScreen() {
             </View>
           )}
           {(visibleControlError || tmuxError) && (
-            <Text style={styles.sendErrorText}>{visibleControlError ?? tmuxError}</Text>
+            <Text
+              style={
+                isKeysRetryingNotice(visibleControlError)
+                  ? styles.sendNoticeText
+                  : styles.sendErrorText
+              }
+            >
+              {visibleControlError ?? tmuxError}
+            </Text>
           )}
         </View>
       )}

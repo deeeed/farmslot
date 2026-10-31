@@ -69,7 +69,7 @@ export function useSlotTerminalTyping({
           if (!(error instanceof TerminalInputCancelledError) && captured.current()) {
             onKeysDropped();
             // In the keys' own slot, in place of their waiting notice.
-            setControlError(`Terminal input failed: ${errorText(error)}`);
+            setControlError(errorText(error));
           }
         });
       } catch (error) {
