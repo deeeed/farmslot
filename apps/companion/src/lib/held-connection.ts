@@ -33,6 +33,10 @@ export function createOfflineClock(now = Date.now()) {
       this.observe(state, at);
       return offlineSince === null || at - offlineSince < RECONNECT_GRACE_MS;
     },
+    /** A return to the foreground starts the grace over: a background pause is not an outage. */
+    resume(at = Date.now()) {
+      if (offlineSince !== null) offlineSince = at;
+    },
     graceLeft(at = Date.now()) {
       return offlineSince === null ? null : Math.max(0, RECONNECT_GRACE_MS - (at - offlineSince));
     },
@@ -67,11 +71,21 @@ type TransportStore = (<T>(select: (state: TransportState) => T) => T) & {
   subscribe?: (listener: (state: TransportState) => void) => () => void;
 };
 
-/** One clock per connection store: it watches every transport change, rendered or not. */
-export function createHeldConnection(store: TransportStore) {
+interface AppStateSource {
+  addEventListener: (type: 'change', listener: (state: string) => void) => unknown;
+}
+
+/**
+ * One clock per connection store: it watches every transport change, rendered or not. The app
+ * disconnects while in the background, so a return to the foreground restarts the grace.
+ */
+export function createHeldConnection(store: TransportStore, appState?: AppStateSource) {
   const clock = createOfflineClock();
   clock.observe(store.getState());
   store.subscribe?.((state) => clock.observe(state));
+  appState?.addEventListener('change', (state) => {
+    if (state === 'active') clock.resume();
+  });
   const isHeld = () => clock.held(store.getState());
   function useHeldConnection(): boolean {
     const connected = store(transportConnected);

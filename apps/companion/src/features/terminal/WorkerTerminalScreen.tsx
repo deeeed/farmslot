@@ -527,9 +527,11 @@ export default function WorkerTerminalScreen() {
     setIsSending(true);
     try {
       requireWorkerInventory();
-      await writeWorkerInput(data);
-      // The instruction ends the pane's line with Enter, so the input line starts over.
+      const sending = writeWorkerInput(data);
+      // The instruction ends the pane's line with Enter, so the input line starts over as soon
+      // as it is queued; keys typed while it is on its way belong to the next line.
       inputLineRef.current?.reset();
+      await sending;
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setVoiceStatus('idle');
       setVoiceMessage('Instruction sent. Tap mic for the next worker nudge.');
@@ -1003,7 +1005,10 @@ export default function WorkerTerminalScreen() {
           <TerminalHeldInput
             held={heldInput}
             onResend={workerInput.resend}
-            onDiscard={workerInput.discard}
+            onDiscard={() => {
+              inputLineRef.current?.reset();
+              workerInput.discard();
+            }}
           />
           {terminalDirectInput ? null : (
             <TerminalInputLine ref={inputLineRef} disabled={!workerReady} onSend={sendInput} />

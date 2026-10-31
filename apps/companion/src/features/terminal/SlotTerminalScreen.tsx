@@ -1404,6 +1404,8 @@ export default function TerminalScreen() {
       setVoiceMessage('Open the suggested target before sending this voice draft.');
       return;
     }
+    // The draft is sent as a submitted line, so the input line starts over as it goes out.
+    inputLineRef.current?.reset();
     const sent = await sendTerminalText(voiceEditableInstruction, setVoiceWarning);
     if (sent) {
       resetVoiceCopilotAfterSend('Sent. Tap mic to dictate another instruction.');
@@ -2055,7 +2057,10 @@ export default function TerminalScreen() {
           <TerminalHeldInput
             held={heldInput}
             onResend={terminalInput.resend}
-            onDiscard={terminalInput.discard}
+            onDiscard={() => {
+              inputLineRef.current?.reset();
+              terminalInput.discard();
+            }}
           />
           {showTerminalControls && (
             <View style={styles.controlPanel}>
