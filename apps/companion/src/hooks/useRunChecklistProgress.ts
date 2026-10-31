@@ -1,8 +1,10 @@
 import { useMemo } from 'react';
 
 import { Methods, type Run, type TaskProgressResult } from '@farmslot/protocol';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { heldDataIsSaved, isSupersededRead, resourceQuery } from '@farmslot/protocol/client-cache';
 import { runChecklistProgressTarget } from '@farmslot/review-dispatch';
+
+import { useConnectionStore } from '../store/connection';
 
 import { useResourceQuery } from './useResourceQuery';
 
@@ -16,12 +18,21 @@ export function useRunChecklistProgress(run: Run) {
     [key],
   );
   const state = useResourceQuery(query);
+  const connected = useConnectionStore(
+    (connection) =>
+      connection.status === 'connected' && connection.client?.connectionState === 'connected',
+  );
+  // A reread in flight keeps the current label; only saved data says so.
+  const saved = heldDataIsSaved(state, connected);
   return target
     ? {
         key: target.key,
         progress: state.data?.structured ?? null,
-        error: state.error?.message,
-        stale: state.status !== 'ready',
+        error:
+          state.error && (saved || !state.data || !isSupersededRead(state.error))
+            ? state.error.message
+            : undefined,
+        stale: saved,
         observedAt: state.observedAt,
       }
     : null;

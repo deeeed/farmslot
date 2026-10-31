@@ -347,19 +347,23 @@ export default function TerminalScreen() {
   const subscriptionStarts = useRef(0);
   const inputCommands = useRef(0);
   const commandRequests = useRef(new Map<string, object>());
-  const requireTerminalTarget = useCallback(() => {
-    const context = contextRef.current;
-    if (context.scopeKey !== terminalContext.scopeKey)
-      throw new Error('The terminal target changed. Review it before acting.');
-    context.requireRun();
-    const target = terminalTargetParamsRef.current;
-    if (!target || JSON.stringify(target) !== JSON.stringify(context.target))
-      throw new Error('Wait for the selected terminal target before acting.');
-    return { target, ...context.capture() };
-  }, [terminalContext.scopeKey]);
+  const requireTerminalTarget = useCallback(
+    (input = false) => {
+      const context = contextRef.current;
+      if (context.scopeKey !== terminalContext.scopeKey)
+        throw new Error('The terminal target changed. Review it before acting.');
+      if (input) context.requireInput();
+      else context.requireRun();
+      const target = terminalTargetParamsRef.current;
+      if (!target || JSON.stringify(target) !== JSON.stringify(context.target))
+        throw new Error('Wait for the selected terminal target before acting.');
+      return { target, ...context.capture() };
+    },
+    [terminalContext.scopeKey],
+  );
   const beginTerminalCommand = useCallback(
-    (kind: string) => {
-      const captured = requireTerminalTarget();
+    (kind: string, input = false) => {
+      const captured = requireTerminalTarget(input);
       if (commandRequests.current.has(kind)) return;
       const request = {};
       commandRequests.current.set(kind, request);
@@ -470,7 +474,7 @@ export default function TerminalScreen() {
     native.target?.label ??
     (streamMode === 'connecting' ? 'Connecting' : streamMode === 'ended' ? 'Ended' : 'Live');
   const terminalLabel = slotId || targetRun?.reviewWorkspace?.machine || 'Run terminal';
-  const terminalInputDisabledReason = !terminalContext.ready
+  const terminalInputDisabledReason = !terminalContext.inputReady
     ? 'Wait for current terminal run data'
     : streamMode === 'ended'
       ? 'Read-only · terminal ended'
@@ -528,7 +532,7 @@ export default function TerminalScreen() {
     (data: string) => {
       if (terminalInputDisabledReason || !client) return;
       try {
-        const captured = requireTerminalTarget();
+        const captured = requireTerminalTarget(true);
         sendTerminalInput(data).catch((error: unknown) => {
           // Navigation/disconnect deliberately discards unsent input.
           if (!(error instanceof TerminalInputCancelledError) && captured.current())
@@ -544,9 +548,9 @@ export default function TerminalScreen() {
   const handleTerminalResize = useCallback(
     (size: TerminalSize) => {
       terminalSizeRef.current = size;
-      if (!client || !contextRef.current.ready) return;
+      if (!client || !contextRef.current.inputReady) return;
       try {
-        const captured = requireTerminalTarget();
+        const captured = requireTerminalTarget(true);
         client
           .request('terminal.resize', { ...captured.target, ...size }, 10_000)
           .catch((error: Error) => {
@@ -701,7 +705,7 @@ export default function TerminalScreen() {
       if (!client || isSendingControl || terminalInputDisabledReason) return;
       let command: ReturnType<typeof beginTerminalCommand>;
       try {
-        command = beginTerminalCommand('control');
+        command = beginTerminalCommand('control', true);
         if (!command) return;
         setIsSendingControl(true);
         setActiveControlKey(control.label);
@@ -812,7 +816,7 @@ export default function TerminalScreen() {
       if (!client || !trimmedText || isSending || terminalInputDisabledReason) return false;
       let command: ReturnType<typeof beginTerminalCommand>;
       try {
-        command = beginTerminalCommand('send');
+        command = beginTerminalCommand('send', true);
         if (!command) return false;
         const message =
           pendingOperatorMessage.current?.text === trimmedText

@@ -33,7 +33,7 @@ import {
   tmuxWorkerRefsMatch,
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { canActOn, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
@@ -41,6 +41,7 @@ import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-actions';
 import { getResourceCache } from '../../lib/resource-cache';
+import { TerminalInputCancelledError } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
   appendTerminalTailText,
@@ -82,6 +83,7 @@ import {
 } from './components/terminal-history-viewer';
 import { WindowPickerModal, WorkerTmuxShortcutPanel } from './components/worker-terminal-panels';
 import { workerTerminalStyles as styles } from './styles/worker-terminal.styles';
+import { useWorkerTerminalInput } from './use-worker-terminal-input';
 
 const TERMINAL_DATA_EVENT = 'terminal.data';
 const TERMINAL_TAIL_MAX_CHARS = 20_000;
@@ -205,9 +207,10 @@ export default function WorkerTerminalScreen() {
     [worker?.nodeId],
   );
   const inventory = useResourceQuery(focused ? workerQuery : undefined);
+  // A reread in flight keeps the pane usable; saved inventory does not.
   const workerReady =
     connectionReady &&
-    inventory.status === 'ready' &&
+    canActOn(inventory, client?.connectionState === 'connected') &&
     Boolean(
       worker &&
       inventory.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker)),
@@ -219,7 +222,8 @@ export default function WorkerTerminalScreen() {
       !client ||
       client !== useConnectionStore.getState().client ||
       client.connectionState !== 'connected' ||
-      current?.status !== 'ready' ||
+      !current ||
+      !canActOn(current, true) ||
       !worker ||
       !current.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker))
     )
@@ -378,6 +382,7 @@ export default function WorkerTerminalScreen() {
     }, [selectedVoiceModelId]),
   );
 
+  const writeWorkerInput = useWorkerTerminalInput(client, worker);
   const sendInput = useCallback(
     (data: string) => {
       if (!client || !worker) return;
@@ -387,13 +392,11 @@ export default function WorkerTerminalScreen() {
         setError(getErrorMessage(error));
         return;
       }
-      client
-        .request(Methods.TERMINAL_WORKER_INPUT, { worker, data }, 10_000)
-        .catch((err: Error) => {
-          setError(err.message);
-        });
+      writeWorkerInput(data).catch((err: unknown) => {
+        if (!(err instanceof TerminalInputCancelledError)) setError(getErrorMessage(err));
+      });
     },
-    [client, worker, requireWorkerInventory],
+    [client, worker, requireWorkerInventory, writeWorkerInput],
   );
 
   const openWindowPicker = useCallback(async () => {

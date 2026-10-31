@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { Methods, type Run, type RunGetResult } from '@farmslot/protocol';
 import {
+  canActOn,
   createGatewayResourceCache,
   type ResourceQuery,
   resourceQuery,
@@ -66,7 +67,7 @@ test('terminal commands use current canonical inputs without rereads while the s
     'useTerminalRunContext',
     {
       '@farmslot/protocol': { Methods },
-      '@farmslot/protocol/client-cache': { resourceQuery },
+      '@farmslot/protocol/client-cache': { canActOn, resourceQuery },
       '../../farmslot/run-collections-proof': { observeNativeSlotFrame: () => undefined },
       '../../hooks/useResourceQuery': {
         useResourceQuery(query?: ResourceQuery<unknown>) {
@@ -163,14 +164,20 @@ test('terminal commands use current canonical inputs without rereads while the s
       true,
       'A stale observation does not repeatedly tear down the admitted terminal stream',
     );
+    // Pixel 6 typing arrived duplicated or dropped while each reread disabled input.
+    assert.equal(stale.inputReady, true, 'Typing keeps reaching the admitted stream');
+    assert.doesNotThrow(() => stale.requireInput());
     client.connectionGeneration++;
+    assert.throws(() => stale.requireInput(), /before typing/);
     assert.equal(captured.current(), false);
     assert.equal(
       captured.ownsView(),
       true,
       'Busy cleanup still belongs to this view after losing its connection',
     );
-    assert.equal(render().streamReady, false, 'A new connection needs another current read');
+    const reconnected = render();
+    assert.equal(reconnected.streamReady, false, 'A new connection needs another current read');
+    assert.equal(reconnected.inputReady, false, 'Typing waits for the new connection too');
     workspaceKey = 'second-owner';
     authority.authorityEpoch++;
     render();

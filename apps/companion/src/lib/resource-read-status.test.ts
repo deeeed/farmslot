@@ -38,3 +38,24 @@ test('a ready view is quiet and unsupported reads keep their reason', () => {
     ['Live run updates are unavailable on this gateway.'],
   );
 });
+
+// Pixel 6 on production 0.9.0: every change event flashed these over the list while connected.
+test('a connected reread in flight or a fresh superseded read stays quiet', () => {
+  const rereading = { status: 'stale', data: { runs: [] }, observedAt: 50_000 } as const;
+  const superseded = {
+    ...rereading,
+    error: {
+      code: 'RESOURCE_OBSERVATION_CHANGED',
+      message: 'The file observation changed during this read. Retry against the current producer.',
+    },
+  } as const;
+  const read = (observation: typeof superseded | typeof rereading, now: number, connected = true) =>
+    resourceReadMessages([{ label: 'runs', observation }], now, connected);
+  assert.deepEqual(read(rereading, 56_000), []);
+  assert.deepEqual(read(superseded, 56_000), []);
+  // Saved data still says so: offline, or superseded for longer than the shared grace.
+  assert.deepEqual(read(rereading, 56_000, false), [
+    'Saved runs, 6s old. Actions wait for a current read.',
+  ]);
+  assert.equal(read(superseded, 111_000).length, 2);
+});

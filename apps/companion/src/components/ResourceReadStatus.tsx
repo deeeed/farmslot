@@ -5,6 +5,7 @@ import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import { type LabelledReadObservation, resourceReadMessages } from '../lib/resource-read-status';
 import { baseStyles, colors, spacing } from '../lib/theme';
+import { useConnectionStore } from '../store/connection';
 
 type ResourceReadStatusProps = {
   onRetry?: () => void;
@@ -26,6 +27,9 @@ export function ResourceReadStatus({
 }: ResourceReadStatusProps) {
   const [now, setNow] = useState(Date.now());
   const [details, setDetails] = useState(false);
+  const connected = useConnectionStore(
+    (state) => state.status === 'connected' && state.client?.connectionState === 'connected',
+  );
   const reads = observations ?? (observation && label ? [{ observation, label }] : []);
   const stale = reads.some((read) => read.observation.status === 'stale' && read.observation.data);
   useEffect(() => {
@@ -34,7 +38,7 @@ export function ResourceReadStatus({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [stale]);
-  const messages = resourceReadMessages(reads, now);
+  const messages = resourceReadMessages(reads, now, connected);
   const text = messages.join(' · ');
   useEffect(() => {
     if (!text) setDetails(false);
