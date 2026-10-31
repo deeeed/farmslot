@@ -10,6 +10,7 @@ await import('../runtime/mock-pty.test-support.js');
 const { captureRunOutput, failRunOutputCapture } = await import('../run-completion/output.js');
 const { retainedRunTaskDirectory } = await import('../run-completion/retained-artifacts.js');
 const { getRun, updateRun, updateRunStep } = await import('../runs/store.js');
+const { RecordedEvidenceReadError } = await import('@farmslot/protocol');
 const { assertRunGateReady, collectRunGateReadiness } = await import('./gate-prerequisites.js');
 const { deleteTestRunIfPresent } = await import('./test-fixtures.js');
 
@@ -111,26 +112,41 @@ test('a self-blocked eval output completes without the verdicts and proof it nev
       },
     },
   });
-  const retained = path.join(
-    await retainedRunTaskDirectory(getRun(run.id)!),
-    'artifacts/recipe-runs/proof/recipe-invocation.json',
-  );
-  await chmod(retained, 0o600);
-  await writeFile(retained, '{}');
-  await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
+  const evalState = getRun(run.id)!.engineState;
+  const unselected = {
+    recordedEvidence: async () => {
+      throw new RecordedEvidenceReadError('evidence-selection-missing', 'No recipe attempt');
+    },
+  };
+  const evidenceCodes = async (overrides = {}) =>
+    (await collectRunGateReadiness(getRun(run.id)!, null, overrides)).reasons
+      .filter(({ prerequisite }) => prerequisite === 'evidence')
+      .map(({ code }) => code);
+  assert.deepEqual(await evidenceCodes(unselected), ['evidence-validation-unavailable']);
   updateRunStep(run.id, 'monitor', {
     status: 'done',
     outputs: { evalWorkerBlocked: 'Recipe proof could not be completed' },
   });
+  // No selected recipe attempt is the blocked worker's outcome; unreadable evidence still refuses.
+  assert.deepEqual(await evidenceCodes(unselected), []);
+  assert.deepEqual(
+    await evidenceCodes({
+      recordedEvidence: async () => {
+        throw new RecordedEvidenceReadError('evidence-package-unverifiable', 'Changed bytes');
+      },
+    }),
+    ['evidence-validation-unavailable'],
+  );
   await assert.doesNotReject(assertRunGateReady(getRun(run.id)!, null, 'complete'));
   await assert.doesNotReject(assertRunGateReady(getRun(run.id)!, null, 'finalize'));
   await assert.rejects(
     assertRunGateReady(getRun(run.id)!, null, 'approve-publish'),
-    /evidence package|claim verdicts/,
+    /claim verdicts/,
   );
   // Outside an eval, a worker's blocked marker grants nothing.
   updateRun(run.id, { engineState: undefined });
-  await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
+  assert.deepEqual(await evidenceCodes(unselected), ['evidence-validation-unavailable']);
+  updateRun(run.id, { engineState: evalState });
 });
 
 // F243: f74906ee kept its output review through REVIEW, then COMPLETE refused its
