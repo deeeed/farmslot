@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants, createWriteStream } from 'node:fs';
 import {
   chmod,
+  copyFile,
   lstat,
   mkdir,
   open,
@@ -619,46 +620,67 @@ async function assertStorePairing(store: RunBundleStore): Promise<void> {
 
 const manifestCache = new Map<string, RunBundleManifest>();
 
+const payloadKey = (meta: { sha256: string; bytes: number }) => `${meta.sha256}:${meta.bytes}`;
+
 /**
  * Payloads the run's other bundles already hold, by content. A recapture's media is
- * usually byte-identical to the previous capture's, so it is copied from the store
+ * usually byte-identical to the previous capture's, so it is cloned from the store
  * instead of fetched from the slot again. Read from manifests; no directory walk.
  */
-function retainedPayloadsByDigest(
+async function retainedPayloadsByContent(
   store: RunBundleStore,
   run: Run,
   exceptDigest: string,
-): Map<string, string> {
-  const payloads = new Map<string, string>();
+): Promise<Map<string, string[]>> {
+  const payloads = new Map<string, string[]>();
+  const digests = new Set<string>();
   for (const { ref } of runBundleRefs(run)) {
     const { storeId, bundleDigest } = resolveRetainedRunBundleRef(run, ref);
-    if (storeId !== store.id || bundleDigest === exceptDigest) continue;
-    let directory: string;
-    let manifest: RunBundleManifest;
-    try {
-      directory = bundleDirectory(store, bundleDigest);
-      manifest = parseManifest(directory);
-    } catch {
-      continue; // archived or otherwise gone: the slot copy remains the source
+    if (storeId === store.id && bundleDigest !== exceptDigest) digests.add(bundleDigest);
+  }
+  for (const digest of digests) {
+    const directory = bundleDirectory(store, digest);
+    let manifest = manifestCache.get(`${store.id}:${digest}`);
+    if (!manifest)
+      try {
+        manifest = parseManifest(directory);
+      } catch (error) {
+        if (hasCode(error, 'ENOENT')) continue; // archived: the slot copy remains the source
+        throw error;
+      }
+    const prefix = `tasks/${manifest.runs[0]?.taskKey}/`;
+    // A quota-deferred or missing payload is listed in the manifest but was never stored.
+    const unstored = new Set(
+      (manifest.missingData ?? []).map(
+        (entry) => `${prefix}${parseRunBundleMissingData(entry).path}`,
+      ),
+    );
+    for (const [key, meta] of Object.entries(manifest.entries)) {
+      if (unstored.has(key)) continue;
+      const candidates = payloads.get(payloadKey(meta)) ?? [];
+      candidates.push(resolvePathInsideRoot(directory, key));
+      payloads.set(payloadKey(meta), candidates);
     }
-    for (const [key, meta] of Object.entries(manifest.entries))
-      payloads.set(`${meta.sha256}:${meta.bytes}`, resolvePathInsideRoot(directory, key));
   }
   return payloads;
 }
 
-/** Undefined when the retained copy was archived after the lookup. */
-async function copyRetainedPayload(
-  source: string,
+/** Clones the first candidate still on disk (copy-on-write where the volume allows it). */
+async function cloneRetainedPayload(
+  candidates: string[],
   destination: string,
   maxBytes: number,
 ): Promise<RunBundlePayloadIdentity | undefined> {
-  try {
-    return await copyHashed(source, destination, maxBytes);
-  } catch (error) {
-    if (hasCode(error, 'ENOENT')) return undefined;
-    throw error;
+  for (const source of candidates) {
+    try {
+      await copyFile(source, destination, constants.COPYFILE_FICLONE);
+    } catch (error) {
+      if (hasCode(error, 'ENOENT')) continue; // archived since the lookup
+      throw error;
+    }
+    return copyHashed(destination, null, maxBytes);
   }
+  return undefined;
 }
 
 async function completeRetainedPayloads(
@@ -744,8 +766,8 @@ async function completeRetainedPayloads(
     };
     const retainedElsewhere =
       request.acquireMedia && admitted.length
-        ? retainedPayloadsByDigest(request.store, request.run, ref.bundleDigest)
-        : new Map<string, string>();
+        ? await retainedPayloadsByContent(request.store, request.run, ref.bundleDigest)
+        : new Map<string, string[]>();
     for (const [key, meta] of admitted) {
       const relative = key.slice(prefix.length);
       const target = resolvePathInsideRoot(directory, key);
@@ -753,10 +775,10 @@ async function completeRetainedPayloads(
       try {
         let copied: RunBundlePayloadIdentity;
         const retained = isRunBundleMedia(relative)
-          ? retainedElsewhere.get(`${meta.sha256}:${meta.bytes}`)
+          ? retainedElsewhere.get(payloadKey(meta))
           : undefined;
         // Verified against the manifest below like any other source.
-        const fromStore = retained && (await copyRetainedPayload(retained, temp, meta.bytes));
+        const fromStore = retained && (await cloneRetainedPayload(retained, temp, meta.bytes));
         if (fromStore) copied = fromStore;
         else if (request.acquireMedia && isRunBundleMedia(relative)) {
           copied = await request.acquireMedia(

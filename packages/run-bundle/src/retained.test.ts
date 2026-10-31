@@ -948,6 +948,53 @@ test('a recapture copies media the run already retained instead of fetching it f
   assert.deepEqual(await readFile(video2.path), video);
 });
 
+test('a later bundle that deferred the media does not hide an earlier stored copy', async (t) => {
+  const f = await fixture(t);
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(120_000, 4);
+  const digest = createHash('sha256').update(video).digest('hex');
+  let transfers = 0;
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    artifacts: [
+      f.artifacts[0]!,
+      { path: 'artifacts/capture.mp4', purpose: 'video', sha256: digest, sizeBytes: video.length },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      transfers++;
+      await writeFile(destination, video);
+      return { sha256: digest, bytes: video.length };
+    },
+  };
+  const stored = await materializeRunBundle(request);
+  // Quota-deferred: the manifest lists the video but the bundle never stored it.
+  const deferred = await materializeRunBundle({
+    ...request,
+    captureKey: 'generation-2:original-inventory',
+    policy: {
+      maxBundleBytes: 60_000,
+      maxStoreBytes: 1_000_000,
+      metadataReserveBytes: 4_000,
+      mediaRetentionDays: 30,
+    },
+  });
+  assert.ok(deferred.missingData.includes('media-capacity:artifacts/capture.mp4'));
+  assert.equal(transfers, 1);
+  const output = {
+    artifactBundle: deferred.ref,
+    capturedAt: f.run.createdAt,
+    workerFinished: true,
+    artifactManifest: [...request.artifacts],
+    manifestDigest: 'original-inventory',
+  };
+  await materializeRunBundle({
+    ...request,
+    run: { ...f.run, artifactBundle: stored.ref, output },
+    captureKey: 'generation-3:original-inventory',
+  });
+  assert.equal(transfers, 1, 'the stored copy was used, not the slot');
+});
+
 test('a projects dir inside the root sandbox is charged once', async (t) => {
   const f = await fixture(t);
   const projects = path.join(f.root, '.sandbox/electron/projects');
