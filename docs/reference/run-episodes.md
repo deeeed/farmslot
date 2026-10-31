@@ -17,7 +17,9 @@ recorded for it, never copied.
   adoption, re-review, supersede) releases its slot after the router returns,
   outside its locks. Its transition reports `episode-capture` as skipped, and the
   caller writes the episode right after that release
-  (`captureEpisodeAfterRelease`).
+  (`captureEpisodeAfterRelease`). A run superseded by fresh reuse, a nudge or a
+  warm handoff gets its episode after the old worker's teardown or the new run's
+  slot claim.
 - The hourly retention pass, before and independently of its archival work,
   captures every ended run updated since its last pass
   whose episode is missing or has an older `runUpdatedAt`. A failure keeps the

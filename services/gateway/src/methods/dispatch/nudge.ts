@@ -99,13 +99,25 @@ export class NudgeTimeoutError extends Error {
  * Idempotent: skips when there's no prior run, when prior is already terminal, or when the
  * prior run was bound to a different slot.
  */
+export interface PriorRunTermination {
+  priorRunId: string | null;
+  terminated: boolean;
+  /**
+   * The run this call superseded as an operator completion. Its episode
+   * (ADR-039 Amendment 4) is the caller's to capture once the slot teardown or
+   * ownership transfer that follows is done.
+   */
+  episodeRunId: string | null;
+}
+
 export async function terminalizePriorRunOnSlot(
   slotId: string,
   currentRunId: string,
   label: string,
-): Promise<{ priorRunId: string | null; terminated: boolean }> {
+): Promise<PriorRunTermination> {
   const priorRunId = (await readSlotField(slotId, 'current_run_id')) as string | null;
-  if (!priorRunId || priorRunId === currentRunId) return { priorRunId: null, terminated: false };
+  if (!priorRunId || priorRunId === currentRunId)
+    return { priorRunId: null, terminated: false, episodeRunId: null };
   console.log(
     `[${label}] slot=${slotId} reassigning current_run_id ${priorRunId} -> ${currentRunId} (operator-approved)`,
   );
@@ -120,7 +132,7 @@ export async function terminalizePriorRunOnSlot(
       await cancelNativeRunWorkers(priorRunId);
       for (const context of priorRun.agentContexts ?? [])
         await unwatchContext(slotId, context.id, { expectedRunId: priorRunId });
-      return { priorRunId, terminated: false };
+      return { priorRunId, terminated: false, episodeRunId: null };
     }
     const { runCancel } = await import('../run/lifecycle-control.js');
     const result = await runCancel({
@@ -131,7 +143,8 @@ export async function terminalizePriorRunOnSlot(
       throw new Error(
         'Native worker cancellation did not finish; slot preparation remains blocked',
       );
-    return { priorRunId, terminated: true };
+    // The cancel transition captured the episode after its own slot release.
+    return { priorRunId, terminated: true, episodeRunId: null };
   }
   const { cancelRunEngine } = await import('../../run-engine/orchestrator.js');
   let terminated = false;
@@ -167,13 +180,16 @@ export async function terminalizePriorRunOnSlot(
     for (const ctx of priorRun.agentContexts ?? []) {
       await unwatchContext(slotId, ctx.id);
     }
-    if (terminated) {
-      const { captureEpisodeAfterRelease } =
-        await import('../../run-lifecycle/episode-capture-effect.js');
-      await captureEpisodeAfterRelease(priorRunId);
-    }
   }
-  return { priorRunId, terminated };
+  return { priorRunId, terminated, episodeRunId: terminated ? priorRunId : null };
+}
+
+/** A superseded run's episode, once the caller's teardown or ownership claim is done. */
+export async function captureSupersededRunEpisode(prior: PriorRunTermination): Promise<void> {
+  if (!prior.episodeRunId) return;
+  const { captureEpisodeAfterRelease } =
+    await import('../../run-lifecycle/episode-capture-effect.js');
+  await captureEpisodeAfterRelease(prior.episodeRunId);
 }
 
 /**
@@ -182,10 +198,20 @@ export async function terminalizePriorRunOnSlot(
  * must call this BEFORE the ordinary 'preparing' claim / before PREPARE runs, so that PREPARE
  * doesn't race the prior worker mutating the same git worktree.
  */
-export async function prepareSlotForFreshReuse(slotId: string, newRunId: string): Promise<void> {
+export async function prepareSlotForFreshReuse(
+  slotId: string,
+  newRunId: string,
+  deps = {
+    terminalize: terminalizePriorRunOnSlot,
+    teardown: teardownWorkerOnSlot,
+    captureEpisode: captureSupersededRunEpisode,
+  },
+): Promise<void> {
   assertNativeSlotReplacementOwner(slotId, newRunId);
-  await terminalizePriorRunOnSlot(slotId, newRunId, 'fresh-reuse');
-  await teardownWorkerOnSlot(slotId, newRunId);
+  const prior = await deps.terminalize(slotId, newRunId, 'fresh-reuse');
+  await deps.teardown(slotId, newRunId);
+  // After the old worker is stopped, so writing history never delays the teardown.
+  await deps.captureEpisode(prior);
 }
 
 /** Stop every retained runner and role window before a slot is made reusable. */
@@ -438,7 +464,7 @@ export async function nudgeDispatch(
     deliveryOwnerRun?.agentContexts?.[0];
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;
 
-  await terminalizePriorRunOnSlot(params.slotId, params.runId, 'nudge');
+  const prior = await terminalizePriorRunOnSlot(params.slotId, params.runId, 'nudge');
   // Atomic claim: write every current_* field the contamination check (line
   // 1420-1462) reads. Skipping family/lane/variant here was the source of
   // half-cleared slot state — a later same-family dispatch would see
@@ -474,6 +500,8 @@ export async function nudgeDispatch(
       code: SLOT_CLAIM_REFUSED_CODE,
     });
   }
+  // The superseded run's episode, now that the new run owns the slot.
+  await captureSupersededRunEpisode(prior);
 
   // STEP D: register the new run's agent context under the actual targeted role + bump nudge
   // count. We register under `workerRole` (the existing worker's role) rather than the new

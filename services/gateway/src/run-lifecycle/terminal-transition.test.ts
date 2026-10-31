@@ -468,7 +468,7 @@ test('an ended run records its episode after the teardown; a blocked run has non
   assert.equal(await readRunEpisode('run_episode_blocked'), undefined);
 });
 
-test('an operator completion leaves its episode to the pass that follows its own slot release', async () => {
+test("an operator completion's transition leaves the episode to its caller", async () => {
   assert.equal(operatorCompletionCollaborators(async () => {}).captureEpisode, false);
   const result = await drive(
     run({ id: 'run_episode_operator' }),
