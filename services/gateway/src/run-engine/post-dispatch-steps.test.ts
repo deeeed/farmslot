@@ -30,11 +30,13 @@ import {
   settleReviewRoundNoVerdict,
 } from '../review/review-round-budget.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
+import { captureRunOutput } from '../run-completion/output.js';
 import {
   computeReadyGatePackageHash,
   computeReadyGateReviewSubjectHash,
 } from '../run-completion/ready-gate-package.js';
 import { buildResultDecision, ResultDecisionHoldError } from '../run-completion/result-decision.js';
+import { retainedRunArtifactManifest } from '../run-completion/retained-artifacts.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { RunGateNotReadyError } from './gate-prerequisites.js';
@@ -596,6 +598,53 @@ test('artifact-only QA complete identifies execution completion to the canonical
       },
     }),
     /Stop before resource or completion side effects/,
+  );
+});
+
+// 05b37f1c: a gateway restart stopped COMPLETE's media transfer after its report committed.
+// The restarted COMPLETE refused that capture while its source still held the media.
+test('complete resumes an interrupted retained media transfer before validating evidence', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'MEDIA-1' });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'complete-retained-media-'));
+  t.after(() => rm(taskDir, { recursive: true, force: true }));
+  const media = 'artifacts/screenshots/after.png';
+  await mkdir(path.join(taskDir, 'artifacts/screenshots'), { recursive: true });
+  await writeFile(path.join(taskDir, 'artifacts/report.md'), '# Report\n');
+  await writeFile(path.join(taskDir, media), 'after image');
+  updateRun(run.id, {
+    status: 'completing',
+    completionPolicy: 'artifact-only',
+    slotId: 'retained-media-slot',
+    taskFile: path.join(taskDir, 'TASK.md'),
+  });
+  await assert.rejects(
+    captureRunOutput(run.id, false, true, {
+      acquisition: {
+        media: [],
+        beforeCopy: () => async () => true,
+        acquireMedia: async () => {
+          throw new Error('gateway stopped during media transfer');
+        },
+      },
+    }),
+    /gateway stopped/,
+  );
+  const availability = async (current: Run) =>
+    (await retainedRunArtifactManifest(current)).find(({ path: file }) => file === media)
+      ?.availability;
+  assert.equal(await availability(getRun(run.id)!), 'missing');
+
+  const validated = new Error('evidence validation reached');
+  await assert.rejects(
+    executeCompleteStep(run.id, {
+      ...restartReplayContext(),
+      assertGatePrerequisites: async (current) => {
+        assert.equal(await availability(current), 'available');
+        throw validated;
+      },
+    }),
+    (error) => error === validated,
   );
 });
 
