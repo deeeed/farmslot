@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import fs, {
@@ -88,12 +88,17 @@ function setup() {
 
 test('a supervisor whose home is removed stops its host instead of running on', async () => {
   const fixture = setup();
-  let supervisor = 0;
-  let host = 0;
+  // Supervisor and host carry the unique home in their argv, so a failed or slow start
+  // can still be found and killed even before host.json names them.
+  const stack = () =>
+    (spawnSync('pgrep', ['-f', fixture.root], { encoding: 'utf8' }).stdout ?? '')
+      .split('\n')
+      .filter(Boolean)
+      .map(Number);
   try {
     await new NativeSessionClient(fixture.root).list('owner');
-    supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
-    host = readJson<{ pid: number }>(join(fixture.root, 'worker.json')).pid;
+    const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
+    const host = readJson<{ pid: number }>(join(fixture.root, 'worker.json')).pid;
     rmSync(fixture.root, { recursive: true, force: true });
     const deadline = Date.now() + 4_000;
     while ((alive(supervisor) || alive(host)) && Date.now() < deadline)
@@ -101,12 +106,10 @@ test('a supervisor whose home is removed stops its host instead of running on', 
     assert.equal(alive(host), false, 'the host stopped');
     assert.equal(alive(supervisor), false, 'the supervisor exited');
   } finally {
-    // Never leave a failed run's stack behind.
-    for (const [pid, signal] of [
-      [host, 'SIGKILL'],
-      [supervisor, 'SIGTERM'],
-    ] as const)
-      if (pid && alive(pid)) process.kill(pid, signal);
+    for (const pid of stack()) process.kill(pid, 'SIGKILL');
+    const deadline = Date.now() + 2_000;
+    while (stack().length && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 25));
     fixture.restore();
   }
 });
