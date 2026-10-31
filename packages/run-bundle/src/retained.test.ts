@@ -565,6 +565,18 @@ test("housekeeping selects an active run's superseded captures for archival but 
   f.run.engineState = { generation: 3 };
   await commit(output.ref, []);
   assert.deepEqual(await archivable(), owned(legacy, superseded, prepared));
+
+  // Interrupted archive staging is not a bundle, and archived captures take their intents along.
+  await mkdir(path.join(f.store.root, 'sha256', `.retention-${'0'.repeat(8)}`));
+  const selection = (await runBundleHousekeepingPaths(f.store)).filter(
+    (entry) => entry.store === 'run-bundles' || entry.path.includes('bundle-intents'),
+  );
+  assert.equal(selection.filter((entry) => entry.store === 'bundle-intents').length, 3);
+  // A host archives them; a later capture with the same key starts over instead of failing.
+  for (const entry of selection) await rm(entry.path, { recursive: true, force: true });
+  const recaptured = await capture('legacy:package');
+  const bundle = await readRetainedRunBundle(f.store, recaptured.ref, f.run.id);
+  assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
 });
 
 test('a cached manifest cannot hide loss of the retained bundle directory', async (t) => {

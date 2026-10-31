@@ -976,10 +976,14 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
     if (activeStages.has(name) || now - (await stat(directory)).mtimeMs < 86_400_000) continue;
     cleanup.push({ path: directory, runId: 'bundle-housekeeping', store: 'bundle-staging' });
   }
-  // A bundle no run references and no live capture pins is superseded storage: archive it.
+  // A bundle no run references and no live capture pins is superseded storage: archive it,
+  // with its retry intents, so a later capture with the same key starts over.
+  const archivable: RunBundleHousekeepingPath[] = [];
   const digestRoot = path.join(store.root, 'sha256');
   await mkdir(digestRoot, { recursive: true });
   for (const digest of await readdir(digestRoot)) {
+    // Archive staging (`.retention-*`) and other non-bundle names are not this selection's.
+    if (!/^[a-f0-9]{64}$/u.test(digest)) continue;
     if (referenced.has(digest) || pinned.has(digest)) continue;
     const directory = bundleDirectory(store, digest);
     let runId = 'bundle-housekeeping';
@@ -988,18 +992,21 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
     } catch {
       // An unreadable manifest is still unreferenced storage.
     }
-    cleanup.push({ path: directory, runId, store: 'run-bundles' });
+    archivable.push({ path: directory, runId, store: 'run-bundles' });
+    for (const intent of committedIntents.get(digest) ?? [])
+      archivable.push({ path: intent, runId, store: 'bundle-intents' });
   }
-  return { cleanup, referenced, pinned, committedIntents };
+  return { cleanup, archivable, referenced, pinned, committedIntents };
 }
 
-/** Select inactive reservations and abandoned capture scaffolding without removing bytes. */
+/** Select inactive reservations, abandoned capture scaffolding and superseded bundles without removing bytes. */
 export async function runBundleHousekeepingPaths(
   store: RunBundleStore,
   now = Date.now(),
 ): Promise<RunBundleHousekeepingPath[]> {
   await assertStorePairing(store);
-  return (await runBundleHousekeepingInventory(store, now)).cleanup;
+  const { cleanup, archivable } = await runBundleHousekeepingInventory(store, now);
+  return [...cleanup, ...archivable];
 }
 
 export async function collectRunBundleGarbage(
@@ -1016,8 +1023,6 @@ export async function collectRunBundleGarbage(
     );
     let housekeepingBytes = 0;
     for (const entry of cleanup) {
-      // This standalone collector removes unreferenced bundles itself, with their intents.
-      if (entry.store === 'run-bundles') continue;
       if (entry.store === 'bundle-staging') housekeepingBytes += await physicalBytes(entry.path);
       await rm(entry.path, { recursive: true, force: true });
     }
