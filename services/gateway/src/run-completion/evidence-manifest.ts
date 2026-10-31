@@ -13,8 +13,8 @@ import {
   RECIPE_CLAIM_VERDICTS,
 } from '@farmslot/protocol';
 
-import { plain } from './evidence-attestation.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
+import { plain } from './inert-text.js';
 import { publicationDetails } from './publication-details.js';
 
 export type {
