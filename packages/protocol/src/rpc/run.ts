@@ -212,6 +212,12 @@ export interface RunCreateParams {
    * omitted means the whole project-wide pool is eligible.
    */
   allowedSlots?: string[];
+  /**
+   * Runtime capability ids every selected slot must provide (deduplicated). A run
+   * that names one also asks for a physical device slot under the project's
+   * `slot_selection.physical_devices: on-request`.
+   */
+  requiredCapabilities?: string[];
   /** Internal backlog handoff link. Public run.create rejects this; backlog.enqueue owns it. */
   backlogItemId?: string;
   /** Internal work-graph handoff link. Public run.create rejects this; workGraph.schedulerTick owns it. */

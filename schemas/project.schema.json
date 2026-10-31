@@ -383,6 +383,19 @@
       "description": "Template for the idle git branch on linked worktrees (ADR-042). Expanded with slot hook variables such as {{session}}. When omitted on linked worktrees, the gateway derives wt/{{session}}.",
       "examples": ["wt/{{session}}"]
     },
+    "slot_selection": {
+      "type": "object",
+      "description": "Automatic slot selection policy (ADR-054 amendment 2026-10-31). Explicit slots and one-slot operator allowlists are exempt.",
+      "properties": {
+        "physical_devices": {
+          "type": "string",
+          "enum": ["any", "on-request"],
+          "default": "any",
+          "description": "'on-request' keeps automatic selection off physical device slots (an android-device without an android-emu AVD) unless the run passes run.create requiredCapabilities; the capability check then decides."
+        }
+      },
+      "additionalProperties": false
+    },
     "merge_main_strategy": {
       "type": "string",
       "enum": ["merge", "rebase"],

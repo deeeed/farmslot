@@ -370,7 +370,11 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
       [context.repair.execution],
     );
     return result.choices.length
-      ? { ready: true, choices: result.choices }
+      ? {
+          ready: true,
+          choices: result.choices,
+          pinnedSlotSelection: result.pinnedSlotSelection === true,
+        }
       : { ready: false, reason: result.errors.join('; ') };
   }
   async refreshBeforeCreate(item: QueueItem): Promise<void> {

@@ -20,14 +20,17 @@ async function listSlotCapabilities(slotId: string): Promise<RuntimeCapabilityLi
   return runtimeCapabilityList({ slotId });
 }
 
-/** Capture the typed device intent before replay drops the old slot binding. */
+/**
+ * Capture the typed device intent before replay drops the old slot binding. A
+ * create-time request (no `sourceSlotId` yet) keeps its ids and gains the devices
+ * of the slot being left.
+ */
 export async function replaySlotCapabilityRequirements(
   run: Pick<Run, 'slotId' | 'engineState'>,
   list: (slotId: string) => Promise<RuntimeCapabilityListResult> = listSlotCapabilities,
 ): Promise<RunSlotCapabilityRequirements | undefined> {
-  if (run.engineState?.slotCapabilityRequirements)
-    return structuredClone(run.engineState.slotCapabilityRequirements);
-  if (!run.slotId) return undefined;
+  const retained = run.engineState?.slotCapabilityRequirements;
+  if (retained?.sourceSlotId || !run.slotId) return retained && structuredClone(retained);
   let catalog: RuntimeCapabilityListResult;
   try {
     catalog = await list(run.slotId);
@@ -40,11 +43,16 @@ export async function replaySlotCapabilityRequirements(
     // Historical runs may outlive their pool entry. No device requirement can
     // be inferred from a removed slot; retained snapshots above still apply.
     console.info(`[run] source slot ${run.slotId} was removed; no device intent inferred`);
-    return undefined;
+    return retained && structuredClone(retained);
   }
-  const capabilityIds = catalog.capabilities
-    .filter((entry) => entry.availability.state === 'available' && claimsDevice(entry))
-    .map((entry) => entry.id);
+  const capabilityIds = [
+    ...new Set([
+      ...(retained?.capabilityIds ?? []),
+      ...catalog.capabilities
+        .filter((entry) => entry.availability.state === 'available' && claimsDevice(entry))
+        .map((entry) => entry.id),
+    ]),
+  ];
   return capabilityIds.length ? { sourceSlotId: run.slotId, capabilityIds } : undefined;
 }
 

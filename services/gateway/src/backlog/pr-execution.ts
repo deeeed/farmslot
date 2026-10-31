@@ -20,28 +20,31 @@ import { bindPRExecutionProfilesToPool } from '../review-workspaces/pool-policy.
 import { assertReviewNativeRunnerHealthy } from '../runners/native/review-health.js';
 import { isKnownRunner, runnerSupportsEffort, runnerSupportsModel } from '../runners/registry.js';
 
+import { isPinnedPRExecution } from './pr-admission.js';
+
 export interface PRExecutionContext {
   ownerId: string;
 }
 
+/** `pinnedSlotSelection` is read from the declared slot choices, before availability filtering. */
 export function resolvePRExecution(
   project: string,
   repo: string,
   profiles: PRSlotExecutionProfile[],
   context?: PRExecutionContext,
-): Promise<{ choices: PRSlotExecutionChoice[]; errors: string[] }>;
+): Promise<{ choices: PRSlotExecutionChoice[]; errors: string[]; pinnedSlotSelection?: boolean }>;
 export function resolvePRExecution(
   project: string,
   repo: string,
   profiles: PRExecutionProfile[],
   context?: PRExecutionContext,
-): Promise<{ choices: PRExecutionChoice[]; errors: string[] }>;
+): Promise<{ choices: PRExecutionChoice[]; errors: string[]; pinnedSlotSelection?: boolean }>;
 export async function resolvePRExecution(
   project: string,
   repo: string,
   profiles: PRExecutionProfile[],
   context?: PRExecutionContext,
-): Promise<{ choices: PRExecutionChoice[]; errors: string[] }> {
+): Promise<{ choices: PRExecutionChoice[]; errors: string[]; pinnedSlotSelection?: boolean }> {
   const config = await loadProjectConfig(project);
   if (!config || config.ci.repo.toLowerCase() !== repo.toLowerCase())
     return { choices: [], errors: ['Project does not map to the PR repository'] };
@@ -112,7 +115,11 @@ export async function resolvePRExecution(
     }
     return true;
   });
-  return { choices: supported, errors: supported.length ? [] : errors };
+  return {
+    choices: supported,
+    errors: supported.length ? [] : errors,
+    pinnedSlotSelection: isPinnedPRExecution(choices),
+  };
 }
 
 export function assertPRRepairExecutionAccess(

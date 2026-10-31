@@ -439,6 +439,12 @@ in `hostLoadSelection` before binding. An explicit `slotId`/`--slot` or a one-sl
 recovery or spread narrowing must preserve the original pin intent. The run records a warning in
 `selectionReason` when below the minimum. Other dispatch admission checks apply.
 
+A project with `slot_selection.physical_devices: "on-request"` keeps automatic
+placement off physical device slots (an `android-device` resource and no
+`android-emu` AVD). A run that passes run.create `requiredCapabilities` is placed
+by the capability check instead, so a phone that provides them stays eligible.
+The same pins bypass the policy. The default `"any"` places on any slot.
+
 ### Affected resources
 
 `retention` is policy: it says what the framework should _want_ at a boundary, and

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Validate project `slot_selection.physical_devices` (`any` or `on-request`, default `any`); `normalizeRawSlotSelection` returns the parsed policy.
 - Count Claude multi-block messages once in total and incremental usage, and price current models at company LiteLLM catalog rates.
 
 - Verify shared source trees once per status read while retaining every receipt and fresh drift checks on later reads and executions.
