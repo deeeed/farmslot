@@ -4,6 +4,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- An active run's committed captures stop pinning their bundles once they are superseded: only the run's current generation and its newest capture stay pinned, so repeated gate refreshes no longer fill the store. `chargedStoreBytes` is exported so a host can watch store usage.
+
 - Return the acquisition scan's file count and elapsed time for completion logging, without another tree walk.
 
 - Measure acquisition and store trees with bounded parallel filesystem calls, so run completion no longer waits 30+ minutes on a busy gateway.

@@ -22,6 +22,8 @@ import {
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
 import {
+  chargedStoreBytes,
+  collectRunBundleGarbage,
   DEFAULT_RUN_BUNDLE_RETENTION,
   isRunBundleMedia,
   type MaterializedRunBundle,
@@ -38,6 +40,7 @@ import {
   withRunBundleStoreLock,
 } from '@farmslot/run-bundle';
 
+import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { sha256File } from '../core/file-hash.js';
 import { inferArtifactPurpose } from '../core/index.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
@@ -358,8 +361,66 @@ export async function archiveRunArtifactHousekeeping(): Promise<void> {
   }
 }
 
+// Warn the farm well before the cap; collect superseded bundles above the high-water mark.
+const RUN_BUNDLE_WARN_RATIO = 0.7;
+const RUN_BUNDLE_HIGH_WATER_RATIO = 0.8;
+const RUN_BUNDLE_CAPACITY_CHECK_MS = 10 * 60_000;
+const RUN_BUNDLE_CAPACITY_WARNING_MS = 60 * 60_000;
+let lastCapacityCheck = 0;
+let lastCapacityWarning = 0;
+
+const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+
+/** What the store's usage calls for; pure so the thresholds are testable. */
+export function runBundleCapacityAction(
+  usedBytes: number,
+  policy: Pick<RunBundleRetentionPolicy, 'maxStoreBytes'>,
+): { collect: boolean; warn: boolean } {
+  return {
+    collect: usedBytes >= policy.maxStoreBytes * RUN_BUNDLE_HIGH_WATER_RATIO,
+    warn: usedBytes >= policy.maxStoreBytes * RUN_BUNDLE_WARN_RATIO,
+  };
+}
+
+/**
+ * Gates refuse retained media once the store reaches its cap, so reclaim superseded
+ * bundles at the high-water mark and warn the farm before that. Throttled; never throws.
+ */
+export async function checkRunBundleCapacity(
+  options: { force?: boolean; now?: number } = {},
+): Promise<void> {
+  const now = options.now ?? Date.now();
+  if (!options.force && now - lastCapacityCheck < RUN_BUNDLE_CAPACITY_CHECK_MS) return;
+  lastCapacityCheck = now;
+  try {
+    const store = await runBundleStore(true);
+    const policy = await retentionPolicy();
+    let used = await chargedStoreBytes(store);
+    if (runBundleCapacityAction(used, policy).collect) {
+      const { reclaimedBytes } = await collectRunBundleGarbage(store, policy);
+      used = await chargedStoreBytes(store);
+      console.log(
+        `[run-retention] run-bundle store passed ${RUN_BUNDLE_HIGH_WATER_RATIO * 100}% of its cap; reclaimed ${gib(reclaimedBytes)}, now ${gib(used)}`,
+      );
+    }
+    if (
+      runBundleCapacityAction(used, policy).warn &&
+      now - lastCapacityWarning >= RUN_BUNDLE_CAPACITY_WARNING_MS
+    ) {
+      lastCapacityWarning = now;
+      reportGatewayWarning(
+        'run-bundle.capacity',
+        `Run-bundle store uses ${gib(used)} of its ${gib(policy.maxStoreBytes)} cap; gates refuse retained media at the cap. Free storage or raise maxStoreBytes in run-bundle-retention.json.`,
+      );
+    }
+  } catch (error) {
+    console.error(`[run-retention] run-bundle capacity check failed: ${(error as Error).message}`);
+  }
+}
+
 /** Cleanup failure cannot discard a new run's report or bypass its normal capacity checks. */
 async function tryArchiveRunArtifactHousekeeping(): Promise<void> {
+  await checkRunBundleCapacity();
   try {
     await archiveRunArtifactHousekeeping();
   } catch (error) {

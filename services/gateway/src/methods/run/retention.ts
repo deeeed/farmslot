@@ -13,6 +13,7 @@ import { reviewPRIdentity } from '../../review/session-mode.js';
 import { reclaimReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
 import {
   archiveRunArtifactHousekeeping,
+  checkRunBundleCapacity,
   runBundleStore,
 } from '../../run-completion/retained-artifacts.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
@@ -180,7 +181,10 @@ export async function runRetentionPass(
   const roots = options.roots ?? (await gatewayRetentionRoots());
   if (options.apply) {
     await assertArchiveRoot(roots.archiveRoot);
-    if (!options.roots) await archiveRunArtifactHousekeeping();
+    if (!options.roots) {
+      await archiveRunArtifactHousekeeping();
+      await checkRunBundleCapacity({ force: true });
+    }
   }
   const runs = await getAllRunsWithArchived();
   const context = await retentionContext(runs, options.now, deps);

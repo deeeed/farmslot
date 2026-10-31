@@ -367,3 +367,42 @@ test('capture retains declared hidden package JSON after the source task is remo
     'valid',
   );
 });
+
+test('the run-bundle store warns before its cap and collects above the high-water mark', async (t) => {
+  const { checkRunBundleCapacity, runBundleCapacityAction } =
+    await import('./retained-artifacts.js');
+  const { getRecentEvents } = await import('../chat/copilot-observer.js');
+  const cap = { maxStoreBytes: 100 };
+  assert.deepEqual(runBundleCapacityAction(69, cap), { collect: false, warn: false });
+  assert.deepEqual(runBundleCapacityAction(70, cap), { collect: false, warn: true });
+  assert.deepEqual(runBundleCapacityAction(80, cap), { collect: true, warn: true });
+
+  const policy = path.join(root, 'home/run-bundle-retention.json');
+  t.after(() => rm(policy, { force: true }));
+  const store = await openRunBundleStore({
+    runsDir: process.env.FARMSLOT_RUNS_DIR!,
+    home: process.env.FARMSLOT_HOME!,
+  });
+  // An orphaned bundle no run references is reclaimed once the store passes its high-water mark.
+  const orphan = path.join(store.root, 'sha256', 'f'.repeat(64));
+  await mkdir(orphan, { recursive: true });
+  await writeFile(path.join(orphan, 'payload.bin'), Buffer.alloc(4096));
+  await writeFile(
+    policy,
+    JSON.stringify({
+      runBundleRetention: {
+        maxBundleBytes: 1,
+        maxStoreBytes: 2,
+        metadataReserveBytes: 1,
+        mediaRetentionDays: 30,
+      },
+    }),
+  );
+  await checkRunBundleCapacity({ force: true });
+  await assert.rejects(readdir(orphan), { code: 'ENOENT' });
+  assert.ok(
+    getRecentEvents().some(
+      (event) => event.type === 'run-bundle.capacity' && event.severity === 'warn',
+    ),
+  );
+});
