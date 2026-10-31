@@ -1537,12 +1537,8 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
  * never matched as a live runner: it has already exited and only its exit
  * status remains, but its children are still traversed.
  */
-function buildFindRunnerDescendantPidCommandWithRoot(
-  quotedRoot: string,
-  pattern: string,
-  foregroundOnly = false,
-): string {
-  const walk = [
+function runnerDescendantWalk(foregroundOnly: boolean): string {
+  return [
     `BEGIN { pattern = ENVIRON["FARMSLOT_RUNNER_PATTERN"]; foreground_only = ${foregroundOnly ? 1 : 0} }`,
     '{',
     // The state column is validated as a `ps` STAT word, not merely as
@@ -1595,16 +1591,83 @@ function buildFindRunnerDescendantPidCommandWithRoot(
     '  exit 1',
     '}',
   ].join('\n');
+}
+
+/** Takes the one process table snapshot every walk reads, or exits as "snapshot did not happen". */
+function runnerProcessSnapshotLines(): string[] {
   const snapshotFailed = (reason: string) =>
     `{ printf '%s\\n' ${shellQuote(`runner liveness probe: ${reason}`)} >&2; exit ${RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}; }`;
+  return [
+    `snapshot=$(ps -axo pid=,ppid=,stat=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
+    `[ -n "$snapshot" ] || ${snapshotFailed('ps snapshot was empty')}`,
+  ];
+}
+
+function buildFindRunnerDescendantPidCommandWithRoot(
+  quotedRoot: string,
+  pattern: string,
+  foregroundOnly = false,
+): string {
   return [
     `root=${quotedRoot}`,
     `FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)}`,
     'export FARMSLOT_RUNNER_PATTERN',
-    `snapshot=$(ps -axo pid=,ppid=,stat=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
-    `[ -n "$snapshot" ] || ${snapshotFailed('ps snapshot was empty')}`,
-    `printf '%s\\n' "$snapshot" | awk -v root="$root" ${shellQuote(walk)}`,
+    ...runnerProcessSnapshotLines(),
+    `printf '%s\\n' "$snapshot" | awk -v root="$root" ${shellQuote(runnerDescendantWalk(foregroundOnly))}`,
   ].join('\n');
+}
+
+/**
+ * The same walk from many pane roots over ONE process snapshot, so a fleet check runs a
+ * single `ps` per node instead of one per slot. Prints `<index> <walk exit> [pid]` per root,
+ * in input order; the script itself exits {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT} when the
+ * snapshot fails.
+ */
+export function buildFindRunnerDescendantPidsCommand(
+  roots: ReadonlyArray<{ panePid: string; pattern: string }>,
+): string {
+  return [
+    ...runnerProcessSnapshotLines(),
+    `walk=${shellQuote(runnerDescendantWalk(false))}`,
+    ...roots.map(
+      ({ panePid, pattern }, index) =>
+        `pid=$(printf '%s\\n' "$snapshot" | FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)} awk -v root=${shellQuote(panePid)} "$walk"); printf '%s %s %s\\n' ${index} "$?" "$pid"`,
+    ),
+  ].join('\n');
+}
+
+/**
+ * Runner presence under each pane, from one exec on the node. Absence and uncertainty
+ * are reported apart, as by {@link probeRunnerDescendantPid}; a failed snapshot leaves
+ * every root unknown.
+ */
+export async function probeRunnerDescendantPids(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  roots: ReadonlyArray<{ panePid: string; runnerId?: string | null }>,
+  options?: ExecOnSlotOptions,
+  deps: RunnerDescendantPidProbeDeps = {},
+): Promise<Array<RunnerDescendantPidProbe['state']>> {
+  const states = roots.map((): RunnerDescendantPidProbe['state'] => 'unknown');
+  // Each walkable root keeps its input position, so two slots on one pane stay apart.
+  const walkable = roots.flatMap(({ panePid, runnerId }, index) => {
+    const pattern = runnerProcessPatternSource(runnerId);
+    return /^[0-9]+$/.test(panePid) && pattern ? [{ index, panePid, pattern }] : [];
+  });
+  if (!walkable.length) return states;
+  const result = await (deps.exec ?? execOnSlot)(
+    vars,
+    buildFindRunnerDescendantPidsCommand(walkable),
+    options,
+  );
+  if (result.exitCode !== 0) return states;
+  for (const line of result.stdout.split('\n')) {
+    const [position, exit, pid = ''] = line.trim().split(/\s+/);
+    const root = walkable[Number(position)];
+    if (!root || !/^\d+$/.test(position ?? '')) continue;
+    states[root.index] =
+      exit === '0' && /^\d+$/.test(pid) ? 'present' : exit === '1' ? 'absent' : 'unknown';
+  }
+  return states;
 }
 
 /**
