@@ -155,6 +155,7 @@ export const Methods = {
   NATIVE_SESSION_WORKSPACE_READ: 'native.session.workspace.read',
   NATIVE_SESSION_WORKSPACE_CHANGES: 'native.session.workspace.changes',
   NATIVE_SESSION_WORKSPACE_DIFF: 'native.session.workspace.diff',
+  NATIVE_SESSION_TURN_DIFF: 'native.session.turn.diff',
   WORKER_SESSION_HISTORY_GET: 'worker.session.history.get',
   WORKER_SESSION_HISTORY_SUBSCRIBE: 'worker.session.history.subscribe',
   WORKER_SESSION_HISTORY_UNSUBSCRIBE: 'worker.session.history.unsubscribe',

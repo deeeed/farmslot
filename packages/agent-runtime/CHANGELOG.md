@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The native host checkpoints a session's Git working tree before and after each turn, as commits under `refs/farmslot/native/<sessionId>/` built in the session's own index (the worktree, its index, `HEAD` and branches are untouched), and appends `turn.changes` after the turn; a queued message is journaled after the previous turn's changes. Delivery waits for the checkpoints at most 3 s in all. A session keeps its last 100 checkpoints, and its refs are deleted at close, also after a failure or host restart. The node service answers `native.session.turn.diff` for a file a `turn.changes` event lists while its checkpoints are retained. Read-only reviewer sessions take no checkpoints.
 - The native host steers: `steer` (and `native.worker.steer` under the worker's lease) adds a message to the running turn when the adapter declares `capabilities.steer`, the session runs and no request is pending; otherwise it is an ordinary send. The intent is journaled first; a runner's error reply fails the command without a resend, while a lost reply (exit, timeout) stays unknown; and a steered command settles with its turn. Worker reads keep `steered` on receipts. Codex declares `steer` and uses `turn/steer`. A host started before the upgrade refuses the method as unknown.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

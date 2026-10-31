@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `turn.changes` (`NativeTurnChanges`, `NativeTurnFile`) lists the files a native turn changed in its Git working tree, with line counts, between the host's checkpoints before and after it (`from`, `to`), or why they are `unavailable`. `native.session.turn.diff` (`NativeSessionTurnDiffParams`, `NativeSessionTurnDiffResult`) returns one listed file's diff between those checkpoints. The client-cache timeline has a `changes` entry (none for a turn that changed nothing) with `nativeTurnChangesText` ("Changed 3 files · +12 −4"), and the history projection is bumped so cached histories are read again once (ADR-057 Amendment 9).
 - `NativeSessionSendParams.delivery: 'steer'` adds a message to the running turn when the session reports `NativeSessionCapabilities.steer`; its receipt carries `steered: true` and settles with that turn. `nativeSteerAvailable` says when to offer Steer (the capability and a running turn), and `nativeDeliveryLabel` reads a steered, accepted message as "Added to the running turn". `nativeCommandLockSettled` also releases a client's held message once the runner accepted it and the conversation shows it, instead of only when its turn ends.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

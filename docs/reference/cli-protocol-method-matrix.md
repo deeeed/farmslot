@@ -300,6 +300,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `native.session.workspace.read`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
 | `native.session.workspace.changes` | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
 | `native.session.workspace.diff`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
+| `native.session.turn.diff`         | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
 
 ## node.\*
 
