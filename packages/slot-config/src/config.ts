@@ -15,6 +15,8 @@ import {
   isRuntimeCapabilityClaimScope,
   isValidDomainName,
   normalizeProjectWorkflowDefaults,
+  PHYSICAL_DEVICE_SLOT_POLICIES,
+  type PhysicalDeviceSlotPolicy,
   type PoolSlotMode,
   PREPARE_PHASES,
   PREPARE_REQUIREMENTS,
@@ -24,6 +26,7 @@ import {
   type ProjectExecutionTemplatesConfig,
   type ProjectHostPressureAdmissionConfig,
   type ProjectQaConfig,
+  type ProjectSlotSelectionConfig,
   type ProjectWorkflowDefaults,
   type ReviewMode,
   type ReviewWorkspaceSupportConfig,
@@ -391,6 +394,7 @@ export interface RawProjectJson {
   backlog?: {
     auto_dispatch?: { enabled?: boolean };
   };
+  slot_selection?: { physical_devices?: PhysicalDeviceSlotPolicy };
   scripted?: {
     commands?: Record<
       string,
@@ -844,6 +848,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
 
   validateAutoRecoveryConfig(projectJson, projectConfig);
   validateBacklogConfig(projectJson, projectConfig);
+  normalizeRawSlotSelection(projectJson.slot_selection, projectConfig);
   validateRoadmapConfig(projectJson, projectConfig);
   validateScriptedConfig(projectJson, projectConfig);
   validateEvalHarnessesConfig(projectJson, projectConfig);
@@ -2000,6 +2005,22 @@ export function normalizeRawProjectBacklog(
         }
       : {}),
   };
+}
+
+/** Validate `slot_selection`; absent stays absent and the gateway applies `any`. */
+export function normalizeRawSlotSelection(
+  raw: unknown,
+  projectConfig: string,
+): ProjectSlotSelectionConfig | undefined {
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    throw new Error(`${projectConfig}: slot_selection must be an object`);
+  const physicalDevices = (raw as { physical_devices?: unknown }).physical_devices ?? 'any';
+  if (!PHYSICAL_DEVICE_SLOT_POLICIES.includes(physicalDevices as PhysicalDeviceSlotPolicy))
+    throw new Error(
+      `${projectConfig}: slot_selection.physical_devices must be one of: ${PHYSICAL_DEVICE_SLOT_POLICIES.join(', ')}`,
+    );
+  return { physicalDevices: physicalDevices as PhysicalDeviceSlotPolicy };
 }
 
 export function normalizeRawProjectRoadmap(

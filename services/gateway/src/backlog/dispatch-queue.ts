@@ -55,7 +55,10 @@ import {
   automaticSlotLoads,
   isPinnedSlotSelection,
 } from '../methods/dispatch/pressure-admission.js';
-import { validateSlotForDispatch } from '../methods/dispatch/slot-scoring.js';
+import {
+  projectConfigsFromProjects,
+  validateSlotForDispatch,
+} from '../methods/dispatch/slot-scoring.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import { publishPlanningResources } from '../resources/planning-changes.js';
@@ -1223,6 +1226,10 @@ export async function selectQueueDispatchSlot(
   }
   const { planQueuedSourceSlots } = await import('../sources/runtime.js');
   const sourcePlans = await planQueuedSourceSlots(item);
+  // The queue pins the slot it picks, so it applies the project's automatic
+  // selection policy (slot_selection) here rather than leaving it to FIND_SLOT.
+  const project = await loadProjectConfig(item.project);
+  const projectConfigs = projectConfigsFromProjects(project ? [project] : []);
   if (item.launchSlotPolicy === 'spread' && item.launchGroupId) {
     const activeSiblingSlots = new Set(
       getAllRuns()
@@ -1257,7 +1264,7 @@ export async function selectQueueDispatchSlot(
         const preview = resolveDispatchPreviewFromFleet(
           { ...buildQueuePreviewParams(item), allowedSlots: allowed },
           slots,
-          undefined,
+          projectConfigs,
           {
             requiredPrepareProfile,
             pressureDecisions,
@@ -1271,12 +1278,17 @@ export async function selectQueueDispatchSlot(
       }
     }
   }
-  const preview = resolveDispatchPreviewFromFleet(buildQueuePreviewParams(item), slots, undefined, {
-    requiredPrepareProfile,
-    pressureDecisions,
-    parkPreservedSlotIds: parkPreserved,
-    plans: sourcePlans,
-  });
+  const preview = resolveDispatchPreviewFromFleet(
+    buildQueuePreviewParams(item),
+    slots,
+    projectConfigs,
+    {
+      requiredPrepareProfile,
+      pressureDecisions,
+      parkPreservedSlotIds: parkPreserved,
+      plans: sourcePlans,
+    },
+  );
   // A pinned queue item whose machine is pressure-rejected stays queued until
   // pressure recedes; automatic selection already excluded rejected machines.
   if (preview.pressureAdmission?.outcome === 'rejected') return null;

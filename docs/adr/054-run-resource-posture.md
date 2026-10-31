@@ -495,3 +495,28 @@ placement reads `FARMSLOT_AUTOMATIC_CPU_IDLE_MIN_PERCENT_BY_MACHINE`, a JSON map
 from machine ID to minimum idle percentage in [0, 100]. Omitted machines use 15.
 The existing `hostLoadSelection` inputs and `selectionReason` output record the
 CPU sample, threshold and bypass warning for clients and harnesses.
+
+## Amendment: physical device slots on request (2026-10-31)
+
+**Status:** Approved by the lead under delegated authority; rule set by Arthur.
+
+A physical device slot has an Android `android-device` and no `android-emu` AVD,
+for example `macpro-mm-pixel6`. A project may reserve these slots for runs that
+need a real device. Under `slot_selection.physical_devices: "on-request"`,
+automatic selection skips a physical device slot unless the run names required
+capabilities. The capability check then decides, so a phone that provides them
+stays eligible. The default, `"any"`, keeps today's selection. MetaMask Mobile
+opts in; projects that use the phone for real audio keep the default.
+
+The same pins as the CPU-idle gate bypass this policy: an explicit slot, an
+operator pick, or a one-slot operator allowlist. Internal recovery or
+queue-spread narrowing is not a pin. Availability and capability checks still
+apply.
+
+**Public surface:** project.json `slot_selection.physical_devices` (`any` |
+`on-request`, default `any`). run.create `requiredCapabilities`, a list of
+capability ids that FIND_SLOT requires of the slot. Where dispatch lists slot
+blockers (the preview's no-slot error, a queued item's waiting reason), a skipped
+slot reads "Physical device slot is reserved for runs that request a device
+(project slot_selection.physical_devices = on-request)". No CLI flag, SDK export
+or worker contract.

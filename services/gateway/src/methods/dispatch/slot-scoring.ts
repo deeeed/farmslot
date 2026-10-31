@@ -10,6 +10,8 @@ import {
   isSlotFreedByPark,
   isSlotRefreshStaleBranch,
   parkOriginalSlotId,
+  type PhysicalDeviceSlotPolicy,
+  type ProjectSlotSelectionConfig,
   type Run,
   type RunStatus,
   SLOT_LIFECYCLE,
@@ -160,6 +162,17 @@ export function companionResourceBlocker(
 }
 
 /**
+ * The adb serial of a physical device slot: an Android slot with an
+ * `android-device` and no `android-emu` AVD to boot instead. Null otherwise.
+ */
+function physicalDeviceSerial(slot: Pick<SlotStatus, 'platform' | 'resources'>): string | null {
+  const serial = slot.resources?.['android-device']?.adb_serial;
+  if (slot.platform !== 'android' || serial === undefined || slot.resources?.['android-emu'])
+    return null;
+  return String(serial);
+}
+
+/**
  * Why a slot whose Android target is a physical device cannot dispatch, or null.
  * Prepare boots a simulator or an emulator; it cannot attach a phone, so a slot
  * with no AVD to fall back on is unusable while its device is not attached.
@@ -167,20 +180,39 @@ export function companionResourceBlocker(
 export function unattachedDeviceBlocker(
   slot: Pick<SlotStatus, 'platform' | 'resources' | 'health'>,
 ): string | null {
-  const serial = slot.resources?.['android-device']?.adb_serial;
-  if (slot.platform !== 'android' || serial === undefined || slot.resources?.['android-emu'])
-    return null;
-  if (slot.health.device.endsWith(':OK')) return null;
-  return `Android device ${String(serial)} is not attached and the slot has no AVD to boot`;
+  const serial = physicalDeviceSerial(slot);
+  if (serial === null || slot.health.device.endsWith(':OK')) return null;
+  return `Android device ${serial} is not attached and the slot has no AVD to boot`;
 }
 
-export type SlotScoringProjectConfig = SlotTrackingProjectConfig;
+/**
+ * ADR-054 amendment (2026-10-31): under `slot_selection.physical_devices: on-request`,
+ * automatic selection leaves physical device slots to runs that request a capability
+ * (the capability check then decides) and to operator pins.
+ */
+export function physicalDevicePolicyBlocker(
+  slot: Pick<SlotStatus, 'project' | 'platform' | 'resources'>,
+  options?: Pick<
+    SlotSelectionOptions,
+    'projectConfigs' | 'requiredCapabilities' | 'pinnedSlotSelection'
+  >,
+): string | null {
+  if (options?.pinnedSlotSelection || options?.requiredCapabilities?.length) return null;
+  if (options?.projectConfigs?.[slot.project]?.physicalDevices !== 'on-request') return null;
+  if (physicalDeviceSerial(slot) === null) return null;
+  return 'Physical device slot is reserved for runs that request a device (project slot_selection.physical_devices = on-request)';
+}
+
+export interface SlotScoringProjectConfig extends SlotTrackingProjectConfig {
+  physicalDevices?: PhysicalDeviceSlotPolicy;
+}
 
 export function projectConfigsFromProjects(
   projects: ReadonlyArray<{
     name: string;
     defaultBranch?: string;
     slotTrackingBranch?: string;
+    slotSelection?: ProjectSlotSelectionConfig;
   }>,
 ): Record<string, SlotScoringProjectConfig> {
   return Object.fromEntries(
@@ -189,6 +221,7 @@ export function projectConfigsFromProjects(
       {
         defaultBranch: p.defaultBranch ?? DEFAULT_BRANCH,
         slotTrackingBranch: p.slotTrackingBranch,
+        physicalDevices: p.slotSelection?.physicalDevices ?? 'any',
       },
     ]),
   );
@@ -351,6 +384,11 @@ export interface SlotSelectionOptions {
   projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
   pressureRejectedMachines?: ReadonlySet<string>;
   automaticLoads?: ReadonlyMap<string, AutomaticSlotLoad>;
+  /**
+   * Caller intent before internal narrowing: an explicit slot or a one-slot operator
+   * allowlist (ADR-054 `isPinnedSlotSelection`). Exempts the physical device policy.
+   */
+  pinnedSlotSelection?: boolean;
   parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
   skipPrepare?: boolean;
   plans?: SlotSelectionPlans;
@@ -465,7 +503,7 @@ export function findBestSlot(
       )
         return false;
       if (companionResourceBlocker(s, selected.requiredPrepareProfile)) return false;
-      if (unattachedDeviceBlocker(s)) return false;
+      if (unattachedDeviceBlocker(s) || physicalDevicePolicyBlocker(s, selected)) return false;
       if (
         !s.currentRunId &&
         !s.currentFamilyId &&
@@ -564,6 +602,8 @@ export function validateSlotForDispatch(
      * old, so a phone plugged back in is left to dispatch's own live check.
      */
     explicitSlot?: boolean;
+    projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
+    pinnedSlotSelection?: boolean;
   },
 ): string | null {
   return (
@@ -573,7 +613,9 @@ export function validateSlotForDispatch(
       releasableBranchHolderIds: options?.releasableBranchHolderIds,
     }) ??
     companionResourceBlocker(slot, options?.requiredPrepareProfile) ??
-    (options?.explicitSlot ? null : unattachedDeviceBlocker(slot)) ??
+    (options?.explicitSlot
+      ? null
+      : (unattachedDeviceBlocker(slot) ?? physicalDevicePolicyBlocker(slot, options))) ??
     slotCapabilityBlocker(slot.slot, options?.requiredCapabilities, options?.capabilityCatalogs) ??
     slotRepoBlocker(slot, options)
   );

@@ -1070,6 +1070,7 @@ async function findSlotAttempt(
   const selectionOptions: SlotSelectionOptions = {
     ...capabilitySelection,
     automaticLoads,
+    pinnedSlotSelection: automaticLoadPinned,
     targetBranch,
     releasableBranchHolderIds,
     requiredPrepareProfile,

@@ -55,6 +55,7 @@ const REQUEST_FIELDS = {
   pressureOverride: true,
   pressureAdmissionRef: true,
   allowedSlots: true,
+  requiredCapabilities: true,
   backlogItemId: true,
   workGraphId: true,
   workNodeId: true,

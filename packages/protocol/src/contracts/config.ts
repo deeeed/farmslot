@@ -282,12 +282,30 @@ export function validateProjectRecipeConfig(value: unknown): asserts value is Pr
   }
 }
 
+/**
+ * project.json `slot_selection.physical_devices` (ADR-054 amendment, 2026-10-31).
+ * `on-request` keeps automatic selection off physical device slots unless the run
+ * requests a capability or an operator pins the slot. Absent means `any`.
+ */
+export type PhysicalDeviceSlotPolicy = 'any' | 'on-request';
+
+export const PHYSICAL_DEVICE_SLOT_POLICIES: readonly PhysicalDeviceSlotPolicy[] = [
+  'any',
+  'on-request',
+];
+
+export interface ProjectSlotSelectionConfig {
+  physicalDevices: PhysicalDeviceSlotPolicy;
+}
+
 export interface ProjectConfig {
   name: string;
   repoUrl: string;
   defaultBranch: string;
   /** Linked-worktree idle branch template (e.g. wt/{{session}}). See ADR-042. */
   slotTrackingBranch?: string;
+  /** Automatic slot selection policy; absent selects any slot (`physicalDevices: 'any'`). */
+  slotSelection?: ProjectSlotSelectionConfig;
   /** Operator/docs hint for worktree sandboxes. Stale/idle inference uses fleet-probed linkedWorktree on SlotStatus, not this path. */
   worktreeBase?: string;
   apps?: string[];

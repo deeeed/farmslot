@@ -41,6 +41,7 @@ import {
   normalizeRawProjectRoadmap,
   normalizeRawReviewWorkspaces,
   normalizeRawRuntimeCapabilities,
+  normalizeRawSlotSelection,
   normalizeRawStaticReview,
   poolDir,
   projectPackRoot,
@@ -1071,6 +1072,7 @@ export async function loadProjectConfigs(strictRead = false): Promise<ProjectCon
         }
         const autoRecovery = normalizeRawProjectAutoRecovery(raw.auto_recovery);
         const backlog = normalizeRawProjectBacklog(raw.backlog);
+        const slotSelection = normalizeRawSlotSelection(raw.slot_selection, configPath);
         const roadmap = normalizeRawProjectRoadmap(raw.roadmap);
         const scripted = normalizeProjectScripted(raw.scripted);
         const prepare = normalizeRawProjectPrepare(raw.prepare, raw.name || dir);
@@ -1088,6 +1090,7 @@ export async function loadProjectConfigs(strictRead = false): Promise<ProjectCon
           defaultBranch: raw.default_branch || 'main',
           slotTrackingBranch:
             typeof raw.slot_tracking_branch === 'string' ? raw.slot_tracking_branch : undefined,
+          ...(slotSelection ? { slotSelection } : {}),
           worktreeBase: typeof raw.worktree_base === 'string' ? raw.worktree_base : undefined,
           apps: Array.isArray(raw.apps)
             ? raw.apps.filter(

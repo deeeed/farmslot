@@ -1341,6 +1341,7 @@ export function resolveDispatchPreviewFromFleet(
       .filter(([, decision]) => isPressureAdmissionRejected(decision))
       .map(([machine]) => machine),
   );
+  const pinnedSlotSelection = options?.automaticLoadPinned ?? isPinnedSlotSelection(params);
   const selectionOptions: SlotSelectionOptions = {
     ...params,
     requiredCapabilities: options?.requiredCapabilities,
@@ -1349,14 +1350,9 @@ export function resolveDispatchPreviewFromFleet(
     releasableBranchHolderIds: options?.releasableBranchHolderIds,
     projectConfigs,
     pressureRejectedMachines,
+    pinnedSlotSelection,
     ...(pressureDecisions
-      ? {
-          automaticLoads: automaticSlotLoads(
-            pressureDecisions,
-            undefined,
-            options?.automaticLoadPinned ?? isPinnedSlotSelection(params),
-          ),
-        }
+      ? { automaticLoads: automaticSlotLoads(pressureDecisions, undefined, pinnedSlotSelection) }
       : {}),
     parkPreservedSlotIds: options?.parkPreservedSlotIds,
     plans: options?.plans,

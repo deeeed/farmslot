@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run, SlotStatus } from '@farmslot/protocol';
+import type { Run, RuntimeCapabilityCatalogEntry, SlotStatus } from '@farmslot/protocol';
 
 import {
   activeRunIds,
@@ -16,6 +16,7 @@ import {
   isReplaceableWarmSlot,
   parkPreservedSlotIds,
   pickedSlotIneligibility,
+  projectConfigsFromProjects,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
   slotClaimBlockedByHandoff,
   slotClaimBlockedByLiveOwner,
@@ -272,6 +273,72 @@ test('a phone slot whose device is not attached is never selected; an emulator s
   assert.equal(findBestSlot([phone, emulator], 'demo-farm')?.slot, 'emulator');
   const attached = slot({ ...phone, slot: 'attached', health: { ...health, device: 'emu:OK' } });
   assert.equal(validateSlotForDispatch(attached, [attached]), null);
+});
+
+test('on-request physical devices leave automatic selection to simulators unless the run asks', () => {
+  const phone = slot({
+    slot: 'phone',
+    platform: 'android',
+    health: { ssh: 'LOCAL', device: 'emu:OK', devserver: 'OK', cdp: 'Wallet', fixtures: 'OK' },
+    resources: { 'android-device': { adb_serial: '29071JEGR20638' } },
+  });
+  // The sim scores worse, so only the policy moves selection off the phone.
+  const sim = slot({
+    slot: 'sim',
+    health: { ssh: 'LOCAL', device: 'sim:OFF', devserver: 'OK', cdp: 'OFF', fixtures: 'OK' },
+  });
+  const onRequest = {
+    projectConfigs: projectConfigsFromProjects([
+      { name: 'demo-farm', slotSelection: { physicalDevices: 'on-request' } },
+    ]),
+  };
+  const anySlot = { projectConfigs: projectConfigsFromProjects([{ name: 'demo-farm' }]) };
+  assert.equal(findBestSlot([phone, sim], 'demo-farm', anySlot)?.slot, 'phone');
+  assert.equal(validateSlotForDispatch(phone, [phone], anySlot), null);
+  assert.equal(findBestSlot([phone, sim], 'demo-farm', onRequest)?.slot, 'sim');
+  assert.equal(findBestSlot([phone], 'demo-farm', onRequest), null);
+  assert.equal(
+    validateSlotForDispatch(phone, [phone], onRequest),
+    'Physical device slot is reserved for runs that request a device (project slot_selection.physical_devices = on-request)',
+  );
+  // Operator pins: a named slot, and a one-slot allowlist (ADR-054 pin intent).
+  assert.equal(validateSlotForDispatch(phone, [phone], { ...onRequest, explicitSlot: true }), null);
+  const allowlist = { ...onRequest, allowedSlots: ['phone'] };
+  assert.equal(findBestSlot([phone, sim], 'demo-farm', allowlist), null);
+  assert.equal(
+    findBestSlot([phone, sim], 'demo-farm', { ...allowlist, pinnedSlotSelection: true })?.slot,
+    'phone',
+  );
+  const device: RuntimeCapabilityCatalogEntry = {
+    id: 'android-device',
+    project: 'demo-farm',
+    label: 'Android device',
+    version: '1',
+    sharePolicy: 'exclusive',
+    cost: { class: 'low', resources: [] },
+    actions: {
+      acquire: { kind: 'slot-action', actionId: 'start' },
+      health: { kind: 'slot-action', actionId: 'health' },
+      release: { kind: 'slot-action', actionId: 'stop' },
+    },
+    releaseEffects: [],
+    provenance: { project: 'demo-farm', providerId: 'android-device', version: '1', digest: 'd' },
+    availability: { state: 'available' },
+  };
+  const asks = {
+    ...onRequest,
+    requiredCapabilities: ['android-device'],
+    capabilityCatalogs: new Map([
+      ['phone', [device]],
+      ['sim', []],
+    ]),
+  };
+  assert.equal(findBestSlot([phone, sim], 'demo-farm', asks)?.slot, 'phone');
+  assert.equal(validateSlotForDispatch(phone, [phone, sim], asks), null);
+  assert.match(
+    validateSlotForDispatch(sim, [phone, sim], asks)!,
+    /'android-device' is unavailable/,
+  );
 });
 
 test('validateSlot explains disabled/manual/working/busy and accepts held', () => {
