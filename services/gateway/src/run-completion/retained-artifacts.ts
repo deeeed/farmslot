@@ -33,11 +33,13 @@ import {
   readRunBundleAvailability,
   reserveRunBundleMetadata,
   resolveRetainedRunBundleRef as localBundleRef,
+  runBundleAdmissionUsage,
   runBundleHousekeepingPaths,
   runBundleRefs,
   withRunBundleStoreLock,
 } from '@farmslot/run-bundle';
 
+import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { sha256File } from '../core/file-hash.js';
 import { inferArtifactPurpose } from '../core/index.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
@@ -355,6 +357,35 @@ export async function archiveRunArtifactHousekeeping(): Promise<void> {
         `[run-retention] housekeeping archive ${id} failed; source/journal retained: ${(error as Error).message}`,
       );
     }
+  }
+}
+
+// Warn the farm well before capture admission refuses retained media at the store cap.
+const RUN_BUNDLE_WARN_RATIO = 0.7;
+
+const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+
+/** Whether admission's charged bytes call for a farm warning; pure so the threshold is testable. */
+export function runBundleNearCapacity(
+  chargedBytes: number,
+  policy: Pick<RunBundleRetentionPolicy, 'maxStoreBytes'>,
+): boolean {
+  return chargedBytes >= policy.maxStoreBytes * RUN_BUNDLE_WARN_RATIO;
+}
+
+/** Hourly: warn the farm while there is still room, measured as admission charges it. Never throws. */
+export async function warnRunBundleCapacity(): Promise<void> {
+  try {
+    const store = await runBundleStore(true);
+    const policy = await retentionPolicy();
+    const usage = await runBundleAdmissionUsage(store, farmslotRoot);
+    if (runBundleNearCapacity(usage.total, policy))
+      reportGatewayWarning(
+        'run-bundle.capacity',
+        `Run-bundle admission charges ${gib(usage.total)} of its ${gib(policy.maxStoreBytes)} cap (bundles ${gib(usage.store)}, reservations ${gib(usage.reservations)}, task trees ${gib(usage.acquisition)}); gates refuse retained media before the cap. Free storage or raise maxStoreBytes in run-bundle-retention.json.`,
+      );
+  } catch (error) {
+    console.error(`[run-retention] run-bundle capacity check failed: ${(error as Error).message}`);
   }
 }
 
