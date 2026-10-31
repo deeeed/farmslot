@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import { chatMarkdownHtml } from './markdown.js';
 
+const NEW_TAB = ' target="_blank" rel="noopener noreferrer"';
+
 test('chat markdown renders lists, links, code and tables, and shows raw HTML as text', () => {
-  const html = chatMarkdownHtml(
+  const rendered = chatMarkdownHtml(
     [
       'Done:',
       '- fixed the **test**',
@@ -37,6 +39,9 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
       '</details>',
     ].join('\n'),
   );
+  // Every link opens beside Command Center; the rest of this test reads them without that.
+  assert.equal(rendered.split('<a ').length, rendered.split(`<a${NEW_TAB} `).length);
+  const html = rendered.replaceAll(NEW_TAB, '');
   assert.match(html, /<ul>\s*<li>fixed the <strong>test<\/strong><\/li>/);
   assert.match(html, /<a href="https:\/\/example.com\/pr\/1">the PR<\/a>/);
   assert.match(html, /<pre><code class="language-ts">const a = `\*\*not bold\*\*`;/);

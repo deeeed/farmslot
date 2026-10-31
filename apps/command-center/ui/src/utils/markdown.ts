@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify';
-import { Marked, marked, type Token } from 'marked';
+import { Marked, marked, Renderer, type Token } from 'marked';
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -19,6 +19,9 @@ const markLinkedImages = (tokens: Token[] | undefined, fallback: string) => {
     else if ('tokens' in child) markLinkedImages(child.tokens, fallback);
   }
 };
+
+// A chat link opens beside Command Center instead of replacing the conversation.
+const NEW_TAB = 'target="_blank" rel="noopener noreferrer"';
 
 const showsText = (tokens: Token[] | undefined): boolean =>
   (tokens ?? []).some((child) =>
@@ -41,6 +44,9 @@ const chatMarked = new Marked({
       markLinkedImages(token.tokens, showsText(token.tokens) ? '' : token.href);
   },
   renderer: {
+    link(token) {
+      return Renderer.prototype.link.call(this, token).replace(/^<a /, `<a ${NEW_TAB} `);
+    },
     html: ({ text, block }) =>
       block ? `<p>${escapeText(text.trimEnd()).replace(/\n/g, '<br>')}</p>` : escapeText(text),
     image: (token) =>
@@ -48,7 +54,7 @@ const chatMarked = new Marked({
         ? token.text.trim()
           ? token.text
           : escapeText(String(token.inLink))
-        : `<a href="${escapeText(token.href)}">${token.text || escapeText(token.href)}</a>`,
+        : `<a ${NEW_TAB} href="${escapeText(token.href)}">${token.text || escapeText(token.href)}</a>`,
   },
 });
 
@@ -58,7 +64,7 @@ export function chatMarkdownHtml(md: string): string {
 }
 
 export function renderChatMarkdown(md: string): string {
-  return DOMPurify.sanitize(chatMarkdownHtml(md));
+  return DOMPurify.sanitize(chatMarkdownHtml(md), { ADD_ATTR: ['target'] });
 }
 
 export type MdFetchEntry<T> =
