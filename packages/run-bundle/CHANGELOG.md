@@ -4,6 +4,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- An active run's committed captures stop pinning their bundles once superseded: only the run's current generation and its newest capture stay pinned. Housekeeping now lists bundles no run references and no live capture pins (`run-bundles` entries) for the host to archive, and `runBundleAdmissionUsage` reports what capture admission charges against the cap.
+
 - Return the acquisition scan's file count and elapsed time for completion logging, without another tree walk.
 
 - Measure acquisition and store trees with bounded parallel filesystem calls, so run completion no longer waits 30+ minutes on a busy gateway.
