@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- A native message queued for the next turn has an Edit button that takes it out of the queue and back into the composer, so you can change it and send it again. Sessions on an older native host show no button.
 - A message sent in a native conversation appears at once at the end of the conversation, with its delivery state ("Submitting", "Queued for the next turn", …), until the conversation shows it, instead of only a status line under the composer. A queued message the session never took (it was closed meanwhile) goes back to the composer instead of disappearing.
 - A worker terminal screen and a native command's output keep a terminal hyperlink's text (a file path or URL a tool printed as a link) and everything after it, which were dropped up to the last link on the screen.
 - While a native session runs a turn or waits on a request, the composer's button reads "Queue message" and queues the message for the next turn, as in Command Center, instead of staying disabled until the turn ends. A queued message no longer offers "Retry same message", and a message that could not be sent (the conversation was resumed elsewhere meanwhile) goes back to the composer instead of waiting on a delivery.

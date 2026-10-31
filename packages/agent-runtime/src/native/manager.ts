@@ -1163,6 +1163,8 @@ export class NativeSessionManager {
       ...record.info,
       capabilities: {
         ...record.info.capabilities,
+        // A host property, not the runner's: this host removes any session's queued input.
+        cancelQueued: true,
         ...(unavailable ? { resume: false, resumeUnavailableReason: unavailable } : {}),
       },
     };
@@ -1306,6 +1308,32 @@ export class NativeSessionManager {
       record.sending = false;
       this.scheduleQueuedInput(record);
     }
+  }
+
+  /**
+   * Removes a command still waiting in the queue. Synchronous, like the queue's pick and the first
+   * step of `submitCommand`: the event loop lets exactly one of removal and submission win.
+   */
+  cancelCommand(owner: string, id: string, commandId: string): NativeCommandReceipt {
+    const record = this.owned(owner, id);
+    const command = record.commands.get(commandId);
+    if (!command) throw new Error('Native command is unknown to this session');
+    if (command.outcome !== 'cancelled') {
+      if (!command.queued || command.submitted)
+        throw new Error('Native command is no longer queued: it was submitted or has settled');
+      if (
+        command.generation !== record.info.generation ||
+        command.leaseId !== record.info.workerLeaseId
+      )
+        throw new Error('Queued input belongs to a different generation or worker lease');
+      command.queued = false;
+      command.state = 'failed';
+      command.outcome = 'cancelled';
+      // Durable before the reply: a lost reply still leaves the message removed, never sent.
+      this.persist(record);
+    }
+    const { text: _text, leaseId: _leaseId, ...receipt } = command;
+    return receipt;
   }
 
   private scheduleQueuedInput(record: SessionRecord): void {

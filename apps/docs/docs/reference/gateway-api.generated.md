@@ -204,6 +204,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `native.profile.list`                   | native           | read-only     | —      | —      | Native Profile List gateway method.                   |
 | `native.profile.remove`                 | native           | bounded-write | —      | —      | Native Profile Remove gateway method.                 |
 | `native.profile.status`                 | native           | read-only     | —      | —      | Native Profile Status gateway method.                 |
+| `native.session.cancel`                 | native           | bounded-write | —      | —      | Native Session Cancel gateway method.                 |
 | `native.session.catalog`                | native           | bounded-write | —      | —      | Native Session Catalog gateway method.                |
 | `native.session.close`                  | native           | bounded-write | —      | —      | Native Session Close gateway method.                  |
 | `native.session.create`                 | native           | bounded-write | —      | —      | Native Session Create gateway method.                 |

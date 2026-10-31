@@ -148,6 +148,7 @@ export const Methods = {
   NATIVE_SESSION_SEND: 'native.session.send',
   NATIVE_SESSION_RESPOND: 'native.session.respond',
   NATIVE_SESSION_INTERRUPT: 'native.session.interrupt',
+  NATIVE_SESSION_CANCEL: 'native.session.cancel',
   NATIVE_SESSION_CLOSE: 'native.session.close',
   NATIVE_SESSION_CATALOG: 'native.session.catalog',
   NATIVE_SESSION_WORKSPACE_LIST: 'native.session.workspace.list',

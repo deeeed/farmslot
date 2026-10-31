@@ -1,6 +1,7 @@
 import type {
   NativeCommandReceipt,
   NativeSessionEvent,
+  NativeSessionInfo,
   NativeSessionReadResult,
   NativeSessionResponse,
   NativeSessionTargetParams,
@@ -494,6 +495,7 @@ export function nativeDeliveryLabel(receipt?: NativeCommandReceipt): string {
   if (!receipt) return 'Delivery unknown';
   if (receipt.queued) return 'Queued for the next turn';
   if (receipt.outcome === 'interrupted') return 'Interrupted';
+  if (receipt.outcome === 'cancelled') return 'Removed';
   switch (receipt.state) {
     case 'pending':
       return 'Submitting';
@@ -535,6 +537,23 @@ export function nativeMessageShown(events: NativeSessionEvent[], commandId: stri
  */
 export function nativeMessageDropped(receipt?: NativeCommandReceipt): boolean {
   return receipt?.state === 'failed' && !receipt.submitted;
+}
+
+/**
+ * Whether a sent message can still be taken back: its host removes queued messages, and this one
+ * waits in the current generation's queue, unsubmitted. Removing it drops it, so
+ * `nativeMessageDropped` returns its text to the composer: that is how a client edits it.
+ */
+export function nativeMessageCancelable(
+  session: Pick<NativeSessionInfo, 'generation' | 'capabilities'> | undefined,
+  receipt?: NativeCommandReceipt,
+): boolean {
+  return (
+    !!session?.capabilities.cancelQueued &&
+    !!receipt?.queued &&
+    !receipt.submitted &&
+    receipt.generation === session.generation
+  );
 }
 
 /** A confirmed replacement generation must not inherit the old browser input lock. */

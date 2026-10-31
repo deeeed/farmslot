@@ -15,6 +15,7 @@ import {
   nativeHistoryCanAct,
   nativeHistoryCanSend,
   nativeHistoryQuery,
+  nativeMessageCancelable,
   nativeMessageDropped,
   nativeMessageShown,
   nativeObservationQuery,
@@ -448,6 +449,18 @@ export function useNativeConversationController(params: NativeConversationParams
         throw cause;
       }
     });
+  /** Edit: the host removes the queued message, and reconciling its receipt restores the text. */
+  const edit = () =>
+    mutate(async () => {
+      const command = pendingRef.current;
+      const queued = snapshot?.commands.find((item) => item.commandId === command?.commandId);
+      if (command && nativeMessageCancelable(session, queued))
+        await client!.request(
+          Methods.NATIVE_SESSION_CANCEL,
+          { ...target, commandId: command.commandId },
+          30_000,
+        );
+    });
   const entries = nativeTimeline(transcript.events);
   const rows = nativeTimelineRows(entries);
   const work = nativeWork(transcript.events);
@@ -532,6 +545,7 @@ export function useNativeConversationController(params: NativeConversationParams
       pendingText,
       receipt,
       canRetry: nativeRetryAvailable(receipt),
+      canEdit: nativeMessageCancelable(session, receipt),
       error: error || pollError || creation.viewModel.error || resume.viewModel.error,
       busy,
       ready,
@@ -592,6 +606,7 @@ export function useNativeConversationController(params: NativeConversationParams
       },
       send,
       retry,
+      edit,
       respond,
       setDraft: (value: string) => {
         draftRef.current = value;

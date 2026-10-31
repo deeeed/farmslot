@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The native host removes a queued message on request (`cancelCommand`, and `native.worker.cancelCommand` under the worker's lease), persisting it as failed, never submitted and `cancelled` before it replies. A message already submitted, unknown, settled or of another lease is refused. Sessions on this host report `capabilities.cancelQueued`; a host started before the upgrade refuses the request as an unknown method.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.39.14 - 2026-10-31

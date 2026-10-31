@@ -7,6 +7,7 @@ import { NativeSessionManager } from './manager.js';
 import { privateDirectory, readJson } from './storage.js';
 import {
   NATIVE_WORKER_CANCEL,
+  NATIVE_WORKER_CANCEL_COMMAND,
   NATIVE_WORKER_CLOSE,
   NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
@@ -87,6 +88,10 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
             value = await manager.send(p.owner, p.id, p.commandId, p.text);
             break;
+          case NATIVE_WORKER_CANCEL_COMMAND:
+            manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
+            value = manager.cancelCommand(p.owner, p.id, p.commandId);
+            break;
           case NATIVE_WORKER_RESPOND:
             manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
             value = await manager.respond(p.owner, p.id, p.requestId, p.response);
@@ -113,6 +118,13 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
                 'Native worker input requires its run context, generation and task lease',
               );
             value = await manager.send(p.owner, p.id, p.commandId, p.text);
+            break;
+          case 'cancelCommand':
+            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
+              throw new Error(
+                'Native worker input requires its run context, generation and task lease',
+              );
+            value = manager.cancelCommand(p.owner, p.id, p.commandId);
             break;
           case 'respond':
             if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)

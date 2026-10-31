@@ -232,6 +232,16 @@ export function nativeWorkerInstructionCommandId(
     .digest('hex');
 }
 
+/** Completion feedback reaches the worker under its decision's send-back key. */
+export function completionSendBackCommandId(decisionId: string): string {
+  return `completion-send-back:${decisionId}`;
+}
+
+/** Either ID above: Farmslot derived it, and its clients never generate that shape. */
+export function isNativeWorkerInstructionCommandId(commandId: string): boolean {
+  return /^[0-9a-f]{64}$/.test(commandId) || commandId.startsWith('completion-send-back:');
+}
+
 export async function sendNativeWorkerInstruction(input: {
   runId: string;
   slotId: string;

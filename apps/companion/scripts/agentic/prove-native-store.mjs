@@ -22,6 +22,7 @@ const forbidden = [
   'native.session.respond',
   'native.session.close',
   'native.session.interrupt',
+  'native.session.cancel',
 ];
 if (phase === 'dry-preflight') {
   try {

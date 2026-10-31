@@ -158,6 +158,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `native.profile.list`                   | native-owner   |                                                                                    |
 | `native.profile.remove`                 | native-owner   |                                                                                    |
 | `native.profile.status`                 | native-owner   |                                                                                    |
+| `native.session.cancel`                 | native-owner   |                                                                                    |
 | `native.session.catalog`                | native-owner   |                                                                                    |
 | `native.session.close`                  | native-owner   |                                                                                    |
 | `native.session.create`                 | native-owner   |                                                                                    |

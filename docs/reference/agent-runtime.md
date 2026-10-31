@@ -307,6 +307,15 @@ Session journals append events and changed metadata/receipts, fsyncing command
 intent before submission. Receipts distinguish pending, unknown, accepted, failed
 and completed. `submitted` records a submission attempt; only `accepted` records
 native acknowledgement. A lost reply or unknown receipt never triggers a resend.
+`native.session.cancel` (host method `cancelCommand`; `native.worker.cancelCommand` under
+the worker's generation and lease) removes a command still queued for the next turn. The
+host persists it as `failed`, never submitted, with outcome `cancelled`, before it replies;
+a repeated call returns the same receipt. It refuses a command that was submitted, is
+unknown, settled otherwise, or belongs to another generation or worker lease. Removal and
+the queue's own submission are each decided synchronously on the host's event loop, so
+exactly one wins. Sessions on a host that removes queued commands report
+`capabilities.cancelQueued`; an older host refuses the method as unknown
+([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)).
 `read` accepts `after` and `limit`, returns a cursor and `hasMore`, and exposes the
 latest 100 receipts. Older IDs remain deduplicated across process generations;
 a missing receipt in a page does not mean the command was never submitted. Consume each page once and
