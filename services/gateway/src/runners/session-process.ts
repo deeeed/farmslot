@@ -1537,12 +1537,8 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
  * never matched as a live runner: it has already exited and only its exit
  * status remains, but its children are still traversed.
  */
-function buildFindRunnerDescendantPidCommandWithRoot(
-  quotedRoot: string,
-  pattern: string,
-  foregroundOnly = false,
-): string {
-  const walk = [
+function runnerDescendantWalk(foregroundOnly: boolean): string {
+  return [
     `BEGIN { pattern = ENVIRON["FARMSLOT_RUNNER_PATTERN"]; foreground_only = ${foregroundOnly ? 1 : 0} }`,
     '{',
     // The state column is validated as a `ps` STAT word, not merely as
@@ -1595,16 +1591,79 @@ function buildFindRunnerDescendantPidCommandWithRoot(
     '  exit 1',
     '}',
   ].join('\n');
+}
+
+/** Takes the one process table snapshot every walk reads, or exits as "snapshot did not happen". */
+function runnerProcessSnapshotLines(): string[] {
   const snapshotFailed = (reason: string) =>
     `{ printf '%s\\n' ${shellQuote(`runner liveness probe: ${reason}`)} >&2; exit ${RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}; }`;
+  return [
+    `snapshot=$(ps -axo pid=,ppid=,stat=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
+    `[ -n "$snapshot" ] || ${snapshotFailed('ps snapshot was empty')}`,
+  ];
+}
+
+function buildFindRunnerDescendantPidCommandWithRoot(
+  quotedRoot: string,
+  pattern: string,
+  foregroundOnly = false,
+): string {
   return [
     `root=${quotedRoot}`,
     `FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)}`,
     'export FARMSLOT_RUNNER_PATTERN',
-    `snapshot=$(ps -axo pid=,ppid=,stat=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
-    `[ -n "$snapshot" ] || ${snapshotFailed('ps snapshot was empty')}`,
-    `printf '%s\\n' "$snapshot" | awk -v root="$root" ${shellQuote(walk)}`,
+    ...runnerProcessSnapshotLines(),
+    `printf '%s\\n' "$snapshot" | awk -v root="$root" ${shellQuote(runnerDescendantWalk(foregroundOnly))}`,
   ].join('\n');
+}
+
+/**
+ * The same walk from many pane roots over ONE process snapshot, so a fleet check runs a
+ * single `ps` per node instead of one per slot. Prints `<root> <walk exit> [pid]` per root;
+ * the script itself exits {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT} when the snapshot fails.
+ */
+export function buildFindRunnerDescendantPidsCommand(
+  roots: ReadonlyArray<{ panePid: string; pattern: string }>,
+): string {
+  const walk = shellQuote(runnerDescendantWalk(false));
+  return [
+    ...runnerProcessSnapshotLines(),
+    ...roots.map(
+      ({ panePid, pattern }) =>
+        `pid=$(printf '%s\\n' "$snapshot" | FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)} awk -v root=${shellQuote(panePid)} ${walk}); printf '%s %s %s\\n' ${shellQuote(panePid)} "$?" "$pid"`,
+    ),
+  ].join('\n');
+}
+
+/**
+ * Runner presence under each pane, from one exec on the node. Absence and uncertainty
+ * are reported apart, as by {@link probeRunnerDescendantPid}; a failed snapshot leaves
+ * every root unknown.
+ */
+export async function probeRunnerDescendantPids(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  roots: ReadonlyArray<{ panePid: string; runnerId?: string | null }>,
+  options?: ExecOnSlotOptions,
+): Promise<Map<string, RunnerDescendantPidProbe['state']>> {
+  const states = new Map<string, RunnerDescendantPidProbe['state']>(
+    roots.map(({ panePid }) => [panePid, 'unknown']),
+  );
+  const walkable = roots
+    .filter(({ panePid }) => /^[0-9]+$/.test(panePid))
+    .map(({ panePid, runnerId }) => ({ panePid, pattern: runnerProcessPatternSource(runnerId) }))
+    .filter(({ pattern }) => pattern);
+  if (!walkable.length) return states;
+  const result = await execOnSlot(vars, buildFindRunnerDescendantPidsCommand(walkable), options);
+  if (result.exitCode !== 0) return states;
+  for (const line of result.stdout.split('\n')) {
+    const [panePid, exit, pid = ''] = line.trim().split(/\s+/);
+    if (!panePid || !states.has(panePid)) continue;
+    states.set(
+      panePid,
+      exit === '0' && /^\d+$/.test(pid) ? 'present' : exit === '1' ? 'absent' : 'unknown',
+    );
+  }
+  return states;
 }
 
 /**

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,6 +8,7 @@ import test from 'node:test';
 import { runnerProcessPatternSource } from './registry.js';
 import {
   buildFindRunnerDescendantPidCommand,
+  buildFindRunnerDescendantPidsCommand,
   RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT,
 } from './session-process.js';
 
@@ -262,4 +263,47 @@ test('the real STAT words both platforms emit are still accepted', (t) => {
 
   assert.equal(probe.exitCode, 0, `expected a match, got stderr: ${probe.stderr}`);
   assert.equal(probe.stdout.trim(), '222');
+});
+
+test('one process snapshot answers every pane root of a fleet check', (t) => {
+  const shimDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ps-shim-'));
+  t.after(() => rmSync(shimDir, { recursive: true, force: true }));
+  const calls = path.join(shimDir, 'calls');
+  // Two panes: one whose grandchild is a codex runner, one running only `sleep`.
+  writeFileSync(
+    path.join(shimDir, 'ps'),
+    [
+      '#!/bin/sh',
+      `echo call >> '${calls}'`,
+      "printf '%s\\n' '100 1 Ss -zsh' '101 100 S+ node /usr/local/bin/codex --resume' '200 1 Ss -zsh' '201 200 S+ sleep 30'",
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  const env = { ...process.env, PATH: `${shimDir}${path.delimiter}${process.env.PATH ?? ''}` };
+  const pattern = runnerProcessPatternSource('codex');
+  const result = runCommand(
+    buildFindRunnerDescendantPidsCommand([
+      { panePid: '100', pattern },
+      { panePid: '200', pattern },
+      { panePid: '300', pattern },
+    ]),
+    env,
+  );
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(
+    result.stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.trimEnd()),
+    ['100 0 101', '200 1', '300 1'],
+  );
+  assert.equal(readFileSync(calls, 'utf8'), 'call\n', 'ps ran once for all three roots');
+
+  writeFileSync(path.join(shimDir, 'ps'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const failed = runCommand(
+    buildFindRunnerDescendantPidsCommand([{ panePid: '100', pattern }]),
+    env,
+  );
+  assert.equal(failed.exitCode, RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT);
+  assert.equal(failed.stdout, '');
 });

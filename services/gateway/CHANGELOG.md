@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A fleet refresh checks every slot's agent on a machine with two execs (one tmux pane listing, one process snapshot walked from each pane) instead of three or more per slot. A full refresh of the dev farm's 89 checked slots drops from about 267 execs and 89 `ps` runs to 6 execs and 3 `ps` runs.
 - Replaying COMPLETE or the human gate keeps the run's output review decision, so the replayed COMPLETE no longer refuses with "A captured output review is required". A task-generation replay still drops it, because it recaptures the output.
 - A gate replay, recovery or restart no longer re-sends a worker's whole artifacts directory: the worker artifact copy keeps local files whose size and sha256 already match and transfers only changed ones (media still goes through acquisition).
 - The hourly run retention pass names itself to run-bundle store-lock waiters and declares a 60-minute hold limit, so captures queued behind a long pass keep waiting instead of failing at the store lock's 15-minute default.
