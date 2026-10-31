@@ -4,11 +4,13 @@ import test from 'node:test';
 import { mountHook } from '../hooks/hook-harness.fixtures';
 import { createOfflineClock, RECONNECT_GRACE_MS } from '../lib/held-connection';
 
+import { resolveBannerContent } from './connection-banner-visibility';
+
 type Banner = { tone: string; title: string };
 type Args = [Banner | null, { held: boolean; stuck: boolean; outage: Banner }];
 
-const outage = { tone: 'disconnected', title: 'Disconnected from gateway' };
-const connecting = { tone: 'connecting', title: 'Connecting to gateway…' };
+const outage = { tone: 'disconnected', title: 'Gateway offline' };
+const connecting = { tone: 'connecting', title: 'Connecting…' };
 
 // GatewayClient retries at most every 30 s, under the 60 s grace, so an unreachable gateway
 // cycles disconnected → connecting → disconnected.
@@ -49,4 +51,30 @@ test('an outage that cycles through reconnect attempts shows once the grace has 
   } finally {
     hook.cleanup();
   }
+});
+
+// Arthur: status stays discreet, and less text is always better.
+test('every banner a person can see is a few words, never the raw error', () => {
+  const show = (...args: Parameters<typeof resolveBannerContent>) =>
+    resolveBannerContent(...args).title;
+  const titles = [
+    show('disconnected', null, null, null, 'mini'),
+    show('socket-up-not-proven', null, null, null, 'mini'),
+    show('degraded', null, null, null, 'mini'),
+    show(
+      'healthy',
+      'Failed to refresh decisions: request timed out after 15000ms',
+      null,
+      null,
+      'mini',
+    ),
+    show('healthy', null, null, 'Connected to an older gateway without gateway.ping.', 'mini'),
+  ];
+  assert.deepEqual(titles, [
+    'Gateway offline',
+    'Gateway not answering',
+    'Gateway not answering',
+    'Sync failed',
+    'Gateway outdated',
+  ]);
 });

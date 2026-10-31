@@ -36,13 +36,13 @@ export function CopilotScreen({
       </View>
       <Text style={styles.title}>Operator Co-Pilot</Text>
       <Text style={styles.status}>
-        {!vm.connected
-          ? 'Gateway disconnected'
-          : vm.runtime
-            ? `Co-Pilot is ${vm.runtime.status}`
-            : vm.loading
-              ? 'Finding Co-Pilot…'
-              : 'Co-Pilot unavailable'}
+        {vm.runtime
+          ? `Co-Pilot is ${vm.runtime.status}`
+          : vm.loading
+            ? 'Finding Co-Pilot…'
+            : vm.connected
+              ? 'Co-Pilot unavailable'
+              : ''}
       </Text>
       <Text style={styles.hint}>
         Open the persistent Co-Pilot terminal or continue a native conversation. Start and configure
@@ -56,8 +56,7 @@ export function CopilotScreen({
       ) : null}
       {vm.saved ? (
         <Text style={styles.hint}>
-          Saved status{vm.observedAt ? ` from ${new Date(vm.observedAt).toLocaleString()}` : ''}.
-          Waiting for a current read.
+          Saved{vm.observedAt ? ` · ${new Date(vm.observedAt).toLocaleString()}` : ''}
         </Text>
       ) : null}
       {vm.error ? <Text style={styles.error}>{vm.error}</Text> : null}

@@ -197,7 +197,8 @@ export default function FleetScreen() {
   );
 
   const summaryText = useMemo(() => {
-    if (!fleet) return status === 'connected' ? 'Loading fleet...' : 'Not connected';
+    // Offline, the connection banner says so; the summary stays empty.
+    if (!fleet) return status === 'connected' ? 'Loading fleet…' : '';
     // "busy" is the current protocol lifecycle for slots doing active worker work.
     const working = filteredSlots.filter((s) => s.lifecycle === 'busy').length;
     const ready = filteredSlots.filter((s) => s.lifecycle === 'ready').length;
@@ -229,18 +230,12 @@ export default function FleetScreen() {
       <ResourceReadStatus
         observation={observation}
         label="fleet"
-        notice={fleetStale ? 'Fleet source is stale. Actions wait for a fresh observation.' : null}
+        notice={fleetStale ? 'Fleet source stale' : null}
         onRetry={() => void getResourceCache()?.retry(nativeFleetQuery)}
         retryLabel="Retry reading fleet"
       />
       {!fleet ? (
-        <View style={[styles.content, { paddingBottom: spacing.lg + insets.bottom }]}>
-          <Text style={baseStyles.textSecondary}>
-            {status === 'connected'
-              ? 'Fetching fleet status...'
-              : 'Connect to gateway to see fleet'}
-          </Text>
-        </View>
+        <View style={[styles.content, { paddingBottom: spacing.lg + insets.bottom }]} />
       ) : (
         // FlashList v2 self-measures rows; the current API has no estimatedItemSize prop.
         <FlashList

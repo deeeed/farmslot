@@ -49,7 +49,10 @@ export function readErrorMessage(
   return visibleReadError(observation, savedForDisplay(observation, connected, now))?.message;
 }
 
-/** A connected reread in flight, or one the gateway superseded within its grace, stays quiet. */
+/**
+ * A connected reread in flight, or one the gateway superseded within its grace, stays quiet.
+ * Offline, a read error is the outage's, which the connection banner already shows.
+ */
 export function resourceReadMessages(
   reads: readonly LabelledReadObservation[],
   now: number,
@@ -63,12 +66,9 @@ export function resourceReadMessages(
       ? observation.sourceObservation.observedAt
       : observation.observedAt;
     if (saved && observedAt !== undefined)
-      messages.push(
-        `Saved ${label}, ${sourceObservationAge(observedAt, now)}. Actions wait for a current read.`,
-      );
-    if (observation.status === 'unsupported')
-      messages.push(`Live ${label} updates are unavailable on this gateway.`);
-    const error = visibleReadError(observation, saved);
+      messages.push(`Saved ${label} · ${sourceObservationAge(observedAt, now)}`);
+    if (observation.status === 'unsupported') messages.push(`No live ${label} updates`);
+    const error = connected ? visibleReadError(observation, saved) : undefined;
     if (error) messages.push(`Could not read ${label}: ${error.message}`);
     return messages;
   });

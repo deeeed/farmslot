@@ -64,6 +64,7 @@ export function ResourceReadStatus({
             </Text>
           </Pressable>
           {onRetry &&
+          connected &&
           reads.some((read) =>
             visibleReadError(read.observation, savedForDisplay(read.observation, connected, now)),
           ) ? (
