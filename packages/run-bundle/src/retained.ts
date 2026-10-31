@@ -70,6 +70,8 @@ interface CaptureIntent {
   bundleId: string;
   exportedAt: string;
   runJson: string;
+  /** The Run generation that captured it; earlier generations' packages are superseded. */
+  generation?: number;
   bundleDigest?: string;
   committed?: boolean;
 }
@@ -480,6 +482,25 @@ export function resolveRetainedRunBundleRef(
 }
 
 /** Reserve lightweight output capacity before starting work, under the capture/GC lock. */
+export interface RunBundleAdmissionUsage {
+  store: number;
+  reservations: number;
+  /** Gateway task trees; archival of bundles cannot free these. */
+  acquisition: number;
+  total: number;
+}
+
+/** What capture admission charges against `maxStoreBytes`, split by what holds it. */
+export async function runBundleAdmissionUsage(
+  store: RunBundleStore,
+  farmslotRoot: string,
+): Promise<RunBundleAdmissionUsage> {
+  const stored = await chargedStoreBytes(store);
+  const reservations = await reservedMetadataBytes(store);
+  const acquisition = (await acquisitionBytes(farmslotRoot)).bytes;
+  return { store: stored, reservations, acquisition, total: stored + reservations + acquisition };
+}
+
 export async function reserveRunBundleMetadata(
   store: RunBundleStore,
   runId: string,
@@ -864,14 +885,14 @@ export async function readRetainedRunBundle(
 export interface RunBundleHousekeepingPath {
   path: string;
   runId: string;
-  store: 'bundle-reservations' | 'bundle-intents' | 'bundle-staging';
+  store: 'bundle-reservations' | 'bundle-intents' | 'bundle-staging' | 'run-bundles';
 }
 
 /** Metadata/staging selection shared by the standalone collector and archive-only gateway. Caller holds the bundle lock. */
 async function runBundleHousekeepingInventory(store: RunBundleStore, now: number) {
   const cleanup: RunBundleHousekeepingPath[] = [];
   const referenced = new Set<string>();
-  const activeRuns = new Set<string>();
+  const activeRuns = new Map<string, number | undefined>();
   const pinned = new Set<string>();
   const retainReference = (ref: RunArtifactBundleRef | undefined, pin: boolean) => {
     if (!ref || ref.storeId !== store.id) return;
@@ -885,7 +906,7 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
     const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) =>
       retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
     const active = isActiveListRun(run);
-    if (active) activeRuns.add(run.id);
+    if (active) activeRuns.set(run.id, run.engineState?.generation);
     for (const { ref, decision } of runBundleRefs(run))
       retain(
         ref,
@@ -903,12 +924,19 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
   const activeStages = new Set<string>();
   const captureRuns = new Set<string>();
   const committedIntents = new Map<string, string[]>();
+  const newestCommitted = new Map<string, CaptureIntent>();
   for (const file of await readdir(intentsDir)) {
     if (!file.endsWith('.json')) continue;
     const intentPath = path.join(intentsDir, file);
     const intent: CaptureIntent = JSON.parse(await readFile(intentPath, 'utf8'));
     // A prepared package can outlive the current output pointer before its gate is recorded.
-    if (intent.bundleDigest && activeRuns.has(intent.runId)) pinned.add(intent.bundleDigest);
+    // Only the run's current generation, or its newest capture, can still be that package.
+    if (intent.committed && intent.bundleDigest && activeRuns.has(intent.runId)) {
+      const newest = newestCommitted.get(intent.runId);
+      if (!newest || intent.exportedAt > newest.exportedAt)
+        newestCommitted.set(intent.runId, intent);
+      if (intent.generation === activeRuns.get(intent.runId)) pinned.add(intent.bundleDigest);
+    }
     if (intent.committed && intent.bundleDigest) {
       const files = committedIntents.get(intent.bundleDigest) ?? [];
       files.push(path.join(intentsDir, file));
@@ -930,6 +958,7 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
       if (intent.bundleDigest) pinned.add(intent.bundleDigest);
     }
   }
+  for (const intent of newestCommitted.values()) pinned.add(intent.bundleDigest!);
   const reservations = path.join(store.root, 'reservations');
   await mkdir(reservations, { recursive: true });
   for (const name of await readdir(reservations)) {
@@ -947,16 +976,38 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
     if (activeStages.has(name) || now - (await stat(directory)).mtimeMs < 86_400_000) continue;
     cleanup.push({ path: directory, runId: 'bundle-housekeeping', store: 'bundle-staging' });
   }
-  return { cleanup, referenced, pinned, committedIntents };
+  // A bundle no run references and no live capture pins is superseded storage: archive it,
+  // with its retry intents, so a later capture with the same key starts over.
+  const archivable: RunBundleHousekeepingPath[] = [];
+  const digestRoot = path.join(store.root, 'sha256');
+  await mkdir(digestRoot, { recursive: true });
+  for (const digest of await readdir(digestRoot)) {
+    // Archive staging (`.retention-*`) and other non-bundle names are not this selection's.
+    if (!/^[a-f0-9]{64}$/u.test(digest)) continue;
+    if (referenced.has(digest) || pinned.has(digest)) continue;
+    const directory = bundleDirectory(store, digest);
+    let runId = 'bundle-housekeeping';
+    try {
+      runId = parseManifest(directory).runs[0]?.originalRunId ?? runId;
+    } catch {
+      // An unreadable manifest is still unreferenced storage.
+    }
+    // Intents first: a host interrupted between entries leaves the bundle to select again.
+    for (const intent of committedIntents.get(digest) ?? [])
+      archivable.push({ path: intent, runId, store: 'bundle-intents' });
+    archivable.push({ path: directory, runId, store: 'run-bundles' });
+  }
+  return { cleanup, archivable, referenced, pinned, committedIntents };
 }
 
-/** Select inactive reservations and abandoned capture scaffolding without removing bytes. */
+/** Select inactive reservations, abandoned capture scaffolding and superseded bundles without removing bytes. */
 export async function runBundleHousekeepingPaths(
   store: RunBundleStore,
   now = Date.now(),
 ): Promise<RunBundleHousekeepingPath[]> {
   await assertStorePairing(store);
-  return (await runBundleHousekeepingInventory(store, now)).cleanup;
+  const { cleanup, archivable } = await runBundleHousekeepingInventory(store, now);
+  return [...cleanup, ...archivable];
 }
 
 export async function collectRunBundleGarbage(
@@ -1063,6 +1114,9 @@ export async function materializeRunBundle(
         bundleId: retained.manifest.bundleId,
         exportedAt: retained.manifest.exportedAt,
         runJson: '',
+        ...(run.engineState?.generation !== undefined
+          ? { generation: run.engineState.generation }
+          : {}),
         bundleDigest: request.existingRef.bundleDigest,
       };
       await atomicJson(intentPath, original);
@@ -1076,6 +1130,9 @@ export async function materializeRunBundle(
           bundleId: randomUUID(),
           exportedAt: new Date().toISOString(),
           runJson: `${JSON.stringify(sanitizeRunForBundleExport(run, 'reference'), null, 2)}\n`,
+          ...(run.engineState?.generation !== undefined
+            ? { generation: run.engineState.generation }
+            : {}),
         };
     if (intent.key !== request.captureKey) throw new Error('Run bundle capture intent changed.');
     if (!prior) await atomicJson(intentPath, intent);
