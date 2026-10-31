@@ -231,18 +231,43 @@ export async function openRunBundleStore(input: {
 }
 
 /** One cross-process lock covers capacity reservations, commit and GC. */
-export function withRunBundleStoreLock<T>(store: RunBundleStore, fn: () => Promise<T>): Promise<T> {
-  return withBundleLock(store, 'bundle-store.lock', fn);
+export function withRunBundleStoreLock<T>(
+  store: RunBundleStore,
+  fn: () => Promise<T>,
+  options: { queueTimeoutMs?: number } = {},
+): Promise<T> {
+  return withBundleLock(store, 'bundle-store.lock', fn, options.queueTimeoutMs);
 }
 
 const bundleLockQueues = new Map<string, Promise<unknown>>();
+// The store lock guards short critical sections; a repair holds its own lock for a whole
+// media transfer. A wait past these limits is a stalled holder: fail visibly, never hang.
+const STORE_LOCK_QUEUE_TIMEOUT_MS = 5 * 60_000;
+const REPAIR_LOCK_QUEUE_TIMEOUT_MS = 30 * 60_000;
+const SLOW_LOCK_WAIT_MS = 10_000;
+
+/** True once `promise` settles either way, false if `ms` passes first. */
+function settledWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 async function withBundleLock<T>(
   store: RunBundleStore,
   name: string,
   fn: () => Promise<T>,
+  queueTimeoutMs = STORE_LOCK_QUEUE_TIMEOUT_MS,
 ): Promise<T> {
   const options = bundleLockOptions(store, name);
+  const enqueuedAt = Date.now();
   const execute = async () => {
     let release: () => Promise<void>;
     try {
@@ -261,6 +286,9 @@ async function withBundleLock<T>(
         { code: 'ELOCKED', file: options.lockfilePath },
       );
     }
+    const waited = Date.now() - enqueuedAt;
+    if (waited >= SLOW_LOCK_WAIT_MS)
+      console.warn(`[run-bundle] waited ${(waited / 1000).toFixed(1)}s for ${name}`);
     try {
       return await fn();
     } finally {
@@ -271,7 +299,16 @@ async function withBundleLock<T>(
   // while that same process captures, repairs or collects another run's bytes.
   // A failed operation still rejects its caller; the next operation can proceed.
   const previous = bundleLockQueues.get(options.lockfilePath) ?? Promise.resolve();
-  const pending = previous.then(execute, execute);
+  const pending = settledWithin(previous, queueTimeoutMs).then((settled) => {
+    if (!settled)
+      throw Object.assign(
+        new Error(
+          `Run bundle lock ${name} is still held by another operation in this process after ${Math.round(queueTimeoutMs / 1000)}s; retry once it finishes.`,
+        ),
+        { code: 'ELOCKED', file: options.lockfilePath },
+      );
+    return execute();
+  });
   bundleLockQueues.set(options.lockfilePath, pending);
   try {
     return await pending;
@@ -1262,27 +1299,32 @@ export async function materializeRunBundle(
       throw error;
     }
   });
-  return withBundleLock(store, repairLockName(captured.ref.bundleDigest), async () => {
-    const missingData = await completeRetainedPayloads(
-      request,
-      captured.ref,
-      bundleDirectory(store, captured.ref.bundleDigest),
-      captured.manifest,
-      acquisitionSize,
-    );
-    return withRunBundleStoreLock(store, async () => {
-      await readRetainedRunBundle(store, captured.ref, run.id);
-      await request.commit(captured.ref, missingData);
-      const intentPath = path.join(
-        store.runsDir,
-        'bundle-intents',
-        `${sha256Text(`${run.id}:${request.captureKey}`)}.json`,
+  return withBundleLock(
+    store,
+    repairLockName(captured.ref.bundleDigest),
+    async () => {
+      const missingData = await completeRetainedPayloads(
+        request,
+        captured.ref,
+        bundleDirectory(store, captured.ref.bundleDigest),
+        captured.manifest,
+        acquisitionSize,
       );
-      const intent: CaptureIntent = JSON.parse(await readFile(intentPath, 'utf8'));
-      intent.committed = true;
-      intent.runJson = '';
-      await atomicJson(intentPath, intent);
-      return { ...captured, missingData, acquisitionScan };
-    });
-  });
+      return withRunBundleStoreLock(store, async () => {
+        await readRetainedRunBundle(store, captured.ref, run.id);
+        await request.commit(captured.ref, missingData);
+        const intentPath = path.join(
+          store.runsDir,
+          'bundle-intents',
+          `${sha256Text(`${run.id}:${request.captureKey}`)}.json`,
+        );
+        const intent: CaptureIntent = JSON.parse(await readFile(intentPath, 'utf8'));
+        intent.committed = true;
+        intent.runJson = '';
+        await atomicJson(intentPath, intent);
+        return { ...captured, missingData, acquisitionScan };
+      });
+    },
+    REPAIR_LOCK_QUEUE_TIMEOUT_MS,
+  );
 }

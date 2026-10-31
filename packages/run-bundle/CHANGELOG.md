@@ -4,6 +4,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- A wait on a run-bundle lock behind a stalled operation in the same process now fails with `ELOCKED` instead of hanging: 5 minutes for the store lock, 30 minutes for a bundle's repair lock, which covers a whole media transfer. A wait over 10 seconds is logged. `withRunBundleStoreLock` accepts `queueTimeoutMs`.
+
 - Return the acquisition scan's file count and elapsed time for completion logging, without another tree walk.
 
 - Measure acquisition and store trees with bounded parallel filesystem calls, so run completion no longer waits 30+ minutes on a busy gateway.

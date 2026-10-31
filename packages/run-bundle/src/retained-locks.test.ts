@@ -96,3 +96,30 @@ test('exhausted external contention names the lock and does not poison later wor
   t.mock.restoreAll();
   assert.equal(await withRunBundleStoreLock(store, async () => 'available'), 'available');
 });
+
+test('a wait behind a stalled holder in this process fails visibly instead of hanging', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'retained-lock-stall-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = await openRunBundleStore({
+    runsDir: path.join(root, 'runs'),
+    home: path.join(root, 'home'),
+    create: true,
+  });
+  let finish!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    void withRunBundleStoreLock(store, async () => {
+      resolve();
+      await new Promise<void>((done) => {
+        finish = done;
+      });
+    });
+  });
+  await entered;
+  await assert.rejects(
+    withRunBundleStoreLock(store, async () => 'never', { queueTimeoutMs: 50 }),
+    (error: NodeJS.ErrnoException) =>
+      error.code === 'ELOCKED' && /still held by another operation/.test(error.message),
+  );
+  finish();
+  assert.equal(await withRunBundleStoreLock(store, async () => 'next'), 'next');
+});
