@@ -177,6 +177,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'native.profile.list': { classification: 'native-owner' },
   'native.profile.remove': { classification: 'native-owner' },
   'native.profile.status': { classification: 'native-owner' },
+  'native.session.cancel': { classification: 'native-owner' },
   'native.session.catalog': { classification: 'native-owner' },
   'native.session.close': { classification: 'native-owner' },
   'native.session.create': { classification: 'native-owner' },

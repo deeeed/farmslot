@@ -17,6 +17,8 @@ export interface NativeSessionCapabilities {
   resumeUnavailableReason?: string;
   /** Schemas accepted and validated through provider-native constrained results. */
   structuredResultSchemas?: NativeResultSchema[];
+  /** Set by the host: `native.session.cancel` removes a queued message. Absent on older hosts. */
+  cancelQueued?: boolean;
 }
 
 export interface NativeSessionCreateParams {
@@ -95,6 +97,14 @@ export interface NativeSessionSendResult {
   /** True only after native protocol evidence confirms acceptance. */
   accepted: boolean;
 }
+/** Removes a message still queued for the next turn. A submitted message is refused: stop the turn. */
+export interface NativeSessionCancelParams extends NativeSessionTargetParams {
+  commandId: string;
+}
+export interface NativeSessionCancelResult {
+  /** Failed, never submitted, with outcome `cancelled`. A repeated call returns the same receipt. */
+  receipt: NativeCommandReceipt;
+}
 export type NativeCommandState = 'pending' | 'unknown' | 'accepted' | 'failed' | 'completed';
 export interface NativeCommandReceipt {
   generation: string;
@@ -103,7 +113,8 @@ export interface NativeCommandReceipt {
   submitted: boolean;
   accepted: boolean;
   queued?: boolean;
-  outcome?: 'completed' | 'failed' | 'interrupted';
+  /** `cancelled`: removed from the queue by `native.session.cancel` before submission. */
+  outcome?: 'completed' | 'failed' | 'interrupted' | 'cancelled';
   structuredResult?: NativeStructuredResult;
 }
 

@@ -7,6 +7,7 @@ import {
   beginTerminalTeardown,
   endTerminalTeardown,
 } from '../run-engine/terminal-teardown-registry.js';
+import { captureEpisodeAfterRelease } from '../run-lifecycle/episode-capture-effect.js';
 import {
   operatorCompletionCollaborators,
   terminalTransitionDeps,
@@ -167,5 +168,7 @@ async function closeRunOutputOnce(
     return released;
   } finally {
     if (heldSlot) endTerminalTeardown(heldSlot);
+    // After the release attempt and outside the run lock; skipped unless the run ended.
+    await captureEpisodeAfterRelease(runId);
   }
 }

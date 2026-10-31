@@ -34,6 +34,7 @@ import {
   assertPrimaryReviewContext,
   assertWarmReviewRequestAvailable,
 } from '../../run-engine/review-plan.js';
+import { captureEpisodeAfterRelease } from '../../run-lifecycle/episode-capture-effect.js';
 import {
   operatorCompletionCollaborators,
   terminalTransitionDeps,
@@ -63,6 +64,8 @@ async function supersedeBlockedReview(run: Run, successor: string): Promise<void
       collaborators: operatorCompletionCollaborators(publishCompletedRun),
     }),
   );
+  // No slot release follows a superseded review, so its episode is captured now.
+  await captureEpisodeAfterRelease(run.id);
 }
 
 export async function runRereviewLatestHead(

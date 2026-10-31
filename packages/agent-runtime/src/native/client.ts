@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type {
+  NativeCommandReceipt,
   NativeSessionCreateParams,
   NativeSessionEnsureParams,
   NativeSessionInfo,
@@ -18,6 +19,7 @@ import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
 import { alive, privateDirectory, readJson } from './storage.js';
 import {
   NATIVE_WORKER_CANCEL,
+  NATIVE_WORKER_CANCEL_COMMAND,
   NATIVE_WORKER_CLOSE,
   NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
@@ -205,6 +207,14 @@ export class NativeSessionClient {
       text,
     });
   }
+  cancelCommandWorker(owner: string, target: NativeWorkerTarget, commandId: string) {
+    return this.call<NativeCommandReceipt>({
+      method: NATIVE_WORKER_CANCEL_COMMAND,
+      owner,
+      ...this.workerTarget(target),
+      commandId,
+    });
+  }
   closeWorker(owner: string, target: NativeWorkerTarget) {
     return this.call<NativeSessionInfo>({
       method: NATIVE_WORKER_CLOSE,
@@ -271,6 +281,10 @@ export class NativeSessionClient {
   }
   send(owner: string, id: string, commandId: string, text: string) {
     return this.call<NativeSessionSendResult>({ method: 'send', owner, id, commandId, text });
+  }
+  /** An older host refuses this as an unknown method. */
+  cancelCommand(owner: string, id: string, commandId: string) {
+    return this.call<NativeCommandReceipt>({ method: 'cancelCommand', owner, id, commandId });
   }
   respond(owner: string, id: string, requestId: string, response: NativeSessionResponse) {
     return this.call<void>({ method: 'respond', owner, id, requestId, response });
