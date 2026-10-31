@@ -9,6 +9,7 @@ import type {
   NativeSessionTargetParams,
   NativeSessionTool,
   NativeToolKind,
+  NativeTurnChanges,
 } from '../rpc/native-session.js';
 import { Methods } from '../rpc/registry.js';
 
@@ -20,7 +21,7 @@ import type { ResourceQueryState, ResourceReadResult } from './types.js';
 
 export interface NativeTimelineEntry {
   key: number;
-  kind: 'user' | 'assistant' | 'tool' | 'resolution' | 'plan' | 'status';
+  kind: 'user' | 'assistant' | 'tool' | 'resolution' | 'plan' | 'status' | 'changes';
   event: NativeSessionEvent;
   text: string;
 }
@@ -100,6 +101,18 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
         entries.push(entry);
         plans.set(identity, entry);
       }
+    } else if (
+      event.type === 'turn.changes' &&
+      event.changes &&
+      // A turn that changed nothing adds no row; one whose changes are unavailable says why.
+      (event.changes.files.length || event.changes.unavailable)
+    ) {
+      entries.push({
+        key: event.sequence,
+        kind: 'changes',
+        event,
+        text: nativeTurnChangesText(event.changes),
+      });
     } else if (event.type === 'approval.resolved' && event.request) {
       entries.push({
         key: event.sequence,
@@ -142,6 +155,16 @@ export function nativePlanCopyLabel(copied?: boolean): string {
   return copied === undefined ? 'Copy plan' : copied ? 'Copied' : 'Copy failed';
 }
 
+/** "Changed 3 files · +12 −4", "No file changes", or why the turn's changes are unavailable. */
+export function nativeTurnChangesText(changes: NativeTurnChanges): string {
+  if (changes.unavailable) return `Changes unavailable: ${changes.unavailable}`;
+  if (!changes.files.length) return 'No file changes';
+  const sum = (key: 'additions' | 'deletions') =>
+    changes.files.reduce((total, file) => total + (file[key] ?? 0), 0);
+  const count = `${changes.files.length}${changes.truncated ? '+' : ''}`;
+  return `Changed ${count} ${changes.files.length === 1 && !changes.truncated ? 'file' : 'files'} · +${sum('additions')} −${sum('deletions')}`;
+}
+
 /**
  * "Approved: rm -r build", "Declined: …", "Answered: Which file? → a.ts", or "Resolved: …" when
  * the host did not deliver the response (the runner resolved it), so the decision is unknown.
@@ -174,7 +197,7 @@ export interface NativeHistorySnapshot extends NativeSessionReadResult {
 }
 
 /** Bumped when retention keeps more: a snapshot saved by an older reader is read again from its start, once. */
-const NATIVE_HISTORY_PROJECTION = 4;
+const NATIVE_HISTORY_PROJECTION = 5;
 
 export const NATIVE_HISTORY_MESSAGES = 200;
 export const NATIVE_HISTORY_SESSIONS = 10;

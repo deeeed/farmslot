@@ -321,7 +321,7 @@ Hosts keep their loaded code until stopped, so a session started on an older hos
 
 ## Amendment 9: queued messages, steering, plans and per-turn changes, 2026-10-31
 
-**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in #1658; part 2 (plan updates: checklists and proposed plans) implemented in #1668; part 3 (steer) implemented in this change; per-turn changes and Implement follow in their own changes.
+**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in #1658; part 2 (plan updates: checklists and proposed plans) implemented in #1668; part 3 (steer) implemented in #1671; part 4 (per-turn changes) implemented in this change; Implement follows in its own change.
 
 ### Decision
 
@@ -363,6 +363,20 @@ Claude's TodoWrite and ExitPlanMode come later, after a live check of what Claud
 
 A checklist is one timeline entry per turn and kind, at the place and key of its first update, holding the latest plan. It shows its steps while its turn runs and folds to its progress ("3 of 5 steps") once the turn ends, unless the reader watched it run. A proposal is a card: markdown, collapsed when long, with a copy action. Implement (a mode switch) comes with its own change.
 
+**Per-turn changes.** For a session whose working directory is in a Git working tree, the host takes a checkpoint before and after each turn:
+
+1. when it submits the turn's first command, after journaling it and before writing to the runner;
+2. when the turn ends.
+
+- A checkpoint is a commit of the working tree's content, untracked files Git does not ignore included, with `HEAD` as parent. It is built in the session's own index, kept in the host's state directory, seeded from the worktree's index and reseeded only when that changes. It is kept under `refs/farmslot/native/<sessionId>/` and touches no file, index, `HEAD` or branch of the worktree. An untracked file over 10 MiB when first seen is left out, and one removed while a checkpoint lists it is skipped. A checkpoint whose tree equals the previous one reuses it, so an unchanged worktree adds no commit or ref. A session's checkpoint steps run one at a time.
+- A turn's first command is journaled after the previous turn's `turn.changes`, so each turn's changes sit under its own message, and its start checkpoint is taken before the runner write. Delivery waits for both at most 3 s in all, then proceeds. A previous turn's checkpoint still running then is reported unavailable, so it cannot take in the next turn's edits, and a start checkpoint still running leaves that turn's changes unavailable. A failed checkpoint never fails a turn. The approved text said checkpoints never block delivery; a start taken after the runner's first write would give that write to the previous turn, so delivery waits, bounded, instead.
+- After the end checkpoint the host appends `turn.changes` for the turn's command: `changes: { from, to, files: [{ path, status: 'added' | 'modified' | 'deleted', additions?, deletions? }], truncated?, unavailable? }`. Paths are relative to the repository root, a binary file has no counts, and at most 500 files are listed (`truncated` past that). `unavailable` says why a turn has no changes to show.
+- `native.session.turn.diff` takes a session target, the `sequence` of a `turn.changes` event and a `path` it lists, and returns that file's diff between the two checkpoints, within the workspace diff's 1 MiB limit. It is served with the workspace reads, behind their worker fence.
+- The host keeps a session's last 100 checkpoints and deletes its refs and index when the session closes, including a session that failed or was restored after a host restart. A failure to delete them is shown as an `error` event, and closing again retries. A diff whose checkpoints are no longer under the session's refs is refused as no longer retained.
+- A session whose working directory is read-only (a sandboxed reviewer) takes no checkpoints. Edits made between turns fall outside both checkpoints; changes made during a turn by background processes, or by a pull or rebase, count as the turn's.
+
+Command Center shows what each finished turn changed ("Changed 3 files · +12 −4"), and each file opens its diff in the shared diff viewer; a turn that changed nothing adds no row. Companion, and diffs after a session closes, come later.
+
 ### Rationale and consequences
 
 A queued message could be dropped only by closing the session. The queue lives in the host, so removal needs no runner support.
@@ -373,6 +387,16 @@ Waiting for the turn to end delayed a correction until the work it corrected was
 
 Codex and ACP runners already sent their plans; adapters dropped them, so a reader saw only the prose around them. A plan is shown, never acted on, so it needs no capability: an older host sends no `plan.updated`, and older clients skip the event. Cached histories saved before this change dropped plan events, so the history projection number is bumped and they are read again once.
 
+The workspace pane answers "what differs from `HEAD` now", not "what did this message change", and shows nothing once the worker commits. A checkpoint taken by the host gives every Git-backed runner the same answer; Codex's own turn diff covers only Codex and is not used. The cost is Git work at each turn boundary and hidden refs in the repository's Git directory, which linked worktrees share; deleting a session's refs at close stops them piling up. No Farmslot flow mirror-pushes or prunes refs, and hidden refs already exist under `refs/farmslot/`.
+
+Measured with this change's code on a shared clone of mini's MetaMask Mobile checkout (15,240 tracked files, uncommitted edits left in place, load about 3): the first checkpoint, which seeds the session's index, took 0.24 to 0.25 s, one with nothing changed since the last 0.14 to 0.15 s, one after a turn's edits 0.23 s, and the file summary 0.03 s. A read-only run of the same Git steps on macpro's six MetaMask Mobile worker checkouts (17,120 to 18,503 files, load about 13) took 0.34 to 0.79 s, and 0.23 to 0.39 s with nothing changed. The start checkpoint delays delivery by that much; the end checkpoint runs after the turn. Work avoided (COMMON "Extreme performance, clean architecture"):
+
+- No rescan: the session's index persists between checkpoints, so Git's stat cache hashes only files changed since the previous one, untracked files included. It is reseeded only when the worktree's index changes, and the copy keeps that index's timestamp, so entries written in the same second are still re-checked.
+- No recopy: a checkpoint is a Git tree; unchanged blobs are shared by hash with every earlier checkpoint and with the repository.
+- No per-file spawns: one Git invocation per step. The file list and its counts come from one tree-to-tree diff, and a file's diff is computed only when a reader opens it.
+
+An older host sends no `turn.changes`, so clients offer no turn diffs for its sessions, and an older node service refuses `native.session.turn.diff` as an unknown method. Older clients skip the event.
+
 ### Public surface
 
 `native.session.cancel` (`NativeSessionCancelParams`, `NativeSessionCancelResult`), the receipt outcome `cancelled`, `NativeSessionCapabilities.cancelQueued` and the client-cache predicate `nativeMessageCancelable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `cancelCommand` and `native.worker.cancelCommand`, so it needs a release; native hosts started after it support removal. The gateway adds the method to its worker input fence, authorization map and native method lists, and withholds the capability where it refuses removal; Companion adds it to its workspace method list. No CLI flag or harness change. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) defines the boundary.
@@ -380,3 +404,5 @@ Codex and ACP runners already sent their plans; adapters dropped them, so a read
 Steer: `NativeSessionSendParams.delivery`, `NativeSessionCapabilities.steer`, the receipt flag `steered` and the client-cache predicate `nativeSteerAvailable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `steer` and `native.worker.steer` and the Codex `turn/steer` call, so it needs a release; sessions started on a host after it can steer. The gateway routes a worker steer through its input fence and withholds the capability where it refuses it. No new gateway method.
 
 Plan updates: the event type `plan.updated` with `NativeSessionPlan` and `NativePlanStep`, the `plan` timeline entry, `nativePlanText` and `nativePlanOpen` in the client cache, and the history projection bump, in `@farmslot/protocol`. `@farmslot/agent-runtime` maps the Codex and ACP plans and needs a release; native hosts started after it send plans. The gateway passes events through unchanged.
+
+Per-turn changes: the event type `turn.changes` with `NativeTurnChanges` and `NativeTurnFile`, the method `native.session.turn.diff` (`NativeSessionTurnDiffParams`, `NativeSessionTurnDiffResult`), the `changes` timeline entry and `nativeTurnChangesText` in the client cache, and another history projection bump, in `@farmslot/protocol`. `@farmslot/agent-runtime` takes the checkpoints and serves the diff, so it needs a release; native hosts and node services started after it support them. The gateway adds the method to its routes, worker read fence and authorization map. No CLI flag or harness change.

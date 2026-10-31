@@ -361,6 +361,23 @@ starts each thread with `tools.update_plan.enabled`, without which the app-serve
 plan updates. ACP
 maps a `plan` update to a checklist, dropping entry `priority`. Claude sends no plans yet.
 
+For a session whose working directory is in a Git working tree and not read-only, the
+host checkpoints the working tree before each turn (after journaling its first command,
+which follows the previous turn's `turn.changes`, and before the runner write) and after it
+([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)).
+Delivery waits for the previous turn's checkpoint and its own at most 3 s in all; a slower
+one is reported unavailable. A checkpoint is a commit built in the session's own index (in
+the host's state directory, seeded from the worktree's index and reseeded when that
+changes), with `HEAD` as parent and untracked files Git does not ignore (each up to 10 MiB
+when first seen), kept under `refs/farmslot/native/<sessionId>/`; the worktree, its index,
+`HEAD` and branches are untouched. After the turn the host appends `turn.changes` with both
+checkpoints and the changed files (repository-relative paths, line counts, at most 500), or
+why they are `unavailable`. `native.session.turn.diff` returns one listed file's diff
+between them; a pinned worker reads the event within its lease. A session keeps its last
+100 checkpoints and deletes its refs and index at close, also after a failure or a host
+restart (a failed deletion is an `error` event; closing again retries); a diff whose
+checkpoints are no longer under the session's refs is refused as no longer retained.
+
 After runner or host failure, reads expose failure and recovery instructions.
 Explicit `create` with the recorded `resumeSessionId` retains the Farmslot session
 ID and command history, and starts a new generation only after confirmed cleanup
