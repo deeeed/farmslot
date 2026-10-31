@@ -102,7 +102,7 @@ import {
   writePlanningContextInput,
 } from './planning-context.js';
 import { buildQaTaskSection, writeQaInput } from './qa-input.js';
-import { runContractSection } from './run-contract.js';
+import { runContractSection, shouldApplyArtifactOnlyTaskPolicy } from './run-contract.js';
 import { stackSection } from './stack-section.js';
 import { renderAcceptanceCriteria } from './task-document.js';
 import {
@@ -400,16 +400,6 @@ export function renderCommentSummary(rows: CommentRow[]): string {
       ? `\n\n_${filtered.length - capped.length} more comment(s) omitted — fetch in step 4 for full set._`
       : '';
   return `${header}\n${body}${droppedNote}${truncated}`;
-}
-
-export function shouldApplyArtifactOnlyTaskPolicy(
-  run: Pick<Run, 'completionPolicy' | 'flowType' | 'lane' | 'startRef'>,
-): boolean {
-  return (
-    run.completionPolicy === 'artifact-only' &&
-    (run.flowType === 'dev' || run.flowType === 'fix-bug') &&
-    run.lane === 'comparison'
-  );
 }
 
 export function artifactOnlyReplayForRun(

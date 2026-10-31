@@ -32,7 +32,24 @@ test('autonomous dev and fix-bug runs get the run contract', () => {
   }
 });
 
-test('interactive, validation, artifact-only and other flows get no run contract', () => {
+test('artifact-only runs outside comparison replays get a contract that commits and never publishes', () => {
+  for (const flowType of ['dev', 'fix-bug'] as const) {
+    const section = runContractSection(
+      { flowType, mode: 'autonomous', completionPolicy: 'artifact-only', lane: 'validation' },
+      'temp/tasks/t',
+    );
+    assert.ok(section);
+    assert.match(section, /Never pause or ask for input\./);
+    assert.match(
+      section,
+      /Commit the change locally with a Conventional Commit\. This run is artifact-only/,
+    );
+    assert.match(section, /never `git push` and never run a `gh pr` write/);
+    assert.doesNotMatch(section, /publication gate|CI-FIX\.md/);
+  }
+});
+
+test('interactive, validation, comparison replay and other flows get no run contract', () => {
   assert.equal(runContractSection({ flowType: 'dev', mode: 'interactive' }, 'temp/tasks/t'), null);
   assert.equal(
     runContractSection({ flowType: 'fix-bug', mode: 'validation' }, 'temp/tasks/t'),
@@ -41,7 +58,12 @@ test('interactive, validation, artifact-only and other flows get no run contract
   assert.equal(runContractSection({ flowType: 'fix-bug' }, 'temp/tasks/t'), null);
   assert.equal(
     runContractSection(
-      { flowType: 'fix-bug', mode: 'autonomous', completionPolicy: 'artifact-only' },
+      {
+        flowType: 'fix-bug',
+        mode: 'autonomous',
+        completionPolicy: 'artifact-only',
+        lane: 'comparison',
+      },
       'temp/tasks/t',
     ),
     null,
