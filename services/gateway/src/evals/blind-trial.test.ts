@@ -46,6 +46,8 @@ let checkout = base;
 let verifyAllowed = true;
 let verifications = 0;
 let githubAttempt: string | null = null;
+let marker: { exitCode: number; stdout: string; stderr: string } | undefined;
+let onRestore = () => {};
 const slotCommands: string[] = [];
 mock.module('../core/config.js', {
   namedExports: {
@@ -68,6 +70,16 @@ mock.module('../core/exec.js', {
   namedExports: {
     execOnSlot: async (_vars: SlotVars, command: string) => {
       slotCommands.push(command);
+      if (command.includes('config --get farmslot.blindRun'))
+        return marker ?? { exitCode: 0, stdout: `${run.id}\n`, stderr: '' };
+      if (command.includes('"action":"restore"')) {
+        onRestore();
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ status: 'restored', runId: run.id }),
+          stderr: '',
+        };
+      }
       if (command.includes('git rev-parse HEAD'))
         return { exitCode: 0, stdout: checkout, stderr: '' };
       verifications++;
@@ -116,6 +128,7 @@ const {
   freezeBlindTrialFirstOutput,
   prepareBlindTrialGit,
   restoreBlindTrialGit,
+  restoreFinishedBlindTrialGit,
   verifyBlindTrialForDispatch,
 } = await import('./blind-trial.js');
 
@@ -171,6 +184,8 @@ async function fixture(t: TestContext) {
   verifyAllowed = true;
   verifications = 0;
   githubAttempt = null;
+  marker = undefined;
+  onRestore = () => {};
   onCapture = () => {};
   return root;
 }
@@ -259,6 +274,30 @@ test('a recorded GitHub access attempt makes the frozen first output invalid', a
     'Blind trial worker attempted GitHub access: gh pr diff 291',
   );
   assert.equal(captures, 1);
+});
+
+test('a finished trial restores its own Git and reports why it could not', async (t) => {
+  await fixture(t);
+  slotCommands.length = 0;
+  assert.equal(await restoreFinishedBlindTrialGit(run), null);
+  assert.ok(slotCommands.some((command) => command.includes('"action":"restore"')));
+  marker = { exitCode: 1, stdout: '', stderr: '' };
+  slotCommands.length = 0;
+  assert.equal(await restoreFinishedBlindTrialGit(run), null, 'already restored');
+  assert.ok(!slotCommands.some((command) => command.includes('"action":"restore"')));
+  marker = { exitCode: 255, stdout: '', stderr: 'ssh: connect to host timed out' };
+  assert.match(
+    (await restoreFinishedBlindTrialGit(run)) ?? '',
+    /^Blind trial Git was not restored: Cannot read the blind trial Git marker: ssh/,
+  );
+  marker = undefined;
+  onRestore = () => {
+    epoch++;
+  };
+  assert.match(
+    (await restoreFinishedBlindTrialGit(run)) ?? '',
+    /not restored: slot ownership changed/,
+  );
 });
 
 test('retained redispatch accepts candidate progress while rechecking Git isolation', async (t) => {

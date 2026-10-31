@@ -12,6 +12,7 @@ const { makeRun } = await import('../run-engine/test-fixtures.js');
 let workspace: SlotWorkspace;
 let runs: Run[];
 let recovered: SlotWorkspace[];
+let modes: (string | undefined)[];
 let failure: string | undefined;
 const slot: SlotStatus = {
   slot: 'proof',
@@ -51,7 +52,7 @@ mock.module('../methods/slot/recover-workspace.js', {
       _signal: unknown,
       options: Parameters<typeof recovery.recoverSlotWorkspace>[3],
     ) => {
-      assert.equal(params.mode, 'safe');
+      modes.push(params.mode);
       assert.equal(options?.skipRecycle, true, 'automatic recovery explicitly keeps runtime cold');
       assert.ok(params.expectedWorkspace);
       recovered.push(workspace);
@@ -97,6 +98,7 @@ beforeEach(() => {
   };
   runs = [];
   recovered = [];
+  modes = [];
   failure = undefined;
 });
 for (const publication of ['baseline', 'merged', 'pushed'] as const) {
@@ -104,6 +106,22 @@ for (const publication of ['baseline', 'merged', 'pushed'] as const) {
     workspace.publication = publication;
     assert.deepEqual(await reuseSafeIdleSlot('proof', () => {}), { kind: 'ready' });
     assert.equal(recovered.length, 1);
+    assert.deepEqual(modes, ['safe']);
+  });
+}
+for (const kind of ['dirty', 'unpushed'] as const) {
+  test(`a finished blind trial's ${kind} candidate returns to idle; its branch and first output are kept`, async () => {
+    if (kind === 'dirty') workspace.dirtyCount = 1;
+    else workspace.publication = 'unpushed';
+    assert.deepEqual(
+      await reuseSafeIdleSlot('proof', () => {}, {
+        epoch: 7,
+        runId: null,
+        retainedCandidate: true,
+      }),
+      { kind: 'ready' },
+    );
+    assert.deepEqual(modes, ['force']);
   });
 }
 for (const kind of ['dirty', 'unpushed'] as const) {
@@ -119,10 +137,11 @@ for (const kind of ['dirty', 'unpushed'] as const) {
 test('unknown publication and a deleted remote ref never grant reset authority', async () => {
   workspace.publication = 'unknown';
   workspace.error = 'Publication ref is absent';
-  assert.deepEqual(await reuseSafeIdleSlot('proof', () => {}), {
-    kind: 'unavailable',
-    reason: workspace.error,
-  });
+  for (const retainedCandidate of [false, true])
+    assert.deepEqual(
+      await reuseSafeIdleSlot('proof', () => {}, { epoch: 7, runId: null, retainedCandidate }),
+      { kind: 'unavailable', reason: workspace.error },
+    );
   assert.deepEqual(recovered, []);
 });
 test('a released successor epoch refuses an older terminal cleanup', async () => {

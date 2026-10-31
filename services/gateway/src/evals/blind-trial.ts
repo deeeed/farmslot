@@ -371,3 +371,28 @@ export async function readBlindTrialMarker(vars: SlotVars): Promise<string | nul
     );
   return result.stdout.trim() || null;
 }
+
+/**
+ * Restore a finished trial's original Git while its run still owns the slot, so
+ * a failure leaves the slot held for retry instead of ready on the isolated Git.
+ * Resolves to why it was not restored, or null when restored or nothing to do.
+ */
+export async function restoreFinishedBlindTrialGit(run: Run): Promise<string | null> {
+  const isolation = run.engineState?.evalExperiment?.blind?.isolation;
+  if (!isolation || isolation.slotId !== run.slotId) return null;
+  try {
+    const vars = await loadSlotVars(isolation.slotId);
+    if ((await readBlindTrialMarker(vars)) !== run.id) return null;
+    const epoch = Number((await readSlotRow(isolation.slotId))?.slot_epoch);
+    const assertOwnership = async () => {
+      const row = await readSlotRow(isolation.slotId);
+      if (!row || !ownsRunSlotCleanup(row, run.id) || Number(row.slot_epoch) !== epoch)
+        throw new Error('slot ownership changed');
+    };
+    await assertOwnership();
+    await restoreBlindTrialGit(run, vars, epoch, assertOwnership);
+    return null;
+  } catch (error) {
+    return `Blind trial Git was not restored: ${(error as Error).message}`;
+  }
+}
