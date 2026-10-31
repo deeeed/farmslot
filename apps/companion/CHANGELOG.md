@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- A native conversation on a runner that can take a message mid-turn (Codex) has a Steer button next to "Queue message": while a turn runs, it adds your message to that turn instead of waiting for the next. Its label reads "Added to the running turn". The composer frees as soon as the runner accepted your message and the conversation shows it, so you can steer or queue while your own turn runs.
 - A native conversation shows a Codex or ACP runner's plan: its checklist inside the turn, updated as the runner works and folded to "3 of 5 steps" when the turn ends (unless you watched it run), and a proposed plan as a card with a Copy plan button.
 - A native message queued for the next turn has an Edit button that takes it out of the queue and back into the composer, so you can change it and send it again. Sessions on an older native host show no button.
 - A message sent in a native conversation appears at once at the end of the conversation, with its delivery state ("Submitting", "Queued for the next turn", …), until the conversation shows it, instead of only a status line under the composer. A queued message the session never took (it was closed meanwhile) goes back to the composer instead of disappearing.

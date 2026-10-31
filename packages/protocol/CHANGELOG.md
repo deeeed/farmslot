@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - `TerminalInputSequence` and an optional `seq` on `TerminalInputParams` and `TerminalWorkerInputParams`; `GatewayAuthConnectResult.capabilities.terminalInputSequence` (`{ instance }`) names the gateway process that writes each number once.
+- `NativeSessionSendParams.delivery: 'steer'` adds a message to the running turn when the session reports `NativeSessionCapabilities.steer`; its receipt carries `steered: true` and settles with that turn. `nativeSteerAvailable` says when to offer Steer (the capability and a running turn), and `nativeDeliveryLabel` reads a steered, accepted message as "Added to the running turn". `nativeCommandLockSettled` also releases a client's held message once the runner accepted it and the conversation shows it, instead of only when its turn ends.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.7 - 2026-11-01

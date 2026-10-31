@@ -14,9 +14,16 @@ readline.createInterface({input:process.stdin}).on('line', line => {
  const m=JSON.parse(line);
  if(m.method==='initialize') send({id:m.id,result:{}});
  if(m.method==='thread/start') {require('node:fs').writeFileSync('thread-start.json',JSON.stringify(m.params));send({id:m.id,result:{thread:{id:'thread-one'}}});}
+ if(m.method==='turn/steer') {
+  require('node:fs').writeFileSync('steer.json',JSON.stringify(m.params));
+  if(m.params.expectedTurnId!=='turn-one') return send({id:m.id,error:{code:-32600,message:'expected turn is not active'}});
+  send({id:m.id,result:{turnId:'turn-one'}});
+  send({method:'turn/completed',params:{threadId:'thread-one',turn:{id:'turn-one',status:'completed'}}});
+ }
  if(m.method==='turn/start') {
   send({method:'turn/started',params:{threadId:'thread-one',turn:{id:'turn-one'}}});
   send({id:m.id,result:{turn:{id:'turn-one'}}});
+  if(m.params.input[0].text==='Steer') return;
   if(m.params.input[0].text==='Plan') {
    send({method:'turn/plan/updated',params:{threadId:'thread-one',turnId:'turn-one',explanation:'Two steps',plan:[{step:'Inspect',status:'inProgress'},{step:'Report',status:'pending'}]}});
    send({method:'turn/plan/updated',params:{threadId:'thread-one',turnId:'turn-one',explanation:null,plan:[{step:'Inspect',status:'completed'},{step:'Report',status:'completed'}]}});
@@ -74,6 +81,46 @@ test('Codex correlates structured acceptance and denies only the exact pending r
     );
     assert.equal(events.find((event) => event.type === 'turn.completed')?.status, 'completed');
     await assert.rejects(session.respond('78', { decision: 'approve' }), /stale/);
+  } finally {
+    await session.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('Codex adds a steered message to the running turn, and refuses it once the turn ended', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'native-codex-test-'));
+  const executable = join(cwd, 'codex');
+  await writeFile(executable, fixture);
+  await chmod(executable, 0o755);
+  const events: NativeEventInput[] = [];
+  const session = await codexNativeAdapter.start({ cwd, executable }, (event) =>
+    events.push(event),
+  );
+  try {
+    assert.equal(codexNativeAdapter.capabilities.steer, true);
+    await session.send('Steer', 'command-turn');
+    await session.steer!('Also check the tests.', 'command-steer');
+    assert.deepEqual(JSON.parse(await readFile(join(cwd, 'steer.json'), 'utf8')), {
+      threadId: 'thread-one',
+      input: [{ type: 'text', text: 'Also check the tests.' }],
+      expectedTurnId: 'turn-one',
+      clientUserMessageId: 'command-steer',
+    });
+    const accepted = events.find(
+      (event) => event.type === 'command.accepted' && event.commandId === 'command-steer',
+    );
+    assert.deepEqual([accepted?.turnId, accepted?.text], ['turn-one', 'Also check the tests.']);
+    // The turn's own events stay stamped with the command that started it.
+    const deadline = Date.now() + 5_000;
+    while (!events.some((event) => event.type === 'turn.completed')) {
+      if (Date.now() > deadline) throw new Error('Codex fixture turn timed out');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(
+      events.find((event) => event.type === 'turn.completed')?.commandId,
+      'command-turn',
+    );
+    await assert.rejects(session.steer!('Too late.', 'command-late'), /no running turn/);
   } finally {
     await session.close();
     await rm(cwd, { recursive: true, force: true });

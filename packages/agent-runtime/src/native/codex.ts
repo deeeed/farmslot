@@ -14,7 +14,7 @@ import {
 } from '@farmslot/protocol';
 
 import { nativeChecklist } from './plan.js';
-import { JsonLineProcess } from './process.js';
+import { JsonLineProcess, NativeRequestRefused } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
 import { validateNativeWorkerFilesystemPolicy } from './worker-launch.js';
 
@@ -153,6 +153,7 @@ export const codexNativeAdapter: NativeAdapter = {
     resume: true,
     structuredResultSchemas: [PIPELINE_VISUAL_RESULT_SCHEMA, PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA],
     resumeAcrossWorkspaces: true,
+    steer: true,
   },
   async start(options, emit) {
     let nativeSessionId = '';
@@ -433,6 +434,25 @@ export const codexNativeAdapter: NativeAdapter = {
           type: 'command.accepted',
           commandId: id,
           turnId: wireString(wireObject(result.turn).id),
+          text,
+        });
+      },
+      // Joins the running turn. Its events stay stamped with the turn's own command.
+      async steer(text, id) {
+        if (!turnId)
+          throw new NativeRequestRefused('Codex has no running turn to add the message to');
+        const result = wireObject(
+          await process.request('turn/steer', {
+            threadId: nativeSessionId,
+            input: [{ type: 'text', text }],
+            expectedTurnId: turnId,
+            clientUserMessageId: id,
+          }),
+        );
+        publish({
+          type: 'command.accepted',
+          commandId: id,
+          turnId: wireString(result.turnId),
           text,
         });
       },
