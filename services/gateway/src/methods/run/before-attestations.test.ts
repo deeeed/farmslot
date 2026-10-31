@@ -102,6 +102,33 @@ test('a person attests a same-run attempt bound to its manifest digest, idempote
   );
 });
 
+test('an attempt in the harness attempts/ layout is named by its path under recipe-runs/', async (t) => {
+  const f = fixture(t);
+  const nested = 'attempts/20261031050157814-3227';
+  const { attestation } = await runAttestBeforeAttempt(
+    { ...f.params, recipeRunId: nested },
+    () => {},
+    {
+      ...f.dependencies,
+      readAttemptManifest: async (_run: Run, root: string) =>
+        root === `recipe-runs/${nested}` ? manifest : null,
+    },
+  );
+  assert.equal(attestation.attemptRoot, `recipe-runs/${nested}`);
+  for (const recipeRunId of [
+    'attempts/../escape',
+    'attempts//x',
+    '/attempts/x',
+    'attempts/.hidden',
+    'attempts/x/',
+    'attempts\\x',
+  ])
+    await assert.rejects(
+      runAttestBeforeAttempt({ ...f.params, recipeRunId }, () => {}, f.dependencies),
+      /Name one recipe attempt/,
+    );
+});
+
 test('a credential revoked or replaced at commit leaves no attestation', async (t) => {
   const f = fixture(t);
   const person = f.dependencies.authorizeEvidenceAttestation();
