@@ -719,8 +719,10 @@ async function completeRetainedPayloads(
           await rm(temp, { force: true });
           await consumeReservation(meta.bytes);
         });
-        if (!hasCode(error, 'ENOENT')) throw error;
-        missing.push(`missing:${relative}`);
+        if (hasCode(error, 'ENOENT')) missing.push(`missing:${relative}`);
+        // A source that grew past its captured size has changed since capture.
+        else if (hasCode(error, 'EFBIG')) missing.push(`changed:${relative}`);
+        else throw error;
       }
     }
     await withRunBundleStoreLock(request.store, async () => {
