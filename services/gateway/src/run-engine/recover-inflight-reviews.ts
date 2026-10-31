@@ -828,6 +828,16 @@ async function ingestRecoveredReviewer(
         return null;
       }
       if (ctx.status === 'complete') await markRecoveredReviewerContext(runId, ctx, 'working', {});
+      // The host accepted this launch but a restart lost the gateway's record of it: adopt
+      // that observation now, so a later failed read cannot fail a running reviewer.
+      else if (
+        ctx.status === 'launching' &&
+        !binding.acceptedAt &&
+        (command?.accepted || command?.state === 'accepted')
+      )
+        await markRecoveredReviewerContext(runId, ctx, 'working', {
+          nativeSession: { ...binding, acceptedAt: new Date().toISOString() },
+        });
       return null;
     }
   }

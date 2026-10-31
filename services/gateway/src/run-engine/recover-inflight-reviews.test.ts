@@ -866,13 +866,18 @@ test('a launch the host accepted but the gateway never recorded is adopted, not 
       },
     ],
   };
+  // The first read proves acceptance; a later one fails, as after a node disconnect.
+  let reads = 0;
   await recoverInflightPublicationReviews(run.id, vars.slotId, {
     now: () => Date.parse(launchRequestedAt) + 30 * 60_000,
     readers: {
       slot: async () => vars,
       config: async () => ({ enabled: true }),
       package: async () => undefined,
-      native: async () => snapshot,
+      native: async () => {
+        if (++reads > 1) throw new Error('Native node disconnected');
+        return snapshot;
+      },
     },
   });
   const adopted = getRun(run.id)!.agentContexts![0]!;
