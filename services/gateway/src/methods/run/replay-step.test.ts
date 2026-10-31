@@ -2366,6 +2366,66 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
   });
 });
 
+test('runReplayStep keeps a superseded gate decision when an output recapture clones the decisions', async (t) => {
+  const taskFile = '/tmp/farmslot-human-gate-recapture/TASK.md';
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const pendingGate: RunDecision = {
+    id: 'pending-gate-recapture',
+    type: 'engine_human_gate',
+    title: 'Ready to publish?',
+    description: 'Pending decision owned by a dead engine loop',
+    actions: [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }],
+    createdAt: '2026-07-18T10:00:00.000Z',
+  };
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+    'complete',
+  ]);
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile,
+    decisions: [pendingGate],
+    steps: run.steps.map((step) =>
+      doneThroughComplete.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'human-gate'
+          ? { ...step, status: 'running' }
+          : step,
+    ),
+  });
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (getRun(run.id)) {
+      await evictTestRun(run.id, 'failed');
+    }
+  });
+
+  // A gate replay on a connected slot recaptures the output, whose commit rewrites
+  // the decisions as clones (outputReviewDecisions).
+  await runReplayStep(
+    { runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' },
+    () => {},
+    {
+      afterGenerationBump: async () => {
+        updateRun(run.id, { decisions: structuredClone(getRun(run.id)!.decisions) });
+      },
+    },
+  );
+
+  const superseded = getRun(run.id)?.decisions.find((d) => d.id === 'pending-gate-recapture');
+  assert.ok(superseded, 'pending gate decision must be retained');
+  assert.equal(superseded.resolvedAction, 'superseded');
+});
+
 test('runReplayStep supersedes pending gate decisions before its first awaited operation and reopens them when it fails', async (t) => {
   const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
   const taskFile = '/tmp/farmslot-human-gate-race/TASK.md';

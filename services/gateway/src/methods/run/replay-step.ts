@@ -2129,11 +2129,13 @@ async function replayRunStep(
     // which decisions the reset below carries forward.
     // A completion replay keeps the output review: it records the capture COMPLETE
     // reads, not a gate verdict. A task-generation replay recaptures, so it drops it.
+    // Match by id: an output recapture during the replay clones the decision list.
+    const supersededIds = new Set(supersededGateAudit.map(({ id }) => id));
     const clearedDecisions = replaysTaskGeneration
       ? supersededGateAudit
       : replaysCompletionOrGate
         ? existing.decisions.filter(
-            (d) => supersededGateAudit.includes(d) || d.payload?.kind === 'output-review',
+            (d) => supersededIds.has(d.id) || d.payload?.kind === 'output-review',
           )
         : replaysPostGate
           ? existing.decisions
