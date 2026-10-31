@@ -94,16 +94,21 @@ test('worker pane keys go one request at a time in the order typed', async () =>
   }
 });
 
-test('worker keys held behind a token refresh are never sent to a pane left or a new connection', async () => {
-  const sent: string[] = [];
-  let refreshed: () => void = () => undefined;
+test('worker keys held behind a token refresh reach the same pane on the new connection, never a pane left', async () => {
+  const sent: Array<{ data: string; generation: number }> = [];
+  let waiting: Array<() => void> = [];
+  const refresh = () => {
+    const done = waiting;
+    waiting = [];
+    done.forEach((resolve) => resolve());
+  };
   const client: FakeClient = {
     connectionGeneration: 1,
     async request(_method, params, _timeout, options) {
       // GatewayClient rechecks the caller once the refresh finishes, then sends.
-      await new Promise<void>((resolve) => (refreshed = resolve));
+      await new Promise<void>((resolve) => waiting.push(resolve));
       options?.assertCurrent?.();
-      sent.push(params.data);
+      sent.push({ data: params.data, generation: client.connectionGeneration });
       return { sent: true };
     },
   };
@@ -118,20 +123,27 @@ test('worker keys held behind a token refresh are never sent to a pane left or a
       },
     );
   const reconnected = mount();
-  const beforeReconnect = (reconnected.render(client, worker) as (data: string) => Promise<void>)(
-    'brown66',
-  );
-  await flush();
-  client.connectionGeneration++;
-  refreshed();
-  await assert.rejects(beforeReconnect, TerminalInputCancelledError);
-  reconnected.cleanup();
+  try {
+    const beforeReconnect = (reconnected.render(client, worker) as (data: string) => Promise<void>)(
+      'brown66',
+    );
+    await flush();
+    client.connectionGeneration++;
+    refresh();
+    // The batch was not written on the old connection; it is retried, not dropped.
+    while (waiting.length === 0) await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    refresh();
+    await beforeReconnect;
+    assert.deepEqual(sent, [{ data: 'brown66', generation: 2 }]);
+  } finally {
+    reconnected.cleanup();
+  }
 
   const left = mount();
   const beforeLeaving = (left.render(client, worker) as (data: string) => Promise<void>)('x');
   await flush();
   left.cleanup();
-  refreshed();
+  refresh();
   await assert.rejects(beforeLeaving, TerminalInputCancelledError);
-  assert.deepEqual(sent, []);
+  assert.deepEqual(sent, [{ data: 'brown66', generation: 2 }]);
 });

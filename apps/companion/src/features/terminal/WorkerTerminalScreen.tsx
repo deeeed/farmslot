@@ -46,7 +46,7 @@ import { usePersistentFlag } from '../../lib/held-connection';
 import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-actions';
 import { getResourceCache } from '../../lib/resource-cache';
 import { savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
-import { TerminalInputCancelledError } from '../../lib/terminal-input-queue';
+import { KEYS_RETRYING_MESSAGE, TerminalInputCancelledError } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
   appendTerminalTailText,
@@ -401,7 +401,9 @@ export default function WorkerTerminalScreen() {
     }, [selectedVoiceModelId]),
   );
 
-  const writeWorkerInput = useWorkerTerminalInput(client, worker);
+  const writeWorkerInput = useWorkerTerminalInput(client, worker, (failure, attempt) => {
+    if (attempt >= 1) setError(`${KEYS_RETRYING_MESSAGE}: ${getErrorMessage(failure)}`);
+  });
   const sendInput = useCallback(
     (data: string) => {
       if (!client || !worker) return;
@@ -411,9 +413,12 @@ export default function WorkerTerminalScreen() {
         setError(getErrorMessage(error));
         return;
       }
-      writeWorkerInput(data).catch((err: unknown) => {
-        if (!(err instanceof TerminalInputCancelledError)) setError(getErrorMessage(err));
-      });
+      writeWorkerInput(data).then(
+        () => setError((current) => (current?.startsWith(KEYS_RETRYING_MESSAGE) ? null : current)),
+        (err: unknown) => {
+          if (!(err instanceof TerminalInputCancelledError)) setError(getErrorMessage(err));
+        },
+      );
     },
     [client, worker, requireWorkerInventory, writeWorkerInput],
   );

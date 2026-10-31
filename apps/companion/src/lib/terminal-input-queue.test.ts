@@ -36,21 +36,60 @@ test('a slow first request batches fast typing and Enter in exact order, with on
   assert.equal(requests.join(''), 'abc\u001b[D\r');
 });
 
-test('failure reaches all affected callers and drops unsent keys without retry', async () => {
+// Arthur's rule: a keystroke is never dropped.
+test('a failed request keeps its keys and the keys typed behind it, and retries them in order', async () => {
   const first = deferred();
   const sent: string[] = [];
-  const queue = createTerminalInputQueue(async (data) => {
-    sent.push(data);
-    if (sent.length === 1) await first.promise;
-  });
+  const retries: number[] = [];
+  const queue = createTerminalInputQueue(
+    async (data) => {
+      sent.push(data);
+      if (sent.length === 1) await first.promise;
+    },
+    { retryDelayMs: () => 0, onRetry: (_error, attempt) => retries.push(attempt) },
+  );
   const a = queue.write('a');
   const b = queue.write('b');
-  const checks = [assert.rejects(a, /offline/), assert.rejects(b, /offline/)];
   first.reject(new Error('offline'));
-  await Promise.all(checks);
+  await Promise.all([a, b]);
+  assert.deepEqual(sent, ['a', 'ab']);
+  assert.deepEqual(retries, [0]);
+  await queue.write('c');
+  assert.deepEqual(sent, ['a', 'ab', 'c']);
+});
+
+test('a synchronous send failure is retried and later input follows it', async () => {
+  const sent: string[] = [];
+  let refusals = 2;
+  const queue = createTerminalInputQueue(
+    (data) => {
+      sent.push(data);
+      if (refusals-- > 0) throw new Error('refused');
+      return Promise.resolve();
+    },
+    { retryDelayMs: () => 0 },
+  );
+  await Promise.all([queue.write('x'), queue.write('y')]);
+  assert.deepEqual(sent, ['x', 'xy', 'xy']);
+  await queue.write('ok');
+  assert.deepEqual(sent, ['x', 'xy', 'xy', 'ok']);
+});
+
+test('keys waiting to be retried are dropped only when their target goes away', async () => {
+  const sent: string[] = [];
+  const queue = createTerminalInputQueue(
+    (data) => {
+      sent.push(data);
+      return Promise.reject(new Error('offline'));
+    },
+    { retryDelayMs: () => 60_000 },
+  );
+  const waiting = queue.write('a');
+  const rejected = assert.rejects(waiting, TerminalInputCancelledError);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  queue.dispose();
+  await rejected;
   assert.deepEqual(sent, ['a']);
-  await queue.write('new input');
-  assert.deepEqual(sent, ['a', 'new input']);
 });
 
 test('disconnect or target disposal rejects buffered input and never replays it on a new queue', async () => {
@@ -73,16 +112,4 @@ test('disconnect or target disposal rejects buffered input and never replays it 
   first.resolve();
   await inFlight;
   assert.deepEqual(sent, ['old-a', 'new target']);
-});
-
-test('a synchronous send failure is reported and does not wedge later input', async () => {
-  const sent: string[] = [];
-  const queue = createTerminalInputQueue((data) => {
-    sent.push(data);
-    if (data === 'bad') throw new Error('refused');
-    return Promise.resolve();
-  });
-  await assert.rejects(queue.write('bad'), /refused/);
-  await queue.write('ok');
-  assert.deepEqual(sent, ['bad', 'ok']);
 });

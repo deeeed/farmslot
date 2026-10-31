@@ -24,6 +24,7 @@ export function useTerminalInput(
   target: CompanionTerminalTargetParams | null,
   targetRef: RefObject<CompanionTerminalTargetParams | null>,
   disabledReason: string | null,
+  onRetry?: (error: unknown, attempt: number) => void,
 ): (data: string) => Promise<void> {
   const client = useConnectionStore((state) => state.client);
   const profileId = useConnectionStore((state) => state.activeProfileId);
@@ -31,6 +32,8 @@ export function useTerminalInput(
   const queueRef = useRef<{ key: string; client: GatewayClient; queue: TerminalInputQueue } | null>(
     null,
   );
+  const onRetryRef = useRef(onRetry);
+  onRetryRef.current = onRetry;
   const disabledRef = useRef(disabledReason);
   disabledRef.current = disabledReason;
   const key = targetKey(target);
@@ -70,22 +73,25 @@ export function useTerminalInput(
             targetKey(targetRef.current) === targetKey(selectedTarget)
           );
         };
-        const queue = createTerminalInputQueue(async (batch, assertActive) => {
-          // A batch belongs to the connection it starts on: one in flight when the connection
-          // drops is dropped with the keys behind it, since its delivery is unknown.
-          const generation = selectedClient.connectionGeneration;
-          const assertCurrent = () => {
-            assertActive();
-            if (!isCurrent(generation)) throw new TerminalInputCancelledError();
-          };
-          assertCurrent();
-          await selectedClient.request(
-            'terminal.input',
-            { ...selectedTarget, data: batch },
-            10_000,
-            { assertCurrent },
-          );
-        });
+        const queue = createTerminalInputQueue(
+          async (batch, assertActive) => {
+            // Each attempt belongs to the connection it starts on; one cut off by a reconnect is
+            // retried in order on the next, never dropped.
+            const generation = selectedClient.connectionGeneration;
+            const assertCurrent = () => {
+              assertActive();
+              if (!isCurrent(generation)) throw new TerminalInputCancelledError();
+            };
+            assertCurrent();
+            await selectedClient.request(
+              'terminal.input',
+              { ...selectedTarget, data: batch },
+              10_000,
+              { assertCurrent },
+            );
+          },
+          { onRetry: (error, attempt) => onRetryRef.current?.(error, attempt) },
+        );
         queueRef.current = { key: selectedKey, client: selectedClient, queue };
       }
       const selected = queueRef.current;
