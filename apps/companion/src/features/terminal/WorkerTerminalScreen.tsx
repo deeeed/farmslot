@@ -30,7 +30,6 @@ import {
   type TerminalWorkerSnapshotResult,
   type TmuxWorkerListResult,
   type TmuxWorkerRef,
-  tmuxWorkerRefsMatch,
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
@@ -39,9 +38,10 @@ import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
+import { usePersistentFlag } from '../../lib/held-connection';
 import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-actions';
 import { getResourceCache } from '../../lib/resource-cache';
-import { heldDataUsable, savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
+import { savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
 import { TerminalInputCancelledError } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
@@ -50,7 +50,7 @@ import {
   trimTrailingTerminalBlankLines,
 } from '../../lib/terminal-tail';
 import { colors, spacing } from '../../lib/theme';
-import { tmuxWorkerRefFromRouteParams } from '../../lib/tmux-workers';
+import { inventoryLacksPane, tmuxWorkerRefFromRouteParams } from '../../lib/tmux-workers';
 import {
   getConfiguredSherpaAsrModelId,
   getPreferredVoiceAsrModelId,
@@ -117,9 +117,6 @@ function formatVoiceElapsed(ms: number): string {
 function takeVoiceLiveWindow(points: WaveformPoint[]): WaveformPoint[] {
   return points.slice(Math.max(0, points.length - VOICE_LIVE_BARS_WINDOW));
 }
-
-/** The worker inventory's first read has not arrived yet; not a failure to report. */
-class InventoryPendingError extends Error {}
 
 export default function WorkerTerminalScreen() {
   const router = useRouter();
@@ -214,33 +211,40 @@ export default function WorkerTerminalScreen() {
     [worker?.nodeId],
   );
   const inventory = useResourceQuery(focused ? workerQuery : undefined);
-  // A reread in flight keeps the pane usable; saved inventory does not.
+  // Keys need only the pane from the route; the gateway refuses input for a pane that is gone.
+  // The inventory can be slow (its read times out under load and is not saved), so it never
+  // holds keys back: it only stops them once it positively no longer lists this pane.
+  const paneGone = worker ? inventoryLacksPane(inventory.data, worker) : false;
+  const paneGoneMessage = worker
+    ? `${worker.nodeId} no longer lists this pane (${worker.target}). Go back and choose it again.`
+    : '';
+  const workerReady = connectionReady && Boolean(worker) && !paneGone;
   const inventorySaved = savedForDisplay(inventory, heldConnected);
-  const inventoryError = visibleReadError(inventory, inventorySaved);
-  const workerReady =
-    connectionReady &&
-    heldDataUsable(inventory, heldConnected) &&
-    Boolean(
-      worker &&
-      inventory.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker)),
-    );
+  // A read that keeps failing with nothing held is mentioned only past the shared grace.
+  const inventoryFailing = usePersistentFlag(
+    Boolean(inventory.error) && inventory.data === undefined,
+  );
+  const inventoryError =
+    inventory.data !== undefined
+      ? visibleReadError(inventory, inventorySaved)
+      : inventoryFailing
+        ? inventory.error
+        : undefined;
   const requireWorkerInventory = useCallback(() => {
-    const current = workerQuery ? getResourceCache()?.read(workerQuery) : undefined;
-    // The first read is still on its way: nothing failed, so callers stay quiet.
-    if (current && current.data === undefined && !current.error)
-      throw new InventoryPendingError('Wait for current worker inventory before acting.');
     if (
       !focused ||
+      !worker ||
       !client ||
       client !== useConnectionStore.getState().client ||
-      !heldConnectionCurrent() ||
-      !current ||
-      !heldDataUsable(current, true) ||
-      !worker ||
-      !current.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker))
+      !heldConnectionCurrent()
     )
-      throw new Error('Wait for current worker inventory before acting.');
-    return current.data;
+      throw new Error('Not connected to the gateway.');
+    const current = workerQuery ? getResourceCache()?.read(workerQuery) : undefined;
+    if (inventoryLacksPane(current?.data, worker))
+      throw new Error(
+        `${worker.nodeId} no longer lists this pane (${worker.target}). Go back and choose it again.`,
+      );
+    return current?.data;
   }, [client, workerQuery, worker, focused]);
   const hasVoiceDraft = voiceDraft.trim().length > 0;
   const voiceEditableInstruction = hasVoiceDraft ? voiceDraft : voiceTranscript;
@@ -401,7 +405,7 @@ export default function WorkerTerminalScreen() {
       try {
         requireWorkerInventory();
       } catch (error) {
-        if (!(error instanceof InventoryPendingError)) setError(getErrorMessage(error));
+        setError(getErrorMessage(error));
         return;
       }
       writeWorkerInput(data).catch((err: unknown) => {
@@ -418,6 +422,11 @@ export default function WorkerTerminalScreen() {
     setWindowPickerError(null);
     try {
       const result = requireWorkerInventory();
+      if (!result) {
+        setWindowPickerError('The window list is still loading. Try again in a moment.');
+        setWindowPickerPanes([]);
+        return;
+      }
       const node = result.nodes.find((entry) => entry.nodeId === worker.nodeId);
       const panes = node?.ok
         ? node.workers.filter((pane) => pane.ref.session === worker.session)
@@ -438,18 +447,34 @@ export default function WorkerTerminalScreen() {
 
   useEffect(() => {
     if (!windowPickerOpen || !worker) return;
-    if (!workerReady) {
+    if (!workerReady || !inventory.data) {
       setWindowPickerPanes([]);
-      setWindowPickerError(inventoryError?.message ?? 'Wait for current worker inventory.');
+      setWindowPickerError(
+        paneGone
+          ? paneGoneMessage
+          : !connectionReady
+            ? 'Not connected to the gateway.'
+            : (inventoryError?.message ??
+              'The window list is still loading. Try again in a moment.'),
+      );
       return;
     }
     const panes =
-      inventory.data?.nodes
+      inventory.data.nodes
         .find((node) => node.nodeId === worker.nodeId)
         ?.workers.filter((pane) => pane.ref.session === worker.session) ?? [];
     setWindowPickerPanes(panes);
     setWindowPickerError(panes.length ? null : 'No windows found for this session.');
-  }, [windowPickerOpen, worker, workerReady, inventory, inventoryError]);
+  }, [
+    windowPickerOpen,
+    worker,
+    workerReady,
+    inventory,
+    inventoryError,
+    paneGone,
+    paneGoneMessage,
+    connectionReady,
+  ]);
 
   const selectWindow = useCallback(
     (windowIndex: string) => {
@@ -508,10 +533,9 @@ export default function WorkerTerminalScreen() {
       if (!client || !worker) return;
       try {
         requireWorkerInventory();
-      } catch (error) {
-        // Sent again once the inventory arrives; a first read is not an error.
+      } catch {
+        // Nobody pressed anything: send it again once the pane is usable, without an error.
         pendingSize.current = size;
-        if (!(error instanceof InventoryPendingError)) setError(getErrorMessage(error));
         return;
       }
       pendingSize.current = null;
@@ -765,13 +789,12 @@ export default function WorkerTerminalScreen() {
             </Pressable>
           </View>
         )}
-        {inventoryError || inventorySaved || inventory.status === 'unsupported' ? (
+        {paneGone || inventoryError || inventory.status === 'unsupported' ? (
           <View>
             <Text style={styles.error}>
-              {inventoryError?.message ??
-                (inventory.status === 'unsupported'
-                  ? 'Worker observations are unsupported.'
-                  : 'Saved terminal selection. Wait for current worker inventory before sending input.')}
+              {paneGone
+                ? paneGoneMessage
+                : (inventoryError?.message ?? 'Worker observations are unsupported.')}
             </Text>
             <Pressable
               disabled={!connectionReady}
