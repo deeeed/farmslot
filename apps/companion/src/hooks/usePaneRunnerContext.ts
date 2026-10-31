@@ -55,15 +55,18 @@ export function usePaneRunnerContext(pane: TerminalRunnerPane | null): PaneRunne
         : saved
           ? 'Runner keys wait for current worker inventory.'
           : null));
+  // Forgetting saved pane preferences is destructive, so only a current read may prune them:
+  // held inventory can miss a pane that another read already shows.
+  const current = Boolean(client && connected && observation.status === 'ready');
   useEffect(() => {
-    if (!ready || !nodeId) return;
+    if (!current || !nodeId) return;
     const node = observation.data?.nodes.find((entry) => entry.nodeId === nodeId);
     if (node?.ok && !node.hiddenWorkers)
       forgetClosedPanes(
         nodeId,
         node.workers.map((worker) => worker.ref.target),
       );
-  }, [ready, nodeId, observation.data, forgetClosedPanes]);
+  }, [current, nodeId, observation.data, forgetClosedPanes]);
 
   const context = useMemo(
     () => paneRunnerContext(nodeId && target ? { nodeId, target } : null, summary),

@@ -35,6 +35,7 @@ const inventory: TmuxWorkerListResult = {
 test('runner keys stay usable and quiet while the worker inventory rereads', () => {
   let state: ResourceQueryState<TmuxWorkerListResult> = { status: 'loading' };
   const connection = { client: { connectionState: 'connected' }, status: 'connected' };
+  const forgotten: string[][] = [];
   const hook = mountHook<[TerminalRunnerPane | null]>(
     new URL('./usePaneRunnerContext.ts', import.meta.url),
     'usePaneRunnerContext',
@@ -48,8 +49,9 @@ test('runner keys stay usable and quiet while the worker inventory rereads', () 
         useConnectionStore: (select: (value: typeof connection) => unknown) => select(connection),
       },
       '../store/terminal-prefs': {
-        useTerminalPrefsStore: (select: (value: { forgetClosedPanes: () => void }) => unknown) =>
-          select({ forgetClosedPanes: () => undefined }),
+        useTerminalPrefsStore: (
+          select: (value: { forgetClosedPanes: (node: string, open: string[]) => void }) => unknown,
+        ) => select({ forgetClosedPanes: (_node, open) => forgotten.push(open) }),
       },
       './useResourceQuery': { useResourceQuery: () => state },
     },
@@ -61,11 +63,21 @@ test('runner keys stay usable and quiet while the worker inventory rereads', () 
     assert.equal(render().error, null, 'The first read is loading, not an error');
     state = { status: 'ready', data: inventory, observedAt: 1_000 };
     assert.equal(render().context.linkedRunner, 'claude');
+    assert.deepEqual(forgotten, [['%19']], 'A current read prunes closed panes');
 
     state = { status: 'stale', data: inventory, observedAt: 1_000 };
     const rereading = render();
     assert.equal(rereading.error, null);
     assert.equal(rereading.context.linkedRunner, 'claude', 'Runner keys keep the held inventory');
+    // Held inventory that lacks a pane a newer read shows must never prune its saved keys.
+    state = {
+      status: 'stale',
+      data: { ...inventory, nodes: [{ ...inventory.nodes[0]!, workers: [] }], workers: [] },
+      observedAt: 1_000,
+    };
+    render();
+    assert.deepEqual(forgotten, [['%19']], 'Stale inventory never prunes pane preferences');
+    state = { status: 'stale', data: inventory, observedAt: 1_000 };
 
     state = {
       ...state,
@@ -89,6 +101,11 @@ test('runner keys stay usable and quiet while the worker inventory rereads', () 
     state = { status: 'stale', data: inventory, observedAt: 1_000 };
     connection.status = 'disconnected';
     assert.equal(render().error, 'Runner keys wait for current worker inventory.');
+    // The transport, not only the store status, decides whether the held inventory is current.
+    connection.status = 'connected';
+    connection.client.connectionState = 'reconnecting';
+    assert.equal(render().error, 'Runner keys wait for current worker inventory.');
+    connection.client.connectionState = 'connected';
 
     // A slot terminal without a worker pane has no inventory to wait for.
     connection.status = 'connected';
