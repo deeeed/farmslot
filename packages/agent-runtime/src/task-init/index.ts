@@ -30,13 +30,14 @@ import type {
 
 import { applyArtifactOnlyTaskPolicy, type ArtifactOnlyReplay } from './artifact-only.js';
 import {
+  completeInterruptedRepin,
   repinTaskExecution,
   retainTaskExecution,
   type TaskExecutionInput,
   taskExecutionPin,
   type TaskExecutionProvenance,
 } from './execution-provenance.js';
-import { installedTaskCommands, quoteTaskPath } from './runtime-command.js';
+import { installedTaskCommands, retainedMarkCommand } from './runtime-command.js';
 import {
   buildBranchUpdateGuardCommand,
   buildBranchUpdateInstructions,
@@ -60,7 +61,6 @@ export * from './artifact-only-guard.js';
 export * from './branch-update.js';
 export * from './discover.js';
 export {
-  resumeTaskRepin,
   type TaskExecutionInput,
   type TaskExecutionProvenance,
   type TaskRecipeBindingIdentity,
@@ -307,7 +307,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     checklistMarkdown,
     fixedMarkCommand: executionProvenance !== undefined,
     markCommand: executionProvenance
-      ? `${quoteTaskPath(executionProvenance.resolvedExecutable)} task mark`
+      ? retainedMarkCommand(executionProvenance.resolvedExecutable)
       : spec.markCommand,
     handoff: handoffMetadata,
     terminalContract,
@@ -333,16 +333,31 @@ export function repinTask(
   previous: TaskExecutionProvenance,
 ): TaskExecutionProvenance {
   const receipt = repinTaskExecution(taskDir, execution, previous);
-  const mark = path.join(taskDir, MARK_SHIM);
-  const shim = (executable: string) =>
-    buildMarkShim(`${quoteTaskPath(executable)} task mark`, true);
-  // An authored marker stays as written; the generated one follows the new pin.
-  if (existsSync(mark) && readFileSync(mark, 'utf8') === shim(previous.resolvedExecutable)) {
-    const staged = `${mark}.${path.basename(receipt.pin)}`;
-    writeFileSync(staged, shim(receipt.resolvedExecutable), { mode: 0o755 });
-    renameSync(staged, mark);
-  }
+  followRepinnedMarker(taskDir, previous, receipt);
   return receipt;
+}
+
+/** Finish a repin stopped between its renames; null when none is pending. */
+export function resumeTaskRepin(
+  taskDir: string,
+): { previous: TaskExecutionProvenance; receipt: TaskExecutionProvenance } | null {
+  const resumed = completeInterruptedRepin(taskDir);
+  if (resumed) followRepinnedMarker(taskDir, resumed.previous, resumed.receipt);
+  return resumed;
+}
+
+// An authored marker stays as written; the generated one follows the new pin.
+function followRepinnedMarker(
+  taskDir: string,
+  previous: TaskExecutionProvenance,
+  receipt: TaskExecutionProvenance,
+): void {
+  const mark = path.join(taskDir, MARK_SHIM);
+  const shim = (executable: string) => buildMarkShim(retainedMarkCommand(executable), true);
+  if (!existsSync(mark) || readFileSync(mark, 'utf8') !== shim(previous.resolvedExecutable)) return;
+  const staged = `${mark}.${path.basename(receipt.pin)}`;
+  writeFileSync(staged, shim(receipt.resolvedExecutable), { mode: 0o755 });
+  renameSync(staged, mark);
 }
 
 export interface TaskProvenance {

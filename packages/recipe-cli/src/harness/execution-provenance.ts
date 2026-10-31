@@ -358,23 +358,30 @@ function gitSourceFingerprint(topLevel: string, pathspecs: string[], head: Buffe
       gitDiffArgs(['--binary', head.toString('utf8').trim(), '--', ...pathspecs]),
     ),
   );
-  const untracked = gitText(topLevel, [
-    'ls-files',
-    '--others',
-    '--exclude-standard',
-    '-z',
-    '--',
-    ...pathspecs,
-  ])
-    .split('\0')
-    .filter(Boolean)
-    .sort();
-  for (const relative of untracked) {
+  for (const relative of untrackedSources(topLevel, pathspecs)) {
     hash.update(`\0untracked\0${relative}\0`);
     const absolute = path.join(topLevel, relative);
     hash.update(readPathIdentity(absolute));
   }
   return hash.digest('hex');
+}
+
+function untrackedSources(topLevel: string, pathspecs: string[]): string[] {
+  return gitText(topLevel, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...pathspecs])
+    .split('\0')
+    .filter(Boolean)
+    .sort();
+}
+
+/** Whether a Git source's bytes differ from a recorded commit, wherever HEAD has moved since. */
+export function sourceChangedSince(root: string, commit: string): boolean {
+  const git = gitContext(root);
+  if (!git) return true;
+  const pathspecs = sourcePathspecs(git, [], []);
+  return (
+    gitBuffer(git.topLevel, gitDiffArgs(['--binary', commit, '--', ...pathspecs])).length > 0 ||
+    untrackedSources(git.topLevel, pathspecs).length > 0
+  );
 }
 
 function sourcePathspecs(

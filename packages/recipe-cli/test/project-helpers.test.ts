@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import { retainTaskExecution } from '../../agent-runtime/src/task-init/execution-provenance.js';
-import { quoteTaskPath } from '../../agent-runtime/src/task-init/runtime-command.js';
+import { retainedMarkCommand } from '../../agent-runtime/src/task-init/runtime-command.js';
 import { buildMarkShim } from '../../agent-runtime/src/task-init/write.js';
 import { handleChecklist } from '../src/harness/commands/checklist.js';
 import { handleRecipeQuality } from '../src/harness/commands/recipe-quality.js';
@@ -720,8 +720,7 @@ async function checkoutProviderTask(t: TestContext) {
     packageRoot: f.installed,
     distributionRoot: f.installed,
   };
-  const shim = (executable: string) =>
-    buildMarkShim(`${quoteTaskPath(executable)} task mark`, true);
+  const shim = (executable: string) => buildMarkShim(retainedMarkCommand(executable), true);
   await withProjectRecipeHost(
     { ...options, tokens: ['--project', 'example', '--app', 'apps/web'] },
     async (host) => {
@@ -729,30 +728,38 @@ async function checkoutProviderTask(t: TestContext) {
       fs.writeFileSync(path.join(f.taskDir, 'mark'), shim(receipt.resolvedExecutable));
     },
   );
-  return { ...f, recipe, library, selected, options, install, shim };
+  return { ...f, app, recipe, library, selected, options, install, shim };
 }
 
-test('a repin refuses an unchanged checkout or a changed pack without touching the task', async (t) => {
+test('a repin refuses an unchanged provider or a changed selection without touching the task', async (t) => {
   const f = await checkoutProviderTask(t);
   const receiptFile = path.join(f.taskDir, 'artifacts/harness-provenance.json');
   const original = fs.readFileSync(receiptFile);
+  fs.writeFileSync(path.join(f.checkout, 'product.ts'), 'ordinary product change');
   await assert.rejects(repinSelectedTask(f.options, f.taskDir, f.install), {
     code: 'TASK_REPIN_UNCHANGED',
   });
+  fs.writeFileSync(path.join(f.library, 'main-flows.recipe.json'), '{}');
   const otherPack = path.join(f.root, 'other-pack');
   fs.cpSync(f.pack, otherPack, { recursive: true });
-  fs.writeFileSync(path.join(f.library, 'main-flows.recipe.json'), '{}');
-  await assert.rejects(
-    repinSelectedTask(
-      { ...f.options, projects: [{ root: otherPack, config: f.selected }] },
-      f.taskDir,
-      f.install,
-    ),
-    { code: 'TASK_BINDING_CHANGED' },
-  );
+  // A pack update that moves the provider, even within the checkout, is not a repin.
+  fs.cpSync(f.recipe, path.join(f.app, 'moved'), { recursive: true });
+  const moved = {
+    ...f.selected,
+    recipe: {
+      ...f.selected.recipe,
+      provider: { module: 'provider.mjs', root: { projectPath: 'apps/web/moved' } },
+    },
+  };
+  for (const projects of [
+    [{ root: otherPack, config: f.selected }],
+    [{ root: f.pack, config: moved }],
+  ])
+    await assert.rejects(repinSelectedTask({ ...f.options, projects }, f.taskDir, f.install), {
+      code: 'TASK_BINDING_CHANGED',
+    });
   assert.deepEqual(fs.readFileSync(receiptFile), original);
 });
-
 test('a repin follows changed checkout recipes and keeps task documents', async (t) => {
   const f = await checkoutProviderTask(t);
   fs.writeFileSync(path.join(f.library, 'main-flows.recipe.json'), '{}');

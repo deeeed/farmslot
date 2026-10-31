@@ -303,7 +303,7 @@ export function repinTaskExecution(
   input: TaskExecutionInput,
   previous: TaskExecutionProvenance,
 ): TaskExecutionProvenance {
-  // Producer additions, such as a template root outside the pack, stay retained.
+  // Producer additions, such as a template root outside the pack, are retained again.
   const inputsRoot = path.join(previous.pin, 'inputs');
   const carried = previous.retainedInputs
     .filter((entry) => path.dirname(path.dirname(entry.path)) === inputsRoot)
@@ -342,7 +342,7 @@ function writeTaskExecution(
   const selection = path.resolve(taskDir, 'inputs/recipe-binding.json');
   const receiptPath = path.join(taskDir, receiptFile);
   // A repin stages its replacement selection and receipt until the new pin exists.
-  const staged = (file: string): string => (previousPin ? `${file}.${path.basename(pin)}` : file);
+  const staged = (file: string): string => (previousPin ? stagedRepinFile(file, pin) : file);
   let swapped = false;
   try {
     const cli = retainTaskInput(distribution, path.join(staging, 'cli'), [
@@ -449,11 +449,28 @@ function writeTaskExecution(
   }
 }
 
-/** Finish a repin stopped after its receipt swap: install the selection its new pin staged. */
-export function resumeTaskRepin(taskDir: string): void {
+const stagedRepinFile = (file: string, pin: string): string => `${file}.${path.basename(pin)}`;
+
+/**
+ * Finish a repin stopped after its receipt swap by installing the selection its new pin
+ * staged. Returns the previous and current receipts, or null when no repin is pending.
+ */
+export function completeInterruptedRepin(
+  taskDir: string,
+): { previous: TaskExecutionProvenance; receipt: TaskExecutionProvenance } | null {
   const receipt: unknown = JSON.parse(fs.readFileSync(path.join(taskDir, receiptFile), 'utf8'));
-  if (!isRecord(receipt) || typeof receipt.pin !== 'string') return;
+  if (!isReceipt(receipt)) return null;
   const selection = path.resolve(taskDir, 'inputs/recipe-binding.json');
-  const staged = `${selection}.${path.basename(receipt.pin)}`;
-  if (fs.existsSync(staged)) fs.renameSync(staged, selection);
+  const staged = stagedRepinFile(selection, receipt.pin);
+  if (!fs.existsSync(staged)) return null;
+  const authority = (pin: string): unknown =>
+    JSON.parse(fs.readFileSync(path.join(pin, 'provenance.json'), 'utf8'));
+  const current = authority(receipt.pin);
+  const previous =
+    isRecord(current) && typeof current.previousPin === 'string'
+      ? authority(current.previousPin)
+      : undefined;
+  if (!isRecord(previous) || !isReceipt(previous.receipt)) return null;
+  fs.renameSync(staged, selection);
+  return { previous: previous.receipt, receipt };
 }

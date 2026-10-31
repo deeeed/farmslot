@@ -5,8 +5,8 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import {
+  completeInterruptedRepin,
   repinTaskExecution,
-  resumeTaskRepin,
   retainTaskExecution,
   verifyTaskExecutionProvenance,
 } from './execution-provenance.js';
@@ -153,8 +153,9 @@ test('a repin replaces the selection and receipt; the previous pin keeps the ori
   fs.renameSync(selection, `${selection}.${path.basename(receipt.pin)}`);
   fs.writeFileSync(selection, '{"identity":null}');
   assert.throws(() => verifyTaskExecutionProvenance(taskDir, null), { code: 'TASK_INPUT_CHANGED' });
-  resumeTaskRepin(taskDir);
+  assert.deepEqual(completeInterruptedRepin(taskDir), { previous, receipt });
   assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
+  assert.equal(completeInterruptedRepin(taskDir), null);
   assert.deepEqual(fs.readdirSync(path.join(taskDir, 'inputs')), ['recipe-binding.json']);
 });
 
