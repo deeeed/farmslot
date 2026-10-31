@@ -823,12 +823,13 @@ export interface PublicationBaselineContext {
   /** Undefined permits capture admission; null records an unavailable publication head. */
   headSha?: string | null;
   branch?: string | null;
-  inventory: readonly ArtifactRef[];
+  /** Null is the worker preflight before the mirror copy; capture admission pins the bytes. */
+  inventory: readonly ArtifactRef[] | null;
 }
 
 export function publicationBaselineContext(
   run: Run,
-  inventory = run.output?.artifactManifest ?? [],
+  inventory: readonly ArtifactRef[] | null = run.output?.artifactManifest ?? [],
 ): PublicationBaselineContext {
   const review = run.steps.find((step) => step.name === 'review')?.outputs;
   const snapshot = review?.reviewSnapshot;
@@ -892,6 +893,7 @@ export async function assertPublicationManifestOwnership(
   );
   const additionalRoots = new Set<string>();
   const retainedManifests = new Map<string, Promise<string | null>>();
+  const pinned = baseline?.inventory !== null;
   for (const file of evidenceManifestArtifactPaths(manifest)) {
     const relativeFile = file.slice('artifacts/'.length);
     for (
@@ -905,7 +907,7 @@ export async function assertPublicationManifestOwnership(
           io.readText(path.join(artifactsDir, directory, 'artifact-manifest.json')),
         );
       const manifestBytes = await retainedManifests.get(directory);
-      const capturedRecipe = baseline?.inventory.some(
+      const capturedRecipe = baseline?.inventory?.some(
         (artifact) => artifact.path === `artifacts/${directory}/summary.json`,
       );
       if (directory !== artifactRoot && capturedRecipe && manifestBytes == null)
@@ -934,7 +936,7 @@ export async function assertPublicationManifestOwnership(
           if (directory !== artifactRoot) {
             const capturedDigest = (relative: string) =>
               baseline?.inventory
-                .find((artifact) => artifact.path === `artifacts/${directory}/${relative}`)
+                ?.find((artifact) => artifact.path === `artifacts/${directory}/${relative}`)
                 ?.sha256?.replace(/^sha256:/u, '');
             const provenanceBytes = await io.readText(
               path.join(artifactsDir, directory, 'product-provenance.json'),
@@ -952,12 +954,14 @@ export async function assertPublicationManifestOwnership(
               }
             }
             if (
-              capturedDigest('artifact-manifest.json') !==
-                createHash('sha256').update(manifestBytes).digest('hex') ||
-              !capturedDigest(path.posix.relative(directory, relativeFile)) ||
+              (pinned &&
+                (capturedDigest('artifact-manifest.json') !==
+                  createHash('sha256').update(manifestBytes).digest('hex') ||
+                  !capturedDigest(path.posix.relative(directory, relativeFile)))) ||
               !provenanceBytes ||
-              capturedDigest('product-provenance.json') !==
-                createHash('sha256').update(provenanceBytes).digest('hex') ||
+              (pinned &&
+                capturedDigest('product-provenance.json') !==
+                  createHash('sha256').update(provenanceBytes).digest('hex')) ||
               !isRecord(provenance)
             )
               throw new RecordedEvidenceReadError(
@@ -988,14 +992,15 @@ export async function assertPublicationManifestOwnership(
                 }
               }
               const selectedDigest = baseline?.inventory
-                .find(
+                ?.find(
                   (artifact) =>
                     artifact.path === `artifacts/${artifactRoot}/product-provenance.json`,
                 )
                 ?.sha256?.replace(/^sha256:/u, '');
               if (
                 !selectedBytes ||
-                selectedDigest !== createHash('sha256').update(selectedBytes).digest('hex') ||
+                (pinned &&
+                  selectedDigest !== createHash('sha256').update(selectedBytes).digest('hex')) ||
                 !isRecord(selected) ||
                 typeof selected.git_ref !== 'string' ||
                 !/^[a-f0-9]{40}$/iu.test(selected.git_ref) ||
