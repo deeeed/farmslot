@@ -704,6 +704,79 @@ test('a falsely complete newer native attempt remains collecting while its own c
   assert.deepEqual(getRun(run.id)!.engineState?.publishGate?.reviews, [review]);
 });
 
+test('a reviewer launch no session accepted settles failed after the bound, not launching forever', async (t) => {
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'owner';
+  t.after(() => {
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  });
+  const vars = makeVars({ remoteRepo: os.tmpdir() });
+  const run = createRun(
+    {
+      project: 'example-mobile-farm',
+      flowType: 'dev',
+      ticketOrPr: 'UNIT-STALLED-LAUNCH',
+      slotId: vars.slotId,
+    },
+    { nativeOwnerPrincipalId: 'owner' },
+  );
+  // 22b57685: a WARM handoff requested at 14:24:56Z that no session ever accepted.
+  const launchRequestedAt = '2026-10-31T14:24:56.032Z';
+  const context = reviewerContext({
+    runId: run.id,
+    slotId: vars.slotId,
+    status: 'launching',
+    artifactScope: 'pipeline-review',
+    attemptStartedAt: '2026-10-31T14:21:12.844Z',
+    nativeSession: {
+      sessionId: 'native-session',
+      commandId: 'launch-command',
+      generation: 'launch-generation',
+      leaseId: 'lease',
+      executionNodeId: 'node',
+      ownerPrincipalId: 'owner',
+      launchRequestedAt,
+    },
+  });
+  t.after(async () => {
+    updateRun(run.id, {
+      agentContexts: [
+        {
+          ...context,
+          status: 'failed',
+          nativeSession: { ...context.nativeSession!, closedAt: new Date().toISOString() },
+        },
+      ],
+    });
+    await deleteTestRunIfPresent(run.id);
+  });
+  updateRun(run.id, { agentContexts: [context], engineState: { publishGate: { reviews: [] } } });
+  const warn = t.mock.method(console, 'warn', () => {});
+  const recover = (minutesAfterLaunch: number) =>
+    recoverInflightPublicationReviews(run.id, vars.slotId, {
+      now: () => Date.parse(launchRequestedAt) + minutesAfterLaunch * 60_000,
+      readers: {
+        slot: async () => vars,
+        config: async () => ({ enabled: true }),
+        package: async () => undefined,
+        native: async () => {
+          throw new Error('Native worker session, generation or task lease changed');
+        },
+      },
+    });
+  await recover(5);
+  assert.equal(getRun(run.id)!.agentContexts?.[0]?.status, 'launching', 'still inside the bound');
+  await recover(11);
+  const settled = getRun(run.id)!.agentContexts![0]!;
+  assert.equal(settled.status, 'failed');
+  assert.match(
+    settled.error ?? '',
+    /launch did not complete within 10 minutes: Native worker session, generation or task lease changed/,
+  );
+  assert.ok(warn.mock.calls.length > 0);
+});
+
 test('reviewerContextIsSettled terminalizes persisted and superseded reviewer ghosts', () => {
   const working = reviewerContext({
     status: 'working',

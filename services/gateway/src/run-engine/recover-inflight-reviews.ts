@@ -112,6 +112,8 @@ export function recoveredReviewerActionForPromptRecovery(
 
 interface PublicationReviewRecoveryOptions {
   shouldAbort?: () => boolean;
+  /** Clock for the reviewer launch bound; tests advance it. */
+  now?: () => number;
   captureArtifacts?: typeof copyWorkerArtifacts;
   readers?: {
     slot?: typeof loadSlotVars;
@@ -639,6 +641,7 @@ export async function recoverInflightPublicationReviews(
   const terminalErrors: PublicationReviewRecoveryResult['terminalErrors'] = [];
   for (const ctx of candidates) {
     if (options.shouldAbort?.()) break;
+    let failure: string | undefined;
     try {
       const action = await ingestRecoveredReviewer(
         runId,
@@ -660,12 +663,50 @@ export async function recoverInflightPublicationReviews(
       // read error) must not strand the human gate or block recovery of the
       // other reviewers — mirror executePublishGateReviewPlan, which degrades a
       // failed review to a recorded outcome rather than throwing out of the gate.
+      failure = (err as Error).message;
       console.warn(
-        `[run-engine] run ${runId.slice(0, 8)} — recovering reviewer ${ctx.id} failed, skipping: ${(err as Error).message.slice(0, 200)}`,
+        `[run-engine] run ${runId.slice(0, 8)} — recovering reviewer ${ctx.id} failed, skipping: ${failure.slice(0, 200)}`,
       );
     }
+    await settleStalledReviewerLaunch(runId, ctx, failure, options.now?.() ?? Date.now());
   }
   return { recoveredIds, repairedIds, relaunchIds, terminalErrors };
+}
+
+/** A review launch reaches its reviewer, or fails with a reason, within this bound. */
+export const REVIEWER_LAUNCH_SETTLE_MS = 10 * 60_000;
+
+/**
+ * A reviewer still `launching` that no session accepted within the bound never started:
+ * a lost WARM handoff, a hung dispatch, or a gateway restart mid-launch. Left alone it
+ * counts as an active review forever, so new review requests coalesce into it and
+ * nothing runs. It is settled `failed` with the reason and its round with no verdict.
+ */
+async function settleStalledReviewerLaunch(
+  runId: string,
+  candidate: AgentContext,
+  failure: string | undefined,
+  now: number,
+): Promise<void> {
+  const ctx = getRun(runId)?.agentContexts?.find((entry) => entry.id === candidate.id);
+  if (!ctx || ctx.role !== 'review' || ctx.status !== 'launching' || ctx.nativeSession?.acceptedAt)
+    return;
+  const launchedAt = Date.parse(
+    ctx.nativeSession?.launchRequestedAt ?? ctx.attemptStartedAt ?? ctx.startedAt ?? '',
+  );
+  if (!Number.isFinite(launchedAt) || now - launchedAt < REVIEWER_LAUNCH_SETTLE_MS) return;
+  const reason = `Reviewer launch did not complete within ${REVIEWER_LAUNCH_SETTLE_MS / 60_000} minutes${failure ? `: ${failure}` : ''}; request the review again`;
+  if (!(await markRecoveredReviewerContext(runId, ctx, 'failed', { error: reason }))) return;
+  if (ctx.nativeSession)
+    await (await import('../runners/native/worker.js'))
+      .cancelNativeWorkerContext(runId, ctx)
+      .catch((error: unknown) =>
+        console.warn(
+          `[run-engine] run ${runId.slice(0, 8)} — stalled reviewer ${ctx.id} cancel failed: ${(error as Error).message}`,
+        ),
+      );
+  await settleRecoveredReviewerNoVerdict(runId, ctx, reason);
+  console.warn(`[run-engine] run ${runId.slice(0, 8)} — reviewer ${ctx.id}: ${reason}`);
 }
 
 /**
