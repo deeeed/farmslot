@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import React, { useMemo } from 'react';
+import React, { createContext } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { connectionHealthCanRetry } from '../lib/connection-liveness';
@@ -7,13 +7,15 @@ import { retryNativeDecisions } from '../lib/run-collections';
 import { colors, fonts, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
 import { useHeldConnection } from '../store/held-connection';
-import { useRunStore } from '../store/runs';
 
 import {
   OUTAGE_BANNER,
   resolveBannerContent,
   useVisibleConnectionBanner,
 } from './connection-banner-visibility';
+
+/** True under a layout that shows the banner, so views there need not say offline. */
+export const ConnectionBannerShown = createContext(false);
 
 interface ConnectionBannerProps {
   compact?: boolean;
@@ -28,34 +30,13 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   const retryDecisionSync = retryNativeDecisions;
   const lastSyncError = useConnectionStore((s) => s.lastSyncError);
   const gatewayCompatibilityHint = useConnectionStore((s) => s.gatewayCompatibilityHint);
-  const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
-  const profiles = useConnectionStore((s) => s.profiles);
-  const activeProfileId = useConnectionStore((s) => s.activeProfileId);
-  const activeLoading = useRunStore((s) => s.activeLoading);
-  const historyLoading = useRunStore((s) => s.historyLoading);
 
-  const activeProfile = useMemo(
-    () => profiles.find((profile) => profile.id === activeProfileId) ?? null,
-    [activeProfileId, profiles],
-  );
-  const runsSyncMessage = historyLoading
-    ? 'Downloading run history…'
-    : activeLoading
-      ? 'Downloading active runs…'
-      : null;
-
-  const banner = resolveBannerContent(
-    healthStatus,
-    lastSyncError,
-    runsSyncMessage,
-    gatewayCompatibilityHint,
-    activeProfile?.name ?? gatewayUrl,
-  );
+  const banner = resolveBannerContent(healthStatus, lastSyncError, gatewayCompatibilityHint);
 
   const heldConnected = useHeldConnection();
   const visible = useVisibleConnectionBanner(banner, {
     held: heldConnected,
-    stuck: banner.tone === 'syncError' || healthStatus === 'socket-up-not-proven',
+    stuck: banner?.tone === 'syncError' || healthStatus === 'socket-up-not-proven',
     outage: OUTAGE_BANNER,
   });
   if (!visible) return null;

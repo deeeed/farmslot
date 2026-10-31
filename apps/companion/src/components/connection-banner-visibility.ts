@@ -3,28 +3,26 @@ import { usePersistentFlag } from '../lib/held-connection';
 
 export interface BannerContent {
   title: string;
-  tone: 'healthy' | 'connecting' | 'syncError' | 'disconnected';
+  tone: 'connecting' | 'syncError' | 'disconnected';
 }
 
 /** The banner is the one place a screen hears about the gateway, in a few words. */
 export const OUTAGE_BANNER: BannerContent = { title: 'Gateway offline', tone: 'disconnected' };
 
+/** Only an outage or a stuck connection or sync ever shows; routine states have no banner. */
 export function resolveBannerContent(
   healthStatus: ConnectionHealthState,
   lastSyncError: string | null,
-  runsSyncMessage: string | null,
   gatewayCompatibilityHint: string | null,
-  gatewayUrl: string,
-): BannerContent {
+): BannerContent | null {
   if (healthStatus === 'disconnected') return OUTAGE_BANNER;
-  if (healthStatus === 'connecting') return { title: 'Connecting…', tone: 'connecting' };
   if (healthStatus === 'socket-up-not-proven')
     return { title: 'Gateway not answering', tone: 'connecting' };
   if (healthStatus === 'degraded') return { title: 'Gateway not answering', tone: 'syncError' };
-  if (runsSyncMessage) return { title: runsSyncMessage, tone: 'connecting' };
+  if (healthStatus === 'connecting') return null;
   if (lastSyncError) return { title: 'Sync failed', tone: 'syncError' };
   if (gatewayCompatibilityHint) return { title: 'Gateway outdated', tone: 'syncError' };
-  return { title: `Healthy · ${gatewayUrl}`, tone: 'healthy' };
+  return null;
 }
 
 /**

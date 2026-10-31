@@ -51,14 +51,16 @@ export function readErrorMessage(
 
 /**
  * A connected reread in flight, or one the gateway superseded within its grace, stays quiet.
- * Offline, a read error is the outage's, which the connection banner already shows.
+ * Offline, a read error is the outage's: a read with nothing to show says "Offline" once, and
+ * not at all under the connection banner (`offlineNotice` false), which already says so.
  */
 export function resourceReadMessages(
   reads: readonly LabelledReadObservation[],
   now: number,
   connected: boolean,
+  offlineNotice = true,
 ): string[] {
-  return reads.flatMap(({ label, observation }) => {
+  const messages = reads.flatMap(({ label, observation }) => {
     if (observation.status === 'ready' || observation.status === 'loading') return [];
     const messages: string[] = [];
     const saved = savedForDisplay(observation, connected, now);
@@ -72,4 +74,9 @@ export function resourceReadMessages(
     if (error) messages.push(`Could not read ${label}: ${error.message}`);
     return messages;
   });
+  const offline =
+    offlineNotice &&
+    !connected &&
+    reads.some(({ observation }) => observation.error && observation.data === undefined);
+  return offline ? ['Offline', ...messages] : messages;
 }

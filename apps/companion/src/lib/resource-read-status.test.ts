@@ -60,3 +60,21 @@ test('a connected reread in flight or a fresh superseded read stays quiet', () =
   assert.deepEqual(read(superseded, 56_000, false), ['Saved runs · 6s old']);
   assert.equal(read(superseded, 111_000).length, 2);
 });
+
+// Review r1: a screen with no banner (a stack route over the tabs) still says why it is empty.
+test('offline, a read with nothing to show says Offline once, unless the banner does', () => {
+  const failed = {
+    status: 'error',
+    error: { code: 'UNAVAILABLE', message: 'Connection closed' },
+  } as const;
+  const reads = [
+    { label: 'dispatch queue', observation: failed },
+    { label: 'work graph', observation: failed },
+  ];
+  assert.deepEqual(resourceReadMessages(reads, 0, false), ['Offline']);
+  assert.deepEqual(resourceReadMessages(reads, 0, false, false), [], 'The banner says so');
+  assert.deepEqual(resourceReadMessages(reads, 0, true), [
+    'Could not read dispatch queue: Connection closed',
+    'Could not read work graph: Connection closed',
+  ]);
+});

@@ -555,7 +555,12 @@ export function useNativeConversationController(params: NativeConversationParams
       receipt,
       canRetry: nativeRetryAvailable(receipt),
       canEdit: nativeMessageCancelable(session, receipt),
-      error: error || pollError || creation.viewModel.error || resume.viewModel.error,
+      // Offline, a failed read is the outage's, which the heading already says.
+      error:
+        error ||
+        (heldConnected || !allowed ? pollError : '') ||
+        creation.viewModel.error ||
+        resume.viewModel.error,
       busy,
       ready,
       connected: heldConnected,

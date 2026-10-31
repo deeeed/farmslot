@@ -38,11 +38,11 @@ export function CopilotScreen({
       <Text style={styles.status}>
         {vm.runtime
           ? `Co-Pilot is ${vm.runtime.status}`
-          : vm.loading
-            ? 'Finding Co-Pilot…'
-            : vm.connected
-              ? 'Co-Pilot unavailable'
-              : ''}
+          : !vm.connected
+            ? ''
+            : vm.loading
+              ? 'Finding Co-Pilot…'
+              : 'Co-Pilot unavailable'}
       </Text>
       <Text style={styles.hint}>
         Open the persistent Co-Pilot terminal or continue a native conversation. Start and configure
