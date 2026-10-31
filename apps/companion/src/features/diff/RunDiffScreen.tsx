@@ -31,6 +31,7 @@ import { diffArtifactCandidate, diffFocusedFilePathFromRequest } from '../../lib
 import { gateDiffFallsBack } from '../../lib/held-content';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
 import { baseStyles } from '../../lib/theme';
 import {
@@ -46,6 +47,7 @@ import {
   workspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent } from '../../store/held-connection';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
 
 import {
@@ -211,7 +213,7 @@ export default function DiffViewerScreen() {
     : '';
   const currentWorkspaceDiff = {
     loading: workspaceDiffObservation.status === 'loading',
-    error: workspaceDiffObservation.error?.message,
+    error: readErrorMessage(workspaceDiffObservation, heldConnectionCurrent()),
   };
   const recipeArtifactCount = recipeRunsLoaded
     ? recipeRuns.reduce((count, group) => count + artifactsForRecipeRun(group).length, 0)

@@ -233,19 +233,76 @@ export async function openRunBundleStore(input: {
   return binding;
 }
 
+const STORE_LOCK = 'bundle-store.lock';
+
 /** One cross-process lock covers capacity reservations, commit and GC. */
-export function withRunBundleStoreLock<T>(store: RunBundleStore, fn: () => Promise<T>): Promise<T> {
-  return withBundleLock(store, 'bundle-store.lock', fn);
+export function withRunBundleStoreLock<T>(
+  store: RunBundleStore,
+  fn: () => Promise<T>,
+  hold: BundleLockHold = {},
+): Promise<T> {
+  return withBundleLock(store, STORE_LOCK, hold, fn);
 }
 
-const bundleLockQueues = new Map<string, Promise<unknown>>();
+/**
+ * What a holder declares about itself: waiters name it, and fail only once it has
+ * held the lock past `holdLimitMs`. A long queue of healthy holders is not a stall.
+ */
+export interface BundleLockHold {
+  label?: string;
+  holdLimitMs?: number;
+}
+
+const bundleLockQueues = new Map<string, Promise<void>>();
+const bundleLockHolders = new Map<string, { label: string; since: number; holdLimitMs: number }>();
+// A healthy store-lock holder finishes in minutes even on a loaded gateway; a repair
+// holds its own lock for a whole media transfer. Past these, waiters treat it as stalled.
+const STORE_LOCK_HOLD_LIMIT_MS = 15 * 60_000;
+const REPAIR_LOCK_HOLD_LIMIT_MS = 60 * 60_000;
+const STALL_CHECK_MS = 10_000;
+const SLOW_LOCK_WAIT_MS = 10_000;
+
+/** True once `turn` resolves, false if `ms` passes first. */
+function resolvedWithin(turn: Promise<true>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    turn,
+    new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** Waits for `previous` (which never rejects); rejects once this process's holder is past its limit. */
+async function waitForBundleLockTurn(
+  previous: Promise<void>,
+  lockfilePath: string,
+  name: string,
+  enqueuedAt: number,
+): Promise<void> {
+  const turn = previous.then(() => true as const);
+  for (;;) {
+    const holder = bundleLockHolders.get(lockfilePath);
+    const untilStalled = holder
+      ? holder.since + holder.holdLimitMs - Date.now() + 1
+      : STALL_CHECK_MS;
+    if (await resolvedWithin(turn, Math.max(1, Math.min(untilStalled, STALL_CHECK_MS)))) return;
+    const current = bundleLockHolders.get(lockfilePath);
+    if (!current || Date.now() - current.since <= current.holdLimitMs) continue;
+    const message = `Run bundle lock ${name} has been held by ${current.label} for ${Math.round((Date.now() - current.since) / 1000)}s, past its ${Math.round(current.holdLimitMs / 1000)}s limit; gave up after waiting ${Math.round((Date.now() - enqueuedAt) / 1000)}s. Retry once it finishes.`;
+    console.warn(`[run-bundle] ${message}`);
+    throw Object.assign(new Error(message), { code: 'ELOCKED', file: lockfilePath });
+  }
+}
 
 async function withBundleLock<T>(
   store: RunBundleStore,
   name: string,
+  hold: BundleLockHold,
   fn: () => Promise<T>,
 ): Promise<T> {
   const options = bundleLockOptions(store, name);
+  const enqueuedAt = Date.now();
   const execute = async () => {
     let release: () => Promise<void>;
     try {
@@ -264,24 +321,41 @@ async function withBundleLock<T>(
         { code: 'ELOCKED', file: options.lockfilePath },
       );
     }
+    const holder = {
+      label: hold.label ?? name,
+      since: Date.now(),
+      holdLimitMs: hold.holdLimitMs ?? STORE_LOCK_HOLD_LIMIT_MS,
+    };
+    const waited = holder.since - enqueuedAt;
+    if (waited >= SLOW_LOCK_WAIT_MS)
+      console.warn(
+        `[run-bundle] ${holder.label} waited ${(waited / 1000).toFixed(1)}s for ${name}`,
+      );
+    bundleLockHolders.set(options.lockfilePath, holder);
     try {
       return await fn();
     } finally {
+      if (bundleLockHolders.get(options.lockfilePath) === holder)
+        bundleLockHolders.delete(options.lockfilePath);
       await release();
     }
   };
   // Local work queues behind its owner instead of spending filesystem retries
   // while that same process captures, repairs or collects another run's bytes.
-  // A failed operation still rejects its caller; the next operation can proceed.
+  // A failed or timed-out caller rejects alone: the queue tail settles only once
+  // its predecessors have, so later callers still line up behind the holder.
   const previous = bundleLockQueues.get(options.lockfilePath) ?? Promise.resolve();
-  const pending = previous.then(execute, execute);
-  bundleLockQueues.set(options.lockfilePath, pending);
-  try {
-    return await pending;
-  } finally {
-    if (bundleLockQueues.get(options.lockfilePath) === pending)
+  const pending = waitForBundleLockTurn(previous, options.lockfilePath, name, enqueuedAt).then(
+    execute,
+  );
+  // Completion only: a tail keeps no result alive once its own work has settled.
+  const tail = Promise.allSettled([previous, pending]).then(() => undefined);
+  bundleLockQueues.set(options.lockfilePath, tail);
+  void tail.then(() => {
+    if (bundleLockQueues.get(options.lockfilePath) === tail)
       bundleLockQueues.delete(options.lockfilePath);
-  }
+  });
+  return pending;
 }
 
 function bundleLockOptions(store: RunBundleStore, name: string) {
@@ -359,11 +433,67 @@ async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<numb
   return walk(root);
 }
 
+/**
+ * A published bundle charges its recorded bytes. Every change to a bundle directory
+ * happens under the store lock and records its new size there, so admission reads
+ * one small file per bundle instead of stat-ing every payload in the store.
+ */
+const BUNDLE_DIGEST = /^[a-f0-9]{64}$/;
+
+function bundleUsagePath(store: RunBundleStore, digest: string): string {
+  return path.join(store.root, 'usage', `${digest}.json`);
+}
+
+async function recordBundleBytes(store: RunBundleStore, digest: string, bytes: number) {
+  await atomicJson(bundleUsagePath(store, digest), { bytes });
+}
+
+async function readBundleRecord(store: RunBundleStore, digest: string) {
+  const raw = await readOptional(bundleUsagePath(store, digest));
+  const bytes: unknown = raw && (JSON.parse(raw) as { bytes?: unknown }).bytes;
+  return typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : undefined;
+}
+
+async function recordedBundleBytes(store: RunBundleStore, digest: string): Promise<number> {
+  const recorded = await readBundleRecord(store, digest);
+  if (recorded !== undefined) return recorded;
+  // Published before the record existed: measured once, then kept current.
+  const measured = await physicalBytes(bundleDirectory(store, digest));
+  await recordBundleBytes(store, digest, measured);
+  return measured;
+}
+
+/**
+ * Retention moves a bundle aside (`.retention-<uuid>`) while it archives it, and those bytes
+ * stay charged until the archive removes them. Its manifest still names the bundle, so the
+ * record applies; only a directory without one is measured.
+ */
+async function movedBundleBytes(store: RunBundleStore, directory: string): Promise<number> {
+  const manifest = await readOptional(path.join(directory, 'manifest.json'));
+  if (!manifest) return physicalBytes(directory);
+  const digest = sha256Text(manifest);
+  const recorded = await readBundleRecord(store, digest);
+  if (recorded !== undefined) return recorded;
+  // Moved aside before it had a record (published before records existed): measured once.
+  const measured = await physicalBytes(directory);
+  await recordBundleBytes(store, digest, measured);
+  return measured;
+}
+
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
 async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
   let bytes = 0;
   for (const entry of await readdir(store.root, { withFileTypes: true })) {
     const file = path.join(store.root, entry.name);
+    if (entry.name === 'sha256' && entry.isDirectory()) {
+      for (const name of await readdir(file))
+        bytes += BUNDLE_DIGEST.test(name)
+          ? await recordedBundleBytes(store, name)
+          : await movedBundleBytes(store, path.join(file, name));
+      continue;
+    }
+    // Records are bookkeeping for the bundles above, not stored payload.
+    if (entry.name === 'usage') continue;
     if (entry.name !== 'staging' || !entry.isDirectory()) {
       bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
       continue;
@@ -496,8 +626,11 @@ export async function runBundleAdmissionUsage(
   store: RunBundleStore,
   farmslotRoot: string,
 ): Promise<RunBundleAdmissionUsage> {
-  const stored = await chargedStoreBytes(store);
-  const reservations = await reservedMetadataBytes(store);
+  // Store accounting can record a legacy bundle's bytes, which only ever happens under the lock.
+  const { stored, reservations } = await withRunBundleStoreLock(store, async () => ({
+    stored: await chargedStoreBytes(store),
+    reservations: await reservedMetadataBytes(store),
+  }));
   const acquisition = (await acquisitionBytes(farmslotRoot)).bytes;
   return { store: stored, reservations, acquisition, total: stored + reservations + acquisition };
 }
@@ -532,7 +665,7 @@ export async function reserveRunBundleMetadata(
       ]).finally(() => clearTimeout(timer))
     : 0;
   // Only the read-only scan is raced. A timed-out scan cannot later reserve or start work.
-  return withRunBundleStoreLock(store, async () => {
+  return withBundleLock(store, STORE_LOCK, { label: `admission of run ${runId}` }, async () => {
     if (await readOptional(file)) return;
     const bytes = Math.min(1024 ** 2, policy.metadataReserveBytes);
     const reserved = await reservedMetadataBytes(store);
@@ -594,7 +727,7 @@ async function copyHashed(
 }
 
 function bundleDirectory(store: RunBundleStore, digest: string): string {
-  if (!/^[a-f0-9]{64}$/u.test(digest)) throw new Error('Invalid retained bundle digest.');
+  if (!BUNDLE_DIGEST.test(digest)) throw new Error('Invalid retained bundle digest.');
   return path.join(store.root, 'sha256', digest);
 }
 
@@ -716,12 +849,20 @@ async function completeRetainedPayloads(
       pending.push([key, meta]);
     }
     let remaining = 0;
-    const admitted = await withRunBundleStoreLock(request.store, async () => {
+    const admission = { label: `media admission of run ${request.run.id}` };
+    const admitted = await withBundleLock(request.store, STORE_LOCK, admission, async () => {
       const selected: typeof pending = [];
       if (!pending.length) return selected;
+      // The presence check above already says which manifest entries are on disk, so the
+      // bundle's bytes follow from the manifest; this also corrects a record a crash left stale.
+      const pendingKeys = new Set(pending.map(([key]) => key));
+      let present = (await stat(path.join(directory, 'manifest.json'))).size;
+      for (const [key, meta] of Object.entries(manifest.entries))
+        if (!pendingKeys.has(key)) present += meta.bytes;
+      await recordBundleBytes(request.store, ref.bundleDigest, present);
       let storeAvailable =
         policy.maxStoreBytes - (await chargedCaptureBytes(request, acquisitionSize));
-      let bundleAvailable = policy.maxBundleBytes - (await physicalBytes(directory));
+      let bundleAvailable = policy.maxBundleBytes - present;
       for (const [key, meta] of pending) {
         const relative = key.slice(prefix.length);
         const reserve = isRunBundleMedia(relative) ? policy.metadataReserveBytes : 0;
@@ -798,6 +939,13 @@ async function completeRetainedPayloads(
             await chmod(temp, 0o400);
             await syncPath(temp);
             await mkdir(path.dirname(target), { recursive: true });
+            // Charged before it is visible: a crash or failed rename over-counts until
+            // the next repair admission re-derives the record, never under-counts.
+            await recordBundleBytes(
+              request.store,
+              ref.bundleDigest,
+              (await recordedBundleBytes(request.store, ref.bundleDigest)) + meta.bytes,
+            );
             await rename(temp, target);
             await syncPath(path.dirname(target));
             restored.add(key);
@@ -1099,7 +1247,7 @@ export async function collectRunBundleGarbage(
 ): Promise<{ reclaimedBytes: number; prunedPaths: string[] }> {
   await assertStorePairing(store);
   assertPolicy(policy);
-  return withRunBundleStoreLock(store, async () => {
+  return withBundleLock(store, STORE_LOCK, { label: 'bundle garbage collection' }, async () => {
     const { cleanup, referenced, pinned, committedIntents } = await runBundleHousekeepingInventory(
       store,
       now,
@@ -1117,8 +1265,10 @@ export async function collectRunBundleGarbage(
       const directory = bundleDirectory(store, digest);
       if (pinned.has(digest)) continue;
       if (!referenced.has(digest)) {
-        reclaimedBytes += await physicalBytes(directory);
+        reclaimedBytes +=
+          (await readBundleRecord(store, digest)) ?? (await physicalBytes(directory));
         await rm(directory, { recursive: true });
+        await rm(bundleUsagePath(store, digest), { force: true });
         // A reclaimed payload cannot satisfy its old retry intent. Future explicit
         // acquisition of these bytes starts a new capture instead of a lost stage.
         for (const intent of committedIntents.get(digest) ?? []) await rm(intent);
@@ -1128,18 +1278,28 @@ export async function collectRunBundleGarbage(
       const manifest = parseManifest(directory);
       if (now - Date.parse(manifest.exportedAt) < policy.mediaRetentionDays * 86_400_000) continue;
       const removed: string[] = [];
+      let prunedBytes = 0;
+      const recorded = await readBundleRecord(store, digest);
       for (const [key, meta] of Object.entries(manifest.entries)) {
         if (!isRunBundleMedia(key)) continue;
         const file = resolvePathInsideRoot(directory, key);
         try {
           await rm(file);
           reclaimedBytes += meta.bytes;
+          prunedBytes += meta.bytes;
           removed.push(key);
         } catch (error) {
           if (!hasCode(error, 'ENOENT')) throw error;
         }
       }
       if (removed.length) {
+        await recordBundleBytes(
+          store,
+          digest,
+          recorded === undefined
+            ? await physicalBytes(directory)
+            : Math.max(0, recorded - prunedBytes),
+        );
         const record = path.join(store.root, 'availability', `${digest}.json`);
         const prior = await readOptional(record);
         const availability: { revision: number; prunedPaths: string[] } = prior
@@ -1178,7 +1338,8 @@ export async function materializeRunBundle(
   assertPolicy(policy);
   const acquisitionScan = await acquisitionBytes(request.farmslotRoot);
   const acquisitionSize = acquisitionScan.bytes;
-  const captured = await withRunBundleStoreLock(store, async () => {
+  const capture = { label: `capture of run ${run.id}` };
+  const captured = await withBundleLock(store, STORE_LOCK, capture, async () => {
     const taskKey = run.id;
     const intentPath = path.join(
       store.runsDir,
@@ -1231,6 +1392,7 @@ export async function materializeRunBundle(
         const raw = await readFile(path.join(stage, 'manifest.json'), 'utf8');
         if (sha256Text(raw) !== intent.bundleDigest)
           throw new Error('Interrupted retained capture is corrupt.');
+        await recordBundleBytes(store, intent.bundleDigest, await physicalBytes(stage));
         await rename(stage, destination);
         await syncPath(path.dirname(destination));
       }
@@ -1279,6 +1441,7 @@ export async function materializeRunBundle(
     };
     const missingData: string[] = [];
     let bundleBytes = Buffer.byteLength(intent.runJson);
+    let stagedBytes = bundleBytes;
     let storeBytes = await chargedCaptureBytes(request, acquisitionSize);
     const taskRoot = await realpath(request.taskDir);
     const gatewayRoot = request.gatewayFiles && (await realpath(request.gatewayFiles.taskDir));
@@ -1362,6 +1525,7 @@ export async function materializeRunBundle(
         }
         manifest.entries[key] = { path: key, ...copied };
         bundleBytes += copied.bytes;
+        stagedBytes += copied.bytes;
         storeBytes += copied.bytes;
       }
       if (missingData.length) manifest.missingData = missingData;
@@ -1381,6 +1545,7 @@ export async function materializeRunBundle(
       // Persist identity before publishing, so a crash in the reference commit reuses it.
       intent.bundleDigest = bundleDigest;
       await atomicJson(intentPath, intent);
+      await recordBundleBytes(store, bundleDigest, stagedBytes + Buffer.byteLength(raw));
       await rename(stage, destination);
       await syncPath(path.dirname(destination));
       const ref: RunArtifactBundleRef = {
@@ -1401,7 +1566,8 @@ export async function materializeRunBundle(
       throw error;
     }
   });
-  return withBundleLock(store, repairLockName(captured.ref.bundleDigest), async () => {
+  const repair = { label: `repair of run ${run.id}`, holdLimitMs: REPAIR_LOCK_HOLD_LIMIT_MS };
+  return withBundleLock(store, repairLockName(captured.ref.bundleDigest), repair, async () => {
     const missingData = await completeRetainedPayloads(
       request,
       captured.ref,
@@ -1409,7 +1575,7 @@ export async function materializeRunBundle(
       captured.manifest,
       acquisitionSize,
     );
-    return withRunBundleStoreLock(store, async () => {
+    return withBundleLock(store, STORE_LOCK, { label: `commit of run ${run.id}` }, async () => {
       await readRetainedRunBundle(store, captured.ref, run.id);
       await request.commit(captured.ref, missingData);
       const intentPath = path.join(

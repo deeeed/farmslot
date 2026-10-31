@@ -490,6 +490,18 @@ test('import clears stale taskFile when bundle has no task tree', async () => {
         overriddenAt: new Date().toISOString(),
       },
     ],
+    beforeAttemptAttestations: [
+      {
+        id: 'foreign',
+        runId,
+        decisionId: 'gate',
+        attemptRoot: 'recipe-runs/before',
+        manifestSha256: 'f'.repeat(64),
+        approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'foreign' },
+        reason: 'Foreign authority',
+        attestedAt: new Date().toISOString(),
+      },
+    ],
     metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -533,6 +545,7 @@ test('import clears stale taskFile when bundle has no task tree', async () => {
       undefined,
       'imported metadata grants no gateway override authority',
     );
+    assert.equal(persisted.beforeAttemptAttestations, undefined);
   } finally {
     rmSync(targetRoot, { recursive: true, force: true });
     rmSync(bundleDir, { recursive: true, force: true });

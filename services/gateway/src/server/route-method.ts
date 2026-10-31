@@ -779,6 +779,7 @@ async function routeAuthorizedMethod(
     case Methods.NATIVE_SESSION_SEND:
     case Methods.NATIVE_SESSION_RESPOND:
     case Methods.NATIVE_SESSION_INTERRUPT:
+    case Methods.NATIVE_SESSION_CANCEL:
     case Methods.NATIVE_PROFILE_LIST:
     case Methods.NATIVE_PROFILE_ADD:
     case Methods.NATIVE_PROFILE_STATUS:

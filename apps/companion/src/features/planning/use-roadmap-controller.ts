@@ -17,10 +17,12 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { useResourceQueries, useResourceQuery } from '../../hooks/useResourceQuery';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { spacing } from '../../lib/theme';
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { useConnectionStore } from '../../store/connection';
 import { useFilterStore } from '../../store/filters';
+import { heldConnectionCurrent } from '../../store/held-connection';
 
 import { roadmapPlanningQuery } from './planning-resources';
 
@@ -102,7 +104,7 @@ export function useRoadmapController() {
       deliveredError,
       observation,
       connected,
-      error: observation.error?.message ?? null,
+      error: readErrorMessage(observation, heldConnectionCurrent()) ?? null,
       loading: observation.status === 'loading',
       search,
       stage,

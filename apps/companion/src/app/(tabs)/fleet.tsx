@@ -14,6 +14,7 @@ import { NodeSourceStatusDisclosure } from '../../features/sources/SourceStatusS
 import { CancelledRunSlotRelease } from '../../features/workspace-shared/CancelledRunSlotRelease';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../../lib/artifact-url';
 import { nativeFleetQuery } from '../../lib/gateway-run-sync';
+import { usePersistentFlag } from '../../lib/held-connection';
 import { getResourceCache } from '../../lib/resource-cache';
 import { runDisplayTitle } from '../../lib/run-display';
 import { baseStyles, colors, fonts, lifecycleColor, spacing } from '../../lib/theme';
@@ -145,6 +146,9 @@ export default function FleetScreen() {
   const insets = useSafeAreaInsets();
   const fleet = useFleetStore((s) => s.fleet);
   const observation = useFleetStore((s) => s.observation);
+  // The gateway marks a snapshot stale after its freshness threshold; a restart or one slow
+  // check is routine, so only staleness that persists past the shared grace is shown.
+  const fleetStale = usePersistentFlag(Boolean(fleet?.stale));
   const runs = useRunStore((s) => s.runs);
   const status = useConnectionStore((s) => s.status);
   const filters = useFilterStore((s) => s.filters);
@@ -222,22 +226,13 @@ export default function FleetScreen() {
         <Text style={styles.summaryText}>{summaryText}</Text>
         <FleetRecoveryControl slots={filteredSlots} />
       </View>
-      <ResourceReadStatus observation={observation} label="fleet" />
-      {fleet?.stale ? (
-        <Text style={baseStyles.textSecondary}>
-          Fleet source is stale. Actions wait for a fresh observation.
-        </Text>
-      ) : null}
-      {observation.error ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            void getResourceCache()?.retry(nativeFleetQuery);
-          }}
-        >
-          <Text style={baseStyles.textSecondary}>Retry reading fleet</Text>
-        </Pressable>
-      ) : null}
+      <ResourceReadStatus
+        observation={observation}
+        label="fleet"
+        notice={fleetStale ? 'Fleet source is stale. Actions wait for a fresh observation.' : null}
+        onRetry={() => void getResourceCache()?.retry(nativeFleetQuery)}
+        retryLabel="Retry reading fleet"
+      />
       {!fleet ? (
         <View style={[styles.content, { paddingBottom: spacing.lg + insets.bottom }]}>
           <Text style={baseStyles.textSecondary}>

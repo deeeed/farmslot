@@ -400,6 +400,7 @@ export async function runScenario({ outDir, explicit, timeoutMs = 180_000 }) {
         'native.session.send',
         'native.session.respond',
         'native.session.interrupt',
+        'native.session.cancel',
         'native.session.close',
       ]) {
         await refused(caller, method, {

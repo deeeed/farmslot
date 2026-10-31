@@ -289,6 +289,11 @@ export function NativeConversationScreen({
                   text={vm.pendingText}
                   delivery={nativeDeliveryLabel(vm.receipt)}
                   onDisclosure={disclose}
+                  edit={
+                    vm.canEdit
+                      ? { disabled: !vm.writable || vm.busy, onPress: () => void actions.edit() }
+                      : undefined
+                  }
                 />
               ) : null}
               {vm.requests.map((request) => (

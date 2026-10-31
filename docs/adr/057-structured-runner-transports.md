@@ -318,3 +318,30 @@ Hosts keep their loaded code until stopped, so a session started on an older hos
 ### Public surface
 
 `NativeSessionTool` and `NativeToolKind` in `@farmslot/protocol`, with the shared presenters `nativeToolLabel` and `nativeCommandText` in its client cache. No RPC, CLI flag or harness change. `@farmslot/agent-runtime` sets the fields, so it needs a release. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) lists each adapter's mapping.
+
+## Amendment 9: queued messages, steering, plans and per-turn changes, 2026-10-31
+
+**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in this change; steering, plans and per-turn changes follow in their own changes.
+
+### Decision
+
+**Remove a queued message.** `native.session.cancel` takes a session target and a `commandId`.
+
+- The host fails a command that is still queued and was never submitted: `state: 'failed'`, `submitted: false`, `accepted: false`, `outcome: 'cancelled'`, persisted before the reply. It returns that receipt, and a repeated call returns the same receipt.
+- It refuses a command that was submitted, is unknown, failed for another reason, or belongs to another generation or worker lease. The client offers Stop instead.
+- Removal and the queue's own submission are each decided synchronously on the host's event loop, so exactly one of them wins.
+- A worker call carries the same pinned target and passes the same gateway fence as a worker message, then the host's lease check (`native.worker.cancelCommand`; `native.worker.cancel` still cancels a worker launch). The gateway refuses command IDs it issued itself (task, subtask, recovery, run instruction and completion feedback IDs), and messages on a run that records them through acceptance registration, until that ledger can withdraw an instruction.
+
+**Edit a queued message** = remove, then send again with a new command ID. The removed text returns to the composer through the existing dropped-message path (`nativeMessageDropped`), and the edited text goes to the end of the queue. There is no in-place edit: a command ID stays bound to its text, which keeps retries idempotent.
+
+Clients show Edit on the queued message they sent while `nativeMessageCancelable` holds: the session reports `capabilities.cancelQueued`, and the receipt is queued, unsubmitted and of the session's current generation. The host reports the capability; the gateway withholds it from a pinned worker's read on a run whose worker messages are acceptance sources, since it refuses removal there.
+
+### Rationale and consequences
+
+A queued message could be dropped only by closing the session. The queue lives in the host, so removal needs no runner support.
+
+Hosts keep their loaded code until stopped. A session on an older host reports no `cancelQueued`, so clients hide Edit and keep "Queue message" and Stop; that host refuses `native.session.cancel` as an unknown method. Older clients show a removed message as "Failed" and return its text to the composer.
+
+### Public surface
+
+`native.session.cancel` (`NativeSessionCancelParams`, `NativeSessionCancelResult`), the receipt outcome `cancelled`, `NativeSessionCapabilities.cancelQueued` and the client-cache predicate `nativeMessageCancelable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `cancelCommand` and `native.worker.cancelCommand`, so it needs a release; native hosts started after it support removal. The gateway adds the method to its worker input fence, authorization map and native method lists, and withholds the capability where it refuses removal; Companion adds it to its workspace method list. No CLI flag or harness change. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) defines the boundary.

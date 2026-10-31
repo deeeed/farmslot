@@ -1,5 +1,5 @@
 import type { FleetStatus, RunGetResult } from '@farmslot/protocol';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { canActOn, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { useConnectionStore } from '../store/connection';
 import { useDecisionStore } from '../store/decisions';
@@ -40,7 +40,7 @@ const collections = new NativeRunCollections((snapshot) => {
   });
   if (
     previous.data &&
-    snapshot.decisions.status === 'ready' &&
+    canActOn(snapshot.decisions, true) &&
     useConnectionStore.getState().status === 'connected'
   ) {
     const ids = new Set(previous.data.decisions.map(({ id }) => id));
@@ -93,7 +93,8 @@ export function assertNativeFleetReady(): FleetStatus {
     state.status !== 'connected' ||
     state.client?.connectionState !== 'connected' ||
     getResourceWorkspaceAccess() !== 'farm' ||
-    observed?.status !== 'ready' ||
+    !observed ||
+    !canActOn(observed, true) ||
     !observed.data ||
     observed.data.fleet.stale
   )
@@ -124,7 +125,8 @@ export function assertNativeRunReady(
   if (
     state.client?.connectionState !== 'connected' ||
     getResourceWorkspaceAccess() !== 'farm' ||
-    observed?.status !== 'ready' ||
+    !observed ||
+    !canActOn(observed, true) ||
     observed.data?.run.id !== runId
   )
     throw new Error('Wait for the current run before acting.');

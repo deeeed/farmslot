@@ -171,6 +171,8 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
         slotId: run.slotId ?? vars.slotId,
         labelPrefix: 'review-artifacts',
         beforeCopy: acquisition.beforeCopy(vars),
+        // A gate replay or restart sends only files whose bytes changed since the last copy.
+        skipUnchanged: true,
       });
 
       for (const document of ['TASK.md', 'CHECKLIST.md']) {

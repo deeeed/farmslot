@@ -21,10 +21,12 @@ import { refreshReviewGateView, reviewGateRefreshBlocksPost } from '@farmslot/re
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { loadReviewFindingSource, reviewFindingSourceRequest } from '../../lib/review-curation';
 import { reviewPublicationView } from '../../lib/review-publication';
 import { assertNativeRunReady } from '../../lib/run-collections';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent } from '../../store/held-connection';
 
 export type ReviewPublicationContext = 'publication' | 'saved';
 
@@ -212,7 +214,7 @@ export function useReviewPublication(
     saved: savedCandidate,
     savedLoading: Boolean(run && observation.status === 'loading'),
     savedOffline: Boolean(savedCandidate && observation.status === 'stale'),
-    savedError: observation.error?.message,
+    savedError: readErrorMessage(observation, heldConnectionCurrent()),
     readSaved: () => {
       void readSaved();
     },
