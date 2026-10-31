@@ -20,6 +20,9 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { sourceStatusFixture } from '../../../../packages/protocol/test/fixtures/source-status';
+import { mountHook } from '../hooks/hook-harness.fixtures';
+
+import * as inputQueue from './terminal-input-queue';
 
 const appStateListeners = new Set<(state: AppStateStatus) => void>();
 mock.module('react-native', {
@@ -767,6 +770,85 @@ test(
         { state: 'connecting', paused: false },
       ]);
     } finally {
+      client.disconnect();
+      Object.assign(globalThis, { WebSocket: original });
+    }
+  },
+);
+
+// A socket close after the frame went out: the capability is gone by the time the request fails,
+// so the safety of a resend must come from the instance that received the frame.
+test(
+  'worker keys cut off by a socket close are resent with the same number to the same gateway',
+  { timeout: 4000 },
+  async (t) => {
+    const original = globalThis.WebSocket;
+    Object.assign(globalThis, { WebSocket: Socket });
+    const { GatewayClient } = await import('./gateway-client');
+    const client = new GatewayClient('ws://localhost:19779', { token: 'admin' });
+    const sequenced = (id: string) => ({
+      ...auth(id, 'farm'),
+      capabilities: {
+        ...auth(id, 'farm').capabilities,
+        terminalInputSequence: { instance: 'gw1' },
+      },
+    });
+    const connection = { activeProfileId: 'arthur-lan', principalId: 'arthur' };
+    const hook = mountHook<
+      [typeof client, { nodeId: string; session: string; target: string }, object]
+    >(
+      new URL('../features/terminal/use-worker-terminal-input.ts', import.meta.url),
+      'useWorkerTerminalInput',
+      {
+        '@farmslot/protocol': { Methods },
+        '../../lib/terminal-input-queue': inputQueue,
+        '../../store/connection': {
+          useConnectionStore: Object.assign(
+            (select: (state: typeof connection) => unknown) => select(connection),
+            { getState: () => connection },
+          ),
+        },
+      },
+    );
+    const holds: unknown[] = [];
+    try {
+      client.connect();
+      const first = Socket.sockets.at(-1)!;
+      first.open();
+      first.response(first.sent[0].id, sequenced('admin'));
+      await settle();
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const { write } = hook.render(
+        client,
+        { nodeId: 'mini', session: 'mmt-3', target: '%19' },
+        {
+          onHold: (held: unknown) => holds.push(held),
+        },
+      ) as { write: (data: string) => Promise<void> };
+      const typed = write('make deploy\r');
+      await settle();
+      const sent = first.sent.find((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT)!;
+      first.close(1006);
+      await settle();
+      t.mock.timers.tick(1_000);
+      await settle();
+      const second = Socket.sockets.at(-1)!;
+      assert.notEqual(second, first);
+      second.open();
+      second.response(second.sent[0].id, sequenced('admin'));
+      await settle();
+      // The queue retried while the socket was down; let its backoff run out.
+      for (let step = 0; step < 8; step++) {
+        t.mock.timers.tick(1_000);
+        await settle();
+      }
+      const resent = second.sent.find((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT)!;
+      assert.deepEqual(resent.params, sent.params, 'same keys, same stream and number');
+      second.response(resent.id, { sent: true });
+      await typed;
+      assert.deepEqual(holds, []);
+    } finally {
+      hook.cleanup();
       client.disconnect();
       Object.assign(globalThis, { WebSocket: original });
     }

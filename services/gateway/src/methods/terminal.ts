@@ -38,11 +38,7 @@ import {
   unsubscribePty,
   writePty,
 } from '../runtime/pty-stream.js';
-import {
-  inputAlreadyApplied,
-  rememberInputApplied,
-  runInputInOrder,
-} from '../runtime/terminal-input-sequence.js';
+import { runInputInOrder, writeSequencedInput } from '../runtime/terminal-input-sequence.js';
 import { sendKeys, snapshot, subscribe, unsubscribe } from '../runtime/tmux-stream.js';
 import {
   isWorkspaceTerminal,
@@ -391,13 +387,16 @@ export async function terminalInput(
     : `slot:${params.slotId}`;
   await runInputInOrder(key, async () => {
     await assertAccess?.();
-    if (inputAlreadyApplied(key, params.seq)) return;
-    await writeTerminalInput(params);
-    rememberInputApplied(key, params.seq);
+    await writeSequencedInput(key, params.seq, (dispatched) =>
+      writeTerminalInput(params, dispatched),
+    );
   });
 }
 
-async function writeTerminalInput(params: TerminalInputParams): Promise<void> {
+async function writeTerminalInput(
+  params: TerminalInputParams,
+  dispatched: () => void,
+): Promise<void> {
   if (isWorkspaceTerminal(params)) {
     const { key } = await resolveWorkspaceTerminal(params);
     if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
@@ -424,6 +423,7 @@ async function writeTerminalInput(params: TerminalInputParams): Promise<void> {
   if (machine && getNode(machine)) {
     // Raw input can contain a whole buffered word such as "Up" or "Enter".
     // Reuse the literal text path so tmux never interprets it as a named key.
+    dispatched();
     await sendKeys(params.slotId, resolved.target, params.data, false, undefined, {
       noRetry: true,
     });

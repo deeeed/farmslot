@@ -5,13 +5,14 @@ import { Methods, type TmuxWorkerRef } from '@farmslot/protocol';
 
 import { mountHook } from '../../hooks/hook-harness.fixtures';
 import {
+  assertSafeResend,
   createTerminalInputQueue,
   TerminalInputCancelledError,
 } from '../../lib/terminal-input-queue';
 
 interface FakeClient {
   connectionGeneration: number;
-  terminalInputSequenceSupported?: boolean;
+  terminalInputSequenceInstance?: string | null;
   request(
     method: string,
     params: { worker: TmuxWorkerRef; data: string; seq?: { stream: string; n: number } },
@@ -28,7 +29,11 @@ const connectionStore = Object.assign(
 );
 const dependencies = {
   '@farmslot/protocol': { Methods },
-  '../../lib/terminal-input-queue': { createTerminalInputQueue, TerminalInputCancelledError },
+  '../../lib/terminal-input-queue': {
+    assertSafeResend,
+    createTerminalInputQueue,
+    TerminalInputCancelledError,
+  },
   '../../store/connection': { useConnectionStore: connectionStore },
 };
 
@@ -196,7 +201,7 @@ test('worker keys held across a profile switch never go out under the new sign-i
   }
 });
 
-// The gateway advertises terminalInputSequence: a lost reply is resent on its own, numbered.
+// The gateway instance that received the batch drops a repeat: a lost reply is resent on its own.
 test(
   'worker keys whose reply was lost are resent with the same number, with nothing to resolve by hand',
   { timeout: 5_000 },
@@ -206,7 +211,7 @@ test(
     let loseReply = true;
     const client: FakeClient = {
       connectionGeneration: 1,
-      terminalInputSequenceSupported: true,
+      terminalInputSequenceInstance: 'gw1',
       async request(_method, params, _timeout, options) {
         options?.onSent?.();
         pane.push({ data: params.data, n: params.seq?.n });

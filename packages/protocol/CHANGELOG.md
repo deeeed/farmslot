@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- `TerminalInputSequence` and an optional `seq` on `TerminalInputParams` and `TerminalWorkerInputParams`; `GatewayAuthConnectResult.capabilities.terminalInputSequence` says the gateway writes each number once.
+- `TerminalInputSequence` and an optional `seq` on `TerminalInputParams` and `TerminalWorkerInputParams`; `GatewayAuthConnectResult.capabilities.terminalInputSequence` (`{ instance }`) names the gateway process that writes each number once.
 - `run.attestBeforeAttempt` (`RunAttestBeforeAttemptParams`, `RunAttestBeforeAttemptResult`), `BeforeAttemptAttestation`, `Run.beforeAttemptAttestations` and `ReadyGatePrPackage.beforeAttemptAttestationIds` record a person's attestation of a same-run recipe attempt as before-only evidence. `buildRunDecisionActionRequest` routes the `attest-before-attempt` gate action (`ATTEST_BEFORE_ATTEMPT_ACTION`) to it with the displayed package hash (ADR-062 Amendment 21).
 - `ProjectConfig.slotSelection` (`ProjectSlotSelectionConfig`, `PhysicalDeviceSlotPolicy`) carries project.json `slot_selection.physical_devices`. `RunCreateParams.requiredCapabilities` names capability ids the run's slot must provide; `RunSlotCapabilityRequirements.sourceSlotId` is optional, unset for create-time requirements.
 - `nativeMessageShown` says whether a native conversation shows a sent message yet (its submission or acceptance, with the text), the rule `nativeTimeline` uses for user entries, so a client can show a message it sent until then. `nativeMessageDropped` says from its receipt that the host failed a sent message without submitting it (a queued message when the session closes or its worker lease changes), so a client can give the text back.

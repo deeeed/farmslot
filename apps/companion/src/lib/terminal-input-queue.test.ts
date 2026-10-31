@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  assertSafeResend,
   createTerminalInputQueue,
   keysRetryingNotice,
   TerminalInputCancelledError,
@@ -42,7 +43,7 @@ test('a slow first request batches fast typing and Enter in exact order, with on
 });
 
 // Arthur's rule: a keystroke is never dropped.
-test('a request that failed before it was sent is retried in order with the keys typed behind it', async () => {
+test('a request that failed before it was sent is resent as is, and the keys typed behind it follow', async () => {
   const first = deferred();
   const sent: string[] = [];
   const retries: number[] = [];
@@ -57,10 +58,10 @@ test('a request that failed before it was sent is retried in order with the keys
   const b = queue.write('b');
   first.reject(new Error('Not connected'));
   await Promise.all([a, b]);
-  assert.deepEqual(sent, ['a', 'ab']);
+  assert.deepEqual(sent, ['a', 'a', 'b']);
   assert.deepEqual(retries, [0]);
   await queue.write('c');
-  assert.deepEqual(sent, ['a', 'ab', 'c']);
+  assert.deepEqual(sent, ['a', 'a', 'b', 'c']);
 });
 
 test('a synchronous send failure is retried and later input follows it', async () => {
@@ -75,9 +76,9 @@ test('a synchronous send failure is retried and later input follows it', async (
     { retryDelayMs: () => 0 },
   );
   await Promise.all([queue.write('x'), queue.write('y')]);
-  assert.deepEqual(sent, ['x', 'xy', 'xy']);
+  assert.deepEqual(sent, ['x', 'x', 'x', 'y']);
   await queue.write('ok');
-  assert.deepEqual(sent, ['x', 'xy', 'xy', 'ok']);
+  assert.deepEqual(sent, ['x', 'x', 'x', 'y', 'ok']);
 });
 
 // A lost reply after the frame went out: the pane may already have run the command.
@@ -189,7 +190,7 @@ test(
     const queue = createTerminalInputQueue(
       async (data, _assertActive, markSent, seq) => {
         requests.push({ data, n: seq.n, stream: seq.stream });
-        markSent();
+        markSent('gw1');
         if (loseReply) {
           loseReply = false;
           await typedDuringRetry.promise;
@@ -198,7 +199,6 @@ test(
       },
       {
         retryDelayMs: () => 0,
-        resendsAreSafe: () => true,
         stream: 'q1',
         onHold: (h) => holds.push(h),
       },
@@ -231,7 +231,7 @@ test(
           throw new Error('Not connected');
         }
       },
-      { retryDelayMs: () => 0, resendsAreSafe: () => true },
+      { retryDelayMs: () => 0 },
     );
     await Promise.all([queue.write('a'), queue.write('b')]);
     assert.deepEqual(requests, [
@@ -241,3 +241,34 @@ test(
     ]);
   },
 );
+
+test('a batch the gateway reports uncertain, or one bound for another instance, is held for the user', async () => {
+  const holds: Array<string | null> = [];
+  const uncertain = createTerminalInputQueue(
+    async (_data, _assertActive, markSent) => {
+      markSent('gw1');
+      throw Object.assign(new Error('may already be in the terminal'), {
+        code: 'TERMINAL_INPUT_UNCERTAIN',
+      });
+    },
+    { retryDelayMs: () => 0, onHold: (held) => holds.push(held && held.data) },
+  );
+  void uncertain.write('make deploy\r');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  // The gateway restarted between attempts: the new instance has no record of number 1.
+  const attempts: Array<string | null | undefined> = [];
+  const restarted = createTerminalInputQueue(
+    async (_data, _assertActive, markSent, _seq, sentTo) => {
+      attempts.push(sentTo);
+      assertSafeResend(sentTo, attempts.length === 1 ? 'gw1' : 'gw2');
+      markSent(attempts.length === 1 ? 'gw1' : 'gw2');
+      throw new Error('Connection closed');
+    },
+    { retryDelayMs: () => 0, onHold: (held) => holds.push(held && held.data) },
+  );
+  void restarted.write('pwd\r');
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(attempts, [undefined, 'gw1']);
+  assert.deepEqual(holds, ['make deploy\r', 'pwd\r']);
+});

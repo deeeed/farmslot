@@ -13,10 +13,10 @@ export function heldInputPreview(data: string, max = 40): string {
 }
 
 /**
- * Keys whose request reached the gateway and then failed: the pane may already have them, so
- * nothing more is sent until the user resends or discards them. Only a gateway without
- * `terminalInputSequence` gets here; with it, the batch is resent and written once. Delete this
- * once every supported gateway has the capability.
+ * Keys that may already be in the pane: nothing more is sent until the user resends or discards
+ * them. A gateway instance that numbers input resends them on its own; this shows only when that
+ * cannot be known: a gateway without `terminalInputSequence`, a different instance after a
+ * restart, or a remote node that never answered (TERMINAL_INPUT_UNCERTAIN).
  */
 export function TerminalHeldInput({
   held,

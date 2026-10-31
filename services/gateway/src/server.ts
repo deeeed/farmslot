@@ -101,6 +101,7 @@ import {
   startScreenReaper,
   startScreenRelaunchWatcher,
 } from './runtime/screen-session.js';
+import { INPUT_SEQUENCE_INSTANCE } from './runtime/terminal-input-sequence.js';
 import { unsubscribeAll } from './runtime/tmux-stream.js';
 // Method handlers
 import {
@@ -792,7 +793,7 @@ async function handleMessage(
         },
         batchedContent: true,
         conditionalFileWrites: true,
-        terminalInputSequence: true,
+        terminalInputSequence: { instance: INPUT_SEQUENCE_INSTANCE },
         workspaceAccess: gatewayWorkspaceAccess(
           result.principal,
           authRuntime.store.snapshot().principals,

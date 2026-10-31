@@ -18,11 +18,7 @@ import {
   subscribePty,
   writePty,
 } from '../runtime/pty-stream.js';
-import {
-  inputAlreadyApplied,
-  rememberInputApplied,
-  runInputInOrder,
-} from '../runtime/terminal-input-sequence.js';
+import { runInputInOrder, writeSequencedInput } from '../runtime/terminal-input-sequence.js';
 import {
   captureWorkerTerminal,
   resizeWorkerTerminal,
@@ -76,10 +72,11 @@ export async function terminalWorkerInput(params: TerminalWorkerInputParams): Pr
   // In order per pane, so a batch resent after a lost reply waits for the original.
   await runInputInOrder(`worker:${key}`, async () => {
     await assertTmuxWorkerControlAllowed(params.worker);
-    if (inputAlreadyApplied(key, params.seq)) return;
-    if (hasPty(key)) writePty(key, params.data);
-    else await sendWorkerTerminalInput(params.worker, params.data);
-    rememberInputApplied(key, params.seq);
+    await writeSequencedInput(key, params.seq, async (dispatched) => {
+      if (hasPty(key)) return writePty(key, params.data);
+      dispatched();
+      await sendWorkerTerminalInput(params.worker, params.data);
+    });
   });
 }
 

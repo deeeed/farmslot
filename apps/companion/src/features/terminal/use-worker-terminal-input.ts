@@ -4,6 +4,7 @@ import { Methods, type TmuxWorkerRef } from '@farmslot/protocol';
 
 import type { GatewayClient } from '../../lib/gateway-client';
 import {
+  assertSafeResend,
   createTerminalInputQueue,
   type TerminalInput,
   TerminalInputCancelledError,
@@ -41,7 +42,7 @@ export function useWorkerTerminalInput(
         queueRef.current = {
           key,
           queue: createTerminalInputQueue(
-            async (batch, assertActive, markSent, seq) => {
+            async (batch, assertActive, markSent, seq, sentTo) => {
               const generation = client.connectionGeneration;
               // Rechecked after any wait for the connection or a token refresh, before sending.
               const assertCurrent = () => {
@@ -53,24 +54,24 @@ export function useWorkerTerminalInput(
                   current.principalId !== principalId
                 )
                   throw new TerminalInputCancelledError();
+                // Only a live connection says which instance would receive the frame; the last
+                // check runs connected, just before the frame is written.
+                if (client.connectionState === 'connected')
+                  assertSafeResend(sentTo, client.terminalInputSequenceInstance);
               };
               assertCurrent();
-              // A gateway that writes each number once makes a resend after a lost reply safe.
-              const sequence = client.terminalInputSequenceSupported ? { seq } : {};
+              // Older gateways ignore `seq`; the instance that received the frame says whether a
+              // resend after a lost reply can be dropped as a repeat.
               await client.request(
                 Methods.TERMINAL_WORKER_INPUT,
-                { worker, data: batch, ...sequence },
+                { worker, data: batch, seq },
                 10_000,
-                {
-                  assertCurrent,
-                  onSent: markSent,
-                },
+                { assertCurrent, onSent: () => markSent(client.terminalInputSequenceInstance) },
               );
             },
             {
               onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt),
               onHold: (held) => eventsRef.current.onHold?.(held),
-              resendsAreSafe: () => client.terminalInputSequenceSupported,
             },
           ),
         };
