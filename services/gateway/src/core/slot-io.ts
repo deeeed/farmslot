@@ -388,6 +388,10 @@ export async function slotFileFingerprint(
       })) as SlotFileFingerprint);
 }
 
+/** EFBIG: the source grew past the bytes admitted for it, so the copy refuses before writing more. */
+const capacityExceeded = () =>
+  Object.assign(new Error('File copy exceeds its admitted byte capacity.'), { code: 'EFBIG' });
+
 export async function slotCopyFile(
   ctx: SlotLocality,
   remotePath: string,
@@ -402,7 +406,7 @@ export async function slotCopyFile(
     throw new Error('File copy requires a non-negative byte ceiling.');
   if (local(ctx)) {
     if (options.maxBytes !== undefined && (await stat(remotePath)).size > options.maxBytes)
-      throw new Error('File copy exceeds its admitted byte capacity.');
+      throw capacityExceeded();
     if (
       options.skipUnchanged &&
       (await existingSlotFileMatches(ctx, remotePath, localPath, (await stat(remotePath)).size))
@@ -418,8 +422,7 @@ export async function slotCopyFile(
         new Transform({
           transform(chunk: Buffer, _encoding, callback) {
             bytes += chunk.length;
-            if (bytes > ceiling)
-              return callback(new Error('File copy exceeds its admitted byte capacity.'));
+            if (bytes > ceiling) return callback(capacityExceeded());
             callback(null, chunk);
           },
         }),
@@ -458,7 +461,7 @@ export async function slotCopyFile(
     return false;
 
   if (options.maxBytes !== undefined && sizeKnown && size > options.maxBytes)
-    throw new Error('File copy exceeds its admitted byte capacity.');
+    throw capacityExceeded();
   const useChunked = options.forceChunked || options.maxBytes !== undefined || size > threshold;
   if (!useChunked) {
     const result = (await request('fs.readBase64', pathParams, {
@@ -499,7 +502,7 @@ export async function slotCopyFile(
         options.maxBytes !== undefined &&
         offset + Buffer.from(chunk.content, 'base64').length > options.maxBytes
       )
-        throw new Error('File copy exceeds its admitted byte capacity.');
+        throw capacityExceeded();
       return chunk;
     },
   });

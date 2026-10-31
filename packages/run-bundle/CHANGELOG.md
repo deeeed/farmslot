@@ -5,6 +5,7 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 ## Unreleased
 
 - Admission and capture no longer stat every payload in the store under the store lock. Each published bundle's bytes are recorded in `usage/<digest>.json` when it is published, repaired or pruned, all under the store lock, and admission sums those records; a bundle without a record is measured once and recorded. On a store shaped like the dev gateway's (235 bundles, ~99k files) an admission drops from ~3.9 s to ~30 ms on an idle machine.
+- Retained media that grew past its captured size since capture is recorded as `changed:` missing data instead of failing the whole capture, as content that changed at the same size already was.
 - An active run's committed captures stop pinning their bundles once superseded: only the run's current generation and its newest capture stay pinned. Housekeeping now lists bundles no run references and no live capture pins (`run-bundles` entries) for the host to archive, and `runBundleAdmissionUsage` reports what capture admission charges against the cap.
 
 - Return the acquisition scan's file count and elapsed time for completion logging, without another tree walk.

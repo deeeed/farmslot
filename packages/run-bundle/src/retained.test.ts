@@ -976,6 +976,22 @@ test('near-full storage commits the report before media admission and fills the 
   assert.equal(transfers, 1);
 });
 
+test('media that outgrew its captured size is recorded as changed without failing the capture', async (t) => {
+  const f = await fixture(t);
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const result = await materializeRunBundle({
+    ...f.request,
+    acquireMedia: async () => {
+      throw Object.assign(new Error('File copy exceeds its admitted byte capacity.'), {
+        code: 'EFBIG',
+      });
+    },
+  });
+  assert.ok(result.missingData.includes('changed:artifacts/capture.mp4'));
+  const bundle = await readRetainedRunBundle(f.store, result.ref, f.run.id);
+  assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+});
+
 test('acquisition media under FARMSLOT_PROJECTS_DIR is charged like the default projects dir', async (t) => {
   const f = await fixture(t);
   const projects = await mkdtemp(path.join(tmpdir(), 'retained-projects-'));

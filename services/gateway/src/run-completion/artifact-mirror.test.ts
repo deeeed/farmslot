@@ -28,6 +28,11 @@ import {
   refreshArtifactMirror,
   shouldClearLocalRecipeRunCache,
 } from './artifact-mirror.js';
+import {
+  publicationBaselineContext,
+  resolvePublicationManifest,
+  scanArtifacts,
+} from './publication-artifacts.js';
 import { createRunArtifactAcquisition } from './retained-artifacts.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -641,6 +646,67 @@ test('publication preflight refuses a missing selected engine manifest before to
   // No-code completion still captures the fresh report for an inspectable gate.
   assert.ok(await refreshArtifactMirror({ ...run, recordedEvidenceContractVersion: 1 }));
   assert.equal(await readFile(retained, 'utf8'), 'fresh report');
+});
+
+test('publication preflight admits a clean base-commit before attempt the run has not captured yet', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-before-attempt');
+  const baseSha = 'a'.repeat(40);
+  const before = 'recipe-runs/base-attempt';
+  const selected = 'recipe-runs/head-attempt';
+  await put(
+    'latest-valid-recipe-run.json',
+    JSON.stringify({ version: 1, runId: 'head-attempt', relativeArtifactRoot: selected }),
+  );
+  await put(`${selected}/evidence-manifest.json`, JSON.stringify({ version: 1, standalone: [] }));
+  await put(`${selected}/after.png`, 'after');
+  await put(
+    `${before}/artifact-manifest.json`,
+    JSON.stringify({ version: 1, artifacts: [{ path: 'before.png', type: 'screenshot' }] }),
+  );
+  await put(`${before}/before.png`, 'before');
+  const provenance = { schemaVersion: 1, git_ref: baseSha, dirty: false, branch: 'detached' };
+  await put(`${before}/product-provenance.json`, JSON.stringify(provenance));
+  await put(
+    'evidence-manifest.json',
+    JSON.stringify({
+      version: 1,
+      before_after_pairs: [
+        { label: 'Screen', before: `${before}/before.png`, after: `${selected}/after.png` },
+      ],
+    }),
+  );
+  // No earlier capture: the run inventory cannot list the newly declared attempt yet.
+  const uncaptured = {
+    ...run,
+    recordedEvidenceContractVersion: 1,
+    worktreeHeadAtDispatch: baseSha,
+  };
+  assert.equal(uncaptured.output, undefined);
+  await refreshArtifactMirror(uncaptured, { forPublication: true });
+  assert.equal(existsSync(path.join(taskDir, 'artifacts', before, 'before.png')), true);
+  // Capture admission still pins the copied bytes and provenance.
+  const inventory = await scanArtifacts(taskDir);
+  assert.ok(
+    await resolvePublicationManifest(
+      taskDir,
+      undefined,
+      undefined,
+      1,
+      publicationBaselineContext(uncaptured, inventory),
+    ),
+  );
+  // A dirty before attempt is still refused on the worker, before the mirror changes.
+  await put(`${before}/product-provenance.json`, JSON.stringify({ ...provenance, dirty: true }));
+  await assert.rejects(
+    refreshArtifactMirror(uncaptured, { forPublication: true }),
+    /failed dirty validation/,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(path.join(taskDir, 'artifacts', before, 'product-provenance.json'), 'utf8'),
+    ),
+    provenance,
+  );
 });
 
 test('refreshArtifactMirror collects named, step-dir and top-level text and media files, not scratch trees', async (t) => {
