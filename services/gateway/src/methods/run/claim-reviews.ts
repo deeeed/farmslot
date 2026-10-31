@@ -15,6 +15,7 @@ import {
   type RecordedEvidencePackageInput,
   reviewedVisualFiles,
   type Run,
+  runOutputReviewEnabled,
   type RunReviewVisualClaimParams,
   type RunReviewVisualClaimResult,
   sameEvidenceAttestationApprover,
@@ -27,6 +28,7 @@ import {
   readVisualReviewPolicy,
   selectedSourceInputs,
 } from '../../run-engine/claim-reviews.js';
+import { readGateRecordedEvidence } from '../../run-engine/gate-prerequisites.js';
 import {
   readVisualReviewSource,
   visualReviewSnapshotIdentity,
@@ -119,6 +121,20 @@ export async function runReviewVisualClaim(
   const input = matchingSources[0]!;
   if (validateRecordedEvidencePackage(input).status !== 'valid')
     throw new Error('The selected recorded evidence failed integrity validation.');
+  // An output review completes on the worker's selected attempt only. A receipt on
+  // a retained earlier attempt would never count there, and nothing could clear it.
+  const decision = run.decisions.find(({ id }) => id === source.decisionId);
+  if (
+    decision?.payload?.kind === 'output-review' &&
+    run.flowType !== 'qa' &&
+    runOutputReviewEnabled(run) &&
+    !(await readGateRecordedEvidence(run, null)).some(
+      (selected) => selected.claims?.recipeRunId === params.recipeRunId,
+    )
+  )
+    throw new Error(
+      'Review the selected execution. Earlier retained attempts do not count toward completion.',
+    );
   const claim = deriveReviewedRecipeClaims(input).find(({ id }) => id === claimId);
   if (delegated && (!delegator || !delegatedVisualClaimAllowed(approver.principalId, policy)))
     throw new Error('This reviewer has no matching project delegation.');
