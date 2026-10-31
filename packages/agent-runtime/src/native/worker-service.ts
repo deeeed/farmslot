@@ -13,6 +13,7 @@ import {
   NATIVE_WORKER_RESUME,
   NATIVE_WORKER_SEND,
   NATIVE_WORKER_STATE,
+  NATIVE_WORKER_STEER,
   NATIVE_WORKER_TRANSFER,
 } from './worker-launch.js';
 
@@ -93,6 +94,7 @@ export async function routeNativeWorkerSession(
       return { session: await client.resumeWorker(owner, request.params, request.launch) };
     if (
       request.method === NATIVE_WORKER_SEND ||
+      request.method === NATIVE_WORKER_STEER ||
       request.method === NATIVE_WORKER_CANCEL_COMMAND ||
       request.method === NATIVE_WORKER_CLOSE ||
       request.method === NATIVE_WORKER_CONFIRM_STOPPED ||
@@ -106,6 +108,8 @@ export async function routeNativeWorkerSession(
       };
       if (request.method === NATIVE_WORKER_SEND)
         return await client.sendWorker(owner, target, request.commandId, request.text);
+      if (request.method === NATIVE_WORKER_STEER)
+        return await client.steerWorker(owner, target, request.commandId, request.text);
       if (request.method === NATIVE_WORKER_CANCEL_COMMAND)
         return { receipt: await client.cancelCommandWorker(owner, target, request.commandId) };
       if (request.method === NATIVE_WORKER_CLOSE)

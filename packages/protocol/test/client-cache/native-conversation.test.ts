@@ -17,7 +17,11 @@ import {
   nativeMessagePreview,
   nativeMessageShown,
   nativeMessageToggleLabel,
+  nativePlanCopyLabel,
+  nativePlanOpen,
+  nativePlanStepMark,
   nativeSendLabel,
+  nativeSteerAvailable,
   nativeTimeline,
   type NativeTimelineRow,
   nativeTimelineRows,
@@ -30,6 +34,7 @@ import {
 import type {
   NativeCommandReceipt,
   NativeSessionEvent,
+  NativeSessionPlan,
   NativeSessionReadResult,
 } from '../../src/rpc/native-session.js';
 
@@ -183,6 +188,30 @@ test('terminal replay releases an aged-out receipt only for the same command and
     false,
   );
   assert.equal(nativeCommandLockSettled(command, 'generation'), false);
+});
+
+test('a message the runner accepted and the conversation shows frees the composer mid-turn', () => {
+  const command = { commandId: 'command', generation: 'generation' };
+  const accepted: NativeCommandReceipt = {
+    ...command,
+    state: 'accepted',
+    submitted: true,
+    accepted: true,
+  };
+  const shown = [event(1, 'command.submitted', 'Count to 300.')];
+  // Its turn still runs, but the reader can queue or steer the next message.
+  assert.equal(nativeCommandLockSettled(command, 'generation', accepted, shown), true);
+  // Not shown yet, or not accepted yet (queued, or submitted without a reply): still held.
+  assert.equal(nativeCommandLockSettled(command, 'generation', accepted, []), false);
+  assert.equal(
+    nativeCommandLockSettled(
+      command,
+      'generation',
+      { ...accepted, state: 'unknown', accepted: false },
+      shown,
+    ),
+    false,
+  );
 });
 
 test('an error without display text never renders as successful completion', () => {
@@ -490,6 +519,31 @@ test('a queued message can be taken back while its host removes queued messages'
   assert.equal(nativeDeliveryLabel(removed), 'Removed');
 });
 
+test('Steer is offered while a turn runs on a host whose runner can take a message into it', () => {
+  const session = page([]).session;
+  const steering = { ...session, capabilities: { ...session.capabilities, steer: true } };
+  assert.equal(nativeSteerAvailable({ ...steering, state: 'running' }), true);
+  // A request waiting for an answer: the host would queue the message, so Steer waits too.
+  assert.equal(nativeSteerAvailable({ ...steering, state: 'running' }, [{}]), false);
+  // An older host, or a runner without steering, reports no capability: only Queue message.
+  assert.equal(nativeSteerAvailable({ ...session, state: 'running' }), false);
+  // Idle sends start a turn; a turn waiting on a request queues the message instead.
+  for (const state of ['idle', 'waiting', 'closed'] as const)
+    assert.equal(nativeSteerAvailable({ ...steering, state }), false);
+  assert.equal(nativeSteerAvailable(undefined), false);
+  const steered: NativeCommandReceipt = {
+    commandId: 'more',
+    generation: 'generation',
+    state: 'accepted',
+    submitted: true,
+    accepted: true,
+    steered: true,
+  };
+  assert.equal(nativeDeliveryLabel(steered), 'Added to the running turn');
+  assert.equal(nativeDeliveryLabel({ ...steered, state: 'completed' }), 'Completed');
+  assert.equal(nativeDeliveryLabel({ ...steered, state: 'failed' }), 'Failed');
+});
+
 test('late acceptance restores the user prompt before its assistant response', () => {
   const timeline = nativeTimeline([
     event(1, 'text.delta', 'answer'),
@@ -697,4 +751,109 @@ test('a finished turn gets one summary row below its tools; nothing above it mov
   assert(fold?.kind === 'work');
   assert.equal(nativeFoldWatched(fold, watched), true);
   assert.equal(nativeFoldWatched(fold, new Set()), false);
+});
+
+test('a plan updates in place in its turn, folds to its progress when the turn ends', () => {
+  const plan = (sequence: number, value: NativeSessionPlan, commandId = 'first') => ({
+    ...event(sequence, 'plan.updated'),
+    commandId,
+    plan: value,
+  });
+  const steps = (...status: Array<'pending' | 'in-progress' | 'completed'>): NativeSessionPlan => ({
+    kind: 'checklist',
+    steps: status.map((value, index) => ({ text: `Step ${index + 1}`, status: value })),
+  });
+  const running = [
+    { ...event(1, 'command.submitted', 'Fix the test.'), commandId: 'first' },
+    plan(2, steps('in-progress', 'pending', 'pending')),
+    { ...event(3, 'text.delta', 'Reading.'), commandId: 'first' },
+    plan(4, steps('completed', 'in-progress', 'pending')),
+    plan(5, { kind: 'proposal', text: '1. Read.\n2. Fix.' }),
+  ];
+  const entries = nativeTimeline(running);
+  // One checklist entry, at the place and key of its first update, holding the latest steps.
+  assert.deepEqual(
+    entries.map((entry) => [entry.kind, entry.key, entry.text]),
+    [
+      ['user', 1, 'Fix the test.'],
+      ['plan', 2, '1 of 3 steps'],
+      ['assistant', 3, 'Reading.'],
+      ['plan', 5, '1. Read.\n2. Fix.'],
+    ],
+  );
+  assert.deepEqual(entries[1].event.plan, steps('completed', 'in-progress', 'pending'));
+  assert.equal(entries[1].event.sequence, 2);
+  // Cached history keeps only the latest checklist, under the same key.
+  const kept = retainNativeMessages(running);
+  assert.deepEqual(
+    kept.filter((item) => item.type === 'plan.updated').map((item) => item.sequence),
+    [2, 5],
+  );
+  assert.deepEqual(
+    nativeTimeline(kept)[1].event.plan,
+    steps('completed', 'in-progress', 'pending'),
+  );
+  // Another turn's checklist is its own entry.
+  assert.equal(
+    nativeTimeline([...running, plan(6, steps('pending'), 'second')]).at(-1)?.text,
+    '0 of 1 step',
+  );
+
+  const open = (rows: NativeTimelineRow[], watched: Set<number>) =>
+    rows.flatMap((row) =>
+      row.kind === 'entry' && row.entry.kind === 'plan' ? [nativePlanOpen(row, watched)] : [],
+    );
+  const ended = [...running, { ...event(9, 'turn.completed'), commandId: 'first' }];
+  // While its turn runs a checklist shows its steps; once it ended, a stored read folds it.
+  assert.deepEqual(open(nativeTimelineRows(nativeTimeline(running)), new Set()), [true, true]);
+  assert.deepEqual(open(nativeTimelineRows(nativeTimeline(ended)), new Set()), [false, false]);
+  // A plan the reader watched run stays open, so it does not fold away under them.
+  const watched = new Set<number>();
+  nativeWatchTools(nativeTimelineRows(nativeTimeline(running)), watched, true);
+  assert.deepEqual(open(nativeTimelineRows(nativeTimeline(ended)), watched), [true, true]);
+
+  // A later page's update merges into the plan cached from an earlier page, under its first key.
+  const paged = retainNativeMessages([
+    ...retainNativeMessages(running.slice(0, 2)),
+    ...running.slice(2),
+  ]);
+  assert.deepEqual(
+    nativeTimeline(paged)
+      .filter((entry) => entry.kind === 'plan')
+      .map((entry) => [entry.key, entry.text]),
+    [
+      [2, '1 of 3 steps'],
+      [5, '1. Read.\n2. Fix.'],
+    ],
+  );
+  // A resumed generation's plan with the same command ID is its own entry; proposals merge too.
+  const resumed = nativeTimeline([
+    plan(1, steps('completed')),
+    { ...plan(2, steps('pending')), generation: 'next' },
+    plan(3, { kind: 'proposal', text: 'First.' }),
+    plan(4, { kind: 'proposal', text: 'Second.' }),
+  ]);
+  assert.deepEqual(
+    resumed.map((entry) => [entry.key, entry.text]),
+    [
+      [1, '1 of 1 step'],
+      [2, '0 of 1 step'],
+      [3, 'Second.'],
+    ],
+  );
+  assert.deepEqual((['completed', 'in-progress', 'pending'] as const).map(nativePlanStepMark), [
+    '✓',
+    '●',
+    '○',
+  ]);
+  assert.deepEqual([undefined, true, false].map(nativePlanCopyLabel), [
+    'Copy plan',
+    'Copied',
+    'Copy failed',
+  ]);
+
+  // A long proposal collapses like a long message.
+  const long = Array.from({ length: 40 }, (_, index) => `${index + 1}. Step.`).join('\n');
+  assert.ok(nativeEntryPreview(nativeTimeline([plan(1, { kind: 'proposal', text: long })])[0]));
+  assert.equal(nativeEntryPreview(entries[1]), undefined);
 });

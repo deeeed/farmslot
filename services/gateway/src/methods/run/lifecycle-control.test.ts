@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { Events, type MachineParkRecord, NATIVE_WORKER_RESUME_ACTION } from '@farmslot/protocol';
 
+import { readRunEpisode } from '../../run-completion/run-episode.js';
 import {
   withMachineRunTransition,
   withRunTransition,
@@ -11,6 +12,7 @@ import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../../ru
 import type { ResourcePostureRequest } from '../../runtime-capabilities/posture.js';
 
 import {
+  collectCompletedRunSlotReleaseEffect,
   GATE_PARK_REPLAY_TRIGGER,
   publishCompletedRun,
   runCancel,
@@ -1652,3 +1654,25 @@ for (const status of ['blocked', 'reconciling'] as const) {
     assert.notEqual(getRun(run.id)?.metrics.outcome, 'success');
   });
 }
+
+test('an operator completion writes its episode right after its own slot release', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example',
+    ticketOrPr: 'PROJ-EPISODE',
+    slotId: 'episode-slot',
+  });
+  t.after(() => cleanupRun(run.id));
+  const done = updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+  const seenAtRelease: boolean[] = [];
+  const effects = await collectCompletedRunSlotReleaseEffect(done, async () => {
+    seenAtRelease.push(Boolean(await readRunEpisode(run.id)));
+    return { released: true };
+  });
+  assert.deepEqual(
+    effects.map((effect) => `${effect.name}:${effect.status}`),
+    ['slot-release:ok', 'episode-capture:ok'],
+  );
+  assert.deepEqual(seenAtRelease, [false], 'the episode is written after the release, not before');
+  assert.equal((await readRunEpisode(run.id))?.status, 'done');
+});

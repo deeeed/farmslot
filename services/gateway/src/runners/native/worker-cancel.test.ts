@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import { NATIVE_WORKER_CANCEL_COMMAND, NATIVE_WORKER_READ } from '@farmslot/agent-runtime/native';
+import {
+  NATIVE_WORKER_CANCEL_COMMAND,
+  NATIVE_WORKER_READ,
+  NATIVE_WORKER_STEER,
+} from '@farmslot/agent-runtime/native';
 import {
   type AcceptanceRegistration,
   type AgentContext,
@@ -141,6 +145,7 @@ const snapshot: NativeSessionReadResult = {
       interrupt: true,
       resume: true,
       cancelQueued: true,
+      steer: true,
     },
   },
   commands: [],
@@ -218,9 +223,48 @@ test('a worker whose messages are acceptance sources reads without the removal c
       )) as NativeSessionReadResult
     ).session.capabilities;
   updateRun(run.id, { acceptanceRegistration: undefined });
-  assert.equal((await read()).cancelQueued, true);
+  assert.deepEqual([(await read()).cancelQueued, (await read()).steer], [true, true]);
   updateRun(run.id, { acceptanceRegistration: registration });
   // The other capabilities pass through unchanged.
-  const { cancelQueued: _removal, ...others } = snapshot.session.capabilities;
+  const { cancelQueued: _removal, steer: _steer, ...others } = snapshot.session.capabilities;
   assert.deepEqual(await read(), others);
+});
+
+test('a pinned worker steers through the input fence; a run recording acceptance refuses it', async () => {
+  const steer = (delivery: unknown, pin = target) =>
+    runWithSessionOriginator(admin, () =>
+      nativeSessionRoute(
+        Methods.NATIVE_SESSION_SEND,
+        {
+          sessionId: binding.sessionId,
+          executionNodeId: 'local',
+          worker: pin,
+          commandId: 'steered',
+          text: 'Also check the tests.',
+          delivery,
+        },
+        admin,
+      ),
+    );
+  updateRun(run.id, { acceptanceRegistration: undefined });
+  calls.length = 0;
+  await steer('steer');
+  assert.deepEqual(calls, [
+    {
+      method: NATIVE_WORKER_STEER,
+      params: {
+        sessionId: 'session',
+        executionNodeId: 'local',
+        generation: 'generation',
+        leaseId: 'lease',
+        commandId: 'steered',
+        text: 'Also check the tests.',
+      },
+    },
+  ]);
+  await assert.rejects(steer('now'), /delivery must be 'steer'/);
+  await assert.rejects(steer('steer', { ...target, leaseId: 'stale' }), /stale/);
+  updateRun(run.id, { acceptanceRegistration: registration });
+  await assert.rejects(steer('steer'), /cannot join the running turn/);
+  assert.equal(calls.length, 1);
 });

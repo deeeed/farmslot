@@ -29,6 +29,7 @@ import { alive, appendDurable, matchesProcess, privateDirectory, readJson } from
 import {
   decodeNativeWorkerLaunch,
   NATIVE_WORKER_CANCEL_COMMAND,
+  NATIVE_WORKER_STEER,
   type NativeWorkerLaunch,
 } from './worker-launch.js';
 import { routeNativeWorkerSession } from './worker-service.js';
@@ -65,6 +66,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   },600);
  }
  if(m.id===7 && !m.method){fs.appendFileSync('decisions',JSON.stringify(m.result)+'\\n');send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'completed'}}});}
+ if(m.method==='turn/steer'){fs.appendFileSync('steers',m.params.input[0].text+'\\n');if(m.params.input[0].text==='exit')process.exit(1);if(m.params.input[0].text==='refuse')return send({id:m.id,error:{code:-32600,message:'no active turn to steer'}});return send({id:m.id,result:{turnId:m.params.expectedTurnId}});}
  if(m.method==='turn/interrupt'){clearTimeout(timer);send({id:m.id,result:{}});send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'interrupted'}}});}
 });`;
 const delay = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1902,6 +1904,119 @@ test('a removal is durable, and the removed message never reaches the runner', a
     assert.equal(reloaded?.submitted, false);
   } finally {
     for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('host IPC decodes a steered message, leased for a worker', () => {
+  const steer = { owner: 'owner', id: 'session', commandId: 'more', text: 'Also check the tests.' };
+  assert.deepEqual(decodeRequest({ method: 'steer', ...steer }), { method: 'steer', ...steer });
+  const lease = { generation: 'generation', leaseId: 'lease' };
+  assert.deepEqual(decodeRequest({ method: NATIVE_WORKER_STEER, ...steer, ...lease }), {
+    method: NATIVE_WORKER_STEER,
+    ...steer,
+    ...lease,
+  });
+  assert.throws(
+    () => decodeRequest({ method: NATIVE_WORKER_STEER, ...steer, generation: 'generation' }),
+    /Invalid IPC leaseId/,
+  );
+});
+
+test('a steered message joins the running turn, ends with it, and never holds up the queue', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const receipt = (commandId: string) =>
+    manager.read('owner', session.id).commands.find((command) => command.commandId === commandId);
+  const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+  try {
+    assert.equal(session.capabilities.steer, true);
+    // No turn runs: steering is an ordinary send, which starts one.
+    assert.equal((await manager.steer('owner', session.id, 'first', 'first')).steered, undefined);
+    await until(() => manager.read('owner', session.id).session.state === 'running');
+    assert.deepEqual(await manager.steer('owner', session.id, 'more', 'more'), {
+      commandId: 'more',
+      submitted: true,
+      accepted: true,
+      state: 'accepted',
+      steered: true,
+    });
+    // Durable before the runner got it: the submission precedes the runner's acceptance.
+    const events = manager.read('owner', session.id).events;
+    const at = (type: string) =>
+      events.findIndex((event) => event.type === type && event.commandId === 'more');
+    assert.ok(at('command.submitted') >= 0 && at('command.submitted') < at('command.accepted'));
+    assert.equal((await manager.send('owner', session.id, 'next', 'next')).queued, true);
+    const inputs = join(fixture.cwd, 'inputs');
+    await until(() => existsSync(inputs) && readFileSync(inputs, 'utf8').includes('next'));
+    assert.deepEqual(
+      ['first', 'more'].map((id) => [receipt(id)?.state, receipt(id)?.steered]),
+      [
+        ['completed', undefined],
+        ['completed', true],
+      ],
+    );
+    assert.equal(readFileSync(inputs, 'utf8'), 'first\nnext\n');
+    // A runner refusal fails the message, and it is never resent.
+    await until(() => manager.read('owner', session.id).session.state === 'running');
+    assert.equal((await manager.steer('owner', session.id, 'refuse', 'refuse')).state, 'failed');
+    assert.equal(
+      (await manager.steer('owner', session.id, 'refuse', 'refuse')).state,
+      'failed',
+      'a retry returns the receipt',
+    );
+    await until(() => manager.read('owner', session.id).session.state === 'idle');
+    assert.equal(readFileSync(join(fixture.cwd, 'steers'), 'utf8'), 'more\nrefuse\n');
+    assert.equal(readFileSync(inputs, 'utf8'), 'first\nnext\n');
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+  }
+});
+
+test('while a request waits for an answer, a steered message is queued instead', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+  try {
+    await manager.send('owner', session.id, 'approval', 'approval');
+    await until(() => manager.read('owner', session.id).pendingRequests.length > 0);
+    const queued = await manager.steer('owner', session.id, 'later', 'later');
+    assert.equal(queued.queued, true);
+    assert.equal(queued.steered, undefined);
+    assert.equal(existsSync(join(fixture.cwd, 'steers')), false);
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+  }
+});
+
+test('a steer whose runner stopped before replying stays unknown, and is never resent', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: fixture.cwd });
+  const receipt = () =>
+    manager.read('owner', session.id).commands.find((command) => command.commandId === 'exit');
+  try {
+    await manager.send('owner', session.id, 'first', 'first');
+    await until(() => manager.read('owner', session.id).session.state === 'running');
+    // The runner exits with a tool child still running: the reply is lost, not a refusal.
+    assert.equal((await manager.steer('owner', session.id, 'exit', 'exit')).state, 'unknown');
+    await until(() =>
+      ['closed', 'failed'].includes(manager.read('owner', session.id).session.state),
+    );
+    assert.deepEqual([receipt()?.state, receipt()?.steered], ['unknown', true]);
+    assert.equal(readFileSync(join(fixture.cwd, 'steers'), 'utf8'), 'exit\n');
+    const reloaded = new NativeSessionManager(fixture.root)
+      .read('owner', session.id)
+      .commands.find((command) => command.commandId === 'exit');
+    assert.equal(reloaded?.state, 'unknown');
+  } finally {
+    // The tool child outlives its runner here; never leave it running.
+    const descendant = join(fixture.cwd, 'descendant');
+    const pid = existsSync(descendant) ? Number(readFileSync(descendant, 'utf8')) : 0;
+    if (pid && alive(pid)) process.kill(pid, 'SIGKILL');
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
     fixture.restore();
   }
 });
