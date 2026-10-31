@@ -319,6 +319,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
     desc,
     actions,
     reviewPayload,
+    { generation },
   );
   if (actionId === 'abort' || runSupersededSince(getRun(runId), generation)) return;
   const resolvedDecision = findLatestResolvedDecision(getRun(runId)!.decisions, 'review_posting');

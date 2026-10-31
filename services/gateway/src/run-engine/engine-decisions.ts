@@ -44,7 +44,7 @@ import {
   isReplayableResolvedHumanGateDecision,
   latestResolvedHumanGateDecision,
 } from './decision-replay.js';
-import { hasValidPrNumber } from './gate-policy.js';
+import { hasValidPrNumber, supersedeStaleHumanGateDecisions } from './gate-policy.js';
 import {
   assertAcceptedFindingsCurrent,
   collectRunGateReadiness,
@@ -781,6 +781,12 @@ export async function createEngineDecision(
      * reason+resolvedAt only and silently replays the prior action against new data. */
     canReplay?: (existing: RunDecision) => boolean;
     readProgress?: (run: Run) => Promise<RunProgressObservation>;
+    /**
+     * The generation the calling driver took when it started. A driver that a pause, resume
+     * or replay superseded during its slow preparation is refused here, before it could
+     * supersede the live driver's gate decision. Defaults to the run's current generation.
+     */
+    generation?: number;
   },
 ): Promise<string> {
   const run = getRun(runId);
@@ -788,7 +794,7 @@ export async function createEngineDecision(
   const adopted = adoptedHumanGateAction(reason, run);
   if (adopted) return adopted;
 
-  const generation = run.engineState?.generation ?? 0;
+  const generation = options?.generation ?? run.engineState?.generation ?? 0;
   if (runSupersededSince(run, generation) || isTerminalRunStatus(run.status))
     throw new Error(`Run ${runId.slice(0, 8)} no longer owns this decision`);
 
@@ -862,6 +868,10 @@ export async function createEngineDecision(
     ...(isPrerequisiteGatePayload(payload) ? { context: { gateActions: gateDefinitions } } : {}),
   };
 
+  // Exactly one live gate decision: a gate that opens a new one supersedes any predecessor
+  // still open, e.g. one a second driver of the same gate left behind. Same tick as the append.
+  if (decision.type === 'engine_human_gate' || decision.type === 'engine_review_posting')
+    supersedeStaleHumanGateDecisions(current!.decisions, decision.createdAt, decision.id);
   updateRun(runId, {
     status: runDecisionWaitingStatus(
       current!,

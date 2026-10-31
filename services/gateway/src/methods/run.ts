@@ -53,6 +53,7 @@ import {
   runClaimOverrideSnapshotIdentity,
   type RunCreateParams,
   type RunCreateResult,
+  type RunDecision,
   type RunInteractiveDevResolveParams,
   type RunInteractiveDevResolveResult,
   type RunProbeWorkerSignalParams,
@@ -1580,8 +1581,28 @@ export async function runProbeWorkerSignal(
  * the caller's reference. Exported for tests.
  */
 export function assertDecisionStillUnresolved(runId: string, decisionId: string): void {
-  const fresh = getRun(runId)?.decisions.find((d) => d.id === decisionId);
+  const run = getRun(runId);
+  const fresh = run?.decisions.find((d) => d.id === decisionId);
   if (!fresh || fresh.resolvedAt) throw new Error(`Decision already resolved`);
+  assertCurrentGateDecision(run!, fresh);
+}
+
+const isGateDecision = (decision: RunDecision) =>
+  decision.type === 'engine_human_gate' || decision.type === 'engine_review_posting';
+
+/**
+ * Only the run's newest open gate decision takes a gate action. One that another gate
+ * decision replaced has no engine waiting on it: its action would report ok and then be
+ * dropped, so it is refused with the decision to act on instead.
+ */
+function assertCurrentGateDecision(run: Run, decision: RunDecision): void {
+  if (!isGateDecision(decision)) return;
+  const current = [...run.decisions].reverse().find((d) => isGateDecision(d) && !d.resolvedAt);
+  if (current && current.id !== decision.id)
+    throw new GatewayMethodError(
+      'RUN_GATE_NOT_READY',
+      `Gate decision ${decision.id} has been replaced by ${current.id}; act on the current gate.`,
+    );
 }
 
 type TriageAssessmentPrice = NonNullable<NonNullable<AssessmentRecord['reservation']>['price']>;
@@ -1964,6 +1985,7 @@ export async function resolveRunDecision(
 
   let decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
+  if (!decision.resolvedAt) assertCurrentGateDecision(existing, decision);
   const attestationReason = evidenceAttestationReason(
     params.actionId,
     params.evidenceAttestationReason,
