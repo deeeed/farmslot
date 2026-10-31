@@ -528,6 +528,8 @@ export default function WorkerTerminalScreen() {
     try {
       requireWorkerInventory();
       await writeWorkerInput(data);
+      // The instruction ends the pane's line with Enter, so the input line starts over.
+      inputLineRef.current?.reset();
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setVoiceStatus('idle');
       setVoiceMessage('Instruction sent. Tap mic for the next worker nudge.');

@@ -27,6 +27,8 @@ export const TERMINAL_CONTROL_KEYS: readonly TerminalControlKey[] = [
   { label: '^D', data: '\x04', danger: true },
   { label: '^U', data: '\x15', danger: false },
   { label: '^L', data: '\x0c', danger: false },
+  // Backspace past the input line: Gboard reports no key in an empty field.
+  { label: '⌫', data: '\x7f', danger: false },
 ] as const;
 
 /** The tmux pane a terminal key bar drives. */

@@ -36,6 +36,7 @@ test('terminal control keys include mobile TUI navigation sequences', () => {
   assert.equal(dataByLabel.get('Tab'), '\x09');
   assert.equal(dataByLabel.get('⇧Tab'), '\x1b[Z');
   assert.equal(dataByLabel.get('^D'), '\x04');
+  assert.equal(dataByLabel.get('⌫'), '\x7f');
 });
 
 test('terminal control keys keep interrupt marked dangerous', () => {

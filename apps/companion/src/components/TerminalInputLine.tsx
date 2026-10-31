@@ -58,7 +58,8 @@ export const TerminalInputLine = forwardRef<TerminalInputLineHandle, TerminalInp
           if (data) onSend(data);
         }}
         onKeyPress={({ nativeEvent }) => {
-          // Backspace in an empty line keeps deleting in the pane.
+          // Backspace in an empty line keeps deleting in the pane when the keyboard reports it
+          // (a hardware keyboard does; Gboard does not, so the key bar also has ⌫).
           if (nativeEvent.key === 'Backspace' && sent.current === '') onSend(TERMINAL_BACKSPACE);
         }}
         onSubmitEditing={() => {
