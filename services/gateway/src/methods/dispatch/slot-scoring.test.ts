@@ -264,6 +264,9 @@ test('a phone slot whose device is not attached is never selected; an emulator s
   );
   assert.equal(validateSlotForDispatch(phone, [phone]), unattachedDeviceBlocker(phone));
   assert.equal(findBestSlot([phone], 'demo-farm'), null);
+  // Fleet health can be minutes old: a pinned or picked phone that was plugged back in
+  // is left to dispatch's live device check.
+  assert.equal(validateSlotForDispatch(phone, [phone], { explicitSlot: true }), null);
   // Prepare boots an emulator, so an emulator slot that is off stays selectable.
   assert.equal(unattachedDeviceBlocker(emulator), null);
   assert.equal(findBestSlot([phone, emulator], 'demo-farm')?.slot, 'emulator');

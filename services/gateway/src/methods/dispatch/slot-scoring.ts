@@ -559,6 +559,11 @@ export function validateSlotForDispatch(
     requiredCapabilities?: readonly string[];
     capabilityCatalogs?: SlotCapabilityCatalogs;
     automaticLoads?: ReadonlyMap<string, AutomaticSlotLoad>;
+    /**
+     * An operator-named slot (a pin or a pick). Fleet device health can be minutes
+     * old, so a phone plugged back in is left to dispatch's own live check.
+     */
+    explicitSlot?: boolean;
   },
 ): string | null {
   return (
@@ -568,7 +573,7 @@ export function validateSlotForDispatch(
       releasableBranchHolderIds: options?.releasableBranchHolderIds,
     }) ??
     companionResourceBlocker(slot, options?.requiredPrepareProfile) ??
-    unattachedDeviceBlocker(slot) ??
+    (options?.explicitSlot ? null : unattachedDeviceBlocker(slot)) ??
     slotCapabilityBlocker(slot.slot, options?.requiredCapabilities, options?.capabilityCatalogs) ??
     slotRepoBlocker(slot, options)
   );
