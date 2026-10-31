@@ -5,6 +5,10 @@
 - The native host removes a queued message on request (`cancelCommand`, and `native.worker.cancelCommand` under the worker's lease), persisting it as failed, never submitted and `cancelled` before it replies. A message already submitted, unknown, settled or of another lease is refused. Sessions on this host report `capabilities.cancelQueued`; a host started before the upgrade refuses the request as an unknown method.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.15 - 2026-10-31
+
+- A native session supervisor stops its host and exits when its home directory is removed, instead of running on with its process census (`ps` about ten times a second). Tests and smokes that delete their temp home no longer leak native host stacks.
+
 ## 0.39.14 - 2026-10-31
 
 - `repinTask` retains a task checkout's changed provider in a new pin, replaces the task's selection and receipt, and points the generated marker at the new CLI. The previous pin keeps the original receipt (ADR-068 Amendment 8).

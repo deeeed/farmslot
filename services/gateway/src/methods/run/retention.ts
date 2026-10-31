@@ -170,7 +170,12 @@ export const RUN_RETENTION_DEPS: RunRetentionDeps = {
   holdsSlot: runHoldsSlot,
   openPrs: readOpenPrs,
   projectRepo,
-  withBundleLock: async (operation) => withRunBundleStoreLock(await runBundleStore(), operation),
+  // The pass walks every eligible run's storage under the lock; waiters allow it an hour.
+  withBundleLock: async (operation) =>
+    withRunBundleStoreLock(await runBundleStore(), operation, {
+      label: 'run retention pass',
+      holdLimitMs: 60 * 60_000,
+    }),
 };
 
 /** Archive only eligible run-owned storage. Live and archived run records stay in place forever. */

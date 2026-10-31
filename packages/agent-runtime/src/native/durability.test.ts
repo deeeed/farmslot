@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import fs, {
@@ -91,6 +91,48 @@ function setup() {
     },
   };
 }
+
+test('a supervisor whose home is removed stops its host instead of running on', async () => {
+  const fixture = setup();
+  // Supervisor and host carry the unique home in their argv, so a failed or slow start
+  // can still be found and killed even before host.json names them.
+  const stack = () =>
+    (spawnSync('pgrep', ['-f', fixture.root], { encoding: 'utf8' }).stdout ?? '')
+      .split('\n')
+      .filter(Boolean)
+      .map(Number);
+  try {
+    await new NativeSessionClient(fixture.root).list('owner');
+    const supervisor = readJson<HostIdentity>(join(fixture.root, 'host.json')).pid;
+    const host = readJson<{ pid: number }>(join(fixture.root, 'worker.json')).pid;
+    rmSync(fixture.root, { recursive: true, force: true });
+    const deadline = Date.now() + 4_000;
+    while ((alive(supervisor) || alive(host)) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(alive(host), false, 'the host stopped');
+    assert.equal(alive(supervisor), false, 'the supervisor exited');
+  } finally {
+    // The detached supervisor leads its own process group, which its host and census
+    // `ps` join; killing the group reaches a host forked after a snapshot. A host whose
+    // group is gone is killed directly. Teardown is confirmed, never assumed.
+    const kill = (pid: number) => {
+      for (const target of [-pid, pid])
+        try {
+          process.kill(target, 'SIGKILL');
+        } catch (error) {
+          if (!['ESRCH', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? ''))
+            throw error;
+        }
+    };
+    const deadline = Date.now() + 3_000;
+    while (stack().length && Date.now() < deadline) {
+      stack().forEach(kill);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    fixture.restore();
+    assert.deepEqual(stack(), [], 'no supervisor or host outlives the test');
+  }
+});
 
 for (const mode of ['startup', 'periodic', 'persistent'] as const) {
   test(`supervisor ${mode} census failure stops its host and preserves cleanup truth`, async () => {
