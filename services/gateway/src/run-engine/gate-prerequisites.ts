@@ -323,12 +323,21 @@ export async function readGateRecordedEvidence(
     throw new Error(
       'A required QA case is absent from the captured output. Refresh the artifact mirror.',
     );
-  const sources = await readFrozenRecordedEvidenceSources(
-    captured,
-    inventory,
-    [],
-    captured.output?.artifactBundle,
-  );
+  // QA selects its own cases below. Other output reviews read the worker's selected
+  // attempt, as a publication gate does, never the failing baseline it also retains.
+  const sources = qa
+    ? await readFrozenRecordedEvidenceSources(
+        captured,
+        inventory,
+        [],
+        captured.output?.artifactBundle,
+      )
+    : await readFrozenPublicationRecipeSources(
+        captured,
+        inventory,
+        [],
+        captured.output?.artifactBundle,
+      );
   let applicable = sources;
   if (run.flowType === 'qa') {
     // QA owns case selection and revision checks. Retained failed attempts are
