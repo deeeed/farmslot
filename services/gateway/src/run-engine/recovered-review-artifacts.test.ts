@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, test, type TestContext } from 'node:test';
@@ -225,6 +225,25 @@ async function fixture(t: TestContext, scenario = 'matching') {
     captureCalls: () => captureCalls,
   };
 }
+
+test('a repeated worker artifact copy keeps unchanged mirror files and refreshes changed ones', async (t) => {
+  const f = await fixture(t);
+  // With no project file the copy reads the worker's default `.task` dir in the slot repo.
+  const slotRepo = path.resolve(f.taskDir, '../../..');
+  const notes = path.join(slotRepo, '.task', path.basename(f.taskDir), 'artifacts/notes');
+  await mkdir(notes, { recursive: true });
+  await writeFile(path.join(notes, 'kept.txt'), 'unchanged worker output\n');
+  await writeFile(path.join(notes, 'edited.txt'), 'first worker output\n');
+  await copyWorkerArtifacts(f.run.id);
+  const mirror = path.join(f.gatewayDir, 'artifacts/notes');
+  const before = new Date('2026-01-01T00:00:00.000Z');
+  for (const name of ['kept.txt', 'edited.txt'])
+    await utimes(path.join(mirror, name), before, before);
+  await writeFile(path.join(notes, 'edited.txt'), 'second worker output\n');
+  await copyWorkerArtifacts(f.run.id);
+  assert.equal((await stat(path.join(mirror, 'kept.txt'))).mtimeMs, before.getTime());
+  assert.equal(await readFile(path.join(mirror, 'edited.txt'), 'utf8'), 'second worker output\n');
+});
 
 test('an ingested PASS regains its launch snapshot and exact structured result without a new review', async (t) => {
   const f = await fixture(t);
