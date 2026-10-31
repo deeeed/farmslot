@@ -232,19 +232,76 @@ export async function openRunBundleStore(input: {
   return binding;
 }
 
+const STORE_LOCK = 'bundle-store.lock';
+
 /** One cross-process lock covers capacity reservations, commit and GC. */
-export function withRunBundleStoreLock<T>(store: RunBundleStore, fn: () => Promise<T>): Promise<T> {
-  return withBundleLock(store, 'bundle-store.lock', fn);
+export function withRunBundleStoreLock<T>(
+  store: RunBundleStore,
+  fn: () => Promise<T>,
+  hold: BundleLockHold = {},
+): Promise<T> {
+  return withBundleLock(store, STORE_LOCK, hold, fn);
 }
 
-const bundleLockQueues = new Map<string, Promise<unknown>>();
+/**
+ * What a holder declares about itself: waiters name it, and fail only once it has
+ * held the lock past `holdLimitMs`. A long queue of healthy holders is not a stall.
+ */
+export interface BundleLockHold {
+  label?: string;
+  holdLimitMs?: number;
+}
+
+const bundleLockQueues = new Map<string, Promise<void>>();
+const bundleLockHolders = new Map<string, { label: string; since: number; holdLimitMs: number }>();
+// A healthy store-lock holder finishes in minutes even on a loaded gateway; a repair
+// holds its own lock for a whole media transfer. Past these, waiters treat it as stalled.
+const STORE_LOCK_HOLD_LIMIT_MS = 15 * 60_000;
+const REPAIR_LOCK_HOLD_LIMIT_MS = 60 * 60_000;
+const STALL_CHECK_MS = 10_000;
+const SLOW_LOCK_WAIT_MS = 10_000;
+
+/** True once `turn` resolves, false if `ms` passes first. */
+function resolvedWithin(turn: Promise<true>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    turn,
+    new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** Waits for `previous` (which never rejects); rejects once this process's holder is past its limit. */
+async function waitForBundleLockTurn(
+  previous: Promise<void>,
+  lockfilePath: string,
+  name: string,
+  enqueuedAt: number,
+): Promise<void> {
+  const turn = previous.then(() => true as const);
+  for (;;) {
+    const holder = bundleLockHolders.get(lockfilePath);
+    const untilStalled = holder
+      ? holder.since + holder.holdLimitMs - Date.now() + 1
+      : STALL_CHECK_MS;
+    if (await resolvedWithin(turn, Math.max(1, Math.min(untilStalled, STALL_CHECK_MS)))) return;
+    const current = bundleLockHolders.get(lockfilePath);
+    if (!current || Date.now() - current.since <= current.holdLimitMs) continue;
+    const message = `Run bundle lock ${name} has been held by ${current.label} for ${Math.round((Date.now() - current.since) / 1000)}s, past its ${Math.round(current.holdLimitMs / 1000)}s limit; gave up after waiting ${Math.round((Date.now() - enqueuedAt) / 1000)}s. Retry once it finishes.`;
+    console.warn(`[run-bundle] ${message}`);
+    throw Object.assign(new Error(message), { code: 'ELOCKED', file: lockfilePath });
+  }
+}
 
 async function withBundleLock<T>(
   store: RunBundleStore,
   name: string,
+  hold: BundleLockHold,
   fn: () => Promise<T>,
 ): Promise<T> {
   const options = bundleLockOptions(store, name);
+  const enqueuedAt = Date.now();
   const execute = async () => {
     let release: () => Promise<void>;
     try {
@@ -263,24 +320,41 @@ async function withBundleLock<T>(
         { code: 'ELOCKED', file: options.lockfilePath },
       );
     }
+    const holder = {
+      label: hold.label ?? name,
+      since: Date.now(),
+      holdLimitMs: hold.holdLimitMs ?? STORE_LOCK_HOLD_LIMIT_MS,
+    };
+    const waited = holder.since - enqueuedAt;
+    if (waited >= SLOW_LOCK_WAIT_MS)
+      console.warn(
+        `[run-bundle] ${holder.label} waited ${(waited / 1000).toFixed(1)}s for ${name}`,
+      );
+    bundleLockHolders.set(options.lockfilePath, holder);
     try {
       return await fn();
     } finally {
+      if (bundleLockHolders.get(options.lockfilePath) === holder)
+        bundleLockHolders.delete(options.lockfilePath);
       await release();
     }
   };
   // Local work queues behind its owner instead of spending filesystem retries
   // while that same process captures, repairs or collects another run's bytes.
-  // A failed operation still rejects its caller; the next operation can proceed.
+  // A failed or timed-out caller rejects alone: the queue tail settles only once
+  // its predecessors have, so later callers still line up behind the holder.
   const previous = bundleLockQueues.get(options.lockfilePath) ?? Promise.resolve();
-  const pending = previous.then(execute, execute);
-  bundleLockQueues.set(options.lockfilePath, pending);
-  try {
-    return await pending;
-  } finally {
-    if (bundleLockQueues.get(options.lockfilePath) === pending)
+  const pending = waitForBundleLockTurn(previous, options.lockfilePath, name, enqueuedAt).then(
+    execute,
+  );
+  // Completion only: a tail keeps no result alive once its own work has settled.
+  const tail = Promise.allSettled([previous, pending]).then(() => undefined);
+  bundleLockQueues.set(options.lockfilePath, tail);
+  void tail.then(() => {
+    if (bundleLockQueues.get(options.lockfilePath) === tail)
       bundleLockQueues.delete(options.lockfilePath);
-  }
+  });
+  return pending;
 }
 
 function bundleLockOptions(store: RunBundleStore, name: string) {
@@ -531,7 +605,7 @@ export async function reserveRunBundleMetadata(
       ]).finally(() => clearTimeout(timer))
     : 0;
   // Only the read-only scan is raced. A timed-out scan cannot later reserve or start work.
-  return withRunBundleStoreLock(store, async () => {
+  return withBundleLock(store, STORE_LOCK, { label: `admission of run ${runId}` }, async () => {
     if (await readOptional(file)) return;
     const bytes = Math.min(1024 ** 2, policy.metadataReserveBytes);
     const reserved = await reservedMetadataBytes(store);
@@ -657,7 +731,8 @@ async function completeRetainedPayloads(
       pending.push([key, meta]);
     }
     let remaining = 0;
-    const admitted = await withRunBundleStoreLock(request.store, async () => {
+    const admission = { label: `media admission of run ${request.run.id}` };
+    const admitted = await withBundleLock(request.store, STORE_LOCK, admission, async () => {
       const selected: typeof pending = [];
       if (!pending.length) return selected;
       let storeAvailable =
@@ -1019,7 +1094,7 @@ export async function collectRunBundleGarbage(
 ): Promise<{ reclaimedBytes: number; prunedPaths: string[] }> {
   await assertStorePairing(store);
   assertPolicy(policy);
-  return withRunBundleStoreLock(store, async () => {
+  return withBundleLock(store, STORE_LOCK, { label: 'bundle garbage collection' }, async () => {
     const { cleanup, referenced, pinned, committedIntents } = await runBundleHousekeepingInventory(
       store,
       now,
@@ -1098,7 +1173,8 @@ export async function materializeRunBundle(
   assertPolicy(policy);
   const acquisitionScan = await acquisitionBytes(request.farmslotRoot);
   const acquisitionSize = acquisitionScan.bytes;
-  const captured = await withRunBundleStoreLock(store, async () => {
+  const capture = { label: `capture of run ${run.id}` };
+  const captured = await withBundleLock(store, STORE_LOCK, capture, async () => {
     const taskKey = run.id;
     const intentPath = path.join(
       store.runsDir,
@@ -1321,7 +1397,8 @@ export async function materializeRunBundle(
       throw error;
     }
   });
-  return withBundleLock(store, repairLockName(captured.ref.bundleDigest), async () => {
+  const repair = { label: `repair of run ${run.id}`, holdLimitMs: REPAIR_LOCK_HOLD_LIMIT_MS };
+  return withBundleLock(store, repairLockName(captured.ref.bundleDigest), repair, async () => {
     const missingData = await completeRetainedPayloads(
       request,
       captured.ref,
@@ -1329,7 +1406,7 @@ export async function materializeRunBundle(
       captured.manifest,
       acquisitionSize,
     );
-    return withRunBundleStoreLock(store, async () => {
+    return withBundleLock(store, STORE_LOCK, { label: `commit of run ${run.id}` }, async () => {
       await readRetainedRunBundle(store, captured.ref, run.id);
       await request.commit(captured.ref, missingData);
       const intentPath = path.join(
