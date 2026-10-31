@@ -24,6 +24,7 @@ import '../chat/native-session-view.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, subscribe } from '../../state.js';
+import { queueNativeChatContext, terminalChatContext } from '../chat/native-chat-context.js';
 import {
   heldDataIsSaved,
   isSupersededRead,
@@ -1180,6 +1181,7 @@ export class TerminalView extends TerminalViewState {
       this._terminal.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
       // Auto-copy when selection changes (debounced — copies after user stops selecting)
       this._xtermSelectionDisposable = this._terminal.onSelectionChange(() => {
+        this._hasSelection = Boolean(this._terminal?.getSelection().trim());
         clearTimeout(this._selectionCopyTimer);
         this._selectionCopyTimer = setTimeout(() => {
           const sel = this._terminal?.getSelection();
@@ -1189,6 +1191,7 @@ export class TerminalView extends TerminalViewState {
     } else {
       this._xtermSelectionDisposable?.dispose();
       this._xtermSelectionDisposable = undefined;
+      this._hasSelection = false;
       clearTimeout(this._selectionCopyTimer);
       // Re-enable: bounce the PTY size so tmux does a full redraw and re-sends mouse mode.
       // A same-size resize is a no-op, so shrink by 1 col then restore.
@@ -1244,6 +1247,16 @@ export class TerminalView extends TerminalViewState {
     this._terminal?.focus();
   }
 
+  private _selectNative(contextId: string | null) {
+    this.dispatchEvent(
+      new CustomEvent('native-context-selected', {
+        detail: { contextId },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   private _renderTmuxToolbar() {
     if (!this.slotId && this.runId && !this._workerRef()) return null;
     return renderTmuxToolbar({
@@ -1253,14 +1266,14 @@ export class TerminalView extends TerminalViewState {
       windows: this._tmuxWindows,
       nativeWorkers: this.nativeWorkers,
       selectedNativeKey: this.nativeWorker ? nativeWorkerAttemptKey(this.nativeWorker) : '',
-      selectNative: (contextId) =>
-        this.dispatchEvent(
-          new CustomEvent('native-context-selected', {
-            detail: { contextId },
-            bubbles: true,
-            composed: true,
-          }),
-        ),
+      selectNative: (contextId) => this._selectNative(contextId),
+      hasSelection: this._hasSelection,
+      addToChat: (tab) => {
+        const context = terminalChatContext(this._terminal?.getSelection() ?? '');
+        if (!context) return;
+        queueNativeChatContext(tab.key, context);
+        this._selectNative(tab.target.contextId);
+      },
       renaming: this._renaming,
       renameValue: this._renameValue,
       setRenameValue: (value) => {

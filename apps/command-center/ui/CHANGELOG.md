@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A slot terminal can hand selected output to its native conversation: in Select mode, "Add to <conversation>" puts the selection in that conversation's message as a code block and opens it. Nothing is sent until the reader sends it.
 - A link in a chat or native conversation message opens in a new tab instead of replacing Command Center.
 - A queued native message the session never took (it was closed meanwhile) goes back to the composer, ahead of anything typed since, instead of disappearing. The sent message's label shows its delivery state, such as "Queued for the next turn", instead of a fixed "Delivery unconfirmed".
 - A native conversation's unconfirmed message follows the shared client-cache rule for when the conversation shows it, as Companion does.

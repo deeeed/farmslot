@@ -69,6 +69,30 @@ export interface TmuxToolbarContext {
   nativeWorkers?: ReturnType<typeof nativeWorkerTabs>;
   selectedNativeKey?: string;
   selectNative?: (contextId: string | null) => void;
+  /** Select mode has a non-empty selection. */
+  hasSelection?: boolean;
+  addToChat?: (tab: ReturnType<typeof nativeWorkerTabs>[number]) => void;
+}
+
+/** One button per writable native conversation; enabled once text is selected in select mode. */
+function renderAddToChat(ctx: TmuxToolbarContext) {
+  const ready = ctx.selectMode && Boolean(ctx.hasSelection);
+  return (ctx.nativeWorkers ?? [])
+    .filter((tab) => !tab.target.readOnly)
+    .map(
+      (tab) =>
+        html`<button
+          class="tmux-btn"
+          data-testid="terminal-add-to-chat"
+          ?disabled=${!ready}
+          title=${ready
+            ? `Add the selected text to ${tab.label}'s message`
+            : 'Select text first: switch to Select, then drag over the output'}
+          @click=${() => ctx.addToChat?.(tab)}
+        >
+          Add to ${tab.label}
+        </button>`,
+    );
 }
 
 function renderTerminalWindowTabs(ctx: TmuxToolbarContext) {
@@ -192,6 +216,7 @@ export function renderTmuxToolbar(ctx: TmuxToolbarContext) {
       >
         ${ctx.selectMode ? 'Select' : 'Mouse'}
       </button>
+      ${renderAddToChat(ctx)}
 
       <div class="tmux-sep"></div>
 

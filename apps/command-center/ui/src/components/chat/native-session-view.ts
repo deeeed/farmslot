@@ -71,6 +71,7 @@ import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
 import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-controller.js';
 
+import { draftWithContext, takeNativeChatContext } from './native-chat-context.js';
 import type { NativeProfileSelection } from './native-profiles.js';
 import { renderNativeSessionHeader } from './native-session-header.js';
 import { observeNativeResource } from './native-session-observation.js';
@@ -78,6 +79,7 @@ import { renderNativeSessionRequest } from './native-session-request.js';
 import { nativeSessionStyles } from './native-session-styles.js';
 import {
   assertNativeWorkerViewPage,
+  nativeWorkerAttemptKey,
   nativeWorkerViewControl,
   nativeWorkerViewKey,
   nativeWorkerViewPin,
@@ -658,6 +660,12 @@ ${JSON.stringify(
 
   private loadLocal() {
     this.draft = safeLsGet(this.sessionKey(`draft:${this.selectedId}`)) ?? '';
+    // Terminal text the reader added to this conversation before it opened.
+    const context = this.worker && takeNativeChatContext(nativeWorkerAttemptKey(this.worker));
+    if (context) {
+      this.draft = draftWithContext(this.draft, context);
+      safeLsSet(this.sessionKey(`draft:${this.selectedId}`), this.draft);
+    }
     const raw = safeLsGet(this.sessionKey(`command:${this.selectedId}`));
     this.localCommand = undefined;
     this.invalidDelivery = false;
