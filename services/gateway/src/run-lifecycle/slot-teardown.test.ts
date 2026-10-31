@@ -321,9 +321,15 @@ mock.module('../fleet/resource-manager.js', {
 });
 
 const realRelease = await import('../methods/slot/release.js');
+let blindReleases: string[] = [];
+let blindRelease: { released: boolean; reason?: string } | undefined;
 mock.module('../methods/slot/release.js', {
   namedExports: {
     ...realRelease,
+    releaseFinishedBlindTrialSlot: async (target: Run) => {
+      blindReleases.push(target.id);
+      return blindRelease;
+    },
     killSlotAgents: async (slotId: string) => {
       slotAgentKills.push(slotId);
       if (slotAgentKillError) throw slotAgentKillError;
@@ -366,6 +372,8 @@ const run = {
 const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENTITY}'`));
 
 beforeEach(() => {
+  blindReleases = [];
+  blindRelease = undefined;
   run.status = 'cancelled';
   idleReturnResult = { kind: 'unavailable', reason: 'No fixture Git checkout' };
   idleReturnCalls = 0;
@@ -1114,6 +1122,50 @@ for (const state of ['successor', 'handoff'] as const) {
     assert.equal(run.slotReclaimed, undefined);
   });
 }
+
+for (const status of ['done', 'failed'] as const) {
+  test(`a ${status} blind trial restores and returns its slot once the run gives it up`, async () => {
+    run.status = status;
+    blindRelease = { released: true };
+    assert.deepEqual(await releaseCompletedRunSlot(run), { released: true });
+    assert.deepEqual(blindReleases, [RUN_ID]);
+    assert.equal(runUpdates.at(-1)?.slotTeardownSkipped, undefined);
+    blindReleases = [];
+    blindRelease = { released: false, reason: 'restore refused' };
+    slotRow = { current_run_id: RUN_ID, slot_epoch: 2 };
+    assert.deepEqual(await releaseCompletedRunSlot(run), {
+      released: false,
+      skipped: 'restore refused',
+    });
+  });
+}
+
+test('a blind trial whose run keeps the slot is never force-released', async () => {
+  run.status = 'done';
+  configuredResources = slotRuntimeResources();
+  shutdownFailure = 'dev-server';
+  blindRelease = { released: true };
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.deepEqual(blindReleases, []);
+  const cancel = defaultCancelCollaborators();
+  run.status = 'cancelled';
+  shutdownFailure = null;
+  slotRow = { current_run_id: RUN_ID, slot_epoch: 1 };
+  await cancel.releaseCapabilities(run);
+  await cancel.releaseSlot(run);
+  assertKeptForReplay();
+  assert.deepEqual(blindReleases, [], 'a cancelled trial keeps its isolation for replay');
+  otherRuns = [
+    {
+      ...run,
+      id: 'requester',
+      status: 'slot-finding',
+      steps: [{ name: 'find-slot', status: 'running' }],
+    },
+  ];
+  assert.equal(await reclaimCancelledSlot(SLOT_ID, 'requester'), true);
+  assert.deepEqual(blindReleases, [RUN_ID], 'reclaiming it restores the trial Git');
+});
 
 test('the engine cleans up a successful CI end that deferred no slot release', async () => {
   const { makeRun } = await import('../run-engine/test-fixtures.js');

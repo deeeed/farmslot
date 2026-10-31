@@ -308,6 +308,16 @@ export function defaultCancelCollaborators({
         const kept = await releaseRunSlotOwnership(run, fence, blocker, { keepForReplay });
         if (blocker) return { skipped: blocker };
         if (!kept) return { skipped: 'Slot ownership changed during cancellation' };
+        if (!keepForReplay) {
+          // A reclaimed blind trial must leave the slot on its original Git.
+          const { releaseFinishedBlindTrialSlot } = await import('../methods/slot/release.js');
+          const blind = await releaseFinishedBlindTrialSlot(
+            getRun(run.id) ?? run,
+            broadcastTransitionEvent,
+          );
+          if (blind && !blind.released)
+            return { skipped: blind.reason ?? 'Blind trial Git was not restored' };
+        }
         await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
         console.log(
           `[run-lifecycle] ${keepForReplay ? 'kept' : 'released'} slot ${run.slotId} for cancelled run ${run.id}`,

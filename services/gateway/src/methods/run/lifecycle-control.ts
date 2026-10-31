@@ -345,9 +345,34 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
 
 export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResult> {
   const { withTerminalTeardown } = await import('../../run-engine/terminal-teardown-registry.js');
-  return run.slotId
-    ? withTerminalTeardown(run.slotId, () => releaseCompletedRunSlotOnce(run))
-    : releaseCompletedRunSlotOnce(run);
+  const result = run.slotId
+    ? await withTerminalTeardown(run.slotId, () => releaseCompletedRunSlotOnce(run))
+    : await releaseCompletedRunSlotOnce(run);
+  return result.released || !run.slotId ? releaseFinishedBlindTrial(run, result) : result;
+}
+
+/** A released blind trial slot still needs its isolated Git restored before reuse. */
+async function releaseFinishedBlindTrial(
+  run: Run,
+  result: SlotReleaseResult,
+): Promise<SlotReleaseResult> {
+  const { releaseFinishedBlindTrialSlot } = await import('../slot/release.js');
+  const { recordSlotTeardownSkipped } = await import('../../run-lifecycle/slot-teardown.js');
+  try {
+    const blind = await releaseFinishedBlindTrialSlot(
+      getRun(run.id) ?? run,
+      (await import('../../server.js')).broadcastEvent,
+    );
+    if (!blind) return result;
+    // The checkout went back to idle, so a retained-checkout note no longer applies.
+    if (!blind.released) return { released: false, skipped: blind.reason };
+    await recordSlotTeardownSkipped(run, null);
+    return { released: true };
+  } catch (error) {
+    const reason = `Blind trial Git was not restored: ${(error as Error).message}`;
+    await recordSlotTeardownSkipped(run, reason);
+    return { released: false, skipped: reason };
+  }
 }
 
 async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult> {

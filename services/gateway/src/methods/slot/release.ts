@@ -13,6 +13,7 @@ import {
   isReviewerWindowName,
   isTerminalRunStatus,
   primaryRoleForFlow,
+  type Run,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
   type SlotReleaseResult,
@@ -1165,6 +1166,30 @@ async function slotReleaseImpl(
   emit('slot.release.done', { requestId, slotId: params.slotId, keepWarm });
   complete(0);
   return { released: true };
+}
+
+/**
+ * A finished blind trial gives its slot up still on its isolated Git. Its named
+ * forced release restores that Git and returns the checkout to idle; the
+ * candidate branch stays (ADR-030 Amendment 1) and the first output is frozen.
+ * A run that retains its workspace for completion replay or a result decision
+ * keeps it until that is settled.
+ */
+export async function releaseFinishedBlindTrialSlot(
+  run: Run,
+  emit: EventEmitter,
+): Promise<SlotReleaseResult | undefined> {
+  const isolation = run.engineState?.evalExperiment?.blind?.isolation;
+  if (
+    !isolation ||
+    !isTerminalRunStatus(run.status) ||
+    isCompletionPrerequisiteFailure(run) ||
+    isHeldForResultDecision(run)
+  )
+    return undefined;
+  if ((await readBlindTrialMarker(await loadSlotVars(isolation.slotId))) !== run.id)
+    return undefined;
+  return slotRelease({ slotId: isolation.slotId, expectedRunId: run.id, forceReset: true }, emit);
 }
 
 /** Tear down role windows and runner processes without running a full slot release. */
