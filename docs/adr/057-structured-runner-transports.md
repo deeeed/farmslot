@@ -334,7 +334,7 @@ Hosts keep their loaded code until stopped, so a session started on an older hos
 
 **Edit a queued message** = remove, then send again with a new command ID. The removed text returns to the composer through the existing dropped-message path (`nativeMessageDropped`), and the edited text goes to the end of the queue. There is no in-place edit: a command ID stays bound to its text, which keeps retries idempotent.
 
-Clients show Edit on the queued message they sent while `nativeMessageCancelable` holds: the session's host reports `capabilities.cancelQueued`, and the receipt is queued, unsubmitted and of the session's current generation.
+Clients show Edit on the queued message they sent while `nativeMessageCancelable` holds: the session reports `capabilities.cancelQueued`, and the receipt is queued, unsubmitted and of the session's current generation. The host reports the capability; the gateway withholds it from a pinned worker's read on a run whose worker messages are acceptance sources, since it refuses removal there.
 
 ### Rationale and consequences
 
@@ -344,4 +344,4 @@ Hosts keep their loaded code until stopped. A session on an older host reports n
 
 ### Public surface
 
-`native.session.cancel` (`NativeSessionCancelParams`, `NativeSessionCancelResult`), the receipt outcome `cancelled`, `NativeSessionCapabilities.cancelQueued` and the client-cache predicate `nativeMessageCancelable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `cancelCommand` and `native.worker.cancelCommand`, so it needs a release; native hosts started after it support removal. The gateway adds the method to its worker input fence, authorization map and native method lists, and Companion to its workspace method list. No CLI flag or harness change. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) defines the boundary.
+`native.session.cancel` (`NativeSessionCancelParams`, `NativeSessionCancelResult`), the receipt outcome `cancelled`, `NativeSessionCapabilities.cancelQueued` and the client-cache predicate `nativeMessageCancelable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `cancelCommand` and `native.worker.cancelCommand`, so it needs a release; native hosts started after it support removal. The gateway adds the method to its worker input fence, authorization map and native method lists, and withholds the capability where it refuses removal; Companion adds it to its workspace method list. No CLI flag or harness change. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) defines the boundary.

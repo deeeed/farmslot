@@ -4,11 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import { NATIVE_WORKER_CANCEL_COMMAND } from '@farmslot/agent-runtime/native';
+import { NATIVE_WORKER_CANCEL_COMMAND, NATIVE_WORKER_READ } from '@farmslot/agent-runtime/native';
 import {
   type AcceptanceRegistration,
   type AgentContext,
   Methods,
+  type NativeSessionReadResult,
   type NativeWorkerSessionBinding,
   type Principal,
 } from '@farmslot/protocol';
@@ -33,6 +34,7 @@ mock.module('./node.js', {
       method: string,
       params: Record<string, unknown>,
     ) => {
+      if (method === NATIVE_WORKER_READ) return snapshot;
       calls.push({ method, params });
       return { receipt: { commandId: params.commandId } };
     },
@@ -112,6 +114,57 @@ const target = {
   generation: binding.generation!,
   leaseId: binding.leaseId,
 };
+const snapshot: NativeSessionReadResult = {
+  session: {
+    id: binding.sessionId,
+    generation: 'generation',
+    hostPid: 1,
+    runner: 'codex',
+    nativeSessionId: 'conversation',
+    ownerPrincipalId: service.id,
+    executionNodeId: 'local',
+    accountContextId: 'account',
+    cwd: home,
+    executable: 'codex',
+    version: 'fixture',
+    mode: 'default',
+    accountMode: 'native',
+    workerManaged: true,
+    workerLeaseId: binding.leaseId,
+    state: 'running',
+    capabilities: {
+      modes: ['default'],
+      streaming: true,
+      tools: true,
+      approvals: false,
+      questions: false,
+      interrupt: true,
+      resume: true,
+      cancelQueued: true,
+    },
+  },
+  commands: [],
+  events: [],
+  pendingRequests: [],
+  cursor: 0,
+  hasMore: false,
+  scope: { leaseId: binding.leaseId, startAfter: 0, endAt: 0, released: false },
+};
+const registration: AcceptanceRegistration = {
+  schemaVersion: 1,
+  runId: run.id,
+  revision: 1,
+  intake: {
+    provider: 'github',
+    repository: 'example/repo',
+    prNumber: 1,
+    headSha: 'a'.repeat(40),
+    capturedAt: '2026-10-31T00:00:00Z',
+  },
+  original: [],
+  derived: [],
+  units: [],
+};
 const cancel = (commandId: unknown, pin = target) =>
   runWithSessionOriginator(admin, () =>
     nativeSessionRoute(
@@ -148,22 +201,26 @@ test('a pinned worker removes only a message its operator queued, through the in
     await assert.rejects(cancel(commandId), /Farmslot sent this worker instruction/);
   await assert.rejects(cancel('operator-message', { ...target, leaseId: 'stale' }), /stale/);
   await assert.rejects(cancel(undefined), /requires commandId/);
-  const registration: AcceptanceRegistration = {
-    schemaVersion: 1,
-    runId: run.id,
-    revision: 1,
-    intake: {
-      provider: 'github',
-      repository: 'example/repo',
-      prNumber: 1,
-      headSha: 'a'.repeat(40),
-      capturedAt: '2026-10-31T00:00:00Z',
-    },
-    original: [],
-    derived: [],
-    units: [],
-  };
   updateRun(run.id, { acceptanceRegistration: registration });
   await assert.rejects(cancel('operator-message'), /records worker messages for acceptance/);
   assert.equal(calls.length, 1);
+});
+
+test('a worker whose messages are acceptance sources reads without the removal capability', async () => {
+  const read = async () =>
+    (
+      (await runWithSessionOriginator(admin, () =>
+        nativeSessionRoute(
+          Methods.NATIVE_SESSION_READ,
+          { sessionId: binding.sessionId, executionNodeId: 'local', worker: target },
+          admin,
+        ),
+      )) as NativeSessionReadResult
+    ).session.capabilities;
+  updateRun(run.id, { acceptanceRegistration: undefined });
+  assert.equal((await read()).cancelQueued, true);
+  updateRun(run.id, { acceptanceRegistration: registration });
+  // The other capabilities pass through unchanged.
+  const { cancelQueued: _removal, ...others } = snapshot.session.capabilities;
+  assert.deepEqual(await read(), others);
 });

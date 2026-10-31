@@ -113,38 +113,23 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             value = manager.read(p.owner, p.id, p.after, p.limit);
             break;
           case 'send':
-            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
-              throw new Error(
-                'Native worker input requires its run context, generation and task lease',
-              );
+            manager.assertUnmanagedSession(p.owner, p.id);
             value = await manager.send(p.owner, p.id, p.commandId, p.text);
             break;
           case 'cancelCommand':
-            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
-              throw new Error(
-                'Native worker input requires its run context, generation and task lease',
-              );
+            manager.assertUnmanagedSession(p.owner, p.id);
             value = manager.cancelCommand(p.owner, p.id, p.commandId);
             break;
           case 'respond':
-            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
-              throw new Error(
-                'Native worker input requires its run context, generation and task lease',
-              );
+            manager.assertUnmanagedSession(p.owner, p.id);
             value = await manager.respond(p.owner, p.id, p.requestId, p.response);
             break;
           case 'interrupt':
-            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
-              throw new Error(
-                'Native worker input requires its run context, generation and task lease',
-              );
+            manager.assertUnmanagedSession(p.owner, p.id);
             value = await manager.interrupt(p.owner, p.id);
             break;
           case 'close':
-            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
-              throw new Error(
-                'Native worker input requires its run context, generation and task lease',
-              );
+            manager.assertUnmanagedSession(p.owner, p.id);
             value = await manager.close(p.owner, p.id);
             break;
         }

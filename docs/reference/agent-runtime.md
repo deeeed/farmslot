@@ -314,7 +314,9 @@ a repeated call returns the same receipt. It refuses a command that was submitte
 unknown, settled otherwise, or belongs to another generation or worker lease. Removal and
 the queue's own submission are each decided synchronously on the host's event loop, so
 exactly one wins. Sessions on a host that removes queued commands report
-`capabilities.cancelQueued`; an older host refuses the method as unknown
+`capabilities.cancelQueued`, except in a pinned worker read the gateway serves for a run
+whose worker messages are acceptance sources, where the gateway refuses removal. An older
+host refuses the method as unknown
 ([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)).
 `read` accepts `after` and `limit`, returns a cursor and `hasMore`, and exposes the
 latest 100 receipts. Older IDs remain deduplicated across process generations;

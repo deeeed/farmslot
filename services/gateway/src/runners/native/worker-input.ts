@@ -5,6 +5,7 @@ import {
   NATIVE_WORKER_SEND,
 } from '@farmslot/agent-runtime/native';
 import {
+  type AgentContext,
   isTerminalRunStatus,
   Methods,
   type NativeWorkerControlTarget,
@@ -30,6 +31,17 @@ export const NATIVE_WORKER_INPUT_METHODS: readonly string[] = [
   Methods.NATIVE_SESSION_CANCEL,
   Methods.NATIVE_SESSION_CLOSE,
 ];
+
+/**
+ * Each message to this pinned worker becomes an acceptance source, which the run's ledger cannot
+ * withdraw: a message is sent through it, and a queued one cannot be removed.
+ */
+export function nativeWorkerRecordsAcceptance(
+  run: Pick<Run, 'acceptanceRegistration' | 'slotId'>,
+  context: Pick<AgentContext, 'role'> | undefined,
+): boolean {
+  return !!run.acceptanceRegistration && !!context && context.role !== 'review' && !!run.slotId;
+}
 
 /** Commands Farmslot itself sent a run's workers: tasks, subtasks, recoveries and instructions. */
 function farmslotIssuedCommand(run: Run, commandId: string): boolean {
@@ -137,9 +149,8 @@ async function routePinnedWorkerInput(
     generation: target.generation,
     leaseId: target.leaseId,
   };
-  // This run records each worker message as an acceptance source.
-  const acceptanceRecorded = !!run.acceptanceRegistration && context.role !== 'review' && !!slotId;
-  if (method === Methods.NATIVE_SESSION_SEND && acceptanceRecorded) {
+  const acceptanceRecorded = nativeWorkerRecordsAcceptance(run, context);
+  if (method === Methods.NATIVE_SESSION_SEND && acceptanceRecorded && slotId) {
     if (typeof params.commandId !== 'string' || typeof params.text !== 'string')
       throw new GatewayMethodError('INVALID_PARAMS', 'Worker message requires commandId and text');
     const { operatorMessage } = await import('../../methods/run/operator-message.js');

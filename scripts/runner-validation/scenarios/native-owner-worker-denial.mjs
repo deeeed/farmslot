@@ -105,6 +105,7 @@ export async function runScenario({ explicit, outDir }) {
       Methods.NATIVE_SESSION_SEND,
       Methods.NATIVE_SESSION_RESPOND,
       Methods.NATIVE_SESSION_INTERRUPT,
+      Methods.NATIVE_SESSION_CANCEL,
       Methods.NATIVE_SESSION_CLOSE,
       Methods.NATIVE_SESSION_WORKSPACE_READ,
     ]) {

@@ -221,6 +221,8 @@ export async function confirmNativeWorkerStopped(runId: string, contextId?: stri
   if (!result.session.processStopped) throw new Error('Native stop confirmation was not recorded');
 }
 
+// worker-input.ts refuses removal of Farmslot's own commands by this deny-list: a new Farmslot send
+// path must derive its IDs here (and match them below) or bind them on the context.
 export function nativeWorkerInstructionCommandId(
   runId: string,
   binding: NativeWorkerSessionBinding,

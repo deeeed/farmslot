@@ -758,6 +758,12 @@ export class NativeSessionManager {
     if (record.workerLeaseError && !closing) throw record.workerLeaseError;
   }
 
+  /** Standalone input only: a worker's input carries its run context, generation and lease. */
+  assertUnmanagedSession(owner: string, id: string): void {
+    if (this.owned(owner, id, this.processObservations).info.workerManaged)
+      throw new Error('Native worker input requires its run context, generation and task lease');
+  }
+
   async closeWorker(
     owner: string,
     id: string,
@@ -1326,11 +1332,20 @@ export class NativeSessionManager {
         command.leaseId !== record.info.workerLeaseId
       )
         throw new Error('Queued input belongs to a different generation or worker lease');
+      const { state } = command;
       command.queued = false;
       command.state = 'failed';
       command.outcome = 'cancelled';
-      // Durable before the reply: a lost reply still leaves the message removed, never sent.
-      this.persist(record);
+      try {
+        // Durable before the reply: a lost reply still leaves the message removed, never sent.
+        this.persist(record);
+      } catch (error) {
+        // Not durable, so not removed: a host restart would still submit it. A retry persists.
+        command.queued = true;
+        command.state = state;
+        delete command.outcome;
+        throw error;
+      }
     }
     const { text: _text, leaseId: _leaseId, ...receipt } = command;
     return receipt;
