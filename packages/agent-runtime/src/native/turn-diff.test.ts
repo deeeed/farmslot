@@ -15,6 +15,7 @@ import {
 import { NativeCheckpoints } from './checkpoint.js';
 import { NativeSessionClient } from './client.js';
 import { routeNativeSession } from './service.js';
+import { gitEnvironment } from './workspace.js';
 
 /** A host whose only answer is this session's history, paged as `read` pages it. */
 class HistoryClient extends NativeSessionClient {
@@ -39,20 +40,18 @@ class HistoryClient extends NativeSessionClient {
 
 test('a turn diff is served for a file its turn.changes event lists, and nothing else', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'native-turn-diff-'));
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
-  );
+  const indexDir = mkdtempSync(join(tmpdir(), 'native-turn-diff-index-'));
   const git = (...args: string[]) =>
     execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@localhost', ...args], {
       cwd,
-      env,
+      env: gitEnvironment(),
     });
   try {
     git('init', '-q', '-b', 'main');
     writeFileSync(join(cwd, 'a.txt'), 'one\n');
     git('add', '.');
     git('commit', '-q', '-m', 'base');
-    const checkpoints = (await NativeCheckpoints.open(cwd, 'session'))!;
+    const checkpoints = (await NativeCheckpoints.open(cwd, 'session', { indexDir }))!;
     const from = await checkpoints.take();
     writeFileSync(join(cwd, 'a.txt'), 'one\ntwo\n');
     const to = await checkpoints.take();
@@ -96,7 +95,11 @@ test('a turn diff is served for a file its turn.changes event lists, and nothing
     await assert.rejects(diff({ sequence: 2, path: 'other.txt' }), /lists no such changed file/);
     await assert.rejects(diff({ sequence: 1, path: 'a.txt' }), /lists no such changed file/);
     await assert.rejects(diff({ sequence: 0, path: 'a.txt' }), /positive integer/);
+    // Once the session's checkpoints are deleted, its diffs are no longer retained.
+    await checkpoints.remove();
+    await assert.rejects(diff({ sequence: 2, path: 'a.txt' }), /no longer retained/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
+    rmSync(indexDir, { recursive: true, force: true });
   }
 });

@@ -101,7 +101,12 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
         entries.push(entry);
         plans.set(identity, entry);
       }
-    } else if (event.type === 'turn.changes' && event.changes) {
+    } else if (
+      event.type === 'turn.changes' &&
+      event.changes &&
+      // A turn that changed nothing adds no row; one whose changes are unavailable says why.
+      (event.changes.files.length || event.changes.unavailable)
+    ) {
       entries.push({
         key: event.sequence,
         kind: 'changes',

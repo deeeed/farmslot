@@ -291,6 +291,11 @@ export const nativeSessionStyles = css`
     width: 100%;
     text-align: left;
   }
+  .turn-files diff-review {
+    display: block;
+    max-height: 480px;
+    overflow: auto;
+  }
   .composer {
     flex-shrink: 0;
     max-height: 70%;

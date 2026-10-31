@@ -885,6 +885,14 @@ test('the files a turn changed are one entry after it, summed, or why they are u
     ['turn.completed', 'turn.changes'],
   );
   assert.equal(nativeTurnChangesText({ files: [] }), 'No file changes');
+  // A turn that changed nothing adds no row.
+  assert.deepEqual(
+    nativeTimeline([
+      event(3, 'turn.completed'),
+      { ...event(4, 'turn.changes'), changes: { from: 'a', to: 'a', files: [] } },
+    ]).map((entry) => entry.kind),
+    ['status'],
+  );
   assert.equal(
     nativeTurnChangesText({
       files: [{ path: 'a', status: 'deleted', additions: 0, deletions: 2 }],

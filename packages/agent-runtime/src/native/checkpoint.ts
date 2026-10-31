@@ -1,5 +1,4 @@
-import { spawn } from 'node:child_process';
-import { copyFile, lstat, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, rm, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -22,15 +21,19 @@ const IDENTITY = {
   GIT_COMMITTER_EMAIL: 'farmslot@localhost',
 };
 
+const refPrefix = (sessionId: string) => `${REF_ROOT}/${sessionId}`;
+
 /**
  * A session's checkpoints: commits of its Git working tree's content, untracked files Git does not
- * ignore included, built in a temporary index seeded from the worktree's own index (so Git's stat
- * cache hashes only files changed since), with `HEAD` as parent. The worktree, its index, `HEAD`
- * and every branch stay untouched. One Git call per step, never one per file.
+ * ignore included, with `HEAD` as parent. They are built in the session's own index, seeded from
+ * the worktree's index and reseeded only when that changes, so Git's stat cache hashes only files
+ * changed since the previous checkpoint, tracked or not. The worktree, its index, `HEAD` and every
+ * branch stay untouched. One Git call per step, never one per file; steps run one at a time.
  */
 export class NativeCheckpoints {
   private last?: { commit: string; tree: string };
-  /** The latest step; steps run one at a time, so ref transactions never race. */
+  /** The worktree index the session's index was seeded from. */
+  private seeded?: string;
   private queue: Promise<unknown> = Promise.resolve();
 
   private constructor(
@@ -39,25 +42,40 @@ export class NativeCheckpoints {
     private readonly prefix: string,
     private refs: string[],
     private readonly kept: number,
+    private readonly indexDir: string,
   ) {}
 
-  /** Checkpoints for a session whose working directory is in a Git working tree, or none. */
+  /**
+   * Checkpoints for a session whose working directory is in a Git working tree, or none.
+   * `indexDir` holds the session's index (a fresh temporary directory by default); `remove`
+   * deletes it with the refs.
+   */
   static async open(
     cwd: string,
     sessionId: string,
-    kept = NATIVE_CHECKPOINTS_KEPT,
+    options: { kept?: number; indexDir?: string } = {},
   ): Promise<NativeCheckpoints | undefined> {
     const located = await git(cwd, ['rev-parse', '--show-toplevel', '--absolute-git-dir']).catch(
       () => undefined,
     );
     if (!located) return undefined;
     const [root, gitDir] = located.trim().split('\n');
-    const prefix = `${REF_ROOT}/${sessionId}`;
+    const prefix = refPrefix(sessionId);
     const refs = (await git(root, ['for-each-ref', '--format=%(refname)', `${prefix}/`]))
       .split('\n')
       .filter(Boolean)
       .sort();
-    return new NativeCheckpoints(root, gitDir, prefix, refs, kept);
+    const indexDir =
+      options.indexDir ?? (await mkdtemp(path.join(tmpdir(), 'farmslot-checkpoint-')));
+    await mkdir(indexDir, { recursive: true, mode: 0o700 });
+    return new NativeCheckpoints(
+      root,
+      gitDir,
+      prefix,
+      refs,
+      options.kept ?? NATIVE_CHECKPOINTS_KEPT,
+      indexDir,
+    );
   }
 
   private serial<T>(step: () => Promise<T>): Promise<T> {
@@ -72,48 +90,57 @@ export class NativeCheckpoints {
   }
 
   private async snapshot(): Promise<string> {
-    const scratch = await mkdtemp(path.join(tmpdir(), 'farmslot-checkpoint-'));
-    try {
-      const index = path.join(scratch, 'index');
-      await copyFile(path.join(this.gitDir, 'index'), index).catch((error: unknown) => {
-        // A repository without an index yet: Git builds one from the working tree.
-        if ((error as { code?: unknown }).code !== 'ENOENT') throw error;
-      });
-      const env = { GIT_INDEX_FILE: index };
-      const untracked = await this.untracked(env);
-      await git(this.root, ['add', '--update', '--', '.'], undefined, env);
-      if (untracked.length) {
-        const list = path.join(scratch, 'untracked');
-        await writeFile(list, untracked.join('\0'));
-        await git(
-          this.root,
-          ['add', `--pathspec-from-file=${list}`, '--pathspec-file-nul'],
-          undefined,
-          env,
-        );
-      }
-      const tree = (await git(this.root, ['write-tree'], undefined, env)).trim();
-      if (this.last?.tree === tree) return this.last.commit;
-      const message = ['-m', 'Farmslot native checkpoint'];
-      const commit = (
-        await git(this.root, ['commit-tree', tree, '-p', 'HEAD', ...message], undefined, IDENTITY)
-          // An unborn branch has no HEAD to descend from.
-          .catch(() => git(this.root, ['commit-tree', tree, ...message], undefined, IDENTITY))
-      ).trim();
-      const ref = `${this.prefix}/${Date.now().toString(36).padStart(9, '0')}-${commit.slice(0, 12)}`;
-      const stale = this.refs.length + 1 - this.kept;
-      const expired = stale > 0 ? this.refs.slice(0, stale) : [];
-      // One transaction: the new ref, and the oldest beyond those kept.
-      await this.updateRefs([`create ${ref} ${commit}`, ...expired.map((old) => `delete ${old}`)]);
-      this.refs = [...this.refs.slice(expired.length), ref];
-      this.last = { commit, tree };
-      return commit;
-    } finally {
-      await rm(scratch, { recursive: true, force: true });
-    }
+    const index = path.join(this.indexDir, 'index');
+    await this.seed(index);
+    const env = { GIT_INDEX_FILE: index };
+    // Entries the session's index holds: changed ones are hashed, deleted ones dropped.
+    await git(this.root, ['add', '--update', '--', '.'], undefined, env);
+    const untracked = await this.untracked(env);
+    // A file removed since it was listed is skipped, not an error.
+    if (untracked.length)
+      await git(
+        this.root,
+        ['update-index', '--add', '--remove', '-z', '--stdin'],
+        undefined,
+        env,
+        `${untracked.join('\0')}\0`,
+      );
+    const tree = (await git(this.root, ['write-tree'], undefined, env)).trim();
+    if (this.last?.tree === tree) return this.last.commit;
+    const message = ['-m', 'Farmslot native checkpoint'];
+    const commit = (
+      await git(this.root, ['commit-tree', tree, '-p', 'HEAD', ...message], undefined, IDENTITY)
+        // An unborn branch has no HEAD to descend from.
+        .catch(() => git(this.root, ['commit-tree', tree, ...message], undefined, IDENTITY))
+    ).trim();
+    const ref = `${this.prefix}/${Date.now().toString(36).padStart(9, '0')}-${commit.slice(0, 12)}`;
+    const stale = this.refs.length + 1 - this.kept;
+    const expired = stale > 0 ? this.refs.slice(0, stale) : [];
+    // One transaction: the new ref, and the oldest beyond those kept.
+    await this.updateRefs([`create ${ref} ${commit}`, ...expired.map((old) => `delete ${old}`)]);
+    this.refs = [...this.refs.slice(expired.length), ref];
+    this.last = { commit, tree };
+    return commit;
   }
 
-  /** Untracked files Git does not ignore, up to the size limit each. */
+  /**
+   * Seeds the session's index from the worktree's when that changed (a commit, a staged file, a
+   * checkout) or none exists yet. The copy keeps the original's timestamp, so Git still re-checks
+   * entries written in the same second as that index.
+   */
+  private async seed(index: string): Promise<void> {
+    const source = path.join(this.gitDir, 'index');
+    const current = await stat(source).catch(() => undefined);
+    const key = current && `${current.ino}:${current.size}:${current.mtimeMs}`;
+    if (key === this.seeded && (await stat(index).catch(() => undefined))) return;
+    if (current) {
+      await copyFile(source, index);
+      await utimes(index, current.atime, current.mtime);
+    } else await rm(index, { force: true });
+    this.seeded = key;
+  }
+
+  /** Files the session's index lacks that Git does not ignore, up to the size limit each. */
   private async untracked(env: Record<string, string>): Promise<string[]> {
     const listed = await git(
       this.root,
@@ -151,18 +178,25 @@ export class NativeCheckpoints {
     };
   }
 
-  /** Deletes the session's checkpoint refs; their diffs are no longer retained. */
+  /** Deletes the session's checkpoint refs and index; their diffs are no longer retained. */
   remove(): Promise<void> {
     return this.serial(async () => {
       if (this.refs.length) await this.updateRefs(this.refs.map((ref) => `delete ${ref}`));
       this.refs = [];
       this.last = undefined;
+      this.seeded = undefined;
+      await rm(this.indexDir, { recursive: true, force: true });
     });
   }
 
   private async updateRefs(lines: string[]): Promise<void> {
-    const input = `start\n${lines.join('\n')}\nprepare\ncommit\n`;
-    await gitWithInput(this.root, ['update-ref', '--stdin'], input);
+    await git(
+      this.root,
+      ['update-ref', '--stdin'],
+      undefined,
+      {},
+      `start\n${lines.join('\n')}\nprepare\ncommit\n`,
+    );
   }
 }
 
@@ -180,8 +214,9 @@ export function parseTurnFiles(output: string): NativeTurnFile[] {
         status: status === 'A' ? 'added' : status === 'D' ? 'deleted' : 'modified',
       });
     } else if (token.includes('\t')) {
-      const [additions, deletions, file] = token.split('\t');
-      const entry = files.get(file);
+      // A path may itself hold tabs.
+      const [additions, deletions, ...name] = token.split('\t');
+      const entry = files.get(name.join('\t'));
       if (entry && additions !== '-') {
         entry.additions = Number(additions);
         entry.deletions = Number(deletions);
@@ -191,40 +226,29 @@ export function parseTurnFiles(output: string): NativeTurnFile[] {
   return [...files.values()];
 }
 
-/** One file's diff between two checkpoints of the repository holding `cwd`; `file` is relative to its root. */
+/**
+ * One file's diff between two checkpoints of the session's repository; `file` is relative to its
+ * root. `undefined` once either checkpoint is no longer retained under the session's refs.
+ */
 export async function nativeTurnDiff(
   cwd: string,
+  sessionId: string,
   from: string,
   to: string,
   file: string,
-): Promise<string> {
+): Promise<string | undefined> {
+  const [root, retained] = await Promise.all([
+    git(cwd, ['rev-parse', '--show-toplevel']),
+    git(cwd, ['for-each-ref', '--format=%(objectname)', `${refPrefix(sessionId)}/`]),
+  ]);
+  const kept = new Set(retained.split('\n'));
+  if (!kept.has(from) || !kept.has(to)) return undefined;
   // Pathspecs are literal and relative to where Git runs, so run at the root.
-  const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim();
-  return git(root, ['diff', '--no-renames', from, to, '--', file]);
+  return git(root.trim(), ['diff', '--no-renames', from, to, '--', file]);
 }
 
-async function gitWithInput(cwd: string, args: string[], input: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('git', args, {
-      cwd,
-      stdio: ['pipe', 'ignore', 'pipe'],
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
-      ),
-      timeout: 15_000,
-    });
-    let stderr = '';
-    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
-    child.on('error', reject);
-    child.on('close', (code) =>
-      code === 0 ? resolve() : reject(new Error(`git ${args[0]} failed: ${stderr.trim()}`)),
-    );
-    child.stdin.end(input);
-  });
-}
-
-/** How long a turn's delivery waits for the checkpoint before it; a slower one is skipped. */
-export const NATIVE_CHECKPOINT_WAIT_MS = 5_000;
+/** How long a turn's delivery waits, in all, for the previous turn's checkpoint and its own. */
+export const NATIVE_CHECKPOINT_WAIT_MS = 3_000;
 
 /** The value, or `undefined` once `ms` passed first. */
 export async function withinMs<T>(work: Promise<T>, ms: number): Promise<T | undefined> {

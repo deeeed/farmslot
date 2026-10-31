@@ -63,6 +63,7 @@ import { catalogForNativeRunners, ReviewDispatchViewModel } from '@farmslot/revi
 
 import '../shared/review-dispatch-picker.js';
 import './chat-message.js';
+// Also registers <diff-review>, which shows a turn's file diffs.
 import './native-workspace.js';
 import './native-profiles.js';
 
@@ -203,8 +204,10 @@ export class NativeSessionView extends LitElement {
   @state() private expandedMessages = new Set<string>();
   /** The proposed plan last copied, by entry key, and whether the copy worked. */
   @state() private planCopy?: { key: number; copied: boolean };
-  /** Turn file diffs the reader opened, by `sequence:path`; each is fetched once. */
+  /** Turn file diffs fetched, by `sequence:path`; a diff never changes, so each is fetched once. */
   @state() private turnDiffs = new Map<string, { diff?: string; error?: string }>();
+  /** Turn files whose diff is open, by `sequence:path`. */
+  @state() private openTurnFiles = new Set<string>();
   @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
   /** The selection the timeline DOM was last rendered for. */
   private renderedRevision = -1;
@@ -560,14 +563,16 @@ export class NativeSessionView extends LitElement {
       <summary>${entry.text}</summary>
       <ul class="turn-files">
         ${changes.files.map((file) => {
-          const opened = this.turnDiffs.get(`${entry.event.sequence}:${file.path}`);
+          const key = `${entry.event.sequence}:${file.path}`;
+          const opened = this.openTurnFiles.has(key);
+          const fetched = this.turnDiffs.get(key);
           return html`<li>
             <button
               class="turn-file"
               data-testid="native-turn-file"
               aria-expanded=${opened ? 'true' : 'false'}
               @click=${(event: Event) =>
-                void this.toggleInPlace(event.currentTarget, !!opened, () =>
+                void this.toggleInPlace(event.currentTarget, opened, () =>
                   this.toggleTurnDiff(entry.event.sequence, file.path),
                 )}
             >
@@ -581,7 +586,16 @@ export class NativeSessionView extends LitElement {
                 ? nothing
                 : html`<span class="meta">+${file.additions} −${file.deletions}</span>`}
             </button>
-            ${opened ? html`<pre>${opened.diff ?? opened.error ?? 'Loading…'}</pre>` : nothing}
+            ${!opened
+              ? nothing
+              : fetched?.diff
+                ? html`<diff-review .filename=${file.path} .diff=${fetched.diff}></diff-review>`
+                : html`<p class="meta">
+                    ${fetched?.error ??
+                    (fetched?.diff === ''
+                      ? 'No text changes (a binary or mode change).'
+                      : 'Loading…')}
+                  </p>`}
           </li>`;
         })}
       </ul>
@@ -590,19 +604,21 @@ export class NativeSessionView extends LitElement {
 
   private toggleTurnDiff(sequence: number, path: string) {
     const key = `${sequence}:${path}`;
-    const next = new Map(this.turnDiffs);
-    if (next.delete(key)) {
-      this.turnDiffs = next;
+    const open = new Set(this.openTurnFiles);
+    if (open.delete(key)) {
+      this.openTurnFiles = open;
       return;
     }
-    this.turnDiffs = next.set(key, {});
+    this.openTurnFiles = open.add(key);
     const session = this.session;
-    if (!session) return;
+    // A fetched or pending diff is kept; a failed fetch is tried again when the file is reopened.
+    const known = this.turnDiffs.get(key);
+    if (!session || (known && !known.error)) return;
     const revision = this.revision;
     const settle = (value: { diff?: string; error?: string }) => {
-      if (revision === this.revision && this.turnDiffs.has(key))
-        this.turnDiffs = new Map(this.turnDiffs).set(key, value);
+      if (revision === this.revision) this.turnDiffs = new Map(this.turnDiffs).set(key, value);
     };
+    this.turnDiffs = new Map(this.turnDiffs).set(key, {});
     this.api
       .request<NativeSessionTurnDiffResult>(Methods.NATIVE_SESSION_TURN_DIFF, {
         sessionId: session.id,
@@ -612,7 +628,7 @@ export class NativeSessionView extends LitElement {
         ...(this.worker ? { worker: this.workerControl } : {}),
       })
       .then(
-        (result) => settle({ diff: result.diff || 'No text changes (a binary or mode change).' }),
+        (result) => settle({ diff: result.diff }),
         (error: unknown) => settle({ error: (error as Error).message }),
       );
   }
@@ -1054,6 +1070,7 @@ ${JSON.stringify(
     this.expandedMessages = new Set();
     this.planCopy = undefined;
     this.turnDiffs = new Map();
+    this.openTurnFiles = new Set();
     this.watchedTools = new Set();
     this.foldOpen = new Map();
     this.follow = NATIVE_FOLLOW_LATEST;

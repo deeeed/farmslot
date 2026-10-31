@@ -22,7 +22,10 @@ export class NativeSessionMethodError extends Error {
   }
 }
 
-/** One changed file's diff between the checkpoints of the `turn.changes` event at `sequence`. */
+/**
+ * One changed file's diff between the checkpoints of the `turn.changes` event at `sequence`. A
+ * pinned worker reads that event within its own lease, as it reads the rest of its history.
+ */
 async function turnDiff(
   client: NativeSessionClient,
   principal: string,
@@ -33,16 +36,24 @@ async function turnDiff(
   const sequence = params.sequence;
   if (typeof sequence !== 'number' || !Number.isInteger(sequence) || sequence < 1)
     throw new NativeSessionMethodError('INVALID_PARAMS', 'sequence must be a positive integer');
-  const [event] = (await client.read(principal, session.id, sequence - 1, 1)).events;
+  const lease = session.workerManaged ? session.workerLeaseId : undefined;
+  const page = lease
+    ? // A sequence outside the lease's window is not this worker's.
+      await client
+        .readWorker(principal, session.id, lease, sequence - 1, 1)
+        .catch((error: unknown) => {
+          if (/history cursor/.test((error as Error).message)) return undefined;
+          throw error;
+        })
+    : await client.read(principal, session.id, sequence - 1, 1);
+  const [event] = page?.events ?? [];
   const changes = event?.sequence === sequence && event.type === 'turn.changes' && event.changes;
   if (!changes || !changes.from || !changes.to || !changes.files.some((file) => file.path === path))
     throw new NativeSessionMethodError('INVALID_PARAMS', 'That turn lists no such changed file');
-  return nativeTurnDiff(session.cwd, changes.from, changes.to, path).catch((error: unknown) => {
-    // Retention deleted the checkpoint, and Git collected it.
-    if (/bad object|unknown revision|invalid object/i.test((error as Error).message))
-      throw new NativeSessionMethodError('NOT_FOUND', "This turn's changes are no longer retained");
-    throw error;
-  });
+  const diff = await nativeTurnDiff(session.cwd, session.id, changes.from, changes.to, path);
+  if (diff === undefined)
+    throw new NativeSessionMethodError('NOT_FOUND', "This turn's changes are no longer retained");
+  return diff;
 }
 
 /** A send's `delivery`: `steer`, or none for an ordinary send. */
