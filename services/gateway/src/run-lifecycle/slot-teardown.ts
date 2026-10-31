@@ -442,8 +442,14 @@ export async function stopRunOwnedTmuxAndWatches(
   return [blocker, prepareBlocker, browserBlocker].filter(Boolean).join('; ') || null;
 }
 
-/** Stop configured slot infrastructure after its terminal run has released its leases. */
-export async function shutdownRunSlotResources(run: Run): Promise<string | null> {
+/**
+ * Stop configured slot infrastructure after its terminal run has released its leases.
+ * `unconfirmed` collects the stops a shutdown hook ran without confirming.
+ */
+export async function shutdownRunSlotResources(
+  run: Run,
+  unconfirmed: string[] = [],
+): Promise<string | null> {
   if (!run.slotId) return null;
   const slotId = run.slotId;
   const ownershipBlocker = await slotOwnershipBlocker(run);
@@ -493,8 +499,10 @@ export async function shutdownRunSlotResources(run: Run): Promise<string | null>
       },
     );
     if (!guarded.ok) failures.push(`${resource.id}: ${guarded.reason}`);
-    else if (!guarded.value.torn)
+    else if (!guarded.value.torn) {
       failures.push(`${resource.id}: ${guarded.value.reason ?? 'shutdown not confirmed'}`);
+      unconfirmed.push(resource.id);
+    }
   }
   if (!(await stillOwned())) return 'Slot ownership changed during runtime shutdown';
   // Leases have now been released, so they no longer hide detached browser helpers.
@@ -508,7 +516,10 @@ export async function releaseRunSlotOwnership(
   run: Run,
   fence: RunSlotCleanupFence,
   blocker: string | null,
-  { keepForReplay = false }: { keepForReplay?: boolean } = {},
+  {
+    keepForReplay = false,
+    stopUnconfirmed = false,
+  }: { keepForReplay?: boolean; stopUnconfirmed?: boolean } = {},
 ): Promise<boolean> {
   if (!run.slotId) return false;
   const before = fence.before;
@@ -556,6 +567,9 @@ export async function releaseRunSlotOwnership(
     lifecycle: 'held',
     phase: 'occupied',
     held_reason: blocker,
+    // A failed shutdown hook settles here: reconciliation stops retrying it. An operator
+    // release clears the hold; slot cleanup reruns the stop.
+    ...(stopUnconfirmed ? { [SLOT_CLEANUP_STOP_UNCONFIRMED]: true } : {}),
     cleanup_release_token: null,
     [SLOT_RELEASING_SINCE]: null,
     agent: 'idle',
