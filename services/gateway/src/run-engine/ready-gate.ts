@@ -1005,7 +1005,7 @@ export async function executeReadyGate(
             diffStat: { files: 0, additions: 0, deletions: 0 },
             stale: true,
           },
-          { canReplay: () => false },
+          { canReplay: () => false, generation },
         );
         // Keep the live resolution instead of replaying a cached action. Some
         // explicit actions, including Continue Fixing, intentionally never replay.
@@ -1449,6 +1449,7 @@ export async function executeReadyGate(
         !isPublishApprovalAction(prior.resolvedAction ?? '') ||
         (prior.payload?.kind === 'ready' &&
           prior.payload.prPackage?.packageHash === preparedPackage?.packageHash),
+      generation,
     }));
 
   if (actionId === 'abort' || runSupersededSince(getRun(runId), generation)) return 'abort';

@@ -781,6 +781,12 @@ export async function createEngineDecision(
      * reason+resolvedAt only and silently replays the prior action against new data. */
     canReplay?: (existing: RunDecision) => boolean;
     readProgress?: (run: Run) => Promise<RunProgressObservation>;
+    /**
+     * The generation the calling driver took when it started. A driver that a pause, resume
+     * or replay superseded during its slow preparation is refused here, before it could
+     * supersede the live driver's gate decision. Defaults to the run's current generation.
+     */
+    generation?: number;
   },
 ): Promise<string> {
   const run = getRun(runId);
@@ -788,7 +794,7 @@ export async function createEngineDecision(
   const adopted = adoptedHumanGateAction(reason, run);
   if (adopted) return adopted;
 
-  const generation = run.engineState?.generation ?? 0;
+  const generation = options?.generation ?? run.engineState?.generation ?? 0;
   if (runSupersededSince(run, generation) || isTerminalRunStatus(run.status))
     throw new Error(`Run ${runId.slice(0, 8)} no longer owns this decision`);
 
