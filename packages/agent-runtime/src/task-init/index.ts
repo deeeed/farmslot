@@ -6,7 +6,7 @@
 // own retained installation.
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -30,6 +30,7 @@ import type {
 
 import { applyArtifactOnlyTaskPolicy, type ArtifactOnlyReplay } from './artifact-only.js';
 import {
+  repinTaskExecution,
   retainTaskExecution,
   type TaskExecutionInput,
   taskExecutionPin,
@@ -46,13 +47,20 @@ import {
   type HandoffMetadata,
   type HandoffSourceKind,
 } from './task-document.js';
-import { writeTaskDir, type WriteTaskDirInput, type WrittenTaskDir } from './write.js';
+import {
+  buildMarkShim,
+  MARK_SHIM,
+  writeTaskDir,
+  type WriteTaskDirInput,
+  type WrittenTaskDir,
+} from './write.js';
 
 export { applyArtifactOnlyTaskPolicy } from './artifact-only.js';
 export * from './artifact-only-guard.js';
 export * from './branch-update.js';
 export * from './discover.js';
 export {
+  resumeTaskRepin,
   type TaskExecutionInput,
   type TaskExecutionProvenance,
   type TaskRecipeBindingIdentity,
@@ -312,6 +320,29 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     handoffMetadata,
     ...(executionProvenance ? { executionProvenance } : {}),
   };
+}
+
+/**
+ * ADR-068 Amendment 8: retain the task checkout's changed provider in a new pin and
+ * point the generated marker at its CLI. The caller verified `previous` and the
+ * selection change. Documents, checklist state, acceptance identity and evidence stay.
+ */
+export function repinTask(
+  taskDir: string,
+  execution: TaskExecutionInput,
+  previous: TaskExecutionProvenance,
+): TaskExecutionProvenance {
+  const receipt = repinTaskExecution(taskDir, execution, previous);
+  const mark = path.join(taskDir, MARK_SHIM);
+  const shim = (executable: string) =>
+    buildMarkShim(`${quoteTaskPath(executable)} task mark`, true);
+  // An authored marker stays as written; the generated one follows the new pin.
+  if (existsSync(mark) && readFileSync(mark, 'utf8') === shim(previous.resolvedExecutable)) {
+    const staged = `${mark}.${path.basename(receipt.pin)}`;
+    writeFileSync(staged, shim(receipt.resolvedExecutable), { mode: 0o755 });
+    renameSync(staged, mark);
+  }
+  return receipt;
 }
 
 export interface TaskProvenance {

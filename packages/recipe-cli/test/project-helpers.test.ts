@@ -5,12 +5,15 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import { retainTaskExecution } from '../../agent-runtime/src/task-init/execution-provenance.js';
+import { quoteTaskPath } from '../../agent-runtime/src/task-init/runtime-command.js';
+import { buildMarkShim } from '../../agent-runtime/src/task-init/write.js';
 import { handleChecklist } from '../src/harness/commands/checklist.js';
 import { handleRecipeQuality } from '../src/harness/commands/recipe-quality.js';
 import { handleReview } from '../src/harness/commands/review.js';
 import { harnessHost } from '../src/harness/host.js';
 import {
   projectTaskExecution,
+  repinSelectedTask,
   verifySelectedTask,
   withTaskProjectHost,
 } from '../src/harness/project-helpers.js';
@@ -683,4 +686,89 @@ test('nested app retention excludes app-relative recipe runtime output', async (
       assert.equal(fs.existsSync(path.join(retainedApp.path, 'recipe/runtime/state.json')), false);
     },
   );
+});
+
+/** A task retained from a provider and recipe library inside its checkout, as EchoBridge declares them. */
+async function checkoutProviderTask(t: TestContext) {
+  const f = fixture(t);
+  const app = path.join(f.checkout, 'apps/web');
+  const recipe = path.join(app, 'recipe');
+  const library = path.join(f.checkout, 'recipes');
+  fs.mkdirSync(recipe, { recursive: true });
+  fs.mkdirSync(library);
+  fs.writeFileSync(path.join(library, 'smoke.recipe.json'), '{}');
+  fs.writeFileSync(
+    path.join(app, 'package.json'),
+    JSON.stringify({ private: true, type: 'module', files: ['recipe'] }),
+  );
+  fs.copyFileSync(path.join(f.pack, 'provider.mjs'), path.join(recipe, 'provider.mjs'));
+  const config = f.options.projects?.[0]?.config;
+  assert.ok(config?.recipe);
+  const selected = {
+    ...config,
+    apps: ['apps/web'],
+    recipe: {
+      ...config.recipe,
+      provider: { module: 'provider.mjs', root: { projectPath: 'apps/web/recipe' } },
+      libraries: [{ name: 'checkout-recipes', owner: 'example', source: library }],
+    },
+  };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(selected));
+  const options = { ...f.options, projects: [{ root: f.pack, config: selected }] };
+  const install = {
+    executable: path.join(f.installed, 'farmslot'),
+    packageRoot: f.installed,
+    distributionRoot: f.installed,
+  };
+  const shim = (executable: string) =>
+    buildMarkShim(`${quoteTaskPath(executable)} task mark`, true);
+  await withProjectRecipeHost(
+    { ...options, tokens: ['--project', 'example', '--app', 'apps/web'] },
+    async (host) => {
+      const receipt = retainTaskExecution(f.taskDir, await projectTaskExecution(host, install));
+      fs.writeFileSync(path.join(f.taskDir, 'mark'), shim(receipt.resolvedExecutable));
+    },
+  );
+  return { ...f, recipe, library, selected, options, install, shim };
+}
+
+test('a repin refuses an unchanged checkout or a changed pack without touching the task', async (t) => {
+  const f = await checkoutProviderTask(t);
+  const receiptFile = path.join(f.taskDir, 'artifacts/harness-provenance.json');
+  const original = fs.readFileSync(receiptFile);
+  await assert.rejects(repinSelectedTask(f.options, f.taskDir, f.install), {
+    code: 'TASK_REPIN_UNCHANGED',
+  });
+  const otherPack = path.join(f.root, 'other-pack');
+  fs.cpSync(f.pack, otherPack, { recursive: true });
+  fs.writeFileSync(path.join(f.library, 'main-flows.recipe.json'), '{}');
+  await assert.rejects(
+    repinSelectedTask(
+      { ...f.options, projects: [{ root: otherPack, config: f.selected }] },
+      f.taskDir,
+      f.install,
+    ),
+    { code: 'TASK_BINDING_CHANGED' },
+  );
+  assert.deepEqual(fs.readFileSync(receiptFile), original);
+});
+
+test('a repin follows changed checkout recipes and keeps task documents', async (t) => {
+  const f = await checkoutProviderTask(t);
+  fs.writeFileSync(path.join(f.library, 'main-flows.recipe.json'), '{}');
+  const checklist = fs.readFileSync(path.join(f.taskDir, 'CHECKLIST.md'), 'utf8');
+  const { previous, receipt } = await repinSelectedTask(f.options, f.taskDir, f.install);
+  assert.notEqual(receipt.pin, previous.pin);
+  assert.deepEqual(verifySelectedTask(f.taskDir), receipt);
+  assert.equal(
+    fs.readFileSync(path.join(f.taskDir, 'mark'), 'utf8'),
+    f.shim(receipt.resolvedExecutable),
+  );
+  assert.equal(fs.readFileSync(path.join(f.taskDir, 'CHECKLIST.md'), 'utf8'), checklist);
+  await withTaskProjectHost(f.options, f.taskDir, async (host) => {
+    const library = host.librarySources.find((entry) => entry.name === 'checkout-recipes');
+    assert.ok(library);
+    assert.ok(library.root.startsWith(`${receipt.pin}${path.sep}`));
+    assert.equal(fs.existsSync(path.join(library.root, 'main-flows.recipe.json')), true);
+  });
 });

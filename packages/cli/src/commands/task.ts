@@ -68,13 +68,33 @@ export function cliInstallation(): Omit<TaskExecutionInput, 'bindingIdentity' | 
 }
 
 export async function runTaskCommand(
-  action: 'init' | 'verify' | 'mark' | 'closeout',
+  action: 'init' | 'verify' | 'mark' | 'closeout' | 'repin',
   command: Command,
 ): Promise<number> {
   const shared = await import('@farmslot/recipe-cli/harness');
   const options: CliOptions = { ...command.optsWithGlobals() };
   const argv = taskHelperArgv(command, action === 'init');
   const taskDir = path.resolve(command.args[0]!);
+  if (action === 'repin') {
+    const { previous, receipt } = await shared.repinSelectedTask(
+      await projectRecipeHostOptions('task', undefined, options),
+      taskDir,
+      cliInstallation(),
+    );
+    const summary = {
+      pin: receipt.pin,
+      previousPin: previous.pin,
+      resolvedExecutable: receipt.resolvedExecutable,
+      provider: {
+        previous: previous.bindingIdentity?.provider,
+        current: receipt.bindingIdentity?.provider,
+      },
+    };
+    process.stdout.write(
+      options.json ? `${JSON.stringify(summary, null, 2)}\n` : `${receipt.resolvedExecutable}\n`,
+    );
+    return 0;
+  }
   if (action === 'init' && fs.existsSync(path.join(taskDir, 'artifacts/harness-provenance.json'))) {
     shared.verifySelectedTask(taskDir);
     throw shared.usageError(
@@ -188,6 +208,10 @@ export function registerTaskCommand(program: Command): void {
     .command('verify')
     .description('Verify retained task tooling without running it')
     .argument('<task-dir>');
+  const repin = task
+    .command('repin')
+    .description('Repin the task to the provider its checkout changed (operator)')
+    .argument('<task-dir>');
   const mark = recipeProjectOptions(
     task
       .command('mark')
@@ -237,6 +261,7 @@ export function registerTaskCommand(program: Command): void {
   for (const [action, cmd] of [
     ['init', init],
     ['verify', verify],
+    ['repin', repin],
     ['mark', mark],
     ['closeout', closeout],
   ] as const) {

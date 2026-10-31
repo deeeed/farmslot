@@ -346,6 +346,8 @@ export {
 } from './project-command.js';
 export {
   projectTaskExecution,
+  repinSelectedTask,
+  type TaskRepinResult,
   verifySelectedTask,
   withTaskProjectHost,
 } from './project-helpers.js';

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `repinTask` retains a task checkout's changed provider in a new pin, replaces the task's selection and receipt, and points the generated marker at the new CLI. The previous pin keeps the original receipt (ADR-068 Amendment 8).
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.39.12 - 2026-10-31

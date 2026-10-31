@@ -4,7 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
-import { retainTaskExecution, verifyTaskExecutionProvenance } from './execution-provenance.js';
+import {
+  repinTaskExecution,
+  resumeTaskRepin,
+  retainTaskExecution,
+  verifyTaskExecutionProvenance,
+} from './execution-provenance.js';
 import { taskInputDigest } from './pin.js';
 
 function fixture(t: TestContext) {
@@ -101,6 +106,56 @@ test('task tooling survives install pruning and provider/library updates', (t) =
     fs.readFileSync(path.join(receipt.retainedInputs[1]!.path, 'action.mjs'), 'utf8'),
     'export default 1;\n',
   );
+});
+
+test('a repin replaces the selection and receipt; the previous pin keeps the original', (t) => {
+  const { root, taskDir, provider, input } = fixture(t);
+  const previous = retainTaskExecution(taskDir, {
+    ...input,
+    selectedConfiguration: '{"identity":null}',
+  });
+  fs.writeFileSync(path.join(provider, 'action.mjs'), 'export default 2;\n');
+  const changed = { ...input, selectedConfiguration: '{"identity":null,"repinned":true}' };
+  assert.throws(() =>
+    repinTaskExecution(
+      taskDir,
+      { ...changed, inputs: [...input.inputs, path.join(root, 'missing')] },
+      previous,
+    ),
+  );
+  assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), previous);
+  assert.deepEqual(fs.readdirSync(path.join(taskDir, 'inputs')), ['recipe-binding.json']);
+  assert.deepEqual(fs.readdirSync(path.join(taskDir, 'artifacts')), ['harness-provenance.json']);
+
+  const receipt = repinTaskExecution(taskDir, changed, previous);
+  assert.notEqual(receipt.pin, previous.pin);
+  assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
+  assert.equal(
+    fs.readFileSync(path.join(taskDir, 'inputs/recipe-binding.json'), 'utf8'),
+    changed.selectedConfiguration,
+  );
+  const retained = receipt.retainedInputs.find(
+    (entry) => entry.source === fs.realpathSync(provider),
+  );
+  assert.equal(
+    fs.readFileSync(path.join(retained!.path, 'action.mjs'), 'utf8'),
+    'export default 2;\n',
+  );
+  const authority = (pin: string): { receipt?: unknown; previousPin?: unknown } =>
+    JSON.parse(fs.readFileSync(path.join(pin, 'provenance.json'), 'utf8'));
+  assert.deepEqual(authority(previous.pin).receipt, previous);
+  assert.equal(authority(receipt.pin).previousPin, previous.pin);
+  assert.deepEqual(fs.readdirSync(path.join(taskDir, 'inputs')), ['recipe-binding.json']);
+  assert.deepEqual(fs.readdirSync(path.join(taskDir, 'artifacts')), ['harness-provenance.json']);
+
+  // A repin stopped after its receipt swap leaves the new selection staged.
+  const selection = path.join(taskDir, 'inputs/recipe-binding.json');
+  fs.renameSync(selection, `${selection}.${path.basename(receipt.pin)}`);
+  fs.writeFileSync(selection, '{"identity":null}');
+  assert.throws(() => verifyTaskExecutionProvenance(taskDir, null), { code: 'TASK_INPUT_CHANGED' });
+  resumeTaskRepin(taskDir);
+  assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
+  assert.deepEqual(fs.readdirSync(path.join(taskDir, 'inputs')), ['recipe-binding.json']);
 });
 
 test('changed retained dependency refuses without changing the receipt', (t) => {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- `repinSelectedTask` repins a task whose own checkout changed its provider after checking that the recorded project, app, adapter, target, pack and checkout still match; it needs the matching `@farmslot/agent-runtime` release (ADR-068 Amendment 8).
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Record task acceptance through the runtime's shared engine-claim transfer, so it needs the matching `@farmslot/agent-runtime` release.
