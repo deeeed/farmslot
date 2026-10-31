@@ -1,11 +1,11 @@
 import { useCallback } from 'react';
 
 import { type CopilotStatusResult, Methods } from '@farmslot/protocol';
-import { canActOn, heldDataIsSaved, resourceQuery } from '@farmslot/protocol/client-cache';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { getResourceCache } from '../../lib/resource-cache';
-import { visibleReadError } from '../../lib/resource-read-status';
+import { heldDataUsable, savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { useConnectionStore } from '../../store/connection';
 import { useHeldConnection } from '../../store/held-connection';
@@ -22,7 +22,7 @@ export function useCopilotController() {
     if (useConnectionStore.getState().workspaceAccess !== 'farm') return;
     await getResourceCache()?.retry(runtimeQuery);
   }, [state.error]);
-  const saved = heldDataIsSaved(state, connected);
+  const saved = savedForDisplay(state, connected);
   return {
     viewModel: {
       runtime: state.data?.session ?? null,
@@ -31,7 +31,7 @@ export function useCopilotController() {
       settled: state.status === 'ready' || state.status === 'unsupported' || Boolean(state.error),
       error: visibleReadError(state, saved)?.message ?? '',
       connected,
-      ready: canActOn(state, connected),
+      ready: heldDataUsable(state, connected),
       saved,
       observedAt: state.observedAt,
     },

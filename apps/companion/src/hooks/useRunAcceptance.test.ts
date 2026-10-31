@@ -4,14 +4,12 @@ import { URL } from 'node:url';
 
 import { Events, Methods } from '@farmslot/protocol';
 import {
-  canActOn,
   createGatewayResourceCache,
   type ResourceQuery,
   resourceQuery,
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceCacheConformanceTransport } from '../../../../packages/protocol/src/client-cache/conformance';
-import { readErrorMessage } from '../lib/resource-read-status';
 import { recordVisualClaimReview } from '../lib/visual-claim-review';
 
 import { mountHook } from './hook-harness.fixtures';
@@ -74,7 +72,7 @@ function mount(request: (method: string) => Promise<unknown>) {
     'useRunAcceptance',
     {
       '@farmslot/protocol': { Methods, Events },
-      '@farmslot/protocol/client-cache': { canActOn, resourceQuery },
+      '@farmslot/protocol/client-cache': { resourceQuery },
       './useResourceQuery': {
         useResourceQuery<T>(query: ResourceQuery<T> | undefined) {
           if (!query) return { status: 'loading' };
@@ -107,8 +105,6 @@ function mount(request: (method: string) => Promise<unknown>) {
         useConnectionStore: (select: (state: { authorityEpoch: number }) => unknown) =>
           select({ authorityEpoch: 1 }),
       },
-      '../store/held-connection': { heldConnectionCurrent: () => true },
-      '../lib/resource-read-status': { readErrorMessage },
       './useConnectedTransport': { useConnectedTransport: () => connection },
     },
   );

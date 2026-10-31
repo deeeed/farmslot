@@ -3,9 +3,9 @@ import { useIsFocused } from 'expo-router';
 import { useEffect, useMemo } from 'react';
 
 import { Methods, type TmuxWorkerListResult, tmuxWorkerRefsMatch } from '@farmslot/protocol';
-import { canActOn, heldDataIsSaved, resourceQuery } from '@farmslot/protocol/client-cache';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
-import { visibleReadError } from '../lib/resource-read-status';
+import { heldDataUsable, savedForDisplay, visibleReadError } from '../lib/resource-read-status';
 import {
   paneRunnerContext,
   type TerminalRunnerContext,
@@ -43,8 +43,8 @@ export function usePaneRunnerContext(pane: TerminalRunnerPane | null): PaneRunne
   const observation = useResourceQuery(focused ? query : undefined);
   // A reread in flight keeps the held inventory usable; only saved or missing data gates
   // runner keys, and loading or a reread never shows an error.
-  const ready = Boolean(client && query && canActOn(observation, connected));
-  const saved = heldDataIsSaved(observation, connected);
+  const ready = Boolean(client && query && heldDataUsable(observation, connected));
+  const saved = savedForDisplay(observation, connected);
   const summary = ready
     ? (observation.data?.workers.find((worker) =>
         tmuxWorkerRefsMatch(worker.ref, { nodeId: nodeId!, target: target! }),

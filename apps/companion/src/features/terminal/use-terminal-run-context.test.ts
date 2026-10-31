@@ -13,6 +13,7 @@ import {
 import { ResourceCacheConformanceTransport } from '../../../../../packages/protocol/src/client-cache/conformance';
 import { mountHook } from '../../hooks/hook-harness.fixtures';
 import { currentFarmConnection } from '../../lib/connection-authority';
+import { heldDataUsable } from '../../lib/resource-read-status';
 import {
   buildCompanionTerminalTarget,
   type CompanionTerminalTargetParams,
@@ -103,6 +104,7 @@ test('terminal commands use current canonical inputs without rereads while the s
         shouldUseBareTerminalSessionForRun,
       },
       '../../store/connection': { useConnectionStore },
+      '../../lib/resource-read-status': { heldDataUsable },
       '../../store/held-connection': {
         useHeldConnection: () => held.current,
         heldConnectionCurrent: () => held.current,
@@ -271,6 +273,7 @@ test('saved terminal run data stops typing until a current read', () => {
         shouldUseBareTerminalSessionForRun,
       },
       '../../store/connection': { useConnectionStore },
+      '../../lib/resource-read-status': { heldDataUsable },
       '../../store/held-connection': {
         useHeldConnection: () => held.current,
         heldConnectionCurrent: () => held.current,

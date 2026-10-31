@@ -16,6 +16,7 @@ import {
   getResourceWorkspaceAccess,
   getResourceWorkspaceKey,
 } from '../../lib/resource-cache';
+import { heldDataUsable } from '../../lib/resource-read-status';
 import { assertNativeRunReady } from '../../lib/run-collections';
 import {
   type CompanionTerminalTargetParams,
@@ -118,8 +119,8 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
   const inputReady =
     heldConnected &&
     admittedTarget.current === scopeKey &&
-    (!slotQuery || canActOn(slot, heldConnected)) &&
-    (!runId || canActOn(run, heldConnected));
+    (!slotQuery || heldDataUsable(slot, heldConnected)) &&
+    (!runId || heldDataUsable(run, heldConnected));
 
   const requireRun = useCallback(() => {
     const cache = getResourceCache();
@@ -159,12 +160,12 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
     const selected = current.current;
     if (selected.slotQuery) {
       const state = cache?.read(selected.slotQuery);
-      if (!state || !canActOn(state, true) || state.data?.run?.id !== selected.targetRun?.id)
+      if (!state || !heldDataUsable(state, true) || state.data?.run?.id !== selected.targetRun?.id)
         throw new Error('Wait for the current slot binding before typing.');
     }
     if (selected.runQuery) {
       const state = cache?.read(selected.runQuery);
-      if (!state || !canActOn(state, true) || state.data?.run.id !== runId)
+      if (!state || !heldDataUsable(state, true) || state.data?.run.id !== runId)
         throw new Error('Wait for the current run before typing.');
     }
   }, [client, scopeKey, workspaceKey, runId]);

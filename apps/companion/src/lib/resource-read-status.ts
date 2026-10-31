@@ -1,29 +1,52 @@
 import { sourceObservationAge } from '@farmslot/protocol';
 import {
   heldDataIsSaved,
-  isSupersededRead,
   type ResourceQueryState,
+  SUPERSEDED_READ_GRACE_MS,
 } from '@farmslot/protocol/client-cache';
 
 export interface LabelledReadObservation {
   label: string;
   observation: ResourceQueryState;
 }
-/** A read error worth showing: a read the gateway superseded within its grace is not one. */
-export function visibleReadError(observation: ResourceQueryState, saved: boolean) {
-  const error = observation.error;
-  return error && (saved || observation.data === undefined || !isSupersededRead(error))
-    ? error
-    : undefined;
+/**
+ * Saved data worth mentioning. `connected` already includes the reconnect grace, so offline
+ * past it says so at once; while connected, held data is mentioned only once its last good
+ * read is older than the shared threshold. One failed or superseded reread stays silent.
+ */
+export function savedForDisplay(
+  observation: ResourceQueryState,
+  connected: boolean,
+  now = Date.now(),
+): boolean {
+  if (!heldDataIsSaved(observation, connected, now)) return false;
+  if (!connected) return true;
+  const observedAt = observation.sourceObservation?.observedAt ?? observation.observedAt ?? 0;
+  return now - observedAt >= SUPERSEDED_READ_GRACE_MS;
 }
 
-/** The read error a view may show; a superseded read inside the shared grace is not one. */
+/** Held data typing and display keep using until it is saved data worth mentioning. */
+export function heldDataUsable(
+  observation: ResourceQueryState,
+  connected: boolean,
+  now = Date.now(),
+): boolean {
+  return observation.data !== undefined && !savedForDisplay(observation, connected, now);
+}
+
+/** A read error worth showing: on saved data, or when there is no data to show at all. */
+export function visibleReadError(observation: ResourceQueryState, saved: boolean) {
+  const error = observation.error;
+  return error && (saved || observation.data === undefined) ? error : undefined;
+}
+
+/** The read error a view may show; a routine failed or superseded reread is not one. */
 export function readErrorMessage(
   observation: ResourceQueryState,
   connected: boolean,
   now = Date.now(),
 ): string | undefined {
-  return visibleReadError(observation, heldDataIsSaved(observation, connected, now))?.message;
+  return visibleReadError(observation, savedForDisplay(observation, connected, now))?.message;
 }
 
 /** A connected reread in flight, or one the gateway superseded within its grace, stays quiet. */
@@ -35,7 +58,7 @@ export function resourceReadMessages(
   return reads.flatMap(({ label, observation }) => {
     if (observation.status === 'ready' || observation.status === 'loading') return [];
     const messages: string[] = [];
-    const saved = heldDataIsSaved(observation, connected, now);
+    const saved = savedForDisplay(observation, connected, now);
     const observedAt = observation.sourceObservation
       ? observation.sourceObservation.observedAt
       : observation.observedAt;

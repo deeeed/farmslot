@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { heldDataIsSaved, type ResourceQueryState } from '@farmslot/protocol/client-cache';
+import { type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import {
   type LabelledReadObservation,
   resourceReadMessages,
+  savedForDisplay,
   visibleReadError,
 } from '../lib/resource-read-status';
 import { baseStyles, colors, spacing } from '../lib/theme';
@@ -64,7 +65,7 @@ export function ResourceReadStatus({
           </Pressable>
           {onRetry &&
           reads.some((read) =>
-            visibleReadError(read.observation, heldDataIsSaved(read.observation, connected, now)),
+            visibleReadError(read.observation, savedForDisplay(read.observation, connected, now)),
           ) ? (
             <Pressable
               accessibilityRole="button"

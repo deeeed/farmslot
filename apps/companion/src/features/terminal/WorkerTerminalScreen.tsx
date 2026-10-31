@@ -33,7 +33,7 @@ import {
   tmuxWorkerRefsMatch,
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
-import { canActOn, heldDataIsSaved, resourceQuery } from '@farmslot/protocol/client-cache';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
@@ -41,7 +41,7 @@ import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-actions';
 import { getResourceCache } from '../../lib/resource-cache';
-import { visibleReadError } from '../../lib/resource-read-status';
+import { heldDataUsable, savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
 import { TerminalInputCancelledError } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
@@ -212,11 +212,11 @@ export default function WorkerTerminalScreen() {
   );
   const inventory = useResourceQuery(focused ? workerQuery : undefined);
   // A reread in flight keeps the pane usable; saved inventory does not.
-  const inventorySaved = heldDataIsSaved(inventory, heldConnected);
+  const inventorySaved = savedForDisplay(inventory, heldConnected);
   const inventoryError = visibleReadError(inventory, inventorySaved);
   const workerReady =
     connectionReady &&
-    canActOn(inventory, heldConnected) &&
+    heldDataUsable(inventory, heldConnected) &&
     Boolean(
       worker &&
       inventory.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker)),
@@ -229,7 +229,7 @@ export default function WorkerTerminalScreen() {
       client !== useConnectionStore.getState().client ||
       !heldConnectionCurrent() ||
       !current ||
-      !canActOn(current, true) ||
+      !heldDataUsable(current, true) ||
       !worker ||
       !current.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker))
     )

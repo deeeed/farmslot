@@ -14,7 +14,7 @@ import {
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
 
-import { visibleReadError } from '../lib/resource-read-status';
+import { heldDataUsable, savedForDisplay, visibleReadError } from '../lib/resource-read-status';
 import { paneRunnerContext, type TerminalRunnerPane } from '../lib/terminal-controls';
 
 import { mountHook } from './hook-harness.fixtures';
@@ -45,7 +45,7 @@ test('runner keys stay usable and quiet while the worker inventory rereads', () 
       'expo-router': { useIsFocused: () => true },
       '@farmslot/protocol': { Methods, tmuxWorkerRefsMatch },
       '@farmslot/protocol/client-cache': { canActOn, heldDataIsSaved, resourceQuery },
-      '../lib/resource-read-status': { visibleReadError },
+      '../lib/resource-read-status': { heldDataUsable, savedForDisplay, visibleReadError },
       '../lib/terminal-controls': { paneRunnerContext },
       '../store/connection': {
         useConnectionStore: (select: (value: typeof connection) => unknown) => select(connection),
