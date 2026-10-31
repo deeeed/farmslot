@@ -911,6 +911,43 @@ test('acquisition media under FARMSLOT_PROJECTS_DIR is charged like the default 
   assert.ok(result.missingData.includes('media-capacity:artifacts/capture.mp4'));
 });
 
+test('a recapture copies media the run already retained instead of fetching it from the slot', async (t) => {
+  const f = await fixture(t);
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(120_000, 3);
+  const digest = createHash('sha256').update(video).digest('hex');
+  let transfers = 0;
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    artifacts: [
+      f.artifacts[0]!,
+      { path: 'artifacts/capture.mp4', purpose: 'video', sha256: digest, sizeBytes: video.length },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      transfers++;
+      await writeFile(destination, video);
+      return { sha256: digest, bytes: video.length };
+    },
+  };
+  const first = await materializeRunBundle(request);
+  assert.equal(transfers, 1);
+  const second = await materializeRunBundle({
+    ...request,
+    run: { ...f.run, artifactBundle: first.ref },
+    captureKey: 'generation-2:original-inventory',
+  });
+  assert.notEqual(second.ref.bundleDigest, first.ref.bundleDigest);
+  assert.equal(transfers, 1, 'the recapture reused the retained video');
+  assert.deepEqual(second.missingData, []);
+  const video2 = await resolveRunBundleEntry({
+    store: f.store,
+    ref: second.ref,
+    runId: f.run.id,
+    path: 'artifacts/capture.mp4',
+  });
+  assert.deepEqual(await readFile(video2.path), video);
+});
+
 test('a projects dir inside the root sandbox is charged once', async (t) => {
   const f = await fixture(t);
   const projects = path.join(f.root, '.sandbox/electron/projects');

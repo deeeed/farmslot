@@ -4,6 +4,7 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- A recapture copies media the run's earlier bundles already retained (same sha256 and size, found through their manifests) from the store instead of fetching it from the slot again. A copy that was archived meanwhile falls back to the slot; every copy is still verified against the manifest.
 - Retained media that grew past its captured size since capture is recorded as `changed:` missing data instead of failing the whole capture, as content that changed at the same size already was.
 - An active run's committed captures stop pinning their bundles once superseded: only the run's current generation and its newest capture stay pinned. Housekeeping now lists bundles no run references and no live capture pins (`run-bundles` entries) for the host to archive, and `runBundleAdmissionUsage` reports what capture admission charges against the cap.
 
