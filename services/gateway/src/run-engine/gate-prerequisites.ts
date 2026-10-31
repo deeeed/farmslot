@@ -24,6 +24,7 @@ import {
   qualifyingTerminalReviewInputs,
   type ReadyGatePrPackage,
   reasonWithoutRemedy,
+  RecordedEvidenceReadError,
   registeredAcceptanceCriteria,
   reviewFindingIsSettled,
   type ReviewStatus,
@@ -38,6 +39,7 @@ import { reviewFindingEntries, reviewFixInProgress } from '@farmslot/review-disp
 import { findingsDigest } from '../core/findings-digest.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
+import { evalWorkerBlockedReason } from '../evals/blocked-first-output.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
@@ -756,13 +758,21 @@ export async function collectRunGateAssessment(
           ...visualRepairEvidenceReasons(evidenceRun, inputs, evidencePackage),
         );
       } catch (error) {
-        // An unreadable frozen closure remains an explicit refusal.
-        reasons.push({
-          code: 'evidence-validation-unavailable',
-          prerequisite: 'evidence',
-          message: `The selected frozen evidence package could not be read or validated: ${error instanceof Error ? error.message : String(error)}`,
-          actionId: 'hold',
-        });
+        // An unreadable frozen closure remains an explicit refusal. A self-blocked
+        // eval output selected no recipe attempt; that absence is its outcome.
+        if (
+          !(
+            error instanceof RecordedEvidenceReadError &&
+            error.code === 'evidence-selection-missing' &&
+            isSelfBlockedEvalOutput(run)
+          )
+        )
+          reasons.push({
+            code: 'evidence-validation-unavailable',
+            prerequisite: 'evidence',
+            message: `The selected frozen evidence package could not be read or validated: ${error instanceof Error ? error.message : String(error)}`,
+            actionId: 'hold',
+          });
       }
     }
   }
@@ -959,6 +969,17 @@ export class RunGateNotReadyError extends GatewayMethodError {
   }
 }
 
+const BLOCKED_OUTPUT_UNPROVEN = new Set(['acceptance-incomplete', 'evidence-policy-unsatisfied']);
+
+/** A worker that blocked its artifact-only eval output proved nothing (ADR-030 Amendment 2). */
+function isSelfBlockedEvalOutput(run: Run): boolean {
+  return (
+    Boolean(run.engineState?.evalExperiment) &&
+    isArtifactOnlyRun(run) &&
+    evalWorkerBlockedReason(run) !== undefined
+  );
+}
+
 export async function assertRunGateReady(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
@@ -974,13 +995,16 @@ export async function assertRunGateReady(
     isArtifactOnlyRun(run) &&
     !preparedPackage &&
     !readiness.identity.packageHash;
+  // Its missing verdicts and proof, under every evidence policy, are the measured
+  // outcome, not prerequisites.
+  const blockedOutput = outputCompletion && isSelfBlockedEvalOutput(run);
   const reasons = gateReasonsForAction(readiness, actionId).filter(
     (reason) =>
       !(
         outputCompletion &&
         reason.code === 'evidence-policy-unsatisfied' &&
         reason.evidencePolicy === 'claim-verdict'
-      ),
+      ) && !(blockedOutput && BLOCKED_OUTPUT_UNPROVEN.has(reason.code)),
   );
   if (
     reasons.length ||

@@ -33,6 +33,10 @@ import {
 import { markSlotBusy, markSlotHeld, updateSlotStatusIf } from '../core/index.js';
 import { freezeBlindTrialFirstOutput } from '../evals/blind-trial.js';
 import {
+  EVAL_WORKER_BLOCKED_OUTPUT,
+  evalWorkerBlockedReason,
+} from '../evals/blocked-first-output.js';
+import {
   finalizeEvalResultPackageForRun,
   freezeEvalFirstOutputPackage,
   readFrozenEvalFirstOutputPackage,
@@ -405,17 +409,22 @@ async function freezeEvalWorkerFacts(run: Run, context: PostDispatchStepContext)
     current?.steps.find(({ name }) => name === S.DISPATCH)?.startedAt ?? '',
   );
   const ended = Date.parse(first?.capturedAt ?? '');
-  await freezeEvalFirstOutputPackage(current!, {
-    durationMs:
-      Number.isFinite(started) && Number.isFinite(ended) && ended >= started
-        ? ended - started
-        : undefined,
-    costEstimate: cost.costUsd ?? undefined,
-    sessionTurns: cost.turns ?? undefined,
-    sessionInputTokens: cost.inputTokens ?? undefined,
-    sessionOutputTokens: cost.outputTokens ?? undefined,
-    sessionTotalTokens: cost.totalTokens ?? undefined,
-  });
+  const blockedReason = evalWorkerBlockedReason(current!);
+  await freezeEvalFirstOutputPackage(
+    current!,
+    {
+      durationMs:
+        Number.isFinite(started) && Number.isFinite(ended) && ended >= started
+          ? ended - started
+          : undefined,
+      costEstimate: cost.costUsd ?? undefined,
+      sessionTurns: cost.turns ?? undefined,
+      sessionInputTokens: cost.inputTokens ?? undefined,
+      sessionOutputTokens: cost.outputTokens ?? undefined,
+      sessionTotalTokens: cost.totalTokens ?? undefined,
+    },
+    blockedReason ? [`Worker blocked: ${blockedReason}`] : [],
+  );
 }
 
 export function readyGateReviewSubjectMatches(
@@ -670,6 +679,16 @@ export async function executeMonitorStep(
         outputs: heldOutputs,
       };
     }
+    if (
+      workerSignal?.status === 'blocked' &&
+      getRun(runId)?.engineState?.evalExperiment?.blind?.firstOutput
+    ) {
+      // A self-blocked first output is a measurement too: it is judged by nobody
+      // and finalized like a completed one, keeping the worker's reason.
+      (stepOutputs as Record<string, unknown>)[EVAL_WORKER_BLOCKED_OUTPUT] =
+        workerSignal.reason ?? after.error ?? 'worker signaled blocked';
+      return { inputs, outputs: stepOutputs };
+    }
     if (workerSignal?.status === 'blocked' || workerSignal?.status === 'failed') {
       // Non-interactive failures use the engine's status and cleanup path.
       throw monitorTerminalError({
@@ -754,6 +773,12 @@ export async function executeReviewStep(
       return {
         inputs,
         outputs: { skipped: true, reason: 'eval-first-output-invalid', invalidReason },
+      };
+    const blockedReason = evalWorkerBlockedReason(current);
+    if (blockedReason)
+      return {
+        inputs,
+        outputs: { skipped: true, reason: 'eval-first-output-blocked', blockedReason },
       };
   }
 
