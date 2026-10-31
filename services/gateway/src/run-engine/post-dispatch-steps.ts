@@ -77,6 +77,7 @@ import {
   runDeliveredResult,
   takeSendBackReview,
 } from '../run-completion/result-decision.js';
+import { retainRunArtifacts } from '../run-completion/retained-artifacts.js';
 import { readRunProgress } from '../runners/run-progress.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
@@ -1652,6 +1653,14 @@ export async function executeCompleteStep(
     await abandonBranchMaintenance(current);
   else await completeBranchMaintenance(current);
   if (!shouldPrepareLocalFirstPackage(current)) {
+    // A restart can stop a capture's media transfer after its report committed. Resume
+    // it from the source before the gate reads that capture; what stays missing refuses.
+    if (current.output?.artifactBundle)
+      await retainRunArtifacts(runId).catch((error: unknown) =>
+        console.warn(
+          `[run-engine] run ${runId.slice(0, 8)} — retained capture repair failed: ${(error as Error).message}`,
+        ),
+      );
     // SIGNAL.json can precede the worker's final native turn completion. Keep
     // this engine attempt alive while that is the only unmet prerequisite.
     for (;;) {
