@@ -9,7 +9,7 @@ import { createArtifactOnlyTrial } from './artifact-only-completion.test-support
 await import('../runtime/mock-pty.test-support.js');
 const { captureRunOutput, failRunOutputCapture } = await import('../run-completion/output.js');
 const { retainedRunTaskDirectory } = await import('../run-completion/retained-artifacts.js');
-const { getRun, updateRun } = await import('../runs/store.js');
+const { getRun, updateRun, updateRunStep } = await import('../runs/store.js');
 const { assertRunGateReady, collectRunGateReadiness } = await import('./gate-prerequisites.js');
 const { deleteTestRunIfPresent } = await import('./test-fixtures.js');
 
@@ -93,6 +93,43 @@ test('eval completion retains unapproved claims without requiring publication ap
   );
   await chmod(retained, 0o600);
   await writeFile(retained, '{}');
+  await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
+});
+
+// F238: 61cf9212's worker blocked before running its recipe; its output was never finalized.
+test('a self-blocked eval output completes without the verdicts and proof it never produced', async (t) => {
+  const { run } = await trial(t, 'review');
+  updateRun(run.id, {
+    engineState: {
+      evalExperiment: {
+        experimentId: 'experiment-f238',
+        experimentKey: 'f238',
+        experimentManifestPath: '/unused/experiment-manifest.json',
+        packagePath: '/unused/candidate.result-package.json',
+        candidateStrategyFingerprint: 'candidate-f238',
+        trialId: 'trial-f238',
+      },
+    },
+  });
+  const retained = path.join(
+    await retainedRunTaskDirectory(getRun(run.id)!),
+    'artifacts/recipe-runs/proof/recipe-invocation.json',
+  );
+  await chmod(retained, 0o600);
+  await writeFile(retained, '{}');
+  await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
+  updateRunStep(run.id, 'monitor', {
+    status: 'done',
+    outputs: { evalWorkerBlocked: 'Recipe proof could not be completed' },
+  });
+  await assert.doesNotReject(assertRunGateReady(getRun(run.id)!, null, 'complete'));
+  await assert.doesNotReject(assertRunGateReady(getRun(run.id)!, null, 'finalize'));
+  await assert.rejects(
+    assertRunGateReady(getRun(run.id)!, null, 'approve-publish'),
+    /evidence package|claim verdicts/,
+  );
+  // Outside an eval, a worker's blocked marker grants nothing.
+  updateRun(run.id, { engineState: undefined });
   await assert.rejects(assertRunGateReady(getRun(run.id)!, null, 'complete'), /evidence package/);
 });
 

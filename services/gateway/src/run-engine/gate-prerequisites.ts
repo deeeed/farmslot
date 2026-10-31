@@ -950,6 +950,12 @@ export class RunGateNotReadyError extends GatewayMethodError {
   }
 }
 
+const BLOCKED_OUTPUT_UNPROVEN = new Set([
+  'acceptance-incomplete',
+  'evidence-policy-unsatisfied',
+  'evidence-validation-unavailable',
+]);
+
 export async function assertRunGateReady(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
@@ -965,13 +971,19 @@ export async function assertRunGateReady(
     isArtifactOnlyRun(run) &&
     !preparedPackage &&
     !readiness.identity.packageHash;
+  // A worker that blocked its own eval output proved nothing: its missing verdicts
+  // and proof are the measured outcome, not prerequisites (ADR-030 Amendment 2).
+  const blockedOutput =
+    outputCompletion &&
+    typeof run.steps.find(({ name }) => name === 'monitor')?.outputs?.evalWorkerBlocked ===
+      'string';
   const reasons = gateReasonsForAction(readiness, actionId).filter(
     (reason) =>
       !(
         outputCompletion &&
         reason.code === 'evidence-policy-unsatisfied' &&
         reason.evidencePolicy === 'claim-verdict'
-      ),
+      ) && !(blockedOutput && BLOCKED_OUTPUT_UNPROVEN.has(reason.code)),
   );
   if (
     reasons.length ||
