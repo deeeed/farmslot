@@ -395,8 +395,14 @@ async function recordedBundleBytes(store: RunBundleStore, digest: string): Promi
  */
 async function movedBundleBytes(store: RunBundleStore, directory: string): Promise<number> {
   const manifest = await readOptional(path.join(directory, 'manifest.json'));
-  const recorded = manifest && (await readBundleRecord(store, sha256Text(manifest)));
-  return typeof recorded === 'number' ? recorded : physicalBytes(directory);
+  if (!manifest) return physicalBytes(directory);
+  const digest = sha256Text(manifest);
+  const recorded = await readBundleRecord(store, digest);
+  if (recorded !== undefined) return recorded;
+  // Moved aside before it had a record (published before records existed): measured once.
+  const measured = await physicalBytes(directory);
+  await recordBundleBytes(store, digest, measured);
+  return measured;
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
