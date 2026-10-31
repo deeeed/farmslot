@@ -57,6 +57,40 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * The command line Codex ran, without the shell it wraps every command in:
+ * `/bin/zsh -lc 'git status'` ran `git status`. Anything else stays as Codex sent it.
+ */
+export function codexCommandLine(command: string): string {
+  const wrapped = /^(?:\S*\/)?(?:ba|z)?sh -l?c (.+)$/s.exec(command);
+  return (wrapped && shellWord(wrapped[1])) || command;
+}
+
+/** The text as one shell word with its quoting removed, or undefined when it is not one word. */
+function shellWord(text: string): string | undefined {
+  let word = '';
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === "'") {
+      const end = text.indexOf("'", i + 1);
+      if (end < 0) return undefined;
+      word += text.slice(i + 1, end);
+      i = end;
+    } else if (char === '"') {
+      let j = i + 1;
+      for (; j < text.length && text[j] !== '"'; j++) {
+        if (text[j] === '\\' && '"\\$`'.includes(text[j + 1] ?? '')) j++;
+        word += text[j];
+      }
+      if (j >= text.length) return undefined;
+      i = j;
+    } else if (char === '\\') word += text[++i] ?? '';
+    else if (/\s/.test(char)) return undefined;
+    else word += char;
+  }
+  return word;
+}
+
 /** What a Codex item does: its kind, command line and files. */
 function codexToolKind(
   itemType: string,
@@ -64,7 +98,7 @@ function codexToolKind(
 ): Pick<NativeSessionTool, 'kind' | 'command' | 'paths'> {
   if (itemType === 'commandExecution') {
     const command = optionalString(item.command);
-    return { kind: 'command', ...(command ? { command } : {}) };
+    return { kind: 'command', ...(command ? { command: codexCommandLine(command) } : {}) };
   }
   if (itemType === 'fileChange') {
     const paths = (Array.isArray(item.changes) ? item.changes : []).flatMap((change: unknown) => {

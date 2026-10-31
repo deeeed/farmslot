@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { codexNativeAdapter } from './codex.js';
+import { codexCommandLine, codexNativeAdapter } from './codex.js';
 import type { NativeEventInput } from './types.js';
 
 const fixture = `#!/usr/bin/env node
@@ -22,8 +22,8 @@ readline.createInterface({input:process.stdin}).on('line', line => {
  }
  if(m.id===78 && m.result) {
   send({method:'item/completed',params:{threadId:'thread-one',item:{id:'tool-one',type:'commandExecution',status:m.result.decision==='decline'?'declined':'completed'}}});
-  send({method:'item/started',params:{threadId:'thread-one',item:{id:'tool-two',type:'commandExecution',command:'npm test',status:'inProgress'}}});
-  send({method:'item/completed',params:{threadId:'thread-one',item:{id:'tool-two',type:'commandExecution',command:'npm test',aggregatedOutput:'ok',status:'completed'}}});
+  send({method:'item/started',params:{threadId:'thread-one',item:{id:'tool-two',type:'commandExecution',command:"/bin/zsh -lc 'npm test'",status:'inProgress'}}});
+  send({method:'item/completed',params:{threadId:'thread-one',item:{id:'tool-two',type:'commandExecution',command:"/bin/zsh -lc 'npm test'",aggregatedOutput:'ok',status:'completed'}}});
   send({method:'turn/completed',params:{threadId:'thread-one',turn:{id:'turn-one',status:'completed'}}});
  }
 });`;
@@ -70,4 +70,20 @@ test('Codex correlates structured acceptance and denies only the exact pending r
     await session.close();
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+test('a Codex command reads as the command line it wrapped in a shell', () => {
+  const cases: [string, string][] = [
+    [`/bin/zsh -lc 'git status --short'`, `git status --short`],
+    [`/bin/zsh -lc 'cat a.ts | head -5 && echo done'`, `cat a.ts | head -5 && echo done`],
+    [`/bin/bash -c "echo \\"hi\\" \\$HOME"`, `echo "hi" $HOME`],
+    [`/bin/zsh -lc 'echo '\\''quoted'\\'''`, `echo 'quoted'`],
+    [`/bin/zsh -lc 'printf one\ntwo'`, `printf one\ntwo`],
+    // Not one wrapped word: as Codex sent it.
+    [`/bin/zsh -lc 'echo' extra`, `/bin/zsh -lc 'echo' extra`],
+    [`/bin/zsh -lc 'unterminated`, `/bin/zsh -lc 'unterminated`],
+    [`npm test`, `npm test`],
+    [`/bin/zsh -lc ''`, `/bin/zsh -lc ''`],
+  ];
+  for (const [command, line] of cases) assert.equal(codexCommandLine(command), line, command);
 });
