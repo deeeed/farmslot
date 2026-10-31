@@ -469,7 +469,10 @@ export interface SlotLoadWait {
   slotId: string;
 }
 
-export class AutomaticSlotLoadWaitError extends Error {
+/** No slot in the requested scope can take the dispatch now; the message says why. */
+export class NoDispatchableSlotError extends Error {}
+
+export class AutomaticSlotLoadWaitError extends NoDispatchableSlotError {
   constructor(
     message: string,
     readonly wait: SlotLoadWait,

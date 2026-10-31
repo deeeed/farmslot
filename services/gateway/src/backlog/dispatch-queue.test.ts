@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
 import type { QueueItem, ReviewSelection, SlotStatus } from '@farmslot/protocol';
 
@@ -2073,9 +2073,10 @@ test('PR queue prepares cold allowed slots while respecting busy slots and model
   assert.deepEqual(item.allowedSlots, ['allowed-b']);
 });
 
-test('PR queue narrowing to a lone phone slot is not an operator pin under on-request', async (t) => {
+/** A project with `slot_selection.physical_devices: on-request`, a phone and a simulator. */
+async function onRequestPRFixture(t: TestContext, label: string) {
   setQueueDispatchPressureCaptureForTests(admitAllPressure);
-  const project = `physical-devices-${process.pid}`;
+  const project = `physical-devices-${process.pid}-${label}`;
   const projectDir = path.join(farmslotRoot, 'projects', project);
   await mkdir(projectDir, { recursive: true });
   t.after(() => rm(projectDir, { recursive: true, force: true }));
@@ -2083,7 +2084,7 @@ test('PR queue narrowing to a lone phone slot is not an operator pin under on-re
     path.join(projectDir, 'project.json'),
     JSON.stringify({ name: project, slot_selection: { physical_devices: 'on-request' } }),
   );
-  const sim: SlotStatus = { ...readyFleetSlot('sim').slots[0], project, agent: 'working' };
+  const sim: SlotStatus = { ...readyFleetSlot('sim').slots[0], project };
   const phone: SlotStatus = {
     ...readyFleetSlot('macpro-mm-pixel6').slots[0],
     project,
@@ -2092,7 +2093,7 @@ test('PR queue narrowing to a lone phone slot is not an operator pin under on-re
     resources: { 'android-device': { adb_serial: '29071JEGR20638' } },
   };
   const item: QueueItem = {
-    id: 'pr-phone-narrowing',
+    id: `pr-${label}`,
     flowType: 'review-pr',
     project,
     ticketOrPr: 'owner/repo#44',
@@ -2100,18 +2101,36 @@ test('PR queue narrowing to a lone phone slot is not an operator pin under on-re
     createdAt: new Date().toISOString(),
     status: 'queued',
   };
-  // Busy sim and phone sit in separate execution groups, so one group is [phone].
-  const choices = [
-    { slotId: sim.slot, runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'cold' },
-    { slotId: phone.slot, runner: 'codex', model: 'gpt-6-astra', effort: 'medium', mode: 'cold' },
-  ] as const;
+  // The preferred model runs only on the phone; the fallback runs on the simulator.
+  const choice = (slotId: string, effort: string) =>
+    ({ slotId, runner: 'codex', model: 'gpt-6-astra', effort, mode: 'cold' }) as const;
+  const choices = [choice(phone.slot, 'high'), choice(sim.slot, 'medium')];
+  return { sim, phone, item, choices, busySim: { ...sim, agent: 'working' as const } };
+}
+
+test('PR queue tries the next execution group when on-request refuses a phone-only group', async (t) => {
+  const { sim, phone, item, choices, busySim } = await onRequestPRFixture(t, 'groups');
+  assert.equal(await selectPRQueueExecution([phone, sim], { ...item }, choices), sim.slot);
+  // Narrowing to the [phone] group is not an operator pin.
   await assert.rejects(
-    selectPRQueueExecution([sim, phone], item, [...choices]),
+    selectPRQueueExecution([phone, busySim], { ...item }, choices),
     /macpro-mm-pixel6: Physical device slot is reserved for runs that request a device/,
   );
-  assert.equal(item.allowedSlots, undefined);
-  const pinned = { ...item, allowedSlots: [phone.slot] };
-  assert.equal(await selectPRQueueExecution([sim, phone], pinned, [...choices]), phone.slot);
+  // One configured slot is an operator pin.
+  assert.equal(await selectPRQueueExecution([phone, sim], item, [choices[0]]), phone.slot);
+});
+
+test('fields a failed PR dispatch wrote back do not pin its retry to the phone', async (t) => {
+  const { sim, phone, item, choices, busySim } = await onRequestPRFixture(t, 'retry');
+  const selected = await selectPRQueueExecution([phone, sim], item, choices);
+  assert.equal(selected, sim.slot);
+  // tryDispatchNext records the pick; a failed create requeues the item with both fields set.
+  item.slotId = selected!;
+  assert.deepEqual(item.allowedSlots, [sim.slot]);
+  await assert.rejects(
+    selectPRQueueExecution([phone, busySim], item, choices),
+    /macpro-mm-pixel6: Physical device slot is reserved/,
+  );
 });
 
 test('PR queue filters every disabled member of a mixed model group before scoring', async () => {

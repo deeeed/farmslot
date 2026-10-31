@@ -40,7 +40,7 @@ test('run.create requiredCapabilities become the capability requirements FIND_SL
   const params = { flowType: 'dev', project: 'fixture', ticketOrPr: 'TEST-CAPABILITIES' } as const;
   const run = buildRunRecord({
     ...params,
-    requiredCapabilities: ['android-device', 'audio-capture', 'android-device'],
+    requiredCapabilities: ['android-device', ' audio-capture', 'android-device '],
   });
   assert.deepEqual(run.engineState?.slotCapabilityRequirements, {
     capabilityIds: ['android-device', 'audio-capture'],

@@ -1114,7 +1114,9 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
     engineState: params.requiredCapabilities?.length
       ? {
           ...engineState,
-          slotCapabilityRequirements: { capabilityIds: [...new Set(params.requiredCapabilities)] },
+          slotCapabilityRequirements: {
+            capabilityIds: [...new Set(params.requiredCapabilities.map((id) => id.trim()))],
+          },
         }
       : engineState,
     ticketData:

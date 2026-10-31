@@ -56,6 +56,7 @@ import {
   isPinnedSlotSelection,
 } from '../methods/dispatch/pressure-admission.js';
 import {
+  NoDispatchableSlotError,
   projectConfigsFromProjects,
   validateSlotForDispatch,
 } from '../methods/dispatch/slot-scoring.js';
@@ -1305,15 +1306,19 @@ export async function selectPRQueueExecution(
   item: QueueItem,
   choices: PRExecutionChoice[],
 ): Promise<string | null> {
-  // Narrowing to one execution group is not an operator pin (ADR-054).
-  const pinnedSlotSelection = isPinnedSlotSelection(item);
-  const groups = new Map<string, PRSlotExecutionChoice[]>();
-  for (const choice of choices.filter(
+  const slotChoices = choices.filter(
     (entry): entry is PRSlotExecutionChoice => !isPRWorkspaceExecutionChoice(entry),
-  )) {
+  );
+  // ADR-054 pin intent comes from the configured choices: exactly one slot is a pin.
+  // The item's slotId/allowedSlots are written back by earlier selections, and
+  // narrowing to one execution group is not a pin.
+  const pinnedSlotSelection = new Set(slotChoices.map((choice) => choice.slotId)).size === 1;
+  const groups = new Map<string, PRSlotExecutionChoice[]>();
+  for (const choice of slotChoices) {
     const key = JSON.stringify([choice.runner, choice.model, choice.effort]);
     groups.set(key, [...(groups.get(key) ?? []), choice]);
   }
+  let refusal: NoDispatchableSlotError | undefined;
   for (const group of groups.values()) {
     const model = group[0];
     const execution = executionModelFromSelection(model);
@@ -1347,7 +1352,16 @@ export async function selectPRQueueExecution(
       model: execution.model,
       effort: execution.effort ?? undefined,
     };
-    const slotId = await selectQueueDispatchSlot(slots, proposed, { pinnedSlotSelection });
+    let slotId: string | null;
+    try {
+      slotId = await selectQueueDispatchSlot(slots, proposed, { pinnedSlotSelection });
+    } catch (error) {
+      // A group whose slots all refuse (placement policy, an unplugged phone) must
+      // not hide a later group that can dispatch.
+      if (!(error instanceof NoDispatchableSlotError)) throw error;
+      refusal ??= error;
+      continue;
+    }
     if (slotId) {
       item.allowedSlots = allowedSlots;
       item.runner = model.runner;
@@ -1356,6 +1370,7 @@ export async function selectPRQueueExecution(
       return slotId;
     }
   }
+  if (refusal) throw refusal;
   return null;
 }
 
