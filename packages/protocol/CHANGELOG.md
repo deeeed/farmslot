@@ -4,9 +4,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.74.7 - 2026-11-01
+
 - `plan.updated` (`NativeSessionPlan`, `NativePlanStep`) carries a runner's whole plan: a `checklist` of steps (`pending`, `in-progress`, `completed`, with an optional note) or a `proposal` in markdown. The client-cache timeline has a `plan` entry, one per turn and kind, updated in place under the key of its first update; `nativePlanText` gives a checklist's progress ("3 of 5 steps"); `nativeTimelineRows` marks a plan whose turn ended (`ended`), `nativeWatchTools` also watches running plans, and `nativePlanOpen` keeps a watched plan open. A long proposal collapses like a long message. The history projection is bumped, so cached histories that dropped plans are read again once.
 - `RunAttestBeforeAttemptParams.recipeRunId` documents the attempt path under `artifacts/recipe-runs/`, including the harness's `attempts/<id>` layout.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.6 - 2026-11-01
 
