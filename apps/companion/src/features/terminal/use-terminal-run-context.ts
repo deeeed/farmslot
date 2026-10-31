@@ -11,7 +11,11 @@ import { canActOn, type ResourceQuery, resourceQuery } from '@farmslot/protocol/
 import { observeNativeSlotFrame, type SlotProofFrame } from '../../farmslot/run-collections-proof';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
-import { getResourceCache, getResourceWorkspaceKey } from '../../lib/resource-cache';
+import {
+  getResourceCache,
+  getResourceWorkspaceAccess,
+  getResourceWorkspaceKey,
+} from '../../lib/resource-cache';
 import { assertNativeRunReady } from '../../lib/run-collections';
 import {
   type CompanionTerminalTargetParams,
@@ -137,6 +141,7 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
       !currentFarmConnection(client, useConnectionStore.getState)() ||
       scope.current !== scopeKey ||
       workspaceKey !== getResourceWorkspaceKey() ||
+      getResourceWorkspaceAccess() !== 'farm' ||
       admitted.current !== JSON.stringify([scopeKey, client.connectionGeneration])
     )
       throw new Error('Wait for the current terminal run before typing.');

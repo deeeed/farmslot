@@ -18,6 +18,7 @@ test('saved facts retain their source age alongside a refresh failure', () => {
       },
     ],
     61_000,
+    true,
   );
   assert.equal(messages.length, 2);
   assert.match(messages[0], /Saved runs, 1m old/);
@@ -26,15 +27,15 @@ test('saved facts retain their source age alongside a refresh failure', () => {
 
 test('a ready view is quiet and unsupported reads keep their reason', () => {
   assert.deepEqual(
-    resourceReadMessages([{ label: 'run', observation: { status: 'ready', data: {} } }], 0),
+    resourceReadMessages([{ label: 'run', observation: { status: 'ready', data: {} } }], 0, true),
     [],
   );
   assert.deepEqual(
-    resourceReadMessages([{ label: 'run', observation: { status: 'loading' } }], 0),
+    resourceReadMessages([{ label: 'run', observation: { status: 'loading' } }], 0, true),
     [],
   );
   assert.deepEqual(
-    resourceReadMessages([{ label: 'run', observation: { status: 'unsupported' } }], 0),
+    resourceReadMessages([{ label: 'run', observation: { status: 'unsupported' } }], 0, true),
     ['Live run updates are unavailable on this gateway.'],
   );
 });

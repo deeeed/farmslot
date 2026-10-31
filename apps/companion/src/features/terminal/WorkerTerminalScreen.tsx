@@ -463,7 +463,7 @@ export default function WorkerTerminalScreen() {
     setIsSending(true);
     try {
       requireWorkerInventory();
-      await client.request(Methods.TERMINAL_WORKER_INPUT, { worker, data }, 10_000);
+      await writeWorkerInput(data);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setVoiceStatus('idle');
       setVoiceMessage('Instruction sent. Tap mic for the next worker nudge.');
@@ -474,12 +474,21 @@ export default function WorkerTerminalScreen() {
       setVoiceComposerOpen(false);
       return true;
     } catch (err) {
-      setVoiceWarning(`Send failed: ${getErrorMessage(err)}`);
+      if (!(err instanceof TerminalInputCancelledError))
+        setVoiceWarning(`Send failed: ${getErrorMessage(err)}`);
       return false;
     } finally {
       setIsSending(false);
     }
-  }, [client, isSending, voiceContext, voiceEditableInstruction, worker, requireWorkerInventory]);
+  }, [
+    client,
+    isSending,
+    voiceContext,
+    voiceEditableInstruction,
+    worker,
+    requireWorkerInventory,
+    writeWorkerInput,
+  ]);
 
   const resize = useCallback(
     (size: TerminalSize) => {

@@ -32,9 +32,16 @@ export function useWorkerTerminalInput(
         queueRef.current = {
           key,
           queue: createTerminalInputQueue(async (batch, assertActive) => {
-            assertActive();
-            if (client.connectionGeneration !== generation) throw new TerminalInputCancelledError();
-            await client.request(Methods.TERMINAL_WORKER_INPUT, { worker, data: batch }, 10_000);
+            // Rechecked after any wait for the connection or a token refresh, before sending.
+            const assertCurrent = () => {
+              assertActive();
+              if (client.connectionGeneration !== generation)
+                throw new TerminalInputCancelledError();
+            };
+            assertCurrent();
+            await client.request(Methods.TERMINAL_WORKER_INPUT, { worker, data: batch }, 10_000, {
+              assertCurrent,
+            });
           }),
         };
       }

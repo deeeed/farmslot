@@ -9,11 +9,19 @@ export interface LabelledReadObservation {
   label: string;
   observation: ResourceQueryState;
 }
+/** A read error worth showing: a read the gateway superseded within its grace is not one. */
+export function visibleReadError(observation: ResourceQueryState, saved: boolean) {
+  const error = observation.error;
+  return error && (saved || observation.data === undefined || !isSupersededRead(error))
+    ? error
+    : undefined;
+}
+
 /** A connected reread in flight, or one the gateway superseded within its grace, stays quiet. */
 export function resourceReadMessages(
   reads: readonly LabelledReadObservation[],
   now: number,
-  connected = true,
+  connected: boolean,
 ): string[] {
   return reads.flatMap(({ label, observation }) => {
     if (observation.status === 'ready' || observation.status === 'loading') return [];
@@ -28,11 +36,8 @@ export function resourceReadMessages(
       );
     if (observation.status === 'unsupported')
       messages.push(`Live ${label} updates are unavailable on this gateway.`);
-    if (
-      observation.error &&
-      (saved || observation.data === undefined || !isSupersededRead(observation.error))
-    )
-      messages.push(`Could not read ${label}: ${observation.error.message}`);
+    const error = visibleReadError(observation, saved);
+    if (error) messages.push(`Could not read ${label}: ${error.message}`);
     return messages;
   });
 }

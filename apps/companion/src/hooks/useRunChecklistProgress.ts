@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
 
 import { Methods, type Run, type TaskProgressResult } from '@farmslot/protocol';
-import { heldDataIsSaved, isSupersededRead, resourceQuery } from '@farmslot/protocol/client-cache';
+import { heldDataIsSaved, resourceQuery } from '@farmslot/protocol/client-cache';
 import { runChecklistProgressTarget } from '@farmslot/review-dispatch';
 
+import { visibleReadError } from '../lib/resource-read-status';
 import { useConnectionStore } from '../store/connection';
 
 import { useResourceQuery } from './useResourceQuery';
@@ -28,10 +29,7 @@ export function useRunChecklistProgress(run: Run) {
     ? {
         key: target.key,
         progress: state.data?.structured ?? null,
-        error:
-          state.error && (saved || !state.data || !isSupersededRead(state.error))
-            ? state.error.message
-            : undefined,
+        error: visibleReadError(state, saved)?.message,
         stale: saved,
         observedAt: state.observedAt,
       }

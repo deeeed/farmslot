@@ -11,7 +11,12 @@ import {
 
 interface FakeClient {
   connectionGeneration: number;
-  request(method: string, params: { worker: TmuxWorkerRef; data: string }): Promise<unknown>;
+  request(
+    method: string,
+    params: { worker: TmuxWorkerRef; data: string },
+    timeout?: number,
+    options?: { assertCurrent?: () => void },
+  ): Promise<unknown>;
 }
 
 const flush = async () => {
@@ -87,4 +92,46 @@ test('worker pane keys go one request at a time in the order typed', async () =>
   } finally {
     hook.cleanup();
   }
+});
+
+test('worker keys held behind a token refresh are never sent to a pane left or a new connection', async () => {
+  const sent: string[] = [];
+  let refreshed: () => void = () => undefined;
+  const client: FakeClient = {
+    connectionGeneration: 1,
+    async request(_method, params, _timeout, options) {
+      // GatewayClient rechecks the caller once the refresh finishes, then sends.
+      await new Promise<void>((resolve) => (refreshed = resolve));
+      options?.assertCurrent?.();
+      sent.push(params.data);
+      return { sent: true };
+    },
+  };
+  const worker: TmuxWorkerRef = { nodeId: 'mini', session: 'mmt-3', target: 'mmt-3:1.1' };
+  const mount = () =>
+    mountHook<[FakeClient, TmuxWorkerRef]>(
+      new URL('./use-worker-terminal-input.ts', import.meta.url),
+      'useWorkerTerminalInput',
+      {
+        '@farmslot/protocol': { Methods },
+        '../../lib/terminal-input-queue': { createTerminalInputQueue, TerminalInputCancelledError },
+      },
+    );
+  const reconnected = mount();
+  const beforeReconnect = (reconnected.render(client, worker) as (data: string) => Promise<void>)(
+    'brown66',
+  );
+  await flush();
+  client.connectionGeneration++;
+  refreshed();
+  await assert.rejects(beforeReconnect, TerminalInputCancelledError);
+  reconnected.cleanup();
+
+  const left = mount();
+  const beforeLeaving = (left.render(client, worker) as (data: string) => Promise<void>)('x');
+  await flush();
+  left.cleanup();
+  refreshed();
+  await assert.rejects(beforeLeaving, TerminalInputCancelledError);
+  assert.deepEqual(sent, []);
 });

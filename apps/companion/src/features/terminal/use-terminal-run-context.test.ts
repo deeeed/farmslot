@@ -7,6 +7,7 @@ import {
   createGatewayResourceCache,
   type ResourceQuery,
   resourceQuery,
+  type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceCacheConformanceTransport } from '../../../../../packages/protocol/src/client-cache/conformance';
@@ -83,6 +84,7 @@ test('terminal commands use current canonical inputs without rereads while the s
       '../../lib/connection-authority': { currentFarmConnection },
       '../../lib/resource-cache': {
         getResourceCache: () => cache,
+        getResourceWorkspaceAccess: () => 'farm',
         getResourceWorkspaceKey: () => workspaceKey,
       },
       '../../lib/run-collections': {
@@ -204,5 +206,95 @@ test('terminal commands use current canonical inputs without rereads while the s
     hook.cleanup();
     for (const stop of stops.values()) stop();
     await cache.dispose();
+  }
+});
+
+test('saved terminal run data stops typing until a current read', () => {
+  const run: Run = {
+    id: 'run-a',
+    familyId: 'run-a',
+    lane: 'production',
+    flowType: 'dev',
+    status: 'monitoring',
+    project: 'example',
+    ticketOrPr: 'EX-1',
+    slotId: 'slot-a',
+    branch: 'ex-1',
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { runner: 'codex', model: 'gpt-5.5', nudgeCount: 0 },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:01:00.000Z',
+  };
+  const runQuery = resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: 'run-a' });
+  let runState: ResourceQueryState<RunGetResult> = {
+    status: 'ready',
+    data: { run },
+    observedAt: 1_000,
+  };
+  const client = { connectionGeneration: 1, connectionState: 'connected', workspaceAccess: 'farm' };
+  const authority = { client, status: 'connected', activeProfileId: 'first', authorityEpoch: 0 };
+  const useConnectionStore = Object.assign(
+    (select: (state: typeof authority) => unknown) => select(authority),
+    { getState: () => authority },
+  );
+  const read = (query?: ResourceQuery<unknown>): ResourceQueryState<unknown> =>
+    query?.id === runQuery.id ? runState : { status: 'ready', data: { recipeRuns: [] } };
+  const hook = mountHook<[CompanionTerminalTargetParams]>(
+    new URL('./use-terminal-run-context.ts', import.meta.url),
+    'useTerminalRunContext',
+    {
+      '@farmslot/protocol': { Methods },
+      '@farmslot/protocol/client-cache': { canActOn, resourceQuery },
+      '../../farmslot/run-collections-proof': { observeNativeSlotFrame: () => undefined },
+      '../../hooks/useResourceQuery': { useResourceQuery: read },
+      '../../lib/connection-authority': { currentFarmConnection },
+      '../../lib/resource-cache': {
+        getResourceCache: () => ({ read }),
+        getResourceWorkspaceAccess: () => 'farm',
+        getResourceWorkspaceKey: () => 'owner',
+      },
+      '../../lib/run-collections': { assertNativeRunReady: () => run },
+      '../../lib/terminal-target': {
+        buildCompanionTerminalTarget,
+        shouldUseBareTerminalSessionForRun,
+      },
+      '../../store/connection': { useConnectionStore },
+      '../native-conversation/use-slot-native-session': {
+        useSlotNativeSession: (
+          _run: Run | null,
+          slotId: string,
+          contextId?: string,
+          runId?: string,
+        ) => ({
+          contextId: contextId ?? '',
+          target: undefined,
+          terminalTarget: buildCompanionTerminalTarget({
+            slotId,
+            runId,
+            contextId,
+            bareSession: false,
+          }),
+        }),
+      },
+    },
+  );
+  const render = () => hook.render({ slotId: 'slot-a', runId: 'run-a' }) as Context;
+  try {
+    assert.equal(render().inputReady, true);
+    // A failed reread leaves saved data: typing stops even though the stream stays admitted.
+    runState = {
+      status: 'stale',
+      data: { run },
+      observedAt: 1_000,
+      error: { code: 'UNAVAILABLE', message: 'Gateway unavailable' },
+    };
+    const saved = render();
+    assert.equal(saved.streamReady, true);
+    assert.equal(saved.inputReady, false);
+    assert.throws(() => saved.requireInput(), /before typing/);
+  } finally {
+    hook.cleanup();
   }
 });
