@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
@@ -540,6 +541,21 @@ test('a bundle retention has moved aside stays charged until archived, without a
   );
   await rm(aside, { recursive: true });
   await reserveRunBundleMetadata(f.store, f.run.id, policy);
+});
+
+test('a recorded bundle retention has moved aside is charged its record, not walked', async (t) => {
+  const f = await fixture(t);
+  const result = await materializeRunBundle(f.request);
+  const aside = path.join(f.store.root, 'sha256', '.retention-1a2b3c4d');
+  await rename(path.join(f.store.root, 'sha256', result.ref.bundleDigest), aside);
+  await writeFile(path.join(aside, 'unrecorded.bin'), Buffer.alloc(60_000));
+  const policy = {
+    maxBundleBytes: 64_000,
+    maxStoreBytes: 64_000,
+    metadataReserveBytes: 4_000,
+    mediaRetentionDays: 30,
+  };
+  await reserveRunBundleMetadata(f.store, 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee', policy);
 });
 
 test('a repair re-derives a stale record from the manifest before charging restored media', async (t) => {

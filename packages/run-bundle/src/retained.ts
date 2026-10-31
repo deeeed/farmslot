@@ -386,6 +386,17 @@ async function recordedBundleBytes(store: RunBundleStore, digest: string): Promi
   return measured;
 }
 
+/**
+ * Retention moves a bundle aside (`.retention-<uuid>`) while it archives it, and those bytes
+ * stay charged until the archive removes them. Its manifest still names the bundle, so the
+ * record applies; only a directory without one is measured.
+ */
+async function movedBundleBytes(store: RunBundleStore, directory: string): Promise<number> {
+  const manifest = await readOptional(path.join(directory, 'manifest.json'));
+  const recorded = manifest && (await readBundleRecord(store, sha256Text(manifest)));
+  return typeof recorded === 'number' ? recorded : physicalBytes(directory);
+}
+
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
 async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
   let bytes = 0;
@@ -393,11 +404,9 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
     const file = path.join(store.root, entry.name);
     if (entry.name === 'sha256' && entry.isDirectory()) {
       for (const name of await readdir(file))
-        // Retention moves a bundle aside (`.retention-<uuid>`) while it archives it; those
-        // bytes stay charged until the archive removes them.
         bytes += BUNDLE_DIGEST.test(name)
           ? await recordedBundleBytes(store, name)
-          : await physicalBytes(path.join(file, name));
+          : await movedBundleBytes(store, path.join(file, name));
       continue;
     }
     // Records are bookkeeping for the bundles above, not stored payload.
@@ -613,7 +622,7 @@ async function copyHashed(
 }
 
 function bundleDirectory(store: RunBundleStore, digest: string): string {
-  if (!/^[a-f0-9]{64}$/u.test(digest)) throw new Error('Invalid retained bundle digest.');
+  if (!BUNDLE_DIGEST.test(digest)) throw new Error('Invalid retained bundle digest.');
   return path.join(store.root, 'sha256', digest);
 }
 
@@ -680,8 +689,6 @@ async function completeRetainedPayloads(
     const admitted = await withRunBundleStoreLock(request.store, async () => {
       const selected: typeof pending = [];
       if (!pending.length) return selected;
-      let storeAvailable =
-        policy.maxStoreBytes - (await chargedCaptureBytes(request, acquisitionSize));
       // The presence check above already says which manifest entries are on disk, so the
       // bundle's bytes follow from the manifest; this also corrects a record a crash left stale.
       const pendingKeys = new Set(pending.map(([key]) => key));
@@ -689,6 +696,8 @@ async function completeRetainedPayloads(
       for (const [key, meta] of Object.entries(manifest.entries))
         if (!pendingKeys.has(key)) present += meta.bytes;
       await recordBundleBytes(request.store, ref.bundleDigest, present);
+      let storeAvailable =
+        policy.maxStoreBytes - (await chargedCaptureBytes(request, acquisitionSize));
       let bundleAvailable = policy.maxBundleBytes - present;
       for (const [key, meta] of pending) {
         const relative = key.slice(prefix.length);
@@ -1053,6 +1062,7 @@ export async function collectRunBundleGarbage(
       if (now - Date.parse(manifest.exportedAt) < policy.mediaRetentionDays * 86_400_000) continue;
       const removed: string[] = [];
       let prunedBytes = 0;
+      const recorded = await readBundleRecord(store, digest);
       for (const [key, meta] of Object.entries(manifest.entries)) {
         if (!isRunBundleMedia(key)) continue;
         const file = resolvePathInsideRoot(directory, key);
@@ -1066,8 +1076,13 @@ export async function collectRunBundleGarbage(
         }
       }
       if (removed.length) {
-        const recorded = await recordedBundleBytes(store, digest);
-        await recordBundleBytes(store, digest, Math.max(0, recorded - prunedBytes));
+        await recordBundleBytes(
+          store,
+          digest,
+          recorded === undefined
+            ? await physicalBytes(directory)
+            : Math.max(0, recorded - prunedBytes),
+        );
         const record = path.join(store.root, 'availability', `${digest}.json`);
         const prior = await readOptional(record);
         const availability: { revision: number; prunedPaths: string[] } = prior
