@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.74.8`
+Protocol version: `0.74.9`
 
 ## WebSocket frame shape
 
@@ -214,6 +214,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `native.session.read`                   | native           | read-only     | —      | —      | Native Session Read gateway method.                   |
 | `native.session.respond`                | native           | bounded-write | —      | —      | Native Session Respond gateway method.                |
 | `native.session.send`                   | native           | bounded-write | —      | —      | Native Session Send gateway method.                   |
+| `native.session.turn.diff`              | native           | bounded-write | —      | —      | Native Session Turn Diff gateway method.              |
 | `native.session.workspace.changes`      | native           | bounded-write | —      | —      | Native Session Workspace Changes gateway method.      |
 | `native.session.workspace.diff`         | native           | bounded-write | —      | —      | Native Session Workspace Diff gateway method.         |
 | `native.session.workspace.list`         | native           | read-only     | —      | —      | Native Session Workspace List gateway method.         |

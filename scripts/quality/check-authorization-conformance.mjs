@@ -194,6 +194,7 @@ const nativeOwnerMethods = new Set([
   'native.session.workspace.read',
   'native.session.workspace.changes',
   'native.session.workspace.diff',
+  'native.session.turn.diff',
 ]);
 for (const method of nativeOwnerMethods) {
   if (!registrySet.has(method) || !routed.has(method))

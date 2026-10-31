@@ -24,6 +24,7 @@ import {
   type NativeSessionResponse,
   type NativeSessionSendResult,
   nativeStructuredResult,
+  type NativeTurnChanges,
 } from '@farmslot/protocol';
 
 import {
@@ -31,6 +32,7 @@ import {
   nativeProfileEnvironment,
   requireNativeProfile,
 } from './account-profiles.js';
+import { NATIVE_CHECKPOINT_WAIT_MS, NativeCheckpoints, withinMs } from './checkpoint.js';
 import { NativeRequestRefused } from './process.js';
 import { journalProcesses, type ProcessIdentity } from './process-tree.js';
 import { nativeRunnerDefinitions as adapters } from './registry.js';
@@ -230,6 +232,14 @@ interface SessionRecord {
   steering?: Set<string>;
   context: Record<string, string>;
   sending: boolean;
+  /** A read-only checkout: no checkpoints. */
+  readOnlyCheckout?: boolean;
+  /** Git checkpoints around each turn, or none (no Git working tree); opened when first needed. */
+  checkpoints?: Promise<NativeCheckpoints | undefined>;
+  /** The running turn's checkpoint before it, or why there is none. */
+  turnStart?: { commandId: string; from?: string; unavailable?: string };
+  /** The last turn's checkpoint after it while it is taken; `abandon` reports it unavailable now. */
+  turnEnd?: { done: Promise<void>; abandon(reason: string): void };
 }
 
 /** Runs only inside the local host. Synchronous fsync orders intent before native input. */
@@ -643,6 +653,8 @@ export class NativeSessionManager {
       throw error;
     }
     try {
+      // A read-only checkout is never written, so its turns change nothing to checkpoint.
+      record.readOnlyCheckout = !!filesystemPolicy;
       record.startupAbort = new AbortController();
       record.startup = transport.adapter.start(
         {
@@ -1117,7 +1129,13 @@ export class NativeSessionManager {
       }
     }
     this.persist(record, enriched);
-    if (event.type === 'turn.completed') this.scheduleQueuedInput(record);
+    if (event.type === 'turn.completed') {
+      const start = record.turnStart;
+      record.turnStart = undefined;
+      // Only once turn.completed is durable: its changes follow it in the journal.
+      if (start) this.checkpointAfter(record, start);
+      this.scheduleQueuedInput(record);
+    }
   }
 
   private owned(owner: string, id: string, observations?: ProcessMetadataCache): SessionRecord {
@@ -1375,8 +1393,12 @@ export class NativeSessionManager {
     command.submitted = true;
     record.commands.set(commandId, command);
     try {
+      // The previous turn's changes come first, and nothing this turn writes can reach them.
+      const deadline = Date.now() + NATIVE_CHECKPOINT_WAIT_MS;
+      if (record.turnEnd) await this.finishTurnChanges(record, deadline);
       // A crash after this durable reservation must never trigger a resend.
       this.append(record, { type: 'command.submitted', commandId, text });
+      await this.checkpointBefore(record, commandId, deadline);
       await record.adapter!.send(text, commandId);
       return {
         submitted: command.submitted,
@@ -1529,10 +1551,14 @@ export class NativeSessionManager {
       if (record.info.processPid && !record.info.processStopped)
         throw new Error('Native process cleanup is unconfirmed; close outcome is unknown');
       cancelQueued();
+      await this.dropCheckpoints(record);
       return;
     }
     record.info.state = 'closing';
     this.persist(record);
+    // The last turn's changes are reported before the session closes.
+    if (record.turnEnd)
+      await this.finishTurnChanges(record, Date.now() + NATIVE_CHECKPOINT_WAIT_MS);
     if (!record.adapter && record.startup) {
       record.startupAbort?.abort();
       try {
@@ -1542,6 +1568,7 @@ export class NativeSessionManager {
         // adapter has independently confirmed that its entire owned tree stopped.
         if (record.info.processStopped && ['closed', 'failed'].includes(record.info.state)) {
           cancelQueued();
+          await this.dropCheckpoints(record);
           return;
         }
         throw error;
@@ -1554,5 +1581,124 @@ export class NativeSessionManager {
     cancelQueued();
     if (!['closed', 'failed'].includes(this.owned(owner, id).info.state))
       this.append(record, { type: 'session.closed' });
+    await this.dropCheckpoints(record);
+  }
+
+  /**
+   * The session's checkpoints, opened once and found again after a host restart (they are kept
+   * under the session's refs). A failure to open is not kept: the next use tries again.
+   */
+  private checkpointsOf(record: SessionRecord): Promise<NativeCheckpoints | undefined> {
+    if (!record.checkpoints) {
+      const opened = NativeCheckpoints.open(record.info.cwd, record.info.id, {
+        indexDir: this.checkpointDirectory(record),
+      });
+      record.checkpoints = opened;
+      opened.catch(() => {
+        if (record.checkpoints === opened) record.checkpoints = undefined;
+      });
+    }
+    return record.checkpoints;
+  }
+
+  private checkpointDirectory(record: SessionRecord): string {
+    return join(this.root, 'checkpoints', record.info.id);
+  }
+
+  /** Waits until `deadline` for the last turn's `turn.changes`; later, reports it unavailable. */
+  private async finishTurnChanges(record: SessionRecord, deadline: number): Promise<void> {
+    const end = record.turnEnd;
+    if (!end) return;
+    const left = Math.max(0, deadline - Date.now());
+    if (
+      (await withinMs(
+        end.done.then(() => true),
+        left,
+      )) === undefined
+    )
+      end.abandon(
+        `The checkpoint after this turn took longer than ${NATIVE_CHECKPOINT_WAIT_MS / 1000} s`,
+      );
+  }
+
+  /**
+   * The checkpoint a turn starts from, before the runner write. Delivery waits for it until
+   * `deadline`; slower, the turn reports its changes unavailable and the late result is unused.
+   */
+  private async checkpointBefore(
+    record: SessionRecord,
+    commandId: string,
+    deadline: number,
+  ): Promise<void> {
+    record.turnStart = undefined;
+    // A read-only checkout is never written, so its turns change nothing to checkpoint.
+    if (record.readOnlyCheckout) return;
+    const late = {
+      commandId,
+      unavailable: `The checkpoint before this turn took longer than ${NATIVE_CHECKPOINT_WAIT_MS / 1000} s`,
+    };
+    // The previous turn's checkpoint used the whole wait: none is started that would go unused.
+    if (Date.now() >= deadline) {
+      if (record.checkpoints) record.turnStart = late;
+      return;
+    }
+    // `null`: the working directory is not in a Git working tree, so its turns report nothing.
+    const taken = (async () => {
+      const checkpoints = await this.checkpointsOf(record);
+      return checkpoints ? { from: await checkpoints.take() } : null;
+    })().catch((error: unknown) => ({
+      unavailable: `The checkpoint before this turn failed: ${(error as Error).message}`,
+    }));
+    const start = await withinMs(taken, Math.max(0, deadline - Date.now()));
+    if (start === undefined) record.turnStart = late;
+    else if (start) record.turnStart = { commandId, ...start };
+  }
+
+  /** The turn's checkpoint after it, and `turn.changes` between the two, once. */
+  private checkpointAfter(
+    record: SessionRecord,
+    start: NonNullable<SessionRecord['turnStart']>,
+  ): void {
+    let reported = false;
+    const report = (changes: NativeTurnChanges) => {
+      if (reported || this.sessions.get(record.info.id) !== record) return;
+      reported = true;
+      if (record.turnEnd === end) record.turnEnd = undefined;
+      this.append(record, { type: 'turn.changes', commandId: start.commandId, changes });
+    };
+    const end: NonNullable<SessionRecord['turnEnd']> = {
+      done: Promise.resolve(),
+      abandon: (reason) => report({ files: [], unavailable: reason }),
+    };
+    record.turnEnd = end;
+    end.done = (async () => {
+      try {
+        const checkpoints = start.from && (await record.checkpoints);
+        report(
+          start.from && checkpoints
+            ? await checkpoints.changes(start.from, await checkpoints.take())
+            : { files: [], unavailable: start.unavailable ?? 'No checkpoint before this turn' },
+        );
+      } catch (error) {
+        report({
+          files: [],
+          unavailable: `The checkpoint after this turn failed: ${(error as Error).message}`,
+        });
+      }
+    })();
+  }
+
+  /** Deletes the session's checkpoints; a failure is shown and the next close tries again. */
+  private async dropCheckpoints(record: SessionRecord): Promise<void> {
+    // A session that never took one (outside Git, read-only, no turn) has no index directory.
+    if (!record.checkpoints && !existsSync(this.checkpointDirectory(record))) return;
+    try {
+      await (await this.checkpointsOf(record))?.remove();
+    } catch (error) {
+      this.append(record, {
+        type: 'error',
+        text: `This session's checkpoints were not deleted: ${(error as Error).message}. Close it again to retry.`,
+      });
+    }
   }
 }
