@@ -91,6 +91,20 @@ test('Pixel replay intent comes from available device providers and survives slo
   assert.equal(await replaySlotCapabilityRequirements({ slotId: null }), undefined);
 });
 
+test('replay keeps a run.create capability request and adds the devices of the slot it leaves', async () => {
+  const requested = { capabilityIds: ['audio-capture'] };
+  const leaving = { slotId: pixel.slot, engineState: { slotCapabilityRequirements: requested } };
+  assert.deepEqual(
+    await replaySlotCapabilityRequirements(leaving, async () => ({
+      slotId: pixel.slot,
+      project: 'device-farm',
+      capabilities: [provider('android-device'), provider('ios-simulator', false)],
+    })),
+    { sourceSlotId: pixel.slot, capabilityIds: ['audio-capture', 'android-device'] },
+  );
+  assert.deepEqual(await replaySlotCapabilityRequirements({ ...leaving, slotId: null }), requested);
+});
+
 test('Android capability is a hard filter even when the iOS slot has the best score', () => {
   assert.equal(
     findBestSlot([ios, pixel], 'device-farm')?.slot,

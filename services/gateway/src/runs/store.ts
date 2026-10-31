@@ -900,6 +900,12 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
   if (Array.isArray(params.allowedSlots) && params.allowedSlots.length === 0) {
     throw new Error('Cannot create run: active slot filters resolved to no matching slots');
   }
+  if (
+    params.requiredCapabilities !== undefined &&
+    (!Array.isArray(params.requiredCapabilities) ||
+      params.requiredCapabilities.some((id) => typeof id !== 'string' || !id.trim()))
+  )
+    throw new Error('requiredCapabilities must be an array of non-empty capability ids');
   if (isProductionRunsDir() && isLeakedGatewayTestFixture(params)) {
     throw new Error(
       'Refusing to create gateway test fixture run in production .runs/ — run tests via run-tsx-tests.mjs or set NODE_TEST_CONTEXT=1',
@@ -1104,7 +1110,15 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
         ? (params.reviewValidationDepth ?? 'static-code')
         : undefined,
     safetyTier: resolvedTier,
-    engineState,
+    // FIND_SLOT reads these, plus the devices of a slot a replay leaves.
+    engineState: params.requiredCapabilities?.length
+      ? {
+          ...engineState,
+          slotCapabilityRequirements: {
+            capabilityIds: [...new Set(params.requiredCapabilities.map((id) => id.trim()))],
+          },
+        }
+      : engineState,
     ticketData:
       params.ticketData?.source === 'manual'
         ? { ...params.ticketData, title: taskTitleText(params.ticketData.title) }

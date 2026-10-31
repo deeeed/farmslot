@@ -361,6 +361,8 @@ export function reachesSharedState(source) {
 // accessors above must be serial, which is why the guard matches the accessor
 // rather than the write.
 const SHARED_STATE_READ_ONLY = {
+  'src/backlog/dispatch-queue.test.ts':
+    'writes one process-unique projects/ fixture (physical-devices-<pid>) and removes it on teardown',
   'src/backlog/store.test.ts':
     'writes only process-unique .sandbox and project fixture paths, so concurrent lanes cannot collide',
   'src/intelligence/improvement-apply.test.ts':
