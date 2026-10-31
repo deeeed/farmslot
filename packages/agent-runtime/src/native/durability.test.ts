@@ -16,7 +16,7 @@ import fs, {
 import { syncBuiltinESMExports } from 'node:module';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import test from 'node:test';
 
 import { Methods, type NativeSessionEvent, type NativeSessionInfo } from '@farmslot/protocol';
@@ -33,6 +33,7 @@ import {
   type NativeWorkerLaunch,
 } from './worker-launch.js';
 import { routeNativeWorkerSession } from './worker-service.js';
+import { gitEnvironment } from './workspace.js';
 
 const fixture = `#!/usr/bin/env node
 if (process.argv.includes('--version')) { console.log('fixture 1'); process.exit(0); }
@@ -70,6 +71,25 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
  if(m.method==='turn/interrupt'){clearTimeout(timer);send({id:m.id,result:{}});send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'interrupted'}}});}
 });`;
 const delay = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Git in a test repository, with a fixed identity. */
+const gitIn =
+  (cwd: string) =>
+  (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@localhost', ...args], {
+      cwd,
+      env: gitEnvironment(),
+      encoding: 'utf8',
+    });
+/** Every event of a session, page by page. */
+const allEvents = (manager: NativeSessionManager, id: string) => {
+  const all: NativeSessionEvent[] = [];
+  for (let after = 0; ; ) {
+    const page = manager.read('owner', id, after, 500);
+    all.push(...page.events);
+    if (!page.hasMore) return all;
+    after = page.cursor;
+  }
+};
 async function until(predicate: () => boolean | Promise<boolean>) {
   const deadline = Date.now() + 12_000;
   while (!(await predicate())) {
@@ -1905,6 +1925,148 @@ test('a removal is durable, and the removed message never reaches the runner', a
   } finally {
     for (const session of manager.list('owner')) await manager.close('owner', session.id);
     fixture.restore();
+  }
+});
+
+test('each turn reports what it changed in its Git working tree, and close drops its checkpoints', async () => {
+  const fixture = setup();
+  const { repo, git } = testRepository();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: repo });
+  const refs = () =>
+    git('for-each-ref', '--format=%(refname)', `refs/farmslot/native/${session.id}/`).trim();
+  // The turn streams hundreds of deltas: read every page.
+  const events = () => allEvents(manager, session.id);
+  try {
+    await manager.send('owner', session.id, 'first', 'first');
+    await until(() => events().some((event) => event.type === 'turn.changes'));
+    const event = events().find((item) => item.type === 'turn.changes')!;
+    assert.equal(event.commandId, 'first');
+    // What the runner wrote during the turn; the file it wrote before the turn is not the turn's.
+    assert.deepEqual(event.changes!.files.map((file) => [file.path, file.status]).sort(), [
+      ['descendant', 'added'],
+      ['effects', 'added'],
+      ['inputs', 'added'],
+      ['native-turn.json', 'added'],
+    ]);
+    assert.ok(event.changes!.from && event.changes!.to);
+    // The reader's index and HEAD never moved.
+    assert.equal(git('diff', '--cached', '--name-only'), '');
+    assert.equal(git('rev-list', '--count', 'HEAD').trim(), '1');
+    assert.notEqual(refs(), '');
+    await manager.close('owner', session.id);
+    assert.equal(refs(), '');
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+/** A committed test repository, and Git in it. */
+function testRepository() {
+  const repo = mkdtempSync(join(tmpdir(), 'native-turn-repo-'));
+  const git = gitIn(repo);
+  git('init', '-q', '-b', 'main');
+  writeFileSync(join(repo, 'README.md'), 'base\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  return { repo, git };
+}
+
+test("a queued message is journaled after its previous turn's changes", async () => {
+  const fixture = setup();
+  const { repo } = testRepository();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: repo });
+  const events = () => allEvents(manager, session.id);
+  try {
+    await manager.send('owner', session.id, 'first', 'first');
+    await until(() => events().some((event) => event.type === 'turn.started'));
+    assert.equal((await manager.send('owner', session.id, 'second', 'second')).queued, true);
+    const at = (type: string, commandId: string) =>
+      events().find((event) => event.type === type && event.commandId === commandId)?.sequence;
+    await until(() => at('command.submitted', 'second') !== undefined);
+    // The first turn's changes come before the queued message, so a reader sees them under it.
+    assert.ok(at('turn.changes', 'first')! < at('command.submitted', 'second')!);
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('turn.changes follows its turn.completed in the journal, and a turn outside Git reports none', async () => {
+  const fixture = setup();
+  const { repo } = testRepository();
+  const plain = mkdtempSync(join(tmpdir(), 'native-turn-plain-'));
+  const manager = new NativeSessionManager(fixture.root);
+  const git = await manager.create('owner', { runner: 'codex', cwd: repo });
+  const outside = await manager.create('owner', { runner: 'codex', cwd: plain });
+  // A file where the session's index directory goes: its start checkpoint fails, so the end of
+  // the turn reports at once, inside the turn.completed path.
+  const blocked = join(fixture.root, 'checkpoints', git.id);
+  mkdirSync(dirname(blocked), { recursive: true });
+  writeFileSync(blocked, '');
+  try {
+    await Promise.all([
+      manager.send('owner', git.id, 'first', 'first'),
+      manager.send('owner', outside.id, 'first', 'first'),
+    ]);
+    await until(() =>
+      [git, outside].every((session) =>
+        allEvents(manager, session.id).some((event) => event.type === 'turn.completed'),
+      ),
+    );
+    await until(() => allEvents(manager, git.id).some((event) => event.type === 'turn.changes'));
+    rmSync(blocked);
+    for (const session of [git, outside]) await manager.close('owner', session.id);
+    // After a host restart each history reads back in order, with no gap.
+    const restarted = new NativeSessionManager(fixture.root);
+    for (const session of [git, outside]) {
+      const sequences = allEvents(restarted, session.id).map((event) => event.sequence);
+      assert.deepEqual(
+        sequences,
+        sequences.map((_, index) => index + 1),
+      );
+    }
+    const changes = allEvents(restarted, git.id).find((event) => event.type === 'turn.changes')!;
+    assert.match(changes.changes!.unavailable!, /^The checkpoint before this turn failed/);
+    assert.equal(
+      allEvents(restarted, outside.id).some((event) => event.type === 'turn.changes'),
+      false,
+    );
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(plain, { recursive: true, force: true });
+  }
+});
+
+test('a failed session closed after a host restart deletes its checkpoints', async () => {
+  const fixture = setup();
+  const { repo, git } = testRepository();
+  const manager = new NativeSessionManager(fixture.root);
+  const session = await manager.create('owner', { runner: 'codex', cwd: repo });
+  const refs = () =>
+    git('for-each-ref', '--format=%(refname)', `refs/farmslot/native/${session.id}/`).trim();
+  try {
+    // The runner dies in the turn, after its start checkpoint; the session fails, process stopped.
+    await assert.rejects(manager.send('owner', session.id, 'unknown', 'unknown'), /exited|closed/);
+    await until(() => {
+      const { state, processStopped } = manager.read('owner', session.id).session;
+      return state === 'failed' && processStopped === true;
+    });
+    assert.notEqual(refs(), '');
+    // Restored after a restart, the session has no checkpoints open; closing it finds them.
+    await new NativeSessionManager(fixture.root).close('owner', session.id);
+    assert.equal(refs(), '');
+    assert.equal(existsSync(join(fixture.root, 'checkpoints', session.id)), false);
+  } finally {
+    for (const item of manager.list('owner')) await manager.close('owner', item.id);
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 
