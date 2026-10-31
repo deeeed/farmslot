@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A native message queued for the next turn has an Edit button that takes it out of the queue and back into the composer, so you can change it and send it again. Sessions on an older native host show no button.
 - A link in a chat or native conversation message opens in a new tab instead of replacing Command Center.
 - A queued native message the session never took (it was closed meanwhile) goes back to the composer, ahead of anything typed since, instead of disappearing. The sent message's label shows its delivery state, such as "Queued for the next turn", instead of a fixed "Delivery unconfirmed".
 - A native conversation's unconfirmed message follows the shared client-cache rule for when the conversation shows it, as Companion does.

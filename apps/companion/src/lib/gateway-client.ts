@@ -65,6 +65,11 @@ interface PendingRequest {
 export interface GatewayRequestOptions extends ResourceReadOptions {
   /** Recheck caller lifetime after authentication/reconnection waits, before writing the frame. */
   assertCurrent?: () => void;
+  /**
+   * Called once the request frame is written to the socket. A failure before it means the gateway
+   * never got the request; after it, the gateway may have applied it.
+   */
+  onSent?: () => void;
 }
 
 const DEFAULT_TIMEOUT = 15_000;
@@ -150,6 +155,10 @@ export class GatewayClient {
   }
   private disposed = false;
   private pausedForBackground = false;
+  /** The socket is closed because the app is in the background, not because of an outage. */
+  get backgroundPaused(): boolean {
+    return this.pausedForBackground;
+  }
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
   private wasConnectedBeforeBackground = false;
   private lastConnectionError: string | null = null;
@@ -510,6 +519,7 @@ export class GatewayClient {
 
       this.offlineBaseline?.sent(frame);
       this.ws!.send(JSON.stringify(frame));
+      options?.onSent?.();
     });
     if (generation !== this.generation) throw new Error('Gateway identity changed during request');
     return result;

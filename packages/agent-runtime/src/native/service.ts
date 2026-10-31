@@ -180,6 +180,14 @@ export async function routeNativeSession(
       case Methods.NATIVE_SESSION_INTERRUPT:
         await client.interrupt(principal, string(p, 'sessionId'));
         return { interrupted: true };
+      case Methods.NATIVE_SESSION_CANCEL:
+        return {
+          receipt: await client.cancelCommand(
+            principal,
+            string(p, 'sessionId'),
+            string(p, 'commandId'),
+          ),
+        };
       case Methods.NATIVE_SESSION_CLOSE:
         await client.close(principal, string(p, 'sessionId'));
         return {

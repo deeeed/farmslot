@@ -758,6 +758,12 @@ export class NativeSessionManager {
     if (record.workerLeaseError && !closing) throw record.workerLeaseError;
   }
 
+  /** Standalone input only: a worker's input carries its run context, generation and lease. */
+  assertUnmanagedSession(owner: string, id: string): void {
+    if (this.owned(owner, id, this.processObservations).info.workerManaged)
+      throw new Error('Native worker input requires its run context, generation and task lease');
+  }
+
   async closeWorker(
     owner: string,
     id: string,
@@ -1163,6 +1169,8 @@ export class NativeSessionManager {
       ...record.info,
       capabilities: {
         ...record.info.capabilities,
+        // A host property, not the runner's: this host removes any session's queued input.
+        cancelQueued: true,
         ...(unavailable ? { resume: false, resumeUnavailableReason: unavailable } : {}),
       },
     };
@@ -1306,6 +1314,41 @@ export class NativeSessionManager {
       record.sending = false;
       this.scheduleQueuedInput(record);
     }
+  }
+
+  /**
+   * Removes a command still waiting in the queue. Synchronous, like the queue's pick and the first
+   * step of `submitCommand`: the event loop lets exactly one of removal and submission win.
+   */
+  cancelCommand(owner: string, id: string, commandId: string): NativeCommandReceipt {
+    const record = this.owned(owner, id);
+    const command = record.commands.get(commandId);
+    if (!command) throw new Error('Native command is unknown to this session');
+    if (command.outcome !== 'cancelled') {
+      if (!command.queued || command.submitted)
+        throw new Error('Native command is no longer queued: it was submitted or has settled');
+      if (
+        command.generation !== record.info.generation ||
+        command.leaseId !== record.info.workerLeaseId
+      )
+        throw new Error('Queued input belongs to a different generation or worker lease');
+      const { state } = command;
+      command.queued = false;
+      command.state = 'failed';
+      command.outcome = 'cancelled';
+      try {
+        // Durable before the reply: a lost reply still leaves the message removed, never sent.
+        this.persist(record);
+      } catch (error) {
+        // Not durable, so not removed: a host restart would still submit it. A retry persists.
+        command.queued = true;
+        command.state = state;
+        delete command.outcome;
+        throw error;
+      }
+    }
+    const { text: _text, leaseId: _leaseId, ...receipt } = command;
+    return receipt;
   }
 
   private scheduleQueuedInput(record: SessionRecord): void {

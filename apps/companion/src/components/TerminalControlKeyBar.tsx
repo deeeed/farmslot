@@ -21,9 +21,10 @@ export type TerminalControlKeyBarProps = {
   label?: string | null;
   /** Adds the runner row, the Yours row and their pickers for the pane this bar drives. */
   runnerPane?: TerminalRunnerPane | null;
-  touchKeyboardEnabled?: boolean;
+  /** Typing goes to the terminal itself instead of the input line. */
+  directInput?: boolean;
   onPress: (control: TerminalControlKey) => void;
-  onToggleTouchKeyboard?: () => void;
+  onToggleDirectInput?: () => void;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -34,9 +35,9 @@ export function TerminalControlKeyBar({
   disabled = false,
   label = 'Terminal keys · arrows / Tab / Esc / ^C / ^D',
   runnerPane,
-  touchKeyboardEnabled,
+  directInput,
   onPress,
-  onToggleTouchKeyboard,
+  onToggleDirectInput,
   style,
 }: TerminalControlKeyBarProps) {
   const renderKey: RenderKey = (control, testID) => (
@@ -61,18 +62,17 @@ export function TerminalControlKeyBar({
     <View style={[styles.panel, style]}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
       <View style={styles.row}>
-        {onToggleTouchKeyboard ? (
+        {onToggleDirectInput ? (
           <Pressable
+            testID="terminal-direct-input-toggle"
             accessibilityRole="switch"
-            accessibilityLabel="Allow terminal tap to open keyboard"
-            accessibilityState={{ checked: Boolean(touchKeyboardEnabled) }}
-            style={[styles.button, touchKeyboardEnabled && styles.keyboardButtonActive]}
-            onPress={onToggleTouchKeyboard}
+            accessibilityLabel="Type directly in the terminal"
+            accessibilityState={{ checked: Boolean(directInput) }}
+            style={[styles.button, directInput && styles.keyboardButtonActive]}
+            onPress={onToggleDirectInput}
           >
-            <Text
-              style={[styles.buttonText, touchKeyboardEnabled && styles.keyboardButtonTextActive]}
-            >
-              {touchKeyboardEnabled ? '⌨ On' : '⌨ Off'}
+            <Text style={[styles.buttonText, directInput && styles.keyboardButtonTextActive]}>
+              {directInput ? '⌨ Direct' : '⌨ Line'}
             </Text>
           </Pressable>
         ) : null}

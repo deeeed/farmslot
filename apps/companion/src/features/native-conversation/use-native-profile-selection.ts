@@ -20,7 +20,9 @@ import {
   getResourceNativeOwnerId,
   getResourceWorkspaceKey,
 } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent } from '../../store/held-connection';
 
 import { readNativeProfileSelection } from './native-profile-queries';
 
@@ -139,8 +141,8 @@ export function useNativeProfileSelection(input: {
       error:
         refreshError ??
         currentSnapshot?.error ??
-        listObservation.error?.message ??
-        statusObservation.error?.message,
+        readErrorMessage(listObservation, heldConnectionCurrent()) ??
+        readErrorMessage(statusObservation, heldConnectionCurrent()),
       reason,
       loading:
         input.supported &&

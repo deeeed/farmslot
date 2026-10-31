@@ -30,17 +30,29 @@ import {
   type TerminalWorkerSnapshotResult,
   type TmuxWorkerListResult,
   type TmuxWorkerRef,
-  tmuxWorkerRefsMatch,
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
+import { TerminalHeldInput } from '../../components/TerminalHeldInput';
+import {
+  TerminalInputLine,
+  type TerminalInputLineHandle,
+} from '../../components/TerminalInputLine';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
+import { usePersistentFlag } from '../../lib/held-connection';
 import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-actions';
 import { getResourceCache } from '../../lib/resource-cache';
+import { savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
+import {
+  type HeldTerminalInput,
+  keysRetryingNotice,
+  TerminalInputCancelledError,
+  withoutKeysRetryingNotice,
+} from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
   appendTerminalTailText,
@@ -48,7 +60,7 @@ import {
   trimTrailingTerminalBlankLines,
 } from '../../lib/terminal-tail';
 import { colors, spacing } from '../../lib/theme';
-import { tmuxWorkerRefFromRouteParams } from '../../lib/tmux-workers';
+import { inventoryLacksPane, tmuxWorkerRefFromRouteParams } from '../../lib/tmux-workers';
 import {
   getConfiguredSherpaAsrModelId,
   getPreferredVoiceAsrModelId,
@@ -66,6 +78,7 @@ import {
   workerVoiceInstructionInput,
 } from '../../lib/worker-voice-nudge';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent, useHeldConnection } from '../../store/held-connection';
 import { TMUX_PREFIX_BYTES, useTerminalPrefsStore } from '../../store/terminal-prefs';
 import {
   useQuickActionVoiceTarget,
@@ -82,6 +95,7 @@ import {
 } from './components/terminal-history-viewer';
 import { WindowPickerModal, WorkerTmuxShortcutPanel } from './components/worker-terminal-panels';
 import { workerTerminalStyles as styles } from './styles/worker-terminal.styles';
+import { useWorkerTerminalInput } from './use-worker-terminal-input';
 
 const TERMINAL_DATA_EVENT = 'terminal.data';
 const TERMINAL_TAIL_MAX_CHARS = 20_000;
@@ -148,10 +162,9 @@ export default function WorkerTerminalScreen() {
   const [windowPickerPanes, setWindowPickerPanes] = useState<TmuxWorkerSummary[]>([]);
   const [windowPickerError, setWindowPickerError] = useState<string | null>(null);
   const [windowPickerLoading, setWindowPickerLoading] = useState(false);
-  const allowTerminalTouchKeyboard = useTerminalPrefsStore((s) => s.allowTerminalTouchKeyboard);
-  const setAllowTerminalTouchKeyboard = useTerminalPrefsStore(
-    (s) => s.setAllowTerminalTouchKeyboard,
-  );
+  const terminalDirectInput = useTerminalPrefsStore((s) => s.terminalDirectInput);
+  const setTerminalDirectInput = useTerminalPrefsStore((s) => s.setTerminalDirectInput);
+  const inputLineRef = useRef<TerminalInputLineHandle>(null);
   const tmuxPrefixOption = useTerminalPrefsStore((s) => s.tmuxPrefix);
   const tmuxPrefix = TMUX_PREFIX_BYTES[tmuxPrefixOption];
   const orientationControls = useTerminalOrientationControls(terminalFullscreen);
@@ -196,7 +209,9 @@ export default function WorkerTerminalScreen() {
   const workerSubtitle = worker
     ? `${worker.nodeId} · ${worker.session}:${worker.windowName ?? worker.window ?? '0'}.${worker.pane ?? '0'}`
     : 'Missing worker target';
-  const connectionReady = status === 'connected' && Boolean(client);
+  // Connected, or within a short reconnect: the pane stays usable and keys queue.
+  const heldConnected = useHeldConnection();
+  const connectionReady = heldConnected && Boolean(client);
   const workerQuery = useMemo(
     () =>
       worker
@@ -205,26 +220,40 @@ export default function WorkerTerminalScreen() {
     [worker?.nodeId],
   );
   const inventory = useResourceQuery(focused ? workerQuery : undefined);
-  const workerReady =
-    connectionReady &&
-    inventory.status === 'ready' &&
-    Boolean(
-      worker &&
-      inventory.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker)),
-    );
+  // Keys need only the pane from the route; the gateway refuses input for a pane that is gone.
+  // The inventory can be slow (its read times out under load and is not saved), so it never
+  // holds keys back: it only stops them once it positively no longer lists this pane.
+  const paneGone = worker ? inventoryLacksPane(inventory.data, worker) : false;
+  const paneGoneMessage = worker
+    ? `${worker.nodeId} no longer lists this pane (${worker.target}). Go back and choose it again.`
+    : '';
+  const workerReady = connectionReady && Boolean(worker) && !paneGone;
+  const inventorySaved = savedForDisplay(inventory, heldConnected);
+  // A read that keeps failing with nothing held is mentioned only past the shared grace.
+  const inventoryFailing = usePersistentFlag(
+    Boolean(inventory.error) && inventory.data === undefined,
+  );
+  const inventoryError =
+    inventory.data !== undefined
+      ? visibleReadError(inventory, inventorySaved)
+      : inventoryFailing
+        ? inventory.error
+        : undefined;
   const requireWorkerInventory = useCallback(() => {
-    const current = workerQuery ? getResourceCache()?.read(workerQuery) : undefined;
     if (
       !focused ||
+      !worker ||
       !client ||
       client !== useConnectionStore.getState().client ||
-      client.connectionState !== 'connected' ||
-      current?.status !== 'ready' ||
-      !worker ||
-      !current.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker))
+      !heldConnectionCurrent()
     )
-      throw new Error('Wait for current worker inventory before acting.');
-    return current.data;
+      throw new Error('Not connected to the gateway.');
+    const current = workerQuery ? getResourceCache()?.read(workerQuery) : undefined;
+    if (inventoryLacksPane(current?.data, worker))
+      throw new Error(
+        `${worker.nodeId} no longer lists this pane (${worker.target}). Go back and choose it again.`,
+      );
+    return current?.data;
   }, [client, workerQuery, worker, focused]);
   const hasVoiceDraft = voiceDraft.trim().length > 0;
   const voiceEditableInstruction = hasVoiceDraft ? voiceDraft : voiceTranscript;
@@ -378,6 +407,13 @@ export default function WorkerTerminalScreen() {
     }, [selectedVoiceModelId]),
   );
 
+  const [heldInput, setHeldInput] = useState<HeldTerminalInput | null>(null);
+  const workerInput = useWorkerTerminalInput(client, worker, {
+    onRetry: (failure, attempt) =>
+      setError((current) => keysRetryingNotice(failure, attempt) ?? current),
+    onHold: setHeldInput,
+  });
+  const writeWorkerInput = workerInput.write;
   const sendInput = useCallback(
     (data: string) => {
       if (!client || !worker) return;
@@ -387,13 +423,23 @@ export default function WorkerTerminalScreen() {
         setError(getErrorMessage(error));
         return;
       }
-      client
-        .request(Methods.TERMINAL_WORKER_INPUT, { worker, data }, 10_000)
-        .catch((err: Error) => {
-          setError(err.message);
-        });
+      writeWorkerInput(data).then(
+        () => setError(withoutKeysRetryingNotice),
+        (err: unknown) => {
+          if (!(err instanceof TerminalInputCancelledError)) setError(getErrorMessage(err));
+        },
+      );
     },
-    [client, worker, requireWorkerInventory],
+    [client, worker, requireWorkerInventory, writeWorkerInput],
+  );
+
+  // A key from the key bar or tmux shortcuts changes the pane's line, so the input line starts over.
+  const sendKey = useCallback(
+    (data: string) => {
+      inputLineRef.current?.reset();
+      sendInput(data);
+    },
+    [sendInput],
   );
 
   const openWindowPicker = useCallback(async () => {
@@ -403,6 +449,11 @@ export default function WorkerTerminalScreen() {
     setWindowPickerError(null);
     try {
       const result = requireWorkerInventory();
+      if (!result) {
+        setWindowPickerError('The window list is still loading. Try again in a moment.');
+        setWindowPickerPanes([]);
+        return;
+      }
       const node = result.nodes.find((entry) => entry.nodeId === worker.nodeId);
       const panes = node?.ok
         ? node.workers.filter((pane) => pane.ref.session === worker.session)
@@ -423,18 +474,34 @@ export default function WorkerTerminalScreen() {
 
   useEffect(() => {
     if (!windowPickerOpen || !worker) return;
-    if (!workerReady) {
+    if (!workerReady || !inventory.data) {
       setWindowPickerPanes([]);
-      setWindowPickerError(inventory.error?.message ?? 'Wait for current worker inventory.');
+      setWindowPickerError(
+        paneGone
+          ? paneGoneMessage
+          : !connectionReady
+            ? 'Not connected to the gateway.'
+            : (inventoryError?.message ??
+              'The window list is still loading. Try again in a moment.'),
+      );
       return;
     }
     const panes =
-      inventory.data?.nodes
+      inventory.data.nodes
         .find((node) => node.nodeId === worker.nodeId)
         ?.workers.filter((pane) => pane.ref.session === worker.session) ?? [];
     setWindowPickerPanes(panes);
     setWindowPickerError(panes.length ? null : 'No windows found for this session.');
-  }, [windowPickerOpen, worker, workerReady, inventory]);
+  }, [
+    windowPickerOpen,
+    worker,
+    workerReady,
+    inventory,
+    inventoryError,
+    paneGone,
+    paneGoneMessage,
+    connectionReady,
+  ]);
 
   const selectWindow = useCallback(
     (windowIndex: string) => {
@@ -460,7 +527,11 @@ export default function WorkerTerminalScreen() {
     setIsSending(true);
     try {
       requireWorkerInventory();
-      await client.request(Methods.TERMINAL_WORKER_INPUT, { worker, data }, 10_000);
+      const sending = writeWorkerInput(data);
+      // The instruction ends the pane's line with Enter, so the input line starts over as soon
+      // as it is queued; keys typed while it is on its way belong to the next line.
+      inputLineRef.current?.reset();
+      await sending;
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setVoiceStatus('idle');
       setVoiceMessage('Instruction sent. Tap mic for the next worker nudge.');
@@ -471,22 +542,34 @@ export default function WorkerTerminalScreen() {
       setVoiceComposerOpen(false);
       return true;
     } catch (err) {
-      setVoiceWarning(`Send failed: ${getErrorMessage(err)}`);
+      if (!(err instanceof TerminalInputCancelledError))
+        setVoiceWarning(`Send failed: ${getErrorMessage(err)}`);
       return false;
     } finally {
       setIsSending(false);
     }
-  }, [client, isSending, voiceContext, voiceEditableInstruction, worker, requireWorkerInventory]);
+  }, [
+    client,
+    isSending,
+    voiceContext,
+    voiceEditableInstruction,
+    worker,
+    requireWorkerInventory,
+    writeWorkerInput,
+  ]);
 
+  const pendingSize = useRef<TerminalSize | null>(null);
   const resize = useCallback(
     (size: TerminalSize) => {
       if (!client || !worker) return;
       try {
         requireWorkerInventory();
-      } catch (error) {
-        setError(getErrorMessage(error));
+      } catch {
+        // Nobody pressed anything: send it again once the pane is usable, without an error.
+        pendingSize.current = size;
         return;
       }
+      pendingSize.current = null;
       client
         .request(
           Methods.TERMINAL_WORKER_RESIZE,
@@ -497,6 +580,10 @@ export default function WorkerTerminalScreen() {
     },
     [client, worker, requireWorkerInventory],
   );
+
+  useEffect(() => {
+    if (workerReady && pendingSize.current) resize(pendingSize.current);
+  }, [workerReady, resize]);
 
   const promptOpenMicrophoneSettings = useCallback((message: string) => {
     Alert.alert('Microphone required', message, [
@@ -733,13 +820,12 @@ export default function WorkerTerminalScreen() {
             </Pressable>
           </View>
         )}
-        {!workerReady ? (
+        {paneGone || inventoryError || inventory.status === 'unsupported' ? (
           <View>
             <Text style={styles.error}>
-              {inventory.error?.message ??
-                (inventory.status === 'unsupported'
-                  ? 'Worker observations are unsupported.'
-                  : 'Saved terminal selection. Wait for current worker inventory before sending input.')}
+              {paneGone
+                ? paneGoneMessage
+                : (inventoryError?.message ?? 'Worker observations are unsupported.')}
             </Text>
             <Pressable
               disabled={!connectionReady}
@@ -755,14 +841,14 @@ export default function WorkerTerminalScreen() {
         <View style={styles.terminalArea}>
           <TerminalViewSurface
             ref={terminalRef}
-            allowTouchKeyboard={allowTerminalTouchKeyboard}
+            directInput={terminalDirectInput}
             initialText={lines.join('\r\n')}
             mode={terminalViewMode}
             onInput={sendInput}
             onResize={resize}
             rawHistoryText={terminalTailTextRef.current}
             readOnlyReason={
-              !worker ? 'Missing worker target' : status !== 'connected' ? 'Not connected' : null
+              !worker ? 'Missing worker target' : !heldConnected ? 'Not connected' : null
             }
           />
         </View>
@@ -901,7 +987,7 @@ export default function WorkerTerminalScreen() {
         {showTmuxShortcuts ? (
           <WorkerTmuxShortcutPanel
             disabled={!workerReady}
-            onSend={sendInput}
+            onSend={sendKey}
             tmuxPrefix={tmuxPrefix}
             onOpenWindowPicker={() => void openWindowPicker()}
           />
@@ -916,12 +1002,23 @@ export default function WorkerTerminalScreen() {
           onSelect={selectWindow}
         />
         <View style={styles.keyBar}>
+          <TerminalHeldInput
+            held={heldInput}
+            onResend={workerInput.resend}
+            onDiscard={() => {
+              inputLineRef.current?.reset();
+              workerInput.discard();
+            }}
+          />
+          {terminalDirectInput ? null : (
+            <TerminalInputLine ref={inputLineRef} disabled={!workerReady} onSend={sendInput} />
+          )}
           <TerminalControlKeyBar
             label={null}
             runnerPane={worker}
-            touchKeyboardEnabled={allowTerminalTouchKeyboard}
-            onPress={(control) => sendInput(control.data)}
-            onToggleTouchKeyboard={() => setAllowTerminalTouchKeyboard(!allowTerminalTouchKeyboard)}
+            directInput={terminalDirectInput}
+            onPress={(control) => sendKey(control.data)}
+            onToggleDirectInput={() => setTerminalDirectInput(!terminalDirectInput)}
           />
         </View>
       </View>

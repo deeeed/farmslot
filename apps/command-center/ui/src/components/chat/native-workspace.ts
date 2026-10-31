@@ -25,6 +25,7 @@ export type NativeSessionCommand =
   | typeof Methods.NATIVE_SESSION_SEND
   | typeof Methods.NATIVE_SESSION_RESPOND
   | typeof Methods.NATIVE_SESSION_INTERRUPT
+  | typeof Methods.NATIVE_SESSION_CANCEL
   | typeof Methods.NATIVE_SESSION_CLOSE
   | typeof Methods.NATIVE_PROFILE_ADD
   | typeof Methods.NATIVE_PROFILE_REMOVE;

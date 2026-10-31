@@ -122,6 +122,7 @@ export async function runScenario({ outDir }) {
         { ...target, requestId: 'unauthorized-request', decision: 'approve' },
       ],
       ['native.session.interrupt', target],
+      ['native.session.cancel', { ...target, commandId: randomUUID() }],
       ['native.session.close', target],
     ];
     for (const [method, params] of attempts) {
