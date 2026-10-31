@@ -1,6 +1,6 @@
 import { fork } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -87,6 +87,7 @@ let stopObservingTree: (() => void) | undefined;
 let hostReleased = false;
 let stopping = false;
 let settled = false;
+let homeRemoved = false;
 let failure: string | undefined;
 
 function stopHost(error?: unknown): void {
@@ -132,6 +133,8 @@ function settle(): void {
   void cleanup().then(
     () => process.exit(1),
     (error: Error) => {
+      // A removed home has nowhere to journal; its host and descendants are already stopped.
+      if (homeRemoved || !existsSync(root)) process.exit(1);
       durableWrite(join(root, 'cleanup.json'), {
         hostPid: child.pid,
         state: 'unknown',
@@ -163,6 +166,21 @@ try {
 } catch (error) {
   stopHost(error);
 }
+
+// A host whose home was deleted (a test's temp root, a removed farm home) has no
+// client left and would run, with its process census, forever. Stop it instead.
+const ownerFile = join(lock, 'owner.json');
+const stopIfHomeRemoved = () => {
+  if (homeRemoved || existsSync(ownerFile)) return;
+  homeRemoved = true;
+  stopHost(new Error(`Native session home ${root} was removed`));
+};
+try {
+  watch(root, stopIfHomeRemoved).on('error', stopIfHomeRemoved).unref();
+} catch {
+  stopIfHomeRemoved();
+}
+setInterval(stopIfHomeRemoved, 60_000).unref();
 
 async function cleanup(): Promise<void> {
   stopObservingTree?.();
@@ -214,6 +232,9 @@ async function cleanup(): Promise<void> {
       errors,
       `Native cleanup is unconfirmed: ${errors.map((error) => (error instanceof Error ? error.message : String(error))).join('; ')}`,
     );
+  // A removed home may already be re-created by a new owner; never journal into it or
+  // release a lock that is no longer ours.
+  if (homeRemoved) return;
   for (const { path, info } of records)
     appendDurable(path, { info: { ...info, processStopped: true } });
   durableWrite(join(root, 'cleanup.json'), {
