@@ -12,7 +12,11 @@ import {
   terminalWorkerUnsubscribeKey,
 } from './terminal-worker.js';
 
-function fakeNode(methodReplies: Record<string, unknown>, id?: string) {
+function fakeNode(
+  methodReplies: Record<string, unknown>,
+  id?: string,
+  terminalInputSequence = false,
+) {
   const sent: Array<{ id: string; method: string; params: unknown }> = [];
   const ws = {
     readyState: 1 as number,
@@ -27,7 +31,21 @@ function fakeNode(methodReplies: Record<string, unknown>, id?: string) {
     },
   };
   const nodeId = id ?? `test-node-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  registerNode(nodeId, 1234, ws as never, '0.6.0', '0.6.0');
+  registerNode(
+    nodeId,
+    1234,
+    ws as never,
+    '0.6.0',
+    '0.6.0',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    terminalInputSequence,
+  );
   return { nodeId, sent, ws };
 }
 
@@ -117,8 +135,8 @@ test('worker input refused by a closing node socket is written by its resend', a
   }
 });
 
-// Once the node's socket took the request, the node may have typed it whatever its answer.
-test('worker input that failed after the node socket took it is not written again', async () => {
+// A node predating `terminalInputSequence` may have typed it whatever its answer, and cannot tell.
+test('older node: worker input that failed after the node socket took it is not sent again', async () => {
   const node = fakeNode({ 'tmux.send': new Error("can't find pane: %46") });
   const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%46' };
   try {
@@ -131,6 +149,38 @@ test('worker input that failed after the node socket took it is not written agai
       (error: unknown) => (error as { code?: string }).code === 'TERMINAL_INPUT_UNCERTAIN',
     );
     assert.equal(node.sent.length, 1);
+  } finally {
+    unregisterByWs(node.ws as never);
+  }
+});
+
+// A node that types each number once gets `seq`, so the gateway sends a lost batch again.
+test('capable node: worker input that failed after the node took it is sent again with seq', async () => {
+  let replies = 0;
+  const node = fakeNode({}, undefined, true);
+  node.ws.send = (raw: string) => {
+    const frame = JSON.parse(raw) as { id: string; method: string; params: unknown };
+    node.sent.push(frame);
+    queueMicrotask(() =>
+      replies++ === 0
+        ? handleNodeResponse(frame.id, false, undefined, 'Request tmux.send timed out')
+        : handleNodeResponse(frame.id, true, { sent: true, repeat: true }),
+    );
+  };
+  const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%47' };
+  try {
+    const input = { worker, data: 'make deploy\r', seq: { stream: 'q5', n: 1 } };
+    await assert.rejects(terminalWorkerInput(input), /timed out/);
+    await terminalWorkerInput(input);
+    // Repeats the node acknowledged are not sent a third time.
+    await terminalWorkerInput(input);
+    assert.deepEqual(
+      node.sent.map((frame) => frame.params),
+      [
+        { session: '%47', text: 'make deploy\r', enter: false, seq: { stream: 'q5', n: 1 } },
+        { session: '%47', text: 'make deploy\r', enter: false, seq: { stream: 'q5', n: 1 } },
+      ],
+    );
   } finally {
     unregisterByWs(node.ws as never);
   }

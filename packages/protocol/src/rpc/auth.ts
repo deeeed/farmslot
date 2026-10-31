@@ -55,8 +55,9 @@ export interface GatewayAuthConnectResult {
     /** `expectedHash` and `runId` on file edits, and `hash` on `fs.read`. Experimental. */
     conditionalFileWrites?: boolean;
     /**
-     * Terminal input `seq` is honoured: each batch number is written once by this gateway
-     * instance. A client resends a batch on its own only to the instance that received it.
+     * Terminal input `seq` is honoured: each batch number is typed into a pane once, and the pane
+     * keeps that record across gateway restarts, so a client resends a batch whatever its answer.
+     * `instance` changes with each gateway process; clients from before pane records compare it.
      */
     terminalInputSequence?: { instance: string };
   };

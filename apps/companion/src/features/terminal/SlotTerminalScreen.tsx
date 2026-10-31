@@ -53,7 +53,6 @@ import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
-import { TerminalHeldInput } from '../../components/TerminalHeldInput';
 import {
   TerminalInputLine,
   type TerminalInputLineHandle,
@@ -883,9 +882,7 @@ export default function TerminalScreen() {
     voiceStatus !== 'transcribing' &&
     !voiceRecorderBusy;
   const showInputBar =
-    !native.target &&
-    !native.unavailable &&
-    (showTerminalControls || Boolean(controlError) || Boolean(typing.heldInput));
+    !native.target && !native.unavailable && (showTerminalControls || Boolean(controlError));
   const showVoiceComposer =
     !native.target &&
     !native.unavailable &&
@@ -1989,14 +1986,6 @@ export default function TerminalScreen() {
 
       {showInputBar && (
         <View style={[styles.composer, { paddingBottom: spacing.sm + insets.bottom }]}>
-          <TerminalHeldInput
-            held={typing.heldInput}
-            onResend={typing.resend}
-            onDiscard={() => {
-              inputLineRef.current?.reset();
-              typing.discard();
-            }}
-          />
           {showTerminalControls && (
             <View style={styles.controlPanel}>
               {terminalDirectInput ? null : (

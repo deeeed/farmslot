@@ -833,9 +833,7 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
     capabilities: { ...auth('admin', 'farm').capabilities, terminalInputSequence: { instance } },
   });
   const connection = { activeProfileId: 'arthur-lan', principalId: 'arthur' };
-  const hook = mountHook<
-    [typeof client, { nodeId: string; session: string; target: string }, object]
-  >(
+  const hook = mountHook<[typeof client, { nodeId: string; session: string; target: string }]>(
     new URL('../features/terminal/use-worker-terminal-input.ts', import.meta.url),
     'useWorkerTerminalInput',
     {
@@ -849,7 +847,6 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
       },
     },
   );
-  const holds: unknown[] = [];
   const cleanup = () => {
     hook.cleanup();
     client.disconnect();
@@ -862,13 +859,11 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
     first.response(first.sent[0].id, numbered('gw1'));
     await settle();
     t.mock.timers.enable({ apis: ['setTimeout'] });
-    const { write } = hook.render(
-      client,
-      { nodeId: 'mini', session: 'mmt-3', target: '%19' },
-      {
-        onHold: (held: unknown) => holds.push(held),
-      },
-    ) as { write: (data: string) => Promise<void> };
+    const { write } = hook.render(client, {
+      nodeId: 'mini',
+      session: 'mmt-3',
+      target: '%19',
+    }) as { write: (data: string) => Promise<void> };
     const typed = write('make deploy\r');
     await settle();
     const sent = first.sent.find((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT)!;
@@ -886,7 +881,7 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
       t.mock.timers.tick(1_000);
       await settle();
     }
-    return { sent, second, holds, typed, cleanup };
+    return { sent, second, typed, cleanup };
   } catch (error) {
     cleanup();
     throw error;
@@ -894,42 +889,26 @@ async function lostReplyThenReconnect(t: TestContext, nextInstance: string) {
 }
 
 // A socket close after the frame went out: the capability is gone by the time the request fails,
-// so the safety of a resend must come from the instance that received the frame.
-test(
-  'worker keys cut off by a socket close are resent with the same number to the same gateway',
-  { timeout: 4000 },
-  async (t) => {
-    const run = await lostReplyThenReconnect(t, 'gw1');
-    try {
-      const resent = run.second.sent.find(
-        (frame) => frame.method === Methods.TERMINAL_WORKER_INPUT,
-      )!;
-      assert.deepEqual(resent.params, run.sent.params, 'same keys, same stream and number');
-      run.second.response(resent.id, { sent: true });
-      await run.typed;
-      assert.deepEqual(run.holds, []);
-    } finally {
-      run.cleanup();
-    }
-  },
-);
-
-// After a gateway restart the new process has no record of number 1, so it must not get it.
-test(
-  'worker keys cut off by a socket close are held when a different gateway instance answers',
-  { timeout: 4000 },
-  async (t) => {
-    const run = await lostReplyThenReconnect(t, 'gw2');
-    try {
-      assert.equal(
-        run.second.sent.some((frame) => frame.method === Methods.TERMINAL_WORKER_INPUT),
-        false,
-      );
-      assert.equal(run.holds.length, 1);
-    } finally {
-      run.cleanup();
-    }
-    // Held keys stay pending until the user decides or the terminal goes away.
-    await assert.rejects(run.typed, inputQueue.TerminalInputCancelledError);
-  },
-);
+// so the safety of a resend must come from the gateway that received the frame. The pane records
+// each number it was typed, so a restarted gateway drops the repeat as the same one would.
+for (const [nextInstance, gateway] of [
+  ['gw1', 'the same gateway'],
+  ['gw2', 'a restarted gateway'],
+] as const)
+  test(
+    `worker keys cut off by a socket close are resent with the same number to ${gateway}`,
+    { timeout: 4000 },
+    async (t) => {
+      const run = await lostReplyThenReconnect(t, nextInstance);
+      try {
+        const resent = run.second.sent.find(
+          (frame) => frame.method === Methods.TERMINAL_WORKER_INPUT,
+        )!;
+        assert.deepEqual(resent.params, run.sent.params, 'same keys, same stream and number');
+        run.second.response(resent.id, { sent: true });
+        await run.typed;
+      } finally {
+        run.cleanup();
+      }
+    },
+  );

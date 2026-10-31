@@ -59,6 +59,7 @@ import {
   startMetricsSubscription,
   stopMetricsSubscription,
 } from './commands/system-metrics.js';
+import { createTerminalInputWriter, requireInputSequence } from './commands/terminal-input.js';
 import * as tmux from './commands/tmux.js';
 import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
 import {
@@ -80,6 +81,7 @@ const MAX_TRANSPORT_BACKOFF = 2_000;
 const AUTH_RETRY_DELAY = 30_000;
 const nativeSessions = new NativeNodeSessions(MACHINE_NAME);
 const sources = new NodeSources(MACHINE_NAME);
+const sendTerminalInputOnce = createTerminalInputWriter(tmux.tmuxOutput);
 
 const execConnections = new Map<WebSocket, ExecRequests>();
 let ws: WebSocket | null = null;
@@ -180,6 +182,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       gatewayUrl: GATEWAY_URL,
       execCancellation: true,
       conditionalWrites: true,
+      terminalInputSequence: true,
       observationCapabilities: { workers: 1, files: 1, workspace: 1 },
     });
     if (ws !== socket) {
@@ -524,6 +527,12 @@ async function handleRequest(
         const session = requireString(params, 'session');
         const text = requireString(params, 'text');
         const enter = typeof params.enter === 'boolean' ? params.enter : true;
+        if (params.seq !== undefined) {
+          const seq = requireInputSequence(params.seq);
+          const typed = await sendTerminalInputOnce(session, text, enter, seq);
+          sendResponse(frame.id, true, typed ? { sent: true } : { sent: true, repeat: true });
+          break;
+        }
         await tmux.send(session, text, enter);
         sendResponse(frame.id, true, { sent: true });
         break;

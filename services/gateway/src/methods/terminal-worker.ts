@@ -9,7 +9,8 @@ import type {
   TmuxWorkerRef,
 } from '@farmslot/protocol';
 
-import { isLocal } from '../core/exec.js';
+import { execLocal, isLocal } from '../core/exec.js';
+import { nodeExec } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import {
   hasPty,
@@ -18,11 +19,17 @@ import {
   subscribePty,
   writePty,
 } from '../runtime/pty-stream.js';
-import { runInputInOrder, writeSequencedInput } from '../runtime/terminal-input-sequence.js';
+import {
+  type PaneInputRecord,
+  runInputInOrder,
+  tmuxPaneInputRecord,
+  writeSequencedInput,
+} from '../runtime/terminal-input-sequence.js';
 import {
   captureWorkerTerminal,
   resizeWorkerTerminal,
   sendWorkerTerminalInput,
+  workerNodeTypesInputOnce,
 } from '../runtime/worker-terminal-stream.js';
 
 import { assertTmuxWorkerControlAllowed } from './tmux-workers.js';
@@ -72,11 +79,27 @@ export async function terminalWorkerInput(params: TerminalWorkerInputParams): Pr
   // In order per pane, so a batch resent after a lost reply waits for the original.
   await runInputInOrder(`worker:${key}`, async () => {
     await assertTmuxWorkerControlAllowed(params.worker);
-    await writeSequencedInput(key, params.seq, async (dispatched) => {
-      if (hasPty(key)) return writePty(key, params.data);
-      await sendWorkerTerminalInput(params.worker, params.data, dispatched);
-    });
+    await writeSequencedInput(
+      key,
+      params.seq,
+      hasPty(key)
+        ? { write: () => writePty(key, params.data), record: workerPaneRecord(params.worker) }
+        : {
+            write: (dispatched) =>
+              sendWorkerTerminalInput(params.worker, params.data, dispatched, params.seq),
+            typesOnce: workerNodeTypesInputOnce(params.worker),
+          },
+    );
   });
+}
+
+/** The worker pane's input record, kept by tmux on the worker's machine. */
+function workerPaneRecord(worker: TmuxWorkerRef): PaneInputRecord {
+  return tmuxPaneInputRecord(worker.target, async (command) =>
+    (await resolveWorkerPtyOptions(worker)).sshTarget
+      ? nodeExec(worker.nodeId, command, undefined, { timeout: 5_000 })
+      : execLocal(command, { timeout: 5_000 }),
+  );
 }
 
 export async function terminalWorkerResize(params: TerminalWorkerResizeParams): Promise<void> {

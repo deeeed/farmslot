@@ -4,7 +4,6 @@ import { Methods, type TmuxWorkerRef } from '@farmslot/protocol';
 
 import type { GatewayClient } from '../../lib/gateway-client';
 import {
-  assertSafeResend,
   createTerminalInputQueue,
   type TerminalInput,
   TerminalInputCancelledError,
@@ -17,7 +16,7 @@ import { useConnectionStore } from '../../store/connection';
 export function useWorkerTerminalInput(
   client: GatewayClient | null,
   worker: TmuxWorkerRef | null,
-  events: Pick<TerminalInputQueueOptions, 'onRetry' | 'onHold'> = {},
+  events: Pick<TerminalInputQueueOptions, 'onRetry'> = {},
 ): TerminalInput {
   const profileId = useConnectionStore((state) => state.activeProfileId);
   const principalId = useConnectionStore((state) => state.principalId);
@@ -42,7 +41,7 @@ export function useWorkerTerminalInput(
         queueRef.current = {
           key,
           queue: createTerminalInputQueue(
-            async (batch, assertActive, markSent, seq, sentTo) => {
+            async (batch, assertActive, markSent, seq) => {
               const generation = client.connectionGeneration;
               // Rechecked after any wait for the connection or a token refresh, before sending.
               const assertCurrent = () => {
@@ -54,25 +53,17 @@ export function useWorkerTerminalInput(
                   current.principalId !== principalId
                 )
                   throw new TerminalInputCancelledError();
-                // Only a live connection says which instance would receive the frame; the last
-                // check runs connected, just before the frame is written.
-                if (client.connectionState === 'connected')
-                  assertSafeResend(sentTo, client.terminalInputSequenceInstance);
               };
               assertCurrent();
-              // Older gateways ignore `seq`; the instance that received the frame says whether a
-              // resend after a lost reply can be dropped as a repeat.
+              // Older gateways ignore `seq`, so a batch they received is not sent again.
               await client.request(
                 Methods.TERMINAL_WORKER_INPUT,
                 { worker, data: batch, seq },
                 10_000,
-                { assertCurrent, onSent: () => markSent(client.terminalInputSequenceInstance) },
+                { assertCurrent, onSent: () => markSent(client.terminalInputSequence) },
               );
             },
-            {
-              onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt),
-              onHold: (held) => eventsRef.current.onHold?.(held),
-            },
+            { onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt) },
           ),
         };
       }
@@ -80,7 +71,5 @@ export function useWorkerTerminalInput(
     },
     [client, worker, profileId, principalId],
   );
-  const resend = useCallback(() => queueRef.current?.queue.resend(), []);
-  const discard = useCallback(() => queueRef.current?.queue.discard(), []);
-  return useMemo(() => ({ write, resend, discard }), [write, resend, discard]);
+  return useMemo(() => ({ write }), [write]);
 }

@@ -2,7 +2,6 @@ import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef } from 'r
 
 import type { GatewayClient } from '../../lib/gateway-client';
 import {
-  assertSafeResend,
   createTerminalInputQueue,
   type TerminalInput,
   TerminalInputCancelledError,
@@ -27,7 +26,7 @@ export function useTerminalInput(
   target: CompanionTerminalTargetParams | null,
   targetRef: RefObject<CompanionTerminalTargetParams | null>,
   disabledReason: string | null,
-  events: Pick<TerminalInputQueueOptions, 'onRetry' | 'onHold'> = {},
+  events: Pick<TerminalInputQueueOptions, 'onRetry'> = {},
 ): TerminalInput {
   const client = useConnectionStore((state) => state.client);
   const profileId = useConnectionStore((state) => state.activeProfileId);
@@ -77,33 +76,23 @@ export function useTerminalInput(
           );
         };
         const queue = createTerminalInputQueue(
-          async (batch, assertActive, markSent, seq, sentTo) => {
+          async (batch, assertActive, markSent, seq) => {
             // Each attempt belongs to the connection it starts on; one stopped before it was
             // sent is retried in order on the next.
             const generation = selectedClient.connectionGeneration;
             const assertCurrent = () => {
               assertActive();
               if (!isCurrent(generation)) throw new TerminalInputCancelledError();
-              // Only a live connection says which instance would receive the frame; the last
-              // check runs connected, just before the frame is written.
-              if (selectedClient.connectionState === 'connected')
-                assertSafeResend(sentTo, selectedClient.terminalInputSequenceInstance);
             };
             assertCurrent();
             await selectedClient.request(
               'terminal.input',
               { ...selectedTarget, data: batch, seq },
               10_000,
-              {
-                assertCurrent,
-                onSent: () => markSent(selectedClient.terminalInputSequenceInstance),
-              },
+              { assertCurrent, onSent: () => markSent(selectedClient.terminalInputSequence) },
             );
           },
-          {
-            onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt),
-            onHold: (held) => eventsRef.current.onHold?.(held),
-          },
+          { onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt) },
         );
         queueRef.current = { key: selectedKey, client: selectedClient, queue };
       }
@@ -118,7 +107,5 @@ export function useTerminalInput(
     },
     [targetRef],
   );
-  const resend = useCallback(() => queueRef.current?.queue.resend(), []);
-  const discard = useCallback(() => queueRef.current?.queue.discard(), []);
-  return useMemo(() => ({ write, resend, discard }), [write, resend, discard]);
+  return useMemo(() => ({ write }), [write]);
 }

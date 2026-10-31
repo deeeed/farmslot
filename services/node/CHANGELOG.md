@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- `tmux.send` takes an optional `seq` (`stream`, `n`) and types each number once per pane: it reads the pane option `@farmslot-input-<stream>` first, acknowledges a repeat with `{ sent: true, repeat: true }` without typing, and records the number after typing (keeping the 16 most recently written streams per pane). Writes to one pane run in order. The node advertises `terminalInputSequence` at registration.
+
 - Deploy gateway pool contents as regular files so node-local stale checkouts cannot hide configured slots.
 
 - Advertise `conditionalWrites` and check `expectedHash` on file writes, renames and deletes: exclusive create, hashed deletes on files only. `fs.read` returns the SHA-256 of the raw bytes.
