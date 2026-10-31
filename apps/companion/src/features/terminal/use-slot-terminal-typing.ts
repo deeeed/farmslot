@@ -5,12 +5,10 @@ import {
   type RefObject,
   type SetStateAction,
   useCallback,
-  useState,
 } from 'react';
 
 import type { TerminalControlKey } from '../../lib/terminal-controls';
 import {
-  type HeldTerminalInput,
   keysRetryingNotice,
   TerminalInputCancelledError,
   withoutKeysRetryingNotice,
@@ -48,11 +46,9 @@ export function useSlotTerminalTyping({
   setInputError,
   commandCount,
 }: SlotTerminalTypingOptions) {
-  const [heldInput, setHeldInput] = useState<HeldTerminalInput | null>(null);
   const input = useTerminalInput(target, targetRef, disabledReason, {
     onRetry: (error, attempt) =>
       setControlError((current) => keysRetryingNotice(error, attempt) ?? current),
-    onHold: setHeldInput,
   });
   const write = input.write;
   const clearKeysRetrying = useCallback(
@@ -112,11 +108,5 @@ export function useSlotTerminalTyping({
   );
   const controlKeys = useTerminalControlKeys(sendControlKey);
 
-  return {
-    heldInput,
-    resend: input.resend,
-    discard: input.discard,
-    typeKeys,
-    controlKeys,
-  };
+  return { typeKeys, controlKeys };
 }

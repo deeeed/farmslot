@@ -145,6 +145,12 @@ export async function send(session: string, text: string, enter = true): Promise
   await execFileAsync(TMUX, args, { timeout: 5000 });
 }
 
+/** Runs tmux with `args` and returns its stdout. */
+export async function tmuxOutput(args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync(TMUX, args, { timeout: 5000 });
+  return stdout;
+}
+
 export async function resizePane(target: string, cols: number, rows: number): Promise<void> {
   await execFileAsync(TMUX, ['resize-pane', '-t', target, '-x', String(cols), '-y', String(rows)], {
     timeout: 5000,

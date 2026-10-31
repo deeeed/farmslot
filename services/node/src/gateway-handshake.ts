@@ -192,6 +192,8 @@ export interface NodeRegisterOptions {
   execCancellation?: boolean;
   /** The node checks `expectedHash` on file writes (ADR-009 Amendment 1). */
   conditionalWrites?: boolean;
+  /** The node types a `tmux.send` carrying `seq` once per (pane, stream, n). */
+  terminalInputSequence?: boolean;
   observationCapabilities?: NodeObservationCapabilities;
   /** The URL this node dials; the gateway hands it to workers on this machine. */
   gatewayUrl?: string;
@@ -224,6 +226,7 @@ export function registerNode(
         : {}),
       ...(options.execCancellation ? { execCancellation: true } : {}),
       ...(options.conditionalWrites ? { conditionalWrites: true } : {}),
+      ...(options.terminalInputSequence ? { terminalInputSequence: true } : {}),
       ...(options.nativeSessions ? { nativeSessions: options.nativeSessions } : {}),
       ...(options.gatewayUrl ? { gatewayUrl: options.gatewayUrl } : {}),
     },

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- `TerminalInputSequence` and an optional `seq` on `TerminalInputParams` and `TerminalWorkerInputParams`; `GatewayAuthConnectResult.capabilities.terminalInputSequence` (`{ instance }`) names the gateway process that writes each number once.
+- `TerminalInputSequence` and an optional `seq` on `TerminalInputParams` and `TerminalWorkerInputParams`; `GatewayAuthConnectResult.capabilities.terminalInputSequence` says the gateway types each number once (its `instance` names the process for older clients). `NodeInfo.terminalInputSequence` marks a node whose `tmux.send` takes `seq`. The pane record helpers (`terminalInputRecordOption`, `parseTerminalInputRecord`, `staleTerminalInputRecords`, `isTerminalInputStream`) define the `@farmslot-input-<stream>` tmux pane option both write.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.74.8 - 2026-11-01

@@ -38,7 +38,12 @@ import {
   unsubscribePty,
   writePty,
 } from '../runtime/pty-stream.js';
-import { runInputInOrder, writeSequencedInput } from '../runtime/terminal-input-sequence.js';
+import {
+  type InputLanding,
+  runInputInOrder,
+  tmuxPaneInputRecord,
+  writeSequencedInput,
+} from '../runtime/terminal-input-sequence.js';
 import { sendKeys, snapshot, subscribe, unsubscribe } from '../runtime/tmux-stream.js';
 import {
   isWorkspaceTerminal,
@@ -387,49 +392,51 @@ export async function terminalInput(
     : `slot:${params.slotId}`;
   await runInputInOrder(key, async () => {
     await assertAccess?.();
-    await writeSequencedInput(key, params.seq, (dispatched) =>
-      writeTerminalInput(params, dispatched),
-    );
+    await writeSequencedInput(key, params.seq, await terminalInputLanding(params));
   });
 }
 
-async function writeTerminalInput(
-  params: TerminalInputParams,
-  dispatched: () => void,
-): Promise<void> {
+async function terminalInputLanding(params: TerminalInputParams): Promise<InputLanding> {
   if (isWorkspaceTerminal(params)) {
-    const { key } = await resolveWorkspaceTerminal(params);
-    if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
-    writePty(key, params.data);
-    return;
+    return {
+      write: async () => {
+        const { key } = await resolveWorkspaceTerminal(params);
+        if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
+        writePty(key, params.data);
+      },
+    };
   }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const key = terminalKey({ ...params, role: resolved.role, contextId: resolved.contextId });
+  // The slot pane keeps its own record of typed input, read and written on the slot's host.
+  const record = tmuxPaneInputRecord(resolved.target, async (command) =>
+    execOnSlot(await loadSlotVars(params.slotId), command, { timeout: 5_000, noRetry: true }),
+  );
   // PTY mode: write directly to local pty
   const ptyKey = selectPtyKey(params.slotId, key, hasPty);
-  if (ptyKey) {
-    writePty(ptyKey, params.data);
-    return;
-  }
+  if (ptyKey) return { write: () => writePty(ptyKey, params.data), record };
   // Poll mode (remote): send via agent tmux.send
-  await assertInteractiveTargetReady(
-    params.slotId,
-    resolved.target,
-    resolved.session,
-    resolved.role,
-    params,
-  );
-  const machine = await resolveMachine(params.slotId);
-  if (machine && getNode(machine)) {
-    // Raw input can contain a whole buffered word such as "Up" or "Enter".
-    // Reuse the literal text path so tmux never interprets it as a named key.
-    dispatched();
-    await sendKeys(params.slotId, resolved.target, params.data, false, undefined, {
-      noRetry: true,
-    });
-    return;
-  }
-  throw new Error(`No PTY or agent available for slot ${params.slotId}`);
+  return {
+    record,
+    write: async (dispatched) => {
+      await assertInteractiveTargetReady(
+        params.slotId,
+        resolved.target,
+        resolved.session,
+        resolved.role,
+        params,
+      );
+      const machine = await resolveMachine(params.slotId);
+      if (!machine || !getNode(machine))
+        throw new Error(`No PTY or agent available for slot ${params.slotId}`);
+      // Raw input can contain a whole buffered word such as "Up" or "Enter".
+      // Reuse the literal text path so tmux never interprets it as a named key.
+      dispatched();
+      await sendKeys(params.slotId, resolved.target, params.data, false, undefined, {
+        noRetry: true,
+      });
+    },
+  };
 }
 
 export async function terminalResize(params: TerminalResizeParams): Promise<void> {
