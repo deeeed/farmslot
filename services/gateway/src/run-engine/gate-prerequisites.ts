@@ -39,6 +39,7 @@ import { reviewFindingEntries, reviewFixInProgress } from '@farmslot/review-disp
 import { findingsDigest } from '../core/findings-digest.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
+import { evalWorkerBlockedReason } from '../evals/blocked-first-output.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { loadReviewApprovalPolicy } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
@@ -966,7 +967,7 @@ function isSelfBlockedEvalOutput(run: Run): boolean {
   return (
     Boolean(run.engineState?.evalExperiment) &&
     isArtifactOnlyRun(run) &&
-    typeof run.steps.find(({ name }) => name === 'monitor')?.outputs?.evalWorkerBlocked === 'string'
+    evalWorkerBlockedReason(run) !== undefined
   );
 }
 
@@ -985,7 +986,8 @@ export async function assertRunGateReady(
     isArtifactOnlyRun(run) &&
     !preparedPackage &&
     !readiness.identity.packageHash;
-  // Its missing verdicts and proof are the measured outcome, not prerequisites.
+  // Its missing verdicts and proof, under every evidence policy, are the measured
+  // outcome, not prerequisites.
   const blockedOutput = outputCompletion && isSelfBlockedEvalOutput(run);
   const reasons = gateReasonsForAction(readiness, actionId).filter(
     (reason) =>

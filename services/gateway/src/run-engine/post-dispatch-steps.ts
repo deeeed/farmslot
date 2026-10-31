@@ -33,6 +33,10 @@ import {
 import { markSlotBusy, markSlotHeld, updateSlotStatusIf } from '../core/index.js';
 import { freezeBlindTrialFirstOutput } from '../evals/blind-trial.js';
 import {
+  EVAL_WORKER_BLOCKED_OUTPUT,
+  evalWorkerBlockedReason,
+} from '../evals/blocked-first-output.js';
+import {
   finalizeEvalResultPackageForRun,
   freezeEvalFirstOutputPackage,
   readFrozenEvalFirstOutputPackage,
@@ -382,12 +386,6 @@ async function prepareGatePackageAfterReviews(
   }
 }
 
-/** The reason a blind eval worker gave when it blocked its own first output. */
-function evalWorkerBlockedReason(run: Run): string | undefined {
-  const reason = run.steps.find(({ name }) => name === S.MONITOR)?.outputs?.evalWorkerBlocked;
-  return typeof reason === 'string' ? reason : undefined;
-}
-
 async function freezeEvalWorkerFacts(run: Run, context: PostDispatchStepContext): Promise<void> {
   if (await readFrozenEvalFirstOutputPackage(run)) return;
   const generation = run.engineState?.generation ?? 0;
@@ -687,7 +685,7 @@ export async function executeMonitorStep(
     ) {
       // A self-blocked first output is a measurement too: it is judged by nobody
       // and finalized like a completed one, keeping the worker's reason.
-      (stepOutputs as Record<string, unknown>).evalWorkerBlocked =
+      (stepOutputs as Record<string, unknown>)[EVAL_WORKER_BLOCKED_OUTPUT] =
         workerSignal.reason ?? after.error ?? 'worker signaled blocked';
       return { inputs, outputs: stepOutputs };
     }
