@@ -68,7 +68,8 @@ export function useSlotTerminalTyping({
           // Only leaving the terminal discards unsent input; failures are retried in order.
           if (!(error instanceof TerminalInputCancelledError) && captured.current()) {
             onKeysDropped();
-            setInputError(`Terminal input failed: ${errorText(error)}`);
+            // In the keys' own slot, in place of their waiting notice.
+            setControlError(`Terminal input failed: ${errorText(error)}`);
           }
         });
       } catch (error) {
@@ -81,6 +82,7 @@ export function useSlotTerminalTyping({
       disabledReason,
       onKeysDropped,
       requireTarget,
+      setControlError,
       setInputError,
       write,
     ],

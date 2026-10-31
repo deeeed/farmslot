@@ -11,7 +11,7 @@ type Options = {
   targetRef: { current: object };
   disabledReason: null;
   requireTarget: () => { current: () => boolean };
-  setControlError: () => void;
+  setControlError: (next: string | null | ((current: string | null) => string | null)) => void;
   setInputError: (message: string) => void;
   onKeysDropped: () => void;
   commandCount: { current: number };
@@ -37,6 +37,7 @@ test('keys dropped for good reset the input line and say why; keys sent leave it
   try {
     const resets: number[] = [];
     const errors: string[] = [];
+    let controlError: string | null = 'Keys not delivered yet, retrying in order: timed out';
     const target = { slotId: 'mmt-3' };
     const typing = hook.render({
       connected: true,
@@ -44,7 +45,9 @@ test('keys dropped for good reset the input line and say why; keys sent leave it
       targetRef: { current: target },
       disabledReason: null,
       requireTarget: () => ({ current: () => true }),
-      setControlError: () => {},
+      setControlError: (next) => {
+        controlError = typeof next === 'function' ? next(controlError) : next;
+      },
       setInputError: (message) => errors.push(message),
       onKeysDropped: () => resets.push(1),
       commandCount: { current: 0 },
@@ -56,7 +59,9 @@ test('keys dropped for good reset the input line and say why; keys sent leave it
     typing.typeKeys('\r');
     await flush();
     assert.deepEqual(resets, [1]);
-    assert.match(errors[0] ?? '', /may have reached the terminal/);
+    // One message, in the keys' slot: the drop replaces their waiting notice.
+    assert.match(controlError ?? '', /^Terminal input failed: Keys may have reached the terminal/);
+    assert.deepEqual(errors, []);
     // Leaving the terminal is not a drop: the line goes with it.
     outcome = Promise.reject(new inputQueue.TerminalInputCancelledError());
     typing.typeKeys('x');

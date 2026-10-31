@@ -405,6 +405,8 @@ export default function WorkerTerminalScreen() {
     }, [selectedVoiceModelId]),
   );
 
+  // While the connection is down the screen's own status says so: no keys-waiting notice too.
+  const visibleError = status === 'connected' ? error : withoutKeysRetryingNotice(error);
   const workerInput = useWorkerTerminalInput(client, worker, {
     onRetry: (failure, attempt) =>
       setError((current) => keysRetryingNotice(failure, attempt) ?? current),
@@ -836,7 +838,7 @@ export default function WorkerTerminalScreen() {
             </Pressable>
           </View>
         ) : null}
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {visibleError ? <Text style={styles.error}>{visibleError}</Text> : null}
         <View style={styles.terminalArea}>
           <TerminalViewSurface
             ref={terminalRef}

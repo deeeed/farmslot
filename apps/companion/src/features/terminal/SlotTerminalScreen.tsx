@@ -84,6 +84,7 @@ import {
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { slotTerminalRunnerPane } from '../../lib/terminal-controls';
+import { withoutKeysRetryingNotice } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import { appendTerminalTailText, terminalTailLinesFromText } from '../../lib/terminal-tail';
 import {
@@ -883,8 +884,11 @@ export default function TerminalScreen() {
     voiceStatus !== 'recording' &&
     voiceStatus !== 'transcribing' &&
     !voiceRecorderBusy;
+  // While the connection is down the terminal's own status says so: no keys-waiting notice too.
+  const visibleControlError =
+    connectionStatus === 'connected' ? controlError : withoutKeysRetryingNotice(controlError);
   const showInputBar =
-    !native.target && !native.unavailable && (showTerminalControls || Boolean(controlError));
+    !native.target && !native.unavailable && (showTerminalControls || Boolean(visibleControlError));
   const showVoiceComposer =
     !native.target &&
     !native.unavailable &&
@@ -2020,8 +2024,8 @@ export default function TerminalScreen() {
               ) : null}
             </View>
           )}
-          {(controlError || tmuxError) && (
-            <Text style={styles.sendErrorText}>{controlError ?? tmuxError}</Text>
+          {(visibleControlError || tmuxError) && (
+            <Text style={styles.sendErrorText}>{visibleControlError ?? tmuxError}</Text>
           )}
         </View>
       )}
