@@ -159,6 +159,21 @@ export function companionResourceBlocker(
   return `Prepare profile ${requiredPrepareProfile} requires one of: ${COMPANION_RESOURCE_IDS.join(', ')}`;
 }
 
+/**
+ * Why a slot whose Android target is a physical device cannot dispatch, or null.
+ * Prepare boots a simulator or an emulator; it cannot attach a phone, so a slot
+ * with no AVD to fall back on is unusable while its device is not attached.
+ */
+export function unattachedDeviceBlocker(
+  slot: Pick<SlotStatus, 'platform' | 'resources' | 'health'>,
+): string | null {
+  const serial = slot.resources?.['android-device']?.adb_serial;
+  if (slot.platform !== 'android' || serial === undefined || slot.resources?.['android-emu'])
+    return null;
+  if (slot.health.device.endsWith(':OK')) return null;
+  return `Android device ${String(serial)} is not attached and the slot has no AVD to boot`;
+}
+
 export type SlotScoringProjectConfig = SlotTrackingProjectConfig;
 
 export function projectConfigsFromProjects(
@@ -450,6 +465,7 @@ export function findBestSlot(
       )
         return false;
       if (companionResourceBlocker(s, selected.requiredPrepareProfile)) return false;
+      if (unattachedDeviceBlocker(s)) return false;
       if (
         !s.currentRunId &&
         !s.currentFamilyId &&
@@ -552,6 +568,7 @@ export function validateSlotForDispatch(
       releasableBranchHolderIds: options?.releasableBranchHolderIds,
     }) ??
     companionResourceBlocker(slot, options?.requiredPrepareProfile) ??
+    unattachedDeviceBlocker(slot) ??
     slotCapabilityBlocker(slot.slot, options?.requiredCapabilities, options?.capabilityCatalogs) ??
     slotRepoBlocker(slot, options)
   );
