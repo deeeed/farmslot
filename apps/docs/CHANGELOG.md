@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document `native.session.turn.diff`, which returns one file's diff for a native turn, in the generated gateway API reference.
+
 - Document `native.session.cancel`, which removes a queued native message, in the generated gateway API reference.
 
 - List `run.attestBeforeAttempt` in the generated gateway API reference (ADR-062 Amendment 21).

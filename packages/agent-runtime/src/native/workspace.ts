@@ -13,9 +13,30 @@ const execFile = promisify(execFileCallback);
 const STATUS_OUTPUT_LIMIT = 8 * WORKSPACE_TEXT_LIMIT;
 const DIFF_TOO_LARGE = 'Diff exceeds the 1 MiB viewer limit.';
 
-async function git(cwd: string, args: string[], maxBuffer = WORKSPACE_TEXT_LIMIT): Promise<string> {
+/**
+ * The environment for a Git call. Inherited Git variables are dropped, so explicit directory
+ * arguments cannot be redirected by Git plumbing variables; `env` adds the call's own, such as a
+ * temporary index.
+ */
+export function gitEnvironment(
+  env: Record<string, string> = {},
+): Record<string, string | undefined> {
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
+    ...env,
+  };
+}
+
+/** `input`, when given, is written to Git's stdin. */
+export async function git(
+  cwd: string,
+  args: string[],
+  maxBuffer = WORKSPACE_TEXT_LIMIT,
+  env: Record<string, string> = {},
+  input?: string,
+): Promise<string> {
   try {
-    const { stdout } = await execFile(
+    const running = execFile(
       'git',
       [
         '--literal-pathspecs',
@@ -26,16 +47,10 @@ async function git(cwd: string, args: string[], maxBuffer = WORKSPACE_TEXT_LIMIT
         'core.fsmonitor=false',
         ...(args[0] === 'diff' ? gitDiffArgs(args.slice(1)) : args),
       ],
-      {
-        cwd,
-        maxBuffer,
-        timeout: 15_000,
-        // Explicit directory arguments cannot be redirected by inherited Git plumbing variables.
-        env: Object.fromEntries(
-          Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
-        ),
-      },
+      { cwd, maxBuffer, timeout: 15_000, env: gitEnvironment(env) },
     );
+    if (input !== undefined) running.child.stdin?.end(input);
+    const { stdout } = await running;
     return stdout;
   } catch (error) {
     // Output limits are expected for large workspaces; preserve other Git errors.
@@ -43,7 +58,9 @@ async function git(cwd: string, args: string[], maxBuffer = WORKSPACE_TEXT_LIMIT
       throw new Error(
         args[0] === 'status'
           ? 'Changes list exceeds the 8 MiB limit. Use Files to inspect individual paths.'
-          : DIFF_TOO_LARGE,
+          : args[0] === 'diff'
+            ? DIFF_TOO_LARGE
+            : `Git ${args[0]} output exceeds the ${maxBuffer / 1024 / 1024} MiB limit.`,
         { cause: error },
       );
     throw error;
