@@ -4,9 +4,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- `repinSelectedTask` repins a task whose own checkout changed its provider, after checking that the rest of the recorded selection still matches; it needs the matching `@farmslot/agent-runtime` release (ADR-068 Amendment 8).
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.32.2 - 2026-10-31
+
+- `repinSelectedTask` repins a task whose own checkout changed its provider, after checking that the rest of the recorded selection still matches; it needs the matching `@farmslot/agent-runtime` release (ADR-068 Amendment 8).
 
 - Record task acceptance through the runtime's shared engine-claim transfer, so it needs the matching `@farmslot/agent-runtime` release.
 
