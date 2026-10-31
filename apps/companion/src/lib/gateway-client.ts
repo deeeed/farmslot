@@ -155,6 +155,10 @@ export class GatewayClient {
   }
   private disposed = false;
   private pausedForBackground = false;
+  /** The socket is closed because the app is in the background, not because of an outage. */
+  get backgroundPaused(): boolean {
+    return this.pausedForBackground;
+  }
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
   private wasConnectedBeforeBackground = false;
   private lastConnectionError: string | null = null;

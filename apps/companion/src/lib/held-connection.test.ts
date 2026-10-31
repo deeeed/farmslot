@@ -5,7 +5,7 @@ import { SUPERSEDED_READ_GRACE_MS } from '@farmslot/protocol/client-cache';
 
 import { mountHook } from '../hooks/hook-harness.fixtures';
 
-import { createHeldConnection, createOfflineClock, RECONNECT_GRACE_MS } from './held-connection';
+import { createOfflineClock, RECONNECT_GRACE_MS } from './held-connection';
 
 const connected = { status: 'connected', client: { connectionState: 'connected' as const } };
 const reconnecting = { status: 'connecting', client: { connectionState: 'connecting' as const } };
@@ -54,54 +54,24 @@ test('a flag shows only once it has held for the grace', () => {
   }
 });
 
-// GatewayClient disconnects while the app is in the background; coming back is not an outage.
-test('a return from the background gets the full grace, not an outage', (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: 0 });
-  const paused = { status: 'disconnected', client: { connectionState: 'disconnected' as const } };
-  type State = typeof connected | typeof reconnecting | typeof paused;
-  const timeline = (withAppState: boolean) => {
-    let state: State = connected;
-    const listeners: Array<(next: State) => void> = [];
-    let onAppState: (next: string) => void = () => undefined;
-    const store = Object.assign(<T>(select: (current: State) => T): T => select(state), {
-      getState: () => state,
-      subscribe: (listener: (next: State) => void) => {
-        listeners.push(listener);
-        return () => undefined;
-      },
-    });
-    const held = createHeldConnection(
-      store,
-      withAppState
-        ? {
-            addEventListener: (_type: 'change', listener: (next: string) => void) => {
-              onAppState = listener;
-            },
-          }
-        : undefined,
-    );
-    const move = (next: State, at: number) => {
-      t.mock.timers.setTime(at);
-      state = next;
-      listeners.forEach((listener) => listener(next));
-    };
-    move(paused, 10_000);
-    t.mock.timers.setTime(310_000);
-    onAppState('active');
-    move(reconnecting, 310_000);
-    return held;
+// GatewayClient closes the socket while the app is in the background; coming back is not an outage.
+test('a return from the background gets the full grace, not an outage', () => {
+  const clock = createOfflineClock(0);
+  const paused = {
+    status: 'disconnected',
+    client: { connectionState: 'disconnected' as const, backgroundPaused: true },
   };
-
-  const resumed = timeline(true);
-  assert.equal(resumed.isHeld(), true, 'reconnecting after a resume stays quiet');
-  t.mock.timers.setTime(310_000 + RECONNECT_GRACE_MS);
-  assert.equal(resumed.isHeld(), false, 'an outage after the resume still shows');
-
-  t.mock.timers.setTime(0);
-  const control = timeline(false);
+  const resuming = {
+    status: 'connecting',
+    client: { connectionState: 'connecting' as const, backgroundPaused: false },
+  };
+  assert.equal(clock.held(connected, 0), true);
+  assert.equal(clock.held(paused, 10_000), true);
+  assert.equal(clock.held(paused, 300_000), true, 'five minutes in the background');
+  assert.equal(clock.held(resuming, 310_000), true, 'reconnecting after the return stays quiet');
   assert.equal(
-    control.isHeld(),
+    clock.held(resuming, 310_000 + RECONNECT_GRACE_MS),
     false,
-    'without the foreground event the pause counted as an outage',
+    'a real outage still shows',
   );
 });

@@ -13,7 +13,9 @@ export const RECONNECT_GRACE_MS = SUPERSEDED_READ_GRACE_MS;
 
 interface TransportState {
   status: string;
-  client: Pick<GatewayClient, 'connectionState'> | null;
+  client:
+    | (Pick<GatewayClient, 'connectionState'> & Partial<Pick<GatewayClient, 'backgroundPaused'>>)
+    | null;
 }
 
 export function transportConnected(state: TransportState): boolean {
@@ -25,17 +27,14 @@ export function createOfflineClock(now = Date.now()) {
   let offlineSince: number | null = now;
   return {
     observe(state: TransportState, at = Date.now()) {
-      if (transportConnected(state)) offlineSince = null;
+      // A background pause is not an outage: the reconnect on return starts the grace.
+      if (transportConnected(state) || state.client?.backgroundPaused) offlineSince = null;
       else if (offlineSince === null) offlineSince = at;
     },
     /** True while connected, or within the grace of the last drop. */
     held(state: TransportState, at = Date.now()) {
       this.observe(state, at);
       return offlineSince === null || at - offlineSince < RECONNECT_GRACE_MS;
-    },
-    /** A return to the foreground starts the grace over: a background pause is not an outage. */
-    resume(at = Date.now()) {
-      if (offlineSince !== null) offlineSince = at;
     },
     graceLeft(at = Date.now()) {
       return offlineSince === null ? null : Math.max(0, RECONNECT_GRACE_MS - (at - offlineSince));
@@ -71,21 +70,11 @@ type TransportStore = (<T>(select: (state: TransportState) => T) => T) & {
   subscribe?: (listener: (state: TransportState) => void) => () => void;
 };
 
-interface AppStateSource {
-  addEventListener: (type: 'change', listener: (state: string) => void) => unknown;
-}
-
-/**
- * One clock per connection store: it watches every transport change, rendered or not. The app
- * disconnects while in the background, so a return to the foreground restarts the grace.
- */
-export function createHeldConnection(store: TransportStore, appState?: AppStateSource) {
+/** One clock per connection store: it watches every transport change, rendered or not. */
+export function createHeldConnection(store: TransportStore) {
   const clock = createOfflineClock();
   clock.observe(store.getState());
   store.subscribe?.((state) => clock.observe(state));
-  appState?.addEventListener('change', (state) => {
-    if (state === 'active') clock.resume();
-  });
   const isHeld = () => clock.held(store.getState());
   function useHeldConnection(): boolean {
     const connected = store(transportConnected);
