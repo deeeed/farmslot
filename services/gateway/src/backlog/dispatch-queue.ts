@@ -55,7 +55,11 @@ import {
   automaticSlotLoads,
   isPinnedSlotSelection,
 } from '../methods/dispatch/pressure-admission.js';
-import { validateSlotForDispatch } from '../methods/dispatch/slot-scoring.js';
+import {
+  NoDispatchableSlotError,
+  projectConfigsFromProjects,
+  validateSlotForDispatch,
+} from '../methods/dispatch/slot-scoring.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import { publishPlanningResources } from '../resources/planning-changes.js';
@@ -80,7 +84,7 @@ import {
   type WorkOriginator,
 } from '../security/work-originator.js';
 
-import { preparePRQueueAdmission } from './pr-admission.js';
+import { isPinnedPRExecution, preparePRQueueAdmission } from './pr-admission.js';
 import { migrateQueuedReviewQa } from './review-qa-migration.js';
 
 export type QueueRecord = QueueItem & { originator?: WorkOriginator };
@@ -1137,6 +1141,9 @@ export function queueItemHeldByPressure(
   pressureDecisions: ReadonlyMap<string, PressureAdmissionDecision>,
   allowedSlots?: readonly string[] | null,
   previewParams?: DispatchPreviewParams,
+  pinned = isPinnedSlotSelection(
+    previewParams ?? { allowedSlots: allowedSlots ? [...allowedSlots] : null },
+  ),
 ): boolean {
   // Scope to the exact allow list the resolver will see (item allowlist or
   // spread-policy subset). An admitted free slot outside it must not defeat
@@ -1161,13 +1168,7 @@ export function queueItemHeldByPressure(
       !validateSlotForDispatch(slot, slots, affinityOptions),
   );
   if (freeProjectSlots.length === 0) return false;
-  const loads = automaticSlotLoads(
-    pressureDecisions,
-    undefined,
-    isPinnedSlotSelection(
-      previewParams ?? { allowedSlots: allowedSlots ? [...allowedSlots] : null },
-    ),
-  );
+  const loads = automaticSlotLoads(pressureDecisions, undefined, pinned);
   return freeProjectSlots.every(
     (slot) =>
       pressureDecisions.get(slot.machine)?.outcome === 'rejected' ||
@@ -1178,9 +1179,14 @@ export function queueItemHeldByPressure(
 export async function selectQueueDispatchSlot(
   slots: SlotStatus[],
   item: QueueItem,
-  deps: { capturePressure?: QueuePressureCapture } = {},
+  deps: {
+    capturePressure?: QueuePressureCapture;
+    /** Pin intent of the original item when the caller narrowed `item` (ADR-054). */
+    pinnedSlotSelection?: boolean;
+  } = {},
 ): Promise<string | null> {
   const requiredPrepareProfile = requiredPrepareProfileForQueueItem(item);
+  const pinned = deps.pinnedSlotSelection ?? isPinnedSlotSelection(item);
   // ADR-054: the unattended queue is the path the spec is about, so it must
   // score a park-preserved slot the same way the interactive pickers do.
   const parkPreserved = parkPreservedSlotIds(getAllRuns());
@@ -1214,6 +1220,7 @@ export async function selectQueueDispatchSlot(
       pressureDecisions,
       item.allowedSlots,
       buildQueuePreviewParams(item),
+      pinned,
     )
   ) {
     console.log(
@@ -1223,6 +1230,10 @@ export async function selectQueueDispatchSlot(
   }
   const { planQueuedSourceSlots } = await import('../sources/runtime.js');
   const sourcePlans = await planQueuedSourceSlots(item);
+  // The queue pins the slot it picks, so it applies the project's automatic
+  // selection policy (slot_selection) here rather than leaving it to FIND_SLOT.
+  const project = await loadProjectConfig(item.project);
+  const projectConfigs = projectConfigsFromProjects(project ? [project] : []);
   if (item.launchSlotPolicy === 'spread' && item.launchGroupId) {
     const activeSiblingSlots = new Set(
       getAllRuns()
@@ -1247,6 +1258,7 @@ export async function selectQueueDispatchSlot(
             pressureDecisions,
             allowed,
             buildQueuePreviewParams(item),
+            pinned,
           )
         ) {
           console.log(
@@ -1257,11 +1269,11 @@ export async function selectQueueDispatchSlot(
         const preview = resolveDispatchPreviewFromFleet(
           { ...buildQueuePreviewParams(item), allowedSlots: allowed },
           slots,
-          undefined,
+          projectConfigs,
           {
             requiredPrepareProfile,
             pressureDecisions,
-            automaticLoadPinned: isPinnedSlotSelection(item),
+            automaticLoadPinned: pinned,
             parkPreservedSlotIds: parkPreserved,
             plans: sourcePlans,
           },
@@ -1271,22 +1283,34 @@ export async function selectQueueDispatchSlot(
       }
     }
   }
-  const preview = resolveDispatchPreviewFromFleet(buildQueuePreviewParams(item), slots, undefined, {
-    requiredPrepareProfile,
-    pressureDecisions,
-    parkPreservedSlotIds: parkPreserved,
-    plans: sourcePlans,
-  });
+  const preview = resolveDispatchPreviewFromFleet(
+    buildQueuePreviewParams(item),
+    slots,
+    projectConfigs,
+    {
+      requiredPrepareProfile,
+      pressureDecisions,
+      automaticLoadPinned: pinned,
+      parkPreservedSlotIds: parkPreserved,
+      plans: sourcePlans,
+    },
+  );
   // A pinned queue item whose machine is pressure-rejected stays queued until
   // pressure recedes; automatic selection already excluded rejected machines.
   if (preview.pressureAdmission?.outcome === 'rejected') return null;
   return preview.preview.slotId;
 }
 
+/**
+ * `pinnedSlotSelection` is the declared policy's pin intent ({@link isPinnedPRExecution}).
+ * Admitted `choices`, the item's written-back slotId/allowedSlots and one execution
+ * group are all narrower than what the operator configured, so none of them pins.
+ */
 export async function selectPRQueueExecution(
   slots: SlotStatus[],
   item: QueueItem,
   choices: PRExecutionChoice[],
+  pinnedSlotSelection: boolean,
 ): Promise<string | null> {
   const groups = new Map<string, PRSlotExecutionChoice[]>();
   for (const choice of choices.filter(
@@ -1295,6 +1319,7 @@ export async function selectPRQueueExecution(
     const key = JSON.stringify([choice.runner, choice.model, choice.effort]);
     groups.set(key, [...(groups.get(key) ?? []), choice]);
   }
+  let refusal: NoDispatchableSlotError | undefined;
   for (const group of groups.values()) {
     const model = group[0];
     const execution = executionModelFromSelection(model);
@@ -1328,7 +1353,16 @@ export async function selectPRQueueExecution(
       model: execution.model,
       effort: execution.effort ?? undefined,
     };
-    const slotId = await selectQueueDispatchSlot(slots, proposed);
+    let slotId: string | null;
+    try {
+      slotId = await selectQueueDispatchSlot(slots, proposed, { pinnedSlotSelection });
+    } catch (error) {
+      // A group whose slots all refuse (placement policy, an unplugged phone) must
+      // not hide a later group that can dispatch.
+      if (!(error instanceof NoDispatchableSlotError)) throw error;
+      refusal ??= error;
+      continue;
+    }
     if (slotId) {
       item.allowedSlots = allowedSlots;
       item.runner = model.runner;
@@ -1337,6 +1371,7 @@ export async function selectPRQueueExecution(
       return slotId;
     }
   }
+  if (refusal) throw refusal;
   return null;
 }
 
@@ -1569,11 +1604,13 @@ async function tryDispatchNextOnce(): Promise<void> {
       if (liveQueuedItem(item.id) !== item) continue;
     }
     let prChoices: PRExecutionChoice[] | undefined;
+    let prPinned = false;
     if (item.workflowExecution) {
       try {
         const [bound] = await bindPRExecutionProfilesToPool([item.workflowExecution]);
         if (liveQueuedItem(item.id) !== item) continue;
         prChoices = prExecutionChoices(bound);
+        prPinned = isPinnedPRExecution(prChoices);
       } catch (error) {
         if (!(error instanceof GatewayMethodError)) throw error;
         if (liveQueuedItem(item.id) !== item) continue;
@@ -1600,6 +1637,7 @@ async function tryDispatchNextOnce(): Promise<void> {
         continue;
       }
       prChoices = admission.choices;
+      prPinned = admission.pinnedSlotSelection;
     }
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const usage = evalSuiteCapUsage(item.evalCell.capGroupId, queue);
@@ -1631,7 +1669,7 @@ async function tryDispatchNextOnce(): Promise<void> {
       } else {
         const selectionSlots = prChoices ? (await loadFleetStatus()).slots : fleet.slots;
         const slotId = prChoices
-          ? await selectPRQueueExecution(selectionSlots, item, prChoices)
+          ? await selectPRQueueExecution(selectionSlots, item, prChoices, prPinned)
           : await selectQueueDispatchSlot(selectionSlots, item);
         slot = selectionSlots.find((s) => s.slot === slotId);
       }

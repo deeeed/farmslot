@@ -39,6 +39,7 @@ import {
   slotReleasingFenceFields,
   updateSlotStatusIf,
 } from '../core/state.js';
+import { completedRunOutcome } from '../evals/blocked-first-output.js';
 import { withNodeReconnectWait, withoutNodeReconnectWait } from '../fleet/node-rpc.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
@@ -1349,7 +1350,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       patch: {
         status: 'done',
         completedAt: new Date().toISOString(),
-        metrics: { ...finalRun.metrics, outcome: 'success', durationMs },
+        metrics: { ...finalRun.metrics, outcome: completedRunOutcome(finalRun), durationMs },
       },
       collaborators: terminalCollaborators(
         Events.RUN_COMPLETED,

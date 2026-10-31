@@ -649,6 +649,7 @@ export async function readFrozenEvalFirstOutputPackage(
 export async function freezeEvalFirstOutputPackage(
   run: Run,
   metrics: ResultPackageMetrics,
+  outcomeClaims: string[] = [],
 ): Promise<ResultPackageManifest> {
   const frozen = await readFrozenEvalFirstOutputPackage(run);
   if (frozen) return frozen;
@@ -671,6 +672,7 @@ export async function freezeEvalFirstOutputPackage(
   const first = link.blind.firstOutput;
   return writeResultPackageManifest(firstOutputPackagePath(run), {
     ...snapshot,
+    outcomeClaims: [...snapshot.outcomeClaims, ...outcomeClaims],
     finalizedAt: first.capturedAt,
     baseline: { source: 'local-git', baseSha: link.blind.baseSha, capturedAt: first.capturedAt },
     head: { source: 'local-git', headSha: first.headSha, capturedAt: first.capturedAt },
@@ -719,7 +721,17 @@ export async function finalizeEvalResultPackageForRun(
         frozen.comparisonEligibility?.status === 'invalid' &&
         review?.skipped === true &&
         review.reason === 'eval-first-output-invalid';
-      if (!invalidSkipped && review?.verdict !== 'pass' && review?.verdict !== 'issues')
+      // A worker that blocked itself has no output to judge; its reason is frozen.
+      const blockedSkipped =
+        review?.skipped === true &&
+        review.reason === 'eval-first-output-blocked' &&
+        frozen.outcomeClaims.includes(`Worker blocked: ${review.blockedReason}`);
+      if (
+        !invalidSkipped &&
+        !blockedSkipped &&
+        review?.verdict !== 'pass' &&
+        review?.verdict !== 'issues'
+      )
         throw new Error('The eval first-output judge has no completed verdict');
       const paths = new Set(
         Array.isArray(review.attempts)

@@ -35,3 +35,19 @@ test('loading a historical run does not stamp an evidence contract version', asy
   assert(loaded);
   assert.equal(loaded.recordedEvidenceContractVersion, undefined);
 });
+
+test('run.create requiredCapabilities become the capability requirements FIND_SLOT reads', () => {
+  const params = { flowType: 'dev', project: 'fixture', ticketOrPr: 'TEST-CAPABILITIES' } as const;
+  const run = buildRunRecord({
+    ...params,
+    requiredCapabilities: ['android-device', ' audio-capture', 'android-device '],
+  });
+  assert.deepEqual(run.engineState?.slotCapabilityRequirements, {
+    capabilityIds: ['android-device', 'audio-capture'],
+  });
+  assert.equal(buildRunRecord({ ...params, requiredCapabilities: [] }).engineState, undefined);
+  assert.throws(
+    () => buildRunRecord({ ...params, requiredCapabilities: ['android-device', ' '] }),
+    /requiredCapabilities must be an array of non-empty capability ids/,
+  );
+});

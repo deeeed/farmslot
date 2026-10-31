@@ -12,6 +12,7 @@ import {
   isMockModeProject,
   loadProjectVars,
   normalizeRawRuntimeCapabilities,
+  normalizeRawSlotSelection,
   normalizeSlotTaskRel,
   type RawProjectJson,
   resolveProjectRuntimeDir,
@@ -212,6 +213,25 @@ test('posture retention config validates, normalizes, and leaves keep_warm_ms-on
         'project.json',
       ),
     /"terminal" must be stop/,
+  );
+});
+
+test('slot_selection.physical_devices accepts any and on-request, defaults to any, rejects others', () => {
+  assert.equal(normalizeRawSlotSelection(undefined, 'project.json'), undefined);
+  assert.deepEqual(normalizeRawSlotSelection({}, 'project.json'), { physicalDevices: 'any' });
+  for (const physicalDevices of ['any', 'on-request'] as const) {
+    assert.deepEqual(
+      normalizeRawSlotSelection({ physical_devices: physicalDevices }, 'project.json'),
+      { physicalDevices },
+    );
+  }
+  assert.throws(
+    () => normalizeRawSlotSelection({ physical_devices: 'never' }, 'project.json'),
+    /project\.json: slot_selection\.physical_devices must be one of: any, on-request/,
+  );
+  assert.throws(
+    () => normalizeRawSlotSelection('on-request', 'project.json'),
+    /project\.json: slot_selection must be an object/,
   );
 });
 
