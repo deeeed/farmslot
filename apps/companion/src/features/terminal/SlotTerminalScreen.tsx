@@ -87,8 +87,9 @@ import {
 import { slotTerminalRunnerPane, type TerminalControlKey } from '../../lib/terminal-controls';
 import {
   type HeldTerminalInput,
-  KEYS_RETRYING_MESSAGE,
+  keysRetryingNotice,
   TerminalInputCancelledError,
+  withoutKeysRetryingNotice,
 } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import { appendTerminalTailText, terminalTailLinesFromText } from '../../lib/terminal-tail';
@@ -496,9 +497,7 @@ export default function TerminalScreen() {
     terminalTargetParamsRef,
     terminalInputDisabledReason,
     {
-      onRetry: (error, attempt) => {
-        if (attempt >= 1) setControlError(`${KEYS_RETRYING_MESSAGE}: ${getErrorMessage(error)}`);
-      },
+      onRetry: (error, attempt) => setControlError((c) => keysRetryingNotice(error, attempt) ?? c),
       onHold: setHeldInput,
     },
   );
@@ -531,11 +530,7 @@ export default function TerminalScreen() {
     }
   }, [client, replaceTerminalTail, terminalContext.scopeKey]);
 
-  const clearKeysRetrying = useCallback(
-    () =>
-      setControlError((current) => (current?.startsWith(KEYS_RETRYING_MESSAGE) ? null : current)),
-    [],
-  );
+  const clearKeysRetrying = useCallback(() => setControlError(withoutKeysRetryingNotice), []);
 
   const handleTerminalInput = useCallback(
     (data: string) => {

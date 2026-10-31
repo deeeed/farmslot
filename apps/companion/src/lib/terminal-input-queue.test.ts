@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createTerminalInputQueue, TerminalInputCancelledError } from './terminal-input-queue';
+import {
+  createTerminalInputQueue,
+  keysRetryingNotice,
+  TerminalInputCancelledError,
+  withoutKeysRetryingNotice,
+} from './terminal-input-queue';
 
 function deferred() {
   let resolve!: () => void;
@@ -162,4 +167,12 @@ test('disconnect or target disposal rejects buffered input and never replays it 
   first.resolve();
   await inFlight;
   assert.deepEqual(sent, ['old-a', 'new target']);
+});
+
+test('keys still waiting are mentioned from the second failure and cleared once they go through', () => {
+  assert.equal(keysRetryingNotice(new Error('Not connected'), 0), null, 'one failure is a blip');
+  const notice = keysRetryingNotice(new Error('Not connected'), 1);
+  assert.equal(notice, 'Keys not delivered yet, retrying in order: Not connected');
+  assert.equal(withoutKeysRetryingNotice(notice), null);
+  assert.equal(withoutKeysRetryingNotice('Pane gone'), 'Pane gone', 'other errors stay');
 });

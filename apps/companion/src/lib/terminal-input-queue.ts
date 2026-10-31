@@ -49,6 +49,17 @@ export interface TerminalInputQueueOptions {
 /** Shown once a request has failed twice; cleared when the keys go through. */
 export const KEYS_RETRYING_MESSAGE = 'Keys not delivered yet, retrying in order';
 
+/** The notice for retry `attempt` of keys not yet sent, or null while it is still a blip. */
+export function keysRetryingNotice(error: unknown, attempt: number): string | null {
+  if (attempt < 1) return null;
+  return `${KEYS_RETRYING_MESSAGE}: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+/** Clears the keys-retrying notice once the keys go through; any other error stays. */
+export function withoutKeysRetryingNotice(current: string | null): string | null {
+  return current?.startsWith(KEYS_RETRYING_MESSAGE) ? null : current;
+}
+
 const retryBackoffMs = (attempt: number) => Math.min(250 * 2 ** attempt, 4_000);
 
 /**

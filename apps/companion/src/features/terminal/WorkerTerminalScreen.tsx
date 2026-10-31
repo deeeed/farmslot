@@ -49,8 +49,9 @@ import { getResourceCache } from '../../lib/resource-cache';
 import { savedForDisplay, visibleReadError } from '../../lib/resource-read-status';
 import {
   type HeldTerminalInput,
-  KEYS_RETRYING_MESSAGE,
+  keysRetryingNotice,
   TerminalInputCancelledError,
+  withoutKeysRetryingNotice,
 } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
@@ -408,9 +409,8 @@ export default function WorkerTerminalScreen() {
 
   const [heldInput, setHeldInput] = useState<HeldTerminalInput | null>(null);
   const workerInput = useWorkerTerminalInput(client, worker, {
-    onRetry: (failure, attempt) => {
-      if (attempt >= 1) setError(`${KEYS_RETRYING_MESSAGE}: ${getErrorMessage(failure)}`);
-    },
+    onRetry: (failure, attempt) =>
+      setError((current) => keysRetryingNotice(failure, attempt) ?? current),
     onHold: setHeldInput,
   });
   const writeWorkerInput = workerInput.write;
@@ -424,7 +424,7 @@ export default function WorkerTerminalScreen() {
         return;
       }
       writeWorkerInput(data).then(
-        () => setError((current) => (current?.startsWith(KEYS_RETRYING_MESSAGE) ? null : current)),
+        () => setError(withoutKeysRetryingNotice),
         (err: unknown) => {
           if (!(err instanceof TerminalInputCancelledError)) setError(getErrorMessage(err));
         },
