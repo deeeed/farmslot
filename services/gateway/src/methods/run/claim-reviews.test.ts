@@ -32,9 +32,10 @@ const { deleteTestRunIfPresent, makeReadyGatePackage, retainRunFixture } =
   await import('../../run-engine/test-fixtures.js');
 const { retainedRunTaskDirectory } = await import('../../run-completion/retained-artifacts.js');
 const { computeReadyGatePackageHash } = await import('../../run-completion/ready-gate-package.js');
-const { collectRunGateReadiness, refreshRunGateReadiness } =
+const { collectRunGateReadiness, readGateRecordedEvidence, refreshRunGateReadiness } =
   await import('../../run-engine/gate-prerequisites.js');
 const { readRunRecordedEvidence } = await import('./evidence-review.js');
+const { captureRunOutput } = await import('../../run-completion/output.js');
 
 export async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'visual-claim-review-'));
@@ -658,6 +659,28 @@ test('a pending gate presents the projected ledger and keeps the engine verdict'
     assert.equal(row?.engineVerdict, 'awaiting-review', id);
   }
   assert.equal(JSON.stringify(f.input.claims), engineBytes, 'engine claims stay unchanged');
+});
+
+test('an artifact-only output review reads only the selected attempt, not the retained baseline', async (t) => {
+  // Stability runs 29ce2ab4 and 223cc32f: COMPLETE also read the pre-implementation
+  // baseline attempt, which fails by design, and refused the passing selected run.
+  const f = await fixture(t);
+  const root = path.dirname(f.run.taskFile!);
+  await cp(f.directory, path.join(root, 'artifacts/recipe-baseline-run'), { recursive: true });
+  await writeFile(path.join(root, 'artifacts/report.html'), '<h1>Validation passed</h1>');
+  updateRun(f.run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    completionPolicy: 'artifact-only',
+    lane: 'validation',
+    decisions: [],
+    metrics: { ...f.run.metrics, outcome: 'success' },
+    steps: [{ name: 'complete', status: 'done' }],
+  });
+  await captureRunOutput(f.run.id, false);
+  const inputs = await readGateRecordedEvidence(getRun(f.run.id)!, null);
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0]?.claims?.recipeRunId, f.input.claims!.recipeRunId);
 });
 
 test('QA review consumes only frozen case registration, even when another retained package is valid', async (t) => {
