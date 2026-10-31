@@ -986,6 +986,25 @@ test(
   },
 );
 
+test(
+  'a gate re-presented after a replay superseded its step presents nothing',
+  { timeout: 5_000 },
+  async (t) => {
+    const { run } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    // The step started at generation 0; a replay moved the run on during its slow review work.
+    updateRun(run.id, { engineState: { ...getRun(run.id)!.engineState, generation: 1 } });
+    const before = getRun(run.id)!.decisions.length;
+    assert.equal(
+      await executeReadyGate(run.id, { ensurePackage: async () => prepared, generation: 0 }),
+      'abort',
+    );
+    assert.equal(getRun(run.id)!.decisions.length, before, 'no gate decision was opened');
+  },
+);
+
 test('Retry Gate reports preparation while its second source read is pending', async (t) => {
   let release!: () => void;
   t.after(() => release?.());

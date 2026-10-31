@@ -926,6 +926,12 @@ interface ReadyGatePackageDependencies {
   createDecision?: typeof createEngineDecision;
   rebindSlot?: typeof rebindUnownedPublicationSlot;
   readReviewFixSignal?: ReviewFixSignalReader;
+  /**
+   * The human-gate step's start generation. A re-present after slow work (a review plan,
+   * a resumed review, a visual repair) is fenced to it, so a driver a replay superseded
+   * meanwhile cannot open a gate over the live one.
+   */
+  generation?: number;
 }
 
 export async function executeReadyGate(
@@ -933,7 +939,7 @@ export async function executeReadyGate(
   dependencies: ReadyGatePackageDependencies = {},
 ): Promise<string> {
   let current = getRun(runId)!;
-  const generation = current.engineState?.generation ?? 0;
+  const generation = dependencies.generation ?? current.engineState?.generation ?? 0;
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
       await import('../run-completion/human-publication.js');

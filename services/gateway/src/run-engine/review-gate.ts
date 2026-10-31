@@ -125,9 +125,10 @@ export async function publishPinnedReview({
   if (currentHeadSha !== reviewedHeadSha) onHeadAdvanced(currentHeadSha);
 }
 
-export async function executeReviewGate(runId: string): Promise<void> {
+/** `stepGeneration` is the human-gate step's start generation; the decision is fenced to it. */
+export async function executeReviewGate(runId: string, stepGeneration?: number): Promise<void> {
   const current = getRun(runId)!;
-  const generation = current.engineState?.generation ?? 0;
+  const generation = stepGeneration ?? current.engineState?.generation ?? 0;
 
   // 1. Copy artifacts from worker
   await copyWorkerArtifacts(runId);

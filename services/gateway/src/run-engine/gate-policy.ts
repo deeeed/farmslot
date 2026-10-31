@@ -492,6 +492,11 @@ const GATE_REENTRY = 'gate-reentry';
  * pending_publish). Resolves stale ones as superseded — kept for audit, never
  * silently deleted — and returns how many were superseded.
  */
+/** Human gates and review posting share one live-gate slot per run. */
+export function isGateDecision(decision: Pick<RunDecision, 'type'>): boolean {
+  return decision.type === 'engine_human_gate' || decision.type === 'engine_review_posting';
+}
+
 export function supersedeStaleHumanGateDecisions(
   decisions: RunDecision[],
   nowIso: string = new Date().toISOString(),
@@ -499,11 +504,7 @@ export function supersedeStaleHumanGateDecisions(
 ): number {
   let superseded = 0;
   for (const decision of decisions) {
-    if (
-      (decision.type !== 'engine_human_gate' && decision.type !== 'engine_review_posting') ||
-      decision.resolvedAt
-    )
-      continue;
+    if (!isGateDecision(decision) || decision.resolvedAt) continue;
     decision.resolvedAt = nowIso;
     decision.resolvedAction = 'superseded';
     decision.context = { ...decision.context, supersededBy };

@@ -323,15 +323,21 @@ test('a gate driver a replay superseded cannot open a decision over the live one
   };
   // The live driver runs generation 2; a stale one started at generation 1 finishes its prep late.
   store.updateRun(run.id, { engineState: { generation: 2 }, decisions: [live] });
+  // Bounded: a regressed fence would leave the stale driver waiting on its own card.
   await assert.rejects(
-    createEngineDecision(
-      run.id,
-      'human_gate',
-      'Stale package',
-      [{ id: 'abort', label: 'Abort', style: 'secondary' }],
-      undefined,
-      { readProgress: async () => ({ kind: 'idle' }), generation: 1 },
-    ),
+    Promise.race([
+      createEngineDecision(
+        run.id,
+        'human_gate',
+        'Stale package',
+        [{ id: 'abort', label: 'Abort', style: 'secondary' }],
+        undefined,
+        { readProgress: async () => ({ kind: 'idle' }), generation: 1 },
+      ),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('stale driver opened a decision')), 1_000),
+      ),
+    ]),
     /no longer owns this decision/,
   );
   const decisions = store.getRun(run.id)!.decisions;
