@@ -3,8 +3,9 @@ import { useIsFocused } from 'expo-router';
 import { useEffect, useMemo } from 'react';
 
 import { Methods, type TmuxWorkerListResult, tmuxWorkerRefsMatch } from '@farmslot/protocol';
-import { resourceQuery } from '@farmslot/protocol/client-cache';
+import { canActOn, heldDataIsSaved, resourceQuery } from '@farmslot/protocol/client-cache';
 
+import { visibleReadError } from '../lib/resource-read-status';
 import {
   paneRunnerContext,
   type TerminalRunnerContext,
@@ -23,7 +24,9 @@ export interface PaneRunnerContextState {
 export function usePaneRunnerContext(pane: TerminalRunnerPane | null): PaneRunnerContextState {
   const focused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
-  const connected = useConnectionStore((s) => s.status === 'connected');
+  const connected = useConnectionStore(
+    (s) => s.status === 'connected' && s.client?.connectionState === 'connected',
+  );
   const forgetClosedPanes = useTerminalPrefsStore((s) => s.forgetClosedPanes);
   const nodeId = pane?.nodeId ?? null;
   const target = pane?.target ?? null;
@@ -35,19 +38,23 @@ export function usePaneRunnerContext(pane: TerminalRunnerPane | null): PaneRunne
     [nodeId, target],
   );
   const observation = useResourceQuery(focused ? query : undefined);
-  const ready = Boolean(client && connected && observation.status === 'ready');
+  // A reread in flight keeps the held inventory usable; only saved or missing data gates
+  // runner keys, and loading or a reread never shows an error.
+  const ready = Boolean(client && query && canActOn(observation, connected));
+  const saved = heldDataIsSaved(observation, connected);
   const summary = ready
     ? (observation.data?.workers.find((worker) =>
         tmuxWorkerRefsMatch(worker.ref, { nodeId: nodeId!, target: target! }),
       ) ?? null)
     : null;
-  const error =
-    observation.error?.message ??
-    (observation.status === 'unsupported'
-      ? 'Worker observations are unsupported.'
-      : !ready
-        ? 'Runner keys wait for current worker inventory.'
-        : null);
+  const error = !query
+    ? null
+    : (visibleReadError(observation, saved)?.message ??
+      (observation.status === 'unsupported'
+        ? 'Worker observations are unsupported.'
+        : saved
+          ? 'Runner keys wait for current worker inventory.'
+          : null));
   useEffect(() => {
     if (!ready || !nodeId) return;
     const node = observation.data?.nodes.find((entry) => entry.nodeId === nodeId);
