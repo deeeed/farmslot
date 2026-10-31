@@ -804,12 +804,14 @@ test(
       assert.equal(written.length, 1);
 
       socket.close(1006);
+      const refused: string[] = [];
       await assert.rejects(
         client.request(Methods.TERMINAL_INPUT, params, 50, {
-          onSent: () => written.push('refused request'),
+          onSent: () => refused.push(Methods.TERMINAL_INPUT),
         }),
       );
-      assert.deepEqual(written, [Methods.TERMINAL_INPUT]);
+      assert.deepEqual(refused, []);
+      assert.equal(written.length, 1);
     } finally {
       client.disconnect();
       Object.assign(globalThis, { WebSocket: original });
