@@ -16,12 +16,13 @@ Normative reference for [ADR-030 Amendments 1 to 3](../adr/030-replay-provenance
 - Before worker launch, verify that reference commits are unavailable, remote URLs are absent and fetch protocols are disabled. Recheck the boundary at dispatch and first-output capture.
 - Existing slot Git metadata is retained outside the worker checkout under the trial's lease. Preparation and recovery must not fetch into the isolated repository.
 - Teardown stops the owned worker, retains its candidate commits, then restores the original Git metadata before ordinary slot cleanup. Restoration is bound to the original run and slot ownership. A failed restoration keeps the slot fenced.
+- A finished trial's run-end cleanup restores the original Git while the run still owns the slot; a failed restoration holds the slot for retry. With the first output frozen, the checkout then returns to idle and the candidate branch stays. A run that retains its workspace for completion replay or a result decision keeps it until that is settled; a cancelled trial kept for replay is restored when its slot is reclaimed.
 
 ## Worker boundary
 
 - The worker starts without source-host credentials: no GitHub token variables, an empty GitHub CLI configuration, no Git credential helper and no Git SSH transport.
 - Recording stand-ins in the trial capsule refuse the GitHub CLI on the worker's path and Git's credential and SSH-transport calls. Git's trace in the capsule records transports the isolated repository refuses, whichever git binary ran. A recorded attempt makes the trial invalid at first-output capture.
-- A GitHub CLI call by absolute path fails without credentials but is not recorded.
+- A GitHub CLI call that bypasses the stand-in, by absolute path or through a shell profile that reorders `PATH`, fails without credentials but is not recorded.
 - The worker runs under a macOS `sandbox-exec` profile generated from the pool at preparation. It cannot read the node's other slot checkouts, the original checkout a linked-worktree slot shares objects with, blind capsules other than its own boundary, or the GitHub CLI login.
 - Worker session reloads (recovery, parking and operator resume) start under the same boundary.
 - The network stays open. A blind trial on a source repository readable without credentials is not isolated by this boundary.
@@ -38,6 +39,7 @@ Normative reference for [ADR-030 Amendments 1 to 3](../adr/030-replay-provenance
 ## First-output judging
 
 - A valid completed first worker output receives exactly one configured/default reviewer as a judge, including when a review axis says none or production review is disabled. Invalid blind trials retain their package and reason without judging.
+- A worker that blocks itself has its first output frozen with the blocked reason as an outcome claim. The package finalizes without a judge or person decision, like a judged output.
 - Freeze worker evidence and native worker usage before the judge starts. Worker elapsed time ends at the first terminal output; reviewer time and usage remain separate. Missing measurements stay unknown.
 - Preserve the judge's verdict and findings by severity. Passing and issues verdicts both finalize the artifact-only package automatically. No worker fix, send-back decision or second review follows an eval judge.
 - A replay reuses the completed judge for the same frozen output. An in-flight review keeps its existing recovery identity. Changed worker evidence cannot replace the frozen facts.

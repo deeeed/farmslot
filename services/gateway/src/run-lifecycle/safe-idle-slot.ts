@@ -65,7 +65,13 @@ async function retainCheckout(
 export async function reuseSafeIdleSlot(
   slotId: string,
   emit: EventEmitter,
-  expected?: { epoch: number; runId: string | null; recordRunId?: string },
+  expected?: {
+    epoch: number;
+    runId: string | null;
+    recordRunId?: string;
+    /** A finished blind trial: its commits are a retained branch and its first output is frozen. */
+    retainedCandidate?: boolean;
+  },
 ): Promise<SafeIdleSlotResult> {
   try {
     // Keep the recovery graph lazy: replay also consumes the pure receipt reader.
@@ -85,7 +91,7 @@ export async function reuseSafeIdleSlot(
     const eligibility = slotRecoveryEligibility(slot ? { ...slot, workspace } : undefined);
     if (!eligibility.allowed)
       return { kind: 'unavailable', reason: eligibility.detail ?? 'Slot is protected' };
-    if (eligibility.confirmationRequired)
+    if (eligibility.confirmationRequired && !expected?.retainedCandidate)
       return {
         kind: 'local-work',
         reason: workspace.dirtyCount ? 'dirty files' : 'unpushed commits',
@@ -101,7 +107,12 @@ export async function reuseSafeIdleSlot(
     await retainCheckout(slotId, workspace, expected?.recordRunId);
     const { recoverSlotWorkspace } = await import('../methods/slot/recover-workspace.js');
     const result = await recoverSlotWorkspace(
-      { slotId, release: true, mode: 'safe', expectedWorkspace: workspace },
+      {
+        slotId,
+        release: true,
+        mode: eligibility.confirmationRequired ? 'force' : 'safe',
+        expectedWorkspace: workspace,
+      },
       emit,
       undefined,
       { skipRecycle: true },
