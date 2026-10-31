@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- A Codex command's `tool.command` is the command line it ran, without the shell Codex wraps every command in, so clients show "Run git status" instead of "Run /bin/zsh -lc 'git status'". `tool.input` keeps the command as Codex sent it.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.39.13 - 2026-10-31
+
+- A Codex command's `tool.command` is the command line it ran, without the shell Codex wraps every command in, so clients show "Run git status" instead of "Run /bin/zsh -lc 'git status'". `tool.input` keeps the command as Codex sent it.
 
 ## 0.39.12 - 2026-10-31
 
