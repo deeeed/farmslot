@@ -776,6 +776,47 @@ test(
   },
 );
 
+// A slot voice draft resets the input line from onSent: a send refused before its frame is
+// written keeps the typed text; a written one clears it even if the gateway then refuses it.
+test(
+  'onSent runs once the frame is written, and never for a request refused before that',
+  { timeout: 4000 },
+  async () => {
+    const original = globalThis.WebSocket;
+    Object.assign(globalThis, { WebSocket: Socket });
+    const { GatewayClient } = await import('./gateway-client');
+    const client = new GatewayClient('ws://localhost:19781', { token: 'admin' });
+    const params = { slotId: 'mmt-3', data: 'make deploy\r' };
+    try {
+      client.connect();
+      const socket = Socket.sockets.at(-1)!;
+      socket.open();
+      socket.response(socket.sent[0].id, auth('admin', 'farm'));
+      await settle();
+      const written: string[] = [];
+      const answered = client.request(Methods.TERMINAL_INPUT, params, undefined, {
+        onSent: () => written.push(socket.sent.at(-1)!.method),
+      });
+      await settle();
+      assert.deepEqual(written, [Methods.TERMINAL_INPUT]);
+      socket.failure(socket.sent.at(-1)!.id, { code: 'FORBIDDEN', message: 'No access' });
+      await assert.rejects(answered, /No access/);
+      assert.equal(written.length, 1);
+
+      socket.close(1006);
+      await assert.rejects(
+        client.request(Methods.TERMINAL_INPUT, params, 50, {
+          onSent: () => written.push('refused request'),
+        }),
+      );
+      assert.deepEqual(written, [Methods.TERMINAL_INPUT]);
+    } finally {
+      client.disconnect();
+      Object.assign(globalThis, { WebSocket: original });
+    }
+  },
+);
+
 /**
  * Types `make deploy` through the worker hook on a gateway that numbers input as instance gw1,
  * closes the socket after the frame went out, and reconnects to `nextInstance`.
