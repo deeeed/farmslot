@@ -322,8 +322,9 @@ Adapters normalize each tool call into `tool.kind`, `tool.command` and `tool.pat
 `tool.name` keeps the runner's own name. Claude maps `Bash` to `command`, `Read` to
 `file-read`, `Edit`, `MultiEdit`, `Write` and `NotebookEdit` to `file-edit`, `Grep` and
 `Glob` to `search` (their search root as the path), and `WebFetch` and `WebSearch` to
-`web`; any other Claude tool is `other`. Codex maps `commandExecution` to `command`,
-`fileChange` to `file-edit` with its changed paths, `webSearch` to `web`, and any other
+`web`; any other Claude tool is `other`. Codex maps `commandExecution` to `command`, with
+the command line inside the shell Codex wraps it in (`/bin/zsh -lc 'git status'` is
+`git status`; anything that is not one quoted word stays as sent), `fileChange` to `file-edit` with its changed paths, `webSearch` to `web`, and any other
 item to `other`. ACP maps the tool call's `kind`: `execute` to `command` (with
 `rawInput.command`), `read` to `file-read`, `edit`, `delete` and `move` to `file-edit`,
 `search` to `search`, `fetch` to `web` and any other value to `other`, with its
