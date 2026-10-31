@@ -133,7 +133,11 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       repo: string,
       profiles: PRExecutionProfile[],
       context?: PRExecutionContext,
-    ) => Promise<{ choices: PRExecutionChoice[]; errors: string[] }> = resolvePRExecution,
+    ) => Promise<{
+      choices: PRExecutionChoice[];
+      errors: string[];
+      pinnedSlotSelection?: boolean;
+    }> = resolvePRExecution,
     private readonly replaced: (ownerId: string, generation: number) => boolean = () => false,
   ) {}
 
@@ -462,7 +466,12 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       };
     }
     return resolved.choices.length
-      ? { ready: true, choices: resolved.choices }
+      ? {
+          ready: true,
+          choices: resolved.choices,
+          // Taken before reviewer retention narrowed the choices above.
+          pinnedSlotSelection: resolved.pinnedSlotSelection === true,
+        }
       : { ready: false, reason: resolved.errors.join('; ') };
   }
 

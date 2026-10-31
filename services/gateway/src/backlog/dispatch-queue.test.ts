@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import test, { type TestContext } from 'node:test';
 
 import type { QueueItem, ReviewSelection, SlotStatus } from '@farmslot/protocol';
 
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
-import { setCachedFleetForTests } from '../fleet/state.js';
+import { farmslotRoot, setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
 import { dispatchQueueAdd } from '../methods/dispatch/queue.js';
 import {
@@ -46,6 +48,7 @@ import {
   tryDispatchNext,
   updateItem,
 } from './dispatch-queue.js';
+import { isPinnedPRExecution } from './pr-admission.js';
 
 /** Slot-selection fixtures predate pressure admission: admit every machine so
  * the existing scoring/identity assertions stay deterministic. Pressure-hold
@@ -2065,10 +2068,85 @@ test('PR queue prepares cold allowed slots while respecting busy slots and model
     effort: 'medium',
     mode: 'cold' as const,
   };
-  assert.equal(await selectPRQueueExecution(slots, item, [first]), null);
-  assert.equal(await selectPRQueueExecution(slots, item, [first, second]), 'allowed-b');
+  assert.equal(await selectPRQueueExecution(slots, item, [first], false), null);
+  assert.equal(await selectPRQueueExecution(slots, item, [first, second], false), 'allowed-b');
   assert.equal(item.effort, 'medium');
   assert.deepEqual(item.allowedSlots, ['allowed-b']);
+});
+
+/** A project with `slot_selection.physical_devices: on-request`, a phone and a simulator. */
+async function onRequestPRFixture(t: TestContext, label: string) {
+  setQueueDispatchPressureCaptureForTests(admitAllPressure);
+  const project = `physical-devices-${process.pid}-${label}`;
+  const projectDir = path.join(farmslotRoot, 'projects', project);
+  await mkdir(projectDir, { recursive: true });
+  t.after(() => rm(projectDir, { recursive: true, force: true }));
+  await writeFile(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({ name: project, slot_selection: { physical_devices: 'on-request' } }),
+  );
+  const sim: SlotStatus = { ...readyFleetSlot('sim').slots[0], project };
+  const phone: SlotStatus = {
+    ...readyFleetSlot('macpro-mm-pixel6').slots[0],
+    project,
+    platform: 'android',
+    health: { ssh: 'LOCAL', device: 'emu:OK', devserver: 'OK', cdp: '-', fixtures: '-' },
+    resources: { 'android-device': { adb_serial: '29071JEGR20638' } },
+  };
+  const item: QueueItem = {
+    id: `pr-${label}`,
+    flowType: 'review-pr',
+    project,
+    ticketOrPr: 'owner/repo#44',
+    priority: 10,
+    createdAt: new Date().toISOString(),
+    status: 'queued',
+  };
+  // The preferred model runs only on the phone; the fallback runs on the simulator.
+  const choice = (slotId: string, effort: string) =>
+    ({ slotId, runner: 'codex', model: 'gpt-6-astra', effort, mode: 'cold' }) as const;
+  const choices = [choice(phone.slot, 'high'), choice(sim.slot, 'medium')];
+  return { sim, phone, item, choices, busySim: { ...sim, agent: 'working' as const } };
+}
+
+test('PR queue tries the next execution group when on-request refuses a phone-only group', async (t) => {
+  const { sim, phone, item, choices, busySim } = await onRequestPRFixture(t, 'groups');
+  const declared = isPinnedPRExecution(choices);
+  assert.equal(declared, false);
+  assert.equal(
+    await selectPRQueueExecution([phone, sim], { ...item }, choices, declared),
+    sim.slot,
+  );
+  // Narrowing to the [phone] group is not an operator pin.
+  await assert.rejects(
+    selectPRQueueExecution([phone, busySim], { ...item }, choices, declared),
+    /macpro-mm-pixel6: Physical device slot is reserved for runs that request a device/,
+  );
+  // A policy declaring only the phone is an operator pin.
+  const exact = [choices[0]];
+  assert.equal(
+    await selectPRQueueExecution([phone, sim], item, exact, isPinnedPRExecution(exact)),
+    phone.slot,
+  );
+});
+
+test('a PR retry pins neither from written-back fields nor from filtered choices', async (t) => {
+  const { sim, phone, item, choices, busySim } = await onRequestPRFixture(t, 'retry');
+  const declared = isPinnedPRExecution(choices);
+  const selected = await selectPRQueueExecution([phone, sim], item, choices, declared);
+  assert.equal(selected, sim.slot);
+  // tryDispatchNext records the pick; a failed create requeues the item with both fields set.
+  item.slotId = selected!;
+  assert.deepEqual(item.allowedSlots, [sim.slot]);
+  await assert.rejects(
+    selectPRQueueExecution([phone, busySim], item, choices, declared),
+    /macpro-mm-pixel6: Physical device slot is reserved/,
+  );
+  // Admission later drops the removed sim, leaving the phone as the only admitted choice.
+  await assert.rejects(
+    selectPRQueueExecution([phone], item, [choices[0]], declared),
+    /macpro-mm-pixel6: Physical device slot is reserved/,
+  );
 });
 
 test('PR queue filters every disabled member of a mixed model group before scoring', async () => {
@@ -2096,7 +2174,7 @@ test('PR queue filters every disabled member of a mixed model group before scori
     effort: 'high',
     mode: 'cold' as const,
   }));
-  assert.equal(await selectPRQueueExecution([cold, disabled], item, models), 'allowed-cold');
+  assert.equal(await selectPRQueueExecution([cold, disabled], item, models, false), 'allowed-cold');
   assert.deepEqual(item.allowedSlots, ['allowed-cold']);
 });
 

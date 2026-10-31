@@ -86,6 +86,7 @@ import {
   isDispatchStaleBranch,
   isFreeSlot,
   isReplaceableWarmSlot,
+  NoDispatchableSlotError,
   parkPreservedSlotIds,
   type ParkPreservedWorkspace,
   prepareProfileNeedsCompanionResource,
@@ -1341,6 +1342,7 @@ export function resolveDispatchPreviewFromFleet(
       .filter(([, decision]) => isPressureAdmissionRejected(decision))
       .map(([machine]) => machine),
   );
+  const pinnedSlotSelection = options?.automaticLoadPinned ?? isPinnedSlotSelection(params);
   const selectionOptions: SlotSelectionOptions = {
     ...params,
     requiredCapabilities: options?.requiredCapabilities,
@@ -1349,14 +1351,9 @@ export function resolveDispatchPreviewFromFleet(
     releasableBranchHolderIds: options?.releasableBranchHolderIds,
     projectConfigs,
     pressureRejectedMachines,
+    pinnedSlotSelection,
     ...(pressureDecisions
-      ? {
-          automaticLoads: automaticSlotLoads(
-            pressureDecisions,
-            undefined,
-            options?.automaticLoadPinned ?? isPinnedSlotSelection(params),
-          ),
-        }
+      ? { automaticLoads: automaticSlotLoads(pressureDecisions, undefined, pinnedSlotSelection) }
       : {}),
     parkPreservedSlotIds: options?.parkPreservedSlotIds,
     plans: options?.plans,
@@ -1457,7 +1454,9 @@ export function resolveDispatchPreviewFromFleet(
       );
       if (projectSlots.length === 0) {
         const filterHint = allow ? ` within allowed slots (${[...allow].join(',')})` : '';
-        throw new Error(`No slots found for project ${params.project}${filterHint}`);
+        throw new NoDispatchableSlotError(
+          `No slots found for project ${params.project}${filterHint}`,
+        );
       }
       if (!options?.plans && prepareProfileNeedsCompanionResource(requiredPrepareProfile)) {
         const freeSlots = projectSlots.filter(isFreeSlot);
@@ -1478,7 +1477,7 @@ export function resolveDispatchPreviewFromFleet(
           eligibleFreeSlots.length === 0 &&
           freeSlotsMissingCompanionResource
         ) {
-          throw new Error(
+          throw new NoDispatchableSlotError(
             `No free slots for project ${params.project} have resources required by prepare profile ${requiredPrepareProfile}`,
           );
         }
@@ -1503,7 +1502,7 @@ export function resolveDispatchPreviewFromFleet(
         const wait = scoped ? automaticSlotLoadWait(slot, slots, scoped) : null;
         if (wait) throw new AutomaticSlotLoadWaitError(message, wait);
       }
-      throw new Error(message);
+      throw new NoDispatchableSlotError(message);
     }
     slotInfo = best;
   }

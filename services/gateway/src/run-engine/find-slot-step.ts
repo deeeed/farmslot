@@ -1070,6 +1070,7 @@ async function findSlotAttempt(
   const selectionOptions: SlotSelectionOptions = {
     ...capabilitySelection,
     automaticLoads,
+    pinnedSlotSelection: automaticLoadPinned,
     targetBranch,
     releasableBranchHolderIds,
     requiredPrepareProfile,
@@ -1524,7 +1525,13 @@ async function findSlotAttempt(
         !isFreeSlot(slot) ||
         pickedSlotIneligibility(slot, run.project) ||
         !selected ||
-        validateSlotForDispatch(slot, fleet.slots, { ...selected, automaticLoads: undefined })
+        // The operator's pick is a pin: placement policy (CPU idle, physical devices)
+        // does not hide a choice; attachment, capability and ownership checks still do.
+        validateSlotForDispatch(slot, fleet.slots, {
+          ...selected,
+          automaticLoads: undefined,
+          pinnedSlotSelection: true,
+        })
       )
         continue;
       // Match the claim fences against the live row before offering the choice.

@@ -19,7 +19,10 @@ import {
 import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
 import { firstOutputFixture } from '../evals/first-output.test-support.js';
-import { readFrozenEvalFirstOutputPackage } from '../evals/package-store.js';
+import {
+  finalizeEvalResultPackageForRun,
+  readFrozenEvalFirstOutputPackage,
+} from '../evals/package-store.js';
 import type { ReviewOptions } from '../review/orchestrator.js';
 import {
   admitReviewRound,
@@ -2155,6 +2158,58 @@ for (const mode of ['autonomous', 'interactive'] as const) {
     assert.deepEqual(getRun(run.id)?.decisions, []);
   });
 }
+
+test('a self-blocked eval first output is frozen with its reason and finalized without a judge', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'eval-blocked-review-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'generic-project',
+    ticketOrPr: 'EVAL-BLOCKED',
+    slotId: 'eval-slot',
+    completionPolicy: 'artifact-only',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const fixture = await firstOutputFixture(root, getRun(run.id)!);
+  const reason = 'Recipe proof could not be completed in this environment';
+  updateRun(run.id, {
+    taskFile: fixture.taskFile,
+    engineState: fixture.engineState,
+    steps: getRun(run.id)!.steps.map((step) =>
+      step.name === 'monitor'
+        ? { ...step, status: 'done', outputs: { evalWorkerBlocked: reason } }
+        : step,
+    ),
+  });
+  const io = await executeReviewStep(run.id, {
+    ...restartReplayContext(),
+    readEvalWorkerProgress: async () => ({ kind: 'idle' }),
+    captureEvalWorkerOutput: async () => 1,
+    extractEvalWorkerCost: async () => ({
+      costUsd: 0.4,
+      turns: 12,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      cacheCreation: null,
+      cacheRead: null,
+      actualModel: null,
+    }),
+    executeReviewForRun: async () => assert.fail('A blocked first output has nothing to judge'),
+    createEngineDecision: async () => assert.fail('A blocked first output waits for nobody'),
+  });
+  assert.equal(io.outputs?.reason, 'eval-first-output-blocked');
+  assert.equal(io.outputs?.blockedReason, reason);
+  const frozen = await readFrozenEvalFirstOutputPackage(getRun(run.id)!);
+  assert.deepEqual(frozen?.outcomeClaims, [`Worker blocked: ${reason}`]);
+  assert.equal(frozen?.metrics?.sessionTurns, 12);
+  updateRunStep(run.id, 'review', { status: 'done', outputs: io.outputs });
+  const finalized = await finalizeEvalResultPackageForRun(getRun(run.id)!);
+  assert.equal(finalized?.status, 'final');
+  assert.deepEqual(finalized?.outcomeClaims, [`Worker blocked: ${reason}`]);
+  assert.deepEqual(finalized?.reviewEvidence, []);
+  assert.deepEqual(getRun(run.id)?.decisions, []);
+});
 
 test('only a flow whose COMPLETE ends the run defers its slot release to the engine', () => {
   // The branch that decides whether COMPLETE performs its own release or hands

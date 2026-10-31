@@ -32,6 +32,7 @@ import { resolveDispatchPreviewFromFleet } from './preview.js';
 import {
   AutomaticSlotLoadWaitError,
   findBestSlot,
+  projectConfigsFromProjects,
   type SlotSelectionPlans,
 } from './slot-scoring.js';
 
@@ -441,6 +442,37 @@ test('single-slot and explicit-slot pins warn without skipping a busy host', () 
     slot({ slot: 'other', machine: 'hot' }),
   ];
   assert.equal(queueItemHeldByPressure(busySlots, 'demo-farm', decisions, ['hot', 'other']), true);
+});
+
+test('the physical device policy uses the same pin intent as the CPU-idle gate', () => {
+  const phone = slot({
+    slot: 'phone',
+    machine: 'node',
+    platform: 'android',
+    health: { ssh: 'LOCAL', device: 'emu:OK', devserver: 'OK', cdp: 'Wallet', fixtures: 'OK' },
+    resources: { 'android-device': { adb_serial: '29071JEGR20638' } },
+  });
+  const sim = slot({ slot: 'sim', machine: 'node' });
+  const projectConfigs = projectConfigsFromProjects([
+    { name: 'demo-farm', slotSelection: { physicalDevices: 'on-request' } },
+  ]);
+  const params = { project: 'demo-farm', flowType: 'dev' as const, ticketOrPr: 'TASK-1' };
+  const select = (
+    extra: Partial<Parameters<typeof resolveDispatchPreviewFromFleet>[0]>,
+    automaticLoadPinned?: boolean,
+  ) =>
+    resolveDispatchPreviewFromFleet({ ...params, ...extra }, [phone, sim], projectConfigs, {
+      automaticLoadPinned,
+    }).preview.slotId;
+  assert.equal(select({}), 'sim');
+  assert.equal(select({ allowedSlots: ['phone', 'sim'] }), 'sim');
+  assert.equal(select({ slotId: 'phone' }), 'phone');
+  assert.equal(select({ allowedSlots: ['phone'] }), 'phone');
+  // Internal narrowing to one slot keeps the caller's automatic intent.
+  assert.throws(
+    () => select({ allowedSlots: ['phone'] }, false),
+    /phone: Physical device slot is reserved for runs that request a device/,
+  );
 });
 
 test('per-machine CPU-idle gateway config accepts percentages and rejects malformed values at startup', () => {

@@ -3044,10 +3044,13 @@ export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolea
 }
 
 /** Persisted run-engine state — see ADR-027. */
-/** Device providers required by the slot a replay is leaving. This is placement
- * intent, not an authored proof plan or authorization to acquire a device. */
+/** Capabilities FIND_SLOT requires of a slot: the run.create `requiredCapabilities`
+ * plus, after a replay, the device providers of the slot it left (`sourceSlotId`).
+ * This is placement intent, not an authored proof plan or authorization to acquire a
+ * device. */
 export interface RunSlotCapabilityRequirements {
-  sourceSlotId: string;
+  /** Unset until a replay captures the device providers of the slot it is leaving. */
+  sourceSlotId?: string;
   capabilityIds: string[];
 }
 
