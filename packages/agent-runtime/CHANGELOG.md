@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.17 - 2026-11-01
+
+- Codex and ACP adapters send `plan.updated`: Codex `turn/plan/updated` and ACP `plan` updates as checklists, a completed Codex `plan` item as a proposal. They were dropped before. Codex threads start with its plan tool enabled (`tools.update_plan.enabled`), which the app-server otherwise leaves off.
+
 ## 0.39.16 - 2026-11-01
 
 - The native host removes a queued message on request (`cancelCommand`, and `native.worker.cancelCommand` under the worker's lease), persisting it as failed, never submitted and `cancelled` before it replies. A message already submitted, unknown, settled or of another lease is refused. Sessions on this host report `capabilities.cancelQueued`; a host started before the upgrade refuses the request as an unknown method.

@@ -18,6 +18,7 @@ import {
   nativeFollowGrew,
   nativeFollowLabel,
   nativeFollowScrolled,
+  nativePlanOpen,
   nativeWatchTools,
 } from '@farmslot/protocol/client-cache';
 
@@ -280,6 +281,7 @@ export function NativeConversationScreen({
                     entry={row.entry}
                     onDisclosure={disclose}
                     hidden={row.fold !== undefined && !foldIsOpen(row.fold)}
+                    planOpen={nativePlanOpen(row, watchedTools.current)}
                   />
                 ),
               )}
