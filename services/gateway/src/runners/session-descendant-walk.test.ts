@@ -5,10 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { SlotVars } from '../core/config.js';
+
 import { runnerProcessPatternSource } from './registry.js';
 import {
   buildFindRunnerDescendantPidCommand,
   buildFindRunnerDescendantPidsCommand,
+  probeRunnerDescendantPids,
   RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT,
 } from './session-process.js';
 
@@ -295,7 +298,7 @@ test('one process snapshot answers every pane root of a fleet check', (t) => {
       .split('\n')
       .filter(Boolean)
       .map((line) => line.trimEnd()),
-    ['100 0 101', '200 1', '300 1'],
+    ['0 0 101', '1 1', '2 1'],
   );
   assert.equal(readFileSync(calls, 'utf8'), 'call\n', 'ps ran once for all three roots');
 
@@ -306,4 +309,49 @@ test('one process snapshot answers every pane root of a fleet check', (t) => {
   );
   assert.equal(failed.exitCode, RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT);
   assert.equal(failed.stdout, '');
+});
+
+test('batched probe results follow each root, including two slots on one pane', async () => {
+  const vars: SlotVars = {
+    slotId: 'fixture',
+    machine: os.hostname(),
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: 'test',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/missing',
+    session: 'fixture',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: '',
+    remoteRepo: '/missing',
+    projectName: 'fixture',
+    resourceVars: {},
+  };
+  const roots = [
+    { panePid: '100', runnerId: 'codex' },
+    { panePid: '100', runnerId: 'claude' }, // same pane, different runner: its own verdict
+    { panePid: 'not-a-pid', runnerId: 'codex' }, // never walked
+    { panePid: '200', runnerId: 'codex' },
+  ];
+  let command = '';
+  const states = await probeRunnerDescendantPids(vars, roots, undefined, {
+    exec: async (_vars, cmd) => {
+      command = cmd;
+      return { exitCode: 0, stdout: '0 0 101\n1 1 \n2 3 \n', stderr: '' };
+    },
+  });
+  assert.deepEqual(states, ['present', 'absent', 'unknown', 'unknown']);
+  assert.equal(command.match(/awk -v root=/g)?.length, 3, 'the non-numeric pane is not walked');
+  const failed = await probeRunnerDescendantPids(vars, roots, undefined, {
+    exec: async () => ({ exitCode: RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT, stdout: '', stderr: '' }),
+  });
+  assert.deepEqual(failed, ['unknown', 'unknown', 'unknown', 'unknown']);
 });

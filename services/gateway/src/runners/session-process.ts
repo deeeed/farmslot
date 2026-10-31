@@ -1619,18 +1619,19 @@ function buildFindRunnerDescendantPidCommandWithRoot(
 
 /**
  * The same walk from many pane roots over ONE process snapshot, so a fleet check runs a
- * single `ps` per node instead of one per slot. Prints `<root> <walk exit> [pid]` per root;
- * the script itself exits {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT} when the snapshot fails.
+ * single `ps` per node instead of one per slot. Prints `<index> <walk exit> [pid]` per root,
+ * in input order; the script itself exits {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT} when the
+ * snapshot fails.
  */
 export function buildFindRunnerDescendantPidsCommand(
   roots: ReadonlyArray<{ panePid: string; pattern: string }>,
 ): string {
-  const walk = shellQuote(runnerDescendantWalk(false));
   return [
     ...runnerProcessSnapshotLines(),
+    `walk=${shellQuote(runnerDescendantWalk(false))}`,
     ...roots.map(
-      ({ panePid, pattern }) =>
-        `pid=$(printf '%s\\n' "$snapshot" | FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)} awk -v root=${shellQuote(panePid)} ${walk}); printf '%s %s %s\\n' ${shellQuote(panePid)} "$?" "$pid"`,
+      ({ panePid, pattern }, index) =>
+        `pid=$(printf '%s\\n' "$snapshot" | FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)} awk -v root=${shellQuote(panePid)} "$walk"); printf '%s %s %s\\n' ${index} "$?" "$pid"`,
     ),
   ].join('\n');
 }
@@ -1644,24 +1645,27 @@ export async function probeRunnerDescendantPids(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   roots: ReadonlyArray<{ panePid: string; runnerId?: string | null }>,
   options?: ExecOnSlotOptions,
-): Promise<Map<string, RunnerDescendantPidProbe['state']>> {
-  const states = new Map<string, RunnerDescendantPidProbe['state']>(
-    roots.map(({ panePid }) => [panePid, 'unknown']),
-  );
-  const walkable = roots
-    .filter(({ panePid }) => /^[0-9]+$/.test(panePid))
-    .map(({ panePid, runnerId }) => ({ panePid, pattern: runnerProcessPatternSource(runnerId) }))
-    .filter(({ pattern }) => pattern);
+  deps: RunnerDescendantPidProbeDeps = {},
+): Promise<Array<RunnerDescendantPidProbe['state']>> {
+  const states = roots.map((): RunnerDescendantPidProbe['state'] => 'unknown');
+  // Each walkable root keeps its input position, so two slots on one pane stay apart.
+  const walkable = roots.flatMap(({ panePid, runnerId }, index) => {
+    const pattern = runnerProcessPatternSource(runnerId);
+    return /^[0-9]+$/.test(panePid) && pattern ? [{ index, panePid, pattern }] : [];
+  });
   if (!walkable.length) return states;
-  const result = await execOnSlot(vars, buildFindRunnerDescendantPidsCommand(walkable), options);
+  const result = await (deps.exec ?? execOnSlot)(
+    vars,
+    buildFindRunnerDescendantPidsCommand(walkable),
+    options,
+  );
   if (result.exitCode !== 0) return states;
   for (const line of result.stdout.split('\n')) {
-    const [panePid, exit, pid = ''] = line.trim().split(/\s+/);
-    if (!panePid || !states.has(panePid)) continue;
-    states.set(
-      panePid,
-      exit === '0' && /^\d+$/.test(pid) ? 'present' : exit === '1' ? 'absent' : 'unknown',
-    );
+    const [position, exit, pid = ''] = line.trim().split(/\s+/);
+    const root = walkable[Number(position)];
+    if (!root || !/^\d+$/.test(position ?? '')) continue;
+    states[root.index] =
+      exit === '0' && /^\d+$/.test(pid) ? 'present' : exit === '1' ? 'absent' : 'unknown';
   }
   return states;
 }

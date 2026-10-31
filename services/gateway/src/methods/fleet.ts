@@ -795,7 +795,13 @@ async function checkAllSlots(
     async ([_machine, machineEntries]) => {
       const pool = machineEntries[0].pool;
       const local = isLocal(pool.host, pool.machine);
-      const agents = await checkMachineAgents(machineEntries, sshStatus);
+      // Runs beside each slot's other checks; a slot awaits it only for its agent column.
+      const agents = checkMachineAgents(machineEntries, sshStatus).catch(
+        (error: unknown): Map<string, FleetAgentState> => {
+          console.warn(`[fleet] ${pool.machine}: agent check failed: ${(error as Error).message}`);
+          return new Map();
+        },
+      );
 
       if (local) {
         const results = await mapWithConcurrency(
@@ -833,7 +839,7 @@ async function checkSingleSlot(
   pool: RawPoolJson,
   slotIdx: number,
   sshStatus: Map<string, 'local' | 'ok' | 'fail' | 'skip'>,
-  agents: ReadonlyMap<string, string>,
+  agents: Promise<ReadonlyMap<string, FleetAgentState>>,
 ): Promise<SlotCheckResult> {
   const rawSlot = pool.slots[slotIdx];
   const sid = rawSlot.id;
@@ -936,7 +942,7 @@ async function checkSingleSlot(
   const [branchInfo, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree, repoBlocker] =
     await Promise.all([
       checkBranch(vars),
-      agents.get(sid) ?? 'no-tmux',
+      agents.then((states) => states.get(sid) ?? 'no-tmux'),
       checkDevice(vars, projectJson, projectVars),
       checkDevServer(vars, projectJson, projectVars),
       checkCDP(vars, projectJson, projectVars),
@@ -1081,33 +1087,38 @@ async function checkBranch(vars: SlotVars): Promise<{ branch: string; headSha?: 
   }
 }
 
+type FleetAgentState = 'working' | 'idle' | 'no-tmux' | '-';
+
 /**
  * Agent state of every checked slot on one machine from two execs, however many slots it
- * has: one tmux pane listing and one process snapshot walked from each slot's pane.
+ * has: one tmux pane listing and one process snapshot walked from each slot's pane. Both run
+ * from `/`, not from any one slot's checkout, so a missing checkout fails only its own slot.
  */
 async function checkMachineAgents(
   entries: Array<{ pool: RawPoolJson; slotIdx: number }>,
   sshStatus: Map<string, 'local' | 'ok' | 'fail' | 'skip'>,
-): Promise<Map<string, string>> {
-  const agents = new Map<string, string>();
+): Promise<Map<string, FleetAgentState>> {
+  const agents = new Map<string, FleetAgentState>();
   const pools = await loadPoolConfigs();
   const slots: Array<{ vars: SlotVars; candidates: string[] }> = [];
   for (const { pool, slotIdx } of entries) {
-    const raw = pool.slots[slotIdx];
+    const slotId = pool.slots[slotIdx].id;
     const ssh = sshStatus.get(pool.host);
-    if (!raw.mode && raw.enabled === false) continue; // disabled, as checkSingleSlot reads it
     if (ssh !== 'local' && ssh !== 'ok') continue;
     let vars: SlotVars;
     try {
-      vars = await loadSlotVars(raw.id);
+      vars = await loadSlotVars(slotId);
     } catch {
       continue; // its row reports the config error
     }
-    if (!vars.session) agents.set(raw.id, '-');
-    else slots.push({ vars, candidates: tmuxSessionCandidates(raw.id, vars, pools).candidates });
+    if (!vars.slotEnabled) continue;
+    if (!vars.session) agents.set(slotId, '-');
+    else slots.push({ vars, candidates: tmuxSessionCandidates(slotId, vars, pools).candidates });
   }
   if (!slots.length) return agents;
   const via = slots[0]!.vars;
+  const machine = entries[0]!.pool.machine;
+  const machineWide = { timeout: SLOT_CHECK_TIMEOUT_MS, cwd: '/' };
   // `list-panes -t <session> | head -1` read the first pane of the session's active window.
   const activePane = new Map<string, string>();
   try {
@@ -1116,15 +1127,17 @@ async function checkMachineAgents(
       tmuxShellSnippet(
         `list-panes -a -F '#{session_name}|#{window_active}|#{pane_pid}' 2>/dev/null`,
       ),
-      { timeout: SLOT_CHECK_TIMEOUT_MS },
+      machineWide,
     );
-    for (const line of listing.stdout.split('\n')) {
-      const [session, active, panePid] = line.trim().split('|');
-      if (session && active === '1' && panePid && !activePane.has(session))
-        activePane.set(session, panePid);
-    }
-  } catch {
+    if (listing.exitCode === 0)
+      for (const line of listing.stdout.split('\n')) {
+        const [session, active, panePid] = line.trim().split('|');
+        if (session && active === '1' && panePid && !activePane.has(session))
+          activePane.set(session, panePid);
+      }
+  } catch (error) {
     // Unreachable tmux reads as no-tmux, as a failed per-slot listing did.
+    console.warn(`[fleet] ${machine}: tmux pane listing failed: ${(error as Error).message}`);
   }
   const panes: Array<{
     slotId: string;
@@ -1141,20 +1154,21 @@ async function checkMachineAgents(
     const runnerId = (await readSlotField(vars.slotId, 'runner')) as string | null;
     panes.push({ slotId: vars.slotId, session, panePid: activePane.get(session)!, runnerId });
   }
-  let states = new Map<string, string>();
+  let states: string[] = [];
   try {
-    states = await probeRunnerDescendantPids(via, panes, { timeout: SLOT_CHECK_TIMEOUT_MS });
-  } catch {
+    states = await probeRunnerDescendantPids(via, panes, machineWide);
+  } catch (error) {
     // An unknown tree reads as idle, as isRunnerAliveUnderPane did.
+    console.warn(`[fleet] ${machine}: runner process snapshot failed: ${(error as Error).message}`);
   }
-  for (const { slotId, session, panePid, runnerId } of panes) {
-    const working = states.get(panePid) === 'present';
+  panes.forEach(({ slotId, session, panePid, runnerId }, index) => {
+    const working = states[index] === 'present';
     agents.set(slotId, working ? 'working' : 'idle');
     if (working)
       console.log(
         `[fleet] checkAgent ${slotId}: working (panePid=${panePid}, session=${session}, runner=${runnerId ?? 'auto'})`,
       );
-  }
+  });
   return agents;
 }
 
