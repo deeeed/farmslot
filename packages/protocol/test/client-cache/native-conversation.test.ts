@@ -186,6 +186,30 @@ test('terminal replay releases an aged-out receipt only for the same command and
   assert.equal(nativeCommandLockSettled(command, 'generation'), false);
 });
 
+test('a message the runner accepted and the conversation shows frees the composer mid-turn', () => {
+  const command = { commandId: 'command', generation: 'generation' };
+  const accepted: NativeCommandReceipt = {
+    ...command,
+    state: 'accepted',
+    submitted: true,
+    accepted: true,
+  };
+  const shown = [event(1, 'command.submitted', 'Count to 300.')];
+  // Its turn still runs, but the reader can queue or steer the next message.
+  assert.equal(nativeCommandLockSettled(command, 'generation', accepted, shown), true);
+  // Not shown yet, or not accepted yet (queued, or submitted without a reply): still held.
+  assert.equal(nativeCommandLockSettled(command, 'generation', accepted, []), false);
+  assert.equal(
+    nativeCommandLockSettled(
+      command,
+      'generation',
+      { ...accepted, state: 'unknown', accepted: false },
+      shown,
+    ),
+    false,
+  );
+});
+
 test('an error without display text never renders as successful completion', () => {
   assert.equal(nativeTimeline([event(1, 'error')])[0].text, 'Runner error');
 });
