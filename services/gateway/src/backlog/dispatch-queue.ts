@@ -84,7 +84,7 @@ import {
   type WorkOriginator,
 } from '../security/work-originator.js';
 
-import { preparePRQueueAdmission } from './pr-admission.js';
+import { isPinnedPRExecution, preparePRQueueAdmission } from './pr-admission.js';
 import { migrateQueuedReviewQa } from './review-qa-migration.js';
 
 export type QueueRecord = QueueItem & { originator?: WorkOriginator };
@@ -1301,20 +1301,21 @@ export async function selectQueueDispatchSlot(
   return preview.preview.slotId;
 }
 
+/**
+ * `pinnedSlotSelection` is the declared policy's pin intent ({@link isPinnedPRExecution}).
+ * Admitted `choices`, the item's written-back slotId/allowedSlots and one execution
+ * group are all narrower than what the operator configured, so none of them pins.
+ */
 export async function selectPRQueueExecution(
   slots: SlotStatus[],
   item: QueueItem,
   choices: PRExecutionChoice[],
+  pinnedSlotSelection: boolean,
 ): Promise<string | null> {
-  const slotChoices = choices.filter(
-    (entry): entry is PRSlotExecutionChoice => !isPRWorkspaceExecutionChoice(entry),
-  );
-  // ADR-054 pin intent comes from the configured choices: exactly one slot is a pin.
-  // The item's slotId/allowedSlots are written back by earlier selections, and
-  // narrowing to one execution group is not a pin.
-  const pinnedSlotSelection = new Set(slotChoices.map((choice) => choice.slotId)).size === 1;
   const groups = new Map<string, PRSlotExecutionChoice[]>();
-  for (const choice of slotChoices) {
+  for (const choice of choices.filter(
+    (entry): entry is PRSlotExecutionChoice => !isPRWorkspaceExecutionChoice(entry),
+  )) {
     const key = JSON.stringify([choice.runner, choice.model, choice.effort]);
     groups.set(key, [...(groups.get(key) ?? []), choice]);
   }
@@ -1603,11 +1604,13 @@ async function tryDispatchNextOnce(): Promise<void> {
       if (liveQueuedItem(item.id) !== item) continue;
     }
     let prChoices: PRExecutionChoice[] | undefined;
+    let prPinned = false;
     if (item.workflowExecution) {
       try {
         const [bound] = await bindPRExecutionProfilesToPool([item.workflowExecution]);
         if (liveQueuedItem(item.id) !== item) continue;
         prChoices = prExecutionChoices(bound);
+        prPinned = isPinnedPRExecution(prChoices);
       } catch (error) {
         if (!(error instanceof GatewayMethodError)) throw error;
         if (liveQueuedItem(item.id) !== item) continue;
@@ -1634,6 +1637,7 @@ async function tryDispatchNextOnce(): Promise<void> {
         continue;
       }
       prChoices = admission.choices;
+      prPinned = admission.pinnedSlotSelection;
     }
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const usage = evalSuiteCapUsage(item.evalCell.capGroupId, queue);
@@ -1665,7 +1669,7 @@ async function tryDispatchNextOnce(): Promise<void> {
       } else {
         const selectionSlots = prChoices ? (await loadFleetStatus()).slots : fleet.slots;
         const slotId = prChoices
-          ? await selectPRQueueExecution(selectionSlots, item, prChoices)
+          ? await selectPRQueueExecution(selectionSlots, item, prChoices, prPinned)
           : await selectQueueDispatchSlot(selectionSlots, item);
         slot = selectionSlots.find((s) => s.slot === slotId);
       }

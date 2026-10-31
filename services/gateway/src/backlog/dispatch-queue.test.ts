@@ -48,6 +48,7 @@ import {
   tryDispatchNext,
   updateItem,
 } from './dispatch-queue.js';
+import { isPinnedPRExecution } from './pr-admission.js';
 
 /** Slot-selection fixtures predate pressure admission: admit every machine so
  * the existing scoring/identity assertions stay deterministic. Pressure-hold
@@ -2067,8 +2068,8 @@ test('PR queue prepares cold allowed slots while respecting busy slots and model
     effort: 'medium',
     mode: 'cold' as const,
   };
-  assert.equal(await selectPRQueueExecution(slots, item, [first]), null);
-  assert.equal(await selectPRQueueExecution(slots, item, [first, second]), 'allowed-b');
+  assert.equal(await selectPRQueueExecution(slots, item, [first], false), null);
+  assert.equal(await selectPRQueueExecution(slots, item, [first, second], false), 'allowed-b');
   assert.equal(item.effort, 'medium');
   assert.deepEqual(item.allowedSlots, ['allowed-b']);
 });
@@ -2110,25 +2111,40 @@ async function onRequestPRFixture(t: TestContext, label: string) {
 
 test('PR queue tries the next execution group when on-request refuses a phone-only group', async (t) => {
   const { sim, phone, item, choices, busySim } = await onRequestPRFixture(t, 'groups');
-  assert.equal(await selectPRQueueExecution([phone, sim], { ...item }, choices), sim.slot);
+  const declared = isPinnedPRExecution(choices);
+  assert.equal(declared, false);
+  assert.equal(
+    await selectPRQueueExecution([phone, sim], { ...item }, choices, declared),
+    sim.slot,
+  );
   // Narrowing to the [phone] group is not an operator pin.
   await assert.rejects(
-    selectPRQueueExecution([phone, busySim], { ...item }, choices),
+    selectPRQueueExecution([phone, busySim], { ...item }, choices, declared),
     /macpro-mm-pixel6: Physical device slot is reserved for runs that request a device/,
   );
-  // One configured slot is an operator pin.
-  assert.equal(await selectPRQueueExecution([phone, sim], item, [choices[0]]), phone.slot);
+  // A policy declaring only the phone is an operator pin.
+  const exact = [choices[0]];
+  assert.equal(
+    await selectPRQueueExecution([phone, sim], item, exact, isPinnedPRExecution(exact)),
+    phone.slot,
+  );
 });
 
-test('fields a failed PR dispatch wrote back do not pin its retry to the phone', async (t) => {
+test('a PR retry pins neither from written-back fields nor from filtered choices', async (t) => {
   const { sim, phone, item, choices, busySim } = await onRequestPRFixture(t, 'retry');
-  const selected = await selectPRQueueExecution([phone, sim], item, choices);
+  const declared = isPinnedPRExecution(choices);
+  const selected = await selectPRQueueExecution([phone, sim], item, choices, declared);
   assert.equal(selected, sim.slot);
   // tryDispatchNext records the pick; a failed create requeues the item with both fields set.
   item.slotId = selected!;
   assert.deepEqual(item.allowedSlots, [sim.slot]);
   await assert.rejects(
-    selectPRQueueExecution([phone, busySim], item, choices),
+    selectPRQueueExecution([phone, busySim], item, choices, declared),
+    /macpro-mm-pixel6: Physical device slot is reserved/,
+  );
+  // Admission later drops the removed sim, leaving the phone as the only admitted choice.
+  await assert.rejects(
+    selectPRQueueExecution([phone], item, [choices[0]], declared),
     /macpro-mm-pixel6: Physical device slot is reserved/,
   );
 });
@@ -2158,7 +2174,7 @@ test('PR queue filters every disabled member of a mixed model group before scori
     effort: 'high',
     mode: 'cold' as const,
   }));
-  assert.equal(await selectPRQueueExecution([cold, disabled], item, models), 'allowed-cold');
+  assert.equal(await selectPRQueueExecution([cold, disabled], item, models, false), 'allowed-cold');
   assert.deepEqual(item.allowedSlots, ['allowed-cold']);
 });
 

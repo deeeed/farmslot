@@ -12,7 +12,21 @@ import {
 
 export type PRQueuePreparation =
   | { ready: false; reason: string }
-  | { ready: true; choices: PRExecutionChoice[] };
+  | {
+      ready: true;
+      choices: PRExecutionChoice[];
+      /** Pin intent of the declared execution policy, before admission filtered `choices`. */
+      pinnedSlotSelection: boolean;
+    };
+
+/**
+ * ADR-054: a declared execution policy naming exactly one slot is an operator pin.
+ * Pass the declared choices; admission filtering or reviewer retention can leave one
+ * slot without the operator pinning it.
+ */
+export function isPinnedPRExecution(declared: readonly PRExecutionChoice[]): boolean {
+  return new Set(declared.flatMap((choice) => (choice.slotId ? [choice.slotId] : []))).size === 1;
+}
 export interface PRQueueAdmissionHooks {
   prepare(item: QueueItem): Promise<PRQueuePreparation>;
   refreshBeforeCreate(item: QueueItem): Promise<void>;
