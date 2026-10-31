@@ -184,6 +184,14 @@ export async function runRetentionPass(
   options: { apply: boolean; emit?: Emit; now?: number; roots?: RunRetentionRoots },
   deps: RunRetentionDeps = RUN_RETENTION_DEPS,
 ): Promise<RunRetentionPlan> {
+  if (options.apply && !options.roots) {
+    // ADR-039 Amendment 4: capture episodes a run end missed. First and independent of
+    // archival, so an unavailable archive root never stops it.
+    const loadedAt = Date.now();
+    await captureMissingRunEpisodes(await getAllRunsWithArchived(), loadedAt).catch((error) =>
+      console.error(`[run-episode] retry pass failed: ${(error as Error).message}`),
+    );
+  }
   const roots = options.roots ?? (await gatewayRetentionRoots());
   if (options.apply) {
     await assertArchiveRoot(roots.archiveRoot);
@@ -192,14 +200,7 @@ export async function runRetentionPass(
       await warnRunBundleCapacity();
     }
   }
-  const loadedAt = Date.now();
   const runs = await getAllRunsWithArchived();
-  if (options.apply && !options.roots) {
-    // ADR-039 Amendment 4: capture episodes the run-end effect missed; never blocks archival.
-    await captureMissingRunEpisodes(runs, loadedAt).catch((error) =>
-      console.error(`[run-episode] retry pass failed: ${(error as Error).message}`),
-    );
-  }
   const context = await retentionContext(runs, options.now, deps);
   const { plan, removable } = await planRunRetention(runs, context, roots, deps.holdsSlot);
   if (!options.apply) return plan;

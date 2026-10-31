@@ -61,8 +61,8 @@ export interface TerminalTransitionCollaborators {
   /** Owned static workspace cleanup is independent of a slot lease. */
   cleanupWorkspace?: ((run: Run) => Promise<void>) | null;
   /**
-   * False when the caller releases the slot after this transition returns; the
-   * hourly retention pass then captures the episode after that release.
+   * False when the caller releases the slot after this transition returns; that
+   * caller captures the episode after its release (`captureEpisodeAfterRelease`).
    */
   captureEpisode?: boolean;
   /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */

@@ -78,12 +78,18 @@ export interface RunEpisode {
   };
   sources: {
     bundles: string[];
-    unreadableBundles: { digest: string; error: string }[];
+    unreadableBundles: UnreadableEpisodeBundle[];
     /** Inventory entries without a recorded sha256, left out rather than hashed now. */
     undigested: number;
     /** Media files are counted, not listed; their retention follows the bundle policy. */
     media: number;
   };
+}
+
+/** A referenced bundle whose manifest could not be read, with the reason. */
+export interface UnreadableEpisodeBundle {
+  digest: string;
+  error: string;
 }
 
 export interface EpisodeBundle {
@@ -144,7 +150,7 @@ function collectFiles(
 export function buildRunEpisode(
   run: Run,
   bundles: readonly EpisodeBundle[],
-  unreadableBundles: readonly { digest: string; error: string }[],
+  unreadableBundles: readonly UnreadableEpisodeBundle[],
   capturedAt: string,
 ): RunEpisode {
   const { files, undigested } = collectFiles(run, bundles);
@@ -283,7 +289,7 @@ export async function captureRunEpisode(run: Run, now = new Date()): Promise<Run
     refs.set(local.bundleDigest, local);
   }
   const bundles: EpisodeBundle[] = [];
-  const unreadable: { digest: string; error: string }[] = [];
+  const unreadable: UnreadableEpisodeBundle[] = [];
   if (refs.size) {
     // Loaded on demand: the transition modules that run this effect must not pull in capture.
     const { runBundleStore } = await import('./retained-artifacts.js');

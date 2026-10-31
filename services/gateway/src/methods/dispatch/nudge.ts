@@ -167,6 +167,11 @@ export async function terminalizePriorRunOnSlot(
     for (const ctx of priorRun.agentContexts ?? []) {
       await unwatchContext(slotId, ctx.id);
     }
+    if (terminated) {
+      const { captureEpisodeAfterRelease } =
+        await import('../../run-lifecycle/episode-capture-effect.js');
+      await captureEpisodeAfterRelease(priorRunId);
+    }
   }
   return { priorRunId, terminated };
 }

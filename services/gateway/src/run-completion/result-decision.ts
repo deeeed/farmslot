@@ -26,6 +26,7 @@ import {
 import { findingsDigest } from '../core/findings-digest.js';
 import type { ReviewResult } from '../review/orchestrator.js';
 import { completionVerificationMode } from '../run-engine/push-verification.js';
+import { captureEpisodeAfterRelease } from '../run-lifecycle/episode-capture-effect.js';
 import {
   operatorCompletionCollaborators,
   terminalTransitionDeps,
@@ -500,9 +501,12 @@ export async function resolveResultDecision(
   }
   if (actionId === 'send-back')
     await sendBack(settled, stoppedAt, reasonOfHold, params.decisionId, workerFeedback, reason);
-  // Released outside the run lock, like other operator terminal actions.
-  else if (settled.slotId && options.releaseSlot !== false)
-    await releaseSettledSlot(settled, stoppedAt !== 'review');
+  else {
+    // Released outside the run lock, like other operator terminal actions; the episode follows.
+    if (settled.slotId && options.releaseSlot !== false)
+      await releaseSettledSlot(settled, stoppedAt !== 'review');
+    await captureEpisodeAfterRelease(params.runId);
+  }
   return getRun(params.runId) ?? settled;
 }
 

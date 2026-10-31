@@ -13,10 +13,13 @@ recorded for it, never copied.
 - The terminal transition router's advisory `episode-capture` effect writes the
   episode after `backlog-settle` and the slot teardown. Its failure is reported on
   the transition result and never blocks or reverts the terminal state.
-- An operator completion releases its slot after the router returns, outside its
-  locks. Its transition reports `episode-capture` as skipped, and the hourly pass
-  writes the episode after that release.
-- The hourly retention pass captures every ended run updated since its last pass
+- An operator completion (force complete, output close, a result decision,
+  adoption, re-review, supersede) releases its slot after the router returns,
+  outside its locks. Its transition reports `episode-capture` as skipped, and the
+  caller writes the episode right after that release
+  (`captureEpisodeAfterRelease`).
+- The hourly retention pass, before and independently of its archival work,
+  captures every ended run updated since its last pass
   whose episode is missing or has an older `runUpdatedAt`. A failure keeps the
   watermark (`episodes/watermark.json`) at the failed run, so the next pass
   retries it. The first pass after an upgrade covers the preceding 24 hours.

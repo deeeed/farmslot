@@ -466,8 +466,9 @@ delays a slot. A failure is recorded on the transition result and never blocks o
 reverts the terminal state. An operator completion (force complete, output close,
 a result decision, adoption, re-review or supersede) releases its slot only after
 the router returns and its locks are free, so its transition skips the effect and
-the hourly pass captures the episode after that release. The hourly retention
-pass also retries every other run: each pass
+the caller writes the episode once that release is done. The hourly retention
+pass retries any run still missing one, first and independently of archival:
+each pass
 captures every ended run updated since the last pass whose episode is missing or
 describes an older revision. A failure keeps that pass's watermark at the failed
 run.
