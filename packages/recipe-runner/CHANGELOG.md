@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Consumer harness 0.94.8 sends Extension background market orders' `usdAmount` as the notional (margin × leverage), so orders above 1x fill the requested size instead of failing the fill-size check.
+
 - Consumer harness 0.94.7 uses recipe-cli 0.32.1 for pool-selected providers on new and retained tasks without rewriting original provenance.
 
 - Consumer harness 0.94.6 scopes receipt-backed Extension testnet cleanup to the owned market and preserves other markets.
