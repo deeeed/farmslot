@@ -1,6 +1,8 @@
+import * as Clipboard from 'expo-clipboard';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
+import type { NativeSessionPlan } from '@farmslot/protocol';
 import {
   nativeCommandText,
   nativeEntryPreview,
@@ -12,18 +14,23 @@ import {
 
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
+const PLAN_STEP_MARK = { pending: '○', 'in-progress': '▸', completed: '✓' } as const;
+
 export function NativeTimelineCard({
   entry,
   onDisclosure,
   hidden = false,
+  planOpen = true,
 }: {
   entry: NativeTimelineEntry;
   /** Called before the card opens or closes, so the conversation keeps the reader's place. */
   onDisclosure: () => void;
   /** Inside a closed fold: kept mounted, so its own state survives. */
   hidden?: boolean;
+  /** A checklist starts showing its steps (`nativePlanOpen`). */
+  planOpen?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(entry.kind === 'plan' && planOpen);
   const [raw, setRaw] = useState(false);
   const toggle = () => {
     onDisclosure();
@@ -31,6 +38,7 @@ export function NativeTimelineCard({
   };
   const preview = nativeEntryPreview(entry);
   const command = nativeCommandText(entry.event.tool);
+  const plan = entry.event.plan;
   return (
     <View style={[styles.card, entry.kind === 'user' && styles.user, hidden && styles.hidden]}>
       <Text style={styles.muted}>
@@ -42,9 +50,22 @@ export function NativeTimelineCard({
               ? 'Tool'
               : entry.kind === 'resolution'
                 ? 'Request'
-                : 'Status'}
+                : plan?.kind === 'proposal'
+                  ? 'Proposed plan'
+                  : plan
+                    ? 'Plan'
+                    : 'Status'}
       </Text>
-      {entry.kind === 'tool' ? (
+      {plan ? (
+        <NativePlanBody
+          plan={plan}
+          text={entry.text}
+          preview={preview}
+          open={expanded}
+          onToggle={toggle}
+          onDisclosure={onDisclosure}
+        />
+      ) : entry.kind === 'tool' ? (
         <>
           <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={toggle}>
             <Text style={styles.buttonText}>
@@ -91,6 +112,75 @@ export function NativeTimelineCard({
         />
       )}
     </View>
+  );
+}
+
+/** A checklist's progress and steps, or a proposed plan with a copy action. */
+function NativePlanBody({
+  plan,
+  text,
+  preview,
+  open,
+  onToggle,
+  onDisclosure,
+}: {
+  plan: NativeSessionPlan;
+  text: string;
+  preview?: NativeMessagePreview;
+  open: boolean;
+  onToggle: () => void;
+  onDisclosure: () => void;
+}) {
+  const [copied, setCopied] = useState<boolean>();
+  if (plan.kind === 'proposal')
+    return (
+      <>
+        <NativeMessageText text={text} preview={preview} onDisclosure={onDisclosure} />
+        <Pressable
+          testID="companion-native-plan-copy"
+          accessibilityRole="button"
+          style={styles.messageToggle}
+          onPress={() =>
+            Clipboard.setStringAsync(plan.text).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            )
+          }
+        >
+          <Text style={styles.buttonText}>
+            {copied === undefined ? 'Copy plan' : copied ? 'Copied' : 'Copy failed'}
+          </Text>
+        </Pressable>
+      </>
+    );
+  return (
+    <>
+      <Pressable
+        testID="companion-native-plan-toggle"
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        style={styles.messageToggle}
+        onPress={onToggle}
+      >
+        <Text style={styles.buttonText}>
+          {text} · {open ? 'Hide' : 'Steps'}
+        </Text>
+      </Pressable>
+      {open ? (
+        <>
+          {plan.text ? <Text style={styles.text}>{plan.text}</Text> : null}
+          {plan.steps.map((step, index) => (
+            <Text
+              key={`${index}:${step.text}`}
+              selectable
+              style={step.status === 'completed' ? styles.muted : styles.text}
+            >
+              {PLAN_STEP_MARK[step.status]} {step.text}
+            </Text>
+          ))}
+        </>
+      ) : null}
+    </>
   );
 }
 

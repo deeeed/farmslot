@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- A native conversation shows a Codex or ACP runner's plan: its checklist inside the turn, updated as the runner works and folded to "3 of 5 steps" when the turn ends (unless you watched it run), and a proposed plan as a card with a Copy plan button.
 - A native message queued for the next turn has an Edit button that takes it out of the queue and back into the composer, so you can change it and send it again. Sessions on an older native host show no button.
 - A link in a chat or native conversation message opens in a new tab instead of replacing Command Center.
 - A queued native message the session never took (it was closed meanwhile) goes back to the composer, ahead of anything typed since, instead of disappearing. The sent message's label shows its delivery state, such as "Queued for the next turn", instead of a fixed "Delivery unconfirmed".

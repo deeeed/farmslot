@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -13,10 +13,18 @@ const send = message => process.stdout.write(JSON.stringify(message) + '\\n');
 readline.createInterface({input:process.stdin}).on('line', line => {
  const m=JSON.parse(line);
  if(m.method==='initialize') send({id:m.id,result:{}});
- if(m.method==='thread/start') send({id:m.id,result:{thread:{id:'thread-one'}}});
+ if(m.method==='thread/start') {require('node:fs').writeFileSync('thread-start.json',JSON.stringify(m.params));send({id:m.id,result:{thread:{id:'thread-one'}}});}
  if(m.method==='turn/start') {
   send({method:'turn/started',params:{threadId:'thread-one',turn:{id:'turn-one'}}});
   send({id:m.id,result:{turn:{id:'turn-one'}}});
+  if(m.params.input[0].text==='Plan') {
+   send({method:'turn/plan/updated',params:{threadId:'thread-one',turnId:'turn-one',explanation:'Two steps',plan:[{step:'Inspect',status:'inProgress'},{step:'Report',status:'pending'}]}});
+   send({method:'turn/plan/updated',params:{threadId:'thread-one',turnId:'turn-one',explanation:null,plan:[{step:'Inspect',status:'completed'},{step:'Report',status:'completed'}]}});
+   send({method:'item/started',params:{threadId:'thread-one',item:{id:'plan-one',type:'plan',text:''}}});
+   send({method:'item/completed',params:{threadId:'thread-one',item:{id:'plan-one',type:'plan',text:'1. Inspect.\\n2. Report.'}}});
+   send({method:'turn/completed',params:{threadId:'thread-one',turn:{id:'turn-one',status:'completed'}}});
+   return;
+  }
   send({method:'item/started',params:{threadId:'thread-one',item:{id:'tool-one',type:'fileChange',changes:[{path:'greeting.ts',diff:'-Hello\\n+Hello from Farmslot'}],status:'inProgress'}}});
   send({id:78,method:'item/fileChange/requestApproval',params:{threadId:'thread-one',turnId:'turn-one',itemId:'tool-one'}});
  }
@@ -66,6 +74,59 @@ test('Codex correlates structured acceptance and denies only the exact pending r
     );
     assert.equal(events.find((event) => event.type === 'turn.completed')?.status, 'completed');
     await assert.rejects(session.respond('78', { decision: 'approve' }), /stale/);
+  } finally {
+    await session.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('Codex plan updates are checklists and a completed plan item is a proposal', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'native-codex-test-'));
+  const executable = join(cwd, 'codex');
+  await writeFile(executable, fixture);
+  await chmod(executable, 0o755);
+  const events: NativeEventInput[] = [];
+  const session = await codexNativeAdapter.start({ cwd, executable }, (event) =>
+    events.push(event),
+  );
+  try {
+    await session.send('Plan', 'command-plan');
+    const deadline = Date.now() + 5_000;
+    while (!events.some((event) => event.type === 'turn.completed')) {
+      if (Date.now() > deadline) throw new Error('Codex fixture turn timed out');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const plans = events.filter((event) => event.type === 'plan.updated');
+    assert.deepEqual(
+      plans.map((event) => event.plan),
+      [
+        {
+          kind: 'checklist',
+          steps: [
+            { text: 'Inspect', status: 'in-progress' },
+            { text: 'Report', status: 'pending' },
+          ],
+          text: 'Two steps',
+        },
+        {
+          kind: 'checklist',
+          steps: [
+            { text: 'Inspect', status: 'completed' },
+            { text: 'Report', status: 'completed' },
+          ],
+        },
+        { kind: 'proposal', text: '1. Inspect.\n2. Report.' },
+      ],
+    );
+    assert.deepEqual(
+      plans.map((event) => [event.commandId, event.turnId]),
+      Array(3).fill(['command-plan', 'turn-one']),
+    );
+    // The plan item is not a tool.
+    assert.equal(events.filter((event) => event.type.startsWith('tool.')).length, 0);
+    // The app-server sends no plan updates unless the thread enables Codex's plan tool.
+    const thread = JSON.parse(await readFile(join(cwd, 'thread-start.json'), 'utf8'));
+    assert.equal(thread.config['tools.update_plan.enabled'], true);
   } finally {
     await session.close();
     await rm(cwd, { recursive: true, force: true });

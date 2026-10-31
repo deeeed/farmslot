@@ -256,6 +256,35 @@ export const nativeSessionStyles = css`
     max-height: 240px;
     overflow: auto;
   }
+  /* A runner's checklist: done, current and waiting steps. */
+  .plan-steps {
+    margin: 6px 0 0;
+    padding-left: 22px;
+    list-style: none;
+  }
+  .plan-steps li::before {
+    display: inline-block;
+    width: 18px;
+    margin-left: -18px;
+    content: '○';
+  }
+  .plan-steps li.in-progress::before {
+    content: '▸';
+  }
+  .plan-steps li.completed {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  .plan-steps li.completed::before {
+    content: '✓';
+  }
+  article.proposal {
+    background: ${unsafeCSS(colors.bgCard)};
+    border-radius: 6px;
+    padding: 10px;
+  }
+  .plan-copy {
+    min-height: 44px;
+  }
   .composer {
     flex-shrink: 0;
     max-height: 70%;

@@ -2,6 +2,7 @@ import type {
   NativeCommandReceipt,
   NativeSessionEvent,
   NativeSessionInfo,
+  NativeSessionPlan,
   NativeSessionReadResult,
   NativeSessionResponse,
   NativeSessionTargetParams,
@@ -18,7 +19,7 @@ import type { ResourceQueryState, ResourceReadResult } from './types.js';
 
 export interface NativeTimelineEntry {
   key: number;
-  kind: 'user' | 'assistant' | 'tool' | 'resolution' | 'status';
+  kind: 'user' | 'assistant' | 'tool' | 'resolution' | 'plan' | 'status';
   event: NativeSessionEvent;
   text: string;
 }
@@ -27,6 +28,7 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
   const entries: NativeTimelineEntry[] = [];
   const userCommands = new Set<string>();
   const tools = new Map<string, NativeTimelineEntry>();
+  const plans = new Map<string, NativeTimelineEntry>();
   const prompts = new Map<string, NativeSessionEvent>();
   for (const event of events) {
     if (nativePrompt(event) && !prompts.has(event.commandId)) prompts.set(event.commandId, event);
@@ -79,6 +81,24 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
         entries.push(entry);
         if (identity) tools.set(identity, entry);
       }
+    } else if (event.type === 'plan.updated' && event.plan) {
+      // Each update is the whole plan of its kind in that turn: it replaces the entry in place,
+      // keeping its sequence, so cached history keeps only the latest plan under the same key.
+      const identity = JSON.stringify([event.generation, event.commandId, event.plan.kind]);
+      const previous = plans.get(identity);
+      if (previous) {
+        previous.event = { ...event, sequence: previous.key };
+        previous.text = nativePlanText(event.plan);
+      } else {
+        const entry: NativeTimelineEntry = {
+          key: event.sequence,
+          kind: 'plan',
+          event,
+          text: nativePlanText(event.plan),
+        };
+        entries.push(entry);
+        plans.set(identity, entry);
+      }
     } else if (event.type === 'approval.resolved' && event.request) {
       entries.push({
         key: event.sequence,
@@ -102,6 +122,13 @@ export function nativeTimeline(events: NativeSessionEvent[]): NativeTimelineEntr
     }
   }
   return entries;
+}
+
+/** A checklist's progress, "3 of 5 steps"; a proposal's markdown. */
+export function nativePlanText(plan: NativeSessionPlan): string {
+  if (plan.kind === 'proposal') return plan.text;
+  const done = plan.steps.filter((step) => step.status === 'completed').length;
+  return `${done} of ${plan.steps.length} ${plan.steps.length === 1 ? 'step' : 'steps'}`;
 }
 
 /**
@@ -136,7 +163,7 @@ export interface NativeHistorySnapshot extends NativeSessionReadResult {
 }
 
 /** Bumped when retention keeps more: a snapshot saved by an older reader is read again from its start, once. */
-const NATIVE_HISTORY_PROJECTION = 3;
+const NATIVE_HISTORY_PROJECTION = 4;
 
 export const NATIVE_HISTORY_MESSAGES = 200;
 export const NATIVE_HISTORY_SESSIONS = 10;
@@ -639,9 +666,14 @@ function nativeClip(text: string, max: number): string {
     .trimEnd()}…`;
 }
 
-/** Only the reader's own messages collapse; assistant, tool and status entries show in full. */
+/**
+ * The reader's own messages and proposed plans collapse when long; assistant, tool and status
+ * entries show in full.
+ */
 export function nativeEntryPreview(entry: NativeTimelineEntry): NativeMessagePreview | undefined {
-  return entry.kind === 'user' ? nativeMessagePreview(entry.text) : undefined;
+  return entry.kind === 'user' || entry.event.plan?.kind === 'proposal'
+    ? nativeMessagePreview(entry.text)
+    : undefined;
 }
 
 export function nativeMessageToggleLabel(preview: NativeMessagePreview, expanded: boolean): string {
@@ -784,8 +816,11 @@ function nativeOutputText(output: unknown): string | undefined {
 }
 
 export type NativeTimelineRow =
-  /** `fold`: the summary row that hides this tool while folded. */
-  | { kind: 'entry'; key: number; entry: NativeTimelineEntry; fold?: number }
+  /**
+   * `fold`: the summary row that hides this tool while folded. `ended`: a plan whose turn has
+   * ended, shown folded to its progress.
+   */
+  | { kind: 'entry'; key: number; entry: NativeTimelineEntry; fold?: number; ended?: true }
   /** Keyed by the entry that ended its turn; `tools` are the keys it hides. */
   | { kind: 'work'; key: number; label: string; tools: number[] };
 
@@ -813,6 +848,7 @@ export function nativeTimelineRows(entries: NativeTimelineEntry[]): NativeTimeli
         key: item.key,
         entry: item,
         ...(tools.length && item.kind === 'tool' ? { fold: entry.key } : {}),
+        ...(item.kind === 'plan' ? { ended: true as const } : {}),
       });
     if (tools.length) {
       const prompt =
@@ -846,15 +882,27 @@ export function nativeTimelineRows(entries: NativeTimelineEntry[]): NativeTimeli
 }
 
 /**
- * Tools shown running in a live read here. A turn the reader watched starts open when it
- * finishes, so its tools don't fold away under them. A stored snapshot is not live: a turn that
- * finished while the reader was away starts folded.
+ * Tools and plans shown running in a live read here. A turn the reader watched starts open when
+ * it finishes, so its tools and plan don't fold away under them. A stored snapshot is not live: a
+ * turn that finished while the reader was away starts folded.
  */
 export function nativeWatchTools(rows: NativeTimelineRow[], watched: Set<number>, live: boolean) {
   if (!live) return;
   for (const row of rows)
-    if (row.kind === 'entry' && row.entry.kind === 'tool' && row.fold === undefined)
+    if (
+      row.kind === 'entry' &&
+      ((row.entry.kind === 'tool' && row.fold === undefined) ||
+        (row.entry.kind === 'plan' && !row.ended))
+    )
       watched.add(row.key);
+}
+
+/** A plan shows its steps while its turn runs, or when the reader watched it run. */
+export function nativePlanOpen(
+  row: Extract<NativeTimelineRow, { kind: 'entry' }>,
+  watched: ReadonlySet<number>,
+): boolean {
+  return !row.ended || watched.has(row.key);
 }
 
 export function nativeFoldWatched(
