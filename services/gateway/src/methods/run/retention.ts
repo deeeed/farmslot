@@ -14,6 +14,7 @@ import { reclaimReviewWorkspaceStorage } from '../../review-workspaces/storage-u
 import {
   archiveRunArtifactHousekeeping,
   runBundleStore,
+  warnRunBundleCapacity,
 } from '../../run-completion/retained-artifacts.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
@@ -180,7 +181,10 @@ export async function runRetentionPass(
   const roots = options.roots ?? (await gatewayRetentionRoots());
   if (options.apply) {
     await assertArchiveRoot(roots.archiveRoot);
-    if (!options.roots) await archiveRunArtifactHousekeeping();
+    if (!options.roots) {
+      await archiveRunArtifactHousekeeping();
+      await warnRunBundleCapacity();
+    }
   }
   const runs = await getAllRunsWithArchived();
   const context = await retentionContext(runs, options.now, deps);

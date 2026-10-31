@@ -367,3 +367,46 @@ test('capture retains declared hidden package JSON after the source task is remo
     'valid',
   );
 });
+
+test('housekeeping archives a bundle no run references and the farm is warned before the cap', async (t) => {
+  const { archiveRunArtifactHousekeeping, runBundleNearCapacity, warnRunBundleCapacity } =
+    await import('./retained-artifacts.js');
+  const { getRecentEvents } = await import('../chat/copilot-observer.js');
+  assert.equal(runBundleNearCapacity(69, { maxStoreBytes: 100 }), false);
+  assert.equal(runBundleNearCapacity(70, { maxStoreBytes: 100 }), true);
+
+  const archive = path.join(root, 'home/run-archive');
+  await mkdir(archive, { recursive: true });
+  const store = await openRunBundleStore({
+    runsDir: process.env.FARMSLOT_RUNS_DIR!,
+    home: process.env.FARMSLOT_HOME!,
+  });
+  // A superseded capture no run references moves to the archive; nothing is deleted.
+  const orphan = path.join(store.root, 'sha256', 'f'.repeat(64));
+  await mkdir(orphan, { recursive: true });
+  await writeFile(path.join(orphan, 'payload.bin'), 'superseded capture');
+  await archiveRunArtifactHousekeeping();
+  await assert.rejects(readdir(orphan), { code: 'ENOENT' });
+  const archived = await readdir(archive, { recursive: true });
+  assert.ok(archived.some((entry) => entry.endsWith('payload.bin')));
+
+  const policy = path.join(root, 'home/run-bundle-retention.json');
+  t.after(() => rm(policy, { force: true }));
+  await writeFile(
+    policy,
+    JSON.stringify({
+      runBundleRetention: {
+        maxBundleBytes: 1,
+        maxStoreBytes: 2,
+        metadataReserveBytes: 1,
+        mediaRetentionDays: 30,
+      },
+    }),
+  );
+  await warnRunBundleCapacity();
+  assert.ok(
+    getRecentEvents().some(
+      (event) => event.type === 'run-bundle.capacity' && event.severity === 'warn',
+    ),
+  );
+});
