@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants, createWriteStream } from 'node:fs';
 import {
   chmod,
+  copyFile,
   lstat,
   mkdir,
   open,
@@ -752,6 +753,64 @@ async function assertStorePairing(store: RunBundleStore): Promise<void> {
 
 const manifestCache = new Map<string, RunBundleManifest>();
 
+const payloadKey = (meta: { sha256: string; bytes: number }) => `${meta.sha256}:${meta.bytes}`;
+
+/**
+ * Payloads the run's other bundles already hold, by content. A recapture's media is
+ * usually byte-identical to the previous capture's, so it is cloned from the store
+ * instead of fetched from the slot again. Read from manifests; no directory walk.
+ */
+async function retainedPayloadsByContent(
+  store: RunBundleStore,
+  run: Run,
+  exceptDigest: string,
+): Promise<Map<string, string[]>> {
+  const payloads = new Map<string, string[]>();
+  const digests = new Set<string>();
+  for (const { ref } of runBundleRefs(run)) {
+    const { storeId, bundleDigest } = resolveRetainedRunBundleRef(run, ref);
+    if (storeId === store.id && bundleDigest !== exceptDigest) digests.add(bundleDigest);
+  }
+  for (const digest of digests) {
+    let retained: Awaited<ReturnType<typeof readRetainedManifest>>;
+    try {
+      retained = await readRetainedManifest(store, digest);
+    } catch (error) {
+      if (hasCode(error, 'ENOENT')) continue; // archived: the slot copy remains the source
+      throw error;
+    }
+    const { directory, manifest } = retained;
+    // A deferred payload may be listed without being stored (or stored by a later repair):
+    // every listed entry is a candidate, and cloning skips one that isn't on disk.
+    for (const [key, meta] of Object.entries(manifest.entries)) {
+      const candidates = payloads.get(payloadKey(meta)) ?? [];
+      candidates.push(resolvePathInsideRoot(directory, key));
+      payloads.set(payloadKey(meta), candidates);
+    }
+  }
+  return payloads;
+}
+
+/** Clones the first candidate still on disk (copy-on-write where the volume allows it). */
+async function cloneRetainedPayload(
+  candidates: string[],
+  destination: string,
+  maxBytes: number,
+): Promise<RunBundlePayloadIdentity | undefined> {
+  for (const source of candidates) {
+    try {
+      // Not on disk (deferred, or archived since the lookup), or not the size it claims.
+      if ((await stat(source)).size !== maxBytes) continue;
+      await copyFile(source, destination, constants.COPYFILE_FICLONE);
+    } catch (error) {
+      if (hasCode(error, 'ENOENT')) continue;
+      throw error;
+    }
+    return copyHashed(destination, null, maxBytes);
+  }
+  return undefined;
+}
+
 async function completeRetainedPayloads(
   request: MaterializeRunBundleRequest,
   ref: RunArtifactBundleRef,
@@ -841,13 +900,23 @@ async function completeRetainedPayloads(
       }
       remaining = next;
     };
+    const retainedElsewhere =
+      request.acquireMedia && admitted.length
+        ? await retainedPayloadsByContent(request.store, request.run, ref.bundleDigest)
+        : new Map<string, string[]>();
     for (const [key, meta] of admitted) {
       const relative = key.slice(prefix.length);
       const target = resolvePathInsideRoot(directory, key);
       const temp = path.join(repairStage, `${randomUUID()}.tmp`);
       try {
         let copied: RunBundlePayloadIdentity;
-        if (request.acquireMedia && isRunBundleMedia(relative)) {
+        const retained = isRunBundleMedia(relative)
+          ? retainedElsewhere.get(payloadKey(meta))
+          : undefined;
+        // Verified against the manifest below like any other source.
+        const fromStore = retained && (await cloneRetainedPayload(retained, temp, meta.bytes));
+        if (fromStore) copied = fromStore;
+        else if (request.acquireMedia && isRunBundleMedia(relative)) {
           copied = await request.acquireMedia(
             { path: relative, purpose: 'artifact', sha256: meta.sha256, sizeBytes: meta.bytes },
             temp,
@@ -948,20 +1017,19 @@ export async function readRunBundleAvailability(
   return raw ? JSON.parse(raw) : { revision: 0, prunedPaths: [] };
 }
 
-export async function readRetainedRunBundle(
+/**
+ * A published bundle's manifest, digest-checked on every read; parsed metadata is cached.
+ * Rejects with `ENOENT` once the bundle has left the store.
+ */
+async function readRetainedManifest(
   store: RunBundleStore,
-  ref: RunArtifactBundleRef,
-  runId: string,
-): Promise<RetainedRunBundleSnapshot> {
-  await assertStorePairing(store);
-  if (store.id !== ref.storeId) throw new Error('Retained bundle belongs to another Run store.');
-  assertSafeBundleSegment(ref.taskKey, 'task key');
-  const directory = bundleDirectory(store, ref.bundleDigest);
-  const cacheKey = `${store.id}:${ref.bundleDigest}`;
+  digest: string,
+): Promise<{ directory: string; manifest: RunBundleManifest }> {
+  const directory = bundleDirectory(store, digest);
+  const cacheKey = `${store.id}:${digest}`;
   // Parsed metadata may be cached; the published manifest must still exist and match.
   const raw = await readFile(path.join(directory, 'manifest.json'), 'utf8');
-  if (sha256Text(raw) !== ref.bundleDigest)
-    throw new Error('Retained bundle manifest digest mismatch.');
+  if (sha256Text(raw) !== digest) throw new Error('Retained bundle manifest digest mismatch.');
   let manifest = manifestCache.get(cacheKey);
   if (!manifest) {
     manifest = parseManifest(directory);
@@ -978,6 +1046,18 @@ export async function readRetainedRunBundle(
     if (manifestCache.size >= 128) manifestCache.delete(manifestCache.keys().next().value!);
     manifestCache.set(cacheKey, manifest);
   }
+  return { directory, manifest };
+}
+
+export async function readRetainedRunBundle(
+  store: RunBundleStore,
+  ref: RunArtifactBundleRef,
+  runId: string,
+): Promise<RetainedRunBundleSnapshot> {
+  await assertStorePairing(store);
+  if (store.id !== ref.storeId) throw new Error('Retained bundle belongs to another Run store.');
+  assertSafeBundleSegment(ref.taskKey, 'task key');
+  const { directory, manifest } = await readRetainedManifest(store, ref.bundleDigest);
   if (
     !manifest.runs.some((entry) => entry.originalRunId === runId && entry.taskKey === ref.taskKey)
   )
