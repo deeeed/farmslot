@@ -77,6 +77,7 @@ import {
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
+import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-controller.js';
 
 import type { NativeProfileSelection } from './native-profiles.js';
@@ -208,6 +209,9 @@ export class NativeSessionView extends LitElement {
   @state() private turnDiffs = new Map<string, { diff?: string; error?: string }>();
   /** Turn files whose diff is open, by `sequence:path`. */
   @state() private openTurnFiles = new Set<string>();
+  // A turn's changed files hide tests like every diff list. Native sessions carry no project,
+  // so the default test globs apply.
+  private readonly testFilter = new DiffTestFilterController(this);
   @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
   /** The selection the timeline DOM was last rendered for. */
   private renderedRevision = -1;
@@ -559,10 +563,19 @@ export class NativeSessionView extends LitElement {
   private renderTurnChanges(entry: NativeTimelineEntry) {
     const changes = entry.event.changes!;
     if (!changes.files.length) return html`<span class="meta">${entry.text}</span>`;
+    const split = this.testFilter.split(
+      changes.files.map((file) => ({
+        file,
+        path: file.path,
+        additions: file.additions ?? 0,
+        deletions: file.deletions ?? 0,
+      })),
+    );
     return html`<details>
       <summary>${entry.text}</summary>
+      ${this.testFilter.renderControls(split.summary)}
       <ul class="turn-files">
-        ${changes.files.map((file) => {
+        ${split.visible.map(({ file }) => {
           const key = `${entry.event.sequence}:${file.path}`;
           const opened = this.openTurnFiles.has(key);
           const fetched = this.turnDiffs.get(key);
