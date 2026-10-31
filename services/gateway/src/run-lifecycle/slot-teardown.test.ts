@@ -492,6 +492,23 @@ test('a failed runtime shutdown is recorded and does not publish the slot ready'
   assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
 });
 
+test('a failed browser shutdown settles once instead of rerunning teardown on every reconcile', async () => {
+  run.status = 'done';
+  configuredResources = slotRuntimeResources();
+  shutdownFailure = 'browser';
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  const recorded = runUpdates.length;
+  for (let tick = 0; tick < 2; tick++) assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
+  assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server'], 'teardown ran once');
+  assert.equal(providerCleanups, 1);
+  assert.equal(runUpdates.length, recorded, 'the done run is not rewritten each tick');
+  assert.equal(run.slotTeardownSkipped, 'browser: still running');
+  assert.equal(slotRow?.held_reason, 'browser: still running');
+  assert.equal(slotRow?.cleanup_run_id, RUN_ID);
+  assert.equal(slotRow?.cleanup_stop_unconfirmed, true);
+  assert.notEqual(slotRow?.lifecycle, 'ready');
+});
+
 test('a skipped shutdown and a surviving healthy resource retain cleanup ownership', async () => {
   run.status = 'done';
   configuredResources = slotRuntimeResources().slice(0, 1);
