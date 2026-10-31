@@ -24,6 +24,7 @@ import {
   slotScore,
   slotSelectionOptionsFor,
   type SlotSelectionPlan,
+  unattachedDeviceBlocker,
   validateSlot,
   validateSlotForDispatch,
 } from './slot-scoring.js';
@@ -240,6 +241,37 @@ test('a slot whose repo cannot check out the default branch is never selected', 
   assert.equal(slotRepoBlocker(blocked, { skipPrepare: true }), null);
   assert.equal(validateSlotForDispatch(blocked, [blocked], { skipPrepare: true }), null);
   assert.equal(findBestSlot([blocked], 'demo-farm', { skipPrepare: true })?.slot, 'single-branch');
+});
+
+test('a phone slot whose device is not attached is never selected; an emulator slot still is', () => {
+  // Stability run b3abd64a got macpro-mm-pixel6 with its phone unplugged and failed at dispatch.
+  const health = { ssh: 'OK', device: 'emu:OFF', devserver: 'OFF', cdp: 'OFF', fixtures: 'OK' };
+  const phone = slot({
+    slot: 'phone',
+    platform: 'android',
+    health,
+    resources: { 'android-device': { adb_serial: '29071JEGR20638' } },
+  });
+  const emulator = slot({
+    slot: 'emulator',
+    platform: 'android',
+    health,
+    resources: { 'android-emu': { avd: 'golden-avd', adb_serial: 'emulator-5580' } },
+  });
+  assert.equal(
+    unattachedDeviceBlocker(phone),
+    'Android device 29071JEGR20638 is not attached and the slot has no AVD to boot',
+  );
+  assert.equal(validateSlotForDispatch(phone, [phone]), unattachedDeviceBlocker(phone));
+  assert.equal(findBestSlot([phone], 'demo-farm'), null);
+  // Fleet health can be minutes old: a pinned or picked phone that was plugged back in
+  // is left to dispatch's live device check.
+  assert.equal(validateSlotForDispatch(phone, [phone], { explicitSlot: true }), null);
+  // Prepare boots an emulator, so an emulator slot that is off stays selectable.
+  assert.equal(unattachedDeviceBlocker(emulator), null);
+  assert.equal(findBestSlot([phone, emulator], 'demo-farm')?.slot, 'emulator');
+  const attached = slot({ ...phone, slot: 'attached', health: { ...health, device: 'emu:OK' } });
+  assert.equal(validateSlotForDispatch(attached, [attached]), null);
 });
 
 test('validateSlot explains disabled/manual/working/busy and accepts held', () => {

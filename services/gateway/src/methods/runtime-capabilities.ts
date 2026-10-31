@@ -114,11 +114,8 @@ function actionCommand(
     : projectJson.slot_actions?.[ref.actionId]?.command;
 }
 
-async function captureProviderProcesses(
-  slotId: string,
-  entry: RuntimeCapabilityCatalogEntry,
-  ownerRunId: string,
-): Promise<RuntimeCapabilityLease['providerProcesses']> {
+/** Pid-file watched resources the provider itself owns; other occupants are never its cleanup. */
+async function ownedPidFiles(slotId: string, entry: RuntimeCapabilityCatalogEntry) {
   const resourceIds = entry.affectedResources
     ? entry.affectedResources
         .filter((resource) => resource.ownership === 'capability')
@@ -128,12 +125,27 @@ async function captureProviderProcesses(
       );
   const vars = await loadSlotVars(slotId);
   const project = await loadProjectVars(vars.projectName);
-  const frames: NonNullable<RuntimeCapabilityLease['providerProcesses']> = [];
+  const files: Array<{ resourceId: string; pidPath: string }> = [];
   for (const resourceId of new Set(resourceIds)) {
     const watch = project.projectJson.resources?.[resourceId]?.watch;
     if (watch?.type !== 'pid-file' || !watch.path) continue;
     const expanded = expandTemplate(watch.path, vars, project);
-    const pidPath = expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`;
+    files.push({
+      resourceId,
+      pidPath: expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`,
+    });
+  }
+  return { vars, files };
+}
+
+async function captureProviderProcesses(
+  slotId: string,
+  entry: RuntimeCapabilityCatalogEntry,
+  ownerRunId: string,
+): Promise<RuntimeCapabilityLease['providerProcesses']> {
+  const { vars, files } = await ownedPidFiles(slotId, entry);
+  const frames: NonNullable<RuntimeCapabilityLease['providerProcesses']> = [];
+  for (const { resourceId, pidPath } of files) {
     if (!(await slotFileExists(vars, `${pidPath}.meta`)) || !(await slotFileExists(vars, pidPath)))
       continue; // Missing or legacy sidecars grant no process cleanup ownership.
     const meta = JSON.parse(await slotReadFile(vars, `${pidPath}.meta`)) as ResourceSidecarMeta;
@@ -152,20 +164,8 @@ async function checkProviderCleanup(
   entry: RuntimeCapabilityCatalogEntry,
   expected: RuntimeCapabilityLease['providerProcesses'],
 ): Promise<string | null> {
-  const vars = await loadSlotVars(slotId);
-  const project = await loadProjectVars(vars.projectName);
-  const resources = entry.affectedResources
-    ? entry.affectedResources
-        .filter((resource) => resource.ownership === 'capability')
-        .map((resource) => resource.resourceId)
-    : Object.values(entry.actions).flatMap((action) =>
-        action.kind === 'resource' ? [action.resourceId] : [],
-      );
-  for (const id of new Set(resources)) {
-    const watch = project.projectJson.resources?.[id]?.watch;
-    if (watch?.type !== 'pid-file' || !watch.path) continue;
-    const expanded = expandTemplate(watch.path, vars, project);
-    const pidPath = expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`;
+  const { vars, files } = await ownedPidFiles(slotId, entry);
+  for (const { resourceId: id, pidPath } of files) {
     const current = (await slotFileExists(vars, pidPath))
       ? await probeResourceProcess(vars, Number((await slotReadFile(vars, pidPath)).trim()))
       : undefined;
@@ -189,6 +189,31 @@ async function checkProviderCleanup(
     }
   }
   return null;
+}
+
+/**
+ * Whether a provider with captured processes has nothing left to stop: no owned
+ * pidfile names a running process and no captured process survives (F262). A
+ * provider without captured processes can't be proven stopped.
+ */
+async function providerProcessesGone(
+  slotId: string,
+  entry: RuntimeCapabilityCatalogEntry,
+  expected: RuntimeCapabilityLease['providerProcesses'],
+): Promise<boolean> {
+  if (!expected?.length) return false;
+  const { vars, files } = await ownedPidFiles(slotId, entry);
+  for (const { pidPath } of files) {
+    if (
+      (await slotFileExists(vars, pidPath)) &&
+      (await probeResourceProcess(vars, Number((await slotReadFile(vars, pidPath)).trim())))
+    )
+      return false;
+  }
+  for (const frame of expected) {
+    if ((await probeResourceProcess(vars, frame.pid))?.identity === frame.identity) return false;
+  }
+  return true;
 }
 
 async function catalogForSlot(slotId: string): Promise<RuntimeCapabilityCatalogContext> {
@@ -519,6 +544,7 @@ const registry = new RuntimeCapabilityRegistry({
   catalogForSlot,
   captureProviderProcesses,
   checkProviderCleanup,
+  providerProcessesGone,
   runAction: runProviderAction,
   assertTargetAvailable: assertDeviceTargetAvailable,
   pressureFor,
