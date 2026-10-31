@@ -17,7 +17,9 @@ import {
   nativeMessagePreview,
   nativeMessageShown,
   nativeMessageToggleLabel,
+  nativePlanCopyLabel,
   nativePlanOpen,
+  nativePlanStepMark,
   nativeSendLabel,
   nativeTimeline,
   type NativeTimelineRow,
@@ -759,6 +761,46 @@ test('a plan updates in place in its turn, folds to its progress when the turn e
   const watched = new Set<number>();
   nativeWatchTools(nativeTimelineRows(nativeTimeline(running)), watched, true);
   assert.deepEqual(open(nativeTimelineRows(nativeTimeline(ended)), watched), [true, true]);
+
+  // A later page's update merges into the plan cached from an earlier page, under its first key.
+  const paged = retainNativeMessages([
+    ...retainNativeMessages(running.slice(0, 2)),
+    ...running.slice(2),
+  ]);
+  assert.deepEqual(
+    nativeTimeline(paged)
+      .filter((entry) => entry.kind === 'plan')
+      .map((entry) => [entry.key, entry.text]),
+    [
+      [2, '1 of 3 steps'],
+      [5, '1. Read.\n2. Fix.'],
+    ],
+  );
+  // A resumed generation's plan with the same command ID is its own entry; proposals merge too.
+  const resumed = nativeTimeline([
+    plan(1, steps('completed')),
+    { ...plan(2, steps('pending')), generation: 'next' },
+    plan(3, { kind: 'proposal', text: 'First.' }),
+    plan(4, { kind: 'proposal', text: 'Second.' }),
+  ]);
+  assert.deepEqual(
+    resumed.map((entry) => [entry.key, entry.text]),
+    [
+      [1, '1 of 1 step'],
+      [2, '0 of 1 step'],
+      [3, 'Second.'],
+    ],
+  );
+  assert.deepEqual((['completed', 'in-progress', 'pending'] as const).map(nativePlanStepMark), [
+    '✓',
+    '●',
+    '○',
+  ]);
+  assert.deepEqual([undefined, true, false].map(nativePlanCopyLabel), [
+    'Copy plan',
+    'Copied',
+    'Copy failed',
+  ]);
 
   // A long proposal collapses like a long message.
   const long = Array.from({ length: 40 }, (_, index) => `${index + 1}. Step.`).join('\n');

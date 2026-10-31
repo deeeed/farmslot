@@ -262,20 +262,15 @@ export const nativeSessionStyles = css`
     padding-left: 22px;
     list-style: none;
   }
+  /* The mark is generated content, so copying the steps copies their text only. */
   .plan-steps li::before {
     display: inline-block;
     width: 18px;
     margin-left: -18px;
-    content: '○';
-  }
-  .plan-steps li.in-progress::before {
-    content: '▸';
+    content: attr(data-mark);
   }
   .plan-steps li.completed {
     color: ${unsafeCSS(colors.textMuted)};
-  }
-  .plan-steps li.completed::before {
-    content: '✓';
   }
   article.proposal {
     background: ${unsafeCSS(colors.bgCard)};

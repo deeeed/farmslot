@@ -1,5 +1,6 @@
 import type {
   NativeCommandReceipt,
+  NativePlanStep,
   NativeSessionEvent,
   NativeSessionInfo,
   NativeSessionPlan,
@@ -129,6 +130,16 @@ export function nativePlanText(plan: NativeSessionPlan): string {
   if (plan.kind === 'proposal') return plan.text;
   const done = plan.steps.filter((step) => step.status === 'completed').length;
   return `${done} of ${plan.steps.length} ${plan.steps.length === 1 ? 'step' : 'steps'}`;
+}
+
+/** The mark before a checklist step: done, current or waiting. */
+export function nativePlanStepMark(status: NativePlanStep['status']): string {
+  return status === 'completed' ? '✓' : status === 'in-progress' ? '●' : '○';
+}
+
+/** A proposal's copy action, before a copy (`undefined`), after it, and when it failed. */
+export function nativePlanCopyLabel(copied?: boolean): string {
+  return copied === undefined ? 'Copy plan' : copied ? 'Copied' : 'Copy failed';
 }
 
 /**

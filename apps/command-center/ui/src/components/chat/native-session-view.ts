@@ -41,7 +41,9 @@ import {
   nativeMessageShown,
   nativeMessageToggleLabel,
   nativeObservationQuery,
+  nativePlanCopyLabel,
   nativePlanOpen,
+  nativePlanStepMark,
   nativeSendLabel,
   nativeTimeline,
   type NativeTimelineEntry,
@@ -513,7 +515,12 @@ export class NativeSessionView extends LitElement {
           ? html`<div class="text"><span class="body">${plan.text}</span></div>`
           : nothing}
         <ol class="plan-steps">
-          ${plan.steps.map((step) => html`<li class=${step.status}>${step.text}</li>`)}
+          ${plan.steps.map(
+            (step) =>
+              html`<li class=${step.status} data-mark=${nativePlanStepMark(step.status)}>
+                ${step.text}
+              </li>`,
+          )}
         </ol>
       </details>`;
     const copied = this.planCopy?.key === entry.key ? this.planCopy.copied : undefined;
@@ -535,7 +542,7 @@ export class NativeSessionView extends LitElement {
             () => (this.planCopy = { key: entry.key, copied: false }),
           )}
       >
-        ${copied === undefined ? 'Copy plan' : copied ? 'Copied' : 'Copy failed'}
+        ${nativePlanCopyLabel(copied)}
       </button>`;
   }
 
@@ -974,6 +981,7 @@ ${JSON.stringify(
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
     this.expandedMessages = new Set();
+    this.planCopy = undefined;
     this.watchedTools = new Set();
     this.foldOpen = new Map();
     this.follow = NATIVE_FOLLOW_LATEST;

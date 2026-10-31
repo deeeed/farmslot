@@ -9,12 +9,14 @@ import {
   type NativeMessagePreview,
   nativeMessagePreview,
   nativeMessageToggleLabel,
+  nativePlanCopyLabel,
+  nativePlanStepMark,
   type NativeTimelineEntry,
 } from '@farmslot/protocol/client-cache';
 
+import { FormattedDocument } from '../../../components/FormattedDocument';
+import { formatDocument } from '../../../lib/document-format';
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
-
-const PLAN_STEP_MARK = { pending: '○', 'in-progress': '▸', completed: '✓' } as const;
 
 export function NativeTimelineCard({
   entry,
@@ -135,7 +137,7 @@ function NativePlanBody({
   if (plan.kind === 'proposal')
     return (
       <>
-        <NativeMessageText text={text} preview={preview} onDisclosure={onDisclosure} />
+        <NativeMessageText text={text} preview={preview} markdown onDisclosure={onDisclosure} />
         <Pressable
           testID="companion-native-plan-copy"
           accessibilityRole="button"
@@ -147,9 +149,7 @@ function NativePlanBody({
             )
           }
         >
-          <Text style={styles.buttonText}>
-            {copied === undefined ? 'Copy plan' : copied ? 'Copied' : 'Copy failed'}
-          </Text>
+          <Text style={styles.buttonText}>{nativePlanCopyLabel(copied)}</Text>
         </Pressable>
       </>
     );
@@ -175,7 +175,7 @@ function NativePlanBody({
               selectable
               style={step.status === 'completed' ? styles.muted : styles.text}
             >
-              {PLAN_STEP_MARK[step.status]} {step.text}
+              {nativePlanStepMark(step.status)} {step.text}
             </Text>
           ))}
         </>
@@ -225,19 +225,27 @@ function NativeMessageText({
   text,
   preview,
   muted = false,
+  markdown = false,
   onDisclosure,
 }: {
   text: string;
   preview?: NativeMessagePreview;
   muted?: boolean;
+  /** The whole text is markdown; a collapsed preview stays plain. */
+  markdown?: boolean;
   onDisclosure: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const whole = !preview || expanded;
   return (
     <>
-      <Text selectable style={muted ? styles.muted : styles.text}>
-        {preview && !expanded ? preview.text : text}
-      </Text>
+      {markdown && whole ? (
+        <FormattedDocument blocks={formatDocument('plan.md', text)} />
+      ) : (
+        <Text selectable style={muted ? styles.muted : styles.text}>
+          {preview && !expanded ? preview.text : text}
+        </Text>
+      )}
       {preview ? (
         <Pressable
           testID="companion-native-message-toggle"
