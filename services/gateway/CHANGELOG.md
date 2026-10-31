@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- A finished run whose slot shutdown hook fails (for example a browser that is already gone) records the unconfirmed stop once and keeps the slot held with that reason, instead of rerunning the whole teardown on every reconcile. An explicit release can still retry it.
+- A finished run whose slot shutdown hook fails (for example a browser that is already gone) records the unconfirmed stop once and keeps the slot held with that reason, instead of rerunning the whole teardown on every reconcile. An operator release clears the hold, and slot cleanup reruns the stop.
 - A blind eval worker that blocks itself no longer leaves its trial waiting: the frozen first output keeps the worker's blocked reason as an outcome claim, the package finalizes without a judge, and the run records a partial outcome.
 - An artifact-only run's output review reads the recipe attempt the worker selected (`latest-valid-recipe-run.json`), as a publication gate does, so the failing pre-implementation baseline it retains no longer makes COMPLETE refuse with unsatisfied execution and claim verdicts. Visual review of that output refuses an earlier retained attempt, which would never count toward completion.
 - A finished blind eval trial's run-end cleanup restores its original Git while the run still owns the slot, then returns the checkout to idle and keeps the candidate branch, so no manual release is needed. A failed restoration holds the slot for retry; a cancelled trial kept for replay is restored when its slot is reclaimed.

@@ -567,7 +567,8 @@ export async function releaseRunSlotOwnership(
     lifecycle: 'held',
     phase: 'occupied',
     held_reason: blocker,
-    // A failed shutdown hook settles here: reconciliation stops retrying it, explicit release can.
+    // A failed shutdown hook settles here: reconciliation stops retrying it. An operator
+    // release clears the hold; slot cleanup reruns the stop.
     ...(stopUnconfirmed ? { [SLOT_CLEANUP_STOP_UNCONFIRMED]: true } : {}),
     cleanup_release_token: null,
     [SLOT_RELEASING_SINCE]: null,

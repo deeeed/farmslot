@@ -334,7 +334,9 @@ MUST NOT mark the slot reclaimed.
   slot epoch. Reconciliation MUST recheck it through the same cleanup owner and
   use a conditional release. A live owner, changed epoch, unknown identity or
   in-flight teardown MUST prevent reclamation. Archive MUST NOT erase authority
-  for terminal capability recovery.
+  for terminal capability recovery. A hold whose runtime shutdown was not
+  confirmed (`cleanup_stop_unconfirmed`) is recorded once and is not rechecked:
+  an operator release clears it, and slot cleanup reruns the stop.
 
 The public methods and request formats are unchanged. Clients and harnesses read
 existing slot, lease, park and cleanup outcomes; no new execution path is exposed.
