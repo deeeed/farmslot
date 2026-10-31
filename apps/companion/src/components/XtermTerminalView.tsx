@@ -9,6 +9,7 @@ import React, {
 import { StyleSheet, View } from 'react-native';
 import WebView, { type WebViewMessageEvent } from 'react-native-webview';
 
+import { SILENCE_TERMINAL_QUERIES_JS } from '../lib/terminal-queries';
 import { colors, fonts } from '../lib/theme';
 
 export type TerminalSize = { cols: number; rows: number };
@@ -298,6 +299,7 @@ function terminalHtml(): string {
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.min.js"></script>
   <script>
+    ${SILENCE_TERMINAL_QUERIES_JS}
     (function () {
       var term = null;
       var fitAddon = null;
@@ -615,6 +617,7 @@ function terminalHtml(): string {
           term.loadAddon(fitAddon);
         }
         term.open(terminalElement);
+        silenceTerminalQueries(term);
         term.onData(function (data) {
           if (!readOnly) post({ type: 'input', data: data });
         });

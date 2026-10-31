@@ -5042,6 +5042,7 @@ __metadata:
     "@types/node": "npm:^25.9.1"
     "@types/react": "npm:~19.2.10"
     "@types/react-dom": "npm:^19"
+    "@xterm/xterm": "npm:^6.0.0"
     agent-device: "npm:0.19.3"
     dotenv-flow: "npm:^4.1.0"
     expo: "npm:^57.0.10"
