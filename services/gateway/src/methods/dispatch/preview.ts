@@ -1400,6 +1400,7 @@ export function resolveDispatchPreviewFromFleet(
     if (!found) throw new Error(`Slot ${params.slotId} not found`);
     selectedParams(found);
     const err = validateSlotForDispatch(found, slots, {
+      explicitSlot: true,
       ...slotSelectionOptionsFor(found, selectionOptions),
       allowWorking: options?.replaceableWarmSlotIds?.has(found.slot),
     });
