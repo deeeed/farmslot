@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import * as promiseTimers from 'node:timers/promises';
 
-import type { PoolConfig, PressureAdmissionDecision, Run, SlotStatus } from '@farmslot/protocol';
+import type {
+  PoolConfig,
+  PressureAdmissionDecision,
+  ProjectSlotSelectionConfig,
+  Run,
+  SlotStatus,
+} from '@farmslot/protocol';
 import { sourceLockDigest } from '@farmslot/slot-config/sources';
 
 import type { SafeIdleSlotResult } from '../run-lifecycle/safe-idle-slot.js';
@@ -104,6 +110,7 @@ let candidateSourcePlans: (() => RunSlotSourcePlans) | undefined;
 const sourceAdmissions: string[] = [];
 const finishedReclaims: string[] = [];
 let finishedRefusal: string | undefined;
+let slotSelection: ProjectSlotSelectionConfig | undefined;
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
@@ -130,7 +137,7 @@ mock.module('../fleet/state.js', {
     ...fleet,
     loadFleetStatus: async () => ({ slots }),
     loadProjectConfig: async () => null,
-    loadProjectConfigs: async () => [{ name: project, defaultBranch: 'main' }],
+    loadProjectConfigs: async () => [{ name: project, defaultBranch: 'main', slotSelection }],
     loadPoolConfigs: async () => pools,
   },
 });
@@ -332,6 +339,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   reclaims.length = 0;
   finishedReclaims.length = 0;
   finishedRefusal = undefined;
+  slotSelection = undefined;
   run = makeRun({
     id: 'branch-match-fixture',
     project,
@@ -808,6 +816,35 @@ test('the stale-slot picker still permits an explicit node-load override', async
     [cold.slot, hot.slot],
   );
   assert.equal(hot.branch, 'fix/hot');
+});
+
+test('the picker offers a ready phone that on-request keeps from automatic selection', async () => {
+  reset('dev', 'TAT-9004');
+  expectedTarget = undefined;
+  slotSelection = { physicalDevices: 'on-request' };
+  const sim: SlotStatus = {
+    ...candidate('sim', 'macwork', 'main'),
+    lifecycle: 'busy',
+    agent: 'working',
+  };
+  const phone: SlotStatus = {
+    ...candidate('macpro-mm-pixel6', 'macpro', 'main'),
+    platform: 'android',
+    health: { ssh: 'OK', device: 'emu:OK', devserver: 'OK', cdp: 'OFF', fixtures: '4/8' },
+    resources: { 'android-device': { adb_serial: '29071JEGR20638' } },
+  };
+  slots.splice(0, slots.length, sim, phone);
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.2));
+  expectedSlot = pickedSlot = phone.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  if (pickerPayload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+  assert.deepEqual(
+    pickerPayload.candidates.map((s) => s.slotId),
+    [phone.slot],
+  );
+  assert.equal(result.outputs?.selectedSlot, phone.slot);
+  assert.equal(result.outputs?.selectionMethod, 'human-override');
+  assert.deepEqual(claims, [phone.slot]);
 });
 
 test('the picker keeps released legacy rows without a phase eligible', async () => {

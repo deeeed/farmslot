@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { QueueItem, ReviewSelection, SlotStatus } from '@farmslot/protocol';
 
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
-import { setCachedFleetForTests } from '../fleet/state.js';
+import { farmslotRoot, setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
 import { dispatchQueueAdd } from '../methods/dispatch/queue.js';
 import {
@@ -2069,6 +2071,47 @@ test('PR queue prepares cold allowed slots while respecting busy slots and model
   assert.equal(await selectPRQueueExecution(slots, item, [first, second]), 'allowed-b');
   assert.equal(item.effort, 'medium');
   assert.deepEqual(item.allowedSlots, ['allowed-b']);
+});
+
+test('PR queue narrowing to a lone phone slot is not an operator pin under on-request', async (t) => {
+  setQueueDispatchPressureCaptureForTests(admitAllPressure);
+  const project = `physical-devices-${process.pid}`;
+  const projectDir = path.join(farmslotRoot, 'projects', project);
+  await mkdir(projectDir, { recursive: true });
+  t.after(() => rm(projectDir, { recursive: true, force: true }));
+  await writeFile(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({ name: project, slot_selection: { physical_devices: 'on-request' } }),
+  );
+  const sim: SlotStatus = { ...readyFleetSlot('sim').slots[0], project, agent: 'working' };
+  const phone: SlotStatus = {
+    ...readyFleetSlot('macpro-mm-pixel6').slots[0],
+    project,
+    platform: 'android',
+    health: { ssh: 'LOCAL', device: 'emu:OK', devserver: 'OK', cdp: '-', fixtures: '-' },
+    resources: { 'android-device': { adb_serial: '29071JEGR20638' } },
+  };
+  const item: QueueItem = {
+    id: 'pr-phone-narrowing',
+    flowType: 'review-pr',
+    project,
+    ticketOrPr: 'owner/repo#44',
+    priority: 10,
+    createdAt: new Date().toISOString(),
+    status: 'queued',
+  };
+  // Busy sim and phone sit in separate execution groups, so one group is [phone].
+  const choices = [
+    { slotId: sim.slot, runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'cold' },
+    { slotId: phone.slot, runner: 'codex', model: 'gpt-6-astra', effort: 'medium', mode: 'cold' },
+  ] as const;
+  await assert.rejects(
+    selectPRQueueExecution([sim, phone], item, [...choices]),
+    /macpro-mm-pixel6: Physical device slot is reserved for runs that request a device/,
+  );
+  assert.equal(item.allowedSlots, undefined);
+  const pinned = { ...item, allowedSlots: [phone.slot] };
+  assert.equal(await selectPRQueueExecution([sim, phone], pinned, [...choices]), phone.slot);
 });
 
 test('PR queue filters every disabled member of a mixed model group before scoring', async () => {

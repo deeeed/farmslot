@@ -1140,6 +1140,9 @@ export function queueItemHeldByPressure(
   pressureDecisions: ReadonlyMap<string, PressureAdmissionDecision>,
   allowedSlots?: readonly string[] | null,
   previewParams?: DispatchPreviewParams,
+  pinned = isPinnedSlotSelection(
+    previewParams ?? { allowedSlots: allowedSlots ? [...allowedSlots] : null },
+  ),
 ): boolean {
   // Scope to the exact allow list the resolver will see (item allowlist or
   // spread-policy subset). An admitted free slot outside it must not defeat
@@ -1164,13 +1167,7 @@ export function queueItemHeldByPressure(
       !validateSlotForDispatch(slot, slots, affinityOptions),
   );
   if (freeProjectSlots.length === 0) return false;
-  const loads = automaticSlotLoads(
-    pressureDecisions,
-    undefined,
-    isPinnedSlotSelection(
-      previewParams ?? { allowedSlots: allowedSlots ? [...allowedSlots] : null },
-    ),
-  );
+  const loads = automaticSlotLoads(pressureDecisions, undefined, pinned);
   return freeProjectSlots.every(
     (slot) =>
       pressureDecisions.get(slot.machine)?.outcome === 'rejected' ||
@@ -1181,9 +1178,14 @@ export function queueItemHeldByPressure(
 export async function selectQueueDispatchSlot(
   slots: SlotStatus[],
   item: QueueItem,
-  deps: { capturePressure?: QueuePressureCapture } = {},
+  deps: {
+    capturePressure?: QueuePressureCapture;
+    /** Pin intent of the original item when the caller narrowed `item` (ADR-054). */
+    pinnedSlotSelection?: boolean;
+  } = {},
 ): Promise<string | null> {
   const requiredPrepareProfile = requiredPrepareProfileForQueueItem(item);
+  const pinned = deps.pinnedSlotSelection ?? isPinnedSlotSelection(item);
   // ADR-054: the unattended queue is the path the spec is about, so it must
   // score a park-preserved slot the same way the interactive pickers do.
   const parkPreserved = parkPreservedSlotIds(getAllRuns());
@@ -1217,6 +1219,7 @@ export async function selectQueueDispatchSlot(
       pressureDecisions,
       item.allowedSlots,
       buildQueuePreviewParams(item),
+      pinned,
     )
   ) {
     console.log(
@@ -1254,6 +1257,7 @@ export async function selectQueueDispatchSlot(
             pressureDecisions,
             allowed,
             buildQueuePreviewParams(item),
+            pinned,
           )
         ) {
           console.log(
@@ -1268,7 +1272,7 @@ export async function selectQueueDispatchSlot(
           {
             requiredPrepareProfile,
             pressureDecisions,
-            automaticLoadPinned: isPinnedSlotSelection(item),
+            automaticLoadPinned: pinned,
             parkPreservedSlotIds: parkPreserved,
             plans: sourcePlans,
           },
@@ -1285,6 +1289,7 @@ export async function selectQueueDispatchSlot(
     {
       requiredPrepareProfile,
       pressureDecisions,
+      automaticLoadPinned: pinned,
       parkPreservedSlotIds: parkPreserved,
       plans: sourcePlans,
     },
@@ -1300,6 +1305,8 @@ export async function selectPRQueueExecution(
   item: QueueItem,
   choices: PRExecutionChoice[],
 ): Promise<string | null> {
+  // Narrowing to one execution group is not an operator pin (ADR-054).
+  const pinnedSlotSelection = isPinnedSlotSelection(item);
   const groups = new Map<string, PRSlotExecutionChoice[]>();
   for (const choice of choices.filter(
     (entry): entry is PRSlotExecutionChoice => !isPRWorkspaceExecutionChoice(entry),
@@ -1340,7 +1347,7 @@ export async function selectPRQueueExecution(
       model: execution.model,
       effort: execution.effort ?? undefined,
     };
-    const slotId = await selectQueueDispatchSlot(slots, proposed);
+    const slotId = await selectQueueDispatchSlot(slots, proposed, { pinnedSlotSelection });
     if (slotId) {
       item.allowedSlots = allowedSlots;
       item.runner = model.runner;
