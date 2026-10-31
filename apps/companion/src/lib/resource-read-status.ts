@@ -52,7 +52,7 @@ export function readErrorMessage(
 /**
  * A connected reread in flight, or one the gateway superseded within its grace, stays quiet.
  * Offline, a read error is the outage's: a read with nothing to show says "Offline" once, and
- * not at all under the connection banner (`offlineNotice` false), which already says so.
+ * not at all (`offlineNotice` false) where the banner or the screen itself already says so.
  */
 export function resourceReadMessages(
   reads: readonly LabelledReadObservation[],

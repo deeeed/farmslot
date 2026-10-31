@@ -50,6 +50,7 @@ import { canOpenNativeConversation } from '../../lib/workspace-access';
 import { useConnectionStore } from '../../store/connection';
 import { useHeldConnection } from '../../store/held-connection';
 
+import { nativeConversationError } from './native-conversation-error';
 import { useNativeSessionResume } from './use-native-session-resume';
 import { useNativeSessionSetup } from './use-native-session-setup';
 
@@ -555,12 +556,16 @@ export function useNativeConversationController(params: NativeConversationParams
       receipt,
       canRetry: nativeRetryAvailable(receipt),
       canEdit: nativeMessageCancelable(session, receipt),
-      // Offline, a failed read is the outage's, which the heading already says.
-      error:
-        error ||
-        (heldConnected || !allowed ? pollError : '') ||
-        creation.viewModel.error ||
-        resume.viewModel.error,
+      error: nativeConversationError(
+        {
+          action: error,
+          read: pollError,
+          creation: creation.viewModel.error,
+          resume: resume.viewModel.error,
+        },
+        heldConnected,
+        allowed,
+      ),
       busy,
       ready,
       connected: heldConnected,

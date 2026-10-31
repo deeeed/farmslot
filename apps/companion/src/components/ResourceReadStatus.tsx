@@ -12,7 +12,7 @@ import {
 import { baseStyles, colors, spacing } from '../lib/theme';
 import { useHeldConnection } from '../store/held-connection';
 
-import { ConnectionBannerShown } from './ConnectionBanner';
+import { OfflineShown } from './offline-shown';
 
 type ResourceReadStatusProps = {
   /** A persistent condition of the view itself, shown in the same fixed slot. */
@@ -38,7 +38,7 @@ export function ResourceReadStatus({
   const [now, setNow] = useState(Date.now());
   const [details, setDetails] = useState(false);
   const connected = useHeldConnection();
-  const bannerShown = useContext(ConnectionBannerShown);
+  const offlineShown = useContext(OfflineShown);
   const reads = observations ?? (observation && label ? [{ observation, label }] : []);
   const stale = reads.some((read) => read.observation.status === 'stale' && read.observation.data);
   useEffect(() => {
@@ -48,7 +48,7 @@ export function ResourceReadStatus({
     return () => clearInterval(timer);
   }, [stale]);
   const messages = [
-    ...resourceReadMessages(reads, now, connected, !bannerShown),
+    ...resourceReadMessages(reads, now, connected, !offlineShown),
     ...(notice ? [notice] : []),
   ];
   const text = messages.join(' · ');

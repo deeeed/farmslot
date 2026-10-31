@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import React, { createContext } from 'react';
+import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { connectionHealthCanRetry } from '../lib/connection-liveness';
@@ -13,9 +13,6 @@ import {
   resolveBannerContent,
   useVisibleConnectionBanner,
 } from './connection-banner-visibility';
-
-/** True under a layout that shows the banner, so views there need not say offline. */
-export const ConnectionBannerShown = createContext(false);
 
 interface ConnectionBannerProps {
   compact?: boolean;

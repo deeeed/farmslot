@@ -4,8 +4,9 @@ import React from 'react';
 import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ConnectionBanner, ConnectionBannerShown } from '../../components/ConnectionBanner';
+import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { FilterBar } from '../../components/FilterBar';
+import { OfflineShown } from '../../components/offline-shown';
 import { isStoreScreenshotMode } from '../../lib/store-screenshot-mode';
 import { colors } from '../../lib/theme';
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
@@ -33,7 +34,7 @@ export default function TabLayout() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bgBase }}>
       {/* Every tab but Settings shows the banner, and Settings has no read-status slot. */}
-      <ConnectionBannerShown.Provider value={true}>
+      <OfflineShown.Provider value={true}>
         <Tabs
           screenOptions={{
             tabBarActiveTintColor: colors.accent,
@@ -156,7 +157,7 @@ export default function TabLayout() {
             }}
           />
         </Tabs>
-      </ConnectionBannerShown.Provider>
+      </OfflineShown.Provider>
     </View>
   );
 }
