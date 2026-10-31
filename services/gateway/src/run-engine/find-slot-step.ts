@@ -994,6 +994,7 @@ async function findSlotAttempt(
       eligibilityFail = 'slot is outside the allowed slot list';
     } else if (replaceableWarm || becameFree) {
       eligibilityFail = validateSlotForDispatch(wizardSlot, liveFleet.slots, {
+        explicitSlot: true,
         targetBranch,
         releasableBranchHolderIds,
         requiredPrepareProfile,
@@ -1419,6 +1420,7 @@ async function findSlotAttempt(
             if (!selected)
               throw new SourceAdmissionRefusal('Picked slot has no usable source plan');
             const err = validateSlotForDispatch(picked, freshFleet.slots, {
+              explicitSlot: true,
               ...selected,
               automaticLoads: undefined,
             });
@@ -1617,6 +1619,7 @@ async function findSlotAttempt(
       const selected = optionsFor(picked);
       if (!selected) throw new SourceAdmissionRefusal('Picked slot has no usable source plan');
       const pickedSlotError = validateSlotForDispatch(picked, freshFleet.slots, {
+        explicitSlot: true,
         ...selected,
         automaticLoads: undefined,
       });
