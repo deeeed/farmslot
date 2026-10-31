@@ -1,7 +1,7 @@
 import { html } from 'lit';
 
 import { Methods } from '@farmslot/protocol';
-import type { nativeWorkerTabs } from '@farmslot/review-dispatch';
+import { type nativeWorkerTabs, nativeWorkerTargetLive } from '@farmslot/review-dispatch';
 
 import '../shared/workspace-pin.js';
 
@@ -78,7 +78,7 @@ export interface TmuxToolbarContext {
 function renderAddToChat(ctx: TmuxToolbarContext) {
   const ready = ctx.selectMode && Boolean(ctx.hasSelection);
   return (ctx.nativeWorkers ?? [])
-    .filter((tab) => !tab.target.readOnly)
+    .filter((tab) => nativeWorkerTargetLive(tab.target))
     .map(
       (tab) =>
         html`<button

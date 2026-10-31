@@ -1,21 +1,22 @@
+import { markdownFence } from '@farmslot/protocol';
+import { nativeTailLines, terminalLinesFromText } from '@farmslot/protocol/client-cache';
+
 /** Terminal text a reader added to a native conversation that has not opened yet, by attempt key. */
 const pending = new Map<string, string>();
 
+/** The most of a selection a message carries; earlier lines are counted, not sent. */
+export const TERMINAL_CHAT_CONTEXT_LINES = 400;
+
 /**
  * A terminal selection as conversation context: a fenced block without the terminal's padding
- * (trailing spaces, blank lines at either end). The fence is longer than any backtick run inside.
+ * (trailing spaces, blank lines at either end), keeping its last lines when it is long.
  */
 export function terminalChatContext(selection: string): string {
-  const lines = selection
-    .replace(/\r\n?/g, '\n')
-    .split('\n')
-    .map((line) => line.trimEnd());
+  const lines = terminalLinesFromText(selection).map((line) => line.trimEnd());
   while (lines.length && !lines[0]) lines.shift();
   while (lines.length && !lines.at(-1)) lines.pop();
   if (!lines.length) return '';
-  const longest = Math.max(0, ...[...selection.matchAll(/`+/g)].map((run) => run[0].length));
-  const fence = '`'.repeat(Math.max(3, longest + 1));
-  return `${fence}\n${lines.join('\n')}\n${fence}`;
+  return markdownFence(nativeTailLines(lines, TERMINAL_CHAT_CONTEXT_LINES).join('\n'));
 }
 
 /** Keeps context for the conversation with this attempt key until it opens. */

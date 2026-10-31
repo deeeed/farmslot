@@ -6,6 +6,7 @@ import {
   isEvidenceAttestationApprover,
   isEvidencePolicyReason,
   isValidEvidenceAttestationReason,
+  markdownFence,
   type ReadyGatePrPackage,
   type Run,
   type RunDecision,
@@ -95,12 +96,6 @@ export function withPublicationProvenance(run: Run, body: string): string {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/([`*_[\]\\])/gu, '\\$1');
-    const fenced = (text: string) => {
-      const fence = '`'.repeat(
-        Math.max(3, ...[...text.matchAll(/`+/g)].map((match) => match[0].length + 1)),
-      );
-      return [`${fence}text`, text, fence];
-    };
     if (
       approval &&
       (approval.packageHash !== prepared.packageHash ||
@@ -126,7 +121,7 @@ export function withPublicationProvenance(run: Run, body: string): string {
         `Head: \`${approval.headSha}\`. Findings digest: \`${accepted.digest}\`.`,
         '',
         'Reason:',
-        ...fenced(approval.reason),
+        markdownFence(approval.reason, 'text'),
         '',
         'Accepted findings:',
         ...accepted.findings.map(
@@ -143,7 +138,7 @@ export function withPublicationProvenance(run: Run, body: string): string {
         `Package: \`${receipt.packageHash}\`. Decision: \`${receipt.decisionId}\`.`,
         '',
         'Reason:',
-        ...fenced(receipt.reason),
+        markdownFence(receipt.reason, 'text'),
         '',
         'Waived claim-policy findings:',
         ...receipt.waivedReasons.map((reason) => `- ${plain(reason.message)}`),

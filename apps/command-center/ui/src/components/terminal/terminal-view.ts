@@ -915,6 +915,7 @@ export class TerminalView extends TerminalViewState {
     this._unsubConn?.();
     this._unsubConn = undefined;
     this._xtermSelectionDisposable?.dispose();
+    this._hasSelection = false;
     clearTimeout(this._selectionCopyTimer);
     clearTimeout(this._copyToastTimer);
     this._attachmentQueue?.clear();
@@ -1181,7 +1182,7 @@ export class TerminalView extends TerminalViewState {
       this._terminal.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
       // Auto-copy when selection changes (debounced — copies after user stops selecting)
       this._xtermSelectionDisposable = this._terminal.onSelectionChange(() => {
-        this._hasSelection = Boolean(this._terminal?.getSelection().trim());
+        this._hasSelection = this._terminal?.hasSelection() ?? false;
         clearTimeout(this._selectionCopyTimer);
         this._selectionCopyTimer = setTimeout(() => {
           const sel = this._terminal?.getSelection();

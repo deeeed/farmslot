@@ -21,9 +21,18 @@ const target = (contextId: string, readOnly: boolean): NativeWorkerViewTarget =>
     commandId: 'command',
   },
 });
+const recovering = target('recovering', false);
 const tabs = [
   { key: 'live', label: 'rev-claude native', target: target('live', false) },
   { key: 'history', label: 'rev-claude native · History', target: target('history', true) },
+  {
+    key: 'recovering',
+    label: 'rev-codex native',
+    target: {
+      ...recovering,
+      binding: { ...recovering.binding, recovery: { fromGeneration: 'old', commandId: 'resume' } },
+    },
+  },
 ];
 const toolbar = (selectMode: boolean, hasSelection: boolean, added: string[] = []) =>
   renderTmuxToolbar({
@@ -45,9 +54,10 @@ const toolbar = (selectMode: boolean, hasSelection: boolean, added: string[] = [
     addToChat: (tab) => added.push(tab.key),
   } satisfies TmuxToolbarContext);
 
-test('a terminal offers its selection to each writable native conversation, once text is selected', () => {
+test('a terminal offers its selection to each live native conversation, once text is selected', () => {
   const text = litText(toolbar(true, true));
   assert.equal(text.split('Add to rev-claude native').length - 1, 1, 'history tabs take no input');
+  assert.doesNotMatch(text, /Add to rev-codex native/, 'a recovering conversation cannot send');
   // Present before anything is selected, so the toolbar does not shift when a selection starts.
   assert.deepEqual(litBindings(toolbar(false, false), '?disabled='), [true]);
   assert.deepEqual(litBindings(toolbar(true, false), '?disabled='), [true]);

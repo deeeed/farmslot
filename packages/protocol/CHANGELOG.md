@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `markdownFence(content, info?)` fences text as a Markdown code block that it cannot close early, and `nativeTailLines(lines, max)` keeps the last lines after a "… N earlier lines" line; the command card, recipe-cli artifacts, publication receipts and Command Center's terminal context share them.
 - `ProjectConfig.slotSelection` (`ProjectSlotSelectionConfig`, `PhysicalDeviceSlotPolicy`) carries project.json `slot_selection.physical_devices`. `RunCreateParams.requiredCapabilities` names capability ids the run's slot must provide; `RunSlotCapabilityRequirements.sourceSlotId` is optional, unset for create-time requirements.
 - `nativeMessageShown` says whether a native conversation shows a sent message yet (its submission or acceptance, with the text), the rule `nativeTimeline` uses for user entries, so a client can show a message it sent until then. `nativeMessageDropped` says from its receipt that the host failed a sent message without submitting it (a queued message when the session closes or its worker lease changes), so a client can give the text back.
 - Active-development baseline; add user-facing changes here before release or package publication.

@@ -660,8 +660,13 @@ ${JSON.stringify(
 
   private loadLocal() {
     this.draft = safeLsGet(this.sessionKey(`draft:${this.selectedId}`)) ?? '';
-    // Terminal text the reader added to this conversation before it opened.
-    const context = this.worker && takeNativeChatContext(nativeWorkerAttemptKey(this.worker));
+    // Terminal text the reader added to this conversation before it opened: taken only once the
+    // view reads the worker's own session (connect() first loads the standalone selection).
+    const context =
+      this.worker &&
+      this.selectedId === this.worker.binding.sessionId &&
+      this.selectedNodeId === this.worker.binding.executionNodeId &&
+      takeNativeChatContext(nativeWorkerAttemptKey(this.worker));
     if (context) {
       this.draft = draftWithContext(this.draft, context);
       safeLsSet(this.sessionKey(`draft:${this.selectedId}`), this.draft);
