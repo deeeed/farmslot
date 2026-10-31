@@ -495,6 +495,7 @@ const GATE_REENTRY = 'gate-reentry';
 export function supersedeStaleHumanGateDecisions(
   decisions: RunDecision[],
   nowIso: string = new Date().toISOString(),
+  supersededBy: string = GATE_REENTRY,
 ): number {
   let superseded = 0;
   for (const decision of decisions) {
@@ -505,7 +506,7 @@ export function supersedeStaleHumanGateDecisions(
       continue;
     decision.resolvedAt = nowIso;
     decision.resolvedAction = 'superseded';
-    decision.context = { ...decision.context, supersededBy: GATE_REENTRY };
+    decision.context = { ...decision.context, supersededBy };
     superseded += 1;
   }
   return superseded;

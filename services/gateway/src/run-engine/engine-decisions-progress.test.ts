@@ -268,3 +268,43 @@ test('pending decisions preserve observed work and refuse to label unknown progr
     'monitoring',
   );
 });
+
+test('a gate that opens a new decision supersedes the one still open before it', async (t) => {
+  const run = createObservedRun(t, 'GATE-SUPERSEDE');
+  // Left open by another driver of the same gate (7e88468f had two open at once).
+  const stale: RunDecision = {
+    id: 'stale-gate',
+    type: 'engine_human_gate',
+    title: 'Publication package is unavailable',
+    description: 'Retry this gate.',
+    actions: [{ id: 'hold', label: 'Retry Gate', style: 'secondary' }],
+    createdAt: '2026-10-31T15:08:51.529Z',
+  };
+  store.updateRun(run.id, { decisions: [stale] });
+  let published!: () => void;
+  const presentation = new Promise<void>((resolve) => (published = resolve));
+  setEngineDecisionRuntime({
+    broadcast: (event) => {
+      if (event === Events.RUN_DECISION_NEW) published();
+    },
+    stepToStatus: {},
+  });
+  t.after(() => setEngineDecisionRuntime({ broadcast: () => {}, stepToStatus: {} }));
+  const waiter = createEngineDecision(
+    run.id,
+    'human_gate',
+    'Package ready',
+    [{ id: 'abort', label: 'Abort', style: 'secondary' }],
+    undefined,
+    { readProgress: async () => ({ kind: 'idle' }) },
+  );
+  await presentation;
+  const decisions = store.getRun(run.id)!.decisions;
+  const open = decisions.filter((decision) => !decision.resolvedAt);
+  assert.equal(open.length, 1, 'exactly one live gate decision');
+  const previous = decisions.find((decision) => decision.id === 'stale-gate')!;
+  assert.equal(previous.resolvedAction, 'superseded');
+  assert.equal(previous.context?.supersededBy, open[0]!.id);
+  resolveEngineDecision(open[0]!.id, 'abort');
+  assert.equal(await waiter, 'abort');
+});

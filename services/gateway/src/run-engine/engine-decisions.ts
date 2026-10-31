@@ -44,7 +44,7 @@ import {
   isReplayableResolvedHumanGateDecision,
   latestResolvedHumanGateDecision,
 } from './decision-replay.js';
-import { hasValidPrNumber } from './gate-policy.js';
+import { hasValidPrNumber, supersedeStaleHumanGateDecisions } from './gate-policy.js';
 import {
   assertAcceptedFindingsCurrent,
   collectRunGateReadiness,
@@ -862,6 +862,10 @@ export async function createEngineDecision(
     ...(isPrerequisiteGatePayload(payload) ? { context: { gateActions: gateDefinitions } } : {}),
   };
 
+  // Exactly one live gate decision: a gate that opens a new one supersedes any predecessor
+  // still open, e.g. one a second driver of the same gate left behind. Same tick as the append.
+  if (decision.type === 'engine_human_gate' || decision.type === 'engine_review_posting')
+    supersedeStaleHumanGateDecisions(current!.decisions, decision.createdAt, decision.id);
   updateRun(runId, {
     status: runDecisionWaitingStatus(
       current!,
