@@ -384,12 +384,13 @@ export async function commitRunReviewBudgetExtension(
 /** Commit the receipt before publishing its effective row. Shares the existing per-run write queue. */
 type RunEvidenceReceipt =
   | import('@farmslot/protocol').ClaimUntestableOverrideReceipt
-  | import('@farmslot/protocol').RecipeVisualJudgmentReceipt;
+  | import('@farmslot/protocol').RecipeVisualJudgmentReceipt
+  | import('@farmslot/protocol').BeforeAttemptAttestation;
 
 async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
   id: string,
-  field: 'claimOverrideReceipts' | 'visualJudgmentReceipts',
-  outputField: 'claimOverrideReceiptIds' | 'visualJudgmentReceiptIds',
+  field: 'claimOverrideReceipts' | 'visualJudgmentReceipts' | 'beforeAttemptAttestations',
+  outputField: 'claimOverrideReceiptIds' | 'visualJudgmentReceiptIds' | undefined,
   build: (run: Run) => R,
   assertCurrent: (run: Run) => void | Promise<void>,
   outputReceiptIds?: (snapshot: Run) => string[],
@@ -424,7 +425,7 @@ async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
       ? prior.map((entry) => (entry.id === receipt!.id ? receipt! : entry))
       : [...prior, receipt];
     const snapshot: Run = { ...run, [field]: receipts };
-    if (outputReceiptIds) {
+    if (outputReceiptIds && outputField) {
       const ids = outputReceiptIds(snapshot);
       snapshot.decisions = run.decisions.map((decision) =>
         decision.id === receipt!.decisionId &&
@@ -443,7 +444,7 @@ async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
       throw error;
     }
     Object.assign(run, { [field]: receipts });
-    if (outputReceiptIds) {
+    if (outputReceiptIds && outputField) {
       const projected = snapshot.decisions.find(
         ({ id: decisionId }) => decisionId === receipt!.decisionId,
       )?.payload;
@@ -497,31 +498,12 @@ export function commitRunVisualJudgment(
 }
 
 /** An attestation is durable before a package preparation can admit its attempt. */
-export async function commitRunBeforeAttemptAttestation(
+export function commitRunBeforeAttemptAttestation(
   id: string,
   build: (run: Run) => import('@farmslot/protocol').BeforeAttemptAttestation,
   assertCurrent: (run: Run) => void,
 ): Promise<import('@farmslot/protocol').BeforeAttemptAttestation> {
-  let attestation: import('@farmslot/protocol').BeforeAttemptAttestation | undefined;
-  await enqueueRunWrite(id, async () => {
-    const run = runs.get(id);
-    if (!run) throw new Error('Run is unavailable');
-    assertCurrent(run);
-    attestation = build(run);
-    const prior = run.beforeAttemptAttestations ?? [];
-    if (prior.some((entry) => entry.id === attestation!.id)) return;
-    const attestations = [...prior, attestation];
-    await persistBody(run, { ...run, beforeAttemptAttestations: attestations }, true);
-    try {
-      assertCurrent(run);
-    } catch (error) {
-      await persistBody(run);
-      throw error;
-    }
-    run.beforeAttemptAttestations = attestations;
-    updateRun(id, {});
-  });
-  return attestation!;
+  return commitRunEvidenceReceipt(id, 'beforeAttemptAttestations', undefined, build, assertCurrent);
 }
 
 /**

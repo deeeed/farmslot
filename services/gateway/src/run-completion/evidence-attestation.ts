@@ -74,6 +74,15 @@ export function assertEvidenceAttestationReceipt(
   return receipt;
 }
 
+/** One line of person-written text inside generated PR markdown or HTML, inert in both. */
+export const plain = (value: string) =>
+  value
+    .replace(/[\r\n]+/gu, ' ')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/([`*_[\]\\])/gu, '\\$1');
+
 /** One projection and retained receipt feed publication and subsequent refreshes. */
 export function withPublicationProvenance(run: Run, body: string): string {
   const decision = latestResolvedHumanGateDecision(run.decisions, true);
@@ -88,13 +97,6 @@ export function withPublicationProvenance(run: Run, body: string): string {
       body = replaceMarkdownSection(body, `## ${heading}`, null);
     }
     const approval = decision?.publicationApproval;
-    const plain = (value: string) =>
-      value
-        .replace(/[\r\n]+/gu, ' ')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/([`*_[\]\\])/gu, '\\$1');
     const fenced = (text: string) => {
       const fence = '`'.repeat(
         Math.max(3, ...[...text.matchAll(/`+/g)].map((match) => match[0].length + 1)),

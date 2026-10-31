@@ -37,7 +37,7 @@ test('buildEvidenceSection matches artifact-prefixed manifest paths to uploaded 
   assert.match(section, /https:\/\/cdn\/after\.mp4/);
 });
 
-test('buildEvidenceSection labels an operator-attested before side with reason, actor and time', () => {
+test('buildEvidenceSection labels an operator-attested before side as one inert line', () => {
   const section = buildEvidenceSection(
     {
       before_after_pairs: [
@@ -66,15 +66,16 @@ test('buildEvidenceSection labels an operator-attested before side with reason, 
         attemptRoot: 'recipe-runs/attested',
         manifestSha256: 'f'.repeat(64),
         approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'credential' },
-        reason: 'The recipe needs <Bridge> files this change adds.',
+        reason:
+          'The recipe needs <Bridge> files this change adds.\n```\ndiagnostic [x](https://evil) ![](https://img)\n```',
         attestedAt: '2026-10-31T05:00:00.000Z',
       },
     ],
   );
 
   assert(section);
-  const disclosure =
-    'The recipe needs &lt;Bridge&gt; files this change adds. (Reviewer, 2026-10-31T05:00:00.000Z)';
+  // A multi-line fenced reason cannot end the HTML cell, open a fence or render a link.
+  const disclosure = String.raw`The recipe needs &lt;Bridge&gt; files this change adds. \`\`\` diagnostic \[x\](https://evil) !\[\](https://img) \`\`\` (Reviewer, 2026-10-31T05:00:00.000Z)`;
   const label = `<em>Before: operator-attested</em><br/><sub>${disclosure}</sub>`;
   assert.equal(section.split(label).length - 1, 2);
   assert.match(section, /<em>Before<\/em><br\/><img src="https:\/\/cdn\/ac2-before\.png"/);

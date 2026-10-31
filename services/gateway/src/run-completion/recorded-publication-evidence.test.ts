@@ -32,8 +32,11 @@ const { allSelectedEvidenceKeysForPublication, assertPublicationEvidenceSelectio
   await import('./publication-evidence-policy.js');
 const { expandPublicationEvidenceSelection, readEvidenceManifest, publishSelectedEvidence } =
   await import('./publication-artifacts.js');
-const { publicationBaselineContext, resolvePublicationManifest } =
-  await import('./publication-artifacts.js');
+const {
+  capturedBeforeAttemptAttestations,
+  publicationBaselineContext,
+  resolvePublicationManifest,
+} = await import('./publication-artifacts.js');
 const { computeReadyGatePackageHash } = await import('./ready-gate-package.js');
 
 const { makeRun, makeReadyGatePackage, retainRunFixture, overwriteRetainedFixture } =
@@ -1018,6 +1021,54 @@ test('an operator attestation admits a dirty PR-head attempt as before-only evid
   await retainRunFixture(f.run);
   await assert.rejects(readEvidenceManifest(f.run), /product-provenance\.json.*git_ref/);
   await assert.rejects(preflight(), /product-provenance\.json.*git_ref/);
+});
+
+test('only the same run attesting that attempt manifest waives, labels and binds the package', async (t) => {
+  const f = await sameHeadFixture(t);
+  const directory = path.join(f.taskDir, 'artifacts', f.baselineRoot);
+  const provenance = JSON.stringify({ ...f.provenance, git_ref: f.headSha, dirty: true });
+  await writeFile(path.join(directory, 'product-provenance.json'), provenance);
+  f.inventory.find(
+    (entry) => entry.path === `artifacts/${f.baselineRoot}/product-provenance.json`,
+  )!.sha256 = digest(Buffer.from(provenance));
+  await retainRunFixture(f.run);
+  const attestation = {
+    id: 'attestation',
+    runId: f.run.id,
+    decisionId: 'gate',
+    attemptRoot: f.baselineRoot,
+    manifestSha256: digest(await readFile(path.join(directory, 'artifact-manifest.json'))),
+    approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'credential' },
+    reason: 'The recipe needs files this change adds.',
+    attestedAt: '2026-10-31T05:00:00.000Z',
+  };
+  for (const foreign of [
+    { ...attestation, attemptRoot: 'recipe-runs/another-attempt' },
+    { ...attestation, runId: 'another-run' },
+  ]) {
+    f.run.beforeAttemptAttestations = [foreign];
+    await assert.rejects(readEvidenceManifest(f.run), /product-provenance\.json.*git_ref/);
+    assert.deepEqual(capturedBeforeAttemptAttestations(f.run, f.inventory), []);
+  }
+  f.run.beforeAttemptAttestations = [attestation];
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    await readEvidenceManifest(f.run),
+    1,
+    publicationBaselineContext(f.run),
+  );
+  assert.deepEqual(capturedBeforeAttemptAttestations(f.run, inventory), [attestation]);
+  // A later attestation of the same bytes is bound instead, so the approved package changes.
+  const second = { ...attestation, id: 'second', reason: 'Recorded again.' };
+  f.run.beforeAttemptAttestations = [attestation, second];
+  assert.deepEqual(capturedBeforeAttemptAttestations(f.run, inventory), [second]);
+  const packageHash = (ids: string[]) =>
+    computeReadyGatePackageHash({
+      ...makeReadyGatePackage({ evidenceManifest: inventory }),
+      beforeAttemptAttestationIds: ids,
+    });
+  assert.notEqual(packageHash([attestation.id]), packageHash([second.id]));
 });
 
 test('selected recorded media freezes the complete execution input and selection manifest', async (t) => {

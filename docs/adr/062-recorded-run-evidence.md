@@ -1155,8 +1155,9 @@ selected head.
 
 The attestation applies only while the attempt's manifest digest matches. Any
 change to the attempt needs a new attestation. It resolves no gate; the operator
-retries the gate to rebuild the package. It never satisfies or changes a claim
-verdict. PR evidence labels that before side "Before: operator-attested" with
+retries the gate to rebuild the package. The package binds the admitted
+attestation ids, so a later attestation needs approval again. It never satisfies
+or changes a claim verdict. PR evidence labels that before side "Before: operator-attested" with
 the reason, actor and time. Run-bundle import drops attestations, as it drops
 claim override receipts.
 

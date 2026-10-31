@@ -1000,6 +1000,8 @@ export interface ReadyGatePrPackage {
   artifactBundle?: RunArtifactBundleRef;
   /** Gateway override receipts applied when this package was prepared. */
   claimOverrideReceiptIds?: string[];
+  /** Before-attempt attestations admitted when this package was prepared (ADR-062 Amendment 21). */
+  beforeAttemptAttestationIds?: string[];
   /** Authenticated visual judgments captured by this review snapshot. */
   visualJudgmentReceiptIds?: string[];
   id: string;

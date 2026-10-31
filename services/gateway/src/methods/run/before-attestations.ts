@@ -70,6 +70,7 @@ export async function runAttestBeforeAttempt(
   try {
     manifest = bytes === null ? null : JSON.parse(bytes);
   } catch {
+    // Unparseable bytes are not a recipe attempt; the validator below refuses them as such.
     manifest = null;
   }
   if (bytes === null || validateArtifactManifestDocument(manifest).status !== 'valid')

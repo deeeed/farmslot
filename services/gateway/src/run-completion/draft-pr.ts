@@ -17,7 +17,11 @@ import {
 import { exactEvidenceKeys } from './evidence-paths.js';
 import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT, renderPrBody } from './pr-body-render.js';
 import { lowercaseLeadingTitleWord } from './pr-title.js';
-import { readEvidenceManifest, replaceMarkdownSection } from './publication-artifacts.js';
+import {
+  capturedBeforeAttemptAttestations,
+  readEvidenceManifest,
+  replaceMarkdownSection,
+} from './publication-artifacts.js';
 import { retainedArtifactRun } from './retained-artifacts.js';
 import { readTaskArtifactText } from './retrospective.js';
 
@@ -199,7 +203,11 @@ async function applyLocalEvidencePreview(
   if (!manifest) return body;
   const section = (await projectHasNoArtifactsRepo(run))
     ? buildUnhostedEvidenceSection(run, manifest)
-    : buildEvidenceSection(manifest, manifestUrls, run.beforeAttemptAttestations);
+    : buildEvidenceSection(
+        manifest,
+        manifestUrls,
+        capturedBeforeAttemptAttestations(run, artifacts),
+      );
   const warnings = ambiguousEvidenceManifestPaths(artifacts, manifestFromFile).map(
     (entry) => `ambiguous evidence path ${entry.path}: matches ${entry.matches.join(', ')}`,
   );

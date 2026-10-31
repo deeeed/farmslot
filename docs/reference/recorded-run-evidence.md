@@ -374,8 +374,10 @@ digest equals the recorded one, admission MUST skip only the baseline
 declarations. Ownership, captured digests, closure, secret scan and publication
 approval still apply; its after and standalone captures still need the clean
 selected head. Any manifest change lapses the attestation. It resolves no gate
-and changes no claim verdict. PR evidence MUST label that before side "Before:
-operator-attested" with the reason, actor and time. Run-bundle import drops
+and changes no claim verdict. The publication package MUST bind the admitted
+attestation ids, so a new attestation changes its hash and needs approval again.
+PR evidence MUST label only those before sides "Before: operator-attested", with
+the reason, actor and time as one line of inert text. Run-bundle import drops
 attestations.
 
 The selected successful attempt remains the sole claim-verdict source. Additional

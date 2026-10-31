@@ -13,6 +13,7 @@ import {
   RECIPE_CLAIM_VERDICTS,
 } from '@farmslot/protocol';
 
+import { plain } from './evidence-attestation.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
 import { publicationDetails } from './publication-details.js';
 
@@ -255,6 +256,7 @@ export function manifestPrefersVideo(manifest: EvidenceManifest | null | undefin
 export function buildEvidenceSection(
   manifest: EvidenceManifest,
   artifactUrls: Map<string, string>,
+  /** Attestations admitted for these attempts (`admittedBeforeAttemptAttestations`). */
   beforeAttemptAttestations: readonly BeforeAttemptAttestation[] = [],
 ): string | null {
   const lines: string[] = [];
@@ -315,15 +317,13 @@ export function buildEvidenceSection(
   // ADR-062 Amendment 21: disclose a before side admitted by operator attestation.
   const attestedBefore = (file?: string) => {
     const artifact = file && normalizeEvidenceManifestArtifactPath(file, { mediaOnly: false });
-    const attested = beforeAttemptAttestations
-      .filter(({ attemptRoot }) => artifact?.startsWith(`artifacts/${attemptRoot}/`))
-      .at(-1);
-    return attested
-      ? `${attested.reason} (${attested.approver.displayName}, ${attested.attestedAt})`
-          .replaceAll('&', '&amp;')
-          .replaceAll('<', '&lt;')
-          .replaceAll('>', '&gt;')
-      : undefined;
+    const attested = beforeAttemptAttestations.find(({ attemptRoot }) =>
+      artifact?.startsWith(`artifacts/${attemptRoot}/`),
+    );
+    return (
+      attested &&
+      plain(`${attested.reason} (${attested.approver.displayName}, ${attested.attestedAt})`)
+    );
   };
   const beforeHeading = (file?: string) => {
     const attested = attestedBefore(file);

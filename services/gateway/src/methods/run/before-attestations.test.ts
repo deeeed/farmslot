@@ -102,6 +102,38 @@ test('a person attests a same-run attempt bound to its manifest digest, idempote
   );
 });
 
+test('a credential revoked or replaced at commit leaves no attestation', async (t) => {
+  const f = fixture(t);
+  const person = f.dependencies.authorizeEvidenceAttestation();
+  // Call 1 authorizes the request; 2 rechecks before the durable write, 3 after it.
+  for (const [failingCall, refusal] of [
+    [2, /revoked/],
+    [3, /revoked/],
+  ] as const) {
+    let calls = 0;
+    await assert.rejects(
+      runAttestBeforeAttempt(f.params, () => {}, {
+        ...f.dependencies,
+        authorizeEvidenceAttestation: () => {
+          if (++calls === failingCall) throw new Error('Credential revoked');
+          return person;
+        },
+      }),
+      refusal,
+    );
+  }
+  let calls = 0;
+  await assert.rejects(
+    runAttestBeforeAttempt(f.params, () => {}, {
+      ...f.dependencies,
+      authorizeEvidenceAttestation: () =>
+        ++calls === 1 ? person : { ...person, credentialId: 'replaced' },
+    }),
+    /identity changed/,
+  );
+  assert.equal(getRun(f.run.id)?.beforeAttemptAttestations, undefined);
+});
+
 test('unauthenticated, blank reason, unknown attempt and a changed gate leave no attestation', async (t) => {
   const f = fixture(t);
   assert.throws(
