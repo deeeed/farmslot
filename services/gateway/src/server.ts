@@ -792,6 +792,7 @@ async function handleMessage(
         },
         batchedContent: true,
         conditionalFileWrites: true,
+        terminalInputSequence: true,
         workspaceAccess: gatewayWorkspaceAccess(
           result.principal,
           authRuntime.store.snapshot().principals,

@@ -19,6 +19,11 @@ import {
   writePty,
 } from '../runtime/pty-stream.js';
 import {
+  inputAlreadyApplied,
+  rememberInputApplied,
+  runInputInOrder,
+} from '../runtime/terminal-input-sequence.js';
+import {
   captureWorkerTerminal,
   resizeWorkerTerminal,
   sendWorkerTerminalInput,
@@ -67,13 +72,15 @@ export function terminalWorkerUnsubscribeKey(params: {
 }
 
 export async function terminalWorkerInput(params: TerminalWorkerInputParams): Promise<void> {
-  await assertTmuxWorkerControlAllowed(params.worker);
   const key = terminalWorkerSubscriptionKey(params);
-  if (hasPty(key)) {
-    writePty(key, params.data);
-    return;
-  }
-  await sendWorkerTerminalInput(params.worker, params.data);
+  // In order per pane, so a batch resent after a lost reply waits for the original.
+  await runInputInOrder(`worker:${key}`, async () => {
+    await assertTmuxWorkerControlAllowed(params.worker);
+    if (inputAlreadyApplied(key, params.seq)) return;
+    if (hasPty(key)) writePty(key, params.data);
+    else await sendWorkerTerminalInput(params.worker, params.data);
+    rememberInputApplied(key, params.seq);
+  });
 }
 
 export async function terminalWorkerResize(params: TerminalWorkerResizeParams): Promise<void> {

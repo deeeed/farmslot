@@ -76,7 +76,7 @@ export function useTerminalInput(
           );
         };
         const queue = createTerminalInputQueue(
-          async (batch, assertActive, markSent) => {
+          async (batch, assertActive, markSent, seq) => {
             // Each attempt belongs to the connection it starts on; one stopped before it was
             // sent is retried in order on the next.
             const generation = selectedClient.connectionGeneration;
@@ -87,7 +87,11 @@ export function useTerminalInput(
             assertCurrent();
             await selectedClient.request(
               'terminal.input',
-              { ...selectedTarget, data: batch },
+              {
+                ...selectedTarget,
+                data: batch,
+                ...(selectedClient.terminalInputSequenceSupported ? { seq } : {}),
+              },
               10_000,
               { assertCurrent, onSent: markSent },
             );
@@ -95,6 +99,7 @@ export function useTerminalInput(
           {
             onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt),
             onHold: (held) => eventsRef.current.onHold?.(held),
+            resendsAreSafe: () => selectedClient.terminalInputSequenceSupported,
           },
         );
         queueRef.current = { key: selectedKey, client: selectedClient, queue };

@@ -14,7 +14,9 @@ export function heldInputPreview(data: string, max = 40): string {
 
 /**
  * Keys whose request reached the gateway and then failed: the pane may already have them, so
- * nothing more is sent until the user resends or discards them.
+ * nothing more is sent until the user resends or discards them. Only a gateway without
+ * `terminalInputSequence` gets here; with it, the batch is resent and written once. Delete this
+ * once every supported gateway has the capability.
  */
 export function TerminalHeldInput({
   held,

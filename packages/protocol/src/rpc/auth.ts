@@ -54,6 +54,8 @@ export interface GatewayAuthConnectResult {
     batchedContent?: boolean;
     /** `expectedHash` and `runId` on file edits, and `hash` on `fs.read`. Experimental. */
     conditionalFileWrites?: boolean;
+    /** Terminal input `seq` is honoured: each batch number is written once. */
+    terminalInputSequence?: boolean;
   };
   /** Optional only for compatibility with older gateways. */
   principal?: SelfPrincipalSummary;

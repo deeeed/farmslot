@@ -11,9 +11,10 @@ import {
 
 interface FakeClient {
   connectionGeneration: number;
+  terminalInputSequenceSupported?: boolean;
   request(
     method: string,
-    params: { worker: TmuxWorkerRef; data: string },
+    params: { worker: TmuxWorkerRef; data: string; seq?: { stream: string; n: number } },
     timeout?: number,
     options?: { assertCurrent?: () => void; onSent?: () => void },
   ): Promise<unknown>;
@@ -194,3 +195,49 @@ test('worker keys held across a profile switch never go out under the new sign-i
     hook.cleanup();
   }
 });
+
+// The gateway advertises terminalInputSequence: a lost reply is resent on its own, numbered.
+test(
+  'worker keys whose reply was lost are resent with the same number, with nothing to resolve by hand',
+  { timeout: 5_000 },
+  async () => {
+    const pane: Array<{ data: string; n?: number }> = [];
+    const holds: unknown[] = [];
+    let loseReply = true;
+    const client: FakeClient = {
+      connectionGeneration: 1,
+      terminalInputSequenceSupported: true,
+      async request(_method, params, _timeout, options) {
+        options?.onSent?.();
+        pane.push({ data: params.data, n: params.seq?.n });
+        if (loseReply) {
+          loseReply = false;
+          throw new Error('Request terminal.worker.input timed out after 10000ms');
+        }
+        return { sent: true };
+      },
+    };
+    const worker: TmuxWorkerRef = { nodeId: 'mini', session: 'mmt-3', target: '%19' };
+    const hook = mountHook<[FakeClient, TmuxWorkerRef, { onHold: (held: unknown) => void }]>(
+      new URL('./use-worker-terminal-input.ts', import.meta.url),
+      'useWorkerTerminalInput',
+      dependencies,
+    );
+    try {
+      const { write } = hook.render(client, worker, {
+        onHold: (held) => holds.push(held),
+      }) as Input;
+      await write('echo ONCE\r');
+      await write('pwd\r');
+      // The gateway drops the repeated number 1, so the pane runs each command once.
+      assert.deepEqual(pane, [
+        { data: 'echo ONCE\r', n: 1 },
+        { data: 'echo ONCE\r', n: 1 },
+        { data: 'pwd\r', n: 2 },
+      ]);
+      assert.deepEqual(holds, []);
+    } finally {
+      hook.cleanup();
+    }
+  },
+);

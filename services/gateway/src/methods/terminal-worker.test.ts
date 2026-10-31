@@ -60,6 +60,23 @@ test('worker terminal snapshot/input/resize route to node tmux RPC by worker ref
   }
 });
 
+// A batch the phone resends after a lost reply must not be typed into the pane twice.
+test('worker terminal input writes each sequenced batch once', async () => {
+  const node = fakeNode({ 'tmux.send': { sent: true } });
+  const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%43' };
+  try {
+    await terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q1', n: 1 } });
+    await terminalWorkerInput({ worker, data: 'make deploy\r', seq: { stream: 'q1', n: 1 } });
+    await terminalWorkerInput({ worker, data: 'ls\r', seq: { stream: 'q1', n: 2 } });
+    assert.deepEqual(
+      node.sent.map((frame) => (frame.params as { text: string }).text),
+      ['make deploy\r', 'ls\r'],
+    );
+  } finally {
+    unregisterByWs(node.ws as never);
+  }
+});
+
 test('worker terminal subscribe requires pool config before PTY attach', async () => {
   const node = fakeNode({});
   const worker = { nodeId: node.nodeId, session: 's', window: '0', pane: '0', target: '%43' };

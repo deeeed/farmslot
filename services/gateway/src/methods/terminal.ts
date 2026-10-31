@@ -38,6 +38,11 @@ import {
   unsubscribePty,
   writePty,
 } from '../runtime/pty-stream.js';
+import {
+  inputAlreadyApplied,
+  rememberInputApplied,
+  runInputInOrder,
+} from '../runtime/terminal-input-sequence.js';
 import { sendKeys, snapshot, subscribe, unsubscribe } from '../runtime/tmux-stream.js';
 import {
   isWorkspaceTerminal,
@@ -375,8 +380,6 @@ async function resolveMachine(slotId: string): Promise<string | undefined> {
   return undefined;
 }
 
-const terminalInputChains = new Map<string, Promise<void>>();
-
 export async function terminalInput(
   params: TerminalInputParams,
   assertAccess?: () => Promise<void>,
@@ -386,22 +389,12 @@ export async function terminalInput(
   const key = isWorkspaceTerminal(params)
     ? workspaceTerminalKey(params.runId!)
     : `slot:${params.slotId}`;
-  const previous = terminalInputChains.get(key) ?? Promise.resolve();
-  const operation = previous.then(async () => {
+  await runInputInOrder(key, async () => {
     await assertAccess?.();
+    if (inputAlreadyApplied(key, params.seq)) return;
     await writeTerminalInput(params);
+    rememberInputApplied(key, params.seq);
   });
-  // The caller receives its own failure; later input must not inherit that rejection.
-  const settled = operation.then(
-    () => undefined,
-    () => undefined,
-  );
-  terminalInputChains.set(key, settled);
-  try {
-    await operation;
-  } finally {
-    if (terminalInputChains.get(key) === settled) terminalInputChains.delete(key);
-  }
 }
 
 async function writeTerminalInput(params: TerminalInputParams): Promise<void> {

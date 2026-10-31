@@ -176,3 +176,68 @@ test('keys still waiting are mentioned from the second failure and cleared once 
   assert.equal(withoutKeysRetryingNotice(notice), null);
   assert.equal(withoutKeysRetryingNotice('Pane gone'), 'Pane gone', 'other errors stay');
 });
+
+// With a gateway that writes each sequence number once, the phone resends on its own.
+test(
+  'a batch whose reply was lost is resent as is, and keys typed meanwhile follow it',
+  { timeout: 5_000 },
+  async () => {
+    const requests: Array<{ data: string; n: number; stream: string }> = [];
+    const holds: unknown[] = [];
+    let loseReply = true;
+    const typedDuringRetry = deferred();
+    const queue = createTerminalInputQueue(
+      async (data, _assertActive, markSent, seq) => {
+        requests.push({ data, n: seq.n, stream: seq.stream });
+        markSent();
+        if (loseReply) {
+          loseReply = false;
+          await typedDuringRetry.promise;
+          throw new Error('Request terminal.input timed out after 10000ms');
+        }
+      },
+      {
+        retryDelayMs: () => 0,
+        resendsAreSafe: () => true,
+        stream: 'q1',
+        onHold: (h) => holds.push(h),
+      },
+    );
+    const once = queue.write('echo ONCE\r');
+    const next = queue.write('pwd\r');
+    typedDuringRetry.resolve();
+    await Promise.all([once, next]);
+    assert.deepEqual(requests, [
+      { data: 'echo ONCE\r', n: 1, stream: 'q1' },
+      { data: 'echo ONCE\r', n: 1, stream: 'q1' },
+      { data: 'pwd\r', n: 2, stream: 'q1' },
+    ]);
+    assert.deepEqual(holds, [], 'nothing to resend or discard by hand');
+  },
+);
+
+test(
+  'a numbered batch that failed before it was sent is resent alone, not merged',
+  { timeout: 5_000 },
+  async () => {
+    const requests: Array<{ data: string; n: number }> = [];
+    let refuse = true;
+    const queue = createTerminalInputQueue(
+      async (data, _assertActive, _markSent, seq) => {
+        requests.push({ data, n: seq.n });
+        if (refuse) {
+          refuse = false;
+          await Promise.resolve();
+          throw new Error('Not connected');
+        }
+      },
+      { retryDelayMs: () => 0, resendsAreSafe: () => true },
+    );
+    await Promise.all([queue.write('a'), queue.write('b')]);
+    assert.deepEqual(requests, [
+      { data: 'a', n: 1 },
+      { data: 'a', n: 1 },
+      { data: 'b', n: 2 },
+    ]);
+  },
+);

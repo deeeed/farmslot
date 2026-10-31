@@ -742,3 +742,33 @@ test('a slow visual judgment remains pending until its response or disconnection
   client.disconnect();
   await interrupted;
 });
+
+// The held-connection clock reads backgroundPaused when the client reports the disconnect.
+test(
+  'a background pause is flagged before its disconnect and cleared before the reconnect',
+  { timeout: 4000 },
+  async () => {
+    const original = globalThis.WebSocket;
+    Object.assign(globalThis, { WebSocket: Socket });
+    const { GatewayClient } = await import('./gateway-client');
+    const client = new GatewayClient('ws://localhost:19778', { token: 'admin' });
+    const seen: Array<{ state: string; paused: boolean }> = [];
+    try {
+      client.connect();
+      const socket = Socket.sockets.at(-1)!;
+      socket.open();
+      socket.response(socket.sent[0].id, auth('admin', 'farm'));
+      await settle();
+      client.onConnectionChange((state) => seen.push({ state, paused: client.backgroundPaused }));
+      appStateListeners.forEach((listener) => listener('background'));
+      appStateListeners.forEach((listener) => listener('active'));
+      assert.deepEqual(seen.slice(0, 2), [
+        { state: 'disconnected', paused: true },
+        { state: 'connecting', paused: false },
+      ]);
+    } finally {
+      client.disconnect();
+      Object.assign(globalThis, { WebSocket: original });
+    }
+  },
+);

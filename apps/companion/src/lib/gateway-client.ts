@@ -150,6 +150,7 @@ export class GatewayClient {
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
+    this.inputSequenceSupported = result.capabilities?.terminalInputSequence === true;
     if (this.state === 'connected') this.setState('connected', true);
     return result;
   }
@@ -163,6 +164,11 @@ export class GatewayClient {
   private wasConnectedBeforeBackground = false;
   private lastConnectionError: string | null = null;
   private pingSupported: boolean | null = null;
+  private inputSequenceSupported = false;
+  /** The gateway writes each terminal input sequence number once, so a lost reply can be resent. */
+  get terminalInputSequenceSupported(): boolean {
+    return this.inputSequenceSupported;
+  }
   private generation = 0;
   private principal: SelfPrincipalSummary | null = null;
   private access: WorkspaceAccess = 'none';
@@ -220,6 +226,7 @@ export class GatewayClient {
     this.authRequired = false;
     const generation = this.generation;
     this.pingSupported = null;
+    this.inputSequenceSupported = false;
     this.clearAuthority();
     this.cancelReconnect();
     this.rejectAllPending('Gateway profile changed');
@@ -373,6 +380,7 @@ export class GatewayClient {
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
+    this.inputSequenceSupported = result.capabilities?.terminalInputSequence === true;
     this.backoff = 1000;
     this.lastConnectionError = null;
     this.setState('connected');
@@ -688,6 +696,7 @@ export class GatewayClient {
   private invalidateTransportCapability(): void {
     this.generation += 1;
     this.pingSupported = null;
+    this.inputSequenceSupported = false;
   }
 
   private clearAuthority(): void {

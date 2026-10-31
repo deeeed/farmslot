@@ -41,7 +41,7 @@ export function useWorkerTerminalInput(
         queueRef.current = {
           key,
           queue: createTerminalInputQueue(
-            async (batch, assertActive, markSent) => {
+            async (batch, assertActive, markSent, seq) => {
               const generation = client.connectionGeneration;
               // Rechecked after any wait for the connection or a token refresh, before sending.
               const assertCurrent = () => {
@@ -55,14 +55,22 @@ export function useWorkerTerminalInput(
                   throw new TerminalInputCancelledError();
               };
               assertCurrent();
-              await client.request(Methods.TERMINAL_WORKER_INPUT, { worker, data: batch }, 10_000, {
-                assertCurrent,
-                onSent: markSent,
-              });
+              // A gateway that writes each number once makes a resend after a lost reply safe.
+              const sequence = client.terminalInputSequenceSupported ? { seq } : {};
+              await client.request(
+                Methods.TERMINAL_WORKER_INPUT,
+                { worker, data: batch, ...sequence },
+                10_000,
+                {
+                  assertCurrent,
+                  onSent: markSent,
+                },
+              );
             },
             {
               onRetry: (error, attempt) => eventsRef.current.onRetry?.(error, attempt),
               onHold: (held) => eventsRef.current.onHold?.(held),
+              resendsAreSafe: () => client.terminalInputSequenceSupported,
             },
           ),
         };
