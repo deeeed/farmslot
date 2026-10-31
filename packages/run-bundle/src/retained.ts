@@ -356,11 +356,38 @@ async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<numb
   return walk(root);
 }
 
+/**
+ * A published bundle charges its recorded bytes. Every change to a bundle directory
+ * happens under the store lock and records its new size there, so admission reads
+ * one small file per bundle instead of stat-ing every payload in the store.
+ */
+function bundleUsagePath(store: RunBundleStore, digest: string): string {
+  return path.join(store.root, 'usage', `${digest}.json`);
+}
+
+async function recordBundleBytes(store: RunBundleStore, digest: string, bytes: number) {
+  await atomicJson(bundleUsagePath(store, digest), { bytes });
+}
+
+async function bundleBytes(store: RunBundleStore, digest: string): Promise<number> {
+  const raw = await readOptional(bundleUsagePath(store, digest));
+  const bytes: unknown = raw && (JSON.parse(raw) as { bytes?: unknown }).bytes;
+  if (typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes >= 0) return bytes;
+  // Published before the record existed: measured once, then kept current.
+  const measured = await physicalBytes(bundleDirectory(store, digest));
+  await recordBundleBytes(store, digest, measured);
+  return measured;
+}
+
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
 async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
   let bytes = 0;
   for (const entry of await readdir(store.root, { withFileTypes: true })) {
     const file = path.join(store.root, entry.name);
+    if (entry.name === 'sha256' && entry.isDirectory()) {
+      for (const digest of await readdir(file)) bytes += await bundleBytes(store, digest);
+      continue;
+    }
     if (entry.name !== 'staging' || !entry.isDirectory()) {
       bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
       continue;
@@ -641,7 +668,8 @@ async function completeRetainedPayloads(
       if (!pending.length) return selected;
       let storeAvailable =
         policy.maxStoreBytes - (await chargedCaptureBytes(request, acquisitionSize));
-      let bundleAvailable = policy.maxBundleBytes - (await physicalBytes(directory));
+      let bundleAvailable =
+        policy.maxBundleBytes - (await bundleBytes(request.store, ref.bundleDigest));
       for (const [key, meta] of pending) {
         const relative = key.slice(prefix.length);
         const reserve = isRunBundleMedia(relative) ? policy.metadataReserveBytes : 0;
@@ -710,6 +738,11 @@ async function completeRetainedPayloads(
             await mkdir(path.dirname(target), { recursive: true });
             await rename(temp, target);
             await syncPath(path.dirname(target));
+            await recordBundleBytes(
+              request.store,
+              ref.bundleDigest,
+              (await bundleBytes(request.store, ref.bundleDigest)) + meta.bytes,
+            );
             restored.add(key);
           }
           await consumeReservation(meta.bytes);
@@ -984,8 +1017,9 @@ export async function collectRunBundleGarbage(
       const directory = bundleDirectory(store, digest);
       if (pinned.has(digest)) continue;
       if (!referenced.has(digest)) {
-        reclaimedBytes += await physicalBytes(directory);
+        reclaimedBytes += await bundleBytes(store, digest);
         await rm(directory, { recursive: true });
+        await rm(bundleUsagePath(store, digest), { force: true });
         // A reclaimed payload cannot satisfy its old retry intent. Future explicit
         // acquisition of these bytes starts a new capture instead of a lost stage.
         for (const intent of committedIntents.get(digest) ?? []) await rm(intent);
@@ -1007,6 +1041,7 @@ export async function collectRunBundleGarbage(
         }
       }
       if (removed.length) {
+        await recordBundleBytes(store, digest, await physicalBytes(directory));
         const record = path.join(store.root, 'availability', `${digest}.json`);
         const prior = await readOptional(record);
         const availability: { revision: number; prunedPaths: string[] } = prior
@@ -1092,6 +1127,7 @@ export async function materializeRunBundle(
         const raw = await readFile(path.join(stage, 'manifest.json'), 'utf8');
         if (sha256Text(raw) !== intent.bundleDigest)
           throw new Error('Interrupted retained capture is corrupt.');
+        await recordBundleBytes(store, intent.bundleDigest, await physicalBytes(stage));
         await rename(stage, destination);
         await syncPath(path.dirname(destination));
       }
@@ -1242,6 +1278,7 @@ export async function materializeRunBundle(
       // Persist identity before publishing, so a crash in the reference commit reuses it.
       intent.bundleDigest = bundleDigest;
       await atomicJson(intentPath, intent);
+      await recordBundleBytes(store, bundleDigest, await physicalBytes(stage));
       await rename(stage, destination);
       await syncPath(path.dirname(destination));
       const ref: RunArtifactBundleRef = {

@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   symlink,
   utimes,
   writeFile,
@@ -483,6 +484,43 @@ test('metadata admission refuses exhausted capacity before work and releases the
   await assert.rejects(reserveRunBundleMetadata(f.store, second, policy), /capacity is exhausted/);
   await materializeRunBundle(f.request);
   await reserveRunBundleMetadata(f.store, second, policy);
+});
+
+async function treeBytes(directory: string): Promise<number> {
+  let bytes = 0;
+  for (const entry of await readdir(directory, { withFileTypes: true, recursive: true }))
+    if (entry.isFile()) bytes += (await stat(path.join(entry.parentPath, entry.name))).size;
+  return bytes;
+}
+
+test('admission charges a bundle its recorded bytes and measures only a bundle without a record', async (t) => {
+  const f = await fixture(t);
+  const result = await materializeRunBundle(f.request);
+  const bundle = path.join(f.store.root, 'sha256', result.ref.bundleDigest);
+  const usage = path.join(f.store.root, 'usage', `${result.ref.bundleDigest}.json`);
+  const recorded = async () =>
+    (JSON.parse(await readFile(usage, 'utf8')) as { bytes: number }).bytes;
+  // Publish and the media repair that followed both kept the record exact.
+  assert.equal(await recorded(), await treeBytes(bundle));
+  // Admission reads the record instead of walking payloads, so bytes nothing recorded stay unseen.
+  await writeFile(path.join(bundle, 'unrecorded.bin'), Buffer.alloc(60_000));
+  const policy = {
+    maxBundleBytes: 64_000,
+    maxStoreBytes: 64_000,
+    metadataReserveBytes: 4_000,
+    mediaRetentionDays: 30,
+  };
+  const admitted = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee';
+  await reserveRunBundleMetadata(f.store, admitted, policy);
+  // Each reservation claims the whole metadata reserve; release it as a capture would.
+  await rm(path.join(f.store.root, 'reservations', `${admitted}.json`));
+  // A bundle without a record, e.g. one published before records existed, is measured once.
+  await rm(usage);
+  await assert.rejects(
+    reserveRunBundleMetadata(f.store, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee', policy),
+    /capacity is exhausted/,
+  );
+  assert.equal(await recorded(), await treeBytes(bundle));
 });
 
 test('a dead store lease is recovered and concurrent retries publish the same immutable capture', async (t) => {
