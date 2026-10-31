@@ -453,7 +453,7 @@ admission, capture and hourly archival. No worker protocol changes.
 
 ## Amendment 4: 2026-11-01 run-end episode capture
 
-**Status:** Accepted, lead-approved amendment (2026-11-01).
+**Status:** Accepted, lead-approved amendment (2026-11-01). Implementation: [#1663](https://github.com/deeeed/farmslot/pull/1663).
 **Specification:** [Run episodes](../reference/run-episodes.md).
 
 ### Decision
