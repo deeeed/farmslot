@@ -192,6 +192,7 @@ export const NativeSessionEventTypes = {
   APPROVAL_REQUESTED: 'approval.requested',
   APPROVAL_RESOLVED: 'approval.resolved',
   QUESTION_REQUESTED: 'question.requested',
+  PLAN_UPDATED: 'plan.updated',
   TURN_COMPLETED: 'turn.completed',
   SESSION_CLOSED: 'session.closed',
   ERROR: 'error',
@@ -211,6 +212,20 @@ export interface NativeSessionTool {
   /** Files the tool reads, edits or searches. */
   paths?: string[];
 }
+
+export interface NativePlanStep {
+  text: string;
+  status: 'pending' | 'in-progress' | 'completed';
+}
+/**
+ * A runner's plan, normalized by its adapter. Each `plan.updated` carries the whole plan and
+ * replaces the earlier plan of the same kind in that turn.
+ */
+export type NativeSessionPlan =
+  /** The runner's working steps, with an optional note. */
+  | { kind: 'checklist'; steps: NativePlanStep[]; text?: string }
+  /** A plan proposed before acting, as markdown. */
+  | { kind: 'proposal'; text: string };
 
 export interface NativeSessionEvent {
   sessionId: string;
@@ -242,6 +257,8 @@ export interface NativeSessionEvent {
    * runner resolved the request without one, so its decision is unknown.
    */
   response?: NativeSessionResponse;
+  /** On `plan.updated`. */
+  plan?: NativeSessionPlan;
   status?: 'completed' | 'failed' | 'interrupted';
   /** Only a schema-bound completed provider turn may supply this value. */
   structuredResult?: NativeStructuredResult;

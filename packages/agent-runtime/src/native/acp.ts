@@ -4,6 +4,7 @@ import type { NativeSessionTool, NativeToolKind } from '@farmslot/protocol';
 
 import { type AcpPendingRequest, acpPermission } from './acp-requests.js';
 import { type AcpObject, acpObject, AcpRpc, acpString } from './acp-rpc.js';
+import { nativeChecklist } from './plan.js';
 import type { NativeAdapter, NativeAdapterOptions, NativeEventInput } from './types.js';
 
 const ACP_TOOL_KINDS: Record<string, NativeToolKind> = {
@@ -160,6 +161,11 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
             const content = acpObject(update.content);
             if (kind === 'agent_message_chunk' && content.type === 'text')
               publish({ type: 'text.delta', text: acpString(content.text) });
+          }
+          if (kind === 'plan') {
+            accept();
+            // Each update is the agent's whole plan; entry priority is not carried.
+            publish({ type: 'plan.updated', plan: nativeChecklist(update.entries, 'content') });
           }
           if (kind === 'tool_call' || kind === 'tool_call_update') {
             accept();

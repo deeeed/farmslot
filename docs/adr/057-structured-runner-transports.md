@@ -321,7 +321,7 @@ Hosts keep their loaded code until stopped, so a session started on an older hos
 
 ## Amendment 9: queued messages, steering, plans and per-turn changes, 2026-10-31
 
-**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in #1658; part 3 (steer) implemented in this change; plans and per-turn changes follow in their own changes.
+**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in #1658; part 2 (plan updates: checklists and proposed plans) implemented in #1668; part 3 (steer) implemented in this change; per-turn changes and Implement follow in their own changes.
 
 ### Decision
 
@@ -348,6 +348,21 @@ Codex declares `steer` and calls `turn/steer` with the turn as `expectedTurnId` 
 
 Steering reaches the host as its own method (`steer`, and `native.worker.steer` under the worker's lease), so a host started before this change refuses it as an unknown method instead of dropping the field and queueing the message. A pinned worker's steer passes the same gateway fence as its other messages. On a run that records worker messages for acceptance the gateway refuses it, since that ledger records an instruction for the next turn, and withholds `steer` from that worker's read.
 
+**Plan updates.** A `plan.updated` event carries a `plan` of one of two kinds:
+
+- `kind: 'checklist'`: the runner's working steps, `steps: [{ text, status: 'pending' | 'in-progress' | 'completed' }]`, with an optional note in `text`.
+- `kind: 'proposal'`: a plan proposed before acting, as markdown in `text`.
+
+Each event carries the whole plan and replaces the earlier plan of the same kind in that turn. Adapters map:
+
+- Codex `turn/plan/updated` to a checklist (its `explanation` is the note). The app-server leaves Codex's plan tool off unless the thread enables it, so the adapter starts every thread with `tools.update_plan.enabled`: on 0.166 a three-step prompt sent no plan updates without it and four with it. The tool only reports progress;
+- a completed Codex `plan` item to a proposal; its streamed deltas are ignored, since they need not match the final text;
+- an ACP `plan` update to a checklist; entry `priority` is dropped.
+
+Claude's TodoWrite and ExitPlanMode come later, after a live check of what Claude's headless mode sends.
+
+A checklist is one timeline entry per turn and kind, at the place and key of its first update, holding the latest plan. It shows its steps while its turn runs and folds to its progress ("3 of 5 steps") once the turn ends, unless the reader watched it run. A proposal is a card: markdown, collapsed when long, with a copy action. Implement (a mode switch) comes with its own change.
+
 ### Rationale and consequences
 
 A queued message could be dropped only by closing the session. The queue lives in the host, so removal needs no runner support.
@@ -356,8 +371,12 @@ Hosts keep their loaded code until stopped. A session on an older host reports n
 
 Waiting for the turn to end delayed a correction until the work it corrected was done. Steering lets the reader adjust a running turn. Older clients never send `delivery`, and a client never offers Steer without the capability.
 
+Codex and ACP runners already sent their plans; adapters dropped them, so a reader saw only the prose around them. A plan is shown, never acted on, so it needs no capability: an older host sends no `plan.updated`, and older clients skip the event. Cached histories saved before this change dropped plan events, so the history projection number is bumped and they are read again once.
+
 ### Public surface
 
 `native.session.cancel` (`NativeSessionCancelParams`, `NativeSessionCancelResult`), the receipt outcome `cancelled`, `NativeSessionCapabilities.cancelQueued` and the client-cache predicate `nativeMessageCancelable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `cancelCommand` and `native.worker.cancelCommand`, so it needs a release; native hosts started after it support removal. The gateway adds the method to its worker input fence, authorization map and native method lists, and withholds the capability where it refuses removal; Companion adds it to its workspace method list. No CLI flag or harness change. The [agent-runtime specification](../reference/agent-runtime.md#native-session-host) defines the boundary.
 
 Steer: `NativeSessionSendParams.delivery`, `NativeSessionCapabilities.steer`, the receipt flag `steered` and the client-cache predicate `nativeSteerAvailable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `steer` and `native.worker.steer` and the Codex `turn/steer` call, so it needs a release; sessions started on a host after it can steer. The gateway routes a worker steer through its input fence and withholds the capability where it refuses it. No new gateway method.
+
+Plan updates: the event type `plan.updated` with `NativeSessionPlan` and `NativePlanStep`, the `plan` timeline entry, `nativePlanText` and `nativePlanOpen` in the client cache, and the history projection bump, in `@farmslot/protocol`. `@farmslot/agent-runtime` maps the Codex and ACP plans and needs a release; native hosts started after it send plans. The gateway passes events through unchanged.

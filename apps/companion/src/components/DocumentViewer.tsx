@@ -23,6 +23,8 @@ import { formatDocument } from '../lib/document-format';
 import { isolatedReportHtml, REPORT_DOCUMENT_BASE, reportNavigation } from '../lib/document-html';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
+import { FormattedDocument } from './FormattedDocument';
+
 export interface DocumentHtmlLinks {
   /** A report-relative link to the retained artifact path it names, or null. */
   resolveArtifact: (relativeHref: string) => string | null;
@@ -49,7 +51,7 @@ export function DocumentViewer({
 }) {
   const insets = useSafeAreaInsets();
   const recipeHud = useContext(RecipeHudContext);
-  const { width, height } = useWindowDimensions();
+  const { height } = useWindowDimensions();
   const topInset = Math.max(
     insets.top,
     Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight ?? 0),
@@ -58,7 +60,6 @@ export function DocumentViewer({
   const formatted = html ? [] : formatDocument(title, body);
   const isHtml = Boolean(html);
   const page = useMemo(() => (isHtml ? isolatedReportHtml(body) : ''), [isHtml, body]);
-  const minCodeWidth = Math.max(320, width - spacing.xl * 2);
   if (!visible) return null;
   return (
     <Modal
@@ -131,37 +132,8 @@ export function DocumentViewer({
               }}
               style={[styles.htmlPage, { height: Math.round(height * 0.7) }]}
             />
-          ) : formatted.length > 0 ? (
-            formatted.map((block, index) =>
-              block.kind === 'separator' ? (
-                <View key={`${block.kind}-${index}`} style={styles.separator} />
-              ) : block.kind === 'code' || block.kind === 'json' || block.kind === 'table' ? (
-                <ScrollView
-                  key={`${block.kind}-${index}`}
-                  horizontal
-                  showsHorizontalScrollIndicator
-                  style={styles.codeScroller}
-                  contentContainerStyle={styles.codeScrollerContent}
-                >
-                  <Text
-                    selectable
-                    style={[styles.documentText, styles[block.kind], { minWidth: minCodeWidth }]}
-                  >
-                    {block.text}
-                  </Text>
-                </ScrollView>
-              ) : (
-                <Text
-                  key={`${block.kind}-${index}`}
-                  selectable
-                  style={[styles.documentText, styles[block.kind]]}
-                >
-                  {block.text}
-                </Text>
-              ),
-            )
           ) : (
-            <Text style={styles.documentText}>No document content</Text>
+            <FormattedDocument blocks={formatted} empty="No document content" />
           )}
           <Pressable
             testID="companion-document-end"
@@ -222,69 +194,6 @@ const styles = StyleSheet.create({
   bodyContent: {
     padding: spacing.xl,
     paddingBottom: spacing.xxxl,
-  },
-  documentText: {
-    color: colors.textPrimary,
-    fontSize: fonts.sizeSm,
-    lineHeight: 20,
-    marginBottom: spacing.sm,
-  },
-  paragraph: {
-    color: colors.textPrimary,
-  },
-  heading: {
-    color: colors.accent,
-    fontSize: fonts.sizeMd,
-    fontWeight: '900',
-    marginTop: spacing.lg,
-  },
-  bullet: {
-    color: colors.textSecondary,
-    paddingLeft: spacing.md,
-  },
-  numbered: {
-    color: colors.textSecondary,
-    paddingLeft: spacing.md,
-  },
-  quote: {
-    borderLeftColor: colors.accent + '66',
-    borderLeftWidth: 3,
-    color: colors.textSecondary,
-    paddingLeft: spacing.md,
-  },
-  separator: {
-    backgroundColor: colors.bgCard,
-    height: 1,
-    marginBottom: spacing.md,
-    marginTop: spacing.sm,
-  },
-  table: {
-    color: colors.textPrimary,
-    fontFamily: 'Menlo',
-    backgroundColor: colors.bgInput,
-    borderRadius: radii.md,
-    padding: spacing.md,
-  },
-  code: {
-    color: colors.textPrimary,
-    fontFamily: 'Menlo',
-    backgroundColor: colors.bgInput,
-    borderRadius: radii.md,
-    padding: spacing.md,
-  },
-  json: {
-    color: colors.textPrimary,
-    fontFamily: 'Menlo',
-    backgroundColor: colors.bgInput,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    lineHeight: 18,
-  },
-  codeScroller: {
-    marginBottom: spacing.sm,
-  },
-  codeScrollerContent: {
-    paddingRight: spacing.lg,
   },
   footerCloseButton: {
     alignItems: 'center',

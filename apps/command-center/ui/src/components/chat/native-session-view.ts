@@ -41,6 +41,9 @@ import {
   nativeMessageShown,
   nativeMessageToggleLabel,
   nativeObservationQuery,
+  nativePlanCopyLabel,
+  nativePlanOpen,
+  nativePlanStepMark,
   nativeSendLabel,
   nativeSteerAvailable,
   nativeTimeline,
@@ -69,6 +72,7 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from '../../resource-cache.js';
+import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import { buildHash, hashParams, parseHashRoute } from '../../utils/url-state.js';
 import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-controller.js';
@@ -196,6 +200,8 @@ export class NativeSessionView extends LitElement {
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
   /** Long messages the reader expanded, by command, so a send keeps its state once confirmed. */
   @state() private expandedMessages = new Set<string>();
+  /** The proposed plan last copied, by entry key, and whether the copy worked. */
+  @state() private planCopy?: { key: number; copied: boolean };
   @state() private follow: NativeFollow = NATIVE_FOLLOW_LATEST;
   /** The selection the timeline DOM was last rendered for. */
   private renderedRevision = -1;
@@ -437,8 +443,18 @@ export class NativeSessionView extends LitElement {
       : nothing;
   }
 
-  private renderEntry(entry: NativeTimelineEntry, session: NativeSessionInfo, hidden = false) {
-    return html`<article class=${entry.kind} data-sequence=${entry.key} ?hidden=${hidden}>
+  private renderEntry(
+    entry: NativeTimelineEntry,
+    session: NativeSessionInfo,
+    hidden = false,
+    planOpen = true,
+  ) {
+    const proposal = entry.event.plan?.kind === 'proposal';
+    return html`<article
+      class="${entry.kind}${proposal ? ' proposal' : ''}"
+      data-sequence=${entry.key}
+      ?hidden=${hidden}
+    >
       ${entry.kind === 'tool'
         ? html`<details>
             <summary>
@@ -449,36 +465,86 @@ export class NativeSessionView extends LitElement {
             </summary>
             ${this.renderToolBody(entry.event.tool)}
           </details>`
-        : html`<span class="meta"
-              >${entry.kind === 'user'
-                ? 'You'
-                : entry.kind === 'assistant'
-                  ? session.runner
-                  : entry.event.at}</span
-            >
-            <div class="text">
-              ${entry.kind === 'assistant'
-                ? html`<chat-message
-                    .message=${{
-                      id: `${entry.event.sessionId}:${entry.key}`,
-                      role: 'assistant',
-                      content: entry.text,
-                      timestamp: entry.event.at,
-                    } satisfies ChatMessage}
-                  ></chat-message>`
-                : this.renderMessageBody(
-                    entry.text,
-                    nativeEntryPreview(entry),
-                    entry.event.commandId ?? String(entry.key),
-                  )}
-            </div>
-            ${entry.event.type === 'error' && entry.event.data
-              ? html`<details>
-                  <summary>Error details</summary>
-                  <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
-                </details>`
-              : nothing}`}
+        : entry.kind === 'plan'
+          ? this.renderPlan(entry, planOpen)
+          : html`<span class="meta"
+                >${entry.kind === 'user'
+                  ? 'You'
+                  : entry.kind === 'assistant'
+                    ? session.runner
+                    : entry.event.at}</span
+              >
+              <div class="text">
+                ${entry.kind === 'assistant'
+                  ? this.renderMarkdown(entry, entry.text)
+                  : this.renderMessageBody(
+                      entry.text,
+                      nativeEntryPreview(entry),
+                      entry.event.commandId ?? String(entry.key),
+                    )}
+              </div>
+              ${entry.event.type === 'error' && entry.event.data
+                ? html`<details>
+                    <summary>Error details</summary>
+                    <pre>${JSON.stringify(entry.event.data, null, 2)}</pre>
+                  </details>`
+                : nothing}`}
     </article>`;
+  }
+
+  private renderMarkdown(entry: NativeTimelineEntry, content: string) {
+    return html`<chat-message
+      .message=${{
+        id: `${entry.event.sessionId}:${entry.key}`,
+        role: 'assistant',
+        content,
+        timestamp: entry.event.at,
+      } satisfies ChatMessage}
+    ></chat-message>`;
+  }
+
+  /**
+   * A checklist shows its steps while its turn runs, then folds to its progress unless the reader
+   * watched it run. A proposed plan is a card: markdown, collapsed when long, with a copy action.
+   */
+  private renderPlan(entry: NativeTimelineEntry, open: boolean) {
+    const plan = entry.event.plan!;
+    if (plan.kind === 'checklist')
+      return html`<details ?open=${open}>
+        <summary>Plan · ${entry.text}</summary>
+        ${plan.text
+          ? html`<div class="text"><span class="body">${plan.text}</span></div>`
+          : nothing}
+        <ol class="plan-steps">
+          ${plan.steps.map(
+            (step) =>
+              html`<li class=${step.status} data-mark=${nativePlanStepMark(step.status)}>
+                ${step.text}
+              </li>`,
+          )}
+        </ol>
+      </details>`;
+    const copied = this.planCopy?.key === entry.key ? this.planCopy.copied : undefined;
+    return html`<span class="meta">Proposed plan</span>
+      <div class="text">
+        ${this.renderMessageBody(
+          entry.text,
+          nativeEntryPreview(entry),
+          `plan:${entry.key}`,
+          (text) => this.renderMarkdown(entry, text),
+        )}
+      </div>
+      <button
+        class="plan-copy"
+        data-testid="native-plan-copy"
+        @click=${() =>
+          copyTextToClipboard(plan.text).then(
+            () => (this.planCopy = { key: entry.key, copied: true }),
+            () => (this.planCopy = { key: entry.key, copied: false }),
+          )}
+      >
+        ${nativePlanCopyLabel(copied)}
+      </button>`;
   }
 
   /** A command shows what it ran and its last lines, its raw input and output one tap away. */
@@ -503,10 +569,16 @@ ${JSON.stringify(
       : raw;
   }
 
-  private renderMessageBody(text: string, preview: NativeMessagePreview | undefined, key: string) {
-    if (!preview) return html`<span class="body">${text}</span>`;
+  /** `full` renders the whole text; a collapsed preview is always plain text. */
+  private renderMessageBody(
+    text: string,
+    preview: NativeMessagePreview | undefined,
+    key: string,
+    full: (text: string) => unknown = (body) => html`<span class="body">${body}</span>`,
+  ) {
+    if (!preview) return full(text);
     const expanded = this.expandedMessages.has(key);
-    return html`<span class="body">${expanded ? text : preview.text}</span>
+    return html`${expanded ? full(text) : html`<span class="body">${preview.text}</span>`}
       <button
         class="message-toggle"
         data-testid="native-message-toggle"
@@ -910,6 +982,7 @@ ${JSON.stringify(
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
     this.expandedMessages = new Set();
+    this.planCopy = undefined;
     this.watchedTools = new Set();
     this.foldOpen = new Map();
     this.follow = NATIVE_FOLLOW_LATEST;
@@ -1436,6 +1509,7 @@ ${JSON.stringify(
                                 row.entry,
                                 session,
                                 row.fold !== undefined && !this.foldIsOpen(row.fold),
+                                nativePlanOpen(row, this.watchedTools),
                               ),
                       ),
                     )}

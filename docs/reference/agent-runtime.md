@@ -351,6 +351,16 @@ item to `other`. ACP maps the tool call's `kind`: `execute` to `command` (with
 `locations` as paths. An ACP update that omits them keeps the call's earlier values, and a
 call that never sends a kind has none.
 
+A `plan.updated` event carries the runner's whole plan, which replaces its earlier plan of
+the same kind in that turn
+([ADR-057 Amendment 9](../adr/057-structured-runner-transports.md#amendment-9-queued-messages-steering-plans-and-per-turn-changes-2026-10-31)):
+a `checklist` of steps (`pending`, `in-progress` or `completed`, with an optional note) or a
+`proposal` in markdown. Codex maps `turn/plan/updated` to a checklist (its `explanation` is
+the note) and a completed `plan` item to a proposal, ignoring the item's streamed deltas; it
+starts each thread with `tools.update_plan.enabled`, without which the app-server sends no
+plan updates. ACP
+maps a `plan` update to a checklist, dropping entry `priority`. Claude sends no plans yet.
+
 After runner or host failure, reads expose failure and recovery instructions.
 Explicit `create` with the recorded `resumeSessionId` retains the Farmslot session
 ID and command history, and starts a new generation only after confirmed cleanup
