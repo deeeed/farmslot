@@ -662,6 +662,48 @@ test('a pending gate presents the projected ledger and keeps the engine verdict'
   assert.equal(JSON.stringify(f.input.claims), engineBytes, 'engine claims stay unchanged');
 });
 
+// Retain another recorded execution of the fixture's recipe beside the selected one,
+// with its own run id, as a rerun or the pre-implementation baseline would be.
+async function retainAttempt(
+  f: Awaited<ReturnType<typeof fixture>>,
+  relative: string,
+  recipeRunId: string,
+  status: 'pass' | 'fail',
+) {
+  const root = path.dirname(f.run.taskFile!);
+  const directory = path.join(root, 'artifacts', relative);
+  await cp(f.directory, directory, { recursive: true });
+  const original = f.input.claims!.recipeRunId;
+  for (const file of [
+    'summary.json',
+    'trace.json',
+    'recipe-invocation.json',
+    'acceptance-status.json',
+  ]) {
+    const bytes = await readFile(path.join(directory, file), 'utf8');
+    await writeFile(path.join(directory, file), bytes.replaceAll(original, recipeRunId));
+  }
+  const legacy = (await readRecordedEvidencePackage(directory)).input;
+  const writer = new JsonArtifactWriter(directory);
+  const manifest: { artifacts: RecipeArtifactManifestEntry[] } = JSON.parse(
+    await readFile(path.join(directory, 'artifact-manifest.json'), 'utf8'),
+  );
+  for (const artifact of manifest.artifacts) {
+    if (artifact.path === 'evidence-manifest.json') continue;
+    const bytes = await readFile(path.join(directory, artifact.path));
+    writer.register({ ...artifact, sha256: createHash('sha256').update(bytes).digest('hex') });
+  }
+  await writer.writeEvidenceManifest({ ...legacy.claims!, recipeRunId });
+  await writer.write(status);
+  // The runner binds the summary to its invocation; this copy has its own run id.
+  const summaryPath = path.join(directory, 'summary.json');
+  const summary = JSON.parse(await readFile(summaryPath, 'utf8')) as Record<string, unknown>;
+  summary.invocationDigest = digestRecipeDocument(
+    JSON.parse(await readFile(path.join(directory, 'recipe-invocation.json'), 'utf8')),
+  );
+  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
+}
+
 test('an artifact-only output review judges only the selected attempt, not the retained baseline', async (t) => {
   // Stability runs 29ce2ab4 and 223cc32f: COMPLETE also read the pre-implementation
   // baseline attempt, which fails by design, and refused the passing selected run.
@@ -669,41 +711,8 @@ test('an artifact-only output review judges only the selected attempt, not the r
   const root = path.dirname(f.run.taskFile!);
   // Retained attempts beside the selected one: the failing pre-implementation
   // baseline, and an earlier passing attempt the worker did not select.
-  const retain = async (relative: string, recipeRunId: string, status: 'pass' | 'fail') => {
-    const directory = path.join(root, 'artifacts', relative);
-    await cp(f.directory, directory, { recursive: true });
-    const original = f.input.claims!.recipeRunId;
-    for (const file of [
-      'summary.json',
-      'trace.json',
-      'recipe-invocation.json',
-      'acceptance-status.json',
-    ]) {
-      const bytes = await readFile(path.join(directory, file), 'utf8');
-      await writeFile(path.join(directory, file), bytes.replaceAll(original, recipeRunId));
-    }
-    const legacy = (await readRecordedEvidencePackage(directory)).input;
-    const writer = new JsonArtifactWriter(directory);
-    const manifest: { artifacts: RecipeArtifactManifestEntry[] } = JSON.parse(
-      await readFile(path.join(directory, 'artifact-manifest.json'), 'utf8'),
-    );
-    for (const artifact of manifest.artifacts) {
-      if (artifact.path === 'evidence-manifest.json') continue;
-      const bytes = await readFile(path.join(directory, artifact.path));
-      writer.register({ ...artifact, sha256: createHash('sha256').update(bytes).digest('hex') });
-    }
-    await writer.writeEvidenceManifest({ ...legacy.claims!, recipeRunId });
-    await writer.write(status);
-    // The runner binds the summary to its invocation; this copy has its own run id.
-    const summaryPath = path.join(directory, 'summary.json');
-    const summary = JSON.parse(await readFile(summaryPath, 'utf8')) as Record<string, unknown>;
-    summary.invocationDigest = digestRecipeDocument(
-      JSON.parse(await readFile(path.join(directory, 'recipe-invocation.json'), 'utf8')),
-    );
-    await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
-  };
-  await retain('recipe-baseline-run', 'baseline-run', 'fail');
-  await retain('recipe-runs/earlier', 'earlier-run', 'pass');
+  await retainAttempt(f, 'recipe-baseline-run', 'baseline-run', 'fail');
+  await retainAttempt(f, 'recipe-runs/earlier', 'earlier-run', 'pass');
   await writeFile(path.join(root, 'artifacts/report.html'), '<h1>Validation passed</h1>');
   updateRun(f.run.id, {
     status: 'done',
@@ -736,6 +745,54 @@ test('an artifact-only output review judges only the selected attempt, not the r
       f.dependencies,
     ),
     /Review the selected execution/,
+  );
+});
+
+test('an output review re-run after send back binds only the newly selected attempt', async (t) => {
+  // Send back: the worker reruns, the pointer moves, and the earlier judgment stays
+  // retained. The output review must bind what the gate reads, or COMPLETE holds.
+  const f = await fixture(t);
+  const root = path.dirname(f.run.taskFile!);
+  await retainAttempt(f, 'recipe-runs/rerun', 'rerun', 'pass');
+  await writeFile(path.join(root, 'artifacts/report.html'), '<h1>Validation passed</h1>');
+  updateRun(f.run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    completionPolicy: 'artifact-only',
+    lane: 'validation',
+    decisions: [],
+    metrics: { ...f.run.metrics, outcome: 'success' },
+    steps: [{ name: 'complete', status: 'done' }],
+  });
+  const judge = async (recipeRunId: string) => {
+    await captureRunOutput(f.run.id, false);
+    const captured = getRun(f.run.id)!;
+    const review = captured.decisions.find(
+      ({ payload, resolvedAt }) => payload?.kind === 'output-review' && !resolvedAt,
+    )!;
+    const source = await readVisualReviewSource(captured, review.id);
+    const result = await runReviewVisualClaim(
+      {
+        ...f.params,
+        decisionId: review.id,
+        snapshotIdentity: source.snapshotIdentity,
+        recipeRunId,
+      },
+      () => {},
+      f.dependencies,
+    );
+    return { review, receipt: result.receipt };
+  };
+  await judge(f.input.claims!.recipeRunId);
+  await writeFile(
+    path.join(root, 'artifacts/latest-valid-recipe-run.json'),
+    JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/rerun' }),
+  );
+  const { review, receipt } = await judge('rerun');
+  const payload = getRun(f.run.id)!.decisions.find(({ id }) => id === review.id)?.payload;
+  assert.deepEqual(
+    payload?.kind === 'output-review' ? payload.visualJudgmentReceiptIds : undefined,
+    [receipt.id],
   );
 });
 

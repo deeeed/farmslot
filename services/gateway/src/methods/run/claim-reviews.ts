@@ -121,16 +121,18 @@ export async function runReviewVisualClaim(
   const input = matchingSources[0]!;
   if (validateRecordedEvidencePackage(input).status !== 'valid')
     throw new Error('The selected recorded evidence failed integrity validation.');
-  // An output review completes on the worker's selected attempt only. A receipt on
-  // a retained earlier attempt would never count there, and nothing could clear it.
+  // An output review completes on the worker's selected attempt only, read with the
+  // gate's own reader. Judge and bind receipts there, never on a retained earlier one.
   const decision = run.decisions.find(({ id }) => id === source.decisionId);
-  if (
+  const gateInputs =
     decision?.payload?.kind === 'output-review' &&
     run.flowType !== 'qa' &&
-    runOutputReviewEnabled(run) &&
-    !(await readGateRecordedEvidence(run, null)).some(
-      (selected) => selected.claims?.recipeRunId === params.recipeRunId,
-    )
+    runOutputReviewEnabled(run)
+      ? await readGateRecordedEvidence(run, null)
+      : undefined;
+  if (
+    gateInputs &&
+    !gateInputs.some((selected) => selected.claims?.recipeRunId === params.recipeRunId)
   )
     throw new Error(
       'Review the selected execution. Earlier retained attempts do not count toward completion.',
@@ -227,7 +229,7 @@ export async function runReviewVisualClaim(
     (snapshot) =>
       appliedVisualJudgmentReceiptIds(
         snapshot,
-        source.sources.map(({ input: value }) => value),
+        gateInputs ?? source.sources.map(({ input: value }) => value),
         policy,
       ),
   );
