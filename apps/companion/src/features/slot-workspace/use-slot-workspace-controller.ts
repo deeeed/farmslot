@@ -37,6 +37,7 @@ import {
 } from '../../lib/artifact-url';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache, getResourceWorkspaceKey } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { summarizeSlotFamilyContext } from '../../lib/slot-family-context';
 import {
   hasRunWorkspaceDiff,
@@ -72,6 +73,7 @@ import {
 } from '../../lib/workspace-sticky-nav';
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
+import { heldConnectionCurrent } from '../../store/held-connection';
 import { routeParamString } from '../workspace-shared/route-params';
 
 import type {
@@ -153,8 +155,8 @@ export function useSlotWorkspaceController() {
   }, [currentRun?.id, currentRun?.slotId, currentRun?.reviewWorkspace?.workspaceId]);
   const progressObservation = useResourceQuery(progressQuery);
   const taskProgress = progressObservation.data ?? null;
-  const taskProgressError = progressObservation.error
-    ? `Task progress unavailable: ${progressObservation.error.message}`
+  const taskProgressError = readErrorMessage(progressObservation, heldConnectionCurrent())
+    ? `Task progress unavailable: ${readErrorMessage(progressObservation, heldConnectionCurrent())}`
     : null;
   const recipeQuery = useMemo(
     () =>

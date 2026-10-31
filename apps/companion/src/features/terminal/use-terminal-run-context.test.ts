@@ -23,6 +23,9 @@ import type { useTerminalRunContext } from './use-terminal-run-context';
 
 type Context = ReturnType<typeof useTerminalRunContext>;
 
+/** Connected, or still inside the shared reconnect grace. */
+const held = { current: true };
+
 test('terminal commands use current canonical inputs without rereads while the stream survives invalidation', async () => {
   const transport = new ResourceCacheConformanceTransport({ gatewayUrl: 'ws://terminal.invalid/' });
   transport.setConnection({ connected: true, id: 1 });
@@ -90,7 +93,7 @@ test('terminal commands use current canonical inputs without rereads while the s
       '../../lib/run-collections': {
         assertNativeRunReady(runId: string, expected?: Run) {
           const state = cache.read(resourceQuery<RunGetResult>(Methods.RUN_GET, { runId }));
-          if (state.status !== 'ready' || !state.data || state.data.run !== expected)
+          if (!canActOn(state, true) || !state.data || state.data.run !== expected)
             throw new Error('Wait for the current run');
           return state.data.run;
         },
@@ -100,6 +103,10 @@ test('terminal commands use current canonical inputs without rereads while the s
         shouldUseBareTerminalSessionForRun,
       },
       '../../store/connection': { useConnectionStore },
+      '../../store/held-connection': {
+        useHeldConnection: () => held.current,
+        heldConnectionCurrent: () => held.current,
+      },
       '../native-conversation/use-slot-native-session': {
         useSlotNativeSession(
           _run: Run | null,
@@ -154,11 +161,8 @@ test('terminal commands use current canonical inputs without rereads while the s
       changes: [{ key: { family: 'run', runId: 'run-a' }, revision, kind: 'updated' }],
     });
     await flush();
-    assert.throws(
-      () => ready.requireRun(),
-      /current run/,
-      'The handler reads current cache state before React rerenders',
-    );
+    // Saved data is the normal state: a reread never holds back a command.
+    assert.equal(ready.requireRun(), run, 'Commands act on held data while it rereads');
     const stale = render();
     assert.equal(stale.ready, false);
     assert.equal(
@@ -169,8 +173,9 @@ test('terminal commands use current canonical inputs without rereads while the s
     // Pixel 6 typing arrived duplicated or dropped while each reread disabled input.
     assert.equal(stale.inputReady, true, 'Typing keeps reaching the admitted stream');
     assert.doesNotThrow(() => stale.requireInput());
+    // A short reconnect keeps typing on for the same target: keys queue until it is back.
     client.connectionGeneration++;
-    assert.throws(() => stale.requireInput(), /before typing/);
+    assert.doesNotThrow(() => stale.requireInput());
     assert.equal(captured.current(), false);
     assert.equal(
       captured.ownsView(),
@@ -179,7 +184,12 @@ test('terminal commands use current canonical inputs without rereads while the s
     );
     const reconnected = render();
     assert.equal(reconnected.streamReady, false, 'A new connection needs another current read');
-    assert.equal(reconnected.inputReady, false, 'Typing waits for the new connection too');
+    assert.equal(reconnected.inputReady, true, 'Typing survives a short reconnect');
+    // Offline past the grace, typing stops.
+    held.current = false;
+    assert.equal(render().inputReady, false);
+    assert.throws(() => stale.requireInput(), /before typing/);
+    held.current = true;
     workspaceKey = 'second-owner';
     authority.authorityEpoch++;
     render();
@@ -261,6 +271,10 @@ test('saved terminal run data stops typing until a current read', () => {
         shouldUseBareTerminalSessionForRun,
       },
       '../../store/connection': { useConnectionStore },
+      '../../store/held-connection': {
+        useHeldConnection: () => held.current,
+        heldConnectionCurrent: () => held.current,
+      },
       '../native-conversation/use-slot-native-session': {
         useSlotNativeSession: (
           _run: Run | null,

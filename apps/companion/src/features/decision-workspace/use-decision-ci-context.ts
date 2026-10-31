@@ -13,8 +13,10 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { currentFarmConnection } from '../../lib/connection-authority';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent } from '../../store/held-connection';
 
 export function useDecisionCIContext(
   decision: RunDecision | null,
@@ -94,7 +96,7 @@ export function useDecisionCIContext(
       generation === null ||
       !pr ||
       !project,
-    error: commandError ?? observation.error?.message ?? linkError,
+    error: commandError ?? readErrorMessage(observation, heldConnectionCurrent()) ?? linkError,
     refresh: () => {
       void checkGitHub();
     },

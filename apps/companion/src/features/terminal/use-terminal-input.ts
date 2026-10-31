@@ -8,6 +8,7 @@ import {
 } from '../../lib/terminal-input-queue';
 import type { CompanionTerminalTargetParams } from '../../lib/terminal-target';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent } from '../../store/held-connection';
 
 function targetKey(target: CompanionTerminalTargetParams | null): string {
   return JSON.stringify([
@@ -25,7 +26,6 @@ export function useTerminalInput(
   disabledReason: string | null,
 ): (data: string) => Promise<void> {
   const client = useConnectionStore((state) => state.client);
-  const status = useConnectionStore((state) => state.status);
   const profileId = useConnectionStore((state) => state.activeProfileId);
   const principalId = useConnectionStore((state) => state.principalId);
   const queueRef = useRef<{ key: string; client: GatewayClient; queue: TerminalInputQueue } | null>(
@@ -40,7 +40,7 @@ export function useTerminalInput(
       queueRef.current?.queue.dispose();
       queueRef.current = null;
     },
-    [client, status, profileId, principalId, key, disabledReason],
+    [client, profileId, principalId, key, disabledReason],
   );
 
   return useCallback(
@@ -48,27 +48,21 @@ export function useTerminalInput(
       const connection = useConnectionStore.getState();
       const selectedClient = connection.client;
       const selectedTarget = targetRef.current;
-      if (
-        disabledRef.current ||
-        connection.status !== 'connected' ||
-        !selectedClient ||
-        !selectedTarget
-      )
+      // A short reconnect keeps typing: keys queue and go out once the connection is back.
+      if (disabledRef.current || !heldConnectionCurrent() || !selectedClient || !selectedTarget)
         throw new TerminalInputCancelledError();
-      const generation = selectedClient.connectionGeneration;
       const selectedKey = JSON.stringify([
         connection.activeProfileId,
         connection.principalId,
-        generation,
         targetKey(selectedTarget),
       ]);
       if (queueRef.current?.key !== selectedKey || queueRef.current.client !== selectedClient) {
         queueRef.current?.queue.dispose();
-        const isCurrent = () => {
+        const isCurrent = (generation: number) => {
           const current = useConnectionStore.getState();
           return (
             !disabledRef.current &&
-            current.status === 'connected' &&
+            heldConnectionCurrent() &&
             current.client === selectedClient &&
             current.activeProfileId === connection.activeProfileId &&
             current.principalId === connection.principalId &&
@@ -77,9 +71,12 @@ export function useTerminalInput(
           );
         };
         const queue = createTerminalInputQueue(async (batch, assertActive) => {
+          // A batch belongs to the connection it starts on: one in flight when the connection
+          // drops is dropped with the keys behind it, since its delivery is unknown.
+          const generation = selectedClient.connectionGeneration;
           const assertCurrent = () => {
             assertActive();
-            if (!isCurrent()) throw new TerminalInputCancelledError();
+            if (!isCurrent(generation)) throw new TerminalInputCancelledError();
           };
           assertCurrent();
           await selectedClient.request(

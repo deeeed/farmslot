@@ -33,7 +33,7 @@ import {
   tmuxWorkerRefsMatch,
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
-import { canActOn, resourceQuery } from '@farmslot/protocol/client-cache';
+import { canActOn, heldDataIsSaved, resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
@@ -41,6 +41,7 @@ import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { quickVoiceInstruction, quickVoiceWorkerKey } from '../../lib/quick-actions';
 import { getResourceCache } from '../../lib/resource-cache';
+import { visibleReadError } from '../../lib/resource-read-status';
 import { TerminalInputCancelledError } from '../../lib/terminal-input-queue';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
@@ -67,6 +68,7 @@ import {
   workerVoiceInstructionInput,
 } from '../../lib/worker-voice-nudge';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent, useHeldConnection } from '../../store/held-connection';
 import { TMUX_PREFIX_BYTES, useTerminalPrefsStore } from '../../store/terminal-prefs';
 import {
   useQuickActionVoiceTarget,
@@ -198,7 +200,9 @@ export default function WorkerTerminalScreen() {
   const workerSubtitle = worker
     ? `${worker.nodeId} · ${worker.session}:${worker.windowName ?? worker.window ?? '0'}.${worker.pane ?? '0'}`
     : 'Missing worker target';
-  const connectionReady = status === 'connected' && Boolean(client);
+  // Connected, or within a short reconnect: the pane stays usable and keys queue.
+  const heldConnected = useHeldConnection();
+  const connectionReady = heldConnected && Boolean(client);
   const workerQuery = useMemo(
     () =>
       worker
@@ -208,9 +212,11 @@ export default function WorkerTerminalScreen() {
   );
   const inventory = useResourceQuery(focused ? workerQuery : undefined);
   // A reread in flight keeps the pane usable; saved inventory does not.
+  const inventorySaved = heldDataIsSaved(inventory, heldConnected);
+  const inventoryError = visibleReadError(inventory, inventorySaved);
   const workerReady =
     connectionReady &&
-    canActOn(inventory, client?.connectionState === 'connected') &&
+    canActOn(inventory, heldConnected) &&
     Boolean(
       worker &&
       inventory.data?.workers.some((candidate) => tmuxWorkerRefsMatch(candidate.ref, worker)),
@@ -221,7 +227,7 @@ export default function WorkerTerminalScreen() {
       !focused ||
       !client ||
       client !== useConnectionStore.getState().client ||
-      client.connectionState !== 'connected' ||
+      !heldConnectionCurrent() ||
       !current ||
       !canActOn(current, true) ||
       !worker ||
@@ -428,7 +434,7 @@ export default function WorkerTerminalScreen() {
     if (!windowPickerOpen || !worker) return;
     if (!workerReady) {
       setWindowPickerPanes([]);
-      setWindowPickerError(inventory.error?.message ?? 'Wait for current worker inventory.');
+      setWindowPickerError(inventoryError?.message ?? 'Wait for current worker inventory.');
       return;
     }
     const panes =
@@ -437,7 +443,7 @@ export default function WorkerTerminalScreen() {
         ?.workers.filter((pane) => pane.ref.session === worker.session) ?? [];
     setWindowPickerPanes(panes);
     setWindowPickerError(panes.length ? null : 'No windows found for this session.');
-  }, [windowPickerOpen, worker, workerReady, inventory]);
+  }, [windowPickerOpen, worker, workerReady, inventory, inventoryError]);
 
   const selectWindow = useCallback(
     (windowIndex: string) => {
@@ -745,10 +751,10 @@ export default function WorkerTerminalScreen() {
             </Pressable>
           </View>
         )}
-        {!workerReady ? (
+        {inventoryError || inventorySaved || inventory.status === 'unsupported' ? (
           <View>
             <Text style={styles.error}>
-              {inventory.error?.message ??
+              {inventoryError?.message ??
                 (inventory.status === 'unsupported'
                   ? 'Worker observations are unsupported.'
                   : 'Saved terminal selection. Wait for current worker inventory before sending input.')}

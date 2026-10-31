@@ -5,7 +5,7 @@ import { heldDataIsSaved, resourceQuery } from '@farmslot/protocol/client-cache'
 import { runChecklistProgressTarget } from '@farmslot/review-dispatch';
 
 import { visibleReadError } from '../lib/resource-read-status';
-import { useConnectionStore } from '../store/connection';
+import { useHeldConnection } from '../store/held-connection';
 
 import { useResourceQuery } from './useResourceQuery';
 
@@ -19,10 +19,7 @@ export function useRunChecklistProgress(run: Run) {
     [key],
   );
   const state = useResourceQuery(query);
-  const connected = useConnectionStore(
-    (connection) =>
-      connection.status === 'connected' && connection.client?.connectionState === 'connected',
-  );
+  const connected = useHeldConnection();
   // A reread in flight keeps the current label; only saved data says so.
   const saved = heldDataIsSaved(state, connected);
   return target

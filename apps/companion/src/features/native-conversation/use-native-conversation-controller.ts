@@ -46,6 +46,7 @@ import { getResourceCache, getResourceNativeOwnerId } from '../../lib/resource-c
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
 import { canOpenNativeConversation } from '../../lib/workspace-access';
 import { useConnectionStore } from '../../store/connection';
+import { useHeldConnection } from '../../store/held-connection';
 
 import { useNativeSessionResume } from './use-native-session-resume';
 import { useNativeSessionSetup } from './use-native-session-setup';
@@ -67,6 +68,8 @@ export function useNativeConversationController(params: NativeConversationParams
   const focused = useIsFocused();
   const client = useConnectionStore((state) => state.client);
   const connection = useConnectionStore((state) => state.status);
+  // Connected, or within a short reconnect: the composer stays editable and quiet.
+  const heldConnected = useHeldConnection();
   const profile = useConnectionStore((state) => state.activeProfileId);
   const gatewayUrl = useConnectionStore((state) => state.gatewayUrl);
   const principalId = useConnectionStore((state) => state.principalId);
@@ -287,7 +290,7 @@ export function useNativeConversationController(params: NativeConversationParams
   const writable = nativeConversationWritable({
     allowed,
     ready,
-    connected: connection === 'connected',
+    connected: heldConnected,
     history: historyObservation,
     snapshot,
     run: params.runId ? runObservation : undefined,
@@ -535,7 +538,7 @@ export function useNativeConversationController(params: NativeConversationParams
       error: error || pollError || creation.viewModel.error || resume.viewModel.error,
       busy,
       ready,
-      connected: connection === 'connected',
+      connected: heldConnected,
       writable,
       canSend,
       sendLabel: sendLabel ?? 'Send',

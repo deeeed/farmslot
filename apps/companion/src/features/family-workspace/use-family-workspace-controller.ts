@@ -38,6 +38,7 @@ import { collectFamilyRetrospectives } from '../../lib/family-retrospectives';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
 import {
   effectiveTaskProgressForRun,
@@ -64,6 +65,7 @@ import {
   workspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent } from '../../store/held-connection';
 import { useSharedViewSelection } from '../quick-actions/QuickActionsProvider';
 import { routeParamString } from '../workspace-shared/route-params';
 
@@ -196,8 +198,8 @@ export function useFamilyWorkspaceController() {
   }, [selectedFullRun?.id, selectedFullRun?.slotId, selectedFullRun?.reviewWorkspace?.workspaceId]);
   const progressObservation = useResourceQuery(progressQuery);
   const taskProgress = progressObservation.data?.structured ?? null;
-  const taskProgressError = progressObservation.error
-    ? `Task progress unavailable: ${progressObservation.error.message}`
+  const taskProgressError = readErrorMessage(progressObservation, heldConnectionCurrent())
+    ? `Task progress unavailable: ${readErrorMessage(progressObservation, heldConnectionCurrent())}`
     : null;
   const familyRunIdsKey = (
     snapshot?.runs.map(({ runId }) => runId) ?? (selectedId ? [selectedId] : [])
@@ -252,9 +254,9 @@ export function useFamilyWorkspaceController() {
   }, [recipeObservations, familyRunIds, gatewayUrl]);
   const error =
     actionError ??
-    familyObservation.error?.message ??
-    selectedRunObservation.error?.message ??
-    progressObservation.error?.message ??
+    readErrorMessage(familyObservation, heldConnectionCurrent()) ??
+    readErrorMessage(selectedRunObservation, heldConnectionCurrent()) ??
+    readErrorMessage(progressObservation, heldConnectionCurrent()) ??
     recipeObservations.find((observed) => observed.error)?.error?.message ??
     null;
   const retryFamily = useCallback(async () => {

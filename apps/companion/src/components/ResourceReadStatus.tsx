@@ -1,13 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
+import { heldDataIsSaved, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
-import { type LabelledReadObservation, resourceReadMessages } from '../lib/resource-read-status';
+import {
+  type LabelledReadObservation,
+  resourceReadMessages,
+  visibleReadError,
+} from '../lib/resource-read-status';
 import { baseStyles, colors, spacing } from '../lib/theme';
-import { useConnectionStore } from '../store/connection';
+import { useHeldConnection } from '../store/held-connection';
 
 type ResourceReadStatusProps = {
+  /** A persistent condition of the view itself, shown in the same fixed slot. */
+  notice?: string | null;
   onRetry?: () => void;
   retryDisabled?: boolean;
   retryLabel?: string;
@@ -21,15 +27,14 @@ export function ResourceReadStatus({
   observation,
   label,
   observations,
+  notice = null,
   onRetry,
   retryDisabled = false,
   retryLabel,
 }: ResourceReadStatusProps) {
   const [now, setNow] = useState(Date.now());
   const [details, setDetails] = useState(false);
-  const connected = useConnectionStore(
-    (state) => state.status === 'connected' && state.client?.connectionState === 'connected',
-  );
+  const connected = useHeldConnection();
   const reads = observations ?? (observation && label ? [{ observation, label }] : []);
   const stale = reads.some((read) => read.observation.status === 'stale' && read.observation.data);
   useEffect(() => {
@@ -38,7 +43,7 @@ export function ResourceReadStatus({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [stale]);
-  const messages = resourceReadMessages(reads, now, connected);
+  const messages = [...resourceReadMessages(reads, now, connected), ...(notice ? [notice] : [])];
   const text = messages.join(' · ');
   useEffect(() => {
     if (!text) setDetails(false);
@@ -57,7 +62,10 @@ export function ResourceReadStatus({
               {text}
             </Text>
           </Pressable>
-          {onRetry && reads.some((read) => read.observation.error) ? (
+          {onRetry &&
+          reads.some((read) =>
+            visibleReadError(read.observation, heldDataIsSaved(read.observation, connected, now)),
+          ) ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={retryLabel ?? `Retry reading ${label ?? 'this view'}`}

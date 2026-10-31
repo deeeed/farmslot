@@ -3,6 +3,7 @@ import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { connectionHealthCanRetry } from '../lib/connection-liveness';
+import { usePersistentFlag } from '../lib/held-connection';
 import { retryNativeDecisions } from '../lib/run-collections';
 import { colors, fonts, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
@@ -122,7 +123,12 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
     activeProfileAuthMode ?? 'none',
   );
 
-  if (!banner || banner.tone === 'healthy') return null;
+  // Saved data is the normal state: connecting, proving the socket or downloading runs is
+  // routine background work and never shows. A disconnect or failing sync shows only once it
+  // has persisted past the shared grace.
+  const failing = banner?.tone === 'disconnected' || banner?.tone === 'syncError';
+  const persistentFailure = usePersistentFlag(failing);
+  if (!banner || !failing || !persistentFailure) return null;
   const canRetry = connectionHealthCanRetry(
     healthStatus,
     transportStatus,

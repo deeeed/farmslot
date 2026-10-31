@@ -54,7 +54,7 @@ export function CopilotScreen({
           <Text style={styles.pendingDraftText}>{draft}</Text>
         </View>
       ) : null}
-      {vm.status === 'stale' ? (
+      {vm.saved ? (
         <Text style={styles.hint}>
           Saved status{vm.observedAt ? ` from ${new Date(vm.observedAt).toLocaleString()}` : ''}.
           Waiting for a current read.

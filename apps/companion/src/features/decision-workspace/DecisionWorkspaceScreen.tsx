@@ -94,6 +94,7 @@ import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { nativeDecisionsQuery } from '../../lib/gateway-run-sync';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { requestAnotherReviewRound } from '../../lib/review-budget';
 import { assertNativeDecisionReady, assertNativeRunReady } from '../../lib/run-collections';
 import {
@@ -140,6 +141,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
+import { heldConnectionCurrent } from '../../store/held-connection';
 import { GateActions, GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
 import { GateBlockers } from '../gate-review/components/GateBlockers';
 import { GateReviewSkeleton } from '../gate-review/components/GateReviewSkeleton';
@@ -262,8 +264,8 @@ export default function DecisionDetailScreen({
   }, [sourceRun?.id, sourceRun?.slotId, sourceRun?.reviewWorkspace?.workspaceId]);
   const progressObservation = useResourceQuery(progressQuery);
   const taskProgress = progressObservation.data?.structured ?? null;
-  const taskProgressError = progressObservation.error
-    ? `Task progress unavailable: ${progressObservation.error.message}`
+  const taskProgressError = readErrorMessage(progressObservation, heldConnectionCurrent())
+    ? `Task progress unavailable: ${readErrorMessage(progressObservation, heldConnectionCurrent())}`
     : null;
   const sourceDecision = sourceRun?.decisions.find(({ id }) => id === resolvedDecisionId);
   const decision = useMemo<DecisionDetail | null>(
@@ -280,9 +282,9 @@ export default function DecisionDetailScreen({
   const [actionError, setError] = useState<string | null>(null);
   const error =
     actionError ??
-    sourceObservation.error?.message ??
-    progressObservation.error?.message ??
-    decisionsObservation.error?.message ??
+    readErrorMessage(sourceObservation, heldConnectionCurrent()) ??
+    readErrorMessage(progressObservation, heldConnectionCurrent()) ??
+    readErrorMessage(decisionsObservation, heldConnectionCurrent()) ??
     (decisionsObservation.status === 'ready' &&
     (!sourceRunId || sourceObservation.status === 'ready') &&
     !decision
@@ -557,7 +559,8 @@ export default function DecisionDetailScreen({
         0,
       )
     : null;
-  const recipeAvailabilityError = recipeObservation.error?.message ?? null;
+  const recipeAvailabilityError =
+    readErrorMessage(recipeObservation, heldConnectionCurrent()) ?? null;
 
   const markOutputClaimUntestable = async (claimId: string, reason: string) => {
     const gate = sourceRun?.decisions.find(

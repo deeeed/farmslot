@@ -67,6 +67,7 @@ import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import {
   hasRunWorkspaceDiff,
   selectSlotRecipeArtifactsForPreviewScope,
@@ -125,6 +126,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
+import { heldConnectionCurrent, useHeldConnection } from '../../store/held-connection';
 import { useTerminalPrefsStore } from '../../store/terminal-prefs';
 import { useQuickActionVoiceTarget } from '../quick-actions/QuickActionsProvider';
 import { useQuickActionComposerInset } from '../quick-actions/use-quick-action-composer-inset';
@@ -269,6 +271,7 @@ export default function TerminalScreen() {
   const { height: windowHeight } = useWindowDimensions();
   const client = useConnectionStore((s) => s.client);
   const connectionStatus = useConnectionStore((s) => s.status);
+  const heldConnected = useHeldConnection();
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const slot = useFleetStore((s) => s.fleet?.slots.find((entry) => entry.slot === slotId));
@@ -327,8 +330,8 @@ export default function TerminalScreen() {
   }, [targetRun?.id, targetRun?.slotId, targetRun?.reviewWorkspace?.workspaceId, contextId, role]);
   const progressObservation = useResourceQuery(progressQuery);
   const taskProgress = progressObservation.data?.structured ?? null;
-  const taskProgressError = progressObservation.error
-    ? `Task progress unavailable: ${progressObservation.error.message}`
+  const taskProgressError = readErrorMessage(progressObservation, heldConnectionCurrent())
+    ? `Task progress unavailable: ${readErrorMessage(progressObservation, heldConnectionCurrent())}`
     : null;
   const terminalTargetParams = slotId || runId ? terminalContext.target : null;
   const contextRef = useRef(terminalContext);
@@ -567,8 +570,12 @@ export default function TerminalScreen() {
     if (!focused || !client || (!slotId && !runId)) return;
     if (!terminalContext.streamReady || connectionStatus !== 'connected') {
       setStreamMode('connecting');
-      setSnapshotError('Waiting for gateway connection.');
-      terminalViewRef.current?.setStatus('Waiting for gateway connection.');
+      // A short reconnect is routine: the terminal says so quietly and typing keeps queuing.
+      // Only an outage past the shared grace raises the error line.
+      setSnapshotError(heldConnected ? null : 'Waiting for gateway connection.');
+      terminalViewRef.current?.setStatus(
+        heldConnected ? 'Reconnecting…' : 'Waiting for gateway connection.',
+      );
       return;
     }
     if (native.target || native.unavailable || (contextId && !targetRun)) return;
@@ -658,6 +665,7 @@ export default function TerminalScreen() {
     appendTerminalTail,
     client,
     connectionStatus,
+    heldConnected,
     focused,
     terminalContext.streamReady,
     terminalContext.scopeKey,

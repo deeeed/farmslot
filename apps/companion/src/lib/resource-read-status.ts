@@ -17,6 +17,15 @@ export function visibleReadError(observation: ResourceQueryState, saved: boolean
     : undefined;
 }
 
+/** The read error a view may show; a superseded read inside the shared grace is not one. */
+export function readErrorMessage(
+  observation: ResourceQueryState,
+  connected: boolean,
+  now = Date.now(),
+): string | undefined {
+  return visibleReadError(observation, heldDataIsSaved(observation, connected, now))?.message;
+}
+
 /** A connected reread in flight, or one the gateway superseded within its grace, stays quiet. */
 export function resourceReadMessages(
   reads: readonly LabelledReadObservation[],

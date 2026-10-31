@@ -72,23 +72,23 @@ test('worker pane keys go one request at a time in the order typed', async () =>
     assert.equal(maxActive, 1);
     assert.ok(sent.every(({ method }) => method === Methods.TERMINAL_WORKER_INPUT));
 
-    // A new connection never receives keys typed for the old one.
+    // A short reconnect keeps the queue: keys typed behind a delivered batch follow it in
+    // order on the new connection instead of being lost.
     const held = write('x');
     await flush();
     const late = write('y');
     client.connectionGeneration++;
     replies.shift()!();
     await held;
-    await assert.rejects(late, TerminalInputCancelledError);
-    const next = write('z');
     await flush();
     assert.deepEqual(sent.at(-1), {
       method: Methods.TERMINAL_WORKER_INPUT,
-      data: 'z',
+      data: 'y',
       generation: 2,
     });
     replies.shift()!();
-    await next;
+    await late;
+    assert.equal(maxActive, 1);
   } finally {
     hook.cleanup();
   }

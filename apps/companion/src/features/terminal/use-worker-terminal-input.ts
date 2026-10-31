@@ -25,13 +25,16 @@ export function useWorkerTerminalInput(
   return useCallback(
     (data: string) => {
       if (!client || !worker) return Promise.reject(new TerminalInputCancelledError());
-      const generation = client.connectionGeneration;
-      const key = JSON.stringify([generation, worker]);
+      // One queue per client and pane. Keys typed during a short reconnect wait in it and go
+      // out once it is back; a batch already in flight when the connection drops is dropped
+      // with the keys behind it, since its delivery is unknown.
+      const key = JSON.stringify(worker);
       if (queueRef.current?.key !== key) {
         queueRef.current?.queue.dispose();
         queueRef.current = {
           key,
           queue: createTerminalInputQueue(async (batch, assertActive) => {
+            const generation = client.connectionGeneration;
             // Rechecked after any wait for the connection or a token refresh, before sending.
             const assertCurrent = () => {
               assertActive();

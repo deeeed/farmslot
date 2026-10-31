@@ -53,10 +53,12 @@ import {
   HUMAN_GATE_DECISION_TYPE,
 } from '../../lib/gate-review';
 import { getResourceCache } from '../../lib/resource-cache';
+import { readErrorMessage } from '../../lib/resource-read-status';
 import { requestAnotherReviewRound } from '../../lib/review-budget';
 import { assertNativeDecisionReady, assertNativeRunReady } from '../../lib/run-collections';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
+import { heldConnectionCurrent } from '../../store/held-connection';
 import { decisionDetailFromRun } from '../decision-workspace/components/decision-workspace-panels';
 
 export interface GateReviewRouteParams {
@@ -112,6 +114,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const observation = useResourceQuery(query);
   const run = observation.data?.run ?? null;
   const actionsCurrent =
+    // Decisions authorize publication: they still need a current read (Command Center rereads
+    // before acting). The buttons only disable for that read; nothing is shown.
     connection !== null &&
     decisionsObservation.status === 'ready' &&
     observation.status === 'ready';
@@ -387,7 +391,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     run,
     decision,
     viewModel,
-    loadError: loadError ?? observation.error?.message ?? null,
+    loadError: loadError ?? readErrorMessage(observation, heldConnectionCurrent()) ?? null,
     sendingActionId: sendingActionId ?? criterionDrafts.submissionActionId,
   });
 

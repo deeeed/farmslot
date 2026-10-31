@@ -22,6 +22,7 @@ import {
   shouldUseBareTerminalSessionForRun,
 } from '../../lib/terminal-target';
 import { useConnectionStore } from '../../store/connection';
+import { heldConnectionCurrent, useHeldConnection } from '../../store/held-connection';
 import { useSlotNativeSession } from '../native-conversation/use-slot-native-session';
 
 /** Keep the development probe current without changing its mounted subscription. */
@@ -100,6 +101,8 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
   const current = useRef({ targetRun, slotQuery, runQuery });
   current.current = { targetRun, slotQuery, runQuery };
   const connected = status === 'connected' && client?.connectionState === 'connected';
+  // Connected, or within a short reconnect: held data keeps typing on.
+  const heldConnected = useHeldConnection();
   const ready =
     connected && (!slotQuery || slot.status === 'ready') && (!runId || run.status === 'ready');
   // Invalidation pauses commands without repeatedly tearing down the same stream.
@@ -108,13 +111,15 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
   const connectionScope = JSON.stringify([scopeKey, client?.connectionGeneration]);
   if (ready) admitted.current = connectionScope;
   const streamReady = ready || admitted.current === connectionScope;
-  // Keys go to the admitted stream. A reread in flight pauses commands, never typing;
-  // saved data, a new target or a new connection still stop input.
+  // Keys go to the admitted target. Neither a reread nor a short reconnect stops typing (keys
+  // queue until the connection is back); saved data or a new target does.
+  const admittedTarget = useRef('');
+  if (ready) admittedTarget.current = scopeKey;
   const inputReady =
-    streamReady &&
-    connected &&
-    (!slotQuery || canActOn(slot, connected)) &&
-    (!runId || canActOn(run, connected));
+    heldConnected &&
+    admittedTarget.current === scopeKey &&
+    (!slotQuery || canActOn(slot, heldConnected)) &&
+    (!runId || canActOn(run, heldConnected));
 
   const requireRun = useCallback(() => {
     const cache = getResourceCache();
@@ -128,7 +133,12 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
     const selected = current.current;
     if (selected.slotQuery) {
       const state = cache?.read(selected.slotQuery);
-      if (state?.status !== 'ready' || !state.data || state.data.run?.id !== selected.targetRun?.id)
+      if (
+        !state ||
+        !canActOn(state, true) ||
+        !state.data ||
+        state.data.run?.id !== selected.targetRun?.id
+      )
         throw new Error('Wait for the current slot binding before acting.');
     }
     return runId ? assertNativeRunReady(runId, selected.targetRun ?? undefined) : null;
@@ -138,11 +148,12 @@ export function useTerminalRunContext(params: CompanionTerminalTargetParams) {
     const cache = getResourceCache();
     if (
       !client ||
-      !currentFarmConnection(client, useConnectionStore.getState)() ||
+      useConnectionStore.getState().client !== client ||
+      !heldConnectionCurrent() ||
       scope.current !== scopeKey ||
       workspaceKey !== getResourceWorkspaceKey() ||
       getResourceWorkspaceAccess() !== 'farm' ||
-      admitted.current !== JSON.stringify([scopeKey, client.connectionGeneration])
+      admittedTarget.current !== scopeKey
     )
       throw new Error('Wait for the current terminal run before typing.');
     const selected = current.current;

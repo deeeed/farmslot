@@ -22,10 +22,12 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import type { GatewayClient } from '../lib/gateway-client';
 import { getResourceCache } from '../lib/resource-cache';
+import { readErrorMessage } from '../lib/resource-read-status';
 import { assertNativeRunReady } from '../lib/run-collections';
 import { taskProgressRequestForRun } from '../lib/task-progress';
 import { type AcceptanceLedgerView, acceptanceLedgerView } from '../lib/task-progress-view';
 import { recordVisualClaimReview } from '../lib/visual-claim-review';
+import { heldConnectionCurrent } from '../store/held-connection';
 
 import { useResourceQuery } from './useResourceQuery';
 
@@ -116,7 +118,8 @@ export function useRunAcceptance(
   );
   const evidenceObservation = useResourceQuery(evidenceQuery);
   const evidence = evidenceObservation.data ?? null;
-  const evidenceRequestError = evidenceObservation.error?.message ?? null;
+  const evidenceRequestError =
+    readErrorMessage(evidenceObservation, heldConnectionCurrent()) ?? null;
   const target = taskProgressRequestForRun(run);
   const noSurface = Boolean(run) && !target;
   const progressQuery = useMemo(
@@ -125,7 +128,7 @@ export function useRunAcceptance(
   );
   const progressObservation = useResourceQuery(progressQuery);
   const data: AcceptanceData | null = progressObservation.data ?? null;
-  const requestError = progressObservation.error?.message ?? null;
+  const requestError = readErrorMessage(progressObservation, heldConnectionCurrent()) ?? null;
 
   const evidencePending = run?.status
     ? runEvidencePending({
@@ -201,6 +204,7 @@ export function useRunAcceptance(
           currentReviewIdentity.current !== reviewIdentity
         )
           throw new Error('The review context changed. Open the current evidence before acting.');
+        // Verdicts bind to evidence: they still act on a current read.
         if (!progressQuery || getResourceCache()?.read(progressQuery).status !== 'ready')
           throw new Error('Wait for current acceptance data before acting.');
         const currentEvidence = evidenceQuery ? getResourceCache()?.read(evidenceQuery) : undefined;
