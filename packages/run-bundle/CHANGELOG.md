@@ -4,6 +4,7 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- A wait on a run-bundle lock fails with `ELOCKED` only once the operation holding it in this process has run past its own limit (15 minutes for store-lock holders, 60 for a bundle repair or the gateway's retention pass), and the error names that holder, e.g. `held by capture of run <id> for 912s`. A long queue of healthy holders still waits, and a waiter that gives up leaves later callers queued behind the holder. Waits over 10 seconds are logged with the waiter's label. `withRunBundleStoreLock` accepts `{ label, holdLimitMs }`.
 - Retained media that grew past its captured size since capture is recorded as `changed:` missing data instead of failing the whole capture, as content that changed at the same size already was.
 - Importing a bundle drops the run's before-attempt attestations, as it drops claim override receipts, so imported metadata never becomes this gateway's attestation authority.
 
