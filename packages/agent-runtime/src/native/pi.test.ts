@@ -115,22 +115,31 @@ test('a Pi turn streams text and tools and completes when Pi settles', async () 
   assert.equal(events.at(-1)?.data?.processStopped, true);
 });
 
+// The fixture always reports `fixture/default`, whatever was requested.
+const fixedModel = () =>
+  fixture.replace("(arg('--model')||'fixture/default')", "'fixture/default'");
+
 test('Pi refuses a model other than the one requested', async () => {
   const f = setup();
   try {
-    writeFileSync(
-      f.executable,
-      fixture.replace("(arg('--model')||'fixture/default')", "'fixture/default'"),
-    );
+    writeFileSync(f.executable, fixedModel());
     await assert.rejects(
       piNativeAdapter.start({ ...f, model: 'litellm/flash' }, () => undefined),
       /Pi model is unavailable: litellm\/flash/,
     );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a bare Pi model ID matches the model Pi selected for it', async () => {
+  const f = setup();
+  try {
+    writeFileSync(f.executable, fixedModel());
     await assert.rejects(
       piNativeAdapter.start({ ...f, model: 'flash' }, () => undefined),
       /Pi model is unavailable: flash/,
     );
-    // A bare ID matches the model Pi selected for it.
     const session = await piNativeAdapter.start({ ...f, model: 'default' }, () => undefined);
     await session.close();
   } finally {
