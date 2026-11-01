@@ -11,6 +11,7 @@ import {
   decisionArtifactBundleRef,
   INHERITED_ACCEPTANCE_INPUT,
   isRecord,
+  isTerminalRunStatus,
   type RecipeRunArtifactGroup,
   type Run,
   type RunArtifactBundleRef,
@@ -22,6 +23,7 @@ import {
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
 import {
+  type AcquisitionTaskDirToken,
   DEFAULT_RUN_BUNDLE_RETENTION,
   isRunBundleMedia,
   type MaterializedRunBundle,
@@ -54,11 +56,14 @@ import {
 import { loadContextFromArtifactRoot } from '../live-recipe/context.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import {
+  getAllRunsWithArchived,
   getRun,
   getRunWithArchived,
+  isTaskDirectoryAdmitting,
   persistRunNow,
   recordRunStorageArchive,
   runsDirectory,
+  runTaskDirectories,
   shouldUseIsolatedRunsDir,
   updateRun,
 } from '../runs/store.js';
@@ -363,6 +368,40 @@ export async function archiveRunArtifactHousekeeping(): Promise<void> {
 // Warn the farm well before capture admission refuses retained media at the store cap.
 const RUN_BUNDLE_WARN_RATIO = 0.7;
 
+// A run can still write its task dir just after its last update (slot release, staging media
+// release, a grade), so a dir keeps its footprint only once its runs have been quiet this long.
+const SETTLED_TASK_DIR_QUIET_MS = 15 * 60_000;
+
+/**
+ * Classifies gateway task dirs for acquisition accounting. A dir is live while a run naming it
+ * has not ended, while it is being admitted, and until its runs have been quiet for a while. A
+ * settled dir's token is its runs' ids and update times, so a later run update measures it
+ * again. A dir no run names (a deleted run's) changes only when retention moves or removes it.
+ */
+export async function acquisitionTaskDirToken(now = Date.now()): Promise<AcquisitionTaskDirToken> {
+  const owners = new Map<string, Run[]>();
+  for (const run of await getAllRunsWithArchived())
+    for (const directory of new Set(runTaskDirectories(run)))
+      owners.set(directory, [...(owners.get(directory) ?? []), run]);
+  return (directory) => {
+    if (isTaskDirectoryAdmitting(directory)) return undefined;
+    const runs = owners.get(path.resolve(directory));
+    if (!runs) return 'unowned';
+    if (
+      runs.some(
+        (run) =>
+          !isTerminalRunStatus(run.status) ||
+          !(now - Date.parse(run.updatedAt) >= SETTLED_TASK_DIR_QUIET_MS),
+      )
+    )
+      return undefined;
+    return runs
+      .map((run) => `${run.id}@${run.updatedAt}`)
+      .sort()
+      .join(' ');
+  };
+}
+
 const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 
 /** Whether admission's charged bytes call for a farm warning; pure so the threshold is testable. */
@@ -378,7 +417,11 @@ export async function warnRunBundleCapacity(): Promise<void> {
   try {
     const store = await runBundleStore(true);
     const policy = await retentionPolicy();
-    const usage = await runBundleAdmissionUsage(store, farmslotRoot);
+    const usage = await runBundleAdmissionUsage(
+      store,
+      farmslotRoot,
+      await acquisitionTaskDirToken(),
+    );
     if (runBundleNearCapacity(usage.total, policy))
       reportGatewayWarning(
         'run-bundle.capacity',
@@ -408,7 +451,13 @@ export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
   await tryArchiveRunArtifactHousekeeping();
-  await reserveRunBundleMetadata(store, run.id, policy, farmslotRoot);
+  await reserveRunBundleMetadata(
+    store,
+    run.id,
+    policy,
+    farmslotRoot,
+    await acquisitionTaskDirToken(),
+  );
 }
 
 export async function retainCapturedRunArtifacts(input: {
@@ -475,6 +524,7 @@ export async function retainCapturedRunArtifacts(input: {
   return materializeRunBundle({
     store,
     farmslotRoot,
+    acquisitionTaskDirToken: await acquisitionTaskDirToken(),
     run: input.run,
     artifacts,
     taskDir,

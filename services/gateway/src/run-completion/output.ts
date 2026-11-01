@@ -321,7 +321,7 @@ export async function captureRunOutput(
     },
   });
   console.info(
-    `[output] ${runId} acquisition scan: files=${retained.acquisitionScan.fileCount} durationMs=${retained.acquisitionScan.durationMs.toFixed(1)}`,
+    `[output] ${runId} acquisition scan: files=${retained.acquisitionScan.fileCount} settledDirs=${retained.acquisitionScan.settledDirs} durationMs=${retained.acquisitionScan.durationMs.toFixed(1)}`,
   );
   return copied;
 }

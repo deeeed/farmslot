@@ -97,6 +97,8 @@ export interface MaterializeRunBundleRequest {
   policy?: RunBundleRetentionPolicy;
   /** Import extraction bytes outside the gateway acquisition roots. */
   stagingBytes?: number;
+  /** Lets settled task dirs be charged their kept footprint instead of walked. */
+  acquisitionTaskDirToken?: AcquisitionTaskDirToken;
   /** Inventory is frozen before metadata commits; media transport writes only admitted bytes. */
   acquireMedia?: (
     artifact: ArtifactRef,
@@ -118,8 +120,18 @@ export interface MaterializedRunBundle {
 interface AcquisitionScan {
   bytes: number;
   fileCount: number;
+  /** Settled task dirs charged their kept footprint without a walk. */
+  settledDirs: number;
   durationMs: number;
 }
+
+/**
+ * Classifies a gateway task dir (`<task root>/<flow>/<task>`) for acquisition accounting.
+ * `undefined` means live: walked on every read. Any other value is a token that changes
+ * whenever the dir may have changed; a settled dir is measured once per token and its
+ * footprint kept in the store.
+ */
+export type AcquisitionTaskDirToken = (directory: string) => string | undefined;
 
 export interface RunBundleAvailability {
   revision: number;
@@ -400,9 +412,26 @@ function concurrencyLimit(max: number) {
   };
 }
 
-async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<number> {
+/** Lets a walk charge a dir from a kept size instead of entering it, and keep what it walked. */
+interface WalkHooks {
+  kept(directory: string, depth: number): number | undefined;
+  walked(directory: string, depth: number, bytes: number): void;
+}
+
+async function physicalBytes(
+  root: string,
+  scan?: AcquisitionScan,
+  hooks?: WalkHooks,
+): Promise<number> {
   const limit = concurrencyLimit(PHYSICAL_SCAN_CONCURRENCY);
-  const walk = async (directory: string): Promise<number> => {
+  const walk = async (directory: string, depth = 0): Promise<number> => {
+    const kept = hooks?.kept(directory, depth);
+    if (kept !== undefined) return kept;
+    const bytes = await walkEntries(directory, depth);
+    hooks?.walked(directory, depth, bytes);
+    return bytes;
+  };
+  const walkEntries = async (directory: string, depth: number): Promise<number> => {
     let entries;
     try {
       entries = await limit(() => readdir(directory, { withFileTypes: true }));
@@ -413,7 +442,7 @@ async function physicalBytes(root: string, scan?: AcquisitionScan): Promise<numb
     const sizes = await Promise.all(
       entries.map(async (entry) => {
         const file = path.join(directory, entry.name);
-        if (entry.isDirectory()) return walk(file);
+        if (entry.isDirectory()) return walk(file, depth + 1);
         if (!entry.isFile()) return 0;
         try {
           return (
@@ -517,31 +546,91 @@ const acquisitionScans = new Map<string, Promise<AcquisitionScan>>();
 // A busy gateway's complete acquisition inventory can exceed thirty seconds.
 const ACQUISITION_ADMISSION_TIMEOUT_MS = 120_000;
 
-/** Share only an in-flight scan, never a stale footprint or a separate accounting store. */
-async function acquisitionBytes(root: string): Promise<AcquisitionScan> {
+/** What a settled scan reads and keeps: one footprint per settled task dir, by its token. */
+interface KeptFootprint {
+  token: string;
+  bytes: number;
+  /** Measured since the file was last written. */
+  unsaved?: true;
+}
+
+interface SettledTaskDirs {
+  store: RunBundleStore;
+  token: AcquisitionTaskDirToken;
+  footprints: Map<string, KeptFootprint>;
+  seen: Set<string>;
+}
+
+const keptFootprints = new Map<string, Promise<Map<string, KeptFootprint>>>();
+
+function footprintFile(store: RunBundleStore): string {
+  return path.join(store.root, 'acquisition-footprints.json');
+}
+
+/** Loaded once per process; an unreadable file only costs one walk of each settled dir. */
+function loadKeptFootprints(store: RunBundleStore) {
+  let kept = keptFootprints.get(store.root);
+  if (!kept) {
+    kept = (async () => {
+      const footprints = new Map<string, KeptFootprint>();
+      try {
+        const parsed: unknown = JSON.parse((await readOptional(footprintFile(store))) ?? '{}');
+        const dirs = (parsed as { v?: unknown; dirs?: unknown }).dirs;
+        if ((parsed as { v?: unknown }).v === 1 && dirs && typeof dirs === 'object')
+          for (const [directory, entry] of Object.entries(dirs)) {
+            const { token, bytes } = (entry ?? {}) as { token?: unknown; bytes?: unknown };
+            if (typeof token === 'string' && Number.isSafeInteger(bytes) && (bytes as number) >= 0)
+              footprints.set(directory, { token, bytes: bytes as number });
+          }
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+      return footprints;
+    })();
+    keptFootprints.set(store.root, kept);
+  }
+  return kept;
+}
+
+/**
+ * Share only an in-flight scan. Live task dirs are walked on every read; with a classifier,
+ * a settled one is charged the footprint kept for its token.
+ */
+async function acquisitionBytes(
+  root: string,
+  settled?: { store: RunBundleStore; token: AcquisitionTaskDirToken },
+): Promise<AcquisitionScan> {
   let scan = acquisitionScans.get(root);
   if (!scan) {
-    scan = scanAcquisitionBytes(root).finally(() => acquisitionScans.delete(root));
+    scan = scanAcquisitionBytes(root, settled).finally(() => acquisitionScans.delete(root));
     acquisitionScans.set(root, scan);
   }
   return scan;
 }
 
 /** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
-async function scanAcquisitionBytes(root: string): Promise<AcquisitionScan> {
+async function scanAcquisitionBytes(
+  root: string,
+  settledBy?: { store: RunBundleStore; token: AcquisitionTaskDirToken },
+): Promise<AcquisitionScan> {
   const started = performance.now();
-  const scan: AcquisitionScan = { bytes: 0, fileCount: 0, durationMs: 0 };
+  const scan: AcquisitionScan = { bytes: 0, fileCount: 0, settledDirs: 0, durationMs: 0 };
+  const settled: SettledTaskDirs | undefined = settledBy && {
+    ...settledBy,
+    footprints: await loadKeptFootprints(settledBy.store),
+    seen: new Set(),
+  };
   let bytes = 0;
   const layout = { farmslotRoot: root, projectsDir: resolveProjectsDir(root) };
   // A projects dir inside .sandbox (desktop validation) is charged once, not again below.
   const counted = new Set<string>();
   for (const { root: taskRoot } of await listProjectTaskRoots(layout)) {
     counted.add(path.resolve(taskRoot));
-    bytes += await physicalBytes(taskRoot, scan);
+    bytes += await taskRootBytes(taskRoot, scan, settled);
   }
   const sandbox = async (directory: string): Promise<number> => {
     if (path.basename(directory) === ORCHESTRATOR_TASK_DIR)
-      return counted.has(path.resolve(directory)) ? 0 : physicalBytes(directory, scan);
+      return counted.has(path.resolve(directory)) ? 0 : taskRootBytes(directory, scan, settled);
     let sum = 0;
     try {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -554,8 +643,61 @@ async function scanAcquisitionBytes(root: string): Promise<AcquisitionScan> {
     return sum;
   };
   scan.bytes = bytes + (await sandbox(path.join(root, '.sandbox')));
+  if (settled) {
+    // A dir that went live, moved or was removed drops its footprint.
+    let changed = false;
+    for (const [directory, kept] of settled.footprints) {
+      if (settled.seen.has(directory)) changed ||= kept.unsaved === true;
+      else {
+        settled.footprints.delete(directory);
+        changed = true;
+      }
+    }
+    if (changed) {
+      const dirs = Object.fromEntries(
+        [...settled.footprints].map(([directory, { token, bytes }]) => [
+          directory,
+          { token, bytes },
+        ]),
+      );
+      await atomicJson(footprintFile(settled.store), { v: 1, dirs });
+      for (const kept of settled.footprints.values()) delete kept.unsaved;
+    }
+  }
   scan.durationMs = performance.now() - started;
   return scan;
+}
+
+/**
+ * A task root holds `<flow>/<task>` dirs. A settled task dir is charged the footprint kept for
+ * its token; a missing or stale one is walked and kept. Live dirs are walked as before.
+ */
+function taskRootBytes(
+  taskRoot: string,
+  scan: AcquisitionScan,
+  settled?: SettledTaskDirs,
+): Promise<number> {
+  const TASK_DEPTH = 2;
+  return physicalBytes(
+    taskRoot,
+    scan,
+    settled && {
+      kept: (directory, depth) => {
+        if (depth !== TASK_DEPTH) return undefined;
+        const token = settled.token(directory);
+        if (token === undefined) return undefined;
+        settled.seen.add(directory);
+        const kept = settled.footprints.get(directory);
+        if (kept?.token !== token) return undefined;
+        scan.settledDirs++;
+        return kept.bytes;
+      },
+      walked: (directory, depth, bytes) => {
+        const token = depth === TASK_DEPTH ? settled.token(directory) : undefined;
+        if (token !== undefined) settled.footprints.set(directory, { token, bytes, unsaved: true });
+      },
+    },
+  );
 }
 
 async function chargedCaptureBytes(
@@ -625,13 +767,16 @@ export interface RunBundleAdmissionUsage {
 export async function runBundleAdmissionUsage(
   store: RunBundleStore,
   farmslotRoot: string,
+  taskDirToken?: AcquisitionTaskDirToken,
 ): Promise<RunBundleAdmissionUsage> {
   // Store accounting can record a legacy bundle's bytes, which only ever happens under the lock.
   const { stored, reservations } = await withRunBundleStoreLock(store, async () => ({
     stored: await chargedStoreBytes(store),
     reservations: await reservedMetadataBytes(store),
   }));
-  const acquisition = (await acquisitionBytes(farmslotRoot)).bytes;
+  const acquisition = (
+    await acquisitionBytes(farmslotRoot, taskDirToken && { store, token: taskDirToken })
+  ).bytes;
   return { store: stored, reservations, acquisition, total: stored + reservations + acquisition };
 }
 
@@ -640,6 +785,7 @@ export async function reserveRunBundleMetadata(
   runId: string,
   policy = DEFAULT_RUN_BUNDLE_RETENTION,
   farmslotRoot?: string,
+  taskDirToken?: AcquisitionTaskDirToken,
 ): Promise<void> {
   await assertStorePairing(store);
   assertSafeBundleSegment(runId, 'run id');
@@ -650,7 +796,9 @@ export async function reserveRunBundleMetadata(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const acquisitionSize = farmslotRoot
     ? await Promise.race([
-        acquisitionBytes(farmslotRoot).then((scan) => scan.bytes),
+        acquisitionBytes(farmslotRoot, taskDirToken && { store, token: taskDirToken }).then(
+          (scan) => scan.bytes,
+        ),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
             () =>
@@ -1336,7 +1484,13 @@ export async function materializeRunBundle(
   await assertStorePairing(store);
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   assertPolicy(policy);
-  const acquisitionScan = await acquisitionBytes(request.farmslotRoot);
+  const acquisitionScan = await acquisitionBytes(
+    request.farmslotRoot,
+    request.acquisitionTaskDirToken && {
+      store: request.store,
+      token: request.acquisitionTaskDirToken,
+    },
+  );
   const acquisitionSize = acquisitionScan.bytes;
   const capture = { label: `capture of run ${run.id}` };
   const captured = await withBundleLock(store, STORE_LOCK, capture, async () => {

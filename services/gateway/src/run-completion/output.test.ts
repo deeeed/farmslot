@@ -60,7 +60,9 @@ test('completion diagnostics and a pending retrospective preserve the captured Q
   assert.equal(scanLogs.length, 1, 'one acquisition timing line per output capture');
   assert.match(
     String(scanLogs[0]!.arguments[0]),
-    new RegExp(`^\\[output\\] ${run.id} acquisition scan: files=\\d+ durationMs=\\d+\\.\\d$`),
+    new RegExp(
+      `^\\[output\\] ${run.id} acquisition scan: files=\\d+ settledDirs=\\d+ durationMs=\\d+\\.\\d$`,
+    ),
   );
   const captured = getRun(run.id)!;
   const review = captured.decisions.find((decision) => decision.payload?.kind === 'output-review')!;

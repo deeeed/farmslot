@@ -27,9 +27,11 @@ await openRunBundleStore({
 });
 after(() => rm(root, { recursive: true, force: true }));
 
-const { createRun, getRun, updateRun } = await import('../runs/store.js');
+const { createRun, getRun, persistRunNow, updateRun, withTaskAdmission } =
+  await import('../runs/store.js');
 const { captureRunOutput, acknowledgeRunOutput } = await import('./output.js');
-const { retainRunArtifacts, readRetainedRunText } = await import('./retained-artifacts.js');
+const { acquisitionTaskDirToken, retainRunArtifacts, readRetainedRunText } =
+  await import('./retained-artifacts.js');
 const { runRecipeRunsForRun } = await import('../methods/run/context.js');
 const { serveRunArtifact } = await import('../methods/filesystem.js');
 
@@ -409,4 +411,48 @@ test('housekeeping archives a bundle no run references and the farm is warned be
       (event) => event.type === 'run-bundle.capacity' && event.severity === 'warn',
     ),
   );
+});
+
+test('a task dir settles only once its runs have ended and been quiet, and a run update unsettles it', async () => {
+  const taskDir = (name: string) => path.join(root, 'projects/example/tasks/qa', name);
+  const live = createRun({
+    flowType: 'dev',
+    project: 'example',
+    ticketOrPr: 'LIVE',
+    completionPolicy: 'artifact-only',
+    mode: 'validation',
+  });
+  updateRun(live.id, { taskFile: path.join(taskDir('live'), 'TASK.md'), status: 'monitoring' });
+  const ended = createRun({
+    flowType: 'dev',
+    project: 'example',
+    ticketOrPr: 'ENDED',
+    completionPolicy: 'artifact-only',
+    mode: 'validation',
+  });
+  updateRun(ended.id, { taskFile: path.join(taskDir('ended'), 'TASK.md'), status: 'done' });
+  const endedAt = getRun(ended.id)!.updatedAt;
+  const quiet = Date.parse(endedAt) + 15 * 60_000;
+  const classify = await acquisitionTaskDirToken(quiet);
+  assert.equal(classify(taskDir('live')), undefined, 'a run that has not ended keeps its dir live');
+  assert.equal(classify(taskDir('ended')), `${ended.id}@${endedAt}`);
+  assert.equal(classify(taskDir('deleted-run')), 'unowned');
+  assert.equal(
+    (await acquisitionTaskDirToken(quiet - 1))(taskDir('ended')),
+    undefined,
+    'a run that just ended may still write its dir',
+  );
+  await withTaskAdmission(path.join(taskDir('ended'), 'TASK.md'), async () => {
+    assert.equal((await acquisitionTaskDirToken(quiet))(taskDir('ended')), undefined);
+  });
+  await delay(2);
+  updateRun(ended.id, { ticketOrPr: 'ENDED-GRADED' });
+  const updatedAt = getRun(ended.id)!.updatedAt;
+  assert.notEqual(updatedAt, endedAt);
+  assert.equal(
+    (await acquisitionTaskDirToken(Date.parse(updatedAt) + 15 * 60_000))(taskDir('ended')),
+    `${ended.id}@${updatedAt}`,
+  );
+  // Settle the background run writes before the temp root is removed.
+  for (const run of [live, ended]) await persistRunNow(getRun(run.id)!);
 });
