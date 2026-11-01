@@ -1399,14 +1399,15 @@ if (phase === 'terminal-context') {
       slotId: fixture.slotId,
       agentContexts: [
         {
-          id: 'ot-ci-fix',
+          id: 'ci-fix',
           role: 'ci-fix',
           label: 'CI fix',
           status: 'working',
           slotId: fixture.slotId,
           runId: fixRunId,
           runner: 'claude',
-          // The shape services/gateway/src/ci-monitor/inline-fix.ts saves.
+          // The shape services/gateway/src/ci-monitor/inline-fix.ts saves; context ids are the
+          // role's own (contextIdFor), as the gateway requires.
           target: {
             session: sessionName,
             window: null,
@@ -1429,7 +1430,7 @@ if (phase === 'terminal-context') {
       },
       agentContexts: [
         {
-          id: 'ot-review',
+          id: 'review',
           role: 'review',
           label: 'Review',
           status: 'working',
@@ -1471,7 +1472,7 @@ if (phase === 'terminal-context') {
       const sent = shortTag('os');
       proofRef = `runs-cache:terminal:${fixRunId}`;
       await inbox(
-        `workspace/slot/${fixture.slotId}/terminal?runId=${fixRunId}&contextId=ot-ci-fix&draft=${encodeURIComponent(`echo ${sent}`)}`,
+        `workspace/slot/${fixture.slotId}/terminal?runId=${fixRunId}&contextId=ci-fix&draft=${encodeURIComponent(`echo ${sent}`)}`,
       );
       const opened = await until(
         (value) =>
@@ -1483,7 +1484,7 @@ if (phase === 'terminal-context') {
       assert.deepEqual(opened.terminalTarget, {
         slotId: fixture.slotId,
         runId: fixRunId,
-        contextId: 'ot-ci-fix',
+        contextId: 'ci-fix',
         role: 'ci-fix',
       });
       await pressEnabled('worker-voice-send');
