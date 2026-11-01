@@ -38,7 +38,7 @@ import {
   probeSlotBranchFreshness,
   resolveBranchUpdateStrategy,
 } from './branch-freshness.js';
-import { BlockedRunError } from './errors.js';
+import { BlockedRunError, OWNED_WORKER_NOT_IDLE, OwnedWorkerBusyError } from './errors.js';
 import {
   buildEvidenceRefreshAction,
   countStalePublicationReviews,
@@ -403,9 +403,9 @@ async function refreshPublishPackageTransitionLocked(
     );
   const progress = slotAvailable ? await progressReader(run) : null;
   if (progress && progress.kind !== 'idle')
-    throw new BlockedRunError(
-      'Wait for the owned worker to be idle before refreshing its publication package',
-    );
+    throw progress.kind === 'making-progress'
+      ? new OwnedWorkerBusyError()
+      : new BlockedRunError(OWNED_WORKER_NOT_IDLE);
   const selectedBefore =
     params.selectedEvidenceKeys ??
     oldPayload.prPackage?.selectedEvidenceKeys ??
