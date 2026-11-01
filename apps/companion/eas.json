@@ -24,7 +24,8 @@
       "env": {
         "APP_VARIANT": "preview",
         "YARN_ENABLE_GLOBAL_CACHE": "false",
-        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false"
+        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false",
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a"
       }
     },
     "preview_apk": {
@@ -36,7 +37,8 @@
       "env": {
         "APP_VARIANT": "preview",
         "YARN_ENABLE_GLOBAL_CACHE": "false",
-        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false"
+        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false",
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a"
       }
     },
     "production": {
@@ -45,7 +47,8 @@
       "env": {
         "APP_VARIANT": "production",
         "YARN_ENABLE_GLOBAL_CACHE": "false",
-        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false"
+        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false",
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a"
       }
     },
     "production_apk": {
@@ -57,7 +60,8 @@
       "env": {
         "APP_VARIANT": "production",
         "YARN_ENABLE_GLOBAL_CACHE": "false",
-        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false"
+        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false",
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a"
       }
     }
   },
