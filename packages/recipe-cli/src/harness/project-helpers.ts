@@ -20,6 +20,8 @@ import {
   resolveHarnessContext,
 } from './context.js';
 import { ProjectBindingError } from './context-state.js';
+import { inputSourceSnapshot, sourceIsDirty } from './execution-provenance.js';
+import { isPathWithin } from './paths.js';
 import {
   type ProjectRecipeHost,
   type ProjectRecipeHostOptions,
@@ -227,6 +229,31 @@ export async function projectTaskExecution(
   return {
     ...install,
     bindingIdentity,
+    // Libraries outside the provider bind to their retained copies, so a shared library
+    // checkout moved during the run cannot reach it. Provider-bundled ones follow the provider.
+    pinSelection: (copy) => {
+      const identity: TaskRecipeBindingIdentity = {
+        ...bindingIdentity,
+        libraries: libraries.map((library) => {
+          const retained =
+            library.path && !isPathWithin(binding.provider.root, library.path)
+              ? copy(library.path)
+              : undefined;
+          if (!retained) return library;
+          const snapshot = inputSourceSnapshot(retained.staged);
+          return {
+            name: library.name,
+            path: retained.pinned,
+            ...snapshot,
+            dirtyDigest: sourceIsDirty(snapshot) ? snapshot.sourceFingerprint : null,
+          };
+        }),
+      };
+      return {
+        bindingIdentity: identity,
+        selectedConfiguration: JSON.stringify({ ...selection, identity }),
+      };
+    },
     inputs: [
       ...new Set([
         workspace,
@@ -310,13 +337,17 @@ export async function repinSelectedTask(
       if (!current)
         return refuse('TASK_REPIN_UNSUPPORTED', 'The checkout selected no project provider.');
       // Only tooling bytes and configuration follow the checkout; the selection stays.
-      const kept = (value: TaskProjectSelection, binding: TaskRecipeBindingIdentity) => ({
+      const kept = (
+        value: TaskProjectSelection,
+        binding: TaskRecipeBindingIdentity,
+        source: (file: string | undefined) => string | undefined = (file) => file,
+      ) => ({
         project: binding.project,
         app: binding.app,
         domain: binding.domain,
         adapter: binding.adapter,
         target: binding.target,
-        libraries: binding.libraries.map((library) => [library.name, library.path]),
+        libraries: binding.libraries.map((library) => [library.name, source(library.path)]),
         pack: value.packRoot,
         checkout: value.checkoutRoot,
         provider: value.provider,
@@ -325,7 +356,10 @@ export async function repinSelectedTask(
         farmRuntimeDir: value.farmRuntimeDir,
         artifactDir: value.artifactDir,
       });
-      const before = kept(selection, recorded);
+      // A pinned library is compared by the checkout it was retained from.
+      const before = kept(selection, recorded, (file) =>
+        file === undefined ? undefined : retainedSource(previous, file),
+      );
       const after = kept(fresh, current);
       for (const field of Object.keys(before) as (keyof typeof before)[])
         if (JSON.stringify(before[field]) !== JSON.stringify(after[field]))
@@ -333,6 +367,15 @@ export async function repinSelectedTask(
       return { previous, receipt: repinTask(taskDir, execution, previous, checkout) };
     },
   );
+}
+
+/** The source a retained copy was taken from; any other path is its own source. */
+function retainedSource(receipt: TaskExecutionProvenance, file: string): string {
+  if (!isPathWithin(receipt.pin, file)) return file;
+  const input = receipt.retainedInputs.find(
+    (entry) => entry.source !== entry.path && isPathWithin(entry.path, file),
+  );
+  return input ? path.join(input.source, path.relative(input.path, file)) : file;
 }
 
 export async function withTaskProjectHost<T>(
@@ -381,6 +424,8 @@ export async function withTaskProjectHost<T>(
       (file === provider.root || file.startsWith(`${provider.root}${path.sep}`))
     )
       return path.join(poolProviderRoot, path.relative(provider.root, file));
+    // A selection pinned at task init already names the retained copy.
+    if (isPathWithin(receipt.pin, file)) return file;
     const input =
       receipt.retainedInputs.find((entry) => entry.source === file) ??
       receipt.retainedInputs.find((entry) => file.startsWith(`${entry.source}${path.sep}`));
@@ -431,7 +476,12 @@ export async function withTaskProjectHost<T>(
         if (!library?.path || equals < 1) mismatch(flag);
         const requested = path.resolve(options.cwd ?? process.cwd(), pair.slice(equals + 1));
         const root = fs.existsSync(requested) ? fs.realpathSync(requested) : requested;
-        if (root !== library.path && root !== retained(library.path)) mismatch(flag);
+        if (
+          root !== library.path &&
+          root !== retained(library.path) &&
+          root !== retainedSource(receipt, library.path)
+        )
+          mismatch(flag);
         result.push('--library', `${library.name}=${retained(library.path)}`);
       } else if (stripSelectors && (flag in fixed || flag === '--target')) {
         if (!arg.includes('=')) index += 1;

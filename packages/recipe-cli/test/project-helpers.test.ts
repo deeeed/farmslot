@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,7 @@ import { buildMarkShim } from '../../agent-runtime/src/task-init/write.js';
 import { handleChecklist } from '../src/harness/commands/checklist.js';
 import { handleRecipeQuality } from '../src/harness/commands/recipe-quality.js';
 import { handleReview } from '../src/harness/commands/review.js';
+import { sourceSnapshot } from '../src/harness/execution-provenance.js';
 import { harnessHost } from '../src/harness/host.js';
 import {
   projectTaskExecution,
@@ -270,6 +272,88 @@ test('retained provider gates survive a provider update and ordinary source edit
   await withProjectRecipeHost({ ...updatedDefaults, command: 'doctor' }, async ({ provider }) => {
     assert.equal(provider.commandOptions?.task?.stepGates.length, 1);
   });
+});
+
+test('a shared library checkout moved during the run leaves the task on its pinned copy', async (t) => {
+  const f = fixture(t);
+  // A shared library checkout like ~/dev/metamask/experimental-metamask-recipe-perps.
+  const shared = path.join(f.root, 'shared-library');
+  fs.mkdirSync(path.join(shared, 'recipes'), { recursive: true });
+  fs.writeFileSync(path.join(shared, 'recipes', 'flow.md'), 'version bound at prepare\n');
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', shared, ...args], { stdio: 'pipe' });
+  git('init', '-q');
+  git('add', '.');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'bound');
+  const revision = git('rev-parse', 'HEAD').toString().trim();
+  const options: ProjectRecipeHostOptions = {
+    ...f.options,
+    projects: f.options.projects?.map((entry) => ({
+      ...entry,
+      config: {
+        ...entry.config,
+        recipe: {
+          ...entry.config.recipe!,
+          libraries: [{ name: 'shared', owner: 'example', source: shared, revision }],
+        },
+      },
+    })),
+  };
+  let execution!: Awaited<ReturnType<typeof projectTaskExecution>>;
+  await withProjectRecipeHost(options, async (host) => {
+    execution = await projectTaskExecution(host, {
+      executable: path.join(f.installed, 'farmslot'),
+      packageRoot: f.installed,
+      distributionRoot: f.installed,
+    });
+  });
+  const receipt = retainTaskExecution(f.taskDir, execution);
+  const bound = receipt.bindingIdentity!.libraries.find((library) => library.name === 'shared')!;
+  assert.ok(
+    bound.path?.startsWith(`${receipt.pin}${path.sep}`),
+    'the binding names the pinned copy',
+  );
+  const binding = JSON.parse(
+    fs.readFileSync(path.join(f.taskDir, 'inputs/recipe-binding.json'), 'utf8'),
+  ) as { identity: typeof receipt.bindingIdentity };
+  assert.deepEqual(binding.identity, receipt.bindingIdentity);
+  // An SDK that resolves recorded paths through their sources (one bundled in a provider)
+  // finds the pinned copy as a retained input of its own.
+  assert.ok(
+    receipt.retainedInputs.some(
+      (entry) => entry.source === bound.path && entry.path === bound.path,
+    ),
+  );
+  // A rollout moves the shared checkout while the run is in flight.
+  fs.writeFileSync(path.join(shared, 'recipes', 'flow.md'), 'version rolled out mid-run\n');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qam', 'rollout');
+  // The cook skill's check: the recorded library still has its recorded fingerprint.
+  assert.equal(sourceSnapshot(bound.path!).sourceFingerprint, bound.sourceFingerprint);
+  assert.equal(
+    fs.readFileSync(path.join(bound.path!, 'recipes', 'flow.md'), 'utf8'),
+    'version bound at prepare\n',
+  );
+  assert.equal(verifySelectedTask(f.taskDir).pin, receipt.pin);
+  assert.equal(retainTaskExecution(f.taskDir, execution).pin, receipt.pin, 'a rerun keeps the pin');
+  await withTaskProjectHost(
+    { ...options, tokens: ['--library', `shared=${shared}`] },
+    f.taskDir,
+    async (host) => {
+      assert.equal(
+        host.librarySources.find((source) => source.name === 'shared')?.root,
+        bound.path,
+        'the task host runs the pinned copy, also for an override naming the shared checkout',
+      );
+    },
+  );
+  await assert.rejects(
+    withTaskProjectHost(
+      { ...options, tokens: ['--library', `shared=${f.root}`] },
+      f.taskDir,
+      async () => assert.fail('must not invoke'),
+    ),
+    { code: 'TASK_BINDING_CHANGED' },
+  );
 });
 
 test('retained installed providers keep hoisted dependencies after installation removal', async (t) => {

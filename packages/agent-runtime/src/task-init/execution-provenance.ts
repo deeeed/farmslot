@@ -57,6 +57,52 @@ export interface TaskExecutionInput {
   excludedRoots?: readonly string[];
   /** Host selection data. Its bytes are retained and verified with the tooling. */
   selectedConfiguration?: string;
+  /**
+   * Rebinds the selection to the retained copies once they exist, so the task reads its
+   * pinned bytes instead of a shared checkout that can move during the run. `copy` gives a
+   * retained source's copy: `staged` to read now, `pinned` to record.
+   */
+  pinSelection?: (copy: (source: string) => RetainedCopy | undefined) => PinnedSelection;
+}
+
+export interface RetainedCopy {
+  staged: string;
+  pinned: string;
+}
+
+export interface PinnedSelection {
+  bindingIdentity: TaskRecipeBindingIdentity | null;
+  selectedConfiguration?: string;
+}
+
+/**
+ * The selection a task records: rebound to its retained copies when the host asks for it.
+ * `copies` collects every copy the selection now names.
+ */
+function pinnedSelection(
+  input: TaskExecutionInput,
+  retainedInputs: readonly TaskRetainedInput[],
+  stagedPath: (pinned: string) => string,
+  copies: RetainedCopy[] = [],
+): PinnedSelection {
+  if (!input.pinSelection)
+    return {
+      bindingIdentity: input.bindingIdentity,
+      ...(input.selectedConfiguration !== undefined
+        ? { selectedConfiguration: input.selectedConfiguration }
+        : {}),
+    };
+  return input.pinSelection((source) => {
+    const real = fs.existsSync(source) ? fs.realpathSync(source) : path.resolve(source);
+    const entry = retainedInputs.find(
+      (candidate) => candidate.source !== candidate.path && within(candidate.source, real),
+    );
+    if (!entry) return undefined;
+    const pinned = path.join(entry.path, path.relative(entry.source, real));
+    const copy = { staged: stagedPath(pinned), pinned };
+    copies.push(copy);
+    return copy;
+  });
 }
 
 export class TaskProvenanceError extends Error {
@@ -286,8 +332,18 @@ export function retainTaskExecution(
   input: TaskExecutionInput,
   additionalInputs: readonly string[] = [],
 ): TaskExecutionProvenance {
-  if (fs.existsSync(path.join(taskDir, receiptFile))) {
-    return verifyTaskExecutionProvenance(taskDir, input.bindingIdentity);
+  const receiptPath = path.join(taskDir, receiptFile);
+  if (fs.existsSync(receiptPath)) {
+    // A rerun records the same pinned selection the first run did; verification checks it.
+    const recorded: unknown = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    const retained =
+      isRecord(recorded) && Array.isArray(recorded.retainedInputs)
+        ? recorded.retainedInputs.filter(isRetainedInput)
+        : [];
+    return verifyTaskExecutionProvenance(
+      taskDir,
+      pinnedSelection(input, retained, (pinned) => pinned).bindingIdentity,
+    );
   }
   return writeTaskExecution(taskDir, input, additionalInputs);
 }
@@ -308,7 +364,10 @@ export function repinTaskExecution(
   // Producer additions, such as a template root outside the pack, are retained again.
   const inputsRoot = path.join(previous.pin, 'inputs');
   const carried = previous.retainedInputs
-    .filter((entry) => path.dirname(path.dirname(entry.path)) === inputsRoot)
+    .filter(
+      (entry) =>
+        entry.source !== entry.path && path.dirname(path.dirname(entry.path)) === inputsRoot,
+    )
     .map((entry) => entry.source)
     .filter((source) => fs.existsSync(source));
   return writeTaskExecution(taskDir, input, carried, { previous, checkoutRoot });
@@ -385,9 +444,25 @@ function writeTaskExecution(
         retainedInputs.push({ ...entry, path: path.join(pin, path.relative(staging, entry.path)) });
       retainedInputs.push({ ...copied, path: path.join(pin, relative) });
     }
+    const copies: RetainedCopy[] = [];
+    const selected = pinnedSelection(
+      input,
+      retainedInputs,
+      (pinned) => path.join(staging, path.relative(pin, pinned)),
+      copies,
+    );
+    // A copy the selection names is also retained as itself, so a reader that resolves
+    // recorded paths through their sources (an older bundled SDK) finds the pinned path.
+    for (const copy of copies)
+      if (!retainedInputs.some((entry) => entry.source === copy.pinned))
+        retainedInputs.push({
+          source: copy.pinned,
+          path: copy.pinned,
+          sha256: taskInputDigest(copy.staged),
+        });
     fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
-    if (input.selectedConfiguration !== undefined) {
-      fs.writeFileSync(staged(selection), input.selectedConfiguration, { flag: 'wx' });
+    if (selected.selectedConfiguration !== undefined) {
+      fs.writeFileSync(staged(selection), selected.selectedConfiguration, { flag: 'wx' });
       retainedInputs.push({
         source: selection,
         path: selection,
@@ -419,7 +494,7 @@ function writeTaskExecution(
       entrySha256: sha256(copiedExecutable),
       packageTreeSha256: taskInputDigest(copiedPackage),
       recordedAt: new Date().toISOString(),
-      bindingIdentity: input.bindingIdentity,
+      bindingIdentity: selected.bindingIdentity,
       retainedInputs,
     };
     if (repin) {
@@ -457,7 +532,7 @@ function writeTaskExecution(
       // The receipt names its pin, so an interrupted swap can be finished by resumeTaskRepin.
       fs.renameSync(staged(receiptPath), receiptPath);
       swapped = true;
-      if (input.selectedConfiguration !== undefined) fs.renameSync(staged(selection), selection);
+      if (selected.selectedConfiguration !== undefined) fs.renameSync(staged(selection), selection);
     }
     return receipt;
   } finally {
