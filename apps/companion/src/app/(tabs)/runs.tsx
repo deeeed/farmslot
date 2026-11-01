@@ -1,6 +1,6 @@
 import { FlashList } from '@shopify/flash-list';
-import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useIsFocused, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useShallow } from 'zustand/react/shallow';
@@ -22,7 +22,11 @@ import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { ResourceReadStatus } from '../../components/ResourceReadStatus';
 import { RunLinkedTickets } from '../../components/RunLinkedTickets';
-import { RunElapsedTime, RunPipelineMini } from '../../components/RunPipeline';
+import {
+  RunElapsedTime,
+  RunPipelineLiveContext,
+  RunPipelineMini,
+} from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { useSharedViewSelection } from '../../features/quick-actions/QuickActionsProvider';
 import {
@@ -668,6 +672,7 @@ function RunsReadStatus() {
 export default function RunsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const focused = useIsFocused();
   const runs = useRunStore((s) => s.runs);
   const activeLoading = useRunStore((s) => s.activeLoading);
   const hasRunData = useRunStore((s) => Boolean(s.observation.data));
@@ -777,6 +782,11 @@ export default function RunsScreen() {
       })),
     ]);
   }, [visibleRuns]);
+  // Hidden, the list keeps the rows it showed: run updates don't re-render cards nobody sees,
+  // and showing the tab again renders the current rows.
+  const lastFocusedRows = useRef(runRows);
+  if (focused) lastFocusedRows.current = runRows;
+  const shownRows = focused ? runRows : lastFocusedRows.current;
 
   const runScopeHeader = (
     <View style={styles.scopeBar}>
@@ -868,26 +878,28 @@ export default function RunsScreen() {
           </View>
         )
       ) : (
-        <FlashList
-          data={runRows}
-          keyExtractor={(item) =>
-            item.kind === 'family' ? `family:${item.group.familyId}` : `run:${item.run.id}`
-          }
-          renderItem={renderRow}
-          contentContainerStyle={[
-            styles.listContent,
-            { paddingBottom: styles.listContent.paddingBottom + insets.bottom },
-          ]}
-          ListFooterComponent={
-            <View
-              testID="companion-screen-review-end"
-              accessible
-              collapsable={false}
-              accessibilityLabel="End of Review queue"
-              style={styles.captureEndMarker}
-            />
-          }
-        />
+        <RunPipelineLiveContext.Provider value={focused}>
+          <FlashList
+            data={shownRows}
+            keyExtractor={(item) =>
+              item.kind === 'family' ? `family:${item.group.familyId}` : `run:${item.run.id}`
+            }
+            renderItem={renderRow}
+            contentContainerStyle={[
+              styles.listContent,
+              { paddingBottom: styles.listContent.paddingBottom + insets.bottom },
+            ]}
+            ListFooterComponent={
+              <View
+                testID="companion-screen-review-end"
+                accessible
+                collapsable={false}
+                accessibilityLabel="End of Review queue"
+                style={styles.captureEndMarker}
+              />
+            }
+          />
+        </RunPipelineLiveContext.Provider>
       )}
     </View>
   );

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -101,6 +101,9 @@ export function RunElapsedTime({ run }: { run: Run }) {
   );
 }
 
+/** False while the list holding these pipelines is hidden: clocks and checklist reads pause. */
+export const RunPipelineLiveContext = createContext(true);
+
 /** The mini pipeline's derived state, recomputed only when the run changes. */
 interface RunPipelineMiniView {
   activity: ReturnType<typeof runActivityView>;
@@ -157,7 +160,8 @@ function runPipelineMiniView(run: Run): RunPipelineMiniView {
 /** Only the label re-renders on the clock, for the running step's duration. */
 function RunPipelineMiniSummary({ view, held }: { view: RunPipelineMiniView; held: boolean }) {
   const { activity, isCancelled, active, remaining, allDone, hasFailed, blocked, detail } = view;
-  usePipelineClock(Boolean(activity));
+  const live = useContext(RunPipelineLiveContext);
+  usePipelineClock(Boolean(activity) && live);
   const duration = active ? stepDuration(active) : null;
   const label = isCancelled
     ? 'cancelled'
@@ -197,7 +201,8 @@ function RunPipelineMiniSummary({ view, held }: { view: RunPipelineMiniView; hel
 
 /** Checklist reads refresh on their own cadence; only this row re-renders for them. */
 function RunPipelineMiniChecklist({ run }: { run: Run }) {
-  const checklist = useRunChecklistProgress(run);
+  const live = useContext(RunPipelineLiveContext);
+  const checklist = useRunChecklistProgress(run, live);
   return (
     <RunChecklistProgress
       run={run}
