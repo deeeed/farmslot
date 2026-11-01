@@ -7,6 +7,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Looks right / Issue read as unavailable (dimmed) wherever they can't record a verdict: no verdict bound for you, the run not taking commands, or evidence replaced since the recording opened.
 - Review evidence from a run with an output review pending opens that review's evidence, the files the run screen listed, instead of failing with "… is not evidence for AC-n".
 - A recording opened from Review evidence has an "ACs" toggle over the player: every criterion at the moment the recording reaches it (the table of contents Command Center's review shows), the current one with Looks right / Issue, and previous / next. Tapping one plays from there.
+- AC rows name the recording their verdict comes from. After a re-recording, the gate's older evidence reads "Evidence replaced" instead of red "Not proven" or an invalid package next to passing steps.
 
 ## 0.10.0 - 2026-11-01
 
