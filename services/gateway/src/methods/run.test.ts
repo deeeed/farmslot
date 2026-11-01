@@ -3832,11 +3832,7 @@ test('refused publication approval stays pending without restoring, replaying or
 });
 
 /** The approval probe's answer: a conflict with the base at `headSha`, or a clean merge. */
-function baseProbe(
-  mergeConflicts: boolean,
-  headSha = 'abc1234',
-  seen: (string | undefined)[] = [],
-) {
+function baseProbe(mergeConflicts: boolean, headSha = 'abc1234', seen: Run['slotId'][] = []) {
   return async (run: Pick<Run, 'slotId'>) => {
     seen.push(run.slotId);
     return {
@@ -3894,7 +3890,7 @@ test('approval of a package conflicting with its publication base is refused, an
     engineState: { generation: 4 },
   });
   const events: string[] = [];
-  const probed: (string | undefined)[] = [];
+  const probed: Run['slotId'][] = [];
   await assert.rejects(
     runResolveDecision(
       { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
@@ -4030,7 +4026,7 @@ async function parkedPackagedGate(
       park: { ...park, slotId: ownedSlot, phase: 'restored', slotFreedAt: undefined },
     });
     return {
-      ok: true,
+      ok: true as const,
       runId: run.id,
       slotId: ownedSlot,
       restoredGeneration: 1,
@@ -4062,7 +4058,7 @@ test('real packaged approval restores a parked run before reading a reused slot 
     await parkedPackagedGate(t, [
       { id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' },
     ]);
-  const probed: (string | undefined)[] = [];
+  const probed: Run['slotId'][] = [];
   const findings = [{ reviewId: 'review', file: 'src/a.ts', description: 'Accepted finding' }];
   await runWithSessionOriginator(acceptor, () =>
     runResolveDecision(
@@ -4125,7 +4121,7 @@ test('a parked approval probes its restored checkout and refuses a base conflict
       { id: 'hold', label: 'Hold', style: 'secondary' },
     ]);
   const events: string[] = [];
-  const probed: (string | undefined)[] = [];
+  const probed: Run['slotId'][] = [];
   await assert.rejects(
     runWithSessionOriginator(acceptor, () =>
       runResolveDecision(
