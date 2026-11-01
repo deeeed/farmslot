@@ -246,6 +246,21 @@ export async function retainedRunArtifactManifest(
   );
 }
 
+/** Task-relative paths the bundle left out on purpose: sensitive names never enter it. */
+export async function retainedRunExcludedPaths(
+  run: Run,
+  ref = retainedRunBundleRef(run),
+): Promise<Set<string>> {
+  ref = localBundleRef(run, ref);
+  const { manifest } = await readRetainedRunBundle(await runBundleStore(), ref, run.id);
+  return new Set(
+    (manifest.missingData ?? [])
+      .map(parseRunBundleMissingData)
+      .filter(({ reason }) => reason === 'excluded')
+      .map(({ path: file }) => file),
+  );
+}
+
 /** Optional retained metadata has one lookup policy shared by gate/report consumers. */
 export async function readOptionalRetainedRunText(
   run: Run,
