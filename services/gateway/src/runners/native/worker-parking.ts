@@ -22,6 +22,7 @@ import { slotRealpath } from '../../core/slot-io.js';
 import { shellQuote } from '../../core/tmux.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { runTaskLibraries } from '../../tasks/pinned-libraries.js';
 import { unwatchContext, watchContext } from '../../tasks/watcher.js';
 import { runnerSupportsNativeTaskReuse } from '../registry.js';
 
@@ -178,6 +179,7 @@ export async function rehomeNativeParkHandle(
   const prepared = await prepareNativeWorkerLaunch({
     role: owner.context.role,
     vars,
+    taskLibraries: runTaskLibraries(run),
     project: projectVars.projectJson,
     projectVars,
     runner: handle.runnerId,

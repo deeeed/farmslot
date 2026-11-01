@@ -917,6 +917,12 @@ export function runnerSupportsTmuxNudges(runnerId?: string | null): boolean {
   return getRunnerDefinition(runnerId).supportsTmuxNudges;
 }
 
+/** Native chat and farm workers launch through the runner's native adapter. */
+export function assertNativeRunner(runner: string): void {
+  if (!KNOWN_RUNNERS[runner]?.nativeTransport)
+    throw new Error(`Runner has no native transport: ${runner}`);
+}
+
 export function runnerSupportsNativeTaskReuse(runnerId?: string | null): boolean {
   return (
     isKnownRunner(runnerId) &&

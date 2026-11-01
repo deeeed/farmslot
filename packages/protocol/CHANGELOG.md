@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `runWorkerEffort` names a run's worker effort (the worker context, then its native session, the dispatch effort, then the execution-profile choice for its runner and model), and `runEngineLabel` formats `runner/model · effort` with the effort only when known.
 - `nativeImplementableKey` picks the proposed plan a client can offer Implement on (the latest turn of an idle, standalone plan-mode session ended with it, nothing pending); `nativeImplementSession` gives the new default-mode session's create parameters (the planning session's node, runner, model, effort, profile and directory) and `nativeImplementPrompt` its first message (ADR-057 Amendment 9).
 - `markdownFence(content, info?)` fences text as a Markdown code block that it cannot close early, and `nativeTailLines(lines, max)` keeps the last lines after a "… N earlier lines" line; the command card, recipe-cli artifacts, publication receipts and Command Center's terminal context share them.
 - `GatewayAuthConnectResult.capabilities.terminalInputSequence.durable` says panes keep the typed-input record across gateway restarts; otherwise `instance` names the process that has it. `NodeInfo.terminalInputSequence` marks a node whose `tmux.send` takes `seq`. The pane record helpers (`terminalInputRecordOption`, `parseTerminalInputRecord`, `staleTerminalInputRecords`, `isTerminalInputStream`) define the `@farmslot-input-<stream>` tmux pane option both write.

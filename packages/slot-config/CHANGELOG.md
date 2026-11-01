@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Export `resolveRunnerPath`, the slot's configured executable for a runner (`''` when the pool sets none), so native worker launches use the same lookup as dispatch commands.
 - `EVAL_TASK_FLOW` names the task-root flow dir that holds eval experiment roots, for the gateway's eval layout and acquisition accounting.
 - Validate project `slot_selection.physical_devices` (`any` or `on-request`, default `any`); `normalizeRawSlotSelection` returns the parsed policy.
 - Count Claude multi-block messages once in total and incremental usage, and price current models at company LiteLLM catalog rates.
