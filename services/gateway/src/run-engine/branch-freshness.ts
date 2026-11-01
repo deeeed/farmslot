@@ -386,11 +386,20 @@ export async function approvalBaseMergeConflict(
   } = {},
 ): Promise<string | undefined> {
   if (!run.slotId) return undefined;
-  const { vars, base, strategy } = await (deps.target ?? approvalProbeTarget)(
-    run.slotId,
-    run.project,
-  );
-  const freshness = await (deps.probe ?? probeSlotBranchFreshness)(vars, base, strategy);
+  let freshness: BranchFreshnessSummary | null;
+  try {
+    const { vars, base, strategy } = await (deps.target ?? approvalProbeTarget)(
+      run.slotId,
+      run.project,
+    );
+    freshness = await (deps.probe ?? probeSlotBranchFreshness)(vars, base, strategy);
+  } catch (error) {
+    // Like an unavailable probe: the publication push re-checks the base and refuses a conflict.
+    console.warn(
+      `[run-engine] approval base probe unavailable for slot ${run.slotId}: ${(error as Error).message.slice(0, 200)}`,
+    );
+    return undefined;
+  }
   return freshness?.mergeConflicts === true
     ? baseMergeConflictMessage(freshness.mergeConflictPaths)
     : undefined;

@@ -388,6 +388,18 @@ test('approval probes the base again and refuses a branch that now conflicts wit
   assert.equal(await approval(summary(false)), undefined);
   assert.equal(await approval(summary()), undefined);
   assert.equal(await approval(null), undefined);
+  assert.equal(
+    await approvalBaseMergeConflict(
+      { slotId: 'gate-slot', project: 'fixture' },
+      {
+        target: async () => {
+          throw new Error('Slot gate-slot is not in the pool');
+        },
+      },
+    ),
+    undefined,
+    'an unreadable slot defers to the publication push',
+  );
   assert.deepEqual(probes, ['main', 'main', 'main', 'main']);
   assert.equal(await approvalBaseMergeConflict({ slotId: null, project: 'fixture' }), undefined);
 });
