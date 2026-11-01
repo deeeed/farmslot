@@ -142,7 +142,7 @@ GATEWAY_PORT=<slot port> METRO_PORT=<slot port> APP_VARIANT=development \
 - Main's baseline is recorded in the recipe's end nodes: build 4da00ad80, Pixel 6 at 90 Hz, tab-press p95 159 ms and max 192 ms (worst of two release runs; per-tab values and first-frame counts included).
 - Ratchet: when the median tab-press p95 of at least 3 fresh release runs on main is more than 20 ms under the recorded baseline (worst valid run, 158.9 ms), lower the caps by that margin and record the new baseline in the same change. One run cannot trigger it: two runs on the same build differed by 26 ms.
 - The limits are recipe parameters; change them in `jank.recipe.json`'s `paramsSchema` defaults (with the baseline), not per run.
-- Measure on a release build of the development variant (`APP_VARIANT=development`, `assembleRelease`) for budget numbers. A debug client runs it too; label those numbers as debug.
+- Measure on a release build of the development variant (`APP_VARIANT=development`, `assembleRelease`) for budget numbers. Build it on macpro over SSH or with EAS cloud, never with a local Gradle, Xcode or EAS build on macwork (it overloads the machine the phone is plugged into), and install it on the phone from macwork with `adb install -r` onto `net.siteed.farmslot.development` only. A debug client runs the recipe too; label those numbers as debug.
 - Attach `<dir>/performance/report.md` (the per-flow table, with the display refresh rate of each flow) and the run package to the PR, with the head SHA it ran on.
 
 ## Do not
