@@ -219,3 +219,26 @@ test(
     assert.equal(confirmed, true);
   },
 );
+
+test(
+  'a closed connection drops the closeout it owed, so a reply after reconnect proves nothing',
+  { timeout: 4000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const socket = new ExecSocket();
+    const { controller, result, request } = await startScopedExec(t, socket);
+    controller.abort();
+    t.mock.timers.tick(10_010);
+    const error: unknown = await result.catch((failure: unknown) => failure);
+    assert(error instanceof NodeExecUnconfirmedError);
+    let confirmed = false;
+    void error.closeout.then(() => {
+      confirmed = true;
+    });
+    // The gateway's connection close handler.
+    failRequestsBoundTo(socket.asSocket());
+    handleNodeResponse(request.id, true, { exitCode: 0 }, undefined, undefined, socket.asSocket());
+    await Promise.resolve();
+    assert.equal(confirmed, false);
+  },
+);

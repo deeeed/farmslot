@@ -35,7 +35,11 @@ const outputListeners = new Map<string, (stream: string, data: string) => void>(
  * original connection. It replies only once the process closed (or never spawned), so that late
  * result confirms closeout.
  */
-const owedCloseouts = new Map<string, { socket: WebSocket; confirm: () => void }>();
+interface OwedCloseout {
+  socket: WebSocket;
+  confirm: () => void;
+}
+const owedCloseouts = new Map<string, OwedCloseout>();
 
 function awaitOwedCloseout(id: string, socket: WebSocket): Promise<void> {
   return new Promise((confirm) => owedCloseouts.set(id, { socket, confirm }));

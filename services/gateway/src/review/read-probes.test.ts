@@ -368,7 +368,8 @@ test('a late closeout from the node admits the next probe on the same connection
   assert.equal(launches, 2);
 });
 
-test('a probe that waits for reconnect retains the connection that actually executed it', async (t) => {
+/** A node-side socket of a real local WebSocket connection, torn down after the test. */
+async function connectedSocket(t: test.TestContext): Promise<WebSocket> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   let client: WebSocket | undefined;
   t.after(async () => {
@@ -393,6 +394,48 @@ test('a probe that waits for reconnect retains the connection that actually exec
     connection.once('open', resolve).once('error', reject),
   );
   const socket = await peer;
+  return socket;
+}
+
+test('a late closeout from a replaced connection leaves the replacement probe in flight', async (t) => {
+  // The registry replaces a node without closing its old socket, which can still deliver what it
+  // owed; that must not drop the probe the replacement connection is running.
+  const socket = await connectedSocket(t);
+  let confirm!: () => void;
+  const failure = new NodeExecUnconfirmedError(
+    vars.machine,
+    'replaced-request',
+    'timeout',
+    undefined,
+    new Promise<void>((resolve) => {
+      confirm = resolve;
+    }),
+  );
+  const hold = latch();
+  let launches = 0;
+  execute = async () => {
+    launches++;
+    if (launches === 1) throw failure;
+    await hold.promise;
+    return { stdout: 'replacement', stderr: '', exitCode: 0 };
+  };
+  const read = () => probes.readSlotProbe(vars, 'replaced read', 'replaced-fixture', 100);
+  await assert.rejects(read(), (error: unknown) => error === failure);
+  registerNode(vars.machine, 1, socket);
+  const inFlight = read();
+  await flush();
+  assert.equal(launches, 2, 'the replacement connection probes again');
+  confirm();
+  await flush();
+  const shared = read();
+  assert.equal(launches, 2, 'the old closeout did not drop the replacement flight');
+  hold.release();
+  assert.equal((await inFlight).stdout, 'replacement');
+  assert.equal((await shared).stdout, 'replacement');
+});
+
+test('a probe that waits for reconnect retains the connection that actually executed it', async (t) => {
+  const socket = await connectedSocket(t);
   let launches = 0;
   execute = async () => {
     launches++;
