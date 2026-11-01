@@ -107,7 +107,10 @@ mock.module('../../fleet/runtime-ready.js', {
 });
 // This fixture isolates baseline preservation and stops before launch. Probe behavior has its own tests.
 mock.module('../../run-engine/worker-launch-preflight.js', {
-  namedExports: { admitWorkerLaunch: async () => async () => {} },
+  namedExports: {
+    admitWorkerLaunch: async () => async () => {},
+    WorkerLaunchInputsChangedError: class WorkerLaunchInputsChangedError extends Error {},
+  },
 });
 const modulePath: string = './execute.js?dispatch-baseline';
 const { dispatchExecute } = (await import(modulePath)) as typeof import('./execute.js');
