@@ -7,14 +7,23 @@
 // PRs: one with registered criteria, one whose ticket has none. `dispatch.preview` over a real
 // WebSocket, and `farmslot dispatch preview` against the same gateway, must name the first one's
 // criteria and say why the second one's can't be read. `gh` is a failing fixture, so nothing
-// reaches GitHub.
+// reaches GitHub. The CLI runs under `script` (macOS) for the terminal rendering an operator sees.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/preview-inherited-acceptance.mts [evidence-dir]
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -137,7 +146,6 @@ try {
     repo_url: origin,
     default_branch: 'main',
     paths: { runtime_dir: '.agent', artifact_dir: '.task' },
-    execution_templates: { sources: [] },
   });
   await json(path.join(fixtureRoot, 'pool', `${project}.json`), {
     machine: 'localhost',
@@ -220,7 +228,6 @@ try {
         project,
         flowType: 'pr-complete',
         ticketOrPr: `acme/app#${prNumber}`,
-        mode: 'autonomous',
       })
     ).preview;
   const named = await preview(4242);
@@ -240,11 +247,16 @@ try {
     unreadable.inheritedAcceptance?.unavailable ?? '',
     /parent ticketData\.acceptanceCriteria is unavailable/,
   );
-  // The operator's view: the CLI against the same gateway (its profile is in the proof's home).
-  const cli = (prNumber: number) =>
+  // The operator's view: the CLI in a terminal against the same gateway (its profile is in the
+  // proof's home); without a terminal it prints the JSON envelope instead.
+  const cli = async (prNumber: number) => {
+    const transcript = path.join(fixture, `cli-${prNumber}.typescript`);
     execFileSync(
-      process.execPath,
+      'script',
       [
+        '-q',
+        transcript,
+        process.execPath,
         path.join(root, 'packages/cli/bin/farmslot.mjs'),
         'dispatch',
         'preview',
@@ -254,13 +266,21 @@ try {
         'pr-complete',
         '--ticket',
         `acme/app#${prNumber}`,
-        '--mode',
-        'autonomous',
       ],
-      { encoding: 'utf8', env: { ...env, FARMSLOT_HOME: home, NO_COLOR: '1' }, timeout: 90_000 },
+      {
+        env: { ...env, FARMSLOT_HOME: home, NO_COLOR: '1' },
+        stdio: ['ignore', 'ignore', 'pipe'],
+        timeout: 90_000,
+      },
     );
-  const printed = cli(4242);
-  const printedUnreadable = cli(4243);
+    // eslint-disable-next-line no-control-regex
+    return (await readFile(transcript, 'utf8')).replace(
+      /\x1b\[[0-9;?]*[A-Za-z]|\^D|[\r\x04\x08]/g,
+      '',
+    );
+  };
+  const printed = await cli(4242);
+  const printedUnreadable = await cli(4243);
   await writeFile(path.join(evidence, 'cli-4242.txt'), printed);
   await writeFile(path.join(evidence, 'cli-4243.txt'), printedUnreadable);
   assert.match(
