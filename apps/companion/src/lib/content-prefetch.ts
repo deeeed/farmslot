@@ -1,4 +1,5 @@
 import {
+  awaitsHumanDecision,
   type ConfigProjectsResult,
   type DecisionListResult,
   HUMAN_GATE_DECISION_TYPE,
@@ -64,7 +65,9 @@ export function contentPrefetchTargets(
     if (!targets.has(run.id))
       targets.set(run.id, {
         runId: run.id,
-        gate: openHumanGateDecision(run)?.payload?.kind === 'ready',
+        // An open ready gate, or a run the review queue shows waiting on a decision (also while
+        // a review it requested is still running).
+        gate: openHumanGateDecision(run)?.payload?.kind === 'ready' || awaitsHumanDecision(run),
         updatedAt: run.updatedAt,
       });
   return [...targets.values()];

@@ -1,4 +1,5 @@
 import type { ReviewWorkspaceSubject } from '../contracts/review-workspace.js';
+import { awaitsHumanDecision } from '../contracts/run-lifecycle-view.js';
 import type { ReadyGatePrPackage, ReviewDiffSnapshot, Run } from '../contracts/runs.js';
 import type { GitDiffResult, GitLogResult, GitShowBatchResult } from '../rpc/git.js';
 import { Methods } from '../rpc/registry.js';
@@ -180,14 +181,15 @@ export function activeRunDiffQuery(params: {
 function pendingPackage(run: Run): ReadyGatePrPackage | undefined {
   const packageId = run.engineState?.publishGate?.packageId;
   if (!packageId) return undefined;
+  let current: ReadyGatePrPackage | undefined;
   for (const decision of run.decisions ?? [])
-    if (
-      !decision.resolvedAt &&
-      decision.payload?.kind === 'ready' &&
-      decision.payload.prPackage?.id === packageId
-    )
-      return decision.payload.prPackage;
-  return undefined;
+    if (decision.payload?.kind === 'ready' && decision.payload.prPackage?.id === packageId) {
+      if (!decision.resolvedAt) return decision.payload.prPackage;
+      current = decision.payload.prPackage;
+    }
+  // A run still waiting on a person keeps its current package, for example while a review it
+  // requested runs and its ready decision is already resolved.
+  return awaitsHumanDecision(run) ? current : undefined;
 }
 
 /**

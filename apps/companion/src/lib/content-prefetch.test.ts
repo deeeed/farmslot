@@ -340,6 +340,23 @@ test('pending gates come before active runs, each ordered by its last update', (
   ]);
 });
 
+test('a run awaiting a decision while a review it requested runs is still a waiting gate', () => {
+  // A live gate's shape: human-gating, its ready decision resolved with request-review.
+  const waiting = {
+    ...gateRun,
+    id: 'run-review-requested',
+    status: 'human-gating',
+    decisions: (gateRun.decisions ?? []).map((decision) => ({
+      ...decision,
+      resolvedAt: '2026-11-01T08:41:08.392Z',
+    })),
+  } as Run;
+  assert.deepEqual(
+    heldGateRunIds({ runs: [activeRun, waiting], totalCount: 2 }, { decisions: [] }),
+    new Set(['run-review-requested']),
+  );
+});
+
 test('gate media is dropped only against known run and decision lists', () => {
   const runs = { runs: [activeRun, gateRun], totalCount: 2 };
   assert.deepEqual(heldGateRunIds(runs, decisions), new Set(['run-gate']));
