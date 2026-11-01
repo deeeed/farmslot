@@ -46,6 +46,7 @@ import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { captureRunOutput } from '../../run-completion/output.js';
+import { markPreparedPackageStale } from '../../run-completion/prepared-package-stale.js';
 import { retainedMaintenanceStepOutputs } from '../../run-engine/branch-maintenance.js';
 import { pendingDecisionForRun } from '../../run-engine/decision-projection.js';
 import { resolveEngineDecision } from '../../run-engine/engine-decisions.js';
@@ -62,7 +63,6 @@ import {
   startRun,
 } from '../../run-engine/orchestrator.js';
 import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
-import { markPreparedPackageStale } from '../../run-engine/publish-package-refresh.js';
 import {
   probeWorkerSignalForRun,
   signalMatchesMonitorContext,
@@ -1471,18 +1471,20 @@ async function replayRunStep(
   };
   // Re-drive the engine under the run's stored ownership, not as the caller whose request or event
   // started this replay. Test contexts can disable the start (the same switch runCreate honors).
-  const startReplayEngine = (): Promise<void> | undefined => {
+  const startReplayEngine = (expectedGeneration?: number): Promise<void> | undefined => {
     if (
       !hooks.startEngine &&
       process.env.NODE_TEST_CONTEXT === '1' &&
       process.env.FARMSLOT_DISABLE_RUN_ENGINE_START === '1'
     )
       return undefined;
-    return runWithSystemOriginator(() => (hooks.startEngine ?? startRun)(params.runId)).catch(
-      (err: unknown) => {
-        console.error(`[run] replay failed: ${(err as Error).message}`);
-      },
-    );
+    return runWithSystemOriginator(() =>
+      hooks.startEngine
+        ? hooks.startEngine(params.runId)
+        : startRun(params.runId, expectedGeneration === undefined ? {} : { expectedGeneration }),
+    ).catch((err: unknown) => {
+      console.error(`[run] replay failed: ${(err as Error).message}`);
+    });
   };
   // A replay that cancelled the gate's live engine gives it back, and that engine presents its
   // own card. Reopening the superseded card instead leaves it with no engine, and a gate action
@@ -1507,12 +1509,17 @@ async function replayRunStep(
     // The cancelled loop's waiters on the superseded cards return 'abort'.
     for (const decisionId of entry.decisionIds) resolveEngineDecision(decisionId, 'superseded');
     // The engine finalizes a blocked run as terminal on entry; the gate it resumes is waiting.
-    if (current.status !== 'human-gating')
-      await persistRunNow(
-        updateRun(params.runId, { status: 'human-gating' }),
-        'replay-resume-gate',
-      );
-    void startReplayEngine();
+    try {
+      if (current.status !== 'human-gating')
+        await persistRunNow(
+          updateRun(params.runId, { status: 'human-gating' }),
+          'replay-resume-gate',
+        );
+    } finally {
+      // Only this replay's generation: a replay that took the run meanwhile owns its gate.
+      if (getRun(params.runId)?.engineState?.generation === entry.generation)
+        void startReplayEngine(entry.generation);
+    }
     return true;
   };
   const leaveGateReentry = async (failed: boolean, error?: unknown) => {

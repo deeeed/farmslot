@@ -26,6 +26,10 @@ import {
 import { isolatedTestPath } from '../../core/isolated-test-path.js';
 import { statusFile, updateSlotStatus } from '../../core/state.js';
 import {
+  clearPreparedPackageStale,
+  preparedPackageIsStale,
+} from '../../run-completion/prepared-package-stale.js';
+import {
   createEngineDecision,
   hasEngineDecisionWaiter,
 } from '../../run-engine/engine-decisions.js';
@@ -4053,6 +4057,9 @@ test('a gate replay whose publication evidence is refused rebuilds the gate inst
     ),
   );
   assert.deepEqual(started, [run.id]);
+  // The package prepared before the refusal is not offered again.
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), true);
+  clearPreparedPackageStale(run.id);
 });
 
 test('the enclosing human gate cannot mark a replay-restored held slot busy', async (t) => {

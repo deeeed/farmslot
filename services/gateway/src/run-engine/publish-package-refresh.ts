@@ -23,6 +23,7 @@ import {
   prepareCompletionPackageTransitionLocked,
   publicationStatusForRun,
 } from '../run-completion/orchestrator.js';
+import { preparedPackageIsStale } from '../run-completion/prepared-package-stale.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
 import {
   computeReadyGateReviewSubjectHash,
@@ -84,18 +85,6 @@ async function publicationBundleAvailable(
   }
 }
 
-/**
- * Runs whose worker evidence was refused after their package was prepared (a human-gate
- * replay's mirror refresh). That package no longer describes the worker's evidence, so neither
- * the gate nor inspection reuses it until a refresh succeeds; the refresh refuses the evidence
- * again, and the gate presents why.
- */
-const stalePreparedPackages = new Set<string>();
-
-export function markPreparedPackageStale(runId: string): void {
-  stalePreparedPackages.add(runId);
-}
-
 /** The gate loop and inspection share the existing package writer. */
 export async function ensureCurrentPublishPackage(
   runId: string,
@@ -124,7 +113,7 @@ export async function ensureCurrentPublishPackage(
       .flatMap((review) => review.artifactPaths ?? [review.id])
       .sort();
     if (
-      !stalePreparedPackages.has(runId) &&
+      !preparedPackageIsStale(run) &&
       prepared?.headSha === head &&
       JSON.stringify([...prepared.reviewArtifactIds].sort()) === JSON.stringify(ids) &&
       (await publicationBundleAvailable(run, prepared))
@@ -209,7 +198,7 @@ export function reconcilePublicationPackageForInspection(
           ? await readers.bundleAvailable(run, pending.payload.prPackage)
           : false;
       if (
-        !stalePreparedPackages.has(run.id) &&
+        !preparedPackageIsStale(getRun(run.id) ?? run) &&
         pending.payload?.kind === 'ready' &&
         pending.payload.prPackage?.headSha === head &&
         bundleAvailable
@@ -642,7 +631,6 @@ async function refreshPublishPackageTransitionLocked(
   // The preparation owner commits the package only after all projection I/O.
   // A late source refusal therefore preserves the previous canonical pointer.
   await prepared.commit!();
-  stalePreparedPackages.delete(params.runId);
   const nextDecision: RunDecision | undefined = decision
     ? {
         ...decision,

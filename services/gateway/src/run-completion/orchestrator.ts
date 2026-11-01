@@ -195,6 +195,7 @@ export {
   inferRetrospectiveOutcome,
   readCommentsTriageSummary,
 } from './retrospective.js';
+import { clearPreparedPackageStale } from './prepared-package-stale.js';
 import { PublishPackageRefusedError } from './publish-package-refused.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -1107,6 +1108,8 @@ export async function prepareCompletionPackageTransitionLocked(
         },
       },
     });
+    // A committed package describes the evidence it was built from.
+    clearPreparedPackageStale(runId);
   };
   if (!options?.deferCommit) await commit();
   return {

@@ -9,13 +9,17 @@ import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot
 
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
+import {
+  clearPreparedPackageStale,
+  markPreparedPackageStale,
+  preparedPackageIsStale,
+} from '../run-completion/prepared-package-stale.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
 import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 
 import {
   ensureCurrentPublishPackage,
-  markPreparedPackageStale,
   reconcilePublicationPackageForInspection,
   refreshPublishPackage,
   reviewPolicyForPublishPackageRefresh,
@@ -522,4 +526,47 @@ test('a package marked stale by refused evidence is refreshed, not shown again, 
     'the stale package cannot be approved',
   );
   assert.match(shown.decisions[0].description, /Before evidence comes from recipe attempt/);
+});
+
+test('a prepared package stays stale until one is committed, and across a restart while its gate shows no package', () => {
+  const prepared = makeReadyGatePackage();
+  const gate = (id: string, withPackage: boolean): RunDecision => ({
+    id,
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    createdAt: prepared.createdAt,
+    actions: [{ id: 'hold', label: 'Retry Gate', style: 'secondary' }],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      branch: prepared.branch,
+      workerReport: '',
+      diffStat: prepared.diffStat,
+      ...(withPackage ? { prPackage: prepared } : { stale: true }),
+    },
+  });
+  const run = { id: 'stale-package-run', decisions: [gate('built', true)] };
+  assert.equal(preparedPackageIsStale(run), false);
+  markPreparedPackageStale(run.id);
+  assert.equal(preparedPackageIsStale(run), true);
+  clearPreparedPackageStale(run.id);
+  assert.equal(preparedPackageIsStale(run), false);
+  // After a restart the mark is gone, but the gate's "unavailable" card, resolved or not, still
+  // says its package could not be built, so Retry Gate rebuilds instead of reusing the old one.
+  assert.equal(
+    preparedPackageIsStale({
+      ...run,
+      decisions: [gate('built', true), gate('unavailable', false)],
+    }),
+    true,
+  );
+  assert.equal(
+    preparedPackageIsStale({
+      ...run,
+      decisions: [gate('built', true), gate('unavailable', false), gate('rebuilt', true)],
+    }),
+    false,
+  );
 });
