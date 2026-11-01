@@ -9,12 +9,16 @@ await import('../runtime/mock-pty.test-support.js');
 const config = await import('../core/config.js');
 const slotBinding = await import('../runs/slot-binding.js');
 const dispatch = await import('../methods/dispatch.js');
+const store = await import('../runs/store.js');
 const { WorkerLaunchInputsChangedError } = await import('./worker-launch-preflight.js');
+const { LaunchPreflightRefusal } = await import('./worker-preflight.js');
 const { makeRun } = await import('./test-fixtures.js');
 
 let current: Run;
 let attempts = 0;
 let outcomes: Error[] = [];
+/** When set, the attempt after the scripted refusals launches. */
+let launches = false;
 const stop = new Error('Stop after the dispatch attempt');
 const vars: SlotVars = {
   slotId: 'fixture',
@@ -48,8 +52,16 @@ mock.module('../methods/dispatch.js', {
     ...dispatch,
     dispatchExecute: async () => {
       attempts++;
-      throw outcomes.shift() ?? stop;
+      const refusal = outcomes.shift();
+      if (refusal || !launches) throw refusal ?? stop;
+      return { launchCommand: 'fixture-launch' };
     },
+  },
+});
+mock.module('../runs/store.js', {
+  namedExports: {
+    ...store,
+    updateRun: (_id: string, patch: Partial<Run>) => Object.assign(current, patch),
   },
 });
 const freshModule: string = './dispatch-lifecycle-steps.js?launch-inputs-retry';
@@ -78,6 +90,35 @@ test('a launch whose configured inputs changed during preflight is dispatched on
   outcomes = [new WorkerLaunchInputsChangedError('Worker launch inputs changed during preflight')];
   await assert.rejects(dispatchOnce(), (error) => error === stop);
   assert.equal(attempts, 2, 'the second attempt re-reads and dispatches');
+});
+
+test('the retried dispatch launches and its sub-steps record the retry', async () => {
+  attempts = 0;
+  launches = true;
+  outcomes = [new WorkerLaunchInputsChangedError('Worker launch inputs changed during preflight')];
+  try {
+    const { outputs } = await dispatchOnce();
+    assert.equal(attempts, 2);
+    assert.equal(outputs.launchCommand, 'fixture-launch');
+    assert.deepEqual(
+      (outputs.subSteps as Array<{ name: string }>).map((step) => step.name),
+      ['preflight-retry'],
+    );
+  } finally {
+    launches = false;
+  }
+});
+
+test('any other refusal gets no second attempt', async () => {
+  for (const refusal of [
+    new Error('Worker launch inputs changed during preflight; superseded'),
+    new LaunchPreflightRefusal('code', 'the slot checkout is not the dispatched commit'),
+  ]) {
+    attempts = 0;
+    outcomes = [refusal];
+    await assert.rejects(dispatchOnce(), (error) => error === refusal);
+    assert.equal(attempts, 1, refusal.message);
+  }
 });
 
 test('a second change in a row still refuses', async () => {

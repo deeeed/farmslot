@@ -848,11 +848,12 @@ export async function executeDispatchStep(
       preferredLabel && eligible.includes(preferredLabel) ? preferredLabel : eligible[0];
   }
 
-  // A configuration reload during preflight (a pool or project rewrite) refuses before anything
-  // launches; the dispatch re-reads its inputs and checks once more instead of failing the run.
+  // A configuration reload during preflight (a pool or project rewrite) refuses before the task
+  // reaches a worker (a runner already started is stopped first, an unsent native reservation is
+  // retired); the dispatch re-reads its inputs and checks once more instead of failing the run.
   let launchInputsRetried = false;
   for (;;) {
-    if (forcedLabel) triedLabels.push(forcedLabel);
+    if (forcedLabel && !triedLabels.includes(forcedLabel)) triedLabels.push(forcedLabel);
     try {
       dispatchResult = await dispatchExecute(
         {

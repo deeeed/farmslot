@@ -81,7 +81,10 @@ function workerTaskDir(run: Run | undefined, vars: SlotVars, project: ProjectVar
 
 /**
  * The slot's or project's configured launch inputs changed while the launch was being checked
- * (a pool or project file rewrite). Nothing launched; a fresh attempt re-reads the inputs.
+ * (a pool or project file rewrite). No worker has received the task: a tmux runner that already
+ * started is stopped before this escapes, and a native reservation the host never received is
+ * retired. A fresh attempt re-reads the inputs. (A native worker that already accepted the task
+ * is reconciled on retry instead.)
  */
 export class WorkerLaunchInputsChangedError extends Error {
   override name = 'WorkerLaunchInputsChangedError';
