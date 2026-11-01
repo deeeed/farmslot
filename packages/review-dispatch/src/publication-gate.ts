@@ -1,6 +1,7 @@
 import type {
   EvidenceReviewClaim,
   EvidenceReviewJudgmentRow,
+  EvidenceReviewRecording,
 } from '@farmslot/adapter-sdk/evidence';
 import {
   acceptanceCriterionId,
@@ -132,7 +133,7 @@ export function acceptanceClaimRows(
     ledger?: AcceptanceStatusLedger;
     registration?: AcceptanceRegistration;
     /** The recording the verdicts come from (the evidence model's `recording`). */
-    recording?: { label: string; replacedBy?: string } | null;
+    recording?: EvidenceReviewRecording | null;
   },
 ): AcceptanceClaimRow[] {
   const inherited = new Set(
@@ -206,15 +207,18 @@ export function acceptanceClaimRows(
           : row.state === 'Needs your look'
             ? 'pending'
             : 'issue';
-    // A verdict from a replaced recording is neither a pass nor a failure of the current one.
+    // A verdict from a replaced recording is neither a pass nor a failure of the current one,
+    // and there is nothing left to judge on it.
     const recording = inherited ? undefined : input.recording;
     if (recording?.replacedBy && row.state !== 'Skipped') {
       row.state = 'Evidence replaced';
       row.tone = 'pending';
+      row.pending = false;
     }
     const retained = row.source?.retained ?? row.judgment?.claim.retained;
     row.detail = [
-      recording
+      // A retained verdict comes from its original execution, which "Earlier proof" names.
+      recording && !retained
         ? `${recording.label}${recording.replacedBy ? `, replaced by ${recording.replacedBy.replace(/^Recording /u, '')}` : ''}`
         : undefined,
       retained

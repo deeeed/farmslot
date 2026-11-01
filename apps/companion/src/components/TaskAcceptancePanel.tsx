@@ -160,7 +160,7 @@ function TaskAcceptanceContent({
     !acceptanceRegistration &&
     !error &&
     !packageStatus &&
-    !evidenceModel?.occurrences.length
+    !evidenceModel?.currentOccurrences.length
   )
     return null;
   return (
@@ -430,7 +430,7 @@ function TaskAcceptanceContent({
         />
       ) : null}
       {expanded && showOccurrences
-        ? evidenceModel?.occurrences.map((occurrence) => (
+        ? evidenceModel?.currentOccurrences.map((occurrence) => (
             <Pressable
               key={occurrence.traceIndex}
               accessibilityRole="button"

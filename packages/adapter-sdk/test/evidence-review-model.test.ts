@@ -1637,6 +1637,12 @@ test('pending visual criteria stay visible before evidence loads and after a rea
 });
 
 test('a gate package the worker re-recorded reads as replaced, with no details from it', () => {
+  // Run directory stamps are UTC; labels show the viewer's local time.
+  const local = (iso: string) => {
+    const time = new Date(iso);
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `Recording ${pad(time.getHours())}:${pad(time.getMinutes())}`;
+  };
   const pkg = qaPackage(2);
   const packagePath = 'recipe-runs/20261101072653297-84101';
   const ledger = (recipeRunId: string, evidence: string) => ({
@@ -1649,8 +1655,8 @@ test('a gate package the worker re-recorded reads as replaced, with no details f
     packagePath,
     ledger: ledger('qa-attempt', `artifacts/${packagePath}/trace.json`),
   });
-  assert.deepEqual(current.recording, { label: 'Recording 07:26' });
-  assert.ok(current.occurrences.length > 0);
+  assert.deepEqual(current.recording, { label: local('2026-11-01T07:26:00Z') });
+  assert.ok(current.currentOccurrences.length > 0);
   assert.notEqual(current.packageStatus?.status, 'Replaced');
 
   const replaced = createEvidenceReviewModel({
@@ -1659,26 +1665,30 @@ test('a gate package the worker re-recorded reads as replaced, with no details f
     ledger: ledger('newer-attempt', 'artifacts/recipe-runs/20261101082718242-33108/trace.json'),
   });
   assert.deepEqual(replaced.recording, {
-    label: 'Recording 07:26',
-    replacedBy: 'Recording 08:27',
+    label: local('2026-11-01T07:26:00Z'),
+    replacedBy: local('2026-11-01T08:27:00Z'),
   });
   assert.deepEqual(
     {
       status: replaced.packageStatus?.status,
       tone: replaced.packageStatus?.tone,
       summary: replaced.packageStatus?.summary,
+      action: replaced.packageStatus?.action,
       issues: replaced.packageStatus?.issues,
     },
     {
       status: 'Replaced',
       tone: 'info',
-      summary: 'Evidence replaced by recording 08:27',
+      summary: `Evidence replaced by ${local('2026-11-01T08:27:00Z').replace('Recording', 'recording')}`,
+      action: 'Refresh the gate package or re-run the recipe.',
       issues: [],
     },
   );
-  // Evidence details describe the current recording only.
-  assert.deepEqual(replaced.occurrences, []);
+  // Panel-level evidence details describe the current recording only; the replaced package's
+  // own steps stay with its rows and clips.
+  assert.deepEqual(replaced.currentOccurrences, []);
   assert.deepEqual(replaced.displayWarnings, []);
+  assert.equal(replaced.occurrences.length, current.occurrences.length);
   // Validity is unchanged: the mismatch still refuses measured proof.
   assert.ok(replaced.errors.includes('The task ledger belongs to another recipe execution.'));
 });

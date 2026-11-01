@@ -20,10 +20,26 @@ export interface EvidenceReviewPackageStatus {
 
 const requiredFiles = ['summary.json', 'trace.json', 'artifact-manifest.json'] as const;
 
-/** "Recording 07:26" from a recipe-runs directory (`…/20261101072653297-84101/…`). */
+/** The ledger's mismatch, which a `Replaced` status already explains. */
+export const REPLACED_RECORDING_MESSAGE = 'The task ledger belongs to another recipe execution.';
+
+/**
+ * "Recording 15:26" from a recipe-runs directory (`…/20261101072653297-84101/…`). The stamp
+ * is UTC (`toISOString`); the label shows the viewer's local time, like the other run times.
+ */
 export function recipeRecordingLabel(path: string | undefined): string | undefined {
-  const time = path?.match(/(?:^|\/)\d{8}(\d{2})(\d{2})\d{5}-\d+(?:\/|$)/u);
-  return time ? `Recording ${time[1]}:${time[2]}` : undefined;
+  const stamp = path?.match(/(?:^|\/)(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})\d{5}-\d+(?:\/|$)/u);
+  if (!stamp) return undefined;
+  const [year, month, day, hours, minutes] = stamp.slice(1).map(Number) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const time = new Date(Date.UTC(year, month - 1, day, hours, minutes));
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `Recording ${pad(time.getHours())}:${pad(time.getMinutes())}`;
 }
 
 /** Presentation only. Raw reader/validator failures continue to refuse measured proof. */
@@ -36,14 +52,6 @@ export function evidenceReviewPackageStatus(
   replacedBy?: string,
 ): EvidenceReviewPackageStatus | null {
   if (!pkg && !messages.length) return null;
-  if (replacedBy)
-    return {
-      status: 'Replaced',
-      tone: 'info',
-      path: (packagePath ?? '.').replace(/^artifacts\//u, '').replace(/\/$/u, '') || '.',
-      summary: `Evidence replaced by ${replacedBy.replace(/^Recording/u, 'recording')}`,
-      issues: [],
-    };
   const missingCore = pkg ? requiredFiles.filter((file) => !pkg.artifactPaths?.includes(file)) : [];
   const missing = [
     ...missingCore,
@@ -53,6 +61,7 @@ export function evidenceReviewPackageStatus(
   ];
   const grouped = new Map<string, EvidenceReviewIssue>();
   for (const message of messages) {
+    if (replacedBy && message === REPLACED_RECORDING_MESSAGE) continue;
     const file = missing.find(
       (file) =>
         message === `Missing required Recipe v1 artifact ${file}.` ||
@@ -74,7 +83,16 @@ export function evidenceReviewPackageStatus(
   );
   const legacy = Boolean(contractVersion === 0 && pkg && !current);
   const unsupported = contractVersion !== 0 && contractVersion !== 1;
-  const status = legacy ? 'Legacy' : messages.length || unsupported ? 'Invalid' : 'Valid';
+  const status = legacy
+    ? 'Legacy'
+    : replacedBy
+      ? 'Replaced'
+      : grouped.size || unsupported
+        ? 'Invalid'
+        : 'Valid';
+  const otherIssues = grouped.size
+    ? ` · ${grouped.size} other issue${grouped.size === 1 ? '' : 's'}`
+    : '';
   return {
     status,
     tone: status === 'Invalid' ? 'error' : status === 'Valid' ? 'success' : 'info',
@@ -88,12 +106,16 @@ export function evidenceReviewPackageStatus(
     path: (packagePath ?? '.').replace(/^artifacts\//u, '').replace(/\/$/u, '') || '.',
     summary: legacy
       ? `Recorded before Recipe v1: not machine-checkable${missing.length ? ` (missing ${missing.join(', ')})` : ''}; media untimed`
-      : unsupported
-        ? 'The recorded run evidence contract is unsupported; measured proof unavailable'
-        : status === 'Invalid'
-          ? `${grouped.size} evidence issue${grouped.size === 1 ? '' : 's'}; measured proof unavailable`
-          : 'Recipe evidence is machine-checkable',
-    ...(status === 'Invalid' ? { action: 'Refresh the gate package or re-run the recipe.' } : {}),
+      : replacedBy
+        ? `Evidence replaced by ${replacedBy.replace(/^Recording/u, 'recording')}${otherIssues}`
+        : unsupported
+          ? 'The recorded run evidence contract is unsupported; measured proof unavailable'
+          : status === 'Invalid'
+            ? `${grouped.size} evidence issue${grouped.size === 1 ? '' : 's'}; measured proof unavailable`
+            : 'Recipe evidence is machine-checkable',
+    ...(status === 'Invalid' || status === 'Replaced'
+      ? { action: 'Refresh the gate package or re-run the recipe.' }
+      : {}),
     issues: [...grouped.values()],
   };
 }

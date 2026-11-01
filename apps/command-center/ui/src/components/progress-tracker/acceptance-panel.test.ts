@@ -415,5 +415,8 @@ test('each AC row names the recording its verdict comes from', () => {
       ]),
     ),
   );
-  assert.match(text, /Recording 07:26/);
+  // The run directory stamp is UTC; the row shows the viewer's local time.
+  const time = new Date('2026-11-01T07:26:00Z');
+  const pad = (value: number) => String(value).padStart(2, '0');
+  assert.ok(text.includes(`Recording ${pad(time.getHours())}:${pad(time.getMinutes())}`));
 });

@@ -4,7 +4,7 @@
  * `react-native` primitives as DOM tags, rendered with `react-dom/server`; no layout claim.
  */
 import assert from 'node:assert/strict';
-import test, { mock } from 'node:test';
+import test, { before, mock } from 'node:test';
 
 import React from 'react';
 
@@ -49,9 +49,19 @@ mock.module('react-native', {
   },
 });
 
-test('each Companion AC row names the recording its verdict comes from', async () => {
+// Imported after the module mock is registered; this package compiles to CJS, so no top-level await.
+let harness: {
+  renderToStaticMarkup: (element: React.ReactElement) => string;
+  TaskAcceptancePanel: typeof import('./TaskAcceptancePanel').TaskAcceptancePanel;
+};
+before(async () => {
   const server = await import('react-dom/server');
   const { TaskAcceptancePanel } = await import('./TaskAcceptancePanel');
+  harness = { renderToStaticMarkup: server.renderToStaticMarkup, TaskAcceptancePanel };
+});
+
+test('each Companion AC row names the recording its verdict comes from', () => {
+  const { renderToStaticMarkup, TaskAcceptancePanel } = harness;
   const ledger: AcceptanceStatusLedger = {
     schemaVersion: 1,
     criteria: [
@@ -66,8 +76,11 @@ test('each Companion AC row names the recording its verdict comes from', async (
       },
     ],
   };
-  const markup = server.renderToStaticMarkup(
+  const markup = renderToStaticMarkup(
     React.createElement(TaskAcceptancePanel, { acceptanceStatus: ledger, initiallyExpanded: true }),
   );
-  assert.match(markup, /Recording 07:26/);
+  // The run directory stamp is UTC; the row shows the viewer's local time.
+  const time = new Date('2026-11-01T07:26:00Z');
+  const pad = (value: number) => String(value).padStart(2, '0');
+  assert.ok(markup.includes(`Recording ${pad(time.getHours())}:${pad(time.getMinutes())}`));
 });

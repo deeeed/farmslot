@@ -60,9 +60,13 @@ export function acceptancePanelPresentation(
     : (model?.summary ?? summarizeAcceptanceStatus(ledger, criteria));
   const assessed = summary.total - summary.unrecorded;
   const pending = registration?.units.filter(({ result }) => !result) ?? [];
+  // A replaced recording's verdicts are not a tally of the current evidence.
+  const replaced = Boolean(model?.recording?.replacedBy);
   return {
     unassessed: summary.unrecorded,
-    counts: `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}${pending.length ? ' · acceptance update pending' : ''}`,
+    counts: replaced
+      ? `${summary.total} criteria · evidence replaced${pending.length ? ' · acceptance update pending' : ''}`
+      : `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}${pending.length ? ' · acceptance update pending' : ''}`,
     countsTooltip:
       `proven ${summary.proven} · weak ${summary.weak} · missing ${summary.missing} · ` +
       `untestable ${summary.untestable} · not assessed ${summary.unrecorded}`,

@@ -322,7 +322,12 @@ export function EvidenceReviewWorkspace({
                   </Pressable>
                 ))}
                 <Text style={styles.railSubtitle}>
-                  {acceptanceClaimLabel(acceptanceClaimRows({ claims: [row.claim] })[0])}
+                  {acceptanceClaimLabel(
+                    acceptanceClaimRows({
+                      claims: [row.claim],
+                      recording: evidenceModel?.recording,
+                    })[0],
+                  )}
                 </Text>
                 {row.claim.reviewLabels?.length ? (
                   <Text style={styles.railSubtitle}>{row.claim.reviewLabels.join(' · ')}</Text>

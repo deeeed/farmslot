@@ -76,6 +76,7 @@ import {
   type EvidenceReviewPackageStatus,
   evidenceReviewPackageStatus,
   recipeRecordingLabel,
+  REPLACED_RECORDING_MESSAGE,
 } from './evidence-review-status.js';
 import {
   type EvidenceReviewTimelineGroup,
@@ -309,6 +310,8 @@ export interface EvidenceReviewModel {
   readonly claims: readonly EvidenceReviewClaim[];
   readonly visualReviewMarkdown: string;
   readonly occurrences: readonly EvidenceReviewOccurrence[];
+  /** `occurrences` for panel-level evidence details: empty when the package was replaced. */
+  readonly currentOccurrences: readonly EvidenceReviewOccurrence[];
   readonly recordings: readonly RecipeRecordingTimelineDocument[];
   readonly errors: readonly string[];
   readonly warnings: readonly string[];
@@ -473,16 +476,22 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     input.ledger?.schemaVersion === 2 &&
     packageClaims.recipeRunId !== input.ledger.recipeRunId,
   );
-  if (replaced) errors.push('The task ledger belongs to another recipe execution.');
-  const ledgerRecording = recipeRecordingLabel(
-    input.ledger?.criteria.flatMap(({ evidence }) => evidence ?? [])[0],
-  );
-  const recording: EvidenceReviewRecording | null = (() => {
-    const label =
-      recipeRecordingLabel(input.packagePath ?? input.artifactPrefix) ?? ledgerRecording;
-    if (!label) return null;
-    return replaced ? { label, replacedBy: ledgerRecording ?? 'a newer recording' } : { label };
-  })();
+  if (replaced) errors.push(REPLACED_RECORDING_MESSAGE);
+  // The ledger's own recording: the first stamped evidence path of a criterion it judged itself.
+  const ledgerRecording = input.ledger?.criteria
+    .filter(({ inheritedFrom }) => !inheritedFrom)
+    .flatMap(({ evidence }) => evidence ?? [])
+    .map(recipeRecordingLabel)
+    .find(Boolean);
+  const packageRecording = recipeRecordingLabel(input.packagePath ?? input.artifactPrefix);
+  const verdictRecording: EvidenceReviewRecording | null = replaced
+    ? {
+        label: packageRecording ?? 'Gate recording',
+        replacedBy: ledgerRecording ?? 'a newer recording',
+      }
+    : (packageRecording ?? ledgerRecording)
+      ? { label: (packageRecording ?? ledgerRecording)! }
+      : null;
   const trace = recipeTraceEntries(pkg?.trace ?? input.recordings?.[0]?.trace) ?? [];
   const recordings: EvidenceReviewRecordingInput[] = pkg
     ? Object.values(pkg.timelines).map((timeline) => ({
@@ -895,7 +904,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     input.packagePath ?? input.artifactPrefix,
     errors,
     input.contractVersion,
-    recording?.replacedBy,
+    verdictRecording?.replacedBy,
   );
   const reviewedClaims = claims.filter((claim) => claim.reviewLabels.length);
   const markdownCell = (value: string) =>
@@ -1287,8 +1296,9 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     ),
     claims,
     visualReviewMarkdown,
-    // Evidence details describe the current recording only, never a replaced one.
-    occurrences: replaced ? [] : occurrences,
+    occurrences,
+    // Panel-level evidence details describe the current recording only, never a replaced one.
+    currentOccurrences: replaced ? [] : occurrences,
     recordings: [...timelines.values()],
     errors,
     warnings,
@@ -1299,7 +1309,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         ),
     report: input.report,
     packageStatus,
-    recording,
+    recording: verdictRecording,
     get selection() {
       return selection;
     },
