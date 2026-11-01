@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Give an owned gateway outage 90 seconds to restart, so a slow watcher restart no longer reads as a lost gateway.
 - Prove acceptance criteria stay absent before task creation and real read errors remain visible afterward.
 - Add a recorded browser recipe for remembered worker panel disclosure and stable conversation read status.
 - Add the isolated stable-layout browser recipe and blocking UI review checklist rule.
