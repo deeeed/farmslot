@@ -699,6 +699,7 @@ export function renderAcceptancePanel(
             claims: rows.map(({ view, link }) => ({ ...view, evidenceLinked: Boolean(link) })),
             judgmentRows: options.judgments?.rows ?? model.judgmentRows(null),
             pendingVisualClaimIds: model.pendingVisualClaimIds,
+            recording: model.recording,
           }),
           {
             ...options.judgments,

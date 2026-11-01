@@ -308,6 +308,7 @@ function TaskAcceptanceContent({
             claims: view.rows.map(({ review, criterion }) => review ?? criterion),
             judgmentRows: judgmentRows ?? evidenceModel?.judgmentRows(null),
             pendingVisualClaimIds: evidenceModel?.pendingVisualClaimIds,
+            recording: view.model.recording,
           })}
           onRecord={onRecordVisualReview}
           onFocus={

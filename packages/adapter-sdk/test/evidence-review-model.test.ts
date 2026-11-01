@@ -1635,3 +1635,50 @@ test('pending visual criteria stay visible before evidence loads and after a rea
     );
   }
 });
+
+test('a gate package the worker re-recorded reads as replaced, with no details from it', () => {
+  const pkg = qaPackage(2);
+  const packagePath = 'recipe-runs/20261101072653297-84101';
+  const ledger = (recipeRunId: string, evidence: string) => ({
+    ...pkg.claims!,
+    recipeRunId,
+    criteria: pkg.claims!.criteria.map((criterion) => ({ ...criterion, evidence: [evidence] })),
+  });
+  const current = createEvidenceReviewModel({
+    package: pkg,
+    packagePath,
+    ledger: ledger('qa-attempt', `artifacts/${packagePath}/trace.json`),
+  });
+  assert.deepEqual(current.recording, { label: 'Recording 07:26' });
+  assert.ok(current.occurrences.length > 0);
+  assert.notEqual(current.packageStatus?.status, 'Replaced');
+
+  const replaced = createEvidenceReviewModel({
+    package: pkg,
+    packagePath,
+    ledger: ledger('newer-attempt', 'artifacts/recipe-runs/20261101082718242-33108/trace.json'),
+  });
+  assert.deepEqual(replaced.recording, {
+    label: 'Recording 07:26',
+    replacedBy: 'Recording 08:27',
+  });
+  assert.deepEqual(
+    {
+      status: replaced.packageStatus?.status,
+      tone: replaced.packageStatus?.tone,
+      summary: replaced.packageStatus?.summary,
+      issues: replaced.packageStatus?.issues,
+    },
+    {
+      status: 'Replaced',
+      tone: 'info',
+      summary: 'Evidence replaced by recording 08:27',
+      issues: [],
+    },
+  );
+  // Evidence details describe the current recording only.
+  assert.deepEqual(replaced.occurrences, []);
+  assert.deepEqual(replaced.displayWarnings, []);
+  // Validity is unchanged: the mismatch still refuses measured proof.
+  assert.ok(replaced.errors.includes('The task ledger belongs to another recipe execution.'));
+});

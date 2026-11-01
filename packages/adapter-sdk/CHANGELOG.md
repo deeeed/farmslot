@@ -4,6 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- The evidence review model names the recording AC verdicts come from (`recording`: "Recording 07:26"). When the worker re-recorded after the gate package was taken, that package reads `Replaced` ("Evidence replaced by recording 08:27"), not `Invalid`, and its steps and warnings are no longer shown as the current evidence. Validity is unchanged: the mismatch still refuses measured proof.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.25.2 - 2026-10-29

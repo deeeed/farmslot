@@ -131,6 +131,8 @@ export function acceptanceClaimRows(
     criteria?: readonly AcceptanceCriterionRef[];
     ledger?: AcceptanceStatusLedger;
     registration?: AcceptanceRegistration;
+    /** The recording the verdicts come from (the evidence model's `recording`). */
+    recording?: { label: string; replacedBy?: string } | null;
   },
 ): AcceptanceClaimRow[] {
   const inherited = new Set(
@@ -204,8 +206,17 @@ export function acceptanceClaimRows(
           : row.state === 'Needs your look'
             ? 'pending'
             : 'issue';
+    // A verdict from a replaced recording is neither a pass nor a failure of the current one.
+    const recording = inherited ? undefined : input.recording;
+    if (recording?.replacedBy && row.state !== 'Skipped') {
+      row.state = 'Evidence replaced';
+      row.tone = 'pending';
+    }
     const retained = row.source?.retained ?? row.judgment?.claim.retained;
     row.detail = [
+      recording
+        ? `${recording.label}${recording.replacedBy ? `, replaced by ${recording.replacedBy.replace(/^Recording /u, '')}` : ''}`
+        : undefined,
       retained
         ? `Earlier proof${retained.revision ? ` · ${retained.revision.slice(0, 7)}` : ''}`
         : undefined,

@@ -406,3 +406,14 @@ test('the gate can show every registered criterion before evidence has loaded', 
     true,
   );
 });
+
+test('each AC row names the recording its verdict comes from', () => {
+  const text = litText(
+    renderAcceptancePanel(
+      ledger([
+        criterion({ evidence: ['artifacts/recipe-runs/20261101072653297-84101/trace.json'] }),
+      ]),
+    ),
+  );
+  assert.match(text, /Recording 07:26/);
+});

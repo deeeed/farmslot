@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `acceptanceClaimRows` takes the evidence model's `recording`: each row names its recording, and a row from a replaced recording reads "Evidence replaced" instead of a pass or "Not proven".
 - `nativeWorkerTargetLive` says whether a worker conversation still takes input (not history, closed, released or recovering); `selectedNativeWorkerTarget` uses it.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

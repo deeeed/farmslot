@@ -1099,3 +1099,51 @@ test('criterion statuses use the five operator outcomes while preserving engine 
     ['proven', 'proven', 'pending', 'issue', 'untestable'],
   );
 });
+
+test('each AC row names its recording, and a replaced recording never reads as a pass or a failure', () => {
+  const claim = (
+    id: string,
+    verdict: AcceptanceVerdict,
+    proofMode: 'review' | 'state' | 'mixed' = 'mixed',
+  ): PublicationGateClaim => ({
+    id,
+    text: id,
+    status: { id, text: id, verdict, proofMode, evidence: [], recipeNodes: [] },
+  });
+  const claims = [
+    claim('AC-1', 'proven'),
+    claim('AC-2', 'failed'),
+    claim('AC-3', 'awaiting-review'),
+    claim('AC-4', 'awaiting-review', 'review'),
+    claim('AC-5', 'untestable'),
+  ];
+  const current = acceptanceClaimRows({ claims, recording: { label: 'Recording 07:26' } });
+  assert.deepEqual(
+    current.map((row) => [row.state, row.detail]),
+    [
+      ['Proven in app', 'Recording 07:26'],
+      ['Not proven', 'Recording 07:26'],
+      ['Needs your look', 'Recording 07:26'],
+      ['Not proven', 'Recording 07:26'],
+      ['Skipped', 'Recording 07:26'],
+    ],
+  );
+  const replaced = acceptanceClaimRows({
+    claims,
+    recording: { label: 'Recording 07:26', replacedBy: 'Recording 08:27' },
+  });
+  assert.deepEqual(
+    replaced.map((row) => [row.state, row.tone, row.detail]),
+    [
+      ['Evidence replaced', 'pending', 'Recording 07:26, replaced by 08:27'],
+      ['Evidence replaced', 'pending', 'Recording 07:26, replaced by 08:27'],
+      ['Evidence replaced', 'pending', 'Recording 07:26, replaced by 08:27'],
+      ['Evidence replaced', 'pending', 'Recording 07:26, replaced by 08:27'],
+      ['Skipped', 'untestable', 'Recording 07:26, replaced by 08:27'],
+    ],
+  );
+  assert.deepEqual(
+    acceptanceClaimRows({ claims }).map((row) => row.detail),
+    ['', '', '', '', ''],
+  );
+});

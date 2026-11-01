@@ -8,7 +8,7 @@ export interface EvidenceReviewIssue {
 
 export interface EvidenceReviewPackageStatus {
   reasonCode?: 'evidence-package-unverifiable' | 'evidence-contract-unsupported';
-  status: 'Valid' | 'Legacy' | 'Invalid';
+  status: 'Valid' | 'Legacy' | 'Invalid' | 'Replaced';
   /** Red requires an identified current-contract package, never an unknown read. */
   tone: 'success' | 'info' | 'error';
   /** Relative to the run's artifacts, independent of media transport paths. */
@@ -20,14 +20,30 @@ export interface EvidenceReviewPackageStatus {
 
 const requiredFiles = ['summary.json', 'trace.json', 'artifact-manifest.json'] as const;
 
+/** "Recording 07:26" from a recipe-runs directory (`…/20261101072653297-84101/…`). */
+export function recipeRecordingLabel(path: string | undefined): string | undefined {
+  const time = path?.match(/(?:^|\/)\d{8}(\d{2})(\d{2})\d{5}-\d+(?:\/|$)/u);
+  return time ? `Recording ${time[1]}:${time[2]}` : undefined;
+}
+
 /** Presentation only. Raw reader/validator failures continue to refuse measured proof. */
 export function evidenceReviewPackageStatus(
   pkg: RecordedEvidencePackageInput | undefined,
   packagePath: string | undefined,
   messages: readonly string[],
   contractVersion = 1,
+  /** A newer recording replaced this package: its findings belong to old evidence. */
+  replacedBy?: string,
 ): EvidenceReviewPackageStatus | null {
   if (!pkg && !messages.length) return null;
+  if (replacedBy)
+    return {
+      status: 'Replaced',
+      tone: 'info',
+      path: (packagePath ?? '.').replace(/^artifacts\//u, '').replace(/\/$/u, '') || '.',
+      summary: `Evidence replaced by ${replacedBy.replace(/^Recording/u, 'recording')}`,
+      issues: [],
+    };
   const missingCore = pkg ? requiredFiles.filter((file) => !pkg.artifactPaths?.includes(file)) : [];
   const missing = [
     ...missingCore,
