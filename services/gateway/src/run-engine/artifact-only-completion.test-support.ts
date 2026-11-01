@@ -15,6 +15,9 @@ export async function createArtifactOnlyTrial(
   const { captureRunOutput } = await import('../run-completion/output.js');
   const { resolveWorkerTerminalContract } = await import('../tasks/worker-terminal-contract.js');
   const directory = path.join(taskDir, 'artifacts/recipe-runs/proof');
+  // A visual claim has to rest on something a recording can show, or plan refuses it (#1706).
+  // Its read is a UI read here; the other proof modes keep the shell read.
+  const visual = proofMode === 'visual';
   const runner = createRecipeRunner({
     actionManifest: {
       $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
@@ -27,6 +30,12 @@ export async function createArtifactOnlyTrial(
             additionalProperties: false,
           },
           examples: [{ action: 'command', cmd: 'printf observed', intent: 'Read.', next: 'check' }],
+        },
+        'ui.read_text': {
+          description: 'Read the value on screen.',
+          execution_capabilities: [],
+          schema: { type: 'object', properties: {}, additionalProperties: false },
+          examples: [{ action: 'ui.read_text', intent: 'Read.', next: 'check' }],
         },
         assert_output: {
           description: 'Check the value.',
@@ -48,7 +57,16 @@ export async function createArtifactOnlyTrial(
         end: { description: 'Finish.', examples: [{ action: 'end', status: 'pass' }] },
       },
     },
-    adapters: createStandardCoreAdapters({ actions: ['command', 'assert_output'] }),
+    adapters: [
+      ...createStandardCoreAdapters({ actions: ['command', 'assert_output'] }),
+      // A stand-in for a UI read, supplied by the operator like the rest of this fixture.
+      {
+        action: 'ui.read_text',
+        capabilities: [],
+        source: { kind: 'operator', trust: 'trusted', name: 'artifact-only fixture' },
+        execute: async () => ({ output: { stdout: 'observed' } }),
+      },
+    ],
     hud: false,
     defaultSource: { kind: 'operator', trust: 'trusted' },
   });
@@ -56,6 +74,10 @@ export async function createArtifactOnlyTrial(
   const execution = await runner.run({
     projectRoot: taskDir,
     artifactsDir: directory,
+    // No device here: the visual claim is recorded nowhere, which is the case under test.
+    ...(visual
+      ? { recordVideo: false, recordingReason: 'The fixture has no device to record.' }
+      : {}),
     recipeDocument: {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       title: 'Comparison proof',
@@ -64,7 +86,9 @@ export async function createArtifactOnlyTrial(
       workflow: {
         entry: 'read',
         nodes: {
-          read: { action: 'command', cmd: 'printf observed', intent: 'Read.', next: 'check' },
+          read: visual
+            ? { action: 'ui.read_text', intent: 'Read.', next: 'check' }
+            : { action: 'command', cmd: 'printf observed', intent: 'Read.', next: 'check' },
           check: {
             action: 'assert_output',
             source: 'read',
