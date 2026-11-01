@@ -930,6 +930,12 @@ interface ReadyGatePackageDependencies {
   readProgress?: typeof readRunProgress;
   /** Bounded wait for a busy owned worker; tests shorten it. */
   workerIdleWait?: { pollMs: number; maxPollMs: number; timeoutMs: number };
+  /**
+   * The human-gate step's start generation. A re-present after slow work (a review plan,
+   * a resumed review, a visual repair) is fenced to it, so a driver a replay superseded
+   * meanwhile cannot open a gate over the live one.
+   */
+  generation?: number;
 }
 
 // A compaction or a last turn finishes in minutes; past this the operator sees why. Polls
@@ -981,7 +987,7 @@ export async function executeReadyGate(
   dependencies: ReadyGatePackageDependencies = {},
 ): Promise<string> {
   let current = getRun(runId)!;
-  const generation = current.engineState?.generation ?? 0;
+  const generation = dependencies.generation ?? current.engineState?.generation ?? 0;
   const adoptedAtEntry = await adoptedPublicationGateEnd(current);
   if (adoptedAtEntry) return adoptedAtEntry;
   const artifactOnly = isArtifactOnlyRun(current);
@@ -1063,7 +1069,7 @@ export async function executeReadyGate(
             diffStat: { files: 0, additions: 0, deletions: 0 },
             stale: true,
           },
-          { canReplay: () => false },
+          { canReplay: () => false, generation },
         );
         // Keep the live resolution instead of replaying a cached action. Some
         // explicit actions, including Continue Fixing, intentionally never replay.
@@ -1508,6 +1514,7 @@ export async function executeReadyGate(
         !isPublishApprovalAction(prior.resolvedAction ?? '') ||
         (prior.payload?.kind === 'ready' &&
           prior.payload.prPackage?.packageHash === preparedPackage?.packageHash),
+      generation,
     }));
 
   if (actionId === 'abort' || runSupersededSince(getRun(runId), generation)) return 'abort';

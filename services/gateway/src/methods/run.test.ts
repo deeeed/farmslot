@@ -713,7 +713,7 @@ function sendBackFixture(t: import('node:test').TestContext, ticket: string) {
     actions: [{ id: SEND_BACK_TO_AGENT_ACTION, label: 'Send back to agent', style: 'primary' }],
     createdAt: '2026-10-16T00:00:00.000Z',
   });
-  updateRun(run.id, { status: 'done', decisions: [gate('gate-1'), gate('gate-2')] });
+  updateRun(run.id, { status: 'done', decisions: [gate('gate-1')] });
   t.after(async () => deleteRun(run.id));
   const packageHash = 'b'.repeat(64);
   const scope: RecipeRepairScope = {
@@ -763,7 +763,7 @@ function sendBackFixture(t: import('node:test').TestContext, ticket: string) {
       ...(reuse ? { reuse } : {}),
     };
   };
-  return { run, admission };
+  return { run, admission, gate };
 }
 
 test('Send back refusals keep the gate pending and charge nothing', async (t) => {
@@ -821,7 +821,7 @@ test('Send back preserves operator feedback without accepting client-supplied fi
 });
 
 test('Send back reserves one fix round when the gate is consumed and a retry reuses it', async (t) => {
-  const { run, admission } = sendBackFixture(t, 'PROJ-SEND-BACK-RESERVED');
+  const { run, admission, gate } = sendBackFixture(t, 'PROJ-SEND-BACK-RESERVED');
   await runResolveDecision(
     { runId: run.id, decisionId: 'gate-1', actionId: SEND_BACK_TO_AGENT_ACTION },
     () => {},
@@ -833,6 +833,7 @@ test('Send back reserves one fix round when the gate is consumed and a retry reu
   assert.equal(persisted.engineState?.publishGate?.visualRepairs?.length, 1);
   assert.equal(persisted.engineState?.publishGate?.visualRepairs?.[0]?.status, 'reserved');
   // An undelivered repair re-presented at a new gate keeps the same identity and charge.
+  updateRun(run.id, { decisions: [...getRun(run.id)!.decisions, gate('gate-2')] });
   await runResolveDecision(
     { runId: run.id, decisionId: 'gate-2', actionId: SEND_BACK_TO_AGENT_ACTION },
     () => {},
@@ -922,6 +923,131 @@ test('assertDecisionStillUnresolved lets a first resolver through and blocks a r
     /Decision already resolved/,
   );
   assert.throws(() => assertDecisionStillUnresolved(run.id, 'missing-id'), /already resolved/);
+});
+
+test('a gate action on a gate decision another one replaced is refused, not reported ok and dropped', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `GATE-REPLACED-${Date.now().toString(16).toUpperCase()}`,
+    mode: 'autonomous',
+    initialContext: 'Two open gate decisions, as run 7e88468f had',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  const gate = (id: string, createdAt: string): RunDecision => ({
+    id,
+    type: 'engine_human_gate',
+    title: 'MANUAL — human gate',
+    description: 'Review the package.',
+    actions: [{ id: 'request-review', label: 'Request review', style: 'primary' as const }],
+    createdAt,
+  });
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [
+      gate('older', '2026-10-31T15:08:51.529Z'),
+      gate('newer', '2026-10-31T15:14:39.995Z'),
+    ],
+  });
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: 'older', actionId: 'request-review' },
+      () => {},
+    ),
+    (error: unknown) =>
+      error instanceof Error &&
+      /older has been replaced by newer; act on the current gate/.test(error.message),
+  );
+  assert.equal(getRun(run.id)!.decisions.find((d) => d.id === 'older')!.resolvedAt, undefined);
+  assert.throws(() => assertDecisionStillUnresolved(run.id, 'older'), /replaced by newer/);
+  assertDecisionStillUnresolved(run.id, 'newer');
+});
+
+test('the gate decision an engine waits on stays current even when an orphan was opened after it', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `GATE-LIVE-OLDER-${Date.now().toString(16).toUpperCase()}`,
+    mode: 'autonomous',
+    initialContext: 'Older gate has the live waiter, newer one is an orphan (7e88468f order)',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  const waiting = createEngineDecision(
+    run.id,
+    'human_gate',
+    'Package ready',
+    [{ id: 'abort', label: 'Abort', style: 'danger' }],
+    undefined,
+    { readProgress: async () => ({ kind: 'idle' }) },
+  );
+  await Promise.resolve();
+  const live = getRun(run.id)!.decisions.at(-1)!;
+  const orphan: RunDecision = {
+    id: 'orphan-gate',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: 'No engine waits on this one.',
+    actions: [{ id: 'request-review', label: 'Request review', style: 'primary' }],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(run.id, { decisions: [...getRun(run.id)!.decisions, orphan] });
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: 'orphan-gate', actionId: 'request-review' },
+      () => {},
+    ),
+    new RegExp(`orphan-gate has been replaced by ${live.id}`),
+  );
+  assertDecisionStillUnresolved(run.id, live.id);
+  await runResolveDecision({ runId: run.id, decisionId: live.id, actionId: 'abort' }, () => {});
+  assert.equal(await waiting, 'abort');
+});
+
+test('with no engine waiting, acting on the newest gate supersedes the other orphans and resumes the run', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `GATE-ORPHANS-${Date.now().toString(16).toUpperCase()}`,
+    mode: 'autonomous',
+    initialContext: 'Both gate decisions lost their engine (gateway restart)',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  const gate = (id: string): RunDecision => ({
+    id,
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: 'Retry this gate.',
+    actions: [{ id: 'hold', label: 'Retry Gate', style: 'secondary' }],
+    createdAt: new Date().toISOString(),
+  });
+  updateRun(run.id, { status: 'blocked', decisions: [gate('older'), gate('newer')] });
+  let resumed!: () => void;
+  const resume = new Promise<void>((resolve) => (resumed = resolve));
+  await runResolveDecision({ runId: run.id, decisionId: 'newer', actionId: 'hold' }, () => {}, {
+    resumeRun: async () => resumed(),
+  });
+  await Promise.race([
+    resume,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('run did not resume')), 2_000)),
+  ]);
+  const older = getRun(run.id)!.decisions.find((decision) => decision.id === 'older')!;
+  assert.equal(older.resolvedAction, 'superseded');
+  assert.equal(older.context?.supersededBy, 'newer');
 });
 
 test('publication RPC refuses unresolved findings without a pending decision, including an active fix', async (t) => {
