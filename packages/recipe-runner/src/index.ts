@@ -58,6 +58,7 @@ export {
   logRecipeLibrarySources,
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
+  rebindRecipeLibraryPath,
   resolveRecipeLibrarySources,
   resolveRecipeRunSelection,
 } from './core/library.js';

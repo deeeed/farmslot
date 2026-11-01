@@ -75,6 +75,7 @@ import {
   withRunTransition,
 } from '../../run-lifecycle/transition-coordinator.js';
 import {
+  assertNativeRunner,
   assertSupportedRunnerSpelling,
   normalizeRunner,
   runnerDefaultModel,
@@ -1062,6 +1063,8 @@ async function replayRunStep(
   const hasRunnerOverride = params.runner !== undefined || params.model !== undefined;
   if (existing.transport === 'native' && hasRunnerOverride && params.stepName !== PS.DISPATCH)
     throw new Error('Change a native worker runner/model through dispatch replay');
+  if (existing.transport === 'native' && params.runner !== undefined)
+    assertNativeRunner(normalizeRunner(params.runner));
   if (
     hasRunnerOverride &&
     params.stepName !== PS.DISPATCH &&

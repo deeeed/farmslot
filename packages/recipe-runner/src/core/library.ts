@@ -82,16 +82,21 @@ export interface RecipeLibraryResolution {
   recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
 }
 
+/** One RECIPE_LIBRARY_PATH entry: `name=path`, or a bare path with no name. */
+function splitRecipeLibraryEntry(entry: string): { name?: string; root: string } {
+  const separator = entry.indexOf('=');
+  if (separator < 0) return { root: entry };
+  return { name: entry.slice(0, separator).trim(), root: entry.slice(separator + 1).trim() };
+}
+
 export function parseRecipeLibraryPath(value: string): RecipeLibrarySource[] {
   return value
     .split(':')
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => {
-      const separator = entry.indexOf('=');
-      if (separator < 0) return { root: expandTilde(entry) };
-      const name = entry.slice(0, separator).trim();
-      const root = entry.slice(separator + 1).trim();
+      const { name, root } = splitRecipeLibraryEntry(entry);
+      if (name === undefined) return { root: expandTilde(root) };
       if (!name || !root) {
         throw new RecipeResolutionError(
           'RECIPE_LIBRARY_PATH_INVALID',
@@ -101,6 +106,18 @@ export function parseRecipeLibraryPath(value: string): RecipeLibrarySource[] {
       }
       return { name, root: expandTilde(root) };
     });
+}
+
+/** RECIPE_LIBRARY_PATH with each named entry in `pins` rebound to its pinned root; others kept verbatim. */
+export function rebindRecipeLibraryPath(value: string, pins: ReadonlyMap<string, string>): string {
+  return value
+    .split(':')
+    .map((entry) => {
+      const { name } = splitRecipeLibraryEntry(entry.trim());
+      const pinned = name ? pins.get(name) : undefined;
+      return pinned ? `${name}=${pinned}` : entry;
+    })
+    .join(':');
 }
 
 export function personalRecipeLibraryRoot(env: RecipeLibraryEnv = process.env): string {

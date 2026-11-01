@@ -412,3 +412,27 @@ Plan updates: the event type `plan.updated` with `NativeSessionPlan` and `Native
 Implement: `nativeImplementableKey`, `nativeImplementPrompt` and `nativeImplementSession` in the client cache. Clients create and send through the existing `native.session.create` and `native.session.send`; no host, gateway or contract change.
 
 Per-turn changes: the event type `turn.changes` with `NativeTurnChanges` and `NativeTurnFile`, the method `native.session.turn.diff` (`NativeSessionTurnDiffParams`, `NativeSessionTurnDiffResult`), the `changes` timeline entry and `nativeTurnChangesText` in the client cache, and another history projection bump, in `@farmslot/protocol`. `@farmslot/agent-runtime` takes the checkpoints and serves the diff, so it needs a release; native hosts and node services started after it support them. The gateway adds the method to its routes, worker read fence and authorization map. No CLI flag or harness change.
+
+## Amendment 10: every native runner launches as a farm worker, 2026-11-01
+
+**Status:** Proposed.
+
+### Decision
+
+A native farm worker is a native session started through the runner's native adapter, the same `NativeSessionManager` path as a standalone session. The task binding sits on top: lease, launch environment, account setup, safety tier and approval policy.
+
+- **The gateway does not choose executables.** A dispatched worker or static-review launch names an executable only when the machine's pool configures one for that runner (`<runner>_path`). Otherwise the host starts the adapter's own executable, as for a standalone session.
+- **Every runner with a native adapter runs as a worker.** That is Claude, Codex, Cursor and Grok. This replaces "Cursor/Grok standalone adapters" in the implementation status above.
+- **Fail fast.** A native run for a runner with no native adapter is refused before a slot is claimed or prepared:
+  - at run creation and queue admission, when the run names its runner;
+  - at FIND_SLOT, before the claim, when it takes the slot's runner;
+  - on a dispatch replay that changes the runner.
+- **Unchanged:**
+  - Codex workers without a profile keep the farm-provisioned `codex-home`. That is account setup, not launch.
+  - tmux stays first-class for every runner.
+
+### Rationale
+
+Workers and standalone sessions already shared one host launch path: the adapter registry and `NativeSessionManager`, with Cursor and Grok declaring worker support. The split was in the gateway. Its worker launch picked the executable for Claude and Codex itself and refused every other runner, so a Grok worker failed after its slot was prepared (run e57cded9).
+
+Removing that choice leaves one path. A runner gains worker support by having a native adapter, and the pool path stays the only override.

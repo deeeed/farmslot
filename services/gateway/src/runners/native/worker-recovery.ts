@@ -27,6 +27,7 @@ import { shellQuote } from '../../core/tmux.js';
 import { isNodeTransportUnavailableError } from '../../fleet/node-rpc.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { runTaskLibraries } from '../../tasks/pinned-libraries.js';
 import { normalizeWorkerSignal } from '../../tasks/worker-signals.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
 
@@ -382,6 +383,7 @@ async function resumeNativeWorkerExclusive(
           role: context.role,
           reviewValidationDepth: context.reviewValidationDepth,
           vars,
+          taskLibraries: runTaskLibraries(run),
           project: projectVars.projectJson,
           projectVars,
           runner: context.runner,

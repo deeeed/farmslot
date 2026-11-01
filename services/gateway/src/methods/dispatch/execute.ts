@@ -122,6 +122,7 @@ import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { initializeAuthoredTaskOnSlot } from '../../tasks/existing-runtime.js';
 import { verifyHostedTaskOnSlot } from '../../tasks/hosted-task-init.js';
+import { pinnedTaskLibraries } from '../../tasks/pinned-libraries.js';
 import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
@@ -1836,6 +1837,7 @@ export async function dispatchExecute(
     vars,
     projectVars,
     runDomain: currentRun?.domain,
+    taskLibraries: pinnedTaskLibraries(taskDir),
   });
 
   let sessionMeta: Awaited<ReturnType<typeof captureRunnerSessionMetadata>> = {
