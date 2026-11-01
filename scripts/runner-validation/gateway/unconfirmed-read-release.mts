@@ -5,14 +5,14 @@
 // session (out of reach of the node's process-group kill) holding the probe's output open for
 // 25 s, longer than the read's budget, cancel closeout and transport grace. The read fails as an
 // unconfirmed closeout; when the node finally delivers that result on the same connection, the
-// next fleet read must show the workspace. macpro-audiolab-1 stayed at "Execution … has
-// unconfirmed closeout (timeout)" instead. macOS (the node's zsh login supplies the PATH).
+// next fleet read must show the workspace, with the node never reconnecting. macpro-audiolab-1
+// stayed at "Execution … has unconfirmed closeout (timeout)" instead. macOS only: the node's zsh
+// login supplies the fixture's PATH.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/unconfirmed-read-release.mts [evidence-dir]
-import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, type ChildProcess } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -20,19 +20,18 @@ import { fileURLToPath } from 'node:url';
 
 import {
   cleanupOnExit,
-  freePort,
+  type IsolatedStackParts,
+  linkCheckout,
   poll,
+  startIsolatedStack,
   startReaper,
-  startWorkspaceProcess,
   stopProcess,
+  writeJson,
 } from '../lib/isolated-stack.mjs';
-import {
-  GatewayClient,
-  GatewayConnectionError,
-  type GatewayConnection,
-} from '../../../packages/cli/src/gateway-client.js';
 import type { FleetStatusResult } from '../../../packages/protocol/src/index.js';
 
+if (process.platform !== 'darwin' || spawnSync('perl', ['-v'], { stdio: 'ignore' }).status !== 0)
+  throw new Error('This proof needs macOS (a zsh login for the node) and perl');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const evidence = path.resolve(
   root,
@@ -45,53 +44,42 @@ const machine = 'unconfirmed-read-node';
 const slotId = 'unconfirmed-read-slot';
 const repo = path.join(fixture, 'slot');
 const origin = path.join(fixture, 'origin.git');
+// Marks the first probe as slowed, and names the holder in its argv so cleanup can find it.
 const slowed = path.join(fixture, 'slow-read-started');
 const realPython = execFileSync('sh', ['-c', 'command -v python3'], { encoding: 'utf8' }).trim();
 const env: NodeJS.ProcessEnv = { ...process.env };
 delete env.TMUX;
 delete env.TMUX_PANE;
-const stack = (extra: NodeJS.ProcessEnv) => ({ root, evidence, env: { ...env, ...extra } });
-let gateway: ChildProcess | undefined;
-let node: ChildProcess | undefined;
-let connection: GatewayConnection | undefined;
+const parts: IsolatedStackParts = {};
 const cleanupErrors: unknown[] = [];
 const reaper = startReaper();
+// The holder runs in its own session, outside every process group stopped here.
+const stopHolder = ['pkill', '-f', slowed];
+reaper.command(stopHolder, env);
 reaper.path(fixture);
 const cleanup = cleanupOnExit(async () => {
   const attempt = (step: () => Promise<unknown>) =>
     step().catch((error: unknown) => cleanupErrors.push(error));
-  connection?.close();
-  await attempt(() => stopProcess(node));
-  await attempt(() => stopProcess(gateway));
+  parts.connection?.close();
+  await attempt(() => stopProcess(parts.node));
+  await attempt(() => stopProcess(parts.gateway));
+  spawnSync(stopHolder[0], stopHolder.slice(1), { stdio: 'ignore' });
   await attempt(() => rm(fixture, { recursive: true, force: true }));
   reaper.done();
 });
-
-async function json(file: string, value: unknown) {
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(value, null, 2), { mode: 0o600 });
-}
 const git = (cwd: string, ...args: string[]) =>
   execFileSync(
     'git',
     ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args],
-    {
-      cwd,
-      encoding: 'utf8',
-      stdio: 'pipe',
-    },
+    { cwd, encoding: 'utf8', stdio: 'pipe' },
   ).trim();
 
+// What an operator reading the slot sees, once a second.
+const timeline: Array<{ at: number; workspace: string | null; error: string | null }> = [];
 let failure: unknown;
 let result: Record<string, unknown> | undefined;
 try {
-  execFileSync('git', ['clone', '--shared', '--no-checkout', root, path.join(fixture, 'root')], {
-    stdio: 'pipe',
-  });
-  const fixtureRoot = path.join(fixture, 'root');
-  for (const entry of ['scripts', 'services', 'packages', 'node_modules', 'package.json'])
-    await symlink(path.join(root, entry), path.join(fixtureRoot, entry));
-  await writeFile(path.join(fixtureRoot, 'CLAUDE.md'), '# Isolated unconfirmed-read fixture\n');
+  await linkCheckout(root, fixture, 'Isolated unconfirmed-read fixture');
   // The slot: a clean checkout of a real origin, so the workspace probe has a full answer.
   execFileSync('git', ['init', '-q', '--bare', '--initial-branch=main', origin], { stdio: 'pipe' });
   await mkdir(repo);
@@ -101,7 +89,6 @@ try {
   git(repo, 'commit', '-qm', 'fixture');
   git(repo, 'remote', 'add', 'origin', origin);
   git(repo, 'push', '-q', '-u', 'origin', 'main');
-  git(repo, 'fetch', '-q', 'origin', 'main');
   // The node's `python3`: the first workspace probe leaves a holder of its output in its own
   // session, as a stuck read on a loaded machine does. The node's commands take their PATH from
   // its zsh login, so a login profile puts the fixture first.
@@ -112,7 +99,7 @@ try {
     [
       '#!/bin/sh',
       `if [ "$1" = - ] && [ "$2" = ${JSON.stringify(repo)} ] && mkdir ${JSON.stringify(slowed)} 2>/dev/null; then`,
-      `  perl -MPOSIX -e 'POSIX::setsid(); sleep 25' </dev/null &`,
+      `  perl -MPOSIX -e 'POSIX::setsid(); sleep 25' ${JSON.stringify(slowed)} </dev/null &`,
       'fi',
       `exec ${JSON.stringify(realPython)} "$@"`,
       '',
@@ -125,15 +112,14 @@ try {
     path.join(zdotdir, '.zprofile'),
     `export PATH=${JSON.stringify(shimDir)}:"$PATH"\n`,
   );
-  const project = path.join(fixtureRoot, 'projects/unconfirmed-read');
-  await json(path.join(project, 'project.json'), {
+  await writeJson(path.join(fixture, 'projects/unconfirmed-read/project.json'), {
     name: 'unconfirmed-read',
     repo_url: origin,
     default_branch: 'main',
     paths: { runtime_dir: '.agent', artifact_dir: '.task' },
     execution_templates: { sources: [] },
   });
-  await json(path.join(fixtureRoot, 'pool/unconfirmed-read.json'), {
+  await writeJson(path.join(fixture, 'pool/unconfirmed-read.json'), {
     machine,
     host: `${machine}.invalid`,
     ssh_user: process.env.USER ?? 'operator',
@@ -142,7 +128,7 @@ try {
     os: process.platform,
     slots: [{ id: slotId, enabled: true, repo, session: slotId, resources: {} }],
   });
-  await json(path.join(fixtureRoot, '.farm-status.json'), {
+  await writeJson(path.join(fixture, '.farm-status.json'), {
     checked_at: new Date().toISOString(),
     slots: [
       {
@@ -160,70 +146,11 @@ try {
       },
     ],
   });
-  const port = await freePort();
-  const token = testGatewayIdentity(path.join(fixtureRoot, 'home'), `ws://127.0.0.1:${port}`);
-  gateway = startWorkspaceProcess(
-    stack({
-      FARMSLOT_ROOT: fixtureRoot,
-      FARMSLOT_HOME: path.join(fixtureRoot, 'home'),
-      FARMSLOT_PROJECTS_DIR: path.join(fixtureRoot, 'projects'),
-      FARMSLOT_POOL_DIR: path.join(fixtureRoot, 'pool'),
-      FARMSLOT_RUNS_DIR: path.join(fixtureRoot, 'runs'),
-      GATEWAY_HOST: '127.0.0.1',
-      GATEWAY_PORT: String(port),
-      FARMSLOT_GATEWAY_PROFILE: 'proof',
-      FARMSLOT_DISABLE_ORCHESTRATION: '1',
-    }),
-    '@farmslot/gateway',
-    'gateway.log',
+  const { connection: gw } = await startIsolatedStack(
+    { root, evidence, env, fixture, reaper, node: { machine, env: { ZDOTDIR: zdotdir } } },
+    parts,
   );
-  reaper.group(gateway.pid);
-  const client = new GatewayClient({
-    url: `ws://127.0.0.1:${port}`,
-    timeout: 30_000,
-    credential: { token },
-  });
-  connection = await poll(
-    'the isolated gateway',
-    async () => {
-      if (gateway?.exitCode !== null) throw new Error('Isolated gateway exited before readiness');
-      try {
-        return await client.connect();
-      } catch (error) {
-        if (!(error instanceof GatewayConnectionError)) throw error;
-        return undefined;
-      }
-    },
-    60_000,
-  );
-  const gw = connection;
-  const { principal } = await gw.call<{ principal: { id: string } }>('principal.create', {
-    subject: { type: 'node', machine, displayName: 'Unconfirmed read fixture node' },
-    roles: [],
-  });
-  const credential = await gw.call<{ secret: string }>('credential.issue', {
-    principalId: principal.id,
-    displayName: 'Unconfirmed read fixture node',
-  });
-  const nodeRoot = path.join(fixture, 'node');
-  await mkdir(nodeRoot, { recursive: true });
-  node = startWorkspaceProcess(
-    stack({
-      FARMSLOT_ROOT: nodeRoot,
-      FARMSLOT_HOME: path.join(nodeRoot, 'home'),
-      FARMSLOT_NODE_TOKEN: credential.secret,
-      GATEWAY_URL: `ws://127.0.0.1:${port}`,
-      MACHINE_NAME: machine,
-      SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen.sock'),
-      ZDOTDIR: zdotdir,
-    }),
-    '@farmslot/node',
-    'node.log',
-  );
-  reaper.group(node.pid);
 
-  // Read the slot as an operator would, once a second, for up to 2 minutes.
-  const timeline: Array<{ at: number; workspace: string | null; error: string | null }> = [];
   const started = Date.now();
   let sawUnconfirmed = false;
   const recovered = await poll(
@@ -241,20 +168,26 @@ try {
         timeline.push(entry);
       if (/unconfirmed closeout/.test(entry.error ?? '')) sawUnconfirmed = true;
       await delay(1000);
-      return sawUnconfirmed && entry.workspace ? entry : undefined;
+      return sawUnconfirmed && entry.workspace && !entry.error ? entry : undefined;
     },
     120_000,
   );
-  await json(path.join(evidence, 'timeline.json'), timeline);
-  assert.ok((await stat(slowed)).isDirectory(), 'the fixture slowed the first workspace probe');
-  assert.ok(sawUnconfirmed, 'the slow read was reported as an unconfirmed closeout first');
   assert.equal(recovered.workspace, 'main');
+  // A reconnect would clear the pin without the fix; the node kept its one connection.
+  const opened = (await readFile(path.join(evidence, 'node.log'), 'utf8')).match(/Transport open/g);
+  assert.equal(opened?.length, 1, 'the node connected once');
+  assert.notEqual(
+    spawnSync('pgrep', ['-f', slowed], { stdio: 'ignore' }).status,
+    0,
+    'the holder exited before the workspace came back',
+  );
   result = { pass: true, evidence, recoveredAfterSeconds: recovered.at, timeline };
-  await json(path.join(evidence, 'result.json'), result);
+  await writeJson(path.join(evidence, 'result.json'), result);
 } catch (error) {
   failure = error;
-  await json(path.join(evidence, 'failure.json'), { error: String(error), fixture });
+  await writeJson(path.join(evidence, 'failure.json'), { error: String(error), fixture });
 } finally {
+  await writeJson(path.join(evidence, 'timeline.json'), timeline);
   await cleanup();
   if (cleanupErrors.length > 0)
     failure = new AggregateError(
