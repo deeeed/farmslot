@@ -5,6 +5,7 @@ import type {
   AgentContext,
   Run,
   TmuxWorkerListResult,
+  TmuxWorkerRef,
   TmuxWorkerSummary,
 } from '@farmslot/protocol';
 
@@ -42,9 +43,13 @@ function context(overrides: Partial<AgentContext>): AgentContext {
   };
 }
 
-function pane(target: string, overrides: Partial<TmuxWorkerSummary> = {}): TmuxWorkerSummary {
+function pane(
+  target: string,
+  overrides: Partial<TmuxWorkerSummary> = {},
+  ref: Partial<TmuxWorkerRef> = {},
+): TmuxWorkerSummary {
   return {
-    ref: { nodeId: 'mini', session: 'mini-ff-1', target },
+    ref: { nodeId: 'mini', session: 'mini-ff-1', target, ...ref },
     status: { label: 'idle', source: 'pane' },
     ...overrides,
   } as TmuxWorkerSummary;
@@ -98,44 +103,142 @@ test('an agent context with a recorded pane id opens that pane without reading t
         paneId: '%7',
         target: '%7',
       },
+      target: { slotId: 'mini-ff-1', runId: 'run-1', contextId: 'rev-2', role: 'review' },
     },
   );
 });
 
-test('a bare slot reads its own machine and picks the active pane linked to the slot', () => {
-  const selector = { slotId: 'mini-ff-1' };
-  assert.deepEqual(
-    resolveTerminalWorkerRef({ selector, run: null, slotMachine: 'mini', inventory: undefined }),
-    { status: 'needs-inventory', machine: 'mini' },
-  );
-  const linked = pane('%4', { linkedSlotId: 'mini-ff-1', active: true });
-  const resolved = resolveTerminalWorkerRef({
-    selector,
-    run: null,
-    slotMachine: 'mini',
-    inventory: inventory('mini', [
-      pane('%2', { linkedSlotId: 'mini-ff-2', active: true }),
-      pane('%3', { linkedSlotId: 'mini-ff-1' }),
-      linked,
-    ]),
+test('a plain slot link shows, types into and sends to the same actor', () => {
+  // The slot's run has a primary worker and a working reviewer: the terminal opens the
+  // reviewer, so Send names the reviewer too and never falls to the gateway's primary default.
+  const run = makeRun({
+    agentContexts: [
+      context({ target: { session: 'mini-ff-1', window: 'dev', paneId: '%1', target: 'a' } }),
+      context({
+        id: 'rev-1',
+        role: 'review',
+        target: { session: 'mini-ff-1', window: 'review', paneId: '%2', target: 'b' },
+      }),
+    ],
   });
-  assert.deepEqual(resolved, { status: 'ready', worker: linked.ref });
+  const resolved = resolveTerminalWorkerRef({
+    selector: { slotId: 'mini-ff-1' },
+    run,
+    slotMachine: 'mini',
+    inventory: undefined,
+  });
+  assert.equal(resolved.status, 'ready');
+  if (resolved.status !== 'ready') return;
+  assert.equal(resolved.worker.target, '%2');
+  assert.deepEqual(resolved.target, {
+    slotId: 'mini-ff-1',
+    runId: 'run-1',
+    contextId: 'rev-1',
+    role: 'review',
+  });
 });
 
-test('a context without a pane id takes the pane running its worker', () => {
+test('a context that recorded only its window opens a pane in that window, never the worker', () => {
   const run = makeRun({
     agentContexts: [
       context({ target: { session: 'mini-ff-1', window: 'dev', target: 'mini-ff-1:dev' } }),
+      context({
+        id: 'rev-1',
+        role: 'review',
+        status: 'waiting',
+        target: { session: 'mini-ff-1', window: 'review', target: 'mini-ff-1:review' },
+      }),
     ],
   });
-  const worker = pane('%9', { linkedSlotId: 'mini-ff-1', linkedRunId: 'run-1', linkedRunner: 'x' });
+  const dev = pane(
+    '%1',
+    { linkedSlotId: 'mini-ff-1', linkedRunId: 'run-1', linkedRunner: 'x' },
+    { windowName: 'dev' },
+  );
+  const reviewer = pane('%2', { linkedSlotId: 'mini-ff-1' }, { windowName: 'review' });
+  const selector = { slotId: 'mini-ff-1', runId: 'run-1', contextId: 'rev-1' };
   const resolved = resolveTerminalWorkerRef({
-    selector: { slotId: 'mini-ff-1', contextId: 'worker' },
+    selector,
     run,
     slotMachine: 'mini',
-    inventory: inventory('mini', [pane('%8', { linkedSlotId: 'mini-ff-1', active: true }), worker]),
+    inventory: inventory('mini', [dev, reviewer]),
   });
-  assert.deepEqual(resolved, { status: 'ready', worker: worker.ref });
+  assert.equal(resolved.status === 'ready' && resolved.worker.target, '%2');
+  assert.deepEqual(
+    resolveTerminalWorkerRef({
+      selector,
+      run,
+      slotMachine: 'mini',
+      inventory: inventory('mini', [dev]),
+    }),
+    { status: 'unavailable', reason: 'Window not open' },
+  );
+});
+
+test('an actor pin whose run cannot be read never opens another actor', () => {
+  const other = pane('%7', {
+    linkedSlotId: 'mini-ff-1',
+    linkedRunId: 'run-OTHER',
+    linkedRunner: 'x',
+  });
+  for (const selector of [
+    { slotId: 'mini-ff-1', runId: 'run-1', contextId: 'rev-3' },
+    { slotId: 'mini-ff-1', runId: 'run-1', role: 'review' as const },
+  ])
+    assert.deepEqual(
+      resolveTerminalWorkerRef({
+        selector,
+        run: null,
+        slotMachine: 'mini',
+        inventory: inventory('mini', [other]),
+      }),
+      { status: 'unavailable', reason: 'Run unavailable' },
+    );
+});
+
+test('a bare slot reads its own machine and picks the active pane linked to the slot', () => {
+  const selector = { slotId: 'mini-ff-1' };
+  const target = { slotId: 'mini-ff-1' };
+  assert.deepEqual(
+    resolveTerminalWorkerRef({ selector, run: null, slotMachine: 'mini', inventory: undefined }),
+    { status: 'needs-inventory', machine: 'mini', target },
+  );
+  const linked = pane('%4', { linkedSlotId: 'mini-ff-1', active: true });
+  assert.deepEqual(
+    resolveTerminalWorkerRef({
+      selector,
+      run: null,
+      slotMachine: 'mini',
+      inventory: inventory('mini', [
+        pane('%2', { linkedSlotId: 'mini-ff-2', active: true }),
+        pane('%3', { linkedSlotId: 'mini-ff-1' }),
+        linked,
+      ]),
+    }),
+    { status: 'ready', worker: linked.ref, target },
+  );
+});
+
+test("a native run's slot shell opens the slot's own session", () => {
+  const run = makeRun({ transport: 'native', agentContexts: [context({})] });
+  const selector = { slotId: 'mini-ff-1', runId: 'run-1' };
+  assert.deepEqual(
+    resolveTerminalWorkerRef({ selector, run, slotMachine: 'mini', inventory: undefined }),
+    { status: 'native' },
+  );
+  assert.deepEqual(
+    resolveTerminalWorkerRef({
+      selector: { ...selector, shell: true },
+      run,
+      slotMachine: 'mini',
+      inventory: undefined,
+    }),
+    {
+      status: 'needs-inventory',
+      machine: 'mini',
+      target: { slotId: 'mini-ff-1', bareSession: true },
+    },
+  );
 });
 
 test("a review worktree uses the run's pool machine, never its execution node id", () => {
@@ -152,12 +255,16 @@ test("a review worktree uses the run's pool machine, never its execution node id
     },
   });
   const selector = { runId: 'run-2' };
+  const target = { slotId: '', runId: 'run-2' };
   assert.deepEqual(
     resolveTerminalWorkerRef({ selector, run, slotMachine: undefined, inventory: undefined }),
-    { status: 'needs-inventory', machine: 'macpro' },
+    { status: 'needs-inventory', machine: 'macpro', target },
   );
-  const shell = pane('%5', { linkedRunId: 'run-2' });
-  shell.ref = { ...shell.ref, nodeId: 'macpro', session: 'review-shell-ws-1' };
+  const shell = pane(
+    '%5',
+    { linkedRunId: 'run-2' },
+    { nodeId: 'macpro', session: 'review-shell-ws-1' },
+  );
   assert.deepEqual(
     resolveTerminalWorkerRef({
       selector,
@@ -165,44 +272,57 @@ test("a review worktree uses the run's pool machine, never its execution node id
       slotMachine: undefined,
       inventory: inventory('macpro', [pane('%1'), shell]),
     }),
-    { status: 'ready', worker: shell.ref },
-  );
-  assert.deepEqual(slotTerminalTarget(selector, run), { slotId: '', runId: 'run-2' });
-});
-
-test('a missing session asks for terminal.reinit with the slot target the gateway knows', () => {
-  const resolved = resolveTerminalWorkerRef({
-    selector: { slotId: 'mini-ff-1' },
-    run: null,
-    slotMachine: 'mini',
-    inventory: inventory('mini', [pane('%2', { linkedSlotId: 'mini-ff-2' })]),
-  });
-  assert.deepEqual(resolved, { status: 'no-pane', machine: 'mini', hidden: false });
-  // A finished run pinned to its slot opens the slot's own session, as the old screen did.
-  const finished = makeRun({ status: 'done' });
-  assert.deepEqual(slotTerminalTarget({ slotId: 'mini-ff-1', runId: 'run-1' }, finished), {
-    slotId: 'mini-ff-1',
-    bareSession: true,
-  });
-  assert.deepEqual(
-    slotTerminalTarget({ slotId: 'mini-ff-1', runId: 'run-1', contextId: 'worker' }, makeRun({})),
-    { slotId: 'mini-ff-1', runId: 'run-1', contextId: 'worker' },
+    { status: 'ready', worker: shell.ref, target },
   );
 });
 
-test('a pane the worker filter hides says so instead of opening another pane', () => {
+test('a missing session asks for terminal.reinit with the target the gateway knows', () => {
+  // Hidden panes elsewhere on the machine do not stop the reinit; the screen says "hidden"
+  // only when the pane is still missing after it.
   assert.deepEqual(
     resolveTerminalWorkerRef({
       selector: { slotId: 'mini-ff-1' },
       run: null,
       slotMachine: 'mini',
-      inventory: inventory('mini', [], { hiddenWorkers: 2 }),
+      inventory: inventory('mini', [pane('%2', { linkedSlotId: 'mini-ff-2' })], {
+        hiddenWorkers: 2,
+      }),
     }),
-    { status: 'no-pane', machine: 'mini', hidden: true },
+    { status: 'no-pane', machine: 'mini', hidden: true, target: { slotId: 'mini-ff-1' } },
+  );
+  // A finished run pinned to its slot opens the slot's own session, as the old screen did.
+  assert.deepEqual(
+    resolveTerminalWorkerRef({
+      selector: { slotId: 'mini-ff-1', runId: 'run-1' },
+      run: makeRun({ status: 'done' }),
+      slotMachine: 'mini',
+      inventory: inventory('mini', []),
+    }),
+    {
+      status: 'no-pane',
+      machine: 'mini',
+      hidden: false,
+      target: { slotId: 'mini-ff-1', bareSession: true },
+    },
   );
 });
 
-test('a pinned session that is gone, an offline machine and a native worker never open a pane', () => {
+test('an explicit actor pin on a finished run never falls back to the bare slot session', () => {
+  const finished = makeRun({ status: 'done' });
+  assert.deepEqual(
+    slotTerminalTarget(
+      { slotId: 'mini-ff-1', runId: 'run-1', contextId: 'rev-3', role: 'review' },
+      finished,
+    ),
+    { slotId: 'mini-ff-1', runId: 'run-1', contextId: 'rev-3', role: 'review' },
+  );
+  assert.deepEqual(slotTerminalTarget({ slotId: 'mini-ff-1', runId: 'run-1' }, null), {
+    slotId: 'mini-ff-1',
+    bareSession: true,
+  });
+});
+
+test('a gone pin, an offline machine and a loading run never open a pane', () => {
   const run = makeRun({ agentContexts: [context({})] });
   assert.equal(
     resolveTerminalWorkerRef({
@@ -225,37 +345,10 @@ test('a pinned session that is gone, an offline machine and a native worker neve
   assert.deepEqual(
     resolveTerminalWorkerRef({
       selector: { slotId: 'mini-ff-1', runId: 'run-1' },
-      run: makeRun({ transport: 'native', agentContexts: [context({})] }),
-      slotMachine: 'mini',
-      inventory: undefined,
-    }),
-    { status: 'native' },
-  );
-});
-
-test('a run still loading waits rather than guessing a pane', () => {
-  assert.deepEqual(
-    resolveTerminalWorkerRef({
-      selector: { slotId: 'mini-ff-1', runId: 'run-1' },
       run: undefined,
       slotMachine: 'mini',
       inventory: undefined,
     }),
     { status: 'waiting', reason: 'Loading…' },
   );
-});
-
-test('an explicit actor pin on a finished run never falls back to the bare slot session', () => {
-  const finished = makeRun({ status: 'done' });
-  assert.deepEqual(
-    slotTerminalTarget(
-      { slotId: 'mini-ff-1', runId: 'run-1', contextId: 'rev-3', role: 'review' },
-      finished,
-    ),
-    { slotId: 'mini-ff-1', runId: 'run-1', contextId: 'rev-3', role: 'review' },
-  );
-  assert.deepEqual(slotTerminalTarget({ slotId: 'mini-ff-1', runId: 'run-1' }, null), {
-    slotId: 'mini-ff-1',
-    bareSession: true,
-  });
 });

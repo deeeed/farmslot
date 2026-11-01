@@ -1368,7 +1368,12 @@ if (phase === 'terminal-context') {
     );
     await inbox(`${route}&contextId=offline-proof-missing-actor`);
     const pinned = await until(
-      (value) => current(value) && value.terminalStream === 'ended' && value.terminalSnapshotError,
+      // A refused actor has current run facts but no pane.
+      (value) =>
+        value.slotProjectionMatches &&
+        value.detail?.status === 'ready' &&
+        value.terminalStream === 'ended' &&
+        value.terminalSnapshotError,
       'An unavailable explicit actor must show the real gateway refusal',
     );
     assert.equal(pinned.terminalTarget.contextId, 'offline-proof-missing-actor');

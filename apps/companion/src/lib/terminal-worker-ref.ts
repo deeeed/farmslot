@@ -1,4 +1,6 @@
 import type {
+  AgentContext,
+  AgentContextTarget,
   AgentRole,
   Run,
   SlotAgentTargetParams,
@@ -16,25 +18,29 @@ export interface TerminalSelector {
   runId?: string;
   contextId?: string;
   role?: AgentRole;
+  /** The slot's own shell rather than its run's agent (a native run's slot shell). */
+  shell?: boolean;
 }
 
 export type TerminalWorkerResolution =
-  | { status: 'ready'; worker: TmuxWorkerRef }
+  /** `target` is the same pane as the gateway knows it: Send and reinit use it. */
+  | { status: 'ready'; worker: TmuxWorkerRef; target: SlotAgentTargetParams }
   /** A native conversation, not a tmux pane: it opens in the conversation screen. */
   | { status: 'native' }
   /** The pane is found by the machine's inventory, which has not been read yet. */
-  | { status: 'needs-inventory'; machine: string }
+  | { status: 'needs-inventory'; machine: string; target: SlotAgentTargetParams }
   /** The inventory lists no pane for this target: its session may need creating. */
-  | { status: 'no-pane'; machine: string; hidden: boolean }
+  | { status: 'no-pane'; machine: string; hidden: boolean; target: SlotAgentTargetParams }
   | { status: 'waiting'; reason: string }
   | { status: 'unavailable'; reason: string };
 
 const PANE_ID = /^%\d+$/;
 
 /**
- * Picks the tmux pane a terminal link names, on the client. An agent context that recorded its
- * pane id needs nothing else; a bare slot, a review worktree, or a context without a pane id is
- * found in that one machine's inventory by the panes the gateway links to the slot or run.
+ * Picks the tmux pane a terminal link names, on the client, and the slot target for the same
+ * actor, so the pane shown, the keys typed and Send all reach one agent. An agent context that
+ * recorded its pane id needs nothing else; one that recorded only its window is found in that
+ * window; a bare slot or review worktree is the pane the machine's inventory links to it.
  * `run` is undefined while it is still loading and null when there is none.
  */
 export function resolveTerminalWorkerRef({
@@ -50,19 +56,22 @@ export function resolveTerminalWorkerRef({
 }): TerminalWorkerResolution {
   const slotId = selector.slotId ?? '';
   if (run === undefined) return { status: 'waiting', reason: 'Loading…' };
+  // An actor pin is never answered by another actor, even when its run cannot be read.
+  if ((selector.contextId || selector.role) && !run)
+    return { status: 'unavailable', reason: 'Run unavailable' };
   const review = !slotId && run?.reviewWorkspace && !run.reviewWorkspace.cleanedAt ? run : null;
   if (!slotId && !review) return { status: 'unavailable', reason: 'No terminal for this run.' };
   const machine = review ? review.reviewWorkspace!.machine : slotMachine;
   if (!machine) return { status: 'waiting', reason: 'Loading slot…' };
 
-  const bare = !review && bareSlotSession(selector, run);
-  let session: string | undefined;
-  if (run && !bare) {
+  const bare = !review && (Boolean(selector.shell) || bareSlotSession(selector, run));
+  let context: AgentContext | null = null;
+  if (run && !bare && !review) {
     const view = runTerminalView(run, selector.contextId);
     if (selector.contextId && !view.context)
       return { status: 'unavailable', reason: view.disabledReason ?? 'Session gone.' };
     const contexts = run.agentContexts ?? [];
-    const context =
+    context =
       selector.role && !selector.contextId && view.context?.role !== selector.role
         ? (contexts.find((entry) => entry.role === selector.role) ?? null)
         : view.context;
@@ -72,33 +81,57 @@ export function resolveTerminalWorkerRef({
       (run.transport === 'native' && !context?.target)
     )
       return { status: 'native' };
-    const target = context?.target;
-    if (target?.paneId && PANE_ID.test(target.paneId))
-      return {
-        status: 'ready',
-        worker: {
-          nodeId: machine,
-          session: target.session,
-          ...(target.window ? { window: target.window } : {}),
-          ...(target.pane ? { pane: target.pane } : {}),
-          paneId: target.paneId,
-          target: target.paneId,
-        },
-      };
-    session = target?.session;
   }
+  const target: SlotAgentTargetParams = review
+    ? { slotId: '', runId: review.id }
+    : bare
+      ? { slotId, bareSession: true }
+      : {
+          slotId,
+          ...(run ? { runId: run.id } : {}),
+          ...(context ? { contextId: context.id, role: context.role } : {}),
+        };
 
-  if (!inventory) return { status: 'needs-inventory', machine };
+  const recorded = context?.target ?? null;
+  if (recorded?.paneId && PANE_ID.test(recorded.paneId))
+    return { status: 'ready', worker: recordedPane(machine, recorded), target };
+
+  if (!inventory) return { status: 'needs-inventory', machine, target };
   const node = inventory.nodes.find((entry) => entry.nodeId === machine);
   if (!node?.ok) return { status: 'unavailable', reason: `${machine} offline` };
-  const linked = node.workers.filter((pane) =>
-    review ? pane.linkedRunId === review.id : pane.linkedSlotId === slotId,
-  );
-  const ofRun = run && !bare ? linked.filter((pane) => pane.linkedRunId === run.id) : [];
-  const inSession = session ? linked.filter((pane) => pane.ref.session === session) : [];
-  const pane = bestPane(inSession.length ? inSession : ofRun.length ? ofRun : linked);
-  if (!pane) return { status: 'no-pane', machine, hidden: Boolean(node.hiddenWorkers) };
-  return { status: 'ready', worker: pane.ref };
+  let candidates: TmuxWorkerSummary[];
+  if (recorded) {
+    // A context without a pane id names its window: only a pane there is that actor.
+    candidates = node.workers.filter((pane) => inRecordedWindow(pane.ref, recorded));
+    if (!candidates.length) return { status: 'unavailable', reason: 'Window not open' };
+  } else {
+    const linked = node.workers.filter((pane) =>
+      review ? pane.linkedRunId === review.id : pane.linkedSlotId === slotId,
+    );
+    const ofRun = run && !bare ? linked.filter((pane) => pane.linkedRunId === run.id) : [];
+    candidates = ofRun.length ? ofRun : linked;
+  }
+  const pane = bestPane(candidates);
+  if (!pane) return { status: 'no-pane', machine, hidden: Boolean(node.hiddenWorkers), target };
+  return { status: 'ready', worker: pane.ref, target };
+}
+
+function recordedPane(machine: string, recorded: AgentContextTarget): TmuxWorkerRef {
+  return {
+    nodeId: machine,
+    session: recorded.session,
+    ...(recorded.window ? { window: recorded.window } : {}),
+    ...(recorded.pane ? { pane: recorded.pane } : {}),
+    paneId: recorded.paneId!,
+    target: recorded.paneId!,
+  };
+}
+
+function inRecordedWindow(ref: TmuxWorkerRef, recorded: AgentContextTarget): boolean {
+  if (ref.session !== recorded.session) return false;
+  const window = recorded.window;
+  if (window && ref.window !== window && ref.windowName !== window) return false;
+  return !recorded.pane || ref.pane === recorded.pane;
 }
 
 /**
@@ -126,9 +159,8 @@ function bestPane(panes: TmuxWorkerSummary[]): TmuxWorkerSummary | undefined {
 }
 
 /**
- * The slot-addressed target the gateway still takes for `terminal.reinit` (which creates a
- * missing slot or worktree session and keeps an existing one) and for `terminal.send` (the
- * runner's own submission of a message).
+ * The target a link asks for before it resolves, as the gateway takes it: what an unresolved or
+ * refused link reports. A resolved link uses the resolution's own `target`.
  */
 export function slotTerminalTarget(
   selector: TerminalSelector,
@@ -136,7 +168,7 @@ export function slotTerminalTarget(
 ): SlotAgentTargetParams {
   const slotId = selector.slotId ?? '';
   if (!slotId) return { slotId: '', ...(selector.runId ? { runId: selector.runId } : {}) };
-  if (bareSlotSession(selector, run)) return { slotId, bareSession: true };
+  if (selector.shell || bareSlotSession(selector, run)) return { slotId, bareSession: true };
   return {
     slotId,
     ...(selector.runId ? { runId: selector.runId } : {}),

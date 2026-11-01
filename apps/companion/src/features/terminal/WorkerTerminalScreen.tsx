@@ -792,8 +792,9 @@ export function TerminalPane({
         }
         setDraftHydratedPane(draftPane);
       })
-      .catch(() => {
-        if (!disposed) setDraftHydratedPane(draftPane);
+      .catch((err: Error) => {
+        // Writes stay off for this pane: an empty composer must not erase the saved draft.
+        if (!disposed) setVoiceWarning(`Draft not restored: ${err.message}`);
       });
     return () => {
       disposed = true;
