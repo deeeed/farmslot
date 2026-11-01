@@ -253,9 +253,15 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
         return false;
       });
       if (!held) {
-        if (!options.allowed()) return false;
+        if (!options.allowed()) {
+          log(`[evidence-media] skipped ${entry.path}: not on a LAN route`);
+          return false;
+        }
         // A file that could not fit is not downloaded at all.
-        if (entry.sizeBytes !== undefined && !fits(entry.sizeBytes, entry.gateAt)) return false;
+        if (entry.sizeBytes !== undefined && !fits(entry.sizeBytes, entry.gateAt)) {
+          log(`[evidence-media] skipped ${entry.path}: no room (${entry.sizeBytes} B)`);
+          return false;
+        }
         // Two gates sharing a digest download it once.
         let pending = inflight.get(entry.sha256);
         if (!pending) {
@@ -274,6 +280,12 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
     },
     async keep(gateRunIds) {
       await loaded;
+      const ids = [...gateRunIds].sort();
+      if (!wanted || ids.join() !== [...wanted].sort().join())
+        // The first known list too, so "nothing waits on a decision" is visible, not silent.
+        log(
+          `[evidence-media] gates waiting: ${ids.length}${ids.length ? ` (${ids.map((id) => id.slice(0, 8)).join(', ')})` : ''}`,
+        );
       wanted = gateRunIds;
       await serialized(async () => {
         const before = Object.keys(index.runs).length;

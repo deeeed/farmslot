@@ -284,6 +284,41 @@ test('readers hear when the held index is read and when held files change', asyn
   }
 });
 
+test('the log says how many gates wait and why an entry was skipped', async () => {
+  const served = new Map<string, Uint8Array>();
+  const memory = memoryFiles(served);
+  const lines: string[] = [];
+  const network = { allowed: false };
+  const holder = createEvidenceMediaHolder({
+    files: memory.files,
+    source: () => ({ uri: 'https://gw/none' }),
+    allowed: () => network.allowed,
+    limitBytes: 50,
+    log: (line) => lines.push(line),
+  });
+  await holder.keep(new Set());
+  await holder.keep(new Set());
+  await holder.keep(new Set(['abcdef1234']));
+  const body = bytes(21, 10);
+  const entry = (sizeBytes: number) => ({
+    runId: 'abcdef1234',
+    path: 'videos/run.mp4',
+    bundleDigest: 'b1',
+    sha256: digest(body),
+    sizeBytes,
+    gateAt: 1,
+  });
+  assert.equal(await holder.hold(entry(10), signal), false);
+  network.allowed = true;
+  assert.equal(await holder.hold(entry(60), signal), false);
+  assert.deepEqual(lines, [
+    '[evidence-media] gates waiting: 0',
+    '[evidence-media] gates waiting: 1 (abcdef12)',
+    '[evidence-media] skipped videos/run.mp4: not on a LAN route',
+    '[evidence-media] skipped videos/run.mp4: no room (60 B)',
+  ]);
+});
+
 test('artifact sources read held evidence of the same package silently; images by digest', () => {
   const held = 'file:///cache/evidence-media/scope/abc.mp4';
   setHeldArtifactLookup({
