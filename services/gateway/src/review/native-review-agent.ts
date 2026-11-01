@@ -729,8 +729,19 @@ async function runNativeReviewAttempt(
     let lastProgressAt = monitoringStartedAt;
     let observedProgress = false;
     let eventCursor: number | undefined;
-    const silent = (now: number) =>
-      now - lastProgressAt >= inactivityTimeoutMs || (now >= deadline && !observedProgress);
+    // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on and its
+    // progress waits on the node. Only a node silent for a whole inactivity window fails it.
+    let answeredAt = Date.now();
+    let deferredSince: number | undefined;
+    const deferRead = async (error: unknown) => {
+      if (!isNodeTransportUnavailableError(error) || Date.now() - answeredAt >= inactivityTimeoutMs)
+        throw error;
+      if (deferredSince === undefined) {
+        deferredSince = Date.now();
+        console.warn(`[review] ${runId.slice(0, 8)}: reviewer reads deferred: ${error.message}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    };
     const recordProgress = (at: string) => {
       const timestamp = Date.parse(at);
       if (!Number.isFinite(timestamp) || timestamp < monitoringStartedAt) return;
@@ -751,6 +762,7 @@ async function runNativeReviewAttempt(
       // A resumed process can bootstrap a fresh signal attempt. Read the watcher's
       // current binding so its valid terminal signal is not compared with the old one.
       context = latest;
+      const readAt = Date.now();
       let snapshot: Awaited<ReturnType<typeof readNativeWorkerSnapshot>>;
       try {
         snapshot = await readNativeWorkerSnapshot(runId, 'review', contextId, {
@@ -758,12 +770,15 @@ async function runNativeReviewAttempt(
           limit: 500,
         });
       } catch (error) {
-        // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on.
-        // Silence is still judged by the same limits as an answered read.
-        if (!isNodeTransportUnavailableError(error) || silent(Date.now())) throw error;
-        console.warn(`[review] ${runId.slice(0, 8)}: reviewer read deferred: ${error.message}`);
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await deferRead(error);
         continue;
+      }
+      answeredAt = readAt;
+      if (deferredSince !== undefined) {
+        console.warn(
+          `[review] ${runId.slice(0, 8)}: reviewer reads answered again after ${Date.now() - deferredSince}ms`,
+        );
+        deferredSince = undefined;
       }
       eventCursor = snapshot.cursor;
       for (const event of snapshot.events) {
@@ -789,7 +804,14 @@ async function runNativeReviewAttempt(
           recordProgress(event.at);
         }
       }
-      const refused = await refuseReviewerApprovals(context.nativeSession!, snapshot);
+      let refused: number;
+      try {
+        refused = await refuseReviewerApprovals(context.nativeSession!, snapshot);
+      } catch (error) {
+        // A lost refusal reply leaves the request pending or answered; the next read shows which.
+        await deferRead(error);
+        continue;
+      }
       if (refused)
         console.warn(`[review] ${runId.slice(0, 8)}: refused ${refused} runner approval(s)`);
       const command = snapshot.commands.find(
@@ -839,7 +861,7 @@ async function runNativeReviewAttempt(
       // activity that happened while the gateway was offline.
       if (snapshot.hasMore) continue;
       const now = Date.now();
-      if (silent(now)) {
+      if (now - lastProgressAt >= inactivityTimeoutMs || (now >= deadline && !observedProgress)) {
         throw new Error(
           `Native reviewer made no checklist or tool progress for ${now - lastProgressAt}ms ` +
             `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,
