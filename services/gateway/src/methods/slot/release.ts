@@ -99,7 +99,12 @@ import {
   detachRunsForReleasedSlot,
   markCompletionFailureDiscarded,
 } from './release-run-ownership.js';
-import { activePrepareAborts, applySelectedApp, type EventEmitter } from './shared.js';
+import {
+  activePrepareAborts,
+  applySelectedApp,
+  type EventEmitter,
+  RECOVER_HINT,
+} from './shared.js';
 import {
   assertSlotNotOperatorRoot,
   detectLinkedWorktree,
@@ -290,7 +295,7 @@ async function releasePreflight(
   const row = await readSlotRow(params.slotId);
   const recovery = options?.workspaceRecovery;
   if (row?.workspace_recovery && !recovery)
-    throw new Error('Slot recovery must be retried through slot.refresh');
+    throw new Error(`Slot recovery must be retried through slot.refresh. ${RECOVER_HINT}`);
   if (
     recovery &&
     ((Number(row?.slot_epoch) || 0) !== recovery.epoch ||

@@ -1,16 +1,19 @@
 import type { Command } from 'commander';
 
-import type {
-  EventFrame,
-  ScriptActionResult,
-  SlotActionListResult,
-  SlotActionRunResult,
-  SlotAutoRefreshResult,
-  SlotCheckResult,
-  SlotCommandResult,
-  SlotFixtureRefreshResult,
-  SlotMonitorResult,
-  SlotRefreshResult,
+import {
+  type EventFrame,
+  type FleetStatusResult,
+  type ScriptActionResult,
+  type SlotActionListResult,
+  type SlotActionRunResult,
+  type SlotAutoRefreshResult,
+  type SlotCheckResult,
+  type SlotCommandResult,
+  type SlotFixtureRefreshResult,
+  type SlotMonitorResult,
+  type SlotRefreshParams,
+  type SlotRefreshResult,
+  slotWorkspaceIdentity,
 } from '@farmslot/protocol';
 
 import { resolveContext } from '../context.js';
@@ -40,6 +43,7 @@ interface ReleaseOptions {
 
 interface RefreshOptions {
   force?: boolean;
+  recover?: boolean;
 }
 
 interface FixtureOptions {
@@ -239,12 +243,26 @@ export function registerSlotCommand(program: Command): void {
     .description('Refresh a ready slot to the project default branch without full prepare')
     .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
     .option('--force', 'Hard-reset through dirty or stale branch state')
+    .option(
+      '--recover',
+      "Resume a held slot's failed workspace recovery (fenced to its current workspace identity)",
+    )
     .action(async (id: string | undefined, opts: RefreshOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
-        const params = { slotId, mode: opts.force ? 'force' : 'safe' };
+        let params: SlotRefreshParams = { slotId, mode: opts.force ? 'force' : 'safe' };
+        if (opts.recover) {
+          const { fleet } = await client.call<FleetStatusResult>('fleet.status');
+          const workspace = fleet.slots.find((slot) => slot.slot === slotId)?.workspace;
+          if (!workspace) {
+            throw new Error(
+              `Slot ${slotId} has no workspace identity to recover; check \`farmslot fleet status\`.`,
+            );
+          }
+          params = { slotId, release: true, expectedWorkspace: slotWorkspaceIdentity(workspace) };
+        }
         if (emit.machine) {
           const result = await client.call<SlotRefreshResult>('slot.refresh', params);
           if (!result.refreshed) {

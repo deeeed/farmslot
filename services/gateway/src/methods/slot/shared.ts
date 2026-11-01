@@ -10,6 +10,10 @@ import type { StartRefResolution } from '../../projects/start-ref-resolution.js'
 
 import type { PrepareProfileFallback } from './prepare-profile.js';
 
+/** Names the supported exit from a held slot whose workspace recovery failed. */
+export const RECOVER_HINT =
+  "Resume this slot's recovery with `farmslot slot refresh <slot> --recover`.";
+
 export type EventEmitter = (event: string, payload: unknown) => void;
 export type SlotPrepareResult = {
   prepared: boolean;
