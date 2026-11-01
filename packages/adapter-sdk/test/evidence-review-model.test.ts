@@ -1635,3 +1635,78 @@ test('pending visual criteria stay visible before evidence loads and after a rea
     );
   }
 });
+
+test('a gate package the worker re-recorded reads as replaced, with no details from it', () => {
+  // Run directory stamps are UTC; labels show the viewer's local time.
+  const local = (iso: string) => {
+    const time = new Date(iso);
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `Recording ${pad(time.getHours())}:${pad(time.getMinutes())}`;
+  };
+  const pkg = qaPackage(2);
+  const packagePath = 'recipe-runs/20261101072653297-84101';
+  const ledger = (recipeRunId: string, evidence: string) => ({
+    ...pkg.claims!,
+    recipeRunId,
+    criteria: pkg.claims!.criteria.map((criterion) => ({ ...criterion, evidence: [evidence] })),
+  });
+  const current = createEvidenceReviewModel({
+    package: pkg,
+    packagePath,
+    ledger: ledger('qa-attempt', `artifacts/${packagePath}/trace.json`),
+  });
+  assert.deepEqual(current.recording, { label: local('2026-11-01T07:26:00Z') });
+  assert.ok(current.currentOccurrences.length > 0);
+  assert.notEqual(current.packageStatus?.status, 'Replaced');
+
+  const replaced = createEvidenceReviewModel({
+    package: pkg,
+    packagePath,
+    ledger: ledger('newer-attempt', 'artifacts/recipe-runs/20261101082718242-33108/trace.json'),
+  });
+  assert.deepEqual(replaced.recording, {
+    label: local('2026-11-01T07:26:00Z'),
+    replacedBy: local('2026-11-01T08:27:00Z'),
+  });
+  assert.deepEqual(
+    {
+      status: replaced.packageStatus?.status,
+      tone: replaced.packageStatus?.tone,
+      summary: replaced.packageStatus?.summary,
+      action: replaced.packageStatus?.action,
+      issues: replaced.packageStatus?.issues,
+    },
+    {
+      status: 'Replaced',
+      tone: 'info',
+      summary: `Evidence replaced by ${local('2026-11-01T08:27:00Z').replace('Recording', 'recording')}`,
+      action: 'Refresh the gate package or re-run the recipe.',
+      issues: [],
+    },
+  );
+  // Panel-level evidence details describe the current recording only; the replaced package's
+  // own steps stay with its rows and clips.
+  assert.deepEqual(replaced.currentOccurrences, []);
+  assert.deepEqual(replaced.displayWarnings, []);
+  assert.equal(replaced.occurrences.length, current.occurrences.length);
+  // A visual check waiting on the current recording; nothing is left to judge once replaced.
+  const visual = structuredClone(pkg);
+  const awaiting = { ...visual.claims!.criteria[0]!, proofMode: 'mixed' as const };
+  visual.claims!.criteria[0] = { ...awaiting, verdict: 'awaiting-review' };
+  const pendingIn = (recipeRunId: string, evidence: string) =>
+    createEvidenceReviewModel({
+      package: visual,
+      packagePath,
+      ledger: { ...ledger(recipeRunId, evidence), criteria: visual.claims!.criteria },
+    })
+      .judgmentRows(null)
+      .filter((row) => row.pending)
+      .map((row) => row.claim.id);
+  assert.deepEqual(pendingIn('qa-attempt', `artifacts/${packagePath}/trace.json`), [awaiting.id]);
+  assert.deepEqual(
+    pendingIn('newer-attempt', 'artifacts/recipe-runs/20261101082718242-33108/trace.json'),
+    [],
+  );
+  // Validity is unchanged: the mismatch still refuses measured proof.
+  assert.ok(replaced.errors.includes('The task ledger belongs to another recipe execution.'));
+});
