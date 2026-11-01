@@ -5,14 +5,32 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot/protocol';
+import {
+  type ReadyGatePayload,
+  RecordedEvidenceReadError,
+  type ReviewGatePayload,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
+import {
+  markPreparedPackageStale,
+  preparedPackageIsStale,
+} from '../run-completion/prepared-package-stale.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
+import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
-import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../runs/store.js';
+import {
+  commitRunBeforeAttemptAttestation,
+  createRun,
+  getRun,
+  loadAllRuns,
+  persistRunNow,
+  updateRun,
+} from '../runs/store.js';
 
+import { BlockedRunError, OWNED_WORKER_NOT_IDLE, OwnedWorkerBusyError } from './errors.js';
 import {
   ensureCurrentPublishPackage,
   reconcilePublicationPackageForInspection,
@@ -470,4 +488,213 @@ test('inspection repairs a missing bundle at unchanged HEAD, defers busy work an
     ['hold'],
   );
   assert.deepEqual(getRun(run.id)!.decisions, [decision]);
+});
+
+test('polling shows an evidence refusal again without re-running it until its inputs change', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-2',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const prepared = makeReadyGatePackage();
+  const decision: RunDecision = {
+    id: 'refused',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    createdAt: prepared.createdAt,
+    actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      branch: prepared.branch,
+      workerReport: '',
+      diffStat: prepared.diffStat,
+      prPackage: prepared,
+    },
+  };
+  updateRun(run.id, { status: 'human-gating', decisions: [decision] });
+  let refreshes = 0;
+  let refusal: Error = new OwnedWorkerBusyError();
+  let progress: 'idle' | 'making-progress' | 'unproven' = 'idle';
+  const readers = {
+    head: async () => 'new-head',
+    bundleAvailable: async () => true,
+    progress: async () => ({ kind: progress }),
+    refresh: async () => {
+      refreshes++;
+      throw refusal;
+    },
+  };
+  const poll = async (overrides: Partial<typeof readers> = {}) =>
+    (await reconcilePublicationPackageForInspection(getRun(run.id)!, { ...readers, ...overrides }))
+      .decisions[0].description;
+  // A worker that resumed between the reads, an unproven progress read and a node timeout are
+  // not the same on the next poll, so none is remembered.
+  for (const transient of [
+    new OwnedWorkerBusyError(),
+    new BlockedRunError(OWNED_WORKER_NOT_IDLE),
+    new Error('Node macpro timeout after 60000ms'),
+  ]) {
+    refusal = transient;
+    await poll();
+    await poll();
+  }
+  assert.equal(refreshes, 6);
+  // ba397e2c: each refresh held the machine's transition key for 29-170 s, once per poll. Its
+  // refusal is about 700 characters; the gate shows all of it, the attestation command included.
+  const remedy = `Before evidence artifacts/recipe-runs/attempts/20261101125912114-62272/screenshots/main-flows.files.png comes from recipe attempt recipe-runs/attempts/20261101125912114-62272, recorded at ${'b'.repeat(40)}, not the unchanged base ${'9'.repeat(40)}. Re-record it on the base, or have an operator attest the attempt as before evidence: farmslot run gate ${run.id} --action attest-before-attempt --recipe-run attempts/20261101125912114-62272 --reason "<why the base cannot run it>" (artifact-manifest.json sha256 ${'1'.repeat(64)}).`;
+  refusal = new PublishPackageRefusedError(
+    `Artifact mirror refresh failed; cannot build an authoritative publish package: ${remedy}`,
+    { cause: new RecordedEvidenceReadError('evidence-selection-invalid', remedy) },
+  );
+  for (let i = 0; i < 3; i++)
+    assert.ok(
+      (await poll()).endsWith(`(artifact-manifest.json sha256 ${'1'.repeat(64)}).`),
+      'the whole remedy survives the memo',
+    );
+  assert.equal(refreshes, 7);
+  // An unproven progress read under node load is not the worker working; the refusal is kept.
+  progress = 'unproven';
+  await poll();
+  progress = 'idle';
+  await poll();
+  assert.equal(refreshes, 7);
+  // The worker working again (re-recording the before attempt, say) forgets the refusal.
+  progress = 'making-progress';
+  await poll();
+  progress = 'idle';
+  await poll();
+  assert.equal(refreshes, 8);
+  // An operator's attestation, a new HEAD, a new generation and a new decision are new inputs.
+  await commitRunBeforeAttemptAttestation(
+    run.id,
+    () => ({
+      id: 'attestation',
+      runId: run.id,
+      decisionId: decision.id,
+      attemptRoot: 'recipe-runs/attempts/base',
+      manifestSha256: 'a'.repeat(64),
+      approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'credential' },
+      reason: 'The base cannot run this recipe.',
+      attestedAt: '2026-11-01T14:00:00.000Z',
+    }),
+    () => {},
+  );
+  await poll();
+  assert.equal(refreshes, 9);
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 10);
+  updateRun(run.id, { engineState: { ...getRun(run.id)!.engineState, generation: 3 } });
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 11);
+  updateRun(run.id, { decisions: [{ ...decision, id: 'refused-again' }] });
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 12);
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 12);
+  // Artifact edits leave HEAD alone, so an old refusal is retried.
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now + 5 * 60_000 + 1);
+  await poll({ head: async () => 'newer-head' });
+  assert.equal(refreshes, 13);
+});
+
+test('an explicit refresh logs its refusal, so a caller that timed out does not lose it', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-3',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const warn = t.mock.method(console, 'warn', () => {});
+  await assert.rejects(
+    refreshPublishPackage({ runId: run.id }),
+    /No pending ready publish package/,
+  );
+  assert.match(
+    String(warn.mock.calls.at(-1)?.arguments[0]),
+    new RegExp(
+      `run ${run.id.slice(0, 8)} — publish package refresh refused after \\d+s: No pending ready publish package`,
+    ),
+  );
+});
+
+test('a package marked stale by refused evidence is refreshed, not shown again, at the same HEAD', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-STALE',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const prepared = makeReadyGatePackage();
+  const decision: RunDecision = {
+    id: 'stale',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    createdAt: prepared.createdAt,
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      branch: prepared.branch,
+      workerReport: '',
+      diffStat: prepared.diffStat,
+      prPackage: prepared,
+    },
+  };
+  updateRun(run.id, { status: 'human-gating', decisions: [decision] });
+  let refreshes = 0;
+  const readers = {
+    head: async () => prepared.headSha ?? null,
+    bundleAvailable: async () => true,
+    progress: async () => ({ kind: 'idle' as const }),
+    refresh: async () => {
+      refreshes++;
+      throw new Error('Before evidence comes from recipe attempt recipe-runs/attempts/base');
+    },
+  };
+  await reconcilePublicationPackageForInspection(getRun(run.id)!, readers);
+  assert.equal(refreshes, 0, 'an unchanged package is shown as is');
+  // A human-gate replay's mirror refresh refused the worker's evidence after this package.
+  updateRun(run.id, { engineState: { publishGate: { packageId: prepared.id } } });
+  await markPreparedPackageStale(run.id);
+  const shown = await reconcilePublicationPackageForInspection(getRun(run.id)!, readers);
+  assert.equal(refreshes, 1);
+  assert.deepEqual(
+    shown.decisions[0].actions.map((action) => action.id),
+    [],
+    'the stale package cannot be approved',
+  );
+  assert.match(shown.decisions[0].description, /Before evidence comes from recipe attempt/);
+});
+
+test('a refused package stays stale, across a restart, until another package replaces it', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'inspection',
+    ticketOrPr: 'INSPECT-STALE-2',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, { engineState: { publishGate: { packageId: 'pkg-old' } } });
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), false);
+  await markPreparedPackageStale(run.id);
+  // Durable: the run record names the refused package, so a restarted gateway reads it too.
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.refusedEvidencePackageId, 'pkg-old');
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), true);
+  // A package built after the refusal is not stale.
+  updateRun(run.id, {
+    engineState: {
+      publishGate: { ...getRun(run.id)!.engineState!.publishGate, packageId: 'pkg-new' },
+    },
+  });
+  assert.equal(preparedPackageIsStale(getRun(run.id)!), false);
 });

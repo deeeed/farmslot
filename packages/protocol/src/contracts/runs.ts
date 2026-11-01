@@ -3139,6 +3139,11 @@ export interface RunEngineState {
   intelligenceAuditDegraded?: boolean;
   /** Local-first publication gate metadata. Stored on the run JSON snapshot; no DB migration. */
   publishGate?: {
+    /**
+     * The prepared package a human-gate replay found the worker's evidence refused against. While
+     * it is still `packageId`, the gate and inspection rebuild instead of reusing that package.
+     */
+    refusedEvidencePackageId?: string;
     maintainedSnapshot?: BranchMaintenanceCheckpoint;
     humanPublicationAdoption?: import('./human-publication.js').HumanPublicationAdoptionReceipt;
     packageId?: string;
