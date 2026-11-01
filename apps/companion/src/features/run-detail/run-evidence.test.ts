@@ -9,8 +9,13 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../../lib/artifact-url';
+import { selectArtifactWorkspaceDecision } from '../../lib/workspace-decisions';
 
-import { assertRunEvidenceReady, runEvidenceQuery } from './run-evidence';
+import {
+  assertRunEvidenceReady,
+  runAcceptanceEvidenceHref,
+  runEvidenceQuery,
+} from './run-evidence';
 
 function run(digest = 'manifest-a'): Run {
   return {
@@ -119,4 +124,30 @@ test('a retained invocation rereads progress and evidence and refuses replaced c
   input.currentCache = cache;
   invoke();
   assert.equal(sends, 1);
+});
+
+test("a criterion's Review evidence opens the viewer on the evidence this screen read", () => {
+  // Output review pending: the screen read its snapshot, so the viewer must read it too.
+  const pending = runAcceptanceEvidenceHref(
+    run(),
+    'AC-1',
+    'artifacts/recipe-runs/run-2/v.mp4',
+    'execution-a',
+  );
+  assert.equal(pending.params.recipeRun, DECISION_EVIDENCE_RECIPE_RUN_PARAM);
+  assert.equal(pending.params.evidenceDecision, 'review-a');
+  assert.equal(
+    selectArtifactWorkspaceDecision(
+      run(),
+      pending.params.recipeRun,
+      pending.params.evidenceDecision,
+    )?.id,
+    'review-a',
+  );
+  // No review pending: the selected execution, as before.
+  const settled = run();
+  settled.decisions = [];
+  const plain = runAcceptanceEvidenceHref(settled, 'AC-1', 'artifacts/v.mp4', 'execution-a');
+  assert.equal(plain.params.recipeRun, 'execution-a');
+  assert.equal('evidenceDecision' in plain.params, false);
 });

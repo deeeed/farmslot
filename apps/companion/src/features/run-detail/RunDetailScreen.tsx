@@ -38,7 +38,6 @@ import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useResourceQuery } from '../../hooks/useResourceQuery';
 import { useRunOutputReport } from '../../hooks/useRunOutputReport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
-import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
   artifactsForRecipeRun,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -105,7 +104,11 @@ import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
 import { RunResultsCard } from './components/RunResultsCard';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
-import { assertRunEvidenceReady, runEvidenceQuery } from './run-evidence';
+import {
+  assertRunEvidenceReady,
+  runAcceptanceEvidenceHref,
+  runEvidenceQuery,
+} from './run-evidence';
 
 const emptyRecipeRuns: RecipeRunArtifactGroup[] = [];
 
@@ -451,7 +454,7 @@ export default function RunDetailScreen() {
     await recordVisualClaimReview(client, run.id, evidenceModel, id, verdict, reason);
   };
   const openAcceptanceEvidence = (criterionId: string, path: string) =>
-    router.push(acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId));
+    router.push(runAcceptanceEvidenceHref(run, criterionId, path, selectedRecipeRunId));
   const openRunEvidenceArtifact = (
     artifactPath?: string,
     recipeRunId?: string | null,
@@ -528,9 +531,7 @@ export default function RunDetailScreen() {
     if (terminal.disabledReason) return;
     if (!terminal.target) return;
     router.push({
-      pathname: terminal.target.slotId
-        ? '/workspace/slot/[slotId]/terminal'
-        : '/terminal/worker',
+      pathname: terminal.target.slotId ? '/workspace/slot/[slotId]/terminal' : '/terminal/worker',
       params: {
         ...terminal.target,
         ...targetRouteContext('terminal'),
