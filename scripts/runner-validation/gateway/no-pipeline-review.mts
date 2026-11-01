@@ -7,7 +7,7 @@ import {
   testGatewayProfile,
 } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -26,136 +26,172 @@ import type { Run, RunCreateResult } from '../../../packages/protocol/src/index.
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const fixture = await mkdtemp(path.join(tmpdir(), 'farmslot-no-pipeline-review-'));
-// FARMSLOT_ROOT must be a Farmslot checkout: a shared clone with this checkout's sources.
-execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
-for (const name of ['scripts', 'services', 'packages'])
-  await symlink(path.join(root, name), path.join(fixture, name));
-await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated pipeline review validation\n');
 // The gateway's tmux calls reach only this proof's (unstarted) server.
 const tmuxDir = await mkdtemp('/tmp/npr-');
 const log = path.join(fixture, 'gateway.log');
 // Outside the fixture root, which the gateway refuses as a shared fleet status store.
 const statusFile = path.join(fixture, 'status', 'farm-status.json');
-const token = testGatewayIdentity(path.join(fixture, 'home'));
-const probe = createServer();
-probe.listen(0, '127.0.0.1');
-await once(probe, 'listening');
-const port = (probe.address() as { port: number }).port;
-await new Promise<void>((resolve, reject) =>
-  probe.close((error) => (error ? reject(error) : resolve())),
-);
-async function json(file: string, value: unknown) {
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(value), { mode: 0o600 });
-}
-await json(path.join(fixture, 'projects', 'proof', 'project.json'), {
-  name: 'proof',
-  repo_url: 'https://github.com/example/app.git',
-  ci: { repo: 'example/app' },
-  default_branch: 'main',
-  paths: { runtime_dir: '.agent', artifact_dir: '.task' },
-});
-// run.create renders the project's dev worker template; the example pack's is enough here.
-await mkdir(path.join(fixture, 'projects', 'proof', 'templates', 'worker'), { recursive: true });
-await writeFile(
-  path.join(fixture, 'projects', 'proof', 'templates', 'worker', 'dev.md'),
-  await readFile(
-    path.join(root, 'packs/example-app/projects/example-app-farm/templates/worker/dev.md'),
-  ),
-);
-await mkdir(path.join(fixture, 'repo'));
-await json(path.join(fixture, 'pool', 'proof-host.json'), {
-  machine: 'proof-host',
-  host: 'localhost',
-  project: 'proof',
-  platform: 'cli',
-  slots: [
-    {
-      id: 'proof-1',
-      enabled: true,
-      repo: path.join(fixture, 'repo'),
-      session: 'npr-proof',
-      resources: {},
-    },
-  ],
-});
-await json(statusFile, {
-  checked_at: new Date().toISOString(),
-  slots: [
-    {
-      slot: 'proof-1',
-      machine: 'proof-host',
-      project: 'proof',
-      platform: 'cli',
-      enabled: true,
-      lifecycle: 'ready',
-      agent: 'idle',
-      branch: 'main',
-      runner: 'claude',
-      model: 'sonnet',
-    },
-  ],
-});
-
-const output = openSync(log, 'w', 0o600);
-testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
-const env = {
-  ...process.env,
-  TMUX: '',
-  TMUX_TMPDIR: tmuxDir,
-  FARMSLOT_ROOT: fixture,
-  FARMSLOT_HOME: path.join(fixture, 'home'),
-  FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
-  FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
-  FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
-  FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
-  FARMSLOT_GATEWAY_PROFILE: 'proof',
-};
-const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
-  cwd: root,
-  detached: true,
-  stdio: ['ignore', output, output],
-  env: {
-    ...env,
-    GATEWAY_HOST: '127.0.0.1',
-    GATEWAY_PORT: String(port),
-    FARMSLOT_DISABLE_ORCHESTRATION: '1',
-    NODE_TEST_CONTEXT: '1',
-    FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
-    FARMSLOT_TEST_STATUS_FILE: statusFile,
-    FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
-  },
-});
-closeSync(output);
-
-/** The checkout-local CLI against the isolated gateway; a refusal returns its error text. */
-function cli(args: string[]): { ok: true; data: any } | { ok: false; error: string } {
-  try {
-    const raw = execFileSync(
-      'yarn',
-      [
-        'workspace',
-        '@farmslot/cli',
-        'farmslot',
-        '--url',
-        `ws://127.0.0.1:${port}`,
-        '--json',
-        ...args,
-      ],
-      { cwd: root, encoding: 'utf8', timeout: 60_000, env, stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    const result = JSON.parse(raw);
-    return result.status === 'ok' ? { ok: true, data: result.data } : { ok: false, error: raw };
-  } catch (error) {
-    const failed = error as { stdout?: string; stderr?: string };
-    return { ok: false, error: `${failed.stdout ?? ''}${failed.stderr ?? ''}` };
-  }
-}
-
+let token = '';
+let gateway: ChildProcess | undefined;
 let connection: GatewayConnection | undefined;
-const evidence: Record<string, unknown> = {};
+
+let cleaning: Promise<void> | undefined;
+/** Stop the gateway's process group and remove the proof's files: once, on every exit path. */
+function cleanup(): Promise<void> {
+  cleaning ??= (async () => {
+    connection?.close();
+    if (gateway && gateway.exitCode === null && gateway.pid) {
+      const exited = once(gateway, 'exit');
+      process.kill(-gateway.pid, 'SIGTERM');
+      let timer: NodeJS.Timeout | undefined;
+      const stopped = await Promise.race([
+        exited.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 5000);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (!stopped) {
+        process.kill(-gateway.pid, 'SIGKILL');
+        await exited;
+      }
+    }
+    await rm(fixture, { recursive: true, force: true });
+    await rm(tmuxDir, { recursive: true, force: true });
+  })();
+  return cleaning;
+}
+// A cancelled or timed-out recipe signals this process; the detached gateway is in its own group.
+for (const signal of ['SIGINT', 'SIGTERM'] as const)
+  process.once(signal, () => {
+    process.stderr.write(`${signal}: stopping the isolated gateway\n`);
+    void cleanup().finally(() => process.exit(1));
+  });
+
 try {
+  // FARMSLOT_ROOT must be a Farmslot checkout: a shared clone with this checkout's sources.
+  execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
+  for (const name of ['scripts', 'services', 'packages'])
+    await symlink(path.join(root, name), path.join(fixture, name));
+  await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated pipeline review validation\n');
+  token = testGatewayIdentity(path.join(fixture, 'home'));
+  const probe = createServer();
+  probe.listen(0, '127.0.0.1');
+  await once(probe, 'listening');
+  const port = (probe.address() as { port: number }).port;
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error ? reject(error) : resolve())),
+  );
+  async function json(file: string, value: unknown) {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(value), { mode: 0o600 });
+  }
+  await json(path.join(fixture, 'projects', 'proof', 'project.json'), {
+    name: 'proof',
+    repo_url: 'https://github.com/example/app.git',
+    ci: { repo: 'example/app' },
+    default_branch: 'main',
+    paths: { runtime_dir: '.agent', artifact_dir: '.task' },
+  });
+  // run.create renders the project's dev worker template; the example pack's is enough here.
+  await mkdir(path.join(fixture, 'projects', 'proof', 'templates', 'worker'), { recursive: true });
+  await writeFile(
+    path.join(fixture, 'projects', 'proof', 'templates', 'worker', 'dev.md'),
+    await readFile(
+      path.join(root, 'packs/example-app/projects/example-app-farm/templates/worker/dev.md'),
+    ),
+  );
+  await mkdir(path.join(fixture, 'repo'));
+  await json(path.join(fixture, 'pool', 'proof-host.json'), {
+    machine: 'proof-host',
+    host: 'localhost',
+    project: 'proof',
+    platform: 'cli',
+    slots: [
+      {
+        id: 'proof-1',
+        enabled: true,
+        repo: path.join(fixture, 'repo'),
+        session: 'npr-proof',
+        resources: {},
+      },
+    ],
+  });
+  await json(statusFile, {
+    checked_at: new Date().toISOString(),
+    slots: [
+      {
+        slot: 'proof-1',
+        machine: 'proof-host',
+        project: 'proof',
+        platform: 'cli',
+        enabled: true,
+        lifecycle: 'ready',
+        agent: 'idle',
+        branch: 'main',
+        runner: 'claude',
+        model: 'sonnet',
+      },
+    ],
+  });
+
+  const output = openSync(log, 'w', 0o600);
+  testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
+  const env = {
+    ...process.env,
+    TMUX: '',
+    TMUX_TMPDIR: tmuxDir,
+    FARMSLOT_ROOT: fixture,
+    FARMSLOT_HOME: path.join(fixture, 'home'),
+    FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
+    FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
+    FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
+    FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
+  };
+  gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
+    cwd: root,
+    detached: true,
+    stdio: ['ignore', output, output],
+    env: {
+      ...env,
+      GATEWAY_HOST: '127.0.0.1',
+      GATEWAY_PORT: String(port),
+      FARMSLOT_DISABLE_ORCHESTRATION: '1',
+      NODE_TEST_CONTEXT: '1',
+      FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
+      FARMSLOT_TEST_STATUS_FILE: statusFile,
+      FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
+    },
+  });
+  closeSync(output);
+
+  /** The checkout-local CLI against the isolated gateway; a refusal returns its error text. */
+  function cli(args: string[]): { ok: true; data: any } | { ok: false; error: string } {
+    try {
+      const raw = execFileSync(
+        'yarn',
+        [
+          'workspace',
+          '@farmslot/cli',
+          'farmslot',
+          '--url',
+          `ws://127.0.0.1:${port}`,
+          '--json',
+          ...args,
+        ],
+        { cwd: root, encoding: 'utf8', timeout: 60_000, env, stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      const result = JSON.parse(raw);
+      return result.status === 'ok' ? { ok: true, data: result.data } : { ok: false, error: raw };
+    } catch (error) {
+      const failed = error as { stdout?: string; stderr?: string };
+      return { ok: false, error: `${failed.stdout ?? ''}${failed.stderr ?? ''}` };
+    }
+  }
+
+  const evidence: Record<string, unknown> = {};
   const client = new GatewayClient({
     url: `ws://127.0.0.1:${port}`,
     timeout: 15000,
@@ -201,7 +237,7 @@ try {
     [
       'update-branch',
       { flowType: 'update-branch', ticketOrPr: 'example/app#7', completionPolicy: 'artifact-only' },
-      /only for dev and fix-bug runs; a update-branch run/,
+      /only for dev and fix-bug runs; update-branch runs/,
     ],
     [
       'no artifact-only',
@@ -272,15 +308,5 @@ try {
     .join('\n');
   throw new Error(`${String(error)}\n${details}`, { cause: error });
 } finally {
-  connection?.close();
-  if (gateway.exitCode === null && gateway.pid) {
-    const exited = once(gateway, 'exit');
-    process.kill(-gateway.pid, 'SIGTERM');
-    if (!(await Promise.race([exited.then(() => true), delay(5000).then(() => false)]))) {
-      process.kill(-gateway.pid, 'SIGKILL');
-      await exited;
-    }
-  }
-  await rm(fixture, { recursive: true, force: true });
-  await rm(tmuxDir, { recursive: true, force: true });
+  await cleanup();
 }

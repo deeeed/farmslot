@@ -1912,7 +1912,7 @@ export function pipelineReviewPolicyError(params: {
   if (params.completionPolicy !== 'artifact-only')
     return 'pipelineReview none is only for artifact-only runs: set completionPolicy artifact-only.';
   if (!params.flowType || !PIPELINE_REVIEW_OFF_FLOWS.includes(params.flowType))
-    return `pipelineReview none is only for dev and fix-bug runs; a ${params.flowType ?? 'run without a flow'} run pushes or publishes, so it keeps its review.`;
+    return `pipelineReview none is only for dev and fix-bug runs; ${params.flowType ?? 'flowless'} runs push or publish, so they keep their review.`;
   if (params.reviewSequence?.length || params.reviewPolicy !== undefined)
     return 'pipelineReview none turns the review off; drop reviewSequence and reviewPolicy.';
   if (params.engineState?.evalExperiment)

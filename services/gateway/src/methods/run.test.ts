@@ -290,7 +290,7 @@ test('run.create refuses a pipeline review it could not turn off as asked', asyn
   // reference first, so the shared rule is asserted directly (dispatch.preview covers it end to end).
   assert.match(
     pipelineReviewPolicyError({ ...base, flowType: 'update-branch' }) ?? '',
-    /only for dev and fix-bug runs; a update-branch run pushes or publishes/,
+    /only for dev and fix-bug runs; update-branch runs push or publish/,
   );
 });
 

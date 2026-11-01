@@ -194,7 +194,7 @@ test('an artifact-only dispatch that turns the pipeline review off sees it on th
       completionPolicy: 'artifact-only',
       pipelineReview: 'none',
     }),
-    /only for dev and fix-bug runs; a update-branch run/,
+    /only for dev and fix-bug runs; update-branch runs/,
   );
   const plain = await dispatchPreview(
     { project: 'demo', flowType: 'dev', ticketOrPr: 'TAT-1' },
