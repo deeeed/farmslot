@@ -9,6 +9,7 @@ import {
   type SlotAgentTargetParams,
   type TmuxWorkerListResult,
   type TmuxWorkerRef,
+  type TmuxWorkerSummary,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
@@ -165,5 +166,35 @@ test('a missing slot session is created once, and "hidden" is said only if still
     } finally {
       hook.cleanup();
     }
+  }
+});
+
+test('a session that disappears while the terminal is open is created again', async () => {
+  const { hook, reads, requests, render } = mount();
+  try {
+    const selector = { slotId: 'mini-ff-1' };
+    const pane: TmuxWorkerSummary = {
+      ref: { nodeId: 'mini', session: 'mini-ff-1', target: '%4' },
+      linkedSlotId: 'mini-ff-1',
+      status: { label: 'Idle', source: 'tmux', confidence: 'high' },
+    };
+    const listing = (workers: TmuxWorkerListResult['workers']): TmuxWorkerListResult => ({
+      ...emptyInventory(),
+      workers,
+      nodes: [{ ...emptyInventory().nodes[0], workers }],
+    });
+    reads.set(Methods.RUN_FOR_SLOT, { status: 'ready', data: { run: null } });
+    reads.set(Methods.TMUX_WORKER_LIST, { status: 'ready', data: listing([]) });
+    render(selector);
+    await settle();
+    reads.set(Methods.TMUX_WORKER_LIST, { status: 'ready', data: listing([pane]) });
+    assert.equal(render(selector).worker?.target, '%4');
+    // The session is killed while the tab stays open.
+    reads.set(Methods.TMUX_WORKER_LIST, { status: 'ready', data: listing([]) });
+    render(selector);
+    await settle();
+    assert.equal(requests.length, 2);
+  } finally {
+    hook.cleanup();
   }
 });

@@ -44,13 +44,7 @@ export function useResolvedTerminal(selector: TerminalSelector) {
   const pinnedRun = useResourceQuery(runQuery);
   // Undefined while loading; a read that failed with nothing saved has no run to follow.
   const runRead = runQuery ? pinnedRun : slotQuery ? slotRun : undefined;
-  const run = !runRead
-    ? null
-    : runRead.data
-      ? runRead.data.run
-      : runRead.error
-        ? null
-        : undefined;
+  const run = !runRead ? null : runRead.data ? runRead.data.run : runRead.error ? null : undefined;
   const slotMachine = useFleetStore(
     (s) => s.fleet?.slots.find((entry) => entry.slot === slotId)?.machine,
   );
@@ -69,6 +63,15 @@ export function useResolvedTerminal(selector: TerminalSelector) {
     [machine],
   );
   const inventory = useResourceQuery(inventoryQuery);
+  // A read invalidated before its first answer (a cold start reconnecting) is left stale with
+  // nothing saved and no read scheduled: the pane is found only once it is asked for again.
+  const askedAgain = useRef('');
+  useEffect(() => {
+    if (!inventoryQuery || !client || inventory.status !== 'stale') return;
+    if (inventory.data !== undefined || askedAgain.current === inventoryQuery.id) return;
+    askedAgain.current = inventoryQuery.id;
+    void getResourceCache()?.retry(inventoryQuery);
+  }, [client, inventory.data, inventory.status, inventoryQuery]);
   const resolved =
     first.status === 'needs-inventory'
       ? resolveTerminalWorkerRef({ selector: stable, run, slotMachine, inventory: inventory.data })
@@ -81,6 +84,11 @@ export function useResolvedTerminal(selector: TerminalSelector) {
   const reinitKey = JSON.stringify([stable, machine]);
   const reinitFor = useRef('');
   useEffect(() => {
+    // A session that goes away while the terminal stays open is created again next time.
+    if (resolved.status === 'ready') {
+      reinitFor.current = '';
+      return;
+    }
     if (resolved.status !== 'no-pane' || !client) return;
     if (reinitFor.current === reinitKey) return;
     reinitFor.current = reinitKey;

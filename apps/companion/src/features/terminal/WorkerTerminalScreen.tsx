@@ -782,6 +782,14 @@ export function TerminalPane({
     Boolean(worker),
   );
 
+  // A draft handed over by a link (Copilot voice) fills the composer, also on a pane already open.
+  useEffect(() => {
+    if (!draftParam) return;
+    setVoiceTranscript(draftParam);
+    setVoiceDraft('');
+    setVoiceComposerOpen(true);
+  }, [draftParam]);
+
   // An unsent draft stays with its pane across restarts, whichever link opened the pane.
   const draftPane = worker ? voiceDraftPane(worker) : '';
   const [draftHydratedPane, setDraftHydratedPane] = useState('');
