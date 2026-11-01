@@ -126,6 +126,19 @@ export function processGroupId(pid: number, observations?: ProcessMetadataCache)
   return Number(processMetadata(pid, 'pgid', 5000, observations));
 }
 
+/** A supervisor or host as recorded on disk. Records written before start identities have only the PID. */
+export interface RecordedProcess {
+  pid: number;
+  identity?: string;
+}
+/** The process's start time: the identity the census records, which a reused PID never matches. */
+export function processStartIdentity(pid: number): string {
+  return processMetadata(pid, 'lstart', 5000);
+}
+/** A recorded process is live only while its PID still has the recorded start. */
+export function recordedProcessAlive(record: RecordedProcess): boolean {
+  return record.identity ? processIdentityAlive(record.pid, record.identity) : alive(record.pid);
+}
 /** Fresh by default: PID reuse never counts as the old descendant surviving. */
 export function processIdentityAlive(
   pid: number,
