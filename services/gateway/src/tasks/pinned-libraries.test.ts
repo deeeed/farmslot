@@ -12,12 +12,11 @@ test('a bound task pins the libraries its binding names inside its task pin', (t
   assert.deepEqual([...pinnedTaskLibraries(taskDir)], [], 'an unbound task pins none');
   const pin = '/home/.farmslot/task-pins/ba9f77';
   mkdirSync(path.join(taskDir, 'artifacts'));
-  mkdirSync(path.join(taskDir, 'inputs'));
-  writeFileSync(path.join(taskDir, 'artifacts/harness-provenance.json'), JSON.stringify({ pin }));
   writeFileSync(
-    path.join(taskDir, 'inputs/recipe-binding.json'),
+    path.join(taskDir, 'artifacts/harness-provenance.json'),
     JSON.stringify({
-      identity: {
+      pin,
+      bindingIdentity: {
         libraries: [
           { name: 'perps', path: `${pin}/inputs/39/recipe-perps` },
           // Bound before pinning, or bundled with the provider: not a pinned copy.

@@ -1,3 +1,4 @@
+import { rebindRecipeLibraryPath } from '@farmslot/recipe-runner';
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
 import { getNode } from '../fleet/machine-registry.js';
@@ -19,21 +20,6 @@ export interface ProjectCommandEnvOptions {
   taskLibraries?: ReadonlyMap<string, string>;
 }
 
-/** RECIPE_LIBRARY_PATH (`name=path` or `path`, colon-separated) with pinned names rebound. */
-export function pinRecipeLibraryPath(
-  value: string,
-  libraries: ReadonlyMap<string, string>,
-): string {
-  return value
-    .split(':')
-    .map((entry) => {
-      const name = entry.slice(0, Math.max(0, entry.indexOf('=')));
-      const pinned = name ? libraries.get(name) : undefined;
-      return pinned ? `${name}=${pinned}` : entry;
-    })
-    .join(':');
-}
-
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -50,7 +36,7 @@ export function resolveProjectCommandEnv(
     const libraries = set.RECIPE_LIBRARY_PATH;
     const pinned: Record<string, string> =
       libraries !== undefined && options.taskLibraries?.size
-        ? { RECIPE_LIBRARY_PATH: pinRecipeLibraryPath(libraries, options.taskLibraries) }
+        ? { RECIPE_LIBRARY_PATH: rebindRecipeLibraryPath(libraries, options.taskLibraries) }
         : {};
     return {
       unset: unset.filter((name) => !Object.hasOwn(options.overrides ?? {}, name)),

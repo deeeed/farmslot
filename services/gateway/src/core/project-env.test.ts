@@ -9,7 +9,6 @@ import {
   buildMachineEnvPrefix,
   buildProjectCommandEnvPrefix,
   machineShellEnv,
-  pinRecipeLibraryPath,
   resolveProjectCommandEnv,
   withMachineEnv,
 } from './project-env.js';
@@ -200,5 +199,4 @@ test('a bound task resolves its named RECIPE_LIBRARY_PATH entries to the retaine
     'perps=/frozen',
     'a frozen launch binding still wins',
   );
-  assert.equal(pinRecipeLibraryPath('=/odd:perps', pins), '=/odd:perps');
 });
