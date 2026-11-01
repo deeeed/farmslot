@@ -881,7 +881,7 @@ export class RunList extends RunListState {
       (run.status === 'failed' &&
         !run.autoRecoveryDisabled &&
         (hasAutoRecoveryAttempt || Boolean(run.recoveryProposal)));
-    const runnerLabel = runEngineLabel({ ...engine, effort: runWorkerEffort(run) }) ?? '—';
+    const runnerLabel = runEngineLabel({ ...engine, effort: runWorkerEffort(run, engine) }) ?? '—';
     const taskObservation = this.progressQueries.get(
       runChecklistProgressTarget(run)?.key ?? '',
     )?.state;

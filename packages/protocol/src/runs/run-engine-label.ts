@@ -1,10 +1,9 @@
 import { primaryRoleForFlow } from '../agents/roles.js';
 import type { AgentRole } from '../contracts/agents.js';
-import type { Run } from '../contracts/runs.js';
 
 /** The fields of a run that can name its worker's effort; a full Run satisfies it. */
 export interface RunEffortSource {
-  flowType: Run['flowType'];
+  flowType?: string | null;
   effort?: string | null;
   metrics?: { runner?: string | null; model?: string | null };
   agentContexts?: readonly {
@@ -20,21 +19,33 @@ export interface RunEffortSource {
 /**
  * The worker's reasoning effort, when a record names it: the worker context the dispatch
  * launched (its own effort, then its native session's), the run's dispatch effort, then the
- * execution-profile choice matching the run's runner and model. Null when nothing names one.
+ * execution-profile choice matching the runner and model shown for the run (`engine`, the
+ * run's metrics by default). Null when nothing names one.
  */
-export function runWorkerEffort(run: RunEffortSource): string | null {
-  const role = primaryRoleForFlow(run.flowType);
-  const worker = run.agentContexts?.find((context) => context.role === role);
+export function runWorkerEffort(
+  run: RunEffortSource,
+  engine: { runner?: string | null; model?: string | null } = run.metrics ?? {},
+): string | null {
+  const role = workerRole(run.flowType);
+  const worker = role ? run.agentContexts?.find((context) => context.role === role) : undefined;
   const choice = run.workflowExecution?.models.find(
-    (entry) =>
-      entry.runner === run.metrics?.runner &&
-      (entry.model ?? null) === (run.metrics?.model ?? null),
+    (entry) => entry.runner === engine.runner && (entry.model ?? null) === (engine.model ?? null),
   );
   for (const value of [worker?.effort, worker?.nativeSession?.effort, run.effort, choice?.effort]) {
     const effort = value?.trim();
     if (effort) return effort;
   }
   return null;
+}
+
+// A flow type this client doesn't know has no worker role to read; a display detail never
+// throws out of a list render.
+function workerRole(flowType: string | null | undefined): AgentRole | null {
+  try {
+    return primaryRoleForFlow(flowType);
+  } catch {
+    return null;
+  }
 }
 
 /** "runner/model · effort"; the effort only when known. Null when neither runner nor model is. */

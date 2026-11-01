@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '../../src/contracts/runs.js';
 import {
   type RunEffortSource,
   runEngineLabel,
@@ -76,7 +75,16 @@ test('the label adds the effort only when known', () => {
   assert.equal(runEngineLabel({ runner: null, model: null, effort: 'high' }), null);
 });
 
-test('a full run record satisfies the effort source', () => {
-  const source = (run: Run): RunEffortSource => run;
-  assert.equal(typeof source, 'function');
+test('a flow type this client does not know still reads the dispatch effort', () => {
+  assert.equal(runWorkerEffort({ ...base, flowType: 'future-flow', effort: 'high' }), 'high');
+});
+
+test('the profile choice matches the runner and model the label shows', () => {
+  const run: RunEffortSource = {
+    ...base,
+    metrics: {},
+    workflowExecution: { models: [{ runner: 'grok', model: 'grok-4.7', effort: 'minimal' }] },
+  };
+  assert.equal(runWorkerEffort(run), null);
+  assert.equal(runWorkerEffort(run, { runner: 'grok', model: 'grok-4.7' }), 'minimal');
 });
