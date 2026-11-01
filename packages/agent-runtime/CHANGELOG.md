@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Pi and OpenCode run as native sessions and farm workers (ADR-057 Amendment 12): OpenCode through ACP (`opencode acp`), asking before each tool at the sandboxed tier; Pi through its JSONL RPC mode (`pi --mode rpc`), which asks before no tool, as in its terminal. Profiles set Pi's agent directory or OpenCode's data home.
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Pi and OpenCode run as native sessions and farm workers (ADR-057 Amendment 12): OpenCode through ACP (`opencode acp`), asking before each tool at the sandboxed tier; Pi through its JSONL RPC mode (`pi --mode rpc`), which asks before no tool, as in its terminal. Profiles set Pi's agent directory or OpenCode's data home.
 
 ## 0.39.22 - 2026-11-02
 
