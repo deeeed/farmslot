@@ -14,13 +14,12 @@ import {
   type OutputReviewPayload,
   type Run,
   type RunGetResult,
-  type RunRecipeRunsForRunResult,
   type SelfPrincipalSummary,
   type TaskProgressResult,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
-import { recordedEvidenceKey } from '../lib/acceptance-evidence';
+import { recordedEvidenceKey, recordedEvidenceQuery } from '../lib/acceptance-evidence';
 import type { GatewayClient } from '../lib/gateway-client';
 import { getResourceCache } from '../lib/resource-cache';
 import { assertNativeRunReady } from '../lib/run-collections';
@@ -108,19 +107,11 @@ export function useRunAcceptance(
   const evidenceQuery = useMemo(
     () =>
       runId
-        ? resourceQuery<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, {
+        ? recordedEvidenceQuery(
             runId,
-            includeRecordedEvidence: true,
-            ...(options.decisionId
-              ? {
-                  decisionId: options.decisionId,
-                  evidenceSnapshotHash,
-                  ...(options.recipeRunId ? { recipeRunId: options.recipeRunId } : {}),
-                }
-              : options.recipeRunId
-                ? { recipeRunId: options.recipeRunId }
-                : {}),
-          })
+            options.decisionId ? { id: options.decisionId, evidenceSnapshotHash } : undefined,
+            options.recipeRunId,
+          )
         : undefined,
     [runId, options.decisionId, options.recipeRunId, evidenceSnapshotHash],
   );

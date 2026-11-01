@@ -3,15 +3,14 @@ import type {
   RunRecipeRunsForRunResult,
   TaskProgressResult,
 } from '@farmslot/protocol';
-import {
-  type GatewayResourceCache,
-  type ResourceQuery,
-  resourceQuery,
-} from '@farmslot/protocol/client-cache';
+import { type GatewayResourceCache, type ResourceQuery } from '@farmslot/protocol/client-cache';
 import { pendingOutputReview } from '@farmslot/review-dispatch';
 
-import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
-import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../../lib/artifact-url';
+import {
+  acceptanceEvidenceHref,
+  explicitRecipeRunId,
+  recordedEvidenceQuery,
+} from '../../lib/acceptance-evidence';
 
 /** Bind the retained read to the same output snapshot as the report. */
 export function runEvidenceQuery(
@@ -22,19 +21,11 @@ export function runEvidenceQuery(
   if (!runId || run?.id !== runId) return undefined;
   const review = pendingOutputReview(run);
   const recipeRunId = explicitRecipeRunId(requestedRecipeRunId);
-  return resourceQuery<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
+  return recordedEvidenceQuery(
     runId,
-    includeRecordedEvidence: true,
-    ...(review
-      ? {
-          decisionId: review.id,
-          evidenceSnapshotHash: review.payload.manifestDigest,
-          ...(recipeRunId ? { recipeRunId } : {}),
-        }
-      : recipeRunId
-        ? { recipeRunId }
-        : {}),
-  });
+    review ? { id: review.id, evidenceSnapshotHash: review.payload.manifestDigest } : undefined,
+    recipeRunId,
+  );
 }
 
 /**
@@ -60,11 +51,6 @@ export function runAcceptanceEvidenceHref(
         explicitRecipeRunId(requestedRecipeRunId),
       )
     : acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId);
-}
-
-/** The execution the screen asked for by name; none when it reads the default or the decision. */
-function explicitRecipeRunId(requested: string | null): string | undefined {
-  return requested && requested !== DECISION_EVIDENCE_RECIPE_RUN_PARAM ? requested : undefined;
 }
 
 interface EvidenceInvocation {

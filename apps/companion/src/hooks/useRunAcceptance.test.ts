@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol/client-cache';
 
 import { ResourceCacheConformanceTransport } from '../../../../packages/protocol/src/client-cache/conformance';
-import { recordedEvidenceKey } from '../lib/acceptance-evidence';
+import { recordedEvidenceKey, recordedEvidenceQuery } from '../lib/acceptance-evidence';
 import { recordVisualClaimReview } from '../lib/visual-claim-review';
 
 import { mountHook } from './hook-harness.fixtures';
@@ -96,7 +96,7 @@ function mount(request: (method: string) => Promise<unknown>) {
         runEvidencePending: () => false,
       },
       '../lib/recoverable-errors': { isGatewayBackgroundPauseError: () => false },
-      '../lib/acceptance-evidence': { recordedEvidenceKey },
+      '../lib/acceptance-evidence': { recordedEvidenceKey, recordedEvidenceQuery },
       '../lib/visual-claim-review': { recordVisualClaimReview },
       '../lib/task-progress': {
         taskProgressRequestForRun: () => ({ runId: run.id, slotId: run.slotId }),

@@ -10,9 +10,12 @@ import {
   type EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
 import {
+  Methods,
   recordedEvidenceClosureIdentity,
+  type RunRecipeRunsForRunResult,
   type RunRecordedEvidenceReview,
 } from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import type { EvidenceAcceptanceReview } from '../components/EvidenceAcOverlay';
 
@@ -134,13 +137,36 @@ export function acceptanceEvidenceHref(
   };
 }
 
+/** The execution a route names; none when it reads the default or the decision's. */
+export function explicitRecipeRunId(recipeRun: string | null | undefined): string | undefined {
+  return recipeRun && recipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM ? recipeRun : undefined;
+}
+
 /** The execution the evidence viewer reads: the route's own, or the one within its decision. */
 export function acceptanceViewerRecipeRunId(
   recipeRun: string | undefined,
   evidenceExecution: string,
 ): string | undefined {
-  if (recipeRun && recipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM) return recipeRun;
-  return evidenceExecution || undefined;
+  return explicitRecipeRunId(recipeRun) ?? (evidenceExecution || undefined);
+}
+
+/**
+ * The recorded-evidence read. Within a decision it reads that decision's snapshot; a named
+ * execution narrows either read.
+ */
+export function recordedEvidenceQuery(
+  runId: string,
+  decision: { id: string; evidenceSnapshotHash: string | undefined } | undefined,
+  recipeRunId: string | undefined,
+) {
+  return resourceQuery<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, {
+    runId,
+    includeRecordedEvidence: true,
+    ...(decision
+      ? { decisionId: decision.id, evidenceSnapshotHash: decision.evidenceSnapshotHash }
+      : {}),
+    ...(recipeRunId ? { recipeRunId } : {}),
+  });
 }
 
 /**
