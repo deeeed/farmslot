@@ -950,6 +950,7 @@ async function slotReleaseImpl(
   // 3. Collect artifacts + clean task files + git reset
   const taskDirName = resolveProjectTaskDirName(projectJson);
   let idleBranchAfterRelease: string | undefined;
+  let artifactsCollected = false;
   if (!keepWork) {
     // Legacy slots may predate prepare exclusions; keep warm runtime files out of Git clean.
     await assertReleaseClaim();
@@ -1004,6 +1005,8 @@ async function slotReleaseImpl(
             },
           }),
         );
+        // A file that failed to copy is only kept by the scaffolding archive.
+        artifactsCollected = entryFailures.length === 0;
         if (entryFailures.length > 0) {
           step(
             'artifacts',
@@ -1032,7 +1035,7 @@ async function slotReleaseImpl(
           destination,
           taskRelativeDir: taskRel,
           beforeRemove: assertReleaseClaim,
-          excludeArtifacts: !skipArtifacts,
+          artifactsCollected,
         });
         step(
           'scaffolding',

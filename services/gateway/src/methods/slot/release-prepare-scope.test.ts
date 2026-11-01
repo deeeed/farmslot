@@ -37,6 +37,7 @@ let claimAfterTaskClean = false;
 let hasMirrorArtifacts = false;
 let copyOptions: Record<string, unknown> | undefined;
 let scaffoldingExcludesArtifacts: boolean | undefined;
+let copyFailure = false;
 let claimAfterReap = false;
 let cdpPort: string | undefined;
 /** The browser session a cancelled run left on the slot's CDP port: pid -> survives SIGKILL. */
@@ -152,10 +153,10 @@ mock.module('../../fleet/slot-scaffolding.js', {
       options: {
         destination: string;
         beforeRemove?: () => Promise<void>;
-        excludeArtifacts?: boolean;
+        artifactsCollected?: boolean;
       },
     ) => {
-      scaffoldingExcludesArtifacts = options.excludeArtifacts;
+      scaffoldingExcludesArtifacts = options.artifactsCollected;
       await options.beforeRemove?.();
       return { roots: 0, directory: options.destination };
     },
@@ -229,6 +230,11 @@ mock.module('../../core/slot-io.js', {
       options: Record<string, unknown>,
     ) => {
       copyOptions = options;
+      if (copyFailure)
+        (options.onEntryFailure as (error: unknown) => void)({
+          sourcePath: '/slot/.task/dev/proof/artifacts/new.png',
+          message: 'transient read failure',
+        });
       events.push('mirror-complete');
     },
   },
@@ -294,6 +300,7 @@ beforeEach(async () => {
   hasMirrorArtifacts = false;
   copyOptions = undefined;
   scaffoldingExcludesArtifacts = undefined;
+  copyFailure = false;
   claimAfterReap = false;
   cdpPort = undefined;
   browserSession = new Map();
@@ -536,6 +543,14 @@ test('release copyback keeps artifacts the completion mirror already holds', asy
   assert.ok(events.includes('mirror-complete'));
   assert.equal(copyOptions?.skipUnchanged, true);
   assert.equal(scaffoldingExcludesArtifacts, true, 'the scaffolding archive skips them too');
+});
+
+test('a copyback with a failed file keeps the artifacts in the scaffolding archive', async () => {
+  slotRow.task_file = '.task/dev/proof/TASK.md';
+  hasMirrorArtifacts = true;
+  copyFailure = true;
+  await slotRelease({ slotId: SLOT_ID }, emit);
+  assert.equal(scaffoldingExcludesArtifacts, false);
 });
 
 test('a claim during task deletion refuses the following storage cleanup', async () => {

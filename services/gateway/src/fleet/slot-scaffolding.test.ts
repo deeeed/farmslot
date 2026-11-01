@@ -141,7 +141,7 @@ test('a release that collected the artifacts archives the task without them', as
       destination: f.destination,
       taskRelativeDir: 'qa/example',
       beforeRemove: async () => undefined,
-      excludeArtifacts: true,
+      artifactsCollected: true,
     },
   );
   const archived = unpack(result.directory, f.root);
@@ -151,6 +151,33 @@ test('a release that collected the artifacts archives the task without them', as
   );
   assert.equal(existsSync(path.join(archived, '.task/qa/example/artifacts')), false);
   assert.equal(existsSync(path.join(f.repo, '.task/qa/example')), false);
+});
+
+test('only the configured task root counts as collected; legacy artifacts stay archived', async (t) => {
+  const f = fixture(t);
+  scaffolding(f.repo);
+  mkdirSync(path.join(f.repo, '.task/qa/example/artifacts'), { recursive: true });
+  writeFileSync(path.join(f.repo, '.task/qa/example/artifacts/legacy.json'), 'legacy evidence');
+  mkdirSync(path.join(f.repo, 'support/tasks/qa/example/artifacts'), { recursive: true });
+  writeFileSync(path.join(f.repo, 'support/tasks/qa/example/TASK.md'), 'current task');
+  writeFileSync(path.join(f.repo, 'support/tasks/qa/example/artifacts/copied.bin'), 'collected');
+  const project = { task_dir: 'support/tasks', paths: { runtime_dir: '.agent' } };
+  const result = await archiveSlotScaffolding(f.vars, project, {
+    destination: f.destination,
+    taskRelativeDir: 'qa/example',
+    beforeRemove: async () => undefined,
+    artifactsCollected: true,
+  });
+  const archived = unpack(result.directory, f.root);
+  assert.equal(
+    readFileSync(path.join(archived, '.task/qa/example/artifacts/legacy.json'), 'utf8'),
+    'legacy evidence',
+  );
+  assert.equal(existsSync(path.join(archived, 'support/tasks/qa/example/artifacts')), false);
+  assert.equal(
+    readFileSync(path.join(archived, 'support/tasks/qa/example/TASK.md'), 'utf8'),
+    'current task',
+  );
 });
 
 test('a shared task/runtime namespace keeps warm files outside the released task', async (t) => {
