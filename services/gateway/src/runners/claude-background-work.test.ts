@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFile, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -69,15 +80,32 @@ async function transcript(t: TestContext) {
   const write = (records: unknown[]) =>
     writeFile(file, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
   // The probe keeps its per-transcript cache under HOME; keep it inside this test's root.
-  const read = (limit?: number): { state: string; observedAt?: number; bytesRead?: number } =>
+  const read = (
+    limit?: number,
+  ): { state: string; observedAt?: number; bytesRead?: number; cached?: boolean } =>
     JSON.parse(
       execFileSync('sh', ['-c', buildClaudeBackgroundProbeCommand(sessionId, file, limit)], {
         encoding: 'utf8',
         env: { ...probeEnvironment, HOME: root },
       }),
     );
-  return { root, file, write, read };
+  const cacheDir = path.join(root, '.cache', 'farmslot', 'claude-background');
+  const cacheFile = path.join(cacheDir, `${createHash('sha256').update(file).digest('hex')}.json`);
+  return { root, file, write, read, cacheDir, cacheFile };
 }
+/** A session record with no task evidence, padded to the byte length of `record`. */
+function sameLengthFiller(record: unknown) {
+  const filler = { type: 'system', sessionId, subtype: '' };
+  filler.subtype = 'x'.repeat(JSON.stringify(record).length - JSON.stringify(filler).length);
+  assert.equal(JSON.stringify(filler).length, JSON.stringify(record).length);
+  return filler;
+}
+/** About 6.5 KB of records, enough to push earlier lines out of the probe's 4 KB tail window. */
+const padding = Array.from({ length: 100 }, (_, index) => ({
+  type: 'system',
+  sessionId,
+  subtype: `padding-${index}`,
+}));
 
 test('native background work remains active after a Stop and settles only on its own completion', async (t) => {
   const f = await transcript(t);
@@ -341,4 +369,88 @@ test('a partial trailing line is read once it is complete, not before', async (t
   const completedRead = f.read();
   assert.equal(completedRead.state, 'idle');
   assert.equal(completedRead.bytesRead, Buffer.byteLength(line) + 1);
+});
+
+test('beyond 4 KB, a rotation and a same-size rewrite of the tail are each caught on their own', async (t) => {
+  const f = await transcript(t);
+  await f.write([launch(), ...padding]);
+  assert.equal(f.read().state, 'active');
+  // Rotated to a file of the same size and the same last 4 KB, without the launch: only the
+  // inode tells them apart.
+  const next = path.join(f.root, 'next.jsonl');
+  await writeFile(
+    next,
+    [sameLengthFiller(launch()), ...padding].map((record) => JSON.stringify(record)).join('\n') +
+      '\n',
+  );
+  assert.equal((await stat(next)).size, (await stat(f.file)).size);
+  await rename(next, f.file);
+  const rotated = f.read();
+  assert.equal(rotated.state, 'idle');
+  assert.equal(rotated.bytesRead, (await stat(f.file)).size);
+  // Rewritten in place to the same size: only the tail hash tells them apart.
+  await f.write([...padding, launch()]);
+  assert.equal(f.read().state, 'active');
+  const inode = (await stat(f.file)).ino;
+  await f.write([...padding, sameLengthFiller(launch())]);
+  assert.equal((await stat(f.file)).ino, inode);
+  const rewritten = f.read();
+  assert.equal(rewritten.state, 'idle');
+  assert.equal(rewritten.bytesRead, (await stat(f.file)).size);
+});
+
+test('a read that parses nothing leaves the cache alone, and an older probe version cache is ignored', async (t) => {
+  const f = await transcript(t);
+  await f.write([launch()]);
+  assert.equal(f.read().cached, true);
+  const written = await stat(f.cacheFile);
+  assert.equal(f.read().bytesRead, 0);
+  assert.equal((await stat(f.cacheFile)).ino, written.ino, 'a no-op read does not rewrite it');
+  const stored = JSON.parse(await readFile(f.cacheFile, 'utf8')) as Record<string, unknown>;
+  await writeFile(f.cacheFile, JSON.stringify({ ...stored, v: 1 }));
+  const rescanned = f.read();
+  assert.equal(rescanned.state, 'active');
+  assert.equal(rescanned.bytesRead, (await stat(f.file)).size);
+});
+
+test('a cache that cannot be written leaves no temporary file and the verdict stands', async (t) => {
+  const f = await transcript(t);
+  await f.write([launch()]);
+  // A directory where the cache file goes makes the final rename fail after the write.
+  await mkdir(f.cacheFile, { recursive: true });
+  const first = f.read();
+  assert.equal(first.state, 'active');
+  assert.equal(first.cached, false);
+  assert.deepEqual(await readdir(f.cacheDir), [path.basename(f.cacheFile)]);
+  await appendFile(f.file, JSON.stringify(completed()) + '\n');
+  const second = f.read();
+  assert.equal(second.state, 'idle');
+  assert.equal(second.bytesRead, (await stat(f.file)).size, 'with no cache, a read parses it all');
+});
+
+test('a cache that cannot be written is reported once per transcript', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => undefined);
+  const transcriptPath = `/tmp/uncached/${sessionId}.jsonl`;
+  const overrides = {
+    pane: async () => ({ paneId: '%7', panePid: '123' }),
+    paneState: async () => ({ session_id: sessionId }),
+    sessionState: async () => ({
+      session_id: sessionId,
+      tmuxPane: '%7',
+      transcript_path: transcriptPath,
+    }),
+    exec: async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({ state: 'idle', observedAt: 1, cached: false }),
+      stderr: '',
+    }),
+  };
+  for (let read = 0; read < 2; read += 1) {
+    assert.equal((await readClaudeBackgroundWorkState(makeVars(), '%7', overrides)).value, 'idle');
+  }
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(
+    String(warn.mock.calls[0]?.arguments[0]),
+    new RegExp(`offset cache for ${transcriptPath}`),
+  );
 });
