@@ -2,7 +2,7 @@
   "version": "0.10.0",
   "date": "2026-11-01",
   "items": [
-    "Type in any terminal from an input line under it: every key arrives once, in order, even across reconnects and gateway restarts.",
+    "Type in any terminal from an input line under it; keys arrive once and in order, even through reconnects.",
     "See connection status once, in a few muted words.",
     "Steer a running Codex turn, or edit a queued message, from a native conversation.",
     "Follow a runner's plan as a checklist inside the turn.",

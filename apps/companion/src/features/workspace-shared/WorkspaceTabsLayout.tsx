@@ -8,14 +8,7 @@ import {
   type TabTriggerSlotProps,
 } from 'expo-router/ui';
 import { forwardRef, type ReactNode } from 'react';
-import {
-  type HostInstance,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { type HostInstance, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HeaderBackButton } from '../../components/FallbackHeaderBack';

@@ -105,7 +105,11 @@ export default function TabLayout() {
               title: 'Co-Pilot',
               href: null,
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="chatbubble-ellipses-outline" size={size} color={tabIconColor(color)} />
+                <Ionicons
+                  name="chatbubble-ellipses-outline"
+                  size={size}
+                  color={tabIconColor(color)}
+                />
               ),
               header: () => connectedHeader,
             }}
@@ -144,7 +148,11 @@ export default function TabLayout() {
               href: farmTabs ? undefined : null,
               tabBarButtonTestID: 'companion-tab-advanced',
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="ellipsis-horizontal-circle-outline" size={size} color={tabIconColor(color)} />
+                <Ionicons
+                  name="ellipsis-horizontal-circle-outline"
+                  size={size}
+                  color={tabIconColor(color)}
+                />
               ),
               header: () => connectedHeader,
             }}
