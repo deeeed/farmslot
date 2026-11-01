@@ -25,6 +25,7 @@ import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/
 import {
   type AcquisitionTaskDirToken,
   DEFAULT_RUN_BUNDLE_RETENTION,
+  forgetAcquisitionFootprints,
   isRunBundleMedia,
   type MaterializedRunBundle,
   materializeRunBundle,
@@ -42,6 +43,7 @@ import {
 } from '@farmslot/run-bundle';
 
 import { reportGatewayWarning } from '../chat/copilot-observer.js';
+import { EVAL_TASK_FLOW } from '../core/config.js';
 import { sha256File } from '../core/file-hash.js';
 import { inferArtifactPurpose } from '../core/index.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
@@ -372,9 +374,32 @@ const RUN_BUNDLE_WARN_RATIO = 0.7;
 // release, a grade), so a dir keeps its footprint only once its runs have been quiet this long.
 const SETTLED_TASK_DIR_QUIET_MS = 15 * 60_000;
 
+const writingTaskDirs = new Map<string, number>();
+
+/**
+ * Holds a task dir live while the gateway writes it with no update of a run that names it
+ * (a slot release copying artifacts back, an explicit backfill), and first drops its kept
+ * acquisition footprint, so the dir is measured again once the write is over.
+ */
+export async function withTaskDirWrite<T>(directory: string, write: () => Promise<T>): Promise<T> {
+  const dir = path.resolve(directory);
+  writingTaskDirs.set(dir, (writingTaskDirs.get(dir) ?? 0) + 1);
+  try {
+    // A sandbox gateway never writes the owning gateway's store, so it keeps no footprints.
+    if (!process.env.FARMSLOT_SANDBOX_HOME)
+      await forgetAcquisitionFootprints(await runBundleStore(true), [dir]);
+    return await write();
+  } finally {
+    const holds = writingTaskDirs.get(dir)! - 1;
+    if (holds) writingTaskDirs.set(dir, holds);
+    else writingTaskDirs.delete(dir);
+  }
+}
+
 /**
  * Classifies gateway task dirs for acquisition accounting. A dir is live while a run naming it
- * has not ended, while it is being admitted, and until its runs have been quiet for a while. A
+ * has not ended, while it is being admitted or written, and until its runs have been quiet for a
+ * while; eval experiment roots, which trials write without naming them, are always live. A
  * settled dir's token is its runs' ids and update times, so a later run update measures it
  * again. A dir no run names (a deleted run's) changes only when retention moves or removes it.
  */
@@ -384,8 +409,14 @@ export async function acquisitionTaskDirToken(now = Date.now()): Promise<Acquisi
     for (const directory of new Set(runTaskDirectories(run)))
       owners.set(directory, [...(owners.get(directory) ?? []), run]);
   return (directory) => {
-    if (isTaskDirectoryAdmitting(directory)) return undefined;
-    const runs = owners.get(path.resolve(directory));
+    const dir = path.resolve(directory);
+    if (
+      isTaskDirectoryAdmitting(dir) ||
+      writingTaskDirs.has(dir) ||
+      path.basename(path.dirname(dir)) === EVAL_TASK_FLOW
+    )
+      return undefined;
+    const runs = owners.get(dir);
     if (!runs) return 'unowned';
     if (
       runs.some(
@@ -417,11 +448,7 @@ export async function warnRunBundleCapacity(): Promise<void> {
   try {
     const store = await runBundleStore(true);
     const policy = await retentionPolicy();
-    const usage = await runBundleAdmissionUsage(
-      store,
-      farmslotRoot,
-      await acquisitionTaskDirToken(),
-    );
+    const usage = await runBundleAdmissionUsage(store, farmslotRoot, acquisitionTaskDirToken);
     if (runBundleNearCapacity(usage.total, policy))
       reportGatewayWarning(
         'run-bundle.capacity',
@@ -451,13 +478,7 @@ export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
   await tryArchiveRunArtifactHousekeeping();
-  await reserveRunBundleMetadata(
-    store,
-    run.id,
-    policy,
-    farmslotRoot,
-    await acquisitionTaskDirToken(),
-  );
+  await reserveRunBundleMetadata(store, run.id, policy, farmslotRoot, acquisitionTaskDirToken);
 }
 
 export async function retainCapturedRunArtifacts(input: {
@@ -524,7 +545,7 @@ export async function retainCapturedRunArtifacts(input: {
   return materializeRunBundle({
     store,
     farmslotRoot,
-    acquisitionTaskDirToken: await acquisitionTaskDirToken(),
+    acquisitionTaskDirs: acquisitionTaskDirToken,
     run: input.run,
     artifacts,
     taskDir,
@@ -623,35 +644,38 @@ export async function retainRunArtifacts(runId: string): Promise<RunBundleRetain
       }
     }),
   );
-  if (missing.some(Boolean) && run.slotId) {
-    const { refreshArtifactMirror } = await import('./artifact-mirror.js');
-    await refreshArtifactMirror(run, { acquisition });
-  }
-  const result = await retainCapturedRunArtifacts({
-    run,
-    artifacts: output.artifactManifest,
-    acquireMedia: acquisition.acquireMedia,
-    manifestDigest: output.manifestDigest,
-    allowChanged: true,
-    existingRef: output.artifactBundle,
-    releaseStagingMedia: true,
-    commit: async (ref, missingData) => {
-      const current = getRun(runId);
-      if (
-        !current ||
-        current.taskFile !== run.taskFile ||
-        current.engineState?.generation !== run.engineState?.generation ||
-        current.output?.manifestDigest !== output.manifestDigest
-      )
-        throw new Error('Run output changed during retention. Retry the current snapshot.');
-      const updated = updateRun(runId, {
-        artifactBundle: ref,
-        output: { ...current.output, artifactBundle: ref, retentionMissingData: missingData },
-      });
-      await persistRunNow(updated, 'retained artifact backfill');
-    },
+  // The mirror refresh writes the task dir before the commit updates the run, and may fail.
+  return withTaskDirWrite(path.dirname(run.taskFile), async () => {
+    if (missing.some(Boolean) && run.slotId) {
+      const { refreshArtifactMirror } = await import('./artifact-mirror.js');
+      await refreshArtifactMirror(run, { acquisition });
+    }
+    const result = await retainCapturedRunArtifacts({
+      run,
+      artifacts: output.artifactManifest,
+      acquireMedia: acquisition.acquireMedia,
+      manifestDigest: output.manifestDigest,
+      allowChanged: true,
+      existingRef: output.artifactBundle,
+      releaseStagingMedia: true,
+      commit: async (ref, missingData) => {
+        const current = getRun(runId);
+        if (
+          !current ||
+          current.taskFile !== run.taskFile ||
+          current.engineState?.generation !== run.engineState?.generation ||
+          current.output?.manifestDigest !== output.manifestDigest
+        )
+          throw new Error('Run output changed during retention. Retry the current snapshot.');
+        const updated = updateRun(runId, {
+          artifactBundle: ref,
+          output: { ...current.output, artifactBundle: ref, retentionMissingData: missingData },
+        });
+        await persistRunNow(updated, 'retained artifact backfill');
+      },
+    });
+    return { ref: result.ref, missingData: result.missingData };
   });
-  return { ref: result.ref, missingData: result.missingData };
 }
 
 interface RetainedRecipeRunSummary {

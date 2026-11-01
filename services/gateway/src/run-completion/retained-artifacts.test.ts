@@ -30,7 +30,7 @@ after(() => rm(root, { recursive: true, force: true }));
 const { createRun, getRun, persistRunNow, updateRun, withTaskAdmission } =
   await import('../runs/store.js');
 const { captureRunOutput, acknowledgeRunOutput } = await import('./output.js');
-const { acquisitionTaskDirToken, retainRunArtifacts, readRetainedRunText } =
+const { acquisitionTaskDirToken, retainRunArtifacts, readRetainedRunText, withTaskDirWrite } =
   await import('./retained-artifacts.js');
 const { runRecipeRunsForRun } = await import('../methods/run/context.js');
 const { serveRunArtifact } = await import('../methods/filesystem.js');
@@ -455,4 +455,22 @@ test('a task dir settles only once its runs have ended and been quiet, and a run
   );
   // Settle the background run writes before the temp root is removed.
   for (const run of [live, ended]) await persistRunNow(getRun(run.id)!);
+});
+
+test('a dir stays live while the gateway writes it, and eval experiment roots are always live', async () => {
+  const released = path.join(root, 'projects/example/tasks/qa/released-slot-task');
+  assert.equal((await acquisitionTaskDirToken())(released), 'unowned');
+  await withTaskDirWrite(released, async () => {
+    assert.equal((await acquisitionTaskDirToken())(released), undefined);
+  });
+  assert.equal((await acquisitionTaskDirToken())(released), 'unowned');
+  await assert.rejects(
+    withTaskDirWrite(released, async () => {
+      throw new Error('copy failed');
+    }),
+    /copy failed/,
+  );
+  assert.equal((await acquisitionTaskDirToken())(released), 'unowned', 'a failed write releases');
+  const evalRoot = path.join(root, 'projects/example/tasks/evals/case-abc-0123456789ab');
+  assert.equal((await acquisitionTaskDirToken())(evalRoot), undefined);
 });
