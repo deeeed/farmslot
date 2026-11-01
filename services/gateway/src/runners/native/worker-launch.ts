@@ -7,7 +7,11 @@ import type {
   ReviewValidationDepth,
   SafetyTier,
 } from '@farmslot/protocol';
-import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
+import {
+  currentProjectSources,
+  resolveRunnerPath,
+  sourceWorkerEnvironment,
+} from '@farmslot/slot-config';
 
 import { runnerRuntimeDir } from '../../../../../scripts/lib/runner-runtime.cjs';
 import { execOnSlot } from '../../core/exec.js';
@@ -20,12 +24,7 @@ import {
 import { machineShellEnv, resolveProjectCommandEnv } from '../../core/project-env.js';
 import { shellQuote } from '../../core/tmux.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
-import {
-  resolveClaudeBinary,
-  resolveCodexBinary,
-  resolveRunnerEffort,
-  taskRecipeTrustEnvironment,
-} from '../launch-command.js';
+import { resolveRunnerEffort, taskRecipeTrustEnvironment } from '../launch-command.js';
 import { normalizeRunner, runnerSupportsEffort } from '../registry.js';
 import { buildRunnerObservabilityInstallCommand } from '../runner-observability.js';
 import { resolveRunnerAccountForDispatch } from '../status-provider.js';
@@ -52,6 +51,8 @@ export async function prepareNativeWorkerLaunch(input: {
   profile?: NativeProfileReference;
   stateDirectory?: string;
   recordAccount?: (label: string | undefined) => Promise<void>;
+  /** A bound run's pinned recipe libraries (pinnedTaskLibraries). */
+  taskLibraries?: ReadonlyMap<string, string>;
 }): Promise<{ launch: NativeWorkerLaunch; accountLabel?: string }> {
   const { vars } = input;
   const runner = normalizeRunner(input.runner);
@@ -70,6 +71,7 @@ export async function prepareNativeWorkerLaunch(input: {
     domain: input.domain,
     expandDomainValue: (value) =>
       expandTemplate(value, vars, input.projectVars, { domain: input.domain ?? '' }),
+    ...(input.taskLibraries ? { taskLibraries: input.taskLibraries } : {}),
   });
   // Static reviewers need the selected home and pool for retained marker commands.
   // Unrelated pool tool selections must not change their launch identity.
@@ -124,7 +126,6 @@ export async function prepareNativeWorkerLaunch(input: {
     launchAccountLabel = account?.bind.launchAccountLabel;
     await input.recordAccount?.(accountLabel);
   }
-  let executable: string;
   if (runner === 'codex' && !input.profile) {
     const legacyRuntimeDir = path.posix.join(
       input.projectVars?.runtimeDir ?? '.agent',
@@ -163,19 +164,15 @@ export async function prepareNativeWorkerLaunch(input: {
         'Native worker account configuration is unavailable; refresh native setup before dispatch',
       );
     environment.set.CODEX_HOME = home;
-    executable = resolveCodexBinary(vars.codexPath);
-  } else if (runner === 'codex') {
-    executable = resolveCodexBinary(vars.codexPath);
-  } else if (runner === 'claude') {
-    executable = resolveClaudeBinary(vars.claudePath);
-  } else {
-    throw new Error('Native worker launch is unavailable for this runner');
   }
+  // The host starts the runner's native adapter, as a chat session does.
+  // Only the slot's configured executable overrides the adapter's default.
+  const executable = resolveRunnerPath(vars, runner).trim();
   return {
     accountLabel,
     launch: {
       leaseId: input.leaseId,
-      executable,
+      ...(executable ? { executable } : {}),
       environment,
       safetyTier: input.safetyTier,
       ...(input.role === 'review' ? { approvalPolicy: 'never' } : {}),

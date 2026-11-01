@@ -50,6 +50,8 @@ export function recoverStoppedNativeHost(
   root: string,
   supervisorPid: number,
   hostPid: number,
+  /** Start identities recorded at launch; a reused PID or group leader never matches them. */
+  recorded: { supervisor?: string; host?: string } = {},
 ): void {
   const cleanupPath = join(root, 'cleanup.json');
   const original = privateBytes(cleanupPath);
@@ -66,6 +68,8 @@ export function recoverStoppedNativeHost(
   const pids = new Set([supervisorPid, hostPid]);
   const groups = new Set([supervisorPid]);
   const identities = new Map<number, string>();
+  if (recorded.supervisor) identities.set(supervisorPid, recorded.supervisor);
+  if (recorded.host) identities.set(hostPid, recorded.host);
   const observe = (entry: ProcessIdentity) => {
     pids.add(entry.pid);
     groups.add(entry.group);

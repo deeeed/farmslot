@@ -36,7 +36,7 @@ const configuredPool = {
 mock.module('../../core/config.js', {
   namedExports: { ...config, loadMachinePool: async () => configuredPool },
 });
-let selectedExecutable = 'codex';
+let selectedExecutable: string | undefined = 'codex';
 let executableSelections: Array<{ runner: string; machine?: RawPoolJson }> = [];
 
 type Call = { method: string; params: Record<string, unknown> };
@@ -128,8 +128,8 @@ mock.module('../../security/native-worker-owner.js', {
 });
 mock.module('../launch-command.js', {
   namedExports: {
-    interactiveRunnerExecutable: (options: { runner: string; machine?: RawPoolJson }) => {
-      executableSelections.push(options);
+    machineRunnerPath: (runner: string, machine?: RawPoolJson) => {
+      executableSelections.push({ runner, machine });
       return selectedExecutable;
     },
     resolveRunnerEffort: () => undefined,
@@ -502,6 +502,17 @@ test('native review pins the configured machine executable instead of PATH-selec
   assert.equal(executableSelections.length, 1);
   assert.equal(executableSelections[0]?.runner, 'codex');
   assert.equal(executableSelections[0]?.machine, configuredPool);
+});
+
+test('native review without a configured machine path starts the adapter executable, as a chat session does', async () => {
+  reset();
+  selectedExecutable = undefined;
+  await launch();
+  const ensure = calls.find((call) => call.method === NATIVE_WORKER_ENSURE);
+  assert.ok(ensure);
+  const launchInput = ensure.params.launch;
+  assert.ok(launchInput && typeof launchInput === 'object');
+  assert.equal(Object.hasOwn(launchInput, 'executable'), false);
 });
 
 for (const state of ['failed', 'closed'] as const) {
