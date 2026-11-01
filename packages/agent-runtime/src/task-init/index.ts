@@ -61,9 +61,12 @@ export * from './artifact-only-guard.js';
 export * from './branch-update.js';
 export * from './discover.js';
 export {
+  retainedPathFor,
+  retainedSourceFor,
   type TaskExecutionInput,
   type TaskExecutionProvenance,
   type TaskRecipeBindingIdentity,
+  type TaskRetainedInput,
   verifyTaskExecutionProvenance,
 } from './execution-provenance.js';
 export * from './task-document.js';

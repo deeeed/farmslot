@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { beforeEach, mock, test } from 'node:test';
 
 import { NATIVE_WORKER_ENSURE } from '@farmslot/agent-runtime/native';
@@ -75,8 +78,14 @@ mock.module('../../agents/contexts.js', {
     },
   },
 });
+const launchInputs: Array<{ taskLibraries?: ReadonlyMap<string, string> }> = [];
 mock.module('./worker-launch.js', {
-  namedExports: { prepareNativeWorkerLaunch: async () => ({ launch }) },
+  namedExports: {
+    prepareNativeWorkerLaunch: async (input: { taskLibraries?: ReadonlyMap<string, string> }) => {
+      launchInputs.push(input);
+      return { launch };
+    },
+  },
 });
 mock.module('../../run-engine/worker-launch-preflight.js', {
   namedExports: { admitWorkerLaunch: async () => async () => {} },
@@ -138,6 +147,7 @@ beforeEach(() => {
   listUnavailable = false;
   afterList = undefined;
   calls.length = 0;
+  launchInputs.length = 0;
 });
 const dispatch = () =>
   dispatchNativeWorker({
@@ -211,4 +221,23 @@ test('unavailable host presence and cancelled observations never authorize ENSUR
   calls.length = 0;
   await assert.rejects(dispatch(), /no longer admitted/);
   assert.deepEqual(calls, [Methods.NATIVE_SESSION_LIST]);
+});
+test('a bound run launches its native worker on the libraries its task pinned', async (t) => {
+  const taskDir = mkdtempSync(path.join(tmpdir(), 'native-pinned-libraries-'));
+  t.after(() => rmSync(taskDir, { recursive: true, force: true }));
+  const pin = '/home/.farmslot/task-pins/ba9f77';
+  mkdirSync(path.join(taskDir, 'artifacts'));
+  writeFileSync(
+    path.join(taskDir, 'artifacts/harness-provenance.json'),
+    JSON.stringify({
+      pin,
+      bindingIdentity: { libraries: [{ name: 'perps', path: `${pin}/inputs/39/recipe-perps` }] },
+    }),
+  );
+  run.taskFile = path.join(taskDir, 'TASK.md');
+  await assert.rejects(dispatch(), /Reached ENSURE boundary/);
+  assert.deepEqual(
+    [...(launchInputs[0]?.taskLibraries ?? [])],
+    [['perps', `${pin}/inputs/39/recipe-perps`]],
+  );
 });

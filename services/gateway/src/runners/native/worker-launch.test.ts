@@ -196,3 +196,21 @@ test('legacy review launches retain their pool environment without a captured de
   });
   assert.equal(launch.environment.set.PROVIDER_ROOT, '/providers/pinned');
 });
+
+test('a bound worker launch resolves RECIPE_LIBRARY_PATH to its pinned libraries', async () => {
+  const pin = '/home/.farmslot/task-pins/ba9f77/inputs/39/recipe-perps';
+  const { launch } = await prepareNativeWorkerLaunch({
+    vars: makeVars(),
+    project: { command_env: { set: { RECIPE_LIBRARY_PATH: 'perps=/dev/recipe-perps:/plain' } } },
+    runner: 'claude',
+    model: 'opus',
+    role: 'primary',
+    safetyTier: 'sandboxed',
+    taskDir: 'tasks/proof',
+    taskLibraries: new Map([['perps', pin]]),
+    leaseId: 'proof-lease',
+    sessionId: 'proof-session',
+    prepareAccount: false,
+  });
+  assert.equal(launch.environment.set.RECIPE_LIBRARY_PATH, `perps=${pin}:/plain`);
+});

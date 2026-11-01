@@ -44,6 +44,7 @@ import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../../security/work-originator.js';
+import { runTaskLibraries } from '../../tasks/pinned-libraries.js';
 import { unwatchContext, watchContext } from '../../tasks/watcher.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
 
@@ -602,6 +603,7 @@ export async function dispatchNativeWorker(input: {
     ...input,
     reviewValidationDepth: context.reviewValidationDepth,
     vars,
+    taskLibraries: runTaskLibraries(run),
     taskDir: path.posix.dirname(input.taskFile),
     leaseId: binding.leaseId,
     sessionId: binding.sessionId,
