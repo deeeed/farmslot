@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "A closed or archived validation run leaves its slot reusable",
+  "description": "Use a disposable gateway, run ledger, project and slots to verify that an artifact-only validation run's own unpushed branch commits are parked under a durable ref and recorded on the run, and its slot returns to idle: an archive after COMPLETE released the slot, the named discard of a run held at a refused COMPLETE, and the archive of a cancelled run. The same ticket's branch then prepares again on the returned slot, and a commit stacked after COMPLETE is kept. No operator runs or slots are used.",
+  "workflow": {
+    "entry": "validation-slot-reuse",
+    "nodes": {
+      "validation-slot-reuse": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/validation-slot-reuse.mjs",
+        "timeout_ms": 180000,
+        "intent": "Closing or archiving a validation run parks its own commits with SHAs and returns its slot to idle, so the next dispatch of the same ticket prepares.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
