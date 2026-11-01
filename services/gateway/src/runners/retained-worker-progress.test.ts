@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import type { AgentContext } from '@farmslot/protocol';
 
-import { readRetainedWorkerProgressTarget } from './retained-worker-progress.js';
+import {
+  readRetainedWorkerProgressTarget,
+  type RetainedWorkerProgressTarget,
+} from './retained-worker-progress.js';
 import type { RunnerDescendantPidProbe } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
 
@@ -80,6 +83,53 @@ test('a surviving recorded pane is idle once its runner has exited, and unknown 
     assert.equal(actual.state, expected);
   }
   assert.deepEqual(probed, ['101', '101', '101'], 'the recorded pane is probed once per read');
+});
+
+test('an exited recorded pane yields to a live replacement only with the recorded conversation', async () => {
+  const cases: Array<[string, boolean, RetainedWorkerProgressTarget]> = [
+    // The pane moved to another session: it is still the recorded one.
+    ['moved\t%288\t101\n', true, { state: 'absent' }],
+    ['owned\t%288\t101\nowned\t%300\t301\n', true, { state: 'present', target: '%300' }],
+    [
+      'owned\t%288\t101\nowned\t%300\t301\n',
+      false,
+      { state: 'unknown', reason: 'Replacement worker conversation is unconfirmed or ambiguous' },
+    ],
+  ];
+  for (const [stdout, ok, expected] of cases) {
+    const actual = await readRetainedWorkerProgressTarget(vars, context, {
+      exec: async () => ({ exitCode: 0, stdout, stderr: '' }),
+      probe: async (_vars, panePid) =>
+        panePid === '301' ? { state: 'present', pid: '302' } : { state: 'absent' },
+      binding: async () =>
+        ok
+          ? {
+              ok: true,
+              binding: {
+                runnerSessionId: 'saved-session',
+                runnerSessionPath: '/tmp/saved-session.jsonl',
+                canonicalSessionPath: '/tmp/saved-session.jsonl',
+                source: 'native',
+              },
+            }
+          : { ok: false, reason: 'foreign conversation' },
+    });
+    assert.deepEqual(actual, expected);
+  }
+});
+
+test('a recorded pane respawned during the check stays unknown', async () => {
+  // A session reload respawns %288 in place: the probed process exited, its replacement runs.
+  const census = ['owned\t%288\t101\n', 'owned\t%288\t201\n'];
+  const actual = await readRetainedWorkerProgressTarget(vars, context, {
+    exec: async () => ({ exitCode: 0, stdout: census.shift()!, stderr: '' }),
+    probe: async () => ({ state: 'absent' }),
+    binding: async () => assert.fail('no replacement to bind'),
+  });
+  assert.deepEqual(actual, {
+    state: 'unknown',
+    reason: 'Recorded worker pane was respawned during the check',
+  });
 });
 
 test('a resumed worker on a new pane must match the recorded conversation', async () => {

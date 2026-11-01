@@ -188,7 +188,14 @@ async function observeContext(
     run.steps.some(
       (step) => (step.name === 'complete' || step.name === 'finalize') && step.status === 'running',
     );
-  if (progress.kind !== 'unproven' || !context?.target?.paneId || !handedOff) return progress;
+  // A context still launching has no runner yet, which absence cannot tell from one that exited.
+  if (
+    progress.kind !== 'unproven' ||
+    !context?.target?.paneId ||
+    !handedOff ||
+    context.status === 'launching'
+  )
+    return progress;
   const retained = await source.retainedTarget(vars, context);
   if (retained.state === 'absent')
     return {
