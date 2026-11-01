@@ -4,6 +4,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   Text,
   TextInput,
   View,
@@ -44,7 +45,7 @@ export function NativeConversationScreen({
   onSelect: (session: NativeSessionInfo) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
   const [follow, setFollow] = useState(NATIVE_FOLLOW_LATEST);
   const viewport = useRef({ offset: 0, height: 0 });
   const distanceFromEnd = (contentHeight: number) =>

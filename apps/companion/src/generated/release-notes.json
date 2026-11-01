@@ -1,11 +1,11 @@
 {
-  "version": "0.9.0",
-  "date": "2026-10-30",
+  "version": "0.10.0",
+  "date": "2026-11-01",
   "items": [
-    "Open runs, the inbox, fleet, slots and saved reviews offline from the device store, each with its saved age; commands wait for a live read.",
-    "Open pending gate diffs and evidence images up to 2 MB offline once they are prefetched.",
-    "See every live run in run history, not only the latest 80, on gateways with version lists.",
-    "Decide at a gate from one list of what blocks publishing, with the same actions as Command Center.",
-    "Copy or share the current view's Command Center link from the quick-action menu."
+    "Type in any terminal from an input line under it: every key arrives once, in order, even across reconnects and gateway restarts.",
+    "See connection status once, in a few muted words.",
+    "Steer a running Codex turn, or edit a queued message, from a native conversation.",
+    "Follow a runner's plan as a checklist inside the turn.",
+    "Runs on Expo SDK 58 and React Native 0.88."
   ]
 }
