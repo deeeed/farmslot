@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Artifact markdown fences its blocks with the shared protocol `markdownFence`; output is unchanged.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.32.2 - 2026-10-31

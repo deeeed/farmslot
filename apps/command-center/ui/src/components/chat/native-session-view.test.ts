@@ -141,6 +141,54 @@ test('a queued message a resume carried into the new generation stays out of the
   assert.equal(view.draft, '');
 });
 
+test('terminal text added before a worker conversation opens lands in that conversation', async () => {
+  const { queueNativeChatContext } = await import('./native-chat-context.js');
+  const { nativeWorkerAttemptKey } = await import('./native-worker-target.js');
+  const worker = {
+    runId: 'run',
+    contextId: 'context',
+    label: 'rev-claude native',
+    readOnly: false,
+    binding: {
+      sessionId: 'worker-session',
+      executionNodeId: 'macpro',
+      ownerPrincipalId: 'owner',
+      generation: 'generation',
+      leaseId: 'lease',
+      commandId: 'command',
+    },
+  };
+  const view = Object.create(NativeSessionView.prototype) as View & {
+    connect(): Promise<void>;
+    worker: typeof worker;
+  };
+  Object.defineProperty(view, 'isConnected', { value: true });
+  Object.assign(view, {
+    requestUpdate: () => undefined,
+    schedule: () => undefined,
+    // A fresh mount, as the terminal's tab switch makes it: no scope read yet.
+    fixture: { read: async () => undefined },
+    storageScope: '',
+    revision: 0,
+    worker,
+  });
+  stored.clear();
+  // The standalone conversation's last selection, which connect() reads first.
+  stored.set('farmslot-native:fixture:selected', 'other-session');
+  stored.set('farmslot-native:fixture:selected-node', 'local');
+  queueNativeChatContext(nativeWorkerAttemptKey(worker), '```\nerror: a.rs:3\n```');
+  Object.assign(view, { storageScope: 'fixture' });
+  stored.set(view.sessionKey('draft:worker-session'), 'look at this:');
+  Object.assign(view, { storageScope: '' });
+
+  await view.connect();
+
+  assert.equal(view.draft, 'look at this:\n\n```\nerror: a.rs:3\n```');
+  Object.assign(view, { storageScope: 'fixture' });
+  assert.equal(stored.get(view.sessionKey('draft:worker-session')), view.draft);
+  assert.equal(stored.has(view.sessionKey('draft:other-session')), false);
+});
+
 test('Edit removes the queued message, and the composer gets its text back', async () => {
   const queued: NativeCommandReceipt = {
     commandId: 'queued',
