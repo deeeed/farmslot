@@ -67,7 +67,7 @@ export function handleNodeResponse(
   const entry = pending.get(id);
   if (!entry) {
     const owed = owedCloseouts.get(id);
-    if (owed?.socket === source) {
+    if (owed && owed.socket === source) {
       owedCloseouts.delete(id);
       owed.confirm();
     }
