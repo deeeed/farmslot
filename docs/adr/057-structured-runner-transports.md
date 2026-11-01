@@ -5,6 +5,7 @@
 **Scope:** [Runner execution PRD](../PRD-runner-execution-canonical.md), [near-term roadmap](../ROADMAP-next.md)
 **Related:** [ADR-023](023-runner-agnostic-tui-execution.md), [ADR-032](032-runner-observability-via-hooks.md), [ADR-047](047-worker-session-history-panel.md), [ADR-051](051-principal-and-credential-model.md)
 **Lifecycle:** Keep as the accepted decision for the native transport option. This adds an explicit alternative to ADR-023's default without rewriting historical tmux decisions.
+**Terminology:** "runner" here means the agent harness ([ADR-023 Amendment 1](023-runner-agnostic-tui-execution.md#amendment-1-agent-harness-vocabulary-2026-11-02)).
 
 ## Context
 
