@@ -953,7 +953,7 @@ async function slotReleaseImpl(
   if (!keepWork) {
     // Legacy slots may predate prepare exclusions; keep warm runtime files out of Git clean.
     await assertReleaseClaim();
-    await excludeSlotScaffolding(vars, projectJson);
+    if (!parkable) await excludeSlotScaffolding(vars, projectJson);
     // Read task_file from status
     const taskRel = normalizeTaskRelativeDir(
       (await readSlotField(params.slotId, 'task_file')) as string | null,

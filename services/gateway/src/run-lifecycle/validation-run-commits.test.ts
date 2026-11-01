@@ -16,10 +16,10 @@ import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   dropParkedBranch,
-  parkedBranchHead,
   parkRunBranchCommits,
   parksBranchCommits,
   recordReleasedCheckout,
+  restoreParkedBranch,
 } from './validation-run-commits.js';
 
 const run = promisify(execFile);
@@ -102,9 +102,16 @@ test("a finished artifact-only run's own commits are parked under a ref that nev
   assert.equal(await dropParkedBranch(parked, vars, localExec), null);
   assert.equal(git('branch', '--list', 'TAT-4146-validation'), '');
   assert.equal(git('rev-parse', parked.ref), head);
+  // A replay's prepare recreates the dropped branch at the parked head, and never moves it.
   assert.deepEqual(
-    parkedBranchHead(getRun(validation.id), 'proof-slot', 'TAT-4146-validation'),
+    await restoreParkedBranch(getRun(validation.id), vars, 'TAT-4146-validation', localExec),
     parked,
+  );
+  assert.equal(git('rev-parse', 'refs/heads/TAT-4146-validation'), head);
+  assert.equal(
+    await restoreParkedBranch(getRun(validation.id), vars, 'TAT-4146-validation', localExec),
+    null,
+    'an existing branch is left alone',
   );
 });
 

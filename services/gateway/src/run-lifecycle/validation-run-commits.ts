@@ -104,7 +104,7 @@ export async function parkRunBranchCommits(
 /**
  * After the reset, drop the parked branch so the same ticket can be prepared again. Only an
  * unchanged branch is deleted; its commits stay reachable from the parked ref, and prepare
- * recreates the branch from it (`parkedBranchHead`).
+ * recreates the branch from it (`restoreParkedBranch`).
  */
 export async function dropParkedBranch(
   parked: ParkedRunCommits,
@@ -121,8 +121,27 @@ export async function dropParkedBranch(
     : `kept branch ${parked.branch} (it moved): ${(dropped.stderr || dropped.stdout).trim()}`;
 }
 
-/** The latest parked head of `branch` for this run on this slot, to restore it for a replay. */
-export function parkedBranchHead(
+/**
+ * A replay's prepare restores the run's dropped branch at its latest parked head on this slot.
+ * The branch is created, never moved: returns null if there is no parking or the branch exists.
+ */
+export async function restoreParkedBranch(
+  run: Pick<Run, 'parkedCommits'> | undefined,
+  vars: SlotVars,
+  branch: string,
+  exec: typeof execOnSlot,
+): Promise<ParkedRunCommits | null> {
+  const parked = parkedBranchHead(run, vars.slotId, branch);
+  if (!parked) return null;
+  const restored = await exec(
+    vars,
+    `git -C ${shellQuote(vars.remoteRepo)} update-ref ${shellQuote(`refs/heads/${branch}`)} ${shellQuote(parked.headSha)} ''`,
+  );
+  return restored.exitCode === 0 ? parked : null;
+}
+
+/** The latest parked head of `branch` for this run on this slot. */
+function parkedBranchHead(
   run: Pick<Run, 'parkedCommits'> | undefined,
   slotId: string,
   branch: string,
@@ -133,15 +152,16 @@ export function parkedBranchHead(
 }
 
 /**
- * COMPLETE releases an artifact-only run's slot but keeps its checkout. Record the head it left
- * while the run still owns the slot, so a later ownerless return to idle parks exactly that.
+ * A release that keeps an artifact-only run's checkout (COMPLETE, an interactive done-no-pr, a
+ * failed run) records the head it leaves while the run still owns the slot, so a later ownerless
+ * return to idle parks exactly that. Whether it parks is decided then, once the run has finished.
  */
 export async function recordReleasedCheckout(
   run: Run,
   vars: SlotVars,
   exec: typeof execOnSlot,
 ): Promise<void> {
-  if (!parksBranchCommits(run)) return;
+  if (!ownsArtifactOnlyBranch(run)) return;
   const git = `git -C ${shellQuote(vars.remoteRepo)}`;
   const read = await exec(
     vars,

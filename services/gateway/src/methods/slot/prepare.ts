@@ -54,7 +54,7 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
-import { parkedBranchHead } from '../../run-lifecycle/validation-run-commits.js';
+import { restoreParkedBranch } from '../../run-lifecycle/validation-run-commits.js';
 import {
   assertNativeSlotReplacementOwner,
   retireNativeWorkersForSlot,
@@ -850,15 +850,11 @@ async function slotPrepareInner(
     // its replay gets the branch back from the parked head.
     const parked =
       !localExists && params.runId
-        ? parkedBranchHead(getRun(params.runId), params.slotId, branch)
-        : undefined;
+        ? await restoreParkedBranch(getRun(params.runId), vars, branch, execOnSlot)
+        : null;
     if (parked) {
-      const restored = await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git update-ref ${shellQuote(`refs/heads/${branch}`)} ${shellQuote(parked.headSha)} ''`,
-      );
-      localExists = restored.exitCode === 0;
-      if (localExists) step('branch', `Restored ${branch} from its parked head ${parked.ref}`);
+      localExists = true;
+      step('branch', `Restored ${branch} from its parked head ${parked.ref}`);
     }
     if (!localExists && !opts.allowMissingReplayBranch) {
       throw new Error(

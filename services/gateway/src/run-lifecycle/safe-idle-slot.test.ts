@@ -227,10 +227,6 @@ test('a checkout COMPLETE already released returns to idle when its run closes',
   );
   workspace.headSha = 'e'.repeat(40);
   assert.equal((await returnReleasedCheckoutToIdle(run, () => {}))?.kind, 'local-work');
-  // A later run of the same branch on this slot owns whatever checkout is there now.
-  workspace.headSha = 'a'.repeat(40);
-  runs = [run, { ...validationRun({ id: 'later' }), createdAt: '2099-01-01T00:00:00.000Z' }];
-  assert.equal(await returnReleasedCheckoutToIdle(run, () => {}), null);
   assert.deepEqual(parkRunIds, ['validation']);
 });
 

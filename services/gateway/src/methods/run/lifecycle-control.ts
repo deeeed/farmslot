@@ -42,6 +42,7 @@ import {
   type RunTransitionEffectOutcome,
 } from '../../run-lifecycle/transition-router.js';
 import {
+  ownsArtifactOnlyBranch,
   parksBranchCommits,
   recordReleasedCheckout,
 } from '../../run-lifecycle/validation-run-commits.js';
@@ -401,10 +402,13 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   // failed run keeps it for "replay the failed step" until it is closed or archived.
   const parksOnRelease =
     isTerminalRunStatus(run.status) && run.status !== 'failed' && parksBranchCommits(run);
-  // COMPLETE already released the slot but kept the checkout: return that exact head to idle.
-  if (parksOnRelease) {
-    const row = await readSlotRow(slotId);
-    if (row && !row.current_run_id) {
+  let fence = { before: await readSlotRow(slotId) };
+  let checkoutHasLocalWork = false;
+  const unconfirmedStops: string[] = [];
+  try {
+    await releaseRunOwnedCapabilities(run);
+    // COMPLETE already released the slot but kept the checkout: return that exact head to idle.
+    if (parksOnRelease && fence.before && !fence.before.current_run_id) {
       const { returnReleasedCheckoutToIdle } =
         await import('../../run-lifecycle/safe-idle-slot.js');
       const { broadcastEvent } = await import('../../server.js');
@@ -417,12 +421,6 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
           : { released: false, skipped: result.reason };
       }
     }
-  }
-  let fence = { before: await readSlotRow(slotId) };
-  let checkoutHasLocalWork = false;
-  const unconfirmedStops: string[] = [];
-  try {
-    await releaseRunOwnedCapabilities(run);
     const runtimeBlocker = await shutdownRunSlotResources(run, unconfirmedStops);
     blocker = await recordSlotTeardownBlocker(run, workerBlocker ?? runtimeBlocker);
     // A blind trial's original Git comes back while the run still owns the slot;
@@ -467,8 +465,9 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
           return { released: false, skipped: result.reason };
       }
     }
-    // COMPLETE keeps an artifact-only run's checkout; name the head it leaves while it owns it.
-    if (!blocker && !returnsToIdle && parksBranchCommits(run)) {
+    // A release that keeps an artifact-only run's checkout (COMPLETE, an interactive done-no-pr,
+    // a failed run) names the head it leaves while the run still owns the slot.
+    if (!blocker && !returnsToIdle && ownsArtifactOnlyBranch(run)) {
       const { loadSlotVars } = await import('../../core/config.js');
       await recordReleasedCheckout(run, await loadSlotVars(slotId), execOnSlot);
     }

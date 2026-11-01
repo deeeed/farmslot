@@ -497,4 +497,20 @@ export async function markSlotHeld(slotId: string, phase: HeldPhase): Promise<vo
   await updateSlotStatus(slotId, { lifecycle: 'held', phase, agent: 'idle' });
 }
 
+/**
+ * Hold a slot only while `runId` still owns it. A slot its run already released (COMPLETE of an
+ * artifact-only run) stays released: held by no run, every recovery would refuse it (2aecebfe).
+ */
+export async function markRunSlotHeld(
+  slotId: string,
+  runId: string,
+  phase: HeldPhase,
+): Promise<boolean> {
+  return updateSlotStatusIf(slotId, (slot) => slot.current_run_id === runId, {
+    lifecycle: 'held',
+    phase,
+    agent: 'idle',
+  });
+}
+
 export { statusFile };

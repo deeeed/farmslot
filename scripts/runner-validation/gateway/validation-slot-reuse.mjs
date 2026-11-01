@@ -162,6 +162,10 @@ try {
   git(stacked.repo, 'add', '.');
   git(stacked.repo, 'commit', '-qm', 'operator work');
   stacked.head = git(stacked.repo, 'rev-parse', 'HEAD');
+  // 2aecebfe: COMPLETE released the slot; closing the run's output retries its slot cleanup.
+  const closed = seedSlot('closed', 'TAT-9005');
+  // An interactive dev run the operator marks done without a PR: its release keeps the checkout.
+  const interactive = seedSlot('interactive', 'TAT-9006');
 
   mkdirSync(path.join(root, 'scripts'), { recursive: true });
   writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable validation-slot fixture\n');
@@ -174,7 +178,7 @@ try {
     name: 'fixture',
     version: '0.0.0',
   });
-  const slots = [released, held, cancelled, stacked];
+  const slots = [released, held, cancelled, stacked, closed, interactive];
   writeJson(path.join(root, 'pool', 'validation.json'), {
     machine: os.hostname(),
     host: 'localhost',
@@ -219,7 +223,9 @@ try {
     steps: doneSteps,
     releasedCheckout: releasedCheckout(released, released.head),
   });
-  seedRun(held, 'failed', {
+  // Held for a result decision at its refused COMPLETE: not terminal, so only the named discard parks.
+  seedRun(held, 'needs-decision', {
+    completedAt: undefined,
     error: 'A declared deterministic check has no current passing receipt.',
     steps: steps.map((name, i) =>
       i < completeIdx
@@ -235,6 +241,39 @@ try {
   seedRun(stacked, 'done', {
     steps: doneSteps,
     releasedCheckout: releasedCheckout(stacked, stackedRunHead),
+  });
+  const closeDecisionId = randomUUID();
+  const closedAt = new Date(Date.now() - 30000).toISOString();
+  seedRun(closed, 'done', {
+    steps: doneSteps,
+    releasedCheckout: releasedCheckout(closed, closed.head),
+    output: { capturedAt: closedAt, closedAt, cleanupPending: true },
+    decisions: [
+      {
+        id: closeDecisionId,
+        type: 'engine_output_review',
+        title: 'Review run output',
+        description: 'Fixture output review',
+        actions: [{ id: 'close-run', label: 'Close run' }],
+        payload: { kind: 'output-review' },
+        createdAt: closedAt,
+        resolvedAt: closedAt,
+        resolvedAction: 'close-run',
+      },
+    ],
+  });
+  seedRun(interactive, 'monitoring', {
+    mode: 'interactive',
+    completedAt: undefined,
+    steps: steps.map((name) => ({
+      name,
+      status:
+        steps.indexOf(name) < steps.indexOf('monitor')
+          ? 'done'
+          : name === 'monitor'
+            ? 'running'
+            : 'pending',
+    })),
   });
   writeJson(statusFile, {
     checked_at: new Date().toISOString(),
@@ -269,6 +308,22 @@ try {
         phase: null,
         agent: 'idle',
         current_run_id: null,
+        slot_epoch: 3,
+      },
+      {
+        slot: closed.id,
+        lifecycle: 'ready',
+        phase: null,
+        agent: 'idle',
+        current_run_id: null,
+        slot_epoch: 3,
+      },
+      {
+        slot: interactive.id,
+        lifecycle: 'busy',
+        phase: 'working',
+        agent: 'idle',
+        current_run_id: interactive.runId,
         slot_epoch: 3,
       },
     ],
@@ -401,6 +456,37 @@ try {
     return stackedRun.slotTeardownSkipped;
   });
 
+  // 5. 2aecebfe: closing the output retries cleanup through the done release, which returns the
+  // checkout COMPLETE released (the slot has no owner) to idle.
+  scenario('output close after COMPLETE released the slot', () => {
+    rpc('run.resolveDecision', {
+      runId: closed.runId,
+      decisionId: closeDecisionId,
+      actionId: 'close-run',
+    });
+    const run = storedRun(closed.runId);
+    assertReturned(closed, run, 'output close');
+    assert.equal(run.output?.cleanupPending, false);
+    return 'parked';
+  });
+
+  // 6. Interactive done-no-pr releases the slot before the run is done: it records the head it
+  // leaves, and the archive parks exactly that head.
+  scenario('interactive done-no-pr, then archive', () => {
+    rpc('run.interactiveDev.resolve', { runId: interactive.runId, action: 'done-no-pr' });
+    const done = storedRun(interactive.runId);
+    assert.equal(done.status, 'done');
+    assert.deepEqual(
+      [done.releasedCheckout?.slotId, done.releasedCheckout?.headSha],
+      [interactive.id, interactive.head],
+      'the release named the head it left',
+    );
+    assert.equal(git(interactive.repo, 'branch', '--show-current'), interactive.branch);
+    assert.equal(rpc('run.archive', { runId: interactive.runId }).ok, true);
+    assertReturned(interactive, storedRun(interactive.runId), 'interactive archive');
+    return 'parked';
+  });
+
   console.log(JSON.stringify(results, null, 2));
   assert.ok(
     Object.values(results).every((result) => result.pass),
@@ -414,7 +500,9 @@ try {
   if (gateway && gateway.exitCode === null && gateway.signalCode === null) {
     const stopped = once(gateway, 'exit');
     gateway.kill('SIGTERM');
+    const killer = setTimeout(() => gateway.kill('SIGKILL'), 10000);
     await stopped;
+    clearTimeout(killer);
   }
   if (logFd !== undefined) closeSync(logFd);
   closeTmuxSandbox(tmuxSandboxEnvironment(baseEnv, tmuxDir));

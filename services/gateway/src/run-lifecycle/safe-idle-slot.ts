@@ -171,18 +171,6 @@ export async function returnReleasedCheckoutToIdle(
     released?.slotId !== run.slotId
   )
     return null;
-  // A later run of the same branch on this slot may have left this head; it is not this run's.
-  const { getAllRuns } = await import('../runs/store.js');
-  if (
-    getAllRuns().some(
-      (other) =>
-        other.id !== run.id &&
-        other.slotId === run.slotId &&
-        other.branch === run.branch &&
-        other.createdAt > run.createdAt,
-    )
-  )
-    return null;
   const { readSlotRow } = await import('../core/state.js');
   const row = await readSlotRow(run.slotId);
   if (!row || row.current_run_id || row.cleanup_run_id || row.handoff_run_id) return null;
