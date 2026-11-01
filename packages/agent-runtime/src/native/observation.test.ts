@@ -147,9 +147,28 @@ test('partial append revokes admission without truncation; fresh armed receipt r
   }
 });
 
-test('initial account failure never admits source; recovery uses actual shared observer', async () => {
+test('a failed profile sample keeps sessions observable; profile reads recover on a later sample', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const fixture = setup();
   let fail = true;
+  const status: NativeProfileStatusResult = {
+    profile: {
+      id: 'profile',
+      runner: 'grok',
+      directory: fixture.home,
+      accountContextId: 'context',
+      state: 'active' as const,
+    },
+    account: {
+      runner: 'grok',
+      installed: true,
+      login: 'authenticated',
+      observedAt: '2026-11-02T00:00:00.000Z',
+      mode: 'unknown',
+      identityQuality: 'unavailable',
+    },
+    loginCommand: 'login',
+  };
   const source = new NativeHostObservation(
     new NativeSessionClient(fixture.root),
     'A',
@@ -157,17 +176,43 @@ test('initial account failure never admits source; recovery uses actual shared o
     fixture.home,
     async () => {
       if (fail) throw new Error('Account capability unavailable');
-      return [];
+      return [status];
     },
   );
   try {
-    await assert.rejects(source.start(), { code: 'NATIVE_SOURCE_UNAVAILABLE' });
-    assert.throws(() => source.fence(), NativeSourceUnavailable);
-    fail = false;
     await source.start();
+    assert.equal(source.fence().ready, true);
+    assert.throws(() => source.profileStatus('profile'), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
+    fail = false;
+    // The next 60 s account sample; setImmediate is not mocked, so it lets that sample settle.
+    t.mock.timers.tick(60_000);
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(source.profileStatus('profile').account.login, 'authenticated');
     assert.equal(source.fence().ready, true);
   } finally {
     source.stop();
+    fixture.close();
+  }
+});
+
+test('an unreadable profile file leaves sessions observable', async () => {
+  const fixture = setup();
+  try {
+    writeFileSync(join(fixture.home, 'provider-accounts.json'), '{not json', { mode: 0o600 });
+    const source = new NativeHostObservation(
+      new NativeSessionClient(fixture.root),
+      'A',
+      () => undefined,
+      fixture.home,
+    );
+    try {
+      await source.start();
+      assert.equal(source.fence().ready, true);
+      assert.throws(() => source.profileStatus('profile'), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
+    } finally {
+      source.stop();
+    }
+  } finally {
     fixture.close();
   }
 });

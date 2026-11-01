@@ -453,6 +453,7 @@ Removing that choice leaves one path. A runner gains worker support by having a 
 **Clients don't wait for profiles.** Command Center (chat and dispatch) and Companion enable Start on "Node default account" without waiting for `native.profile.list`.
 
 - A pending or failed read affects only the profile choices. Its error shows beside the picker.
+- On the node, a failed profile sample (an unreadable profile file or a failing login probe) leaves session observation ready. Profile reads report unavailable until a later sample succeeds.
 - An explicitly selected profile never silently falls back to the default.
 - In Command Center, with no profiles registered, the picker shows "Node default account" and "Add another account".
 

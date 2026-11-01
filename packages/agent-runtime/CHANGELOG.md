@@ -4,6 +4,7 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - `native.profile.add` refuses a runner's standard directory (the one a session without a profile uses: `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` when set, else `~/.claude`, `~/.codex` or `~/.grok`; the home directory for Cursor) with "This is the node's own login; no profile is needed". The comparison expands `~/` and resolves symlinks. Each runner definition exposes the directory once as `account.standardDirectory` (ADR-057 Amendment 11).
+- A failed profile sample (an unreadable `provider-accounts.json` or a failing login probe) no longer takes the node's native observation source down: sessions stay observable, observed profile reads fail with `NATIVE_PROFILES_UNAVAILABLE`, and the next 60 s sample recovers them.
 
 ## 0.39.21 - 2026-11-01
 
