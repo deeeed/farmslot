@@ -30,6 +30,17 @@ const pending = new Map<string, PendingNodeRequest>();
 // Per-request output listeners for streaming exec output
 const outputListeners = new Map<string, (stream: string, data: string) => void>();
 
+/**
+ * Executions that failed unconfirmed after a timeout: the node still owes their result on the
+ * original connection. It replies only once the process closed (or never spawned), so that late
+ * result confirms closeout.
+ */
+const owedCloseouts = new Map<string, { socket: WebSocket; confirm: () => void }>();
+
+function awaitOwedCloseout(id: string, socket: WebSocket): Promise<void> {
+  return new Promise((confirm) => owedCloseouts.set(id, { socket, confirm }));
+}
+
 function takePendingRequest(id: string): PendingNodeRequest | undefined {
   const request = pending.get(id);
   if (!request) return;
@@ -54,7 +65,14 @@ export function handleNodeResponse(
   errorDetails?: unknown,
 ): void {
   const entry = pending.get(id);
-  if (!entry) return;
+  if (!entry) {
+    const owed = owedCloseouts.get(id);
+    if (owed?.socket === source) {
+      owedCloseouts.delete(id);
+      owed.confirm();
+    }
+    return;
+  }
   // Native mutations cannot accept replies from another node or a replacement connection.
   if (entry.responseSocket && entry.responseSocket !== source) return;
   takePendingRequest(id);
@@ -76,6 +94,8 @@ export function handleNodeResponse(
  * its timeout. Streaming exec requests settle through their own close handling.
  */
 export function failRequestsBoundTo(ws: WebSocket): void {
+  // A closed connection can no longer deliver what it owed; readers re-probe on its replacement.
+  for (const [id, owed] of owedCloseouts) if (owed.socket === ws) owedCloseouts.delete(id);
   for (const [id, entry] of pending) {
     if (entry.responseSocket === ws && entry.connectionClosed)
       takePendingRequest(id)?.reject(entry.connectionClosed());
@@ -154,6 +174,8 @@ export class NodeExecUnconfirmedError extends NodeTransportUnavailableError {
     readonly requestId: string,
     reason: NodeTransportUnavailableReason,
     executionConnection?: WebSocket,
+    /** Settles when the node later delivers this execution's result on its original connection. */
+    readonly closeout: Promise<void> = new Promise(() => {}),
   ) {
     super(
       machine,
@@ -262,7 +284,13 @@ function sendNodeRequestStreaming(
     let stopObservingAbort = () => {};
     const fail = (reason: NodeTransportUnavailableReason) => {
       takePendingRequest(id)?.reject(
-        new NodeExecUnconfirmedError(node.machine, id, reason, node.ws),
+        new NodeExecUnconfirmedError(
+          node.machine,
+          id,
+          reason,
+          node.ws,
+          reason === 'timeout' ? awaitOwedCloseout(id, node.ws) : undefined,
+        ),
       );
     };
     const cancel = () => {

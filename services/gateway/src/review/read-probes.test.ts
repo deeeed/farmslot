@@ -339,6 +339,35 @@ test('unconfirmed closeout does not admit another probe on the same node connect
   assert.equal(launches, 1);
 });
 
+test('a late closeout from the node admits the next probe on the same connection', async () => {
+  // F298: one slow workspace read on loaded macpro hid macpro-audiolab-1's workspace (and with it
+  // every recovery) until the node reconnected, long after the node had answered.
+  let confirm!: () => void;
+  const failure = new NodeExecUnconfirmedError(
+    vars.machine,
+    'late-request',
+    'timeout',
+    undefined,
+    new Promise<void>((resolve) => {
+      confirm = resolve;
+    }),
+  );
+  let launches = 0;
+  execute = async () => {
+    launches++;
+    if (launches === 1) throw failure;
+    return { stdout: 'fresh', stderr: '', exitCode: 0 };
+  };
+  const read = () => probes.readSlotProbe(vars, 'late read', 'late-closeout-fixture', 100);
+  await assert.rejects(read(), (error: unknown) => error === failure);
+  await assert.rejects(read(), (error: unknown) => error === failure);
+  assert.equal(launches, 1, 'held until the node confirms');
+  confirm();
+  await flush();
+  assert.equal((await read()).stdout, 'fresh');
+  assert.equal(launches, 2);
+});
+
 test('a probe that waits for reconnect retains the connection that actually executed it', async (t) => {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   let client: WebSocket | undefined;

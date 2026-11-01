@@ -63,9 +63,15 @@ export function readSlotProbe(
         return result;
       } catch (error) {
         // A lost closeout reply does not prove the old process stopped. Keep
-        // readers on that failure until its node connection is replaced.
+        // readers on that failure until the node delivers that result late (its
+        // process closed) or its connection is replaced.
         entry.unconfirmed = error instanceof NodeExecUnconfirmedError;
-        if (error instanceof NodeExecUnconfirmedError) entry.connection = error.executionConnection;
+        if (error instanceof NodeExecUnconfirmedError) {
+          entry.connection = error.executionConnection;
+          void error.closeout.then(() => {
+            if (pending.get(key) === entry) pending.delete(key);
+          });
+        }
         throw error;
       } finally {
         clearTimeout(timer);
