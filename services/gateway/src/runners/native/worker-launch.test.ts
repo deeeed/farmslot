@@ -142,6 +142,38 @@ for (const role of ['review', 'primary', 'review-fix'] as const) {
   });
 }
 
+for (const [runner, model, effort, executable] of [
+  ['grok', 'grok-4.7', 'medium', '/usr/local/bin/grok'],
+  ['cursor', 'composer-2.5', undefined, '/usr/local/bin/cursor-agent'],
+  ['claude', 'opus', undefined, '/usr/local/bin/claude'],
+  ['codex', 'gpt-6.1-sol', undefined, '/usr/local/bin/codex'],
+] as const) {
+  test(`a native ${runner} worker launches through the runner's native adapter`, async () => {
+    const prepare = (vars: ReturnType<typeof makeVars>) =>
+      prepareNativeWorkerLaunch({
+        vars,
+        project: {},
+        runner,
+        model,
+        effort,
+        role: 'primary',
+        safetyTier: 'sandboxed',
+        taskDir: 'tasks/proof',
+        leaseId: 'proof-lease',
+        sessionId: 'proof-session',
+        prepareAccount: false,
+      });
+    const configured = (await prepare(makeVars())).launch;
+    assert.equal(configured.executable, executable);
+    if (effort) assert.equal(configured.effort, effort);
+    // With no configured path the host starts the adapter's own executable, as for chat.
+    const unconfigured = (
+      await prepare(makeVars({ grokPath: '', cursorPath: '', claudePath: ' ', codexPath: '' }))
+    ).launch;
+    assert.equal(unconfigured.executable, undefined);
+  });
+}
+
 test('review launch identity ignores unrelated pool selections and keeps explicit project settings', async () => {
   const prepare = (
     version: string,
@@ -195,4 +227,22 @@ test('legacy review launches retain their pool environment without a captured de
     prepareAccount: false,
   });
   assert.equal(launch.environment.set.PROVIDER_ROOT, '/providers/pinned');
+});
+
+test('a bound worker launch resolves RECIPE_LIBRARY_PATH to its pinned libraries', async () => {
+  const pin = '/home/.farmslot/task-pins/ba9f77/inputs/39/recipe-perps';
+  const { launch } = await prepareNativeWorkerLaunch({
+    vars: makeVars(),
+    project: { command_env: { set: { RECIPE_LIBRARY_PATH: 'perps=/dev/recipe-perps:/plain' } } },
+    runner: 'claude',
+    model: 'opus',
+    role: 'primary',
+    safetyTier: 'sandboxed',
+    taskDir: 'tasks/proof',
+    taskLibraries: new Map([['perps', pin]]),
+    leaseId: 'proof-lease',
+    sessionId: 'proof-session',
+    prepareAccount: false,
+  });
+  assert.equal(launch.environment.set.RECIPE_LIBRARY_PATH, `perps=${pin}:/plain`);
 });

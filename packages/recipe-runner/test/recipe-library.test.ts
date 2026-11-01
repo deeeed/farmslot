@@ -15,6 +15,7 @@ import {
   logRecipeLibraryResolution,
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
+  rebindRecipeLibraryPath,
   resolveRecipeLibrarySources,
 } from '../src/core/library.js';
 import {
@@ -97,6 +98,17 @@ async function createLibrary(
     await writeJsonFile(target, document);
   }
 }
+
+test('rebinds pinned library names the way the parser reads them and keeps other entries', () => {
+  const pins = new Map([['perps', '/pins/p1/perps']]);
+  assert.equal(
+    rebindRecipeLibraryPath(' perps=/dev/perps:shared=/dev/shared:/plain:=/odd', pins),
+    'perps=/pins/p1/perps:shared=/dev/shared:/plain:=/odd',
+  );
+  assert.deepEqual(parseRecipeLibraryPath(rebindRecipeLibraryPath('perps=/dev/perps', pins)), [
+    { name: 'perps', root: '/pins/p1/perps' },
+  ]);
+});
 
 test('parses ordered library sources and resolves the personal default', async () => {
   assert.deepEqual(parseRecipeLibraryPath('team=/tmp/team:/tmp/personal'), [

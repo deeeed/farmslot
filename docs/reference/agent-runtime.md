@@ -244,6 +244,13 @@ The builder preserves additive metadata under `extra` while protecting the requi
 
 The previous script paths in `@farmslot/skills` and `scripts/quality/` remain compatibility shims for one migration window. New templates should point to `packages/agent-runtime/scripts/*` in the Farmslot monorepo or use `farmslot-agent` when installed as a package.
 
+## Native worker launch
+
+A native worker, dispatched or static-review, starts through its runner's native adapter, as a standalone session does (ADR-057 Amendment 10).
+
+- The gateway's launch names an executable only when the machine's pool configures one for that runner. Otherwise the host uses the adapter's own.
+- A native run for a runner without a native adapter is refused before its slot is claimed or prepared.
+
 ## Managed native reviewer approval policy
 
 The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. Reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.

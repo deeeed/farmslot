@@ -1,3 +1,4 @@
+import { rebindRecipeLibraryPath } from '@farmslot/recipe-runner';
 import { withSourceEnvironment } from '@farmslot/slot-config';
 
 import { getNode } from '../fleet/machine-registry.js';
@@ -15,6 +16,8 @@ export interface ProjectCommandEnvOptions {
   expandDomainValue?: (value: string) => string;
   /** Frozen launch bindings replace project values before placeholder validation. */
   overrides?: Record<string, string>;
+  /** Libraries a bound task pinned, by name: its RECIPE_LIBRARY_PATH entries resolve to them. */
+  taskLibraries?: ReadonlyMap<string, string>;
 }
 
 function shellQuote(value: string): string {
@@ -29,10 +32,17 @@ export function resolveProjectCommandEnv(
   set: Record<string, string>;
 } {
   const raw = projectJson.command_env;
-  const finish = (unset: string[], set: Record<string, string>) => ({
-    unset: unset.filter((name) => !Object.hasOwn(options.overrides ?? {}, name)),
-    set: { ...set, ...options.overrides },
-  });
+  const finish = (unset: string[], set: Record<string, string>) => {
+    const libraries = set.RECIPE_LIBRARY_PATH;
+    const pinned: Record<string, string> =
+      libraries !== undefined && options.taskLibraries?.size
+        ? { RECIPE_LIBRARY_PATH: rebindRecipeLibraryPath(libraries, options.taskLibraries) }
+        : {};
+    return {
+      unset: unset.filter((name) => !Object.hasOwn(options.overrides ?? {}, name)),
+      set: { ...set, ...pinned, ...options.overrides },
+    };
+  };
   if (!raw || typeof raw !== 'object') return finish([], {});
   const rawUnset = Array.isArray(raw.unset) ? raw.unset : [];
   const unset = rawUnset.map((entry) => String(entry).trim()).filter((entry) => entry.length > 0);
