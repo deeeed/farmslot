@@ -157,12 +157,15 @@ export class JsonLineProcess {
     };
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', (chunk: string) => {
-      buffered += chunk;
-      for (let end = buffered.indexOf('\n'); end >= 0; end = buffered.indexOf('\n')) {
-        const line = buffered.slice(0, end);
-        buffered = buffered.slice(end + 1);
+      // Search only the new chunk: rescanning the whole buffer is quadratic in record size.
+      let start = 0;
+      for (let end = chunk.indexOf('\n'); end >= 0; end = chunk.indexOf('\n', start)) {
+        const line = buffered + chunk.slice(start, end);
+        buffered = '';
+        start = end + 1;
         receive(line.endsWith('\r') ? line.slice(0, -1) : line);
       }
+      buffered += chunk.slice(start);
     });
     // A final record without a trailing newline still counts, as it did with readline.
     this.child.stdout.on('end', () => {
