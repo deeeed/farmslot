@@ -10,16 +10,13 @@
 // Run: yarn tsx scripts/runner-validation/gateway/linked-runner-pane.mts [evidence-dir]
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { once } from 'node:events';
-import { closeSync, openSync } from 'node:fs';
+import { execFileSync, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
+import { freePort, poll, startWorkspaceProcess, stopProcess } from '../lib/isolated-stack.mjs';
 import {
   GatewayClient,
   GatewayConnectionError,
@@ -47,48 +44,6 @@ async function json(file: string, value: unknown) {
 
 function tmux(...args: string[]) {
   return execFileSync('tmux', args, { encoding: 'utf8' }).trim();
-}
-
-async function freePort() {
-  const probe = createServer().listen(0, '127.0.0.1');
-  await once(probe, 'listening');
-  const { port } = probe.address() as { port: number };
-  await new Promise<void>((resolve, reject) =>
-    probe.close((error) => (error ? reject(error) : resolve())),
-  );
-  return port;
-}
-
-function startWorkspaceProcess(workspace: string, log: string, env: NodeJS.ProcessEnv) {
-  const fd = openSync(path.join(evidence, log), 'w', 0o600);
-  const child = spawn('yarn', ['workspace', workspace, 'start'], {
-    cwd: root,
-    detached: true,
-    stdio: ['ignore', fd, fd],
-    env: { ...process.env, ...env },
-  });
-  closeSync(fd);
-  return child;
-}
-
-async function stopProcess(child: ChildProcess | undefined) {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
-  const stopped = once(child, 'exit');
-  process.kill(-child.pid, 'SIGTERM');
-  if (!(await Promise.race([stopped.then(() => true), delay(5000).then(() => false)]))) {
-    process.kill(-child.pid, 'SIGKILL');
-    await stopped;
-  }
-}
-
-async function poll<T>(description: string, read: () => Promise<T | undefined>, timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await read();
-    if (value !== undefined) return value;
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${description}`);
-    await delay(500);
-  }
 }
 
 // The fixture root and slot checkout borrow this checkout's code, like the other isolated e2e runs.
@@ -149,19 +104,24 @@ await json(path.join(fixture, '.farm-status.json'), {
 
 const port = await freePort();
 const token = testGatewayIdentity(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`);
-const gateway = startWorkspaceProcess('@farmslot/gateway', 'gateway.log', {
-  FARMSLOT_ROOT: fixture,
-  FARMSLOT_HOME: path.join(fixture, 'home'),
-  FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
-  FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
-  FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
-  FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
-  GATEWAY_HOST: '127.0.0.1',
-  GATEWAY_PORT: String(port),
-  FARMSLOT_GATEWAY_PROFILE: 'proof',
-  FARMSLOT_DISABLE_ORCHESTRATION: '1',
-  FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
-});
+const stack = (env: NodeJS.ProcessEnv) => ({ root, evidence, env: { ...process.env, ...env } });
+const gateway = startWorkspaceProcess(
+  stack({
+    FARMSLOT_ROOT: fixture,
+    FARMSLOT_HOME: path.join(fixture, 'home'),
+    FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
+    FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
+    FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
+    FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
+    GATEWAY_HOST: '127.0.0.1',
+    GATEWAY_PORT: String(port),
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
+    FARMSLOT_DISABLE_ORCHESTRATION: '1',
+    FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
+  }),
+  '@farmslot/gateway',
+  'gateway.log',
+);
 let node: ChildProcess | undefined;
 let connection: GatewayConnection | undefined;
 let run: Run | undefined;
@@ -200,14 +160,18 @@ try {
   });
   const nodeRoot = path.join(fixture, 'node');
   await mkdir(nodeRoot, { recursive: true });
-  node = startWorkspaceProcess('@farmslot/node', 'node.log', {
-    FARMSLOT_ROOT: nodeRoot,
-    FARMSLOT_HOME: path.join(nodeRoot, 'home'),
-    FARMSLOT_NODE_TOKEN: credential.secret,
-    GATEWAY_URL: `ws://127.0.0.1:${port}`,
-    MACHINE_NAME: machine,
-    SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen.sock'),
-  });
+  node = startWorkspaceProcess(
+    stack({
+      FARMSLOT_ROOT: nodeRoot,
+      FARMSLOT_HOME: path.join(nodeRoot, 'home'),
+      FARMSLOT_NODE_TOKEN: credential.secret,
+      GATEWAY_URL: `ws://127.0.0.1:${port}`,
+      MACHINE_NAME: machine,
+      SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen.sock'),
+    }),
+    '@farmslot/node',
+    'node.log',
+  );
 
   run = (
     await gw.call<{ run: Run }>('run.create', {

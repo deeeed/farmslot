@@ -11,9 +11,8 @@
 // Run: yarn tsx scripts/runner-validation/gateway/launch-inputs-reload.mts [evidence-dir]
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { once } from 'node:events';
-import { closeSync, existsSync, openSync } from 'node:fs';
+import { execFileSync, spawnSync, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import {
   chmod,
   mkdir,
@@ -24,12 +23,17 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
+import {
+  cleanupOnExit,
+  freePort,
+  poll,
+  startWorkspaceProcess,
+  stopProcess,
+} from '../lib/isolated-stack.mjs';
 import {
   GatewayClient,
   GatewayConnectionError,
@@ -53,6 +57,32 @@ const rewrote = path.join(fixture, 'pool-rewritten');
 const baseEnv: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: tmuxDir };
 delete baseEnv.TMUX;
 delete baseEnv.TMUX_PANE;
+const stack = (env: NodeJS.ProcessEnv) => ({ root, evidence, env: { ...baseEnv, ...env } });
+// What the worker's shell saw for the rewritten value: the retry must launch on the new inputs.
+const workerPin = path.join(fixture, 'worker-pin');
+let gateway: ChildProcess | undefined;
+let node: ChildProcess | undefined;
+let connection: GatewayConnection | undefined;
+let run: Run | undefined;
+const cleanupErrors: unknown[] = [];
+// Every owned resource is attempted, on the normal path and when the recipe is cancelled.
+const cleanup = cleanupOnExit(async () => {
+  const attempt = (step: () => Promise<unknown>) =>
+    step().catch((error: unknown) => cleanupErrors.push(error));
+  if (connection && run && !['done', 'failed', 'cancelled'].includes(run.status)) {
+    const { id } = run;
+    await attempt(() =>
+      connection!.call('run.cancel', { runId: id, reason: 'launch inputs reload fixture cleanup' }),
+    );
+  }
+  connection?.close();
+  await attempt(() => stopProcess(node));
+  await attempt(() => stopProcess(gateway));
+  // The proof's own tmux server under its private TMUX_TMPDIR; no other server is touched.
+  spawnSync('tmux', ['kill-server'], { stdio: 'ignore', env: baseEnv });
+  await attempt(() => rm(fixture, { recursive: true, force: true }));
+  await attempt(() => rm(tmuxDir, { recursive: true, force: true }));
+});
 
 async function json(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
@@ -60,48 +90,6 @@ async function json(file: string, value: unknown) {
 }
 const tmux = (...args: string[]) =>
   execFileSync('tmux', args, { encoding: 'utf8', env: baseEnv }).trim();
-
-async function freePort() {
-  const probe = createServer().listen(0, '127.0.0.1');
-  await once(probe, 'listening');
-  const { port } = probe.address() as { port: number };
-  await new Promise<void>((resolve, reject) =>
-    probe.close((error) => (error ? reject(error) : resolve())),
-  );
-  return port;
-}
-
-function startWorkspaceProcess(workspace: string, log: string, env: NodeJS.ProcessEnv) {
-  const fd = openSync(path.join(evidence, log), 'w', 0o600);
-  const child = spawn('yarn', ['workspace', workspace, 'start'], {
-    cwd: root,
-    detached: true,
-    stdio: ['ignore', fd, fd],
-    env: { ...baseEnv, ...env },
-  });
-  closeSync(fd);
-  return child;
-}
-
-async function stopProcess(child: ChildProcess | undefined) {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
-  const stopped = once(child, 'exit');
-  process.kill(-child.pid, 'SIGTERM');
-  if (!(await Promise.race([stopped.then(() => true), delay(5000).then(() => false)]))) {
-    process.kill(-child.pid, 'SIGKILL');
-    await stopped;
-  }
-}
-
-async function poll<T>(description: string, read: () => Promise<T | undefined>, timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await read();
-    if (value !== undefined) return value;
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${description}`);
-    await delay(500);
-  }
-}
 
 execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
 execFileSync('git', ['clone', '--shared', '--no-checkout', root, repo], { stdio: 'pipe' });
@@ -132,7 +120,14 @@ await json(path.join(project, 'project.json'), {
   paths: { runtime_dir: '.agent', artifact_dir: '.task' },
   execution_templates: { sources: [] },
   // Keeps the worker alive until the run is read at MONITOR; the run is cancelled afterwards.
-  scripted: { commands: { hold: { command: 'sleep 300', timeout_ms: 330_000 } } },
+  scripted: {
+    commands: {
+      hold: {
+        command: `printf %s "$LAUNCH_RELOAD_PIN" > '${workerPin}' && sleep 300`,
+        timeout_ms: 330_000,
+      },
+    },
+  },
   monitoring: { poll_interval_min: 0.02, total_timeout_min: 10 },
 });
 // The fixture `node` the slot's shell finds first. The launch preflight's code probe is the only
@@ -185,22 +180,23 @@ await json(path.join(fixture, '.farm-status.json'), {
 
 const port = await freePort();
 const token = testGatewayIdentity(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`);
-const gateway = startWorkspaceProcess('@farmslot/gateway', 'gateway.log', {
-  FARMSLOT_ROOT: fixture,
-  FARMSLOT_HOME: path.join(fixture, 'home'),
-  FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
-  FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
-  FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
-  FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
-  GATEWAY_HOST: '127.0.0.1',
-  GATEWAY_PORT: String(port),
-  FARMSLOT_GATEWAY_PROFILE: 'proof',
-  FARMSLOT_DISABLE_ORCHESTRATION: '1',
-  FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
-});
-let node: ChildProcess | undefined;
-let connection: GatewayConnection | undefined;
-let run: Run | undefined;
+gateway = startWorkspaceProcess(
+  stack({
+    FARMSLOT_ROOT: fixture,
+    FARMSLOT_HOME: path.join(fixture, 'home'),
+    FARMSLOT_PROJECTS_DIR: path.join(fixture, 'projects'),
+    FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
+    FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
+    FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
+    GATEWAY_HOST: '127.0.0.1',
+    GATEWAY_PORT: String(port),
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
+    FARMSLOT_DISABLE_ORCHESTRATION: '1',
+    FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
+  }),
+  '@farmslot/gateway',
+  'gateway.log',
+);
 let failure: unknown;
 let result: Record<string, unknown> | undefined;
 try {
@@ -213,7 +209,7 @@ try {
   connection = await poll(
     'the isolated gateway',
     async () => {
-      if (gateway.exitCode !== null) throw new Error('Isolated gateway exited before readiness');
+      if (gateway?.exitCode !== null) throw new Error('Isolated gateway exited before readiness');
       try {
         return await client.connect();
       } catch (error) {
@@ -235,14 +231,18 @@ try {
   });
   const nodeRoot = path.join(fixture, 'node');
   await mkdir(nodeRoot, { recursive: true });
-  node = startWorkspaceProcess('@farmslot/node', 'node.log', {
-    FARMSLOT_ROOT: nodeRoot,
-    FARMSLOT_HOME: path.join(nodeRoot, 'home'),
-    FARMSLOT_NODE_TOKEN: credential.secret,
-    GATEWAY_URL: `ws://127.0.0.1:${port}`,
-    MACHINE_NAME: machine,
-    SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen.sock'),
-  });
+  node = startWorkspaceProcess(
+    stack({
+      FARMSLOT_ROOT: nodeRoot,
+      FARMSLOT_HOME: path.join(nodeRoot, 'home'),
+      FARMSLOT_NODE_TOKEN: credential.secret,
+      GATEWAY_URL: `ws://127.0.0.1:${port}`,
+      MACHINE_NAME: machine,
+      SCREEN_CONTROL_SOCKET: path.join(fixture, 'screen.sock'),
+    }),
+    '@farmslot/node',
+    'node.log',
+  );
 
   run = (
     await gw.call<{ run: Run }>('run.create', {
@@ -291,25 +291,19 @@ try {
   );
   assert.equal(dispatch.status, 'done');
   assert.ok(subSteps.includes('preflight-retry'), `the retry is recorded: ${subSteps.join(', ')}`);
-  result = { pass: true, evidence, runId, dispatchSubSteps: subSteps };
+  const seen = await poll(
+    'the worker to record the value it launched with',
+    async () => (existsSync(workerPin) ? await readFile(workerPin, 'utf8') : undefined),
+    30_000,
+  );
+  assert.equal(seen, 'after', 'the retried launch ran on the rewritten inputs');
+  result = { pass: true, evidence, runId, dispatchSubSteps: subSteps, workerSawPin: seen };
   await json(path.join(evidence, 'result.json'), result);
 } catch (error) {
   failure = error;
   await json(path.join(evidence, 'failure.json'), { error: String(error), fixture });
 } finally {
-  const cleanupErrors: unknown[] = [];
-  if (connection && run && !['done', 'failed', 'cancelled'].includes(run.status)) {
-    await connection
-      .call('run.cancel', { runId: run.id, reason: 'launch inputs reload fixture cleanup' })
-      .catch((error: unknown) => cleanupErrors.push(error));
-  }
-  connection?.close();
-  await stopProcess(node);
-  await stopProcess(gateway);
-  // The proof's own tmux server under its private TMUX_TMPDIR; no other server is touched.
-  spawnSync('tmux', ['kill-server'], { stdio: 'ignore', env: baseEnv });
-  await rm(fixture, { recursive: true, force: true });
-  await rm(tmuxDir, { recursive: true, force: true });
+  await cleanup();
   if (cleanupErrors.length > 0)
     failure = new AggregateError(
       [...(failure ? [failure] : []), ...cleanupErrors],

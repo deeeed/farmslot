@@ -89,12 +89,17 @@ mock.module('./worker-launch.js', {
 });
 // A pool or project rewrite during preflight: the launch's later admission checks refuse.
 let inputsChanged = false;
+/** The rewrite lands while the preflight probes themselves run. */
+let probesSeeChange = false;
 class WorkerLaunchInputsChangedError extends Error {}
 mock.module('../../run-engine/worker-launch-preflight.js', {
   namedExports: {
     WorkerLaunchInputsChangedError,
-    admitWorkerLaunch: async () => async () => {
-      if (inputsChanged) throw new WorkerLaunchInputsChangedError('Worker launch inputs changed');
+    admitWorkerLaunch: async () => {
+      if (probesSeeChange) throw new WorkerLaunchInputsChangedError('Worker launch inputs changed');
+      return async () => {
+        if (inputsChanged) throw new WorkerLaunchInputsChangedError('Worker launch inputs changed');
+      };
     },
   },
 });
@@ -156,6 +161,7 @@ beforeEach(() => {
   listUnavailable = false;
   afterList = undefined;
   inputsChanged = false;
+  probesSeeChange = false;
   calls.length = 0;
   launchInputs.length = 0;
 });
@@ -252,6 +258,26 @@ test('a rewrite during LIST retires the unsent reservation, so the retry ENSUREs
     NATIVE_WORKER_ENSURE,
   ]);
   assert.notEqual(reservation()?.sessionId, 'pending-session');
+});
+test('a rewrite during the preflight probes retires the reservation this dispatch created', async () => {
+  run.agentContexts![0].nativeSession = undefined;
+  probesSeeChange = true;
+  await assert.rejects(dispatch(), WorkerLaunchInputsChangedError);
+  assert.deepEqual(
+    calls,
+    [NATIVE_WORKER_STATE],
+    'nothing reached the host but its state directory',
+  );
+  assert.equal(reservation(), undefined);
+  assert.equal(run.agentContexts![0].nativeSessionHistory?.length, 1, 'kept visible as history');
+});
+test('a superseded attempt never retires the reservation its replay may be reusing', async () => {
+  afterList = () => {
+    inputsChanged = true;
+    run.engineState = { ...run.engineState, generation: (run.engineState?.generation ?? 0) + 1 };
+  };
+  await assert.rejects(dispatch(), /generation changed/);
+  assert.equal(reservation()?.sessionId, 'pending-session');
 });
 test('a rewrite while the host may hold the reservation keeps it for reconciliation', async () => {
   listUnavailable = true;

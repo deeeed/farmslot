@@ -557,6 +557,8 @@ export async function dispatchNativeWorker(input: {
       { id: contextId },
       {
         resolvePatch: (latest) => {
+          // A replay that superseded this attempt may already be reusing the reservation.
+          checkRun();
           const live = latest?.nativeSession;
           if (
             !live ||
@@ -565,7 +567,13 @@ export async function dispatchNativeWorker(input: {
             live.generation
           )
             return null;
-          return { nativeSession: undefined, status: 'idle', target: null };
+          // History keeps the retired session visible to the leftovers probe.
+          return {
+            nativeSession: undefined,
+            nativeSessionHistory: [...(latest.nativeSessionHistory ?? []), live],
+            status: 'idle',
+            target: null,
+          };
         },
       },
     );
@@ -681,14 +689,20 @@ export async function dispatchNativeWorker(input: {
   });
   if (input.role !== 'review') {
     const { admitWorkerLaunch } = await import('../../run-engine/worker-launch-preflight.js');
-    assertPreflightCurrent = await admitWorkerLaunch({
-      runId: input.runId,
-      vars,
-      projectVars: input.projectVars,
-      environment: prepared.launch.environment,
-      record: (name, detail, outcome) => input.emit?.('dispatch.step', { name, detail, outcome }),
-      assertCurrent: input.assertCurrent,
-    });
+    try {
+      assertPreflightCurrent = await admitWorkerLaunch({
+        runId: input.runId,
+        vars,
+        projectVars: input.projectVars,
+        environment: prepared.launch.environment,
+        record: (name, detail, outcome) => input.emit?.('dispatch.step', { name, detail, outcome }),
+        assertCurrent: input.assertCurrent,
+      });
+    } catch (error) {
+      // The probes' own window: a rewrite there refuses the reservation this call created.
+      await refuseUnsentReservation(error);
+      throw error;
+    }
   }
   const digest = nativeWorkerLaunchDigest(prepared.launch);
   if (binding.launchDigest && binding.launchDigest !== digest)
