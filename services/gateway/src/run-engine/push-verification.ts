@@ -1,3 +1,5 @@
+import timers from 'node:timers/promises';
+
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 // run-engine/push-verification.ts — verify a worker's terminal "complete"
 // signal is backed by a published branch before the run advances.
@@ -15,7 +17,7 @@ import { type ExecResult, isInteractiveDevRun, type Run } from '@farmslot/protoc
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { assertRunCommitSignatures } from '../run-completion/commit-signatures.js';
 import { normalizeRunner, sendRunnerInstructionSafely } from '../runners/registry.js';
@@ -33,6 +35,8 @@ const WORKER_OWNED_PUSH_FLOWS = new Set(['pr-complete', 'update-branch']);
 const WORKER_OWNED_COMMIT_FLOWS = new Set(['dev']);
 const PUSH_RECHECK_INTERVAL_MS = 20_000;
 const PUSH_NUDGE_WAIT_MS = 5 * 60_000;
+// First wait before re-running an inspection that timed out; doubles per retry.
+const INSPECTION_RETRY_BACKOFF_MS = 5_000;
 
 export interface PushVerificationResult {
   verified: boolean;
@@ -47,141 +51,142 @@ export interface PushVerificationResult {
 
 export interface WorktreePublishState {
   /**
-   * Total dirty paths (tracked content changes + untracked). Kept for
-   * diagnostics and push-mode gates that require a fully clean tree.
+   * Dirty paths: tracked content changes, plus untracked paths in push mode,
+   * whose gate requires a fully clean tree.
    */
   dirtyFiles: number;
   /** Modified/deleted/staged tracked paths (content vs HEAD). */
   trackedDirtyFiles: number;
   /**
-   * Untracked (non-ignored) paths. Often farm leftovers (e.g. AgenticService
-   * scaffold) rather than task work the worker just committed. Commit-mode
-   * completion does not treat these as blocking — the nudge also tells the
-   * worker to leave unrelated files alone, so counting them would soft-lock.
+   * Untracked (non-ignored) paths, walked in push mode only. Often farm
+   * leftovers (e.g. AgenticService scaffold) rather than task work the worker
+   * just committed. Commit-mode completion does not treat these as blocking —
+   * the nudge also tells the worker to leave unrelated files alone, so counting
+   * them would soft-lock — so it does not walk them at all.
    */
-  untrackedFiles: number;
+  untrackedFiles?: number;
   unpushedCommits: number;
 }
 
 type GitExecutor = (command: string) => Promise<ExecResult>;
 
-function assertGitProbe(result: ExecResult, probe: string): void {
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `push-verification ${probe} failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
-    );
-  }
-}
-
-function refExists(result: ExecResult, probe: string): boolean {
-  if (result.exitCode === 0) return true;
-  if (result.exitCode === 1) return false;
-  assertGitProbe(result, probe);
-  return false;
-}
-
-function nulPaths(stdout: string): string[] {
-  return stdout.split('\0').filter(Boolean);
-}
-
-async function countCommitsAhead(
-  execute: GitExecutor,
-  baseRef: string,
-  branchRef: string,
-): Promise<number> {
-  const result = await execute(
-    `git rev-list --count ${shellQuote(baseRef)}..${shellQuote(branchRef)}`,
-  );
-  assertGitProbe(result, `rev-list ${baseRef}..${branchRef}`);
-  return parseInt(result.stdout.trim(), 10) || 0;
+/**
+ * The whole inspection as one shell script (bash, or zsh on macOS nodes).
+ * It prints NUL-terminated records: the tracked-content and staged path lists,
+ * then the untracked list in push mode, each closed by an empty record (no path
+ * is empty); then the comparison: `remote` or `base` with a commit count, or
+ * `none`. A failing probe prints its name as the last record and exits with its
+ * status.
+ */
+function inspectionScript(branch: string, mode: 'push' | 'commit'): string {
+  const remoteRef = `origin/${branch}`;
+  return [
+    `b=${shellQuote(`refs/heads/${branch}`)}`,
+    `fail() { printf '\\0%s\\0' "$2"; exit "$1"; }`,
+    // rev-parse --verify --quiet exits 1 for a missing ref; above 1 is a git error.
+    `exists() { git rev-parse --verify --quiet "$1" >/dev/null; rc=$?; [ "$rc" -le 1 ] || fail "$rc" "$2"; return "$rc"; }`,
+    `ahead() { n=$(git rev-list --count "$2..$b") || fail $? "rev-list $2..$b"; printf '%s\\0%s\\0' "$1" "$n"; exit 0; }`,
+    // `git status` can report a tracked path as modified from stale stat data
+    // even when its content is unchanged, so diff tracked content against HEAD.
+    `if exists HEAD 'HEAD probe'; then`,
+    `  ${GIT_DIFF_COMMAND} --name-only -z HEAD -- || fail $? 'tracked-content diff'; printf '\\0'`,
+    `  ${GIT_DIFF_COMMAND} --cached --name-only -z HEAD -- || fail $? 'staged-content diff'; printf '\\0'`,
+    `else`,
+    `  git ls-files --cached -z || fail $? 'tracked-content diff'; printf '\\0\\0'`,
+    `fi`,
+    ...(mode === 'push'
+      ? [
+          `git ls-files --others --exclude-standard -z || fail $? 'untracked-files probe'; printf '\\0'`,
+        ]
+      : []),
+    `exists ${shellQuote(remoteRef)} ${shellQuote(`rev-parse ${remoteRef}`)} && ahead remote ${shellQuote(remoteRef)}`,
+    // A new local branch has no origin/<branch> yet. Compare it with its
+    // configured upstream when present, otherwise origin/HEAD.
+    `u=$(git for-each-ref --format='%(upstream:short)' "$b") || fail $? ${shellQuote(`upstream probe for ${branch}`)}`,
+    `[ -n "$u" ] && exists "$u" "rev-parse $u" && ahead base "$u"`,
+    `o=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD); rc=$?`,
+    `[ "$rc" -le 1 ] || fail "$rc" 'origin/HEAD probe'`,
+    `[ -n "$o" ] && ahead base "$o"`,
+    `printf 'none\\0'`,
+  ].join('\n');
 }
 
 /**
- * Inspect content dirtiness and unpublished commits using an injectable git
- * executor so the branch/ref fallback behavior is deterministic in tests.
+ * Inspect content dirtiness and unpublished commits in one slot exec, using an
+ * injectable executor so tests can run the script against real repositories.
+ * Each probe used to be its own remote exec: six to nine per inspection.
  */
 export async function inspectWorktreePublishState(
   branch: string,
+  mode: 'push' | 'commit',
   execute: GitExecutor,
 ): Promise<WorktreePublishState> {
-  // `git status` can report a tracked path as modified from stale stat data
-  // even when its content is unchanged. Diff tracked content against HEAD and
-  // collect untracked files separately; NUL delimiters preserve unusual paths.
-  const headProbe = await execute('git rev-parse --verify --quiet HEAD');
-  const hasHead = refExists(headProbe, 'HEAD probe');
-  const worktree = await execute(
-    hasHead ? `${GIT_DIFF_COMMAND} --name-only -z HEAD --` : 'git ls-files --cached -z',
-  );
-  assertGitProbe(worktree, 'tracked-content diff');
-  const staged = hasHead
-    ? await execute(`${GIT_DIFF_COMMAND} --cached --name-only -z HEAD --`)
-    : { stdout: '', stderr: '', exitCode: 0 };
-  assertGitProbe(staged, 'staged-content diff');
-  const untracked = await execute('git ls-files --others --exclude-standard -z');
-  assertGitProbe(untracked, 'untracked-files probe');
-  const trackedDirtyFiles = new Set([...nulPaths(worktree.stdout), ...nulPaths(staged.stdout)])
-    .size;
-  const untrackedFiles = nulPaths(untracked.stdout).length;
-  const dirtyFiles = new Set([
-    ...nulPaths(worktree.stdout),
-    ...nulPaths(staged.stdout),
-    ...nulPaths(untracked.stdout),
-  ]).size;
-  const baseState = { dirtyFiles, trackedDirtyFiles, untrackedFiles };
-
-  const branchRef = `refs/heads/${branch}`;
-  const remoteRef = `origin/${branch}`;
-  const remoteProbe = await execute(`git rev-parse --verify --quiet ${shellQuote(remoteRef)}`);
-  if (refExists(remoteProbe, `rev-parse ${remoteRef}`)) {
-    return {
-      ...baseState,
-      unpushedCommits: await countCommitsAhead(execute, remoteRef, branchRef),
-    };
-  }
-
-  // A new local branch has no origin/<branch> yet. Compare it with its
-  // configured upstream when present, otherwise origin/HEAD. Counting the
-  // entire local branch history here produced absurd values (for example
-  // 31,508 "unpushed commits") and obscured the actual one-commit state.
-  const upstreamResult = await execute(
-    `git for-each-ref --format=${shellQuote('%(upstream:short)')} ${shellQuote(branchRef)}`,
-  );
-  assertGitProbe(upstreamResult, `upstream probe for ${branch}`);
-  const upstreamRef = upstreamResult.stdout.trim();
-  if (upstreamRef) {
-    const upstreamProbe = await execute(
-      `git rev-parse --verify --quiet ${shellQuote(upstreamRef)}`,
+  const result = await execute(inspectionScript(branch, mode));
+  const records = result.stdout.split('\0');
+  if (result.exitCode !== 0) {
+    // An exec that timed out was killed before any probe could name itself.
+    const probe =
+      (result.exitCode !== EXEC_TIMEOUT_EXIT_CODE && records.at(-2)) || 'worktree inspection';
+    throw new Error(
+      `push-verification ${probe} failed (exit ${result.exitCode}): ${result.stderr}`,
     );
-    if (refExists(upstreamProbe, `rev-parse ${upstreamRef}`)) {
-      return {
-        ...baseState,
-        unpushedCommits: Math.max(1, await countCommitsAhead(execute, upstreamRef, branchRef)),
-      };
-    }
   }
-
-  const originHead = await execute('git symbolic-ref --quiet --short refs/remotes/origin/HEAD');
-  const originHeadRef = originHead.stdout.trim();
-  if (refExists(originHead, 'origin/HEAD probe') && originHeadRef) {
-    return {
-      ...baseState,
-      unpushedCommits: Math.max(1, await countCommitsAhead(execute, originHeadRef, branchRef)),
-    };
-  }
-
-  // With neither a feature remote nor a trustworthy base ref, publication
-  // cannot be proven. Report the safe minimum instead of the whole repository
-  // history and keep the gate closed.
-  return { ...baseState, unpushedCommits: 1 };
+  let at = 0;
+  const paths = () => {
+    const start = at;
+    while (records[at]) at++;
+    return records.slice(start, at++);
+  };
+  const tracked = new Set([...paths(), ...paths()]);
+  const untracked = mode === 'push' ? paths() : undefined;
+  const [comparison, ahead] = records.slice(at);
+  const commits = parseInt(ahead ?? '', 10) || 0;
+  return {
+    dirtyFiles: new Set([...tracked, ...(untracked ?? [])]).size,
+    trackedDirtyFiles: tracked.size,
+    ...(untracked ? { untrackedFiles: untracked.length } : {}),
+    // Against an upstream or origin/HEAD, counting the entire local branch
+    // history produced absurd values (for example 31,508 "unpushed commits")
+    // and obscured the actual one-commit state. With neither a feature remote
+    // nor a trustworthy base ref, publication cannot be proven: report the safe
+    // minimum and keep the gate closed.
+    unpushedCommits: comparison === 'remote' ? commits : Math.max(1, commits),
+  };
 }
 
-async function inspectWorktree(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+/**
+ * Inspect the worktree, retrying an inspection that only ran out of time.
+ * Run e4d0cc24 finished its task and then failed here: its slot host was
+ * briefly overloaded and the untracked-files probe hit the 30 s exec timeout;
+ * the same probe answered in under a second later. A git error still throws at
+ * once. A timeout backs off and retries until `deadline`, then throws. Returns
+ * 'aborted' once `signal` fires, so the cancel path keeps the run status.
+ */
+export async function inspectWorktreeWithRetry(
   branch: string,
-): Promise<WorktreePublishState> {
-  return inspectWorktreePublishState(branch, (command) =>
-    execOnSlot(vars, command, { timeout: 30_000 }),
-  );
+  mode: 'push' | 'commit',
+  execute: GitExecutor,
+  deadline: number,
+  signal?: AbortSignal,
+): Promise<WorktreePublishState | 'aborted'> {
+  let exitCode = 0;
+  const probe: GitExecutor = async (command) => {
+    const result = await execute(command);
+    exitCode = result.exitCode;
+    return result;
+  };
+  for (let backoff = INSPECTION_RETRY_BACKOFF_MS; ; backoff *= 2) {
+    try {
+      return await inspectWorktreePublishState(branch, mode, probe);
+    } catch (err) {
+      // Never let a probe error racing a cancellation escape as a step failure
+      // that overwrites the cancel status.
+      if (signal?.aborted) return 'aborted';
+      if (exitCode !== EXEC_TIMEOUT_EXIT_CODE || Date.now() + backoff >= deadline) throw err;
+    }
+    await timers.setTimeout(backoff, undefined, { signal }).catch(() => undefined);
+    if (signal?.aborted) return 'aborted';
+  }
 }
 
 /**
@@ -204,14 +209,9 @@ export function completionVerificationMode(run: Run): 'push' | 'commit' | 'none'
 function describe(state: WorktreePublishState, mode: 'push' | 'commit' | 'none' = 'push'): string {
   const parts: string[] = [];
   if (mode === 'commit') {
-    // Commit-mode only blocks on tracked dirtiness; still surface untracked for operators.
+    // Commit-mode only blocks on (and only inspects) tracked dirtiness.
     if (state.trackedDirtyFiles > 0) {
       parts.push(`${state.trackedDirtyFiles} uncommitted tracked file(s)`);
-    }
-    if (state.untrackedFiles > 0) {
-      parts.push(
-        `${state.untrackedFiles} untracked leftover file(s) (non-blocking for commit-mode)`,
-      );
     }
   } else if (state.dirtyFiles > 0) {
     parts.push(`${state.dirtyFiles} uncommitted file(s)`);
@@ -224,7 +224,7 @@ function describe(state: WorktreePublishState, mode: 'push' | 'commit' | 'none' 
   return parts.join(' and ') || 'clean';
 }
 
-function stateSatisfiesMode(state: WorktreePublishState, mode: 'push' | 'commit'): boolean {
+export function stateSatisfiesMode(state: WorktreePublishState, mode: 'push' | 'commit'): boolean {
   if (mode === 'commit') {
     // Autonomous dev: worker must commit task work. Publication pushes later.
     // Untracked farm leftovers must not soft-lock after a clean task commit
@@ -257,7 +257,19 @@ export async function verifyWorkerPushedBranch(
     return { verified: true };
   }
   const vars = await loadSlotVars(slotId);
-  let state = await inspectWorktree(vars, branch);
+  const execute: GitExecutor = (command) => execOnSlot(vars, command, { timeout: 30_000, signal });
+  // The worker has finished: a slow first inspection gets the same bounded wait
+  // a publish nudge gets before the run fails on it.
+  let state = await inspectWorktreeWithRetry(
+    branch,
+    mode,
+    execute,
+    Date.now() + PUSH_NUDGE_WAIT_MS,
+    signal,
+  );
+  if (state === 'aborted') {
+    return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
+  }
   if (stateSatisfiesMode(state, mode)) {
     return { verified: true, dirtyFiles: state.dirtyFiles, unpushedCommits: state.unpushedCommits };
   }
@@ -314,19 +326,15 @@ export async function verifyWorkerPushedBranch(
       return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
     }
     await new Promise((resolve) => setTimeout(resolve, PUSH_RECHECK_INTERVAL_MS));
-    // Re-check after the sleep too, and never let a probe error racing a
-    // cancellation escape as a step failure that overwrites the cancel status.
+    // Re-check after the sleep too.
     if (signal?.aborted) {
       return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
     }
-    try {
-      state = await inspectWorktree(vars, branch);
-    } catch (err) {
-      if (signal?.aborted) {
-        return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
-      }
-      throw err;
+    const next = await inspectWorktreeWithRetry(branch, mode, execute, deadline, signal);
+    if (next === 'aborted') {
+      return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
     }
+    state = next;
     if (stateSatisfiesMode(state, mode)) {
       await assertRunCommitSignatures(getRun(runId) ?? run);
       console.log(

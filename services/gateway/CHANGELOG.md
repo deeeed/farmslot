@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Completion push verification inspects the slot worktree in one exec instead of one per git probe (six to nine), and commit mode (autonomous dev) no longer walks untracked files, which cannot block it. An inspection that times out is retried after 5 s, doubling, within the verification's 5-minute wait, then fails with the same error; a git error still fails at once and a cancel still wins. Run e4d0cc24 failed after its worker finished because the untracked-files probe timed out at 30 s on a briefly overloaded slot host; it answered in under a second later.
 - Publication receipts fence their reasons with the shared protocol `markdownFence`; line endings inside a reason are normalised.
 - Run progress ignores an agent context whose native session was released, or closed with no recovery pending: nothing runs there, so it can no longer make an idle worker read unproven. On 22b57685 a blocked reviewer with a closed and released session kept the publication gate at `run-progress-unconfirmed` while the worker sat idle at its prompt.
 - A reviewer's task document states its round ("Review round N of M"), counted the same way as the publication review budget, so project review templates can relax blocking from round 3 as the review convergence rule requires. Before, only an operator-extended round said which attempt it was.

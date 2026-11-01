@@ -1,12 +1,21 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test, { type TestContext } from 'node:test';
 
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import type { ExecResult, Run } from '@farmslot/protocol';
 
 import { runContractSection } from '../tasks/run-contract.js';
 
-import { completionVerificationMode, inspectWorktreePublishState } from './push-verification.js';
+import {
+  completionVerificationMode,
+  inspectWorktreePublishState,
+  inspectWorktreeWithRetry,
+  stateSatisfiesMode,
+} from './push-verification.js';
 
 const shape = (over: Partial<Run>): Run =>
   ({ flowType: 'dev', mode: 'autonomous', ...over }) as Run;
@@ -53,181 +62,281 @@ test('unrelated flows are not gated', () => {
   assert.equal(completionVerificationMode(shape({ flowType: 'review-pr' })), 'none');
 });
 
-const result = (stdout = '', exitCode = 0, stderr = ''): ExecResult => ({
-  stdout,
-  stderr,
-  exitCode,
-});
+const gitEnv = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+  // A directory that is not a repository must not find one above the temp dir.
+  GIT_CEILING_DIRECTORIES: realpathSync(os.tmpdir()),
+};
+// Slot hosts run the inspection through bash locally and zsh on macOS nodes.
+const SHELLS = [
+  ['bash', '-c'],
+  ['zsh', '-f', '-c'],
+].filter(([shell]) => spawnSync(shell, ['-c', 'true']).status === 0);
 
-function scriptedExecutor(results: ExecResult[]) {
+function shellExecutor(cwd: string, [shell, ...flags] = SHELLS[0]) {
   const commands: string[] = [];
   return {
     commands,
     execute: async (command: string): Promise<ExecResult> => {
       commands.push(command);
-      const next = results.shift();
-      assert.ok(next, `unexpected git command: ${command}`);
-      return next;
+      const { stdout, stderr, status } = spawnSync(shell, [...flags, command], {
+        cwd,
+        env: gitEnv,
+        encoding: 'utf8',
+      });
+      return { stdout, stderr, exitCode: status ?? 1 };
     },
   };
 }
 
-test('worktree inspection counts actual content changes and untracked files NUL-safely', async () => {
-  const script = scriptedExecutor([
-    result(),
-    result('tracked file\0shared path\0'),
-    result('staged file\0shared path\0'),
-    result('new file\0shared path\0'),
-    result('origin/feature\n'),
-    result('0\n'),
-  ]);
+function tempDir(t: TestContext): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'push-verification-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
-  const state = await inspectWorktreePublishState('feature', script.execute);
+function repository(t: TestContext) {
+  const dir = tempDir(t);
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: dir, env: gitEnv, encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'feature');
+  git('config', 'user.name', 'Push verification');
+  git('config', 'user.email', 'push-verification@example.invalid');
+  return {
+    dir,
+    git,
+    write: (file: string, text = file) => writeFileSync(path.join(dir, file), text),
+    commit: (message: string) => {
+      git('commit', '-q', '--allow-empty', '-m', message);
+      return git('rev-parse', 'HEAD');
+    },
+  };
+}
 
-  assert.deepEqual(state, {
-    dirtyFiles: 4,
-    trackedDirtyFiles: 3,
-    untrackedFiles: 2,
-    unpushedCommits: 0,
+for (const shell of SHELLS) {
+  const name = shell[0];
+  const inspect = async (dir: string, mode: 'push' | 'commit') => {
+    const executor = shellExecutor(dir, shell);
+    const state = await inspectWorktreePublishState('feature', mode, executor.execute);
+    // Every probe runs in one slot exec.
+    assert.equal(executor.commands.length, 1);
+    return { state, command: executor.commands[0] };
+  };
+
+  test(`${name}: push-mode inspection counts content changes and untracked files NUL-safely in one exec`, async (t) => {
+    const repo = repository(t);
+    for (const file of ['tracked file', 'staged file', 'shared path']) repo.write(file);
+    repo.git('add', '-A');
+    repo.git('update-ref', 'refs/remotes/origin/feature', repo.commit('feat: base'));
+    repo.write('tracked file', 'changed');
+    repo.write('staged file', 'changed');
+    repo.write('shared path', 'staged');
+    repo.git('add', 'staged file', 'shared path');
+    repo.write('shared path', 'changed again');
+    repo.write('new file');
+    repo.write('odd\nname');
+
+    const { state, command } = await inspect(repo.dir, 'push');
+
+    assert.deepEqual(state, {
+      dirtyFiles: 5,
+      trackedDirtyFiles: 3,
+      untrackedFiles: 2,
+      unpushedCommits: 0,
+    });
+    for (const probe of [
+      `${GIT_DIFF_COMMAND} --name-only -z HEAD --`,
+      `${GIT_DIFF_COMMAND} --cached --name-only -z HEAD --`,
+      'git ls-files --others --exclude-standard -z',
+    ])
+      assert.ok(command.includes(probe), probe);
   });
-  assert.deepEqual(script.commands.slice(0, 4), [
-    'git rev-parse --verify --quiet HEAD',
-    `${GIT_DIFF_COMMAND} --name-only -z HEAD --`,
-    `${GIT_DIFF_COMMAND} --cached --name-only -z HEAD --`,
-    'git ls-files --others --exclude-standard -z',
-  ]);
-});
 
-test('worktree inspection supports a repository with no HEAD commit yet', async () => {
-  const script = scriptedExecutor([
-    result('', 1),
-    result('tracked file\0'),
-    result('untracked file\0'),
-    result('', 1),
-    result(),
-    result('', 1),
-  ]);
+  test(`${name}: push mode still blocks on untracked files`, async (t) => {
+    const repo = repository(t);
+    repo.git('update-ref', 'refs/remotes/origin/feature', repo.commit('feat: task'));
+    repo.write('leftover.ts');
 
-  const state = await inspectWorktreePublishState('feature', script.execute);
+    const { state } = await inspect(repo.dir, 'push');
 
-  assert.deepEqual(state, {
-    dirtyFiles: 2,
-    trackedDirtyFiles: 1,
-    untrackedFiles: 1,
-    unpushedCommits: 1,
+    assert.deepEqual(state, {
+      dirtyFiles: 1,
+      trackedDirtyFiles: 0,
+      untrackedFiles: 1,
+      unpushedCommits: 0,
+    });
+    assert.equal(stateSatisfiesMode(state, 'push'), false);
   });
-  assert.equal(script.commands[1], 'git ls-files --cached -z');
-  assert.ok(!script.commands.some((command) => command.includes(`${GIT_DIFF_COMMAND} --cached`)));
-});
 
-test('worktree inspection compares an existing feature remote with the local branch', async () => {
-  const script = scriptedExecutor([
-    result(),
-    result(),
-    result(),
-    result(),
-    result(),
-    result('2\n'),
-  ]);
+  test(`${name}: commit-mode inspection does not walk untracked leftovers`, async (t) => {
+    // Run add136c6: worker committed task work but AgenticService leftovers stayed
+    // untracked. They cannot block commit mode, so the inspection never lists them.
+    const repo = repository(t);
+    repo.commit('feat: task');
+    mkdirSync(path.join(repo.dir, 'app'));
+    repo.write('app/AgenticService.ts');
+    repo.write('app/AgentStepHud.tsx');
 
-  const state = await inspectWorktreePublishState('feature', script.execute);
+    const { state, command } = await inspect(repo.dir, 'commit');
 
-  assert.deepEqual(state, {
-    dirtyFiles: 0,
-    trackedDirtyFiles: 0,
-    untrackedFiles: 0,
-    unpushedCommits: 2,
+    assert.ok(!command.includes('ls-files --others'));
+    assert.deepEqual(state, { dirtyFiles: 0, trackedDirtyFiles: 0, unpushedCommits: 1 });
+    assert.equal(stateSatisfiesMode(state, 'commit'), true);
   });
-  assert.equal(
-    script.commands.at(-1),
-    "git rev-list --count 'origin/feature'..'refs/heads/feature'",
+
+  test(`${name}: worktree inspection supports a repository with no HEAD commit yet`, async (t) => {
+    const repo = repository(t);
+    repo.write('tracked file');
+    repo.git('add', 'tracked file');
+    repo.write('untracked file');
+
+    const { state } = await inspect(repo.dir, 'push');
+
+    assert.deepEqual(state, {
+      dirtyFiles: 2,
+      trackedDirtyFiles: 1,
+      untrackedFiles: 1,
+      unpushedCommits: 1,
+    });
+  });
+
+  test(`${name}: worktree inspection compares an existing feature remote with the local branch`, async (t) => {
+    const repo = repository(t);
+    repo.git('update-ref', 'refs/remotes/origin/feature', repo.commit('feat: pushed'));
+    repo.commit('feat: one');
+    repo.commit('feat: two');
+
+    const { state } = await inspect(repo.dir, 'push');
+
+    assert.deepEqual(state, {
+      dirtyFiles: 0,
+      trackedDirtyFiles: 0,
+      untrackedFiles: 0,
+      unpushedCommits: 2,
+    });
+  });
+
+  test(`${name}: new branch inspection keeps a missing feature remote blocked at its upstream`, async (t) => {
+    const repo = repository(t);
+    repo.commit('chore: history');
+    repo.git('update-ref', 'refs/remotes/origin/main', repo.commit('chore: main'));
+    repo.git('remote', 'add', 'origin', 'https://example.invalid/repo.git');
+    repo.git('config', 'branch.feature.remote', 'origin');
+    repo.git('config', 'branch.feature.merge', 'refs/heads/main');
+
+    // Level with its upstream is still unpublished, and never the whole history (2).
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 1);
+    repo.commit('feat: one');
+    repo.commit('feat: two');
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 2);
+  });
+
+  test(`${name}: new branch inspection falls back to origin HEAD when it has no upstream`, async (t) => {
+    const repo = repository(t);
+    repo.git('update-ref', 'refs/remotes/origin/main', repo.commit('chore: main'));
+    repo.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    for (const n of [1, 2, 3]) repo.commit(`feat: ${n}`);
+
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 3);
+  });
+
+  test(`${name}: new branch inspection keeps publication blocked when no comparison ref exists`, async (t) => {
+    const repo = repository(t);
+    repo.commit('feat: one');
+    repo.commit('feat: two');
+
+    assert.equal((await inspect(repo.dir, 'push')).state.unpushedCommits, 1);
+  });
+}
+
+const TIMED_OUT: ExecResult = {
+  stdout: '',
+  stderr: '\ncommand timed out after 30000ms',
+  exitCode: 124,
+};
+const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test('an inspection that timed out once is retried and verifies', async (t) => {
+  // Run e4d0cc24: the worker had finished, but its briefly overloaded slot host
+  // timed the untracked probe out at 30 s. It answered in under a second later.
+  const repo = repository(t);
+  repo.commit('feat: task');
+  const slot = shellExecutor(repo.dir);
+  let execs = 0;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  const pending = inspectWorktreeWithRetry(
+    'feature',
+    'commit',
+    async (command) => (++execs === 1 ? TIMED_OUT : slot.execute(command)),
+    Date.now() + 60_000,
   );
+  await settle();
+  t.mock.timers.tick(5_000);
+  const state = await pending;
+
+  assert.ok(state !== 'aborted' && stateSatisfiesMode(state, 'commit'));
+  assert.equal(execs, 2);
 });
 
-test('new branch inspection keeps a missing feature remote blocked at its upstream', async () => {
-  const script = scriptedExecutor([
-    result(),
-    result(),
-    result(),
-    result(),
-    result('', 1),
-    result('origin/main\n'),
-    result(),
-    result('0\n'),
-  ]);
+test('an inspection that keeps timing out fails with the probe message at its deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let execs = 0;
 
-  const state = await inspectWorktreePublishState('feature', script.execute);
+  const rejected = assert.rejects(
+    inspectWorktreeWithRetry(
+      'feature',
+      'commit',
+      async () => {
+        execs++;
+        return TIMED_OUT;
+      },
+      Date.now() + 12_000,
+    ),
+    {
+      message:
+        'push-verification worktree inspection failed (exit 124): \ncommand timed out after 30000ms',
+    },
+  );
+  await settle();
+  // The second attempt cannot wait another 10 s before the deadline.
+  t.mock.timers.tick(5_000);
+  await rejected;
 
-  assert.deepEqual(state, {
-    dirtyFiles: 0,
-    trackedDirtyFiles: 0,
-    untrackedFiles: 0,
-    unpushedCommits: 1,
-  });
-  assert.equal(script.commands.at(-1), "git rev-list --count 'origin/main'..'refs/heads/feature'");
-  assert.ok(!script.commands.includes("git rev-list --count 'refs/heads/feature'"));
+  assert.equal(execs, 2);
 });
 
-test('new branch inspection falls back to origin HEAD when it has no upstream', async () => {
-  const script = scriptedExecutor([
-    result(),
-    result(),
-    result(),
-    result(),
-    result('', 1),
-    result(),
-    result('origin/main\n'),
-    result('3\n'),
-  ]);
+test('a git error fails the inspection at once without a retry', async (t) => {
+  const slot = shellExecutor(tempDir(t));
 
-  const state = await inspectWorktreePublishState('feature', script.execute);
+  await assert.rejects(
+    inspectWorktreeWithRetry('feature', 'commit', slot.execute, Date.now() + 60_000),
+    /push-verification HEAD probe failed \(exit 128\): fatal: not a git repository/,
+  );
 
-  assert.deepEqual(state, {
-    dirtyFiles: 0,
-    trackedDirtyFiles: 0,
-    untrackedFiles: 0,
-    unpushedCommits: 3,
-  });
-  assert.equal(script.commands.at(-1), "git rev-list --count 'origin/main'..'refs/heads/feature'");
+  assert.equal(slot.commands.length, 1);
 });
 
-test('new branch inspection keeps publication blocked when no comparison ref exists', async () => {
-  const script = scriptedExecutor([
-    result(),
-    result(),
-    result(),
-    result(),
-    result('', 1),
-    result(),
-    result('', 1),
-  ]);
+test('a cancel during the retry wait returns aborted', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const controller = new AbortController();
+  let execs = 0;
 
-  const state = await inspectWorktreePublishState('feature', script.execute);
+  const pending = inspectWorktreeWithRetry(
+    'feature',
+    'commit',
+    async () => {
+      execs++;
+      return TIMED_OUT;
+    },
+    Date.now() + 60_000,
+    controller.signal,
+  );
+  await settle();
+  controller.abort();
 
-  assert.deepEqual(state, {
-    dirtyFiles: 0,
-    trackedDirtyFiles: 0,
-    untrackedFiles: 0,
-    unpushedCommits: 1,
-  });
-  assert.ok(!script.commands.some((command) => command.startsWith('git rev-list --count')));
-});
-
-test('commit-mode inspection reports untracked leftovers without treating them as tracked dirty', async () => {
-  // Run add136c6: worker committed task work but AgenticService leftovers stayed untracked.
-  const script = scriptedExecutor([
-    result(),
-    result(), // clean tracked
-    result(), // clean staged
-    result('app/core/AgenticService/AgenticService.ts\0app/core/AgenticService/AgentStepHud.tsx\0'),
-    result('origin/feature\n'),
-    result('1\n'),
-  ]);
-
-  const state = await inspectWorktreePublishState('feature', script.execute);
-
-  assert.equal(state.trackedDirtyFiles, 0);
-  assert.equal(state.untrackedFiles, 2);
-  assert.equal(state.dirtyFiles, 2);
-  assert.equal(state.unpushedCommits, 1);
+  assert.equal(await pending, 'aborted');
+  assert.equal(execs, 1);
 });

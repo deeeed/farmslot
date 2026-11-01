@@ -64,15 +64,11 @@ const execute = async (_vars: SlotVars, command: string) => {
   if (command.includes('rev-parse HEAD')) return ok(head);
   if (!afterNudge)
     throw new Error('guard bypassed: unexpected worktree inspection or publication push');
-  if (command === 'git rev-parse --verify --quiet HEAD') {
-    inspections++;
-    return ok(head);
+  if (command.includes("'HEAD probe'")) {
+    // One exec per inspection: tracked paths, staged paths, then the comparison.
+    const tracked = ++inspections === 1 ? ['tracked'] : [];
+    return ok([...tracked, '', '', 'remote', '0', ''].join('\0'));
   }
-  if (command.includes('--cached --name-only')) return ok();
-  if (command.includes('--name-only -z HEAD')) return ok(inspections === 1 ? 'tracked\0' : '');
-  if (command.startsWith('git ls-files --others')) return ok();
-  if (command.startsWith('git rev-parse --verify --quiet')) return ok(head);
-  if (command.startsWith('git rev-list --count')) return ok('0\n');
   throw new Error(`unexpected signature fixture command: ${command}`);
 };
 const execution = await import('../core/exec.js');
