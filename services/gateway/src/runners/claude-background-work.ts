@@ -17,6 +17,8 @@ import type {
 } from './observability-types.js';
 import { probeRunnerDescendantPid } from './session-process.js';
 
+const DEFAULT_MAX_RECORD_BYTES = 32 * 1024 * 1024;
+
 /**
  * Stream native task identities with bounded records, never tool stdout or prose.
  *
@@ -33,7 +35,7 @@ import { probeRunnerDescendantPid } from './session-process.js';
 export function buildClaudeBackgroundProbeCommand(
   sessionId: string,
   transcript: string,
-  maxRecordBytes = 32 * 1024 * 1024,
+  maxRecordBytes = DEFAULT_MAX_RECORD_BYTES,
 ): string {
   return renderClaudeBackgroundProbe(sessionId, transcript, maxRecordBytes, PROBE_VERSION);
 }
@@ -102,7 +104,7 @@ def save_cache(st, offset, tail):
             try:
                 os.unlink(temporary)
             except OSError:
-                pass
+                pass  # already gone: nothing else to clean up
         return False  # the next read resumes from the last cache written, or from byte zero
 try:
     with open(transcript, 'rb') as stream:
@@ -129,7 +131,7 @@ try:
                 partial = True  # still being written; the next read resumes before it
                 break
             consumed += len(line)
-            tail = (tail + line)[-TAIL:]
+            tail = (tail + line[-TAIL:])[-TAIL:]
             try:
                 record = json.loads(line)
             except (ValueError, UnicodeError):
@@ -194,7 +196,7 @@ PY`;
 
 /** Any change to the probe's rules changes this, so caches written by an older probe are ignored. */
 const PROBE_VERSION = createHash('sha256')
-  .update(renderClaudeBackgroundProbe('', '', 0, ''))
+  .update(renderClaudeBackgroundProbe('', '', DEFAULT_MAX_RECORD_BYTES, ''))
   .digest('hex')
   .slice(0, 16);
 
