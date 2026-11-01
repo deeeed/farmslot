@@ -57,6 +57,64 @@ export interface TaskExecutionInput {
   excludedRoots?: readonly string[];
   /** Host selection data. Its bytes are retained and verified with the tooling. */
   selectedConfiguration?: string;
+  /**
+   * Rebinds the selection to the retained copies once they exist, so the task reads its
+   * pinned bytes instead of a shared checkout that can move during the run. `copy` gives a
+   * retained source's copy: `staged` to read now, `pinned` to record.
+   */
+  pinSelection?: (copy: (source: string) => RetainedCopy | undefined) => PinnedSelection;
+}
+
+export interface RetainedCopy {
+  staged: string;
+  pinned: string;
+}
+
+export interface PinnedSelection {
+  bindingIdentity: TaskRecipeBindingIdentity | null;
+  selectedConfiguration?: string;
+}
+
+/** Where a retained source, or a file under it, lives in the pin. */
+export function retainedPathFor(
+  inputs: readonly TaskRetainedInput[],
+  source: string,
+): string | undefined {
+  const entry =
+    inputs.find((candidate) => candidate.source === source) ??
+    inputs.find((candidate) => within(candidate.source, source));
+  return entry ? path.join(entry.path, path.relative(entry.source, source)) : undefined;
+}
+
+/** The source a retained copy, or a file under it, was taken from. */
+export function retainedSourceFor(
+  inputs: readonly TaskRetainedInput[],
+  copy: string,
+): string | undefined {
+  const entry = inputs.find(
+    (candidate) => candidate.source !== candidate.path && within(candidate.path, copy),
+  );
+  return entry ? path.join(entry.source, path.relative(entry.path, copy)) : undefined;
+}
+
+/** The selection a task records: rebound to its retained copies when the host asks for it. */
+function pinnedSelection(
+  input: TaskExecutionInput,
+  retainedInputs: readonly TaskRetainedInput[],
+  stagedPath: (pinned: string) => string,
+): PinnedSelection {
+  if (!input.pinSelection)
+    return {
+      bindingIdentity: input.bindingIdentity,
+      ...(input.selectedConfiguration !== undefined
+        ? { selectedConfiguration: input.selectedConfiguration }
+        : {}),
+    };
+  return input.pinSelection((source) => {
+    const real = fs.existsSync(source) ? fs.realpathSync(source) : path.resolve(source);
+    const pinned = retainedPathFor(retainedInputs, real);
+    return pinned ? { staged: stagedPath(pinned), pinned } : undefined;
+  });
 }
 
 export class TaskProvenanceError extends Error {
@@ -286,8 +344,24 @@ export function retainTaskExecution(
   input: TaskExecutionInput,
   additionalInputs: readonly string[] = [],
 ): TaskExecutionProvenance {
-  if (fs.existsSync(path.join(taskDir, receiptFile))) {
-    return verifyTaskExecutionProvenance(taskDir, input.bindingIdentity);
+  const receiptPath = path.join(taskDir, receiptFile);
+  if (fs.existsSync(receiptPath)) {
+    // Verify the recorded pin before reading its copies, then require the selection the
+    // first run recorded: the same one, pinned the same way.
+    const recorded: unknown = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    const receipt = verifyTaskExecutionProvenance(
+      taskDir,
+      isRecord(recorded) && isBindingIdentity(recorded.bindingIdentity)
+        ? recorded.bindingIdentity
+        : null,
+    );
+    const expected = pinnedSelection(input, receipt.retainedInputs, (pinned) => pinned);
+    if (!isDeepStrictEqual(receipt.bindingIdentity, expected.bindingIdentity))
+      throw new TaskProvenanceError(
+        'TASK_BINDING_CHANGED',
+        'The selected tooling binding differs from the task binding.',
+      );
+    return receipt;
   }
   return writeTaskExecution(taskDir, input, additionalInputs);
 }
@@ -357,15 +431,9 @@ function writeTaskExecution(
     for (const source of [
       ...new Set([...input.inputs, ...additionalInputs].map((file) => fs.realpathSync(file))),
     ]) {
-      const covering = retainedInputs.find(
-        (entry) => source === entry.source || source.startsWith(`${entry.source}${path.sep}`),
-      );
-      if (covering) {
-        const retained = path.join(
-          staging,
-          path.relative(pin, covering.path),
-          path.relative(covering.source, source),
-        );
+      const covered = retainedPathFor(retainedInputs, source);
+      if (covered) {
+        const retained = path.join(staging, path.relative(pin, covered));
         if (!fs.existsSync(retained))
           throw new Error(`Selected task input was excluded from its tooling workspace: ${source}`);
         continue;
@@ -385,9 +453,12 @@ function writeTaskExecution(
         retainedInputs.push({ ...entry, path: path.join(pin, path.relative(staging, entry.path)) });
       retainedInputs.push({ ...copied, path: path.join(pin, relative) });
     }
+    const selected = pinnedSelection(input, retainedInputs, (pinned) =>
+      path.join(staging, path.relative(pin, pinned)),
+    );
     fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
-    if (input.selectedConfiguration !== undefined) {
-      fs.writeFileSync(staged(selection), input.selectedConfiguration, { flag: 'wx' });
+    if (selected.selectedConfiguration !== undefined) {
+      fs.writeFileSync(staged(selection), selected.selectedConfiguration, { flag: 'wx' });
       retainedInputs.push({
         source: selection,
         path: selection,
@@ -419,7 +490,7 @@ function writeTaskExecution(
       entrySha256: sha256(copiedExecutable),
       packageTreeSha256: taskInputDigest(copiedPackage),
       recordedAt: new Date().toISOString(),
-      bindingIdentity: input.bindingIdentity,
+      bindingIdentity: selected.bindingIdentity,
       retainedInputs,
     };
     if (repin) {
@@ -457,7 +528,7 @@ function writeTaskExecution(
       // The receipt names its pin, so an interrupted swap can be finished by resumeTaskRepin.
       fs.renameSync(staged(receiptPath), receiptPath);
       swapped = true;
-      if (input.selectedConfiguration !== undefined) fs.renameSync(staged(selection), selection);
+      if (selected.selectedConfiguration !== undefined) fs.renameSync(staged(selection), selection);
     }
     return receipt;
   } finally {
