@@ -15,6 +15,7 @@ import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { readEvalReviewContribution, recordEvalJudgeResult } from '../evals/judge.js';
+import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import { hasUserSlotChanges } from '../fleet/slot-scaffolding.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
@@ -728,6 +729,8 @@ async function runNativeReviewAttempt(
     let lastProgressAt = monitoringStartedAt;
     let observedProgress = false;
     let eventCursor: number | undefined;
+    const silent = (now: number) =>
+      now - lastProgressAt >= inactivityTimeoutMs || (now >= deadline && !observedProgress);
     const recordProgress = (at: string) => {
       const timestamp = Date.parse(at);
       if (!Number.isFinite(timestamp) || timestamp < monitoringStartedAt) return;
@@ -748,10 +751,20 @@ async function runNativeReviewAttempt(
       // A resumed process can bootstrap a fresh signal attempt. Read the watcher's
       // current binding so its valid terminal signal is not compared with the old one.
       context = latest;
-      const snapshot = await readNativeWorkerSnapshot(runId, 'review', contextId, {
-        after: eventCursor,
-        limit: 500,
-      });
+      let snapshot: Awaited<ReturnType<typeof readNativeWorkerSnapshot>>;
+      try {
+        snapshot = await readNativeWorkerSnapshot(runId, 'review', contextId, {
+          after: eventCursor,
+          limit: 500,
+        });
+      } catch (error) {
+        // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on.
+        // Silence is still judged by the same limits as an answered read.
+        if (!isNodeTransportUnavailableError(error) || silent(Date.now())) throw error;
+        console.warn(`[review] ${runId.slice(0, 8)}: reviewer read deferred: ${error.message}`);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        continue;
+      }
       eventCursor = snapshot.cursor;
       for (const event of snapshot.events) {
         if (
@@ -826,7 +839,7 @@ async function runNativeReviewAttempt(
       // activity that happened while the gateway was offline.
       if (snapshot.hasMore) continue;
       const now = Date.now();
-      if (now - lastProgressAt >= inactivityTimeoutMs || (now >= deadline && !observedProgress)) {
+      if (silent(now)) {
         throw new Error(
           `Native reviewer made no checklist or tool progress for ${now - lastProgressAt}ms ` +
             `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,
