@@ -159,39 +159,75 @@ test('captureRunEpisode writes ended runs only', async () => {
   );
 });
 
+const LIB_A = { name: 'perps', head: 'a'.repeat(40), sourceFingerprint: 'f1', dirtyDigest: null };
+const LIB_B = { name: 'bundled', head: null, sourceFingerprint: 'f2', dirtyDigest: 'd1' };
+const binding = (libraries: unknown) => ({
+  provider: { package: '@demo/provider', version: '1.2.3', module: '/abs/provider.js' },
+  identity: { provider: { head: null, sourceFingerprint: 'p1' }, libraries },
+});
+
 test('captureRunEpisode copies the pinned provider and library revisions from the task binding', async () => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'run-episode-binding-'));
+  const write = (file: string, value: unknown) =>
+    writeFile(path.join(taskDir, file), typeof value === 'string' ? value : JSON.stringify(value));
   try {
     await mkdir(path.join(taskDir, 'inputs'), { recursive: true });
+    await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
     const taskFile = path.join(taskDir, 'TASK.md');
-    await writeFile(
-      path.join(taskDir, 'inputs/recipe-binding.json'),
-      JSON.stringify({
-        provider: { package: '@demo/harness', version: '1.2.3', module: '/abs/provider.js' },
-        identity: {
-          provider: { head: null },
-          libraries: [
-            { name: 'perps', path: '/abs/perps', head: 'a'.repeat(40), sourceFingerprint: 'f1' },
-            { name: 'bundled', head: null, sourceFingerprint: 'f2' },
-          ],
-        },
-      }),
-    );
+
+    // A task with no binding file (written before bindings existed) has no provenance.
+    assert.equal((await captureRunEpisode(run({ id: 'run-legacy', taskFile })))?.provenance, null);
+
+    await write('inputs/recipe-binding.json', binding([LIB_A, LIB_B]));
     const bound = await captureRunEpisode(run({ id: 'run-bound', taskFile }));
     assert.deepEqual(bound?.provenance, {
       source: 'inputs/recipe-binding.json',
-      harness: { package: '@demo/harness', version: '1.2.3' },
+      provider: { package: '@demo/provider', version: '1.2.3' },
       libraries: [
-        { name: 'perps', revision: 'a'.repeat(40), fingerprint: 'f1' },
-        { name: 'bundled', revision: null, fingerprint: 'f2' },
+        { name: 'perps', revision: 'a'.repeat(40), fingerprint: 'f1', dirty: false },
+        { name: 'bundled', revision: null, fingerprint: 'f2', dirty: true },
       ],
     });
 
-    // An unreadable binding leaves provenance null and still writes the episode.
-    await writeFile(path.join(taskDir, 'inputs/recipe-binding.json'), '{not json');
-    const unreadable = await captureRunEpisode(run({ id: 'run-bad-binding', taskFile }));
-    assert.equal(unreadable?.provenance, null);
-    assert.equal((await readRunEpisode('run-bad-binding'))?.runId, 'run-bad-binding');
+    // After a repin the receipt is refreshed and the binding is not: libraries come
+    // from the receipt and the stale provider is dropped.
+    const repinned = { ...LIB_A, head: 'b'.repeat(40) };
+    await write('artifacts/harness-provenance.json', {
+      bindingIdentity: { libraries: [repinned] },
+    });
+    const afterRepin = await captureRunEpisode(run({ id: 'run-repinned', taskFile }));
+    assert.deepEqual(afterRepin?.provenance, {
+      source: 'artifacts/harness-provenance.json',
+      provider: null,
+      libraries: [{ name: 'perps', revision: 'b'.repeat(40), fingerprint: 'f1', dirty: false }],
+    });
+    await rm(path.join(taskDir, 'artifacts/harness-provenance.json'));
+
+    // An unbound task, a wrongly shaped binding and invalid JSON give null, never a throw.
+    for (const [id, value] of [
+      ['run-unbound', { identity: null }],
+      ['run-shape', { identity: { libraries: {} } }],
+      ['run-entries', binding([null, 3, { name: 7 }])],
+      ['run-bad-json', '{not json'],
+    ] as const) {
+      await write('inputs/recipe-binding.json', value);
+      const episode = await captureRunEpisode(run({ id, taskFile }));
+      assert.equal(
+        id === 'run-entries' ? episode?.provenance?.libraries.length : episode?.provenance,
+        id === 'run-entries' ? 0 : null,
+        id,
+      );
+      assert.equal((await readRunEpisode(id))?.runId, id);
+    }
+
+    // Once retention archives the task copy, a re-capture keeps the recorded value.
+    await write('inputs/recipe-binding.json', binding([LIB_A]));
+    const first = await captureRunEpisode(run({ id: 'run-archived', taskFile }));
+    await rm(taskDir, { recursive: true, force: true });
+    const again = await captureRunEpisode(
+      run({ id: 'run-archived', taskFile, updatedAt: '2026-11-02T00:00:00.000Z' }),
+    );
+    assert.deepEqual(again?.provenance, first?.provenance);
 
     assert.equal((await captureRunEpisode(run({ id: 'run-no-task' })))?.provenance, null);
   } finally {

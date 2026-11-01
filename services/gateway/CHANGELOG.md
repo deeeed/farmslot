@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Run episodes record `provenance`: the recipe provider and each library's pinned revision, from the task's binding receipt or binding (ADR-039 Amendment 4).
+
 - A gate action that no engine waits for (after a gateway restart the re-presented gate has none) is refused with `RUN_GATE_NOT_READY` when the resume that applies it could not run: the action is one a resumed gate never applies (Continue Fixing), the run is not waiting at its gate (`reconciling`, `review-failed`, `done`...), or it still waits on another, non-gate decision. Any gate action on a run that ended, or was replayed since the gate opened, is refused too: a waiting engine aborts on those instead of acting. Before, the action returned ok, the decision was recorded as resolved, and the deferred resume skipped it silently. An action that passes is applied by that resume, whose log line now names it (`resuming engine to apply approve-publish`); a blocker that appears only after the action commits is logged as an error.
 - The refusals from `slot.release`, `slot.prepare` and `slot.refresh` for a slot with recovery in flight now name the exit: `farmslot slot refresh <slot> --recover`.
 
