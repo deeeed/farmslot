@@ -142,7 +142,11 @@ export function parseStructuredReviewFeedback(
       if (!(conflict instanceof ReviewApprovalPolicyError) || additionalIssues !== undefined)
         throw conflict;
       const stated = normalizeReviewRecommendation(candidate.recommendation);
-      const read = [stated, verdict === 'issues' ? 'COMMENT' : null].reduce<ReviewRecommendation>(
+      const floors: Array<ReviewRecommendation | null> = [
+        stated,
+        verdict === 'issues' ? 'COMMENT' : null,
+      ];
+      const read = floors.reduce<ReviewRecommendation>(
         (strictest, next) => (next ? stricterReviewRecommendation(strictest, next) : strictest),
         required,
       );
