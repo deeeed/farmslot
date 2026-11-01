@@ -9,6 +9,12 @@ import { isRecord } from '@farmslot/protocol/recipe';
 
 import type { EventEmitter } from '../methods/slot/shared.js';
 
+import {
+  dropParkedValidationBranch,
+  type ParkedValidationCommits,
+  parkValidationRunCommits,
+} from './validation-run-commits.js';
+
 export interface RetainedIdleCheckout {
   slotId: string;
   branch: string;
@@ -91,11 +97,20 @@ export async function reuseSafeIdleSlot(
     const eligibility = slotRecoveryEligibility(slot ? { ...slot, workspace } : undefined);
     if (!eligibility.allowed)
       return { kind: 'unavailable', reason: eligibility.detail ?? 'Slot is protected' };
-    if (eligibility.confirmationRequired && !expected?.retainedCandidate)
-      return {
-        kind: 'local-work',
-        reason: workspace.dirtyCount ? 'dirty files' : 'unpushed commits',
-      };
+    let parked: ParkedValidationCommits | null = null;
+    if (eligibility.confirmationRequired && !expected?.retainedCandidate) {
+      // A validation run's own commits are its retained output: parked under a durable ref with
+      // their SHAs recorded, they no longer keep the next dispatch off this slot.
+      const { getRun } = await import('../runs/store.js');
+      const owner = expected?.recordRunId ? getRun(expected.recordRunId) : undefined;
+      if (owner && !workspace.dirtyCount && workspace.publication === 'unpushed')
+        parked = await parkValidationRunCommits(owner, slotId, workspace);
+      if (!parked)
+        return {
+          kind: 'local-work',
+          reason: workspace.dirtyCount ? 'dirty files' : 'unpushed commits',
+        };
+    }
     // No cleanup is necessary for an unowned primary checkout already at the verified default.
     if (
       !workspace.currentRunId &&
@@ -117,6 +132,7 @@ export async function reuseSafeIdleSlot(
       undefined,
       { skipRecycle: true },
     );
+    if (result.refreshed && parked) await dropParkedValidationBranch(parked);
     if (result.refreshed) emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
     return result.refreshed
       ? { kind: 'ready' }
