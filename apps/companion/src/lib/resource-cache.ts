@@ -42,7 +42,7 @@ const owner = new ResourceCacheOwner({
     };
   },
   openStore: (metadata) =>
-    createNativeSqliteResourceStore({ scope: metadata.scope, onDeleted: deleteScopeMedia }),
+    createNativeSqliteResourceStore({ scope: metadata.scope, deleteFiles: deleteScopeMedia }),
   onNotice(value) {
     notice = value;
     notify();
@@ -98,21 +98,16 @@ function bindMedia(): void {
   setHeldArtifactLookup(media?.holder);
 }
 
-/** A deleted offline store takes its scope's held evidence with it, however it was retired. */
-function deleteScopeMedia(scopeId: string): void {
+/**
+ * A deleted offline store takes its scope's held evidence with it, however it was retired. The
+ * store awaits this, so a failure fails the deletion and the owner deletes the scope again.
+ */
+function deleteScopeMedia(scopeId: string): Promise<void> {
   const current = media?.scope === scopeId ? media.holder : undefined;
-  if (current) {
-    media = undefined;
-    setHeldArtifactLookup(undefined);
-  }
-  (current ? current.destroy() : nativeEvidenceMediaFiles(scopeId).clear()).catch(
-    (error: unknown) => {
-      // Reported, not retried: nothing looks these files up again once their store is gone.
-      console.warn(
-        `Held evidence could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    },
-  );
+  if (!current) return nativeEvidenceMediaFiles(scopeId).clear();
+  media = undefined;
+  setHeldArtifactLookup(undefined);
+  return current.destroy();
 }
 
 function connectionInputs(): ResourceConnectionInputs {

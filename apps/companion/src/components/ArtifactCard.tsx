@@ -2,10 +2,10 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import React from 'react';
 import { Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
+import { useArtifactSource } from '../hooks/useArtifactSource';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
-  artifactSource,
   classifyArtifact,
   formatBytes,
   type VisualArtifactPair,
@@ -60,13 +60,14 @@ export function ArtifactCard({
   const purposeColor = purpose ? (PURPOSE_COLORS[purpose] ?? colors.textMuted) : colors.textMuted;
   const { width } = useWindowDimensions();
   const thumbSize = (width - spacing.xl * 2 - spacing.md) / 2;
+  const imageSource = useArtifactSource(url, authHeaders);
 
   return (
     <View style={[styles.card, { width: thumbSize }]}>
       {mediaType === 'image' && (
         <Pressable onPress={onPressImage}>
           <Image
-            source={artifactSource(url, authHeaders)}
+            source={imageSource}
             style={[styles.thumbnail, { height: thumbSize * 0.75 }]}
             resizeMode="cover"
           />
@@ -124,7 +125,7 @@ function VideoPlayer({
   onOpen?: () => void;
   authHeaders?: ArtifactHttpHeaders;
 }) {
-  const source = React.useMemo(() => artifactSource(url, authHeaders), [authHeaders, url]);
+  const source = useArtifactSource(url, authHeaders);
   const player = useVideoPlayer(source);
 
   return (

@@ -280,13 +280,15 @@ mock.module('expo-file-system/legacy', {
   },
 });
 const stores: ResourceStore[] = [];
-const storeDeletions: Array<(scopeId: string) => void> = [];
+const storeDeletions: Array<(scopeId: string) => Promise<void>> = [];
 mock.module('@farmslot/local-store/native', {
   namedExports: {
-    createNativeSqliteResourceStore: async (options: { onDeleted?: (scopeId: string) => void }) => {
+    createNativeSqliteResourceStore: async (options: {
+      deleteFiles?: (scopeId: string) => Promise<void>;
+    }) => {
       const store = createMemoryResourceStore();
       stores.push(store);
-      if (options.onDeleted) storeDeletions.push(options.onDeleted);
+      if (options.deleteFiles) storeDeletions.push(options.deleteFiles);
       return store;
     },
   },
@@ -514,11 +516,11 @@ test("a deleted offline store deletes its scope's held evidence folder", async (
   const stop = initializeNativeResourceCache();
   try {
     await flush();
-    const onDeleted = storeDeletions.at(-1);
-    assert.ok(onDeleted, 'the store was opened with a deletion hook');
+    const deleteFiles = storeDeletions.at(-1);
+    assert.ok(deleteFiles, 'the store was opened with a deletion hook');
     const before = deletedPaths.length;
-    onDeleted('{"gatewayUrl":"https://gone.invalid/"}');
-    await flush();
+    // The store awaits this before its row goes, so a failure would fail the deletion.
+    await deleteFiles('{"gatewayUrl":"https://gone.invalid/"}');
     const deleted = deletedPaths.slice(before);
     assert.equal(deleted.length, 1);
     assert.match(deleted[0], /^file:\/\/\/cache\/evidence-media\/[0-9a-f]{16}\/$/);
