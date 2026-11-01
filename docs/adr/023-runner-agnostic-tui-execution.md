@@ -169,7 +169,7 @@ Rules-shim layer (ADR-023 §4) remains deferred until a second non-Claude runner
 | Agent harness | The CLI that runs a model with its tools: Claude Code, Codex, Grok CLI, Cursor, Pi, OpenCode. Bare "harness" always means this. |
 | Transport     | How Farmslot talks to the harness: `tmux` or `native` ([ADR-057](057-structured-runner-transports.md)).                         |
 | Worker        | An agent harness session doing a run's work.                                                                                    |
-| Recipe runner | What executes a recipe (`@farmslot/recipe-runner`). The only remaining use of "runner".                                         |
+| Recipe runner | What executes a recipe (`@farmslot/recipe-runner`). The only remaining Farmslot use of "runner".                                |
 | App harness   | The product layer that drives the app under test. `mm-harness` is "the MetaMask app harness"; its package name stays.           |
 
 Until the rename lands, "runner" in this ADR, ADR-057 and the code means agent harness.
@@ -180,33 +180,36 @@ Until the rename lands, "runner" in this ADR, ADR-057 and the code means agent h
 
 **Rename plan.** One PR, with no aliases (the no-shims rule).
 
-- Code: every `Runner*` identifier and `runner` field that means the agent harness becomes `Harness*` and `harness`: protocol contracts, the gateway and agent-runtime registries and their `runners/` directories, slot-config, the CLI, `@farmslot/review-dispatch`, `@farmslot/skills`, root `scripts/` (including `scripts/runner-validation/`), `.agents/skills`, and the Command Center scripts and CSS (`--runner-accent`).
+- Code: every `Runner*` identifier, `runner` field and `runner.*` RPC method (`runner.modelCatalog`, `runner.visibleModels.get` and `.set`) that means the agent harness becomes `Harness*`, `harness` and `harness.*`: protocol contracts, the gateway and agent-runtime registries and their `runners/` directories, slot-config and `schemas/project.schema.json`, the CLI, `@farmslot/review-dispatch`, `@farmslot/skills`, root `scripts/` (including `scripts/runner-validation/`), `.agents/skills`, the Companion agentic scripts, and the Command Center scripts and CSS (`--runner-accent`).
 - CLI flags: `--runner` becomes `--harness`; `--runner-command`, and the cooking lane's `--runner-cmd`, `--runner-mode` and `--runner-log`, follow.
-- Environment variables: `FARMSLOT_RUNNER`, `FARMSLOT_VALIDATION_RUNNER`, `FARMSLOT_VALIDATION_RUNNER_BIN`, `FARMSLOT_SCENARIO_RUNNER` and `FARMSLOT_COPILOT_RUNNER` (operator-set; a silent rename would fall back to the default copilot harness).
+- Environment variables: every one whose `RUNNER` means the agent harness, including `FARMSLOT_RUNNER`, `FARMSLOT_VALIDATION_RUNNER`, `FARMSLOT_VALIDATION_RUNNER_BIN`, `FARMSLOT_SCENARIO_RUNNER`, the visual review, repair, capture-proof and review-test variables, `NATIVE_COMPANION_RUNNER`, and the operator-set `FARMSLOT_COPILOT_RUNNER`, `FARMSLOT_BACKLOG_REFINER_RUNNER` and `FARMSLOT_ROADMAP_REFINER_RUNNER`. A silent rename of the operator-set ones falls back to their default harness, so their old names fail with a message.
 - Configuration outside this repo, changed in matching commits that land with the PR:
   - project.json keys in the project repos: `review.runner`, `defaults.<flow>.runner`, `workflow_defaults.review-pr.execution.models[].runner`, `roadmap.runner` and `roadmap.runner_command`;
-  - pool `dispatch_cmd` placeholders `{runner}` and `{runner_path}`;
+  - the project templates and packs in those repos;
+  - pool `dispatch_cmd` placeholders `{runner}` and `{runner_path}`, and the refinement template placeholder `{{runner}}`;
   - the observability hook commands installed into slot worktrees (`FARMSLOT_RUNNER=`), reinstalled.
-- Persisted stores: each is migrated in place once, on the host that owns it, before strict decoding: run records and run episodes (with a schema version bump), the backlog, dispatch queue and roadmap stores, slot status rows, PR rules and saved review defaults, review history, machine-parking journals (including the `runner-stopping`, `runner-stopped` and `runner-reloading` states), native profile registrations, and native session journals on every node. Derived caches, such as the client history projection, are rebuilt instead.
+- Persisted stores: every persisted file name or key that carries `runner` is migrated in place once, on the host that owns it, before strict decoding. That includes run records and run episodes (with a schema version bump), the backlog, dispatch queue and roadmap stores, slot status rows, PR rules and saved review defaults, review history, machine-parking journals (including the `runner-stopping`, `runner-stopped` and `runner-reloading` states), native profile registrations, native session journals on every node, the per-principal visible-model preferences (`runner-preferences/…/runner-visible-models.json`, `byRunner`) and task directories' `.runner-session.json`. Derived caches, such as the client history projection, are rebuilt instead.
 - Apps: Command Center and Companion name the column and labels "Agent" and show harness · model · effort: "Claude Code · opus · high".
-- Docs: project templates and packs, docs and the docs site, ADR text, CLAUDE.md and AGENTS.md rules, and the `~/xreview` scripts.
+- Docs: docs and the docs site, ADR text, CLAUDE.md and AGENTS.md rules, and the `~/xreview` scripts.
+- File and directory names: the PR decides whether `scripts/runner-validation/`, `scripts/install-runner-observability.mjs`, the ADR files and the runner docs are renamed. Renaming the scripts also changes `.github/workflows`, which is Arthur's call.
 - Bare "harness": existing uses that mean the app harness or a test harness become "app harness", "mm-harness" or "validation suite". The PR decides the name of `artifacts/harness-provenance.json`, which is app harness provenance.
-- Release: the protocol version bump makes older Companion and node builds fail closed with an upgrade message. Nodes and the gateway update together, then Companion (OTA or TestFlight). `@farmslot/protocol`, agent-runtime, review-dispatch, skills and the CLI are cut together, and packages that pin protocol exactly (mm-harness) are repinned.
+- Release: the PR adds a client protocol check (Companion sends no protocol version today, and the gateway only logs a node mismatch), so older Companion and node builds fail closed with an upgrade message. Nodes and the gateway update together, then Companion (OTA or TestFlight). `@farmslot/protocol`, agent-runtime, review-dispatch, skills and the CLI are cut together, and packages that pin protocol exactly (mm-harness) are repinned.
 
-Unchanged: `@farmslot/recipe-runner` and its uses (`farmslot recipe --require-runner-provenance`, `RECIPE_RUNNER_VERSION`, the project var `recipe_runner_resolve_cmd`, `METAMASK_RUNNER_PROTOCOL_ROOT` and `METAMASK_RUNNER_FARMSLOT_ROOT`, the handoff manifest's `runner` evidence producer, mm-harness runner provenance); the pool keys `<harness>_path`, already named by harness ID (`claude_path`, `grok_path`); and MetaMask/skills, which never calls the Farmslot CLI.
+Unchanged: other meanings of "runner" outside Farmslot (GitHub Actions `runner.*`, the pool migration runner, the agent-device iOS runner, a test runner); `@farmslot/recipe-runner` and its uses (`farmslot recipe --require-runner-provenance`, `RECIPE_RUNNER_VERSION`, the project var `recipe_runner_resolve_cmd`, `METAMASK_RUNNER_PROTOCOL_ROOT` and `METAMASK_RUNNER_FARMSLOT_ROOT`, the handoff manifest's `runner` evidence producer, mm-harness runner provenance); the pool keys `<harness>_path`, already named by harness ID (`claude_path`, `grok_path`); and MetaMask/skills, which never calls the Farmslot CLI.
 
 ### Size
 
-Case-insensitive whole-word "runner" or "runners" in tracked files, excluding tests, on main b41c998c:
+Case-insensitive whole-word "runner" or "runners", excluding tests, on main b41c998c. Packages and apps count `src/` only; scripts, skills and docs count the whole directory:
 
 | Area                        | Uses  | Files |
 | --------------------------- | ----- | ----- |
 | Gateway                     | 3,283 | 261   |
 | Root `scripts/`             | 2,303 | 308   |
-| Docs (`docs/`)              | 1,804 | 203   |
+| Docs (`docs/`)              | 1,783 | 203   |
 | Command Center UI           | 1,079 | 133   |
 | Protocol                    | 371   | 52    |
 | Companion                   | 254   | 48    |
+| Companion agentic scripts   | 234   | 35    |
 | `.agents/skills`            | 223   | 12    |
 | Docs site                   | 212   | 46    |
 | `@farmslot/review-dispatch` | 151   | 10    |
