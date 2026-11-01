@@ -1419,6 +1419,11 @@ export function cancelRunEngine(runId: string): void {
   if (controller) controller.abort();
 }
 
+/** True while an engine loop drives the run (any generation). */
+export function isRunEngineDriven(runId: string): boolean {
+  return drivenGenerations.has(runId);
+}
+
 // ─── Recover active runs on startup ───
 
 const PUBLICATION_REVIEW_RECOVERY_POLL_MS = 10_000;

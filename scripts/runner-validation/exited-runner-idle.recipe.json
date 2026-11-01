@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "An exited tmux runner reads idle at a handoff",
+  "description": "On an isolated tmux server, launch two workers through the real role launch wrapper with a stand-in runner named grok. The first runner exits 0, so its pane survives as the role shell; the second keeps running. The retained-worker check used at a publication gate, COMPLETE and FINALIZE must read the first idle and leave the second unconfirmed. No operator tmux server, runs or slots are used.",
+  "workflow": {
+    "entry": "exited-runner-idle",
+    "nodes": {
+      "exited-runner-idle": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/exited-runner-idle.mts",
+        "timeout_ms": 60000,
+        "intent": "A runner that exited cleanly leaves its pane as the role shell and reads idle; a runner still running in its pane stays unconfirmed.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

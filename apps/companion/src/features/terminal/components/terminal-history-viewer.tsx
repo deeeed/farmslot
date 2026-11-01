@@ -4,6 +4,7 @@ import {
   type NativeSyntheticEvent,
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   type StyleProp,
   StyleSheet,
   Text,
@@ -92,7 +93,7 @@ export function TerminalKeysModeControls({
 }
 
 export function TerminalHistoryPanel({ rawText }: { rawText: string }) {
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const pinnedToBottomRef = useRef(true);
   const body = useMemo(
     () => terminalHistoryTextFromText(rawText, TERMINAL_HISTORY_VIEWER_LINES),

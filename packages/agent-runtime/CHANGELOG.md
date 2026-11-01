@@ -2,8 +2,12 @@
 
 ## Unreleased
 
-- The native supervisor records its own and its host's start identity, and judges a previous supervisor, host or pending cleanup by it rather than by PID alone, so a PID reused after a reboot or PID wrap no longer blocks the host. A supervisor that does not start says why in `host.log`.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.39.21 - 2026-11-01
+
+- Publishes against `@farmslot/protocol` 0.74.10.
+- The native supervisor records its own and its host's start identity, and judges a previous supervisor, host or pending cleanup by it rather than by PID alone, so a PID reused after a reboot or PID wrap no longer blocks the host. A supervisor that does not start says why in `host.log`.
 
 ## 0.39.20 - 2026-11-01
 

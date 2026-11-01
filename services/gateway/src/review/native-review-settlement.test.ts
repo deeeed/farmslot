@@ -21,6 +21,7 @@ const { upsertAgentContext } = await import('../agents/contexts.js');
 const { rewriteStatusFile } = await import('../core/state.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 const { runWithSessionOriginator } = await import('../security/work-originator.js');
+const { NodeRpcTimeoutError } = await import('../fleet/node-rpc.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
 const { NativeWorkerOperationUncertainError } = await import('../runners/native/worker-error.js');
 const { PromptDeliveryUncertainError } = await import('../runners/registry.js');
@@ -58,6 +59,10 @@ let reattachProbes = 0;
 let timeline: { now: number; polls: number; stepMs?: number } | undefined;
 let configuredInactivityMinutes: number | undefined;
 const readCursors: Array<number | undefined> = [];
+/** Reviewer reads, and approval refusals, that time out at the node before one is answered. */
+let snapshotTimeouts = 0;
+let timedOutReads = 0;
+let refusalTimeouts = 0;
 const vars = makeVars();
 const owner: Principal = {
   id: 'native-review-settlement-owner',
@@ -235,6 +240,12 @@ mock.module('../runners/native/worker-control.js', {
       _contextId: string,
       history?: { after?: number },
     ) => {
+      if (snapshotTimeouts > 0) {
+        snapshotTimeouts--;
+        timedOutReads++;
+        if (timeline) timeline.now += timeline.stepMs ?? 10 * 60_000;
+        throw new NodeRpcTimeoutError('macpro', 60_000);
+      }
       if (completionCase()) {
         const current = getRun(_runId)!.agentContexts!.find((entry) => entry.role === 'review')!;
         const continued = current.nativeSession!.commandId !== binding.commandId;
@@ -419,7 +430,15 @@ mock.module('./feedback.js', {
   },
 });
 mock.module('./native-reviewer-approvals.js', {
-  namedExports: { refuseReviewerApprovals: async () => 0 },
+  namedExports: {
+    refuseReviewerApprovals: async () => {
+      if (refusalTimeouts > 0) {
+        refusalTimeouts--;
+        throw new NodeRpcTimeoutError('macpro', 60_000);
+      }
+      return 0;
+    },
+  },
 });
 mock.module('./progress.js', { namedExports: { startProgressWatcher: () => ({ stop() {} }) } });
 mock.module('./review-agent.js', {
@@ -740,6 +759,46 @@ test('a native reviewer with no checklist or tool progress fails at ten idle min
   const run = await nativeRun(t);
   await assert.rejects(review(run.id), /no checklist or tool progress for 600000ms/);
   assert.equal(clock.polls, 1);
+});
+
+test('a node timeout while a native reviewer works is read again, not a review failure', async (t) => {
+  ending = 'verdict';
+  snapshotTimeouts = 2;
+  t.after(() => {
+    snapshotTimeouts = 0;
+  });
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(snapshotTimeouts, 0);
+});
+
+test('a node that stays unreachable fails the reviewer once it has not answered for an inactivity window', async (t) => {
+  ending = 'inactive';
+  snapshotTimeouts = Number.POSITIVE_INFINITY;
+  timedOutReads = 0;
+  const clock = { now: 0, polls: 0, stepMs: 4 * 60_000 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+    snapshotTimeouts = 0;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /Node macpro timeout after 60000ms/);
+  // Reads at 0, 4 and 8 minutes are deferred; the one ending at 12 minutes is past the window.
+  assert.equal(timedOutReads, 3);
+  assert.equal(clock.polls, 0);
+});
+
+test('a node timeout while refusing a reviewer approval is read again, not a review failure', async (t) => {
+  ending = 'verdict';
+  refusalTimeouts = 1;
+  t.after(() => {
+    refusalTimeouts = 0;
+  });
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(refusalTimeouts, 0);
 });
 
 test('the native review inactivity window uses its project override', async (t) => {
