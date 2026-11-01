@@ -69,6 +69,12 @@ import {
 import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
 import {
+  dropParkedBranch,
+  ownsArtifactOnlyBranch,
+  parkRunBranchCommits,
+  parksBranchCommits,
+} from '../../run-lifecycle/validation-run-commits.js';
+import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
   retireNativeWorkersForSlot,
@@ -159,6 +165,10 @@ export interface SlotReleaseOptions {
     verifyWork: () => Promise<void>;
     discardLocalWork: boolean;
     skipRecycle?: boolean;
+    /** The finished artifact-only run whose own branch commits this recovery parks. */
+    parkRunId?: string;
+    /** The exact head an ownerless return to idle may park (`Run.releasedCheckout`). */
+    parkHeadSha?: string;
   };
 }
 
@@ -899,7 +909,30 @@ async function slotReleaseImpl(
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
   await assertReleaseClaim();
   if (options?.workspaceRecovery) await options.workspaceRecovery.verifyWork();
-  if (!keepWork && !forceReset && !options?.workspaceRecovery) {
+  // An artifact-only run's own commits are parked under a durable ref (SHAs on the run) before
+  // any reset, so they neither block the next dispatch nor vanish with the reset.
+  const parkOwnerId = options?.workspaceRecovery?.parkRunId ?? params.expectedRunId ?? boundOwner;
+  const parkOwner = !keepWork && parkOwnerId ? await getRunWithArchived(parkOwnerId) : undefined;
+  // A named discard parks the run's commits whatever its phase (a run held at a refused COMPLETE).
+  const namedDiscard = forceReset && !!parkOwnerId && parkOwnerId === params.expectedRunId;
+  const parkable = namedDiscard ? ownsArtifactOnlyBranch(parkOwner) : parksBranchCommits(parkOwner);
+  // The park reads the checkout as clean the way the workspace probe does: scaffolding ignored.
+  if (parkable) await excludeSlotScaffolding(vars, projectJson);
+  const parked = parkable
+    ? await parkRunBranchCommits(parkOwner!, vars, execOnSlot, {
+        defaultBranch,
+        headSha: options?.workspaceRecovery?.parkHeadSha,
+        discard: namedDiscard,
+      })
+    : null;
+  // A recovery started to park a run's commits never resets a checkout that turned out not to be them.
+  if (options?.workspaceRecovery?.parkRunId && !parked) {
+    await markSlotBusy(params.slotId, 'working');
+    throw new Error(
+      `Slot ${params.slotId} holds work that is not run ${options.workspaceRecovery.parkRunId}'s own branch commits; nothing was parked or reset.`,
+    );
+  }
+  if (!keepWork && !forceReset && !options?.workspaceRecovery && !parked) {
     const unmergedWork = await findReleaseUnmergedWork(
       vars,
       projectJson,
@@ -910,7 +943,7 @@ async function slotReleaseImpl(
       await markSlotBusy(params.slotId, 'working');
       throw unmergedWorkError(unmergedWork);
     }
-  } else if (!keepWork) {
+  } else if (!keepWork && !parked) {
     await logDiscardedWork(vars, params.slotId, boundOwner);
   }
 
@@ -920,7 +953,7 @@ async function slotReleaseImpl(
   if (!keepWork) {
     // Legacy slots may predate prepare exclusions; keep warm runtime files out of Git clean.
     await assertReleaseClaim();
-    await excludeSlotScaffolding(vars, projectJson);
+    if (!parkable) await excludeSlotScaffolding(vars, projectJson);
     // Read task_file from status
     const taskRel = normalizeTaskRelativeDir(
       (await readSlotField(params.slotId, 'task_file')) as string | null,
@@ -1059,6 +1092,13 @@ async function slotReleaseImpl(
     });
     idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
+    if (parked) {
+      const kept = await dropParkedBranch(parked, vars, execOnSlot);
+      step(
+        'git',
+        `Parked ${parked.commits.length} unpushed commit(s) of ${parked.branch} at ${parked.ref}${kept ? `; ${kept}` : '; branch dropped'}`,
+      );
+    }
 
     // Automatic recovery stays cold. Explicit manual recovery keeps its recycle policy.
     if (options?.workspaceRecovery?.skipRecycle) {

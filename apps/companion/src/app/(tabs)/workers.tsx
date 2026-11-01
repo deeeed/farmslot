@@ -99,7 +99,13 @@ export default function WorkersScreen() {
     () => resourceQuery<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {}),
     [],
   );
-  const observation = useResourceQuery(focused ? query : undefined);
+  const live = useResourceQuery(focused ? query : undefined);
+  // Blur drops the subscription, not the rows: the hidden tab keeps its last list, so coming back
+  // does not rebuild every row while the reread is in flight. The ref only ever holds a snapshot
+  // this render already read, so writing it here is safe.
+  const lastFocused = useRef(live);
+  if (focused) lastFocused.current = live;
+  const observation = focused ? live : lastFocused.current;
   const nodes = observation.data?.nodes ?? [];
   const [error, setError] = useState<string | null>(null);
   const refreshing = observation.status === 'loading';

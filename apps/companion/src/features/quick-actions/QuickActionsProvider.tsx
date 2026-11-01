@@ -1,13 +1,5 @@
 import { useFocusEffect, useGlobalSearchParams, usePathname } from 'expo-router';
-import React, {
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type { CompanionViewLocation } from '@farmslot/protocol/surfaces/view-links';
 
@@ -18,7 +10,9 @@ import { useConnectionStore } from '../../store/connection';
 import { CopilotVoiceHandoff } from './CopilotVoiceHandoff';
 import {
   type ComposerInset,
+  createQuickActionsStore,
   QuickActionsContext,
+  useQuickActionsField,
   type ViewSelection,
   type VoiceTarget,
 } from './quick-actions-context';
@@ -162,8 +156,10 @@ export function QuickActionsProvider({ children }: { children: React.ReactNode }
       registerOutlet,
     ],
   );
+  const [store] = useState(() => createQuickActionsStore(value));
+  useLayoutEffect(() => store.set(value), [store, value]);
   return (
-    <QuickActionsContext.Provider value={value}>
+    <QuickActionsContext.Provider value={store}>
       {children}
       {mounted ? <CurrentRouteObserver onChange={setCurrentRoute} /> : null}
       {handoff ? (
@@ -202,10 +198,9 @@ export function useQuickActionVoiceTarget(
     latestInvoke.current = invoke;
   }, [invoke]);
   const invokeCurrent = useCallback((context?: string) => latestInvoke.current(context), []);
-  const context = useContext(QuickActionsContext);
-  const register = context?.registerVoice;
-  const scope = context?.scope;
-  const routeKey = context?.routeKey;
+  const register = useQuickActionsField('registerVoice');
+  const scope = useQuickActionsField('scope');
+  const routeKey = useQuickActionsField('routeKey');
   useFocusEffect(
     useCallback(() => {
       if (!register || !scope || !routeKey || !enabled) return;
@@ -221,9 +216,8 @@ export function useSharedViewSelection(location: CompanionViewLocation) {
   }, [location]);
   const selectionKey = JSON.stringify(location);
   const ownerPath = usePathname();
-  const context = useContext(QuickActionsContext);
-  const register = context?.registerView;
-  const scope = context?.scope;
+  const register = useQuickActionsField('registerView');
+  const scope = useQuickActionsField('scope');
   useFocusEffect(
     useCallback(() => {
       if (!register || !scope) return;

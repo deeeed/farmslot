@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import {
   claimSlotStatusIf,
+  markRunSlotHeld,
   markSlotStatusIf,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
@@ -227,4 +228,25 @@ test('workspace recovery cannot be claimed or reset without verified recovery id
   const ready = await readSlotFixture(slotId);
   assert.equal(ready.lifecycle, 'ready');
   assert.equal(ready.workspace_recovery, null);
+});
+
+test('markRunSlotHeld holds only a slot its run still owns', async (t) => {
+  // 2aecebfe: COMPLETE released the artifact-only run's slot, then FINALIZE held it for ci-watch,
+  // leaving it held by no run.
+  const slotId = await withStatusFixture(t, {
+    slot: 'held-owner-test',
+    lifecycle: 'ready',
+    phase: null,
+    current_run_id: null,
+    slot_epoch: 3,
+  });
+  assert.equal(await markRunSlotHeld(slotId, 'released-run', 'ci-watch'), false);
+  assert.deepEqual(
+    [(await readSlotFixture(slotId)).lifecycle, (await readSlotFixture(slotId)).phase],
+    ['ready', null],
+  );
+  await updateSlotStatusIf(slotId, () => true, { current_run_id: 'owner-run', lifecycle: 'busy' });
+  assert.equal(await markRunSlotHeld(slotId, 'owner-run', 'ci-watch'), true);
+  const held = await readSlotFixture(slotId);
+  assert.deepEqual([held.lifecycle, held.phase, held.agent], ['held', 'ci-watch', 'idle']);
 });
