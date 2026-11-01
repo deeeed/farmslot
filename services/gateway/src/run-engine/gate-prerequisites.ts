@@ -985,8 +985,13 @@ export async function assertRunGateReady(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
   actionId?: string,
+  /** The gate decision's payload: its recorded base conflict applies here as in its projection. */
+  payload?: RunDecision['payload'],
 ): Promise<RunGateReadiness> {
-  const readiness = await collectRunGateReadiness(run, preparedPackage);
+  const readiness = withBaseMergeConflict(
+    await collectRunGateReadiness(run, preparedPackage),
+    payload,
+  );
   // Artifact-only eval settlement and QA completion retain unresolved claims as output.
   // This defers only their verdict policy, never package or execution integrity.
   const outputCompletion =
@@ -1037,17 +1042,18 @@ export type GatePrerequisiteAssertion = (
   ...params: Parameters<typeof assertRunGateReady>
 ) => Promise<RunGateReadiness | void>;
 
-/** A prerequisite remedy is actionable only when the same gate offers it. */
 /**
- * The gate's own freshness probe found the package's branch conflicting with its base: the
- * publication push would refuse with PUBLICATION_MERGE_CONFLICT after approval (ba397e2c), so no
- * advancing action is offered until the worker merges the base and the package is refreshed.
+ * The gate's own freshness probe found the publication package's branch conflicting with its
+ * publication base: the push would refuse with PUBLICATION_MERGE_CONFLICT after approval
+ * (ba397e2c), so no advancing action is offered until the conflict is resolved and the package
+ * refreshed. Gates without a publication package are left to their own checks.
  */
-function withBaseMergeConflict(
+export function withBaseMergeConflict(
   readiness: RunGateReadiness,
   payload: RunDecision['payload'] | undefined,
 ): RunGateReadiness {
-  if (payload?.kind !== 'ready' || payload.mergeConflicts !== true) return readiness;
+  if (payload?.kind !== 'ready' || !payload.prPackage || payload.mergeConflicts !== true)
+    return readiness;
   return {
     ...readiness,
     state: readiness.state === 'ready' ? 'not-ready' : readiness.state,
@@ -1057,12 +1063,16 @@ function withBaseMergeConflict(
         code: 'base-merge-conflict',
         prerequisite: 'lifecycle',
         actionId: 'hold',
-        message: baseMergeConflictMessage(payload.mergeConflictPaths ?? []),
+        message: baseMergeConflictMessage({
+          paths: payload.mergeConflictPaths ?? [],
+          hint: payload.branchFreshnessHint,
+        }),
       },
     ],
   };
 }
 
+/** A prerequisite remedy is actionable only when the same gate offers it. */
 export function projectRunGateActions(
   definitions: DecisionAction[],
   assessed: RunGateReadiness,

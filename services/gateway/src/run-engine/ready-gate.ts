@@ -4,7 +4,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
-  DEFAULT_BRANCH,
   effectiveRequiredReviewCount,
   type EvidenceManifestEntry,
   type EvidenceRefreshOverrideRecord,
@@ -108,8 +107,7 @@ import {
 import {
   applyBranchFreshnessToReadyGatePayload,
   type BranchFreshnessSummary,
-  probeSlotBranchFreshness,
-  resolveBranchUpdateStrategy,
+  probeRunBaseFreshness,
 } from './branch-freshness.js';
 import {
   latestResolvedHumanGateDecision,
@@ -1136,10 +1134,6 @@ export async function executeReadyGate(
       await persistRunPrNumber(current.id, mergedPrNumber);
     }
   }
-  // defaultBranch is shared by zero-ahead + branch-freshness (single slot probe).
-  const defaultBranch =
-    (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || DEFAULT_BRANCH;
-
   // Soft branch-freshness probe (fetch + behind/ahead + merge-tree). headSha is
   // taken from the probe when present; fall back to a cheap local rev-parse so a
   // failed/incomplete probe (timeout, missing markers) does not lose drift tracking.
@@ -1148,8 +1142,9 @@ export async function executeReadyGate(
   if (current.slotId) {
     try {
       const vars = await loadSlotVars(current.slotId);
-      const strategy = resolveBranchUpdateStrategy(pv?.projectJson);
-      branchFreshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
+      // Probed against the base the publication push checks (a stacked run's upstream branch).
+      const probed = await probeRunBaseFreshness(current);
+      branchFreshness = probed?.freshness ?? null;
       if (branchFreshness?.headSha) headSha = branchFreshness.headSha;
       if (!headSha) {
         const r = await execOnSlot(vars, `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`, {
@@ -1160,10 +1155,12 @@ export async function executeReadyGate(
       }
       // Fail closed: only promote close-as-shipped when ahead count is a known 0.
       // Unknown/missing ahead (ref not resolved) must not look like zero-ahead.
+      // Zero ahead of the default branch means shipped; a stacked base says nothing about that.
       if (
         publicationApprovalGate &&
         !mergedPrNumber &&
         branchFreshness &&
+        probed?.base === probed?.defaultBranch &&
         typeof branchFreshness.aheadMain === 'number'
       ) {
         branchZeroAhead = branchFreshness.aheadMain === 0;

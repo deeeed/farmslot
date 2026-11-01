@@ -3830,6 +3830,64 @@ test('refused publication approval stays pending without restoring, replaying or
   assert.deepEqual(getRun(run.id), before);
 });
 
+test('approval of a package conflicting with its publication base is refused before any effect (F302)', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'approval-base-conflict',
+    ticketOrPr: 'APPROVAL-BASE-CONFLICT',
+    runner: 'scripted',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'cancelled' });
+    await deleteRun(run.id);
+  });
+  const decision: RunDecision = {
+    id: 'approval-base-conflict',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    createdAt: '2026-11-02T00:00:00Z',
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      branch: 'fix/subject',
+      workerReport: 'Proof retained',
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+    },
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [decision],
+    steps: [
+      { name: 'human-gate', status: 'running' },
+      { name: 'finalize', status: 'pending' },
+    ],
+    engineState: { generation: 4 },
+  });
+  const before = structuredClone(getRun(run.id)!);
+  const checked: string[] = [];
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+      () => {},
+      {
+        assertGatePrerequisites: async () => {},
+        assertPublicationBaseMergeable: async (_run, decisionId) => {
+          checked.push(decisionId);
+          throw new Error('Resolve the base conflict first: this branch conflicts with its base.');
+        },
+        restoreGatePark: async () => assert.fail('refusal cannot restore a worker'),
+        resumeRun: async () => assert.fail('refusal cannot resume the run'),
+      },
+    ),
+    /Resolve the base conflict first/,
+  );
+  assert.deepEqual(checked, [decision.id], 'approval checks the base once');
+  assert.deepEqual(getRun(run.id), before);
+});
+
 test('real packaged approval restores a parked run before reading a reused slot checkout', async (t) => {
   const projectDir = mkdtempSync(path.join(projectsDir, 'parked-package-'));
   const project = path.basename(projectDir);

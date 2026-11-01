@@ -1,7 +1,6 @@
 // publish-package-refresh.ts — Ready-gate package refresh and evidence-selection preservation
 
 import {
-  DEFAULT_BRANCH,
   effectiveRequiredReviewCount,
   Events,
   GATE_SUMMARY_KINDS,
@@ -17,7 +16,7 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
+import { loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
@@ -38,8 +37,8 @@ import { commitRunVisualJudgment, getRun, persistRunNow, updateRun } from '../ru
 
 import {
   applyBranchFreshnessToReadyGatePayload,
-  probeSlotBranchFreshness,
-  resolveBranchUpdateStrategy,
+  type BranchFreshnessSummary,
+  probeRunBaseFreshness,
 } from './branch-freshness.js';
 import { BlockedRunError, OWNED_WORKER_NOT_IDLE, OwnedWorkerBusyError } from './errors.js';
 import {
@@ -640,20 +639,16 @@ async function refreshPublishPackageTransitionLocked(
       reviews,
     },
   };
-  // Soft gate chip: re-probe behind-main + merge-tree on package refresh so the
-  // operator sees staleness before more review loops. Never auto-rebases.
+  // Re-probe behind-base + merge-tree against the publication base on package refresh so the
+  // operator sees staleness before more review loops, and a conflict blocks approval (F302).
+  // Never auto-rebases.
   // Always replace (not partial-spread) freshness keys so stale mergeConflictPaths
   // / hints cannot survive a clean or failed probe via ...oldPayload.
-  let freshness: Awaited<ReturnType<typeof probeSlotBranchFreshness>> = null;
+  let freshness: BranchFreshnessSummary | null = null;
   let freshnessLine = '';
   if (refreshedRun.slotId) {
     try {
-      const vars = await loadSlotVars(refreshedRun.slotId);
-      const projectVars = await loadProjectVars(refreshedRun.project);
-      const defaultBranch =
-        getProjectField(projectVars.projectJson, 'default_branch') || DEFAULT_BRANCH;
-      const strategy = resolveBranchUpdateStrategy(projectVars.projectJson);
-      freshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
+      freshness = (await probeRunBaseFreshness(refreshedRun))?.freshness ?? null;
       if (freshness) {
         const behindLabel =
           typeof freshness.behindMain === 'number' ? String(freshness.behindMain) : 'unknown';

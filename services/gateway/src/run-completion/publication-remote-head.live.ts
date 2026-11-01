@@ -296,6 +296,16 @@ test(
       git('push', '-q', 'origin', `${commit}:refs/heads/main`);
     };
     advanceBase('conflicting upstream\n');
+    // F302: the gate's and approval's probe of the same real base sees the conflict first.
+    const { approvalBaseMergeConflict, probeRunBaseFreshness } =
+      await import('../run-engine/branch-freshness.js');
+    const probed = await probeRunBaseFreshness(current());
+    assert.equal(probed?.base, 'main');
+    assert.equal(probed?.freshness?.mergeConflicts, true);
+    assert.match(
+      (await approvalBaseMergeConflict(current(), { prPackage: { headSha: head } }))?.refusal ?? '',
+      /Resolve the base conflict first: this branch conflicts with its publication base in proof\.txt/,
+    );
     await assert.rejects(
       pushPublicationBranch(current(), head, 'main'),
       /PUBLICATION_MERGE_CONFLICT/,
@@ -304,6 +314,11 @@ test(
     assert.equal(git('rev-parse', 'HEAD'), head);
     await save('conflict-refused.json', { runId: created.id, head, remote: old, base: 'main' });
     advanceBase('published proof\n');
+    assert.equal(
+      await approvalBaseMergeConflict(current(), { prPackage: { headSha: head } }),
+      undefined,
+      'a clean base approves',
+    );
     const hooksBeforePublication = await readFile(hookReceipt, 'utf8');
     // Push exactly the publication HEAD through the production helper and real hook.
     await pushPublicationBranch(current(), head, 'main');

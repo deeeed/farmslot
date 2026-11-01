@@ -29,6 +29,7 @@ import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.
 
 await import('../runtime/mock-pty.test-support.js');
 const {
+  assertRunGateReady,
   collectRunGateAssessment,
   collectRunGateReadiness,
   projectRunGateActions,
@@ -1864,7 +1865,7 @@ test('PR completion still refuses failed worker-derived requirements', async () 
   assert.ok(assessed.readiness.reasons.some(({ code }) => code === 'acceptance-incomplete'));
 });
 
-test('a package branch that conflicts with its base offers no publish action (F302)', () => {
+test('a publication package conflicting with its base offers no publish route (F302)', () => {
   // ba397e2c: approve-publish was offered, then finalize failed PUBLICATION_MERGE_CONFLICT.
   const definitions: DecisionAction[] = [
     { id: APPROVE_PUBLISH_ACTION, label: 'Approve Publish', style: 'primary' },
@@ -1872,36 +1873,116 @@ test('a package branch that conflicts with its base offers no publish action (F3
     { id: 'hold', label: 'Hold', style: 'secondary' },
     { id: 'request-review', label: 'Request Review', style: 'secondary' },
   ];
-  const ready: RunGateReadiness = {
-    state: 'ready',
-    identity: { runId: 'base-conflict', generation: 0 },
-    reasons: [],
+  const identity = { runId: 'base-conflict', generation: 0 };
+  const ready: RunGateReadiness = { state: 'ready', identity, reasons: [] };
+  // Open findings an operator could otherwise accept and publish.
+  const findings: RunGateReadiness = {
+    state: 'not-ready',
+    identity,
+    reasons: [
+      {
+        code: 'review-findings-open',
+        prerequisite: 'review',
+        message: 'Review found 1 issue.',
+        allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
+      },
+    ],
+    findings: [{ reviewId: 'review-1', file: 'package.json', description: 'Pin the SDK' }],
+    findingsDigest: 'digest',
   };
-  const payload = (mergeConflicts: boolean): ReadyGatePayload => ({
+  const payload = (mergeConflicts: boolean, prPackage = true): ReadyGatePayload => ({
     kind: 'ready',
     prNumber: null,
     repo: null,
     diffStat: { files: 2, additions: 3, deletions: 1 },
     workerReport: '',
     branch: 'feat/expo-sdk-58',
+    ...(prPackage ? { prPackage: makeReadyGatePackage() } : {}),
     mergeConflicts,
     mergeConflictPaths: mergeConflicts ? ['package.json', 'yarn.lock'] : [],
+    branchFreshnessHint:
+      'behindMain: 3, mergeConflicts: true. Next: `git fetch origin main && git merge origin/main` (prefer merge).',
   });
+  const ids = (readiness: RunGateReadiness, gate?: ReadyGatePayload) =>
+    projectRunGateActions(definitions, readiness, gate).actions.map(({ id }) => id);
   const conflicted = projectRunGateActions(definitions, ready, payload(true));
-  assert.deepEqual(
-    conflicted.actions.map(({ id }) => id),
-    ['hold', 'request-review'],
-  );
+  assert.deepEqual(ids(ready, payload(true)), ['hold', 'request-review']);
+  assert.deepEqual(ids(findings, payload(true)), ['hold', 'request-review'], 'nor accept-findings');
   assert.equal(conflicted.readiness.state, 'not-ready');
   assert.equal(conflicted.readiness.reasons[0]?.code, 'base-merge-conflict');
   assert.match(
     conflicted.readiness.reasons[0]!.message,
-    /Merge the base branch first: .* in package\.json, yarn\.lock/,
+    /conflicts with its publication base in package\.json, yarn\.lock, so publishing would fail\. Next: `git fetch origin main && git merge origin\/main`/,
   );
-  // A clean or unknown probe leaves the gate as its other prerequisites decide.
-  for (const clean of [payload(false), undefined])
-    assert.deepEqual(
-      projectRunGateActions(definitions, ready, clean).actions.map(({ id }) => id),
-      [APPROVE_PUBLISH_ACTION, 'hold', 'request-review'],
+  // Clean, unknown, or a gate with no publication package: other prerequisites decide.
+  assert.deepEqual(ids(ready, payload(false)), [APPROVE_PUBLISH_ACTION, 'hold', 'request-review']);
+  assert.deepEqual(ids(ready), [APPROVE_PUBLISH_ACTION, 'hold', 'request-review']);
+  assert.deepEqual(ids(ready, payload(true, false)), [
+    APPROVE_PUBLISH_ACTION,
+    'hold',
+    'request-review',
+  ]);
+  assert.deepEqual(ids(findings, payload(false)), [
+    APPROVE_PUBLISH_UNRESOLVED_ACTION,
+    'hold',
+    'request-review',
+  ]);
+});
+
+test('a refresh and the resolve-time assertion apply a recorded base conflict (F302)', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'GATE-BASE-CONFLICT' });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const prepared = makeReadyGatePackage();
+  const inputs = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewedInputsAwaitingReview: async () => null,
+  };
+  const gateWith = (mergeConflicts: boolean): RunDecision => {
+    const decision = pendingReadyDecision();
+    decision.actions = [
+      { id: APPROVE_PUBLISH_ACTION, label: 'Publish', style: 'primary' },
+      { id: 'hold', label: 'Hold', style: 'secondary' },
+    ];
+    if (decision.payload?.kind !== 'ready') throw new Error('Expected ready fixture');
+    decision.payload = {
+      ...decision.payload,
+      prPackage: prepared,
+      mergeConflicts,
+      mergeConflictPaths: mergeConflicts ? ['yarn.lock'] : [],
+    };
+    return decision;
+  };
+  for (const mergeConflicts of [false, true]) {
+    const gate = gateWith(mergeConflicts);
+    updateRun(run.id, {
+      status: 'human-gating',
+      decisions: [gate],
+      engineState: { publishGate: { reviews: [certifyingReview(prepared)] } },
+    });
+    const refreshed = await refreshRunGateReadiness(getRun(run.id)!, inputs);
+    const offered = refreshed.decisions[0].actions.map(({ id }) => id);
+    assert.equal(
+      offered.includes(APPROVE_PUBLISH_ACTION),
+      !mergeConflicts,
+      `conflict=${mergeConflicts}`,
     );
+    // Resolve asserts the same reason (other prerequisites of this fixture may refuse too).
+    const refusal = await assertRunGateReady(
+      getRun(run.id)!,
+      prepared,
+      APPROVE_PUBLISH_ACTION,
+      gate.payload,
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    assert.equal(
+      refusal instanceof Error &&
+        /Resolve the base conflict first: .* in yarn\.lock/.test(refusal.message),
+      mergeConflicts,
+    );
+  }
 });

@@ -7,8 +7,6 @@ import test from 'node:test';
 
 import type { ReadyGatePayload } from '@farmslot/protocol';
 
-import { makeVars } from '../runners/test-fixtures.js';
-
 import {
   applyBranchFreshnessToReadyGatePayload,
   approvalBaseMergeConflict,
@@ -18,6 +16,7 @@ import {
   parseBranchFreshnessProbeOutput,
   parseMergeTreeConflictPaths,
   parseRevListCount,
+  type probeRunBaseFreshness,
   resolveBranchUpdateStrategy,
   sanitizeDefaultBranch,
 } from './branch-freshness.js';
@@ -355,51 +354,49 @@ test('real git: write-tree probe reports conflicts only when origin ref exists',
   assert.doesNotMatch(failFetch.hint, /up to date/);
 });
 
-test('approval probes the base again and refuses a branch that now conflicts with it (F302)', async () => {
-  const summary = (mergeConflicts?: boolean): BranchFreshnessSummary => ({
+test("approval re-probes the publication base, and the gate's last result decides when it cannot (F302)", async () => {
+  const run = { slotId: 'gate-slot', project: 'fixture', parentRunId: null };
+  const summary = (mergeConflicts?: boolean, headSha = 'abc1234'): BranchFreshnessSummary => ({
     ...(mergeConflicts === undefined ? {} : { mergeConflicts }),
     mergeConflictPaths: mergeConflicts ? ['package.json', 'yarn.lock'] : [],
     defaultBranch: 'main',
+    headSha,
     remoteRefOk: mergeConflicts !== undefined,
     fetchOk: mergeConflicts !== undefined,
-    hint: '',
+    hint: 'behindMain: 3, mergeConflicts: true. Next: `git fetch origin main && git rebase origin/main` (rebase project).',
   });
-  const probes: string[] = [];
-  const approval = (result: BranchFreshnessSummary | null) =>
-    approvalBaseMergeConflict(
-      { slotId: 'gate-slot', project: 'fixture' },
-      {
-        target: async () => ({
-          vars: makeVars({ slotId: 'gate-slot' }),
-          base: 'main',
-          strategy: 'merge',
-        }),
-        probe: async (_vars, base) => {
-          probes.push(base);
-          return result;
-        },
-      },
-    );
+  const gate = (mergeConflicts: boolean) => ({
+    prPackage: { headSha: 'abc1234' },
+    mergeConflicts,
+    mergeConflictPaths: mergeConflicts ? ['yarn.lock'] : [],
+  });
+  const timeouts: (number | undefined)[] = [];
+  const probe =
+    (result: BranchFreshnessSummary | null | Error): typeof probeRunBaseFreshness =>
+    async (_run, options) => {
+      timeouts.push(options?.timeoutMs);
+      if (result instanceof Error) throw result;
+      return { base: 'main', defaultBranch: 'main', freshness: result };
+    };
+  // A conflict at the package's HEAD refuses, with the project's own next step, and is returned
+  // so the card can stop offering approval.
+  const found = await approvalBaseMergeConflict(run, gate(false), probe(summary(true)));
   assert.match(
-    (await approval(summary(true))) ?? '',
-    /^Merge the base branch first: .* in package\.json, yarn\.lock/,
+    found?.refusal ?? '',
+    /in package\.json, yarn\.lock, .* Next: `git fetch origin main && git rebase origin\/main`/,
   );
-  // Clean, unknown (ref missing) or an unavailable probe: the publication push still decides.
-  assert.equal(await approval(summary(false)), undefined);
-  assert.equal(await approval(summary()), undefined);
-  assert.equal(await approval(null), undefined);
-  assert.equal(
-    await approvalBaseMergeConflict(
-      { slotId: 'gate-slot', project: 'fixture' },
-      {
-        target: async () => {
-          throw new Error('Slot gate-slot is not in the pool');
-        },
-      },
-    ),
-    undefined,
-    'an unreadable slot defers to the publication push',
+  assert.equal(found?.observed?.mergeConflicts, true);
+  // A clean probe at that HEAD clears a stale conflict.
+  assert.equal(await approvalBaseMergeConflict(run, gate(true), probe(summary(false))), undefined);
+  // Unknown, unavailable, failed, or another HEAD: the recorded result decides.
+  for (const unknown of [summary(), null, new Error('node offline'), summary(true, 'other-head')]) {
+    assert.equal(await approvalBaseMergeConflict(run, gate(false), probe(unknown)), undefined);
+    const kept = await approvalBaseMergeConflict(run, gate(true), probe(unknown));
+    assert.match(kept?.refusal ?? '', /Resolve the base conflict first: .* in yarn\.lock/);
+    assert.equal(kept?.observed, undefined);
+  }
+  assert.ok(
+    timeouts.every((ms) => ms === 15_000),
+    'approval waits a short probe',
   );
-  assert.deepEqual(probes, ['main', 'main', 'main', 'main']);
-  assert.equal(await approvalBaseMergeConflict({ slotId: null, project: 'fixture' }), undefined);
 });
