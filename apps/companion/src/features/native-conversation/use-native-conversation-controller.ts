@@ -594,7 +594,8 @@ export function useNativeConversationController(params: NativeConversationParams
       canSteer: canSend && nativeSteerAvailable(session, snapshot?.pendingRequests),
       /** The proposal Implement is offered on, while a new session can start. */
       implementKey:
-        session && resume.viewModel.implementReady && writable
+        // Kept while Implement runs, so its button stays, labelled, until the new session opens.
+        session && (implementing || (resume.viewModel.implementReady && writable))
           ? nativeImplementableKey(session, rows, snapshot?.pendingRequests, Boolean(pending))
           : undefined,
       implementing,
@@ -661,7 +662,8 @@ export function useNativeConversationController(params: NativeConversationParams
             }
             // Unconfirmed delivery shows, and is retried, in the conversation this opens.
             await deliver(command).catch(() => undefined);
-            return next;
+            // A reader who left this screen meanwhile is not taken to the new conversation.
+            return alive.current ? next : undefined;
           } finally {
             implementingRef.current = false;
             if (alive.current) setImplementing(false);
