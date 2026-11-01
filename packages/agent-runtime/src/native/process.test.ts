@@ -155,6 +155,35 @@ function runLines(t: TestContext, lines: string[]) {
   return { child, messages, exited };
 }
 
+test('Unicode line separators stay inside their records in both directions', async (t) => {
+  const messages: Array<Record<string, unknown>> = [];
+  const child = new JsonLineProcess(
+    process.execPath,
+    [
+      '-e',
+      // Emits a record carrying both separators and a CRLF record, then echoes each stdin
+      // line back the way a readline-framed runner reads it.
+      `process.stdout.write(${JSON.stringify(JSON.stringify({ type: 'text', text: 'a\u2028b\u2029c' }))} + '\\n{"type":"crlf"}\\r\\n');
+       require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => { if (line.trim()) process.stdout.write(JSON.stringify({ line }) + '\\n'); });`,
+    ],
+    { cwd: process.cwd() },
+    (message) => messages.push(message),
+    () => {},
+  );
+  t.after(() => child.close());
+  child.write({ text: 'a\u2028b\u2029c' });
+  const deadline = Date.now() + 10_000;
+  while (messages.length < 3 && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(messages.slice(0, 2), [
+    { type: 'text', text: 'a\u2028b\u2029c' },
+    { type: 'crlf' },
+  ]);
+  assert.equal(messages.length, 3);
+  assert.deepEqual(JSON.parse(String(messages[2].line)), { text: 'a\u2028b\u2029c' });
+  await child.close();
+});
+
 test('an oversized image read keeps the runner and records the image size, not its bytes', async (t) => {
   const { child, messages, exited } = runLines(t, ['read', '{"type":"after"}']);
   const runner: { stopped?: Error } = {};

@@ -437,3 +437,65 @@ A native farm worker is a native session started through the runner's native ada
 Workers and standalone sessions already shared one host launch path: the adapter registry and `NativeSessionManager`, with Cursor and Grok declaring worker support. The split was in the gateway. Its worker launch picked the executable for Claude and Codex itself and refused every other runner, so a Grok worker failed after its slot was prepared (run e57cded9).
 
 Removing that choice leaves one path. A runner gains worker support by having a native adapter, and the pool path stays the only override.
+
+## Amendment 11: a node's own runner login is the default, 2026-11-01
+
+**Status:** Accepted (lead, 2026-11-01).
+
+### Decision
+
+**No registration for the default.** A native session or worker without `profileId` runs on the node's existing login for its runner, in the runner's standard directory.
+
+- The standard directory is the one a session without a profile uses: `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` when the node's environment sets it, otherwise `~/.claude`, `~/.codex` or `~/.grok`; for Cursor, the home directory.
+- Each runner definition in the runner registry exposes it once (`account.standardDirectory`). The Grok review preflight script keeps its own copy, because it runs standalone.
+- This is today's no-profile behaviour. Launch, `accountContextId` and resume don't change.
+- A worker provisions from the node's login or the slot's account label. Codex workers keep the farm-managed `codex-home` that dispatch provisions, as tmux workers do (ADR-032). That is setup, not registration.
+
+**Clients don't wait for profiles.** Command Center (chat and dispatch) and Companion enable Start on "Node default account" without waiting for `native.profile.list`.
+
+- A pending or failed read affects only the profile choices. Its error shows beside the picker.
+- On the node, a failed profile sample (an unreadable profile file, or a profile removed during the sample) leaves session observation ready. Profile reads report unavailable until a later sample succeeds.
+- An explicitly selected profile never silently falls back to the default.
+- In Command Center, with no profiles registered, the picker shows "Node default account" and "Add another account".
+
+**Profiles are for an additional account only.** `native.profile.add` refuses the runner's standard directory with "This is the node's own login; no profile is needed".
+
+- The check compares canonical paths: `~/` expanded, symlinks resolved.
+- It runs before the existing-profile check, so a standard-directory registration made earlier is refused too, not returned again.
+
+**Migration.** Registrations whose canonical directory is their runner's standard directory (today the `macpro-dev-*` ones on macpro) are removed with `native.profile.remove` once no unfinished run, queued item, PR-rule choice or saved review default names them.
+
+- Their saved sessions stay readable and closeable.
+- Resume refuses them, as for any removed profile ("Native account profile is unavailable"). Their conversation files stay in the standard directory.
+- Then one Claude session starts on macpro with no profile.
+- The change ships on the mini proof. The macpro cleanup and its no-profile session follow when macpro is back from maintenance.
+
+**Unchanged:**
+
+- the owner check (`FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID`, ADR-051's generation-zero owner);
+- approval routing;
+- the launch fences (Amendment 6);
+- reviewer health, which already keys "no profile" per owner, node and runner.
+
+This amendment changes one sentence under "Trusted operator profile scope". "Profiles are optional for side-by-side configurations; saved-session resume never changes runners" becomes "Profiles are optional, for an additional configuration directory; the runner's standard directory needs none and cannot be registered; saved-session resume never changes runners". The rest of ADR-057, ADR-051 and the agent-runtime specification's inherited-environment rule stay as written.
+
+### Rationale
+
+The runtime and the gateway already run without a profile. Two things around them made it look otherwise:
+
+- Clients enabled the default only after a successful profile list read, so a slow or failed read blocked Start.
+- Nothing stopped a standard directory being registered, so one login could exist as two accounts.
+
+The cost of the change is small:
+
+- Start on the default no longer waits for a network read.
+- The registration check is one path comparison in `native.profile.add`.
+- Nothing new is scanned or spawned.
+
+### Public surface
+
+- No new methods or fields. `account.standardDirectory` is added to the runner definition in `@farmslot/agent-runtime`.
+- Older hosts still accept a standard-directory registration, and older clients still wait for the profile list.
+- `@farmslot/agent-runtime` (the registration check) needs a release; native hosts started after it refuse.
+- Command Center and Companion change their pickers.
+- The agent-runtime specification states the default and the refusal ("Native account default").

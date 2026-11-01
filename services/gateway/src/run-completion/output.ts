@@ -32,6 +32,7 @@ import {
   retainCapturedRunArtifacts,
   retainedRunArtifactManifest,
   retainedRunBundleRef,
+  retainedRunExcludedPaths,
 } from './retained-artifacts.js';
 
 // Completion writes these diagnostics after the worker output gate opens.
@@ -201,17 +202,52 @@ export function failRunOutputCapture(runId: string, error: unknown, workerFinish
   return updateRun(runId, { output, decisions: outputReviewDecisions(run, output) });
 }
 
+// One capture per run at a time. A replayed review and the recovered review gate both
+// snapshotted the same committed bundle, and the one that committed second failed its
+// step with "A newer retained capture committed" (F305). A queued capture reads the run
+// after the previous one committed, so it builds on that capture, but it still belongs
+// to the attempt it was called for.
+const capturesInFlight = new Map<string, Promise<unknown>>();
+
+interface CaptureAttempt {
+  taskFile: string;
+  generation: number | undefined;
+}
+
 /** Capture before completion policy can skip COMPLETE, including partial work. */
-export async function captureRunOutput(
+export function captureRunOutput(
   runId: string,
   mirror = true,
   workerFinished = false,
   options: ArtifactMirrorOptions = {},
 ): Promise<number> {
   const run = getRun(runId);
+  if (!run?.taskFile) return Promise.resolve(0);
+  const attempt = { taskFile: run.taskFile, generation: run.engineState?.generation };
+  const capture = () => captureRunOutputNow(runId, mirror, workerFinished, options, attempt);
+  const previous = capturesInFlight.get(runId);
+  const next = previous ? previous.then(capture) : capture();
+  const settled = next.catch(() => undefined);
+  capturesInFlight.set(runId, settled);
+  void settled.then(() => {
+    if (capturesInFlight.get(runId) === settled) capturesInFlight.delete(runId);
+  });
+  return next;
+}
+
+async function captureRunOutputNow(
+  runId: string,
+  mirror: boolean,
+  workerFinished: boolean,
+  options: ArtifactMirrorOptions,
+  attempt: CaptureAttempt,
+): Promise<number> {
+  const run = getRun(runId);
   if (!run?.taskFile) return 0;
   const taskFile = run.taskFile;
   const generation = run.engineState?.generation;
+  if (taskFile !== attempt.taskFile || generation !== attempt.generation)
+    throw new Error('Run attempt changed while retrieving output; refresh the current attempt');
   const acquisition = options.acquisition ?? createRunArtifactAcquisition(run);
   const copied =
     mirror && !run.reviewWorkspace
@@ -364,7 +400,18 @@ export async function verifyRunOutputReview(
   const artifacts = (await retainedRunArtifactManifest(run, ref)).filter((artifact) =>
     artifact.path.startsWith('artifacts/'),
   );
-  if (outputManifestDigest(artifacts) !== expected)
+  // The bundle never retains sensitive-named files (a `token` or `secret` in the name), so
+  // the retained bytes must match the rest of the reviewed capture.
+  const excluded = await retainedRunExcludedPaths(run, ref);
+  const retainable = excluded.size
+    ? outputManifestDigest(
+        run.output.artifactManifest.filter((artifact) => !excluded.has(artifact.path)),
+      )
+    : expected;
+  if (
+    (excluded.size && outputManifestDigest(run.output.artifactManifest) !== expected) ||
+    outputManifestDigest(artifacts) !== retainable
+  )
     throw new Error('Run output changed; refresh the report before reviewing');
   if (!artifacts.some((artifact) => artifact.path === reportPath))
     throw new Error('Reviewed report is not in the retained output');
