@@ -194,7 +194,8 @@ async function observeContext(
     return {
       kind: 'idle',
       activeRole,
-      reason: 'Recorded worker pane is gone and its slot has no live runner',
+      reason:
+        'Recorded worker runner has exited or its pane is gone, and its slot has no live runner',
     };
   if (retained.state === 'unknown') return { ...progress, reason: retained.reason };
   return observeTarget(retained.target);

@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { AgentContext } from '@farmslot/protocol';
 
 import { readRetainedWorkerProgressTarget } from './retained-worker-progress.js';
+import type { RunnerDescendantPidProbe } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
 
 const context: AgentContext = {
@@ -43,13 +44,12 @@ test('absence needs no saved conversation; a live runner without one stays unkno
   }
 });
 
-test('unreadable census, malformed output and a surviving saved pane remain unknown', async () => {
+test('an unreadable census and malformed output remain unknown', async () => {
   for (const result of [
     { exitCode: 124, stdout: '', stderr: 'timeout' },
     { exitCode: 1, stdout: '', stderr: 'transport unavailable' },
     { exitCode: 0, stdout: '', stderr: '' },
     { exitCode: 0, stdout: 'owned\t%1\t\n', stderr: '' },
-    { exitCode: 0, stdout: 'moved\t%288\t101\n', stderr: '' },
   ]) {
     const actual = await readRetainedWorkerProgressTarget(vars, context, {
       exec: async () => result,
@@ -58,6 +58,28 @@ test('unreadable census, malformed output and a surviving saved pane remain unkn
     });
     assert.equal(actual.state, 'unknown');
   }
+});
+
+test('a surviving recorded pane is idle once its runner has exited, and unknown while it runs', async () => {
+  const probed: string[] = [];
+  const cases: Array<[RunnerDescendantPidProbe, string]> = [
+    [{ state: 'absent' }, 'absent'],
+    [{ state: 'present', pid: '202' }, 'unknown'],
+    [{ state: 'unknown', code: 'probe-transport', reason: 'probe timed out' }, 'unknown'],
+  ];
+  for (const [runner, expected] of cases) {
+    const actual = await readRetainedWorkerProgressTarget(vars, context, {
+      // The runner exited 0 and left the role shell in its pane (F287, c9562e49).
+      exec: async () => ({ exitCode: 0, stdout: 'owned\t%288\t101\n', stderr: '' }),
+      probe: async (_vars, panePid) => {
+        probed.push(panePid);
+        return runner;
+      },
+      binding: async () => assert.fail('no replacement to bind'),
+    });
+    assert.equal(actual.state, expected);
+  }
+  assert.deepEqual(probed, ['101', '101', '101'], 'the recorded pane is probed once per read');
 });
 
 test('a resumed worker on a new pane must match the recorded conversation', async () => {

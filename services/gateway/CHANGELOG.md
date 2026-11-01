@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A worker whose runner exited reads idle at a handoff (publication gate, COMPLETE, FINALIZE) even though its pane survives as the role shell. Before, the surviving pane alone kept progress unconfirmed, so finalize refused with "The current runner operation cannot be confirmed idle" (grok tmux run c9562e49: `[farmslot] runner launch command exited 0`). A runner still running in that pane, or a probe that can't tell, stays unconfirmed.
 - Native farm workers launch through the runner's native adapter, as chat sessions do (ADR-057 Amendment 10), so Grok and Cursor run as native workers as well as Claude and Codex.
   - The gateway no longer picks the runner executable for a dispatched worker or a static review. The launch names one only when the machine's pool sets `<runner>_path`.
   - A native run for a runner with no native adapter is refused before its slot is claimed or prepared. That happens at creation and queue admission when the run names the runner, at FIND_SLOT when it takes the slot's runner, and on a dispatch replay that changes it.

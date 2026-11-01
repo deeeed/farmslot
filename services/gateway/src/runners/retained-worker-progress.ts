@@ -57,13 +57,24 @@ export async function readRetainedWorkerProgressTarget(
     )
   )
     return { state: 'unknown', reason: 'Worker pane inventory is incomplete' };
-  if (panes.some(({ paneId }) => paneId === target.paneId))
-    return {
-      state: 'unknown',
-      reason: 'Recorded worker pane still exists; progress is unconfirmed',
-    };
+  // The recorded pane outlives a runner that exited: the role shell stays. Only a live runner
+  // there is unconfirmed progress; with it gone, a replacement is looked for as for a gone pane.
+  const recorded = panes.find(({ paneId }) => paneId === target.paneId);
+  if (recorded) {
+    const process = await readers.probe(vars, recorded.panePid!, runner, { timeout: 10_000 });
+    if (process.state !== 'absent')
+      return {
+        state: 'unknown',
+        reason:
+          process.state === 'unknown'
+            ? (process.reason ?? 'Worker process probe is unavailable')
+            : 'Recorded worker pane still runs its runner; progress is unconfirmed',
+      };
+  }
   let resumed: string | undefined;
-  for (const pane of panes.filter(({ session }) => session === target.session)) {
+  for (const pane of panes.filter(
+    ({ session, paneId }) => session === target.session && paneId !== recorded?.paneId,
+  )) {
     const process = await readers.probe(vars, pane.panePid!, runner, { timeout: 10_000 });
     if (process.state === 'unknown')
       return { state: 'unknown', reason: process.reason ?? 'Worker process probe is unavailable' };
