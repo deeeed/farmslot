@@ -59,6 +59,7 @@ import {
   getRun,
   listRuns,
   listRunTags as storeListRunTags,
+  persistRunNow,
   runsDirectory,
   updateRun,
 } from '../../runs/store.js';
@@ -280,7 +281,22 @@ async function releaseKeptSlot(
   const slotId = run.slotId;
   // Another active run owns the slot now; it keeps it.
   const before = await readSlotRow(slotId);
-  if (!ownsRunSlotCleanup(before, run.id)) return;
+  if (!ownsRunSlotCleanup(before, run.id)) {
+    // COMPLETE already released an artifact-only run's slot; archive still returns its checkout.
+    if (archive) {
+      const { returnReleasedCheckoutToIdle } =
+        await import('../../run-lifecycle/safe-idle-slot.js');
+      const result = await returnReleasedCheckoutToIdle(run, emit);
+      if (result && result.kind !== 'ready') {
+        const retained = updateRun(run.id, {
+          slotTeardownSkipped: `Checkout retained: ${result.reason}`,
+        });
+        await persistRunNow(retained, 'released checkout retained');
+        emit(Events.RUN_UPDATED, { run: retained });
+      }
+    }
+    return;
+  }
   const blocker = await slotOwnershipBlocker(run);
   if (blocker) throw new Error(`Cannot release slot ${slotId} of run ${run.id}: ${blocker}`);
   const { released } = await slot.release(
