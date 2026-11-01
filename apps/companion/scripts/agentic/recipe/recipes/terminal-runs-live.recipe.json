@@ -53,7 +53,7 @@
         "action": "command",
         "cmd": "node scripts/agentic/prove-offline-runs.mjs terminal-context",
         "timeout_ms": 240000,
-        "intent": "Prove the shared terminal: run observations, reinit, typing once, old links, per-pane drafts, runner Send, cold restore and exact actor pins.",
+        "intent": "Prove session, typing, links, drafts, Send, cold restore and pins.",
         "next": "shared"
       },
       "shared": {
