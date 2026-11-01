@@ -299,33 +299,147 @@ test('a visual or mixed claim that only shell output proves is refused before th
     workflow: {
       nodes: {
         // AC1 rests only on a command's output (ba397e2c: SDK version and expo-doctor checks).
-        sdk: { action: 'command', cmd: 'node -p 1' },
+        sdk: { action: 'command', cmd: 'node -p 1', next: 'assert-sdk' },
         'assert-sdk': {
           action: 'assert_output',
           source: 'sdk',
           assert: { path: '$', operator: 'eq', value: 1 },
           proves: ['AC1'],
+          next: 'list',
         },
         // An adapter's own UI query counts as on-screen proof (ba397e2c: echobridge.ui.query).
-        list: { action: 'echobridge.ui.query', target: 'list' },
+        list: { action: 'echobridge.ui.query', target: 'list', next: 'assert-list' },
         'assert-list': {
           action: 'assert_output',
           source: 'list',
           assert: { path: '$', operator: 'contains', value: 'two rows' },
           proves: ['AC2'],
+          next: 'done',
         },
+        done: { action: 'end', status: 'pass' },
       },
     },
   });
-  for (const mode of ['visual', 'mixed'] as const)
+  for (const mode of ['visual', 'mixed'] as const) {
+    // Planning a recorded package (gate re-derivation) still accepts it; only a run refuses.
+    const plan = planRecipeEvidence(recipe(mode), new Map());
     assert.throws(
-      () => assertVisualClaimsObserveUi(planRecipeEvidence(recipe(mode), new Map())),
+      () => assertVisualClaimsObserveUi(plan),
       new RegExp(
-        `Claim AC-1 is declared ${mode}, but only shell commands and file checks prove it.*declare proofMode state`,
+        `Claim AC-1 is declared ${mode}, but only shell commands and file or log checks prove it.*or declare proofMode state`,
       ),
     );
+  }
   // A state claim, and a mixed claim asserted on an app's UI query, plan as before.
   assertVisualClaimsObserveUi(planRecipeEvidence(recipe('state'), new Map()));
+});
+
+test('the visual-claim check follows calls, re-reads, file and log checks and child claims', () => {
+  const shellCheck = (source: Record<string, unknown>) => ({
+    proofTargets: [{ id: 'check', claim: 'The checks pass.', proofMode: 'mixed' as const }],
+    workflow: {
+      nodes: {
+        read: { ...source, next: 'assert' },
+        assert: {
+          action: 'assert_output',
+          source: 'read',
+          assert: { path: '$', operator: 'eq', value: 0 },
+          proves: ['check'],
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  });
+  const viaCall = (child: ReturnType<typeof shellCheck>) =>
+    planRecipeEvidence(
+      {
+        proofTargets: [{ id: 'AC1', claim: 'The checks pass.', proofMode: 'mixed' as const }],
+        workflow: {
+          nodes: {
+            step: { action: 'call', ref: 'checks', claimBindings: { check: 'AC1' }, next: 'done' },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      new Map([['checks', child]]),
+    );
+  // A shared library check called from the task recipe, its `end` included.
+  assert.throws(
+    () => assertVisualClaimsObserveUi(viaCall(shellCheck({ action: 'command', cmd: 'yarn tsc' }))),
+    /Claim AC-1 is declared mixed/,
+  );
+  assertVisualClaimsObserveUi(viaCall(shellCheck({ action: 'echobridge.ui.query', target: 'x' })));
+  // A log read, and a command re-read through state_read, are off screen too.
+  for (const nodes of [
+    { read: { action: 'watch_logs', path: 'app.log', contains: 'ready' } },
+    {
+      cmd: { action: 'command', cmd: 'node -p 1', next: 'read' },
+      read: { action: 'state_read', source: 'cmd', path: '$' },
+    },
+  ]) {
+    const child = shellCheck({});
+    child.workflow.nodes = { ...child.workflow.nodes, ...nodes } as typeof child.workflow.nodes;
+    assert.throws(() => assertVisualClaimsObserveUi(viaCall(child)), /declared mixed/);
+  }
+  // A file assertion proves nothing the recording shows.
+  assert.throws(
+    () =>
+      assertVisualClaimsObserveUi(
+        planRecipeEvidence(
+          {
+            proofTargets: [{ id: 'AC1', claim: 'The change is minimal.', proofMode: 'visual' }],
+            workflow: {
+              nodes: {
+                marker: {
+                  action: 'assert_file',
+                  path: 'artifacts/pr-description.md',
+                  contains: 'DO NOT MERGE',
+                  proves: ['AC1'],
+                  next: 'done',
+                },
+                done: { action: 'end', status: 'pass' },
+              },
+            },
+          },
+          new Map(),
+        ),
+      ),
+    /declared visual/,
+  );
+  // A mixed parent whose child claim is shown on screen keeps its mode.
+  assertVisualClaimsObserveUi(
+    planRecipeEvidence(
+      {
+        proofTargets: [
+          { id: 'AC1', claim: 'The value is saved and shown.', proofMode: 'mixed' },
+          { id: 'AC1a', claim: 'The value is shown.', proofMode: 'visual', parentId: 'AC1' },
+        ],
+        workflow: {
+          nodes: {
+            saved: { action: 'command', cmd: 'cat saved.json', next: 'assert-saved' },
+            'assert-saved': {
+              action: 'assert_output',
+              source: 'saved',
+              assert: { path: '$.value', operator: 'eq', value: 1 },
+              proves: ['AC1'],
+              next: 'shown',
+            },
+            shown: { action: 'echobridge.ui.query', target: 'value', next: 'assert-shown' },
+            'assert-shown': {
+              action: 'assert_output',
+              source: 'shown',
+              contains: '1',
+              proves: ['AC1a'],
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      new Map(),
+    ),
+  );
 });
 
 test('two composed calls retain separate claims and explicit parent bindings', () => {

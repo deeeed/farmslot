@@ -7,6 +7,7 @@ import {
 
 import {
   collectProofNodes,
+  isProofObservation,
   potentiallyEligibleProof,
   proofAssertionSource,
   type ProofDocument,
@@ -121,24 +122,29 @@ export function planRecipeEvidence(
   return { declarations: [...declarations.values()], nodes };
 }
 
-/** Nodes whose observation never appears on the app's recording: shell output and file reads. */
-const offScreenProof = (action: string) =>
-  action === 'call' ||
-  action === 'command' ||
-  action === 'assert_output' ||
-  action === 'assert_json' ||
-  action === 'assert_file';
+/** Built-in observations that never appear on the app's recording: shell output and log reads. */
+const OFF_SCREEN_OBSERVATIONS: ReadonlySet<string> = new Set(['command', 'watch_logs']);
 
 /**
  * A visual or mixed claim is judged on the recording. One whose proof rests only on shell output
- * and file reads can never be confirmed there, so the gate would refuse it after the run: it is
- * refused here instead, before anything runs. The closure is every node the claim's proof can
- * rest on (its proving nodes, what they call, the observations they assert). Any other action,
- * including an adapter's own app or UI query, keeps the declared mode.
+ * and file or log checks can never be confirmed there, so the gate would refuse it after the run:
+ * it is refused here instead, before anything runs. The closure is every node the claim's proof
+ * can rest on: the proving nodes of the claim and of its child claims, what they call, and the
+ * sources they assert or re-read. Control and assertion nodes observe nothing themselves. Any
+ * other observation, including an adapter's own app or UI query, keeps the declared mode.
  */
 export function assertVisualClaimsObserveUi(plan: RecipeEvidencePlan): void {
   for (const claim of plan.declarations) {
     if (claim.proofMode !== 'visual' && claim.proofMode !== 'mixed') continue;
+    const claims = new Set([claim.id]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const child of plan.declarations)
+        if (child.parentId && claims.has(child.parentId) && !claims.has(child.id)) {
+          claims.add(child.id);
+          grew = true;
+        }
+    }
     const closure = new Set<string>();
     const add = (id: string) => {
       if (closure.has(id)) return;
@@ -146,14 +152,25 @@ export function assertVisualClaimsObserveUi(plan: RecipeEvidencePlan): void {
       const node = plan.nodes.get(id);
       if (node?.action === 'call')
         for (const child of plan.nodes.keys()) if (child.startsWith(`${id}/`)) add(child);
-      if (node?.action === 'assert_output') add(proofAssertionSource(id, node));
+      if (node?.action === 'assert_output' || node?.action === 'state_read')
+        add(proofAssertionSource(id, node));
     };
-    for (const [id, node] of plan.nodes) if (node.proves?.includes(claim.id)) add(id);
+    for (const [id, node] of plan.nodes)
+      if (node.proves?.some((proved) => claims.has(proved))) add(id);
     // A claim nothing proves is reported as missing by claim derivation, not here.
     if (!closure.size) continue;
-    if ([...closure].every((id) => offScreenProof(plan.nodes.get(id)?.action ?? '')))
+    const onScreen = [...closure].some((id) => {
+      const action = plan.nodes.get(id)?.action ?? '';
+      if (action.startsWith('ui.')) return true;
+      return (
+        isProofObservation(action) &&
+        action !== 'state_read' &&
+        !OFF_SCREEN_OBSERVATIONS.has(action)
+      );
+    });
+    if (!onScreen)
       throw new Error(
-        `Claim ${claim.id} is declared ${claim.proofMode}, but only shell commands and file checks prove it, so the recording cannot show it; declare proofMode state.`,
+        `Claim ${claim.id} is declared ${claim.proofMode}, but only shell commands and file or log checks prove it, so the recording cannot show it; prove it with a UI observation (ui.wait_for, or assert_output on a UI query), or declare proofMode state.`,
       );
   }
 }
