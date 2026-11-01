@@ -35,6 +35,9 @@ import {
   nativeFollowScrolled,
   nativeHistoryCanAct,
   nativeHistoryQuery,
+  nativeImplementableKey,
+  nativeImplementPrompt,
+  nativeImplementSession,
   nativeMessageCancelable,
   nativeMessageDropped,
   type NativeMessagePreview,
@@ -229,6 +232,8 @@ export class NativeSessionView extends LitElement {
     return this.timelineEntries;
   }
 
+  /** The proposal Implement is offered on in this render (`nativeImplementableKey`). */
+  private implementKey?: number;
   private rowsEntries?: NativeTimelineEntry[];
   private rows: NativeTimelineRow[] = [];
   private folds = new Map<number, Extract<NativeTimelineRow, { kind: 'work' }>>();
@@ -558,7 +563,17 @@ export class NativeSessionView extends LitElement {
           )}
       >
         ${nativePlanCopyLabel(copied)}
-      </button>`;
+      </button>
+      ${this.implementKey === entry.key
+        ? html`<button
+            class="plan-copy"
+            data-testid="native-plan-implement"
+            ?disabled=${this.busy || !this.connected}
+            @click=${() => void this.implement(plan.text)}
+          >
+            Implement
+          </button>`
+        : nothing}`;
   }
 
   /** What a turn changed in the working tree; each file opens its diff between the turn's checkpoints. */
@@ -1091,6 +1106,23 @@ ${JSON.stringify(
     }
   }
 
+  /** Selects a session and keeps it in the page address, so a refresh reopens it. */
+  private selectRouted(id: string, executionNodeId = 'local') {
+    this.select(id, executionNodeId);
+    if (this.worker || this.fixture || parseHashRoute().route !== 'native') return;
+    this.initialSessionId = id;
+    this.initialExecutionNodeId = executionNodeId;
+    const params = hashParams();
+    if (id) {
+      params.set('sessionId', id);
+      params.set('executionNodeId', executionNodeId);
+    } else {
+      params.delete('sessionId');
+      params.delete('executionNodeId');
+    }
+    history.replaceState(null, '', buildHash('native', params));
+  }
+
   private select(id: string, executionNodeId = 'local') {
     this.revision++;
     this.expandedMessages = new Set();
@@ -1212,6 +1244,66 @@ ${JSON.stringify(
     this.localCommand = command;
     this.draft = '';
     safeLsRemove(this.sessionKey(`draft:${command.sessionId}`));
+    await this.deliver(command, delivery);
+  }
+
+  /**
+   * Implement: a new default-mode session like this one, whose first message is the plan. Its
+   * delivery is kept like a typed message's, so it shows, and survives a refresh, in the new
+   * session.
+   */
+  private async implement(plan: string) {
+    const source = this.session;
+    if (
+      !source ||
+      this.worker ||
+      this.busy ||
+      !this.connected ||
+      !this.historyCurrent ||
+      !this.inputAllowed ||
+      this.localCommand
+    )
+      return;
+    const revision = this.revision;
+    this.busy = true;
+    this.error = '';
+    let created: NativeSessionInfo;
+    try {
+      ({ session: created } = await this.api.request<{ session: NativeSessionInfo }>(
+        Methods.NATIVE_SESSION_CREATE,
+        nativeImplementSession(source),
+      ));
+    } catch (error) {
+      if (revision === this.revision) {
+        this.error = `${(error as Error).message}. Check Sessions before implementing again.`;
+        this.busy = false;
+      }
+      return;
+    }
+    if (revision !== this.revision || !this.isConnected) return;
+    const command: LocalCommand = {
+      sessionId: created.id,
+      executionNodeId: created.executionNodeId,
+      generation: created.generation,
+      commandId: crypto.randomUUID(),
+      text: nativeImplementPrompt(plan),
+    };
+    const stored = safeLsSet(this.sessionKey(`command:${created.id}`), JSON.stringify(command));
+    this.selectRouted(created.id, created.executionNodeId);
+    this.session = created;
+    void this.refreshSessions();
+    if (!stored) {
+      // Nothing can track its delivery: leave the message for the reader to send.
+      this.draft = command.text;
+      this.error =
+        'Browser storage is unavailable. Enable storage to preserve delivery receipts across refresh.';
+      return;
+    }
+    await this.deliver(command);
+  }
+
+  /** Sends a command already kept as this session's pending message. */
+  private async deliver(command: LocalCommand, delivery?: 'steer') {
     this.error = '';
     const revision = this.revision;
     try {
@@ -1344,6 +1436,15 @@ ${JSON.stringify(
 
   render() {
     const session = this.session;
+    this.implementKey =
+      session && !this.worker && this.historyCurrent && this.inputAllowed
+        ? nativeImplementableKey(
+            session,
+            this.timelineRows(),
+            this.requests,
+            Boolean(this.localCommand),
+          )
+        : undefined;
     const lastReceipt = this.localCommand
       ? this.receipts.find((receipt) => receipt.commandId === this.localCommand?.commandId)
       : this.receipts.at(-1);
@@ -1373,21 +1474,7 @@ ${JSON.stringify(
         toggleFullscreen: () => void this.toggleFullscreen(),
         requestCount: this.requests.length,
         sessionChoice: (item) => this.sessionChoice(item),
-        select: (id, node = 'local') => {
-          this.select(id, node);
-          if (this.worker || this.fixture || parseHashRoute().route !== 'native') return;
-          this.initialSessionId = id;
-          this.initialExecutionNodeId = node;
-          const params = hashParams();
-          if (id) {
-            params.set('sessionId', id);
-            params.set('executionNodeId', node);
-          } else {
-            params.delete('sessionId');
-            params.delete('executionNodeId');
-          }
-          history.replaceState(null, '', buildHash('native', params));
-        },
+        select: (id, node = 'local') => this.selectRouted(id, node),
         readError: this.pollError || this.inventoryError || this.catalogError,
         unavailableSince: this.readUnavailableSince,
         observedAt: this.historyObservation.observedAt,

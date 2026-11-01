@@ -321,7 +321,7 @@ Hosts keep their loaded code until stopped, so a session started on an older hos
 
 ## Amendment 9: queued messages, steering, plans and per-turn changes, 2026-10-31
 
-**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in #1658; part 2 (plan updates: checklists and proposed plans) implemented in #1668; part 3 (steer) implemented in #1671; part 4 (per-turn changes) implemented in this change; Implement follows in its own change.
+**Status:** Accepted (approved by the lead 2026-10-31); part 1 (remove and edit) implemented in #1658; part 2 (plan updates: checklists and proposed plans) implemented in #1668; part 3 (steer) implemented in #1671; part 4 (per-turn changes) implemented in #1674; Implement, as a new session (the lead, 2026-11-01), implemented in this change.
 
 ### Decision
 
@@ -361,7 +361,11 @@ Each event carries the whole plan and replaces the earlier plan of the same kind
 
 Claude's TodoWrite and ExitPlanMode come later, after a live check of what Claude's headless mode sends.
 
-A checklist is one timeline entry per turn and kind, at the place and key of its first update, holding the latest plan. It shows its steps while its turn runs and folds to its progress ("3 of 5 steps") once the turn ends, unless the reader watched it run. A proposal is a card: markdown, collapsed when long, with a copy action. Implement (a mode switch) comes with its own change.
+A checklist is one timeline entry per turn and kind, at the place and key of its first update, holding the latest plan. It shows its steps while its turn runs and folds to its progress ("3 of 5 steps") once the turn ends, unless the reader watched it run. A proposal is a card: markdown, collapsed when long, with a copy action.
+
+**Implement.** When the latest turn of an idle, standalone plan-mode session ended with a proposal, nothing is pending and the client's own last message has settled (a refinement may still change the plan), the card also offers Implement (`nativeImplementableKey`). It starts a new default-mode session on the planning session's node, runner, model, effort, account profile and working directory (`nativeImplementSession`), whose first message is "PLEASE IMPLEMENT THIS PLAN:" and the plan (`nativeImplementPrompt`), and opens it. That message is kept as the new conversation's pending message before it is sent, like a typed one, so its delivery shows there; a client runs one Implement at a time until the new conversation opens. A pinned worker's view cannot start sessions, so it offers none. Refine needs nothing new: the reader answers in the plan-mode session.
+
+The approved text switched the session's mode instead (`send` with `mode`, `capabilities.turnModes`). A live check on Codex 0.166 (2026-11-01) showed that a thread stays in plan mode once it entered it: a turn sent with `collaborationMode: default` after a plan turn still answered "I'm still in Plan Mode" and changed no file, with developer instructions null or omitted (as t3-code sends them) and with t3-code's wording. The lead chose a new session (2026-11-01), so `mode` on `send` and `turnModes` are not added.
 
 **Per-turn changes.** For a session whose working directory is in a Git working tree, the host takes a checkpoint before and after each turn:
 
@@ -404,5 +408,7 @@ An older host sends no `turn.changes`, so clients offer no turn diffs for its se
 Steer: `NativeSessionSendParams.delivery`, `NativeSessionCapabilities.steer`, the receipt flag `steered` and the client-cache predicate `nativeSteerAvailable` in `@farmslot/protocol`. `@farmslot/agent-runtime` adds the host methods `steer` and `native.worker.steer` and the Codex `turn/steer` call, so it needs a release; sessions started on a host after it can steer. The gateway routes a worker steer through its input fence and withholds the capability where it refuses it. No new gateway method.
 
 Plan updates: the event type `plan.updated` with `NativeSessionPlan` and `NativePlanStep`, the `plan` timeline entry, `nativePlanText` and `nativePlanOpen` in the client cache, and the history projection bump, in `@farmslot/protocol`. `@farmslot/agent-runtime` maps the Codex and ACP plans and needs a release; native hosts started after it send plans. The gateway passes events through unchanged.
+
+Implement: `nativeImplementableKey`, `nativeImplementPrompt` and `nativeImplementSession` in the client cache. Clients create and send through the existing `native.session.create` and `native.session.send`; no host, gateway or contract change.
 
 Per-turn changes: the event type `turn.changes` with `NativeTurnChanges` and `NativeTurnFile`, the method `native.session.turn.diff` (`NativeSessionTurnDiffParams`, `NativeSessionTurnDiffResult`), the `changes` timeline entry and `nativeTurnChangesText` in the client cache, and another history projection bump, in `@farmslot/protocol`. `@farmslot/agent-runtime` takes the checkpoints and serves the diff, so it needs a release; native hosts and node services started after it support them. The gateway adds the method to its routes, worker read fence and authorization map. No CLI flag or harness change.

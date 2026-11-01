@@ -1,6 +1,7 @@
 import type {
   NativeCommandReceipt,
   NativePlanStep,
+  NativeSessionCreateParams,
   NativeSessionEvent,
   NativeSessionInfo,
   NativeSessionPlan,
@@ -153,6 +154,69 @@ export function nativePlanStepMark(status: NativePlanStep['status']): string {
 /** A proposal's copy action, before a copy (`undefined`), after it, and when it failed. */
 export function nativePlanCopyLabel(copied?: boolean): string {
   return copied === undefined ? 'Copy plan' : copied ? 'Copied' : 'Copy failed';
+}
+
+/** The first message of the session Implement starts: the proposed plan, to carry out. */
+export function nativeImplementPrompt(plan: string): string {
+  return `PLEASE IMPLEMENT THIS PLAN:\n${plan}`;
+}
+
+/**
+ * Whether a session's proposals can be implemented: it plans, and it is not a pinned worker's,
+ * whose view cannot start sessions. Implement starts a new default-mode session with the plan,
+ * because Codex keeps a thread in plan mode once it entered it.
+ */
+export function nativeImplementAvailable(
+  session: Pick<NativeSessionInfo, 'mode' | 'workerManaged'>,
+): boolean {
+  return session.mode === 'plan' && !session.workerManaged;
+}
+
+/**
+ * The key of the proposal a reader can implement: the latest turn of an idle plan-mode session
+ * ended with it, nothing is pending, and the client's own last message has settled (`unsettled`
+ * otherwise: a refinement may still change the plan).
+ */
+export function nativeImplementableKey(
+  session: Pick<NativeSessionInfo, 'mode' | 'state' | 'workerManaged'>,
+  rows: readonly NativeTimelineRow[],
+  pendingRequests: readonly NativeSessionEvent[] = [],
+  unsettled = false,
+): number | undefined {
+  if (
+    !nativeImplementAvailable(session) ||
+    session.state !== 'idle' ||
+    pendingRequests.length ||
+    unsettled
+  )
+    return undefined;
+  for (let index = rows.length - 1; index >= 0; index--) {
+    const row = rows[index];
+    if (row.kind !== 'entry') continue;
+    // A message sent since the proposal starts a later turn.
+    if (row.entry.kind === 'user') return undefined;
+    if (row.entry.kind === 'plan' && row.entry.event.plan?.kind === 'proposal')
+      return row.ended ? row.key : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Where Implement starts its session: the planning session's node, runner, model, effort,
+ * account profile and working directory, in default mode.
+ */
+export function nativeImplementSession(session: NativeSessionInfo): NativeSessionCreateParams {
+  return {
+    executionNodeId: session.executionNodeId,
+    runner: session.runner,
+    cwd: session.cwd,
+    mode: 'default',
+    ...(session.model ? { model: session.model } : {}),
+    ...(session.effort ? { effort: session.effort } : {}),
+    ...(session.profileId
+      ? { profileId: session.profileId, accountContextId: session.accountContextId }
+      : {}),
+  };
 }
 
 /** "Changed 3 files · +12 −4", "No file changes", or why the turn's changes are unavailable. */
