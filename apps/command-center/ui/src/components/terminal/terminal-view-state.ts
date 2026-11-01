@@ -56,6 +56,8 @@ export abstract class TerminalViewState extends LitElement {
   @state() protected _renaming = false;
   @state() protected _renameValue = '';
   @state() protected _selectMode = false;
+  /** Select mode has a non-empty selection to offer a native conversation (renders only on change). */
+  @state() protected _hasSelection = false;
   @state() protected _copyToast = false;
   @state() protected _attachments: TerminalAttachment[] = [];
   @state() protected _dragActive = false;

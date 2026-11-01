@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { readRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
-import { isRecord } from '@farmslot/protocol';
+import { isRecord, markdownFence } from '@farmslot/protocol';
 import { readRecordedEvidencePackage } from '@farmslot/recipe-runner';
 import { readRecipeCliJsonFileWithinRoot } from '@farmslot/recipe-runner/cli/support';
 
@@ -79,13 +79,6 @@ function headingKey(heading: string): string {
 }
 
 const MACHINE_KEYS = new Set([RECIPE_HEADING, LOGS_HEADING, WORKFLOW_HEADING].map(headingKey));
-
-function fenced(content: string, info = ''): string {
-  let longest = 0;
-  for (const run of content.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
-  const fence = '`'.repeat(Math.max(3, longest + 1));
-  return `${fence}${info}\n${content.replace(/\r\n?/g, '\n').replace(/\n+$/, '')}\n${fence}`;
-}
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -176,7 +169,7 @@ export async function renderTaskArtifactsMarkdown(
       [
         `<details><summary>${summary}</summary>`,
         '',
-        fenced(JSON.stringify(document, null, 2), 'json'),
+        markdownFence(JSON.stringify(document, null, 2), 'json'),
         '</details>',
       ].join('\n'),
     ]);
@@ -198,10 +191,10 @@ export async function renderTaskArtifactsMarkdown(
       LOGS_HEADING,
       [
         ...(provenance.length ? [provenance.join('\n\n'), ''] : []),
-        ...(input.command ? ['Command:', '', fenced(input.command, 'bash'), ''] : []),
+        ...(input.command ? ['Command:', '', markdownFence(input.command, 'bash'), ''] : []),
         `<details><summary>${summary}</summary>`,
         '',
-        fenced(report),
+        markdownFence(report),
         '</details>',
       ].join('\n'),
     ]);
@@ -217,7 +210,7 @@ export async function renderTaskArtifactsMarkdown(
       [
         '<details><summary>workflow.mmd</summary>',
         '',
-        fenced(workflow, 'mermaid'),
+        markdownFence(workflow, 'mermaid'),
         '</details>',
       ].join('\n'),
     ]);
