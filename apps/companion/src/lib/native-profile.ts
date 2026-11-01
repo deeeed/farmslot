@@ -66,6 +66,17 @@ export function nativeProfileLoginReason(
   return undefined;
 }
 
+/** The node default account needs no profile read; a selected profile waits for its status. */
+export function nativeProfileSelectionReady(input: {
+  enabled: boolean;
+  connected: boolean;
+  selected: boolean;
+  current: boolean;
+  reason?: string;
+}): boolean {
+  return input.enabled && input.connected && (!input.selected || input.current) && !input.reason;
+}
+
 export function nativeResumeRequest(
   session: NativeSessionInfo,
   profile: NativeProfileReference | undefined,

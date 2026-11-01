@@ -13,6 +13,7 @@ import { useResourceQuery } from '../../hooks/useResourceQuery';
 import {
   nativeProfileLoginReason,
   nativeProfileReference,
+  nativeProfileSelectionReady,
   validateNativeProfileStatus,
 } from '../../lib/native-profile';
 import {
@@ -127,11 +128,13 @@ export function useNativeProfileSelection(input: {
         ? 'Checking profile login.'
         : (currentSnapshot.error ?? nativeProfileLoginReason(currentSnapshot.status))
     : undefined;
-  const ready =
-    input.enabled &&
-    connection === 'connected' &&
-    (input.supported ? !!currentSnapshot : !selected) &&
-    !reason;
+  const ready = nativeProfileSelectionReady({
+    enabled: input.enabled,
+    connected: connection === 'connected',
+    selected: !!selected,
+    current: !!currentSnapshot,
+    reason,
+  });
   return {
     viewModel: {
       visible: input.supported || !!selected,

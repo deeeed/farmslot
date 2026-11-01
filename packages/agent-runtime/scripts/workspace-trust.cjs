@@ -127,8 +127,11 @@ function seed(file, folders, values, namespace, env) {
   );
 }
 const home = (env) => env.HOME || os.homedir();
+/** Where Codex and Grok read their login when no profile selects another directory. */
+const codexHome = (env) => env.CODEX_HOME || path.join(home(env), '.codex');
+const grokHome = (env) => env.GROK_HOME || path.join(home(env), '.grok');
 function trustGrokFolders(folders, env = process.env) {
-  const file = path.join(env.GROK_HOME || path.join(home(env), '.grok'), 'trusted_folders.toml');
+  const file = path.join(grokHome(env), 'trusted_folders.toml');
   const added = seed(
     file,
     folders,
@@ -177,7 +180,7 @@ function trustGrokWorkspace(cwd, env = process.env, owner, launch) {
 function configureCodexReviewWorkspace(cwd, env = process.env, owner) {
   if (!farmReviewWorkspace(cwd, owner)) return;
   seed(
-    path.join(env.CODEX_HOME || path.join(home(env), '.codex'), 'config.toml'),
+    path.join(codexHome(env), 'config.toml'),
     [path.resolve(cwd), fs.realpathSync(cwd)],
     { trust_level: 'untrusted' },
     'projects',
@@ -231,6 +234,8 @@ const claudeReadOnlyReviewArgs = [
 
 module.exports = {
   claudeReadOnlyReviewArgs,
+  codexHome,
+  grokHome,
   reviewConfigurationRootsByRunner,
   codexWorkspaceTrustConfig,
   trustGrokFolders,

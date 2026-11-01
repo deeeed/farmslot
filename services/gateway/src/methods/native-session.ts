@@ -110,22 +110,27 @@ export async function nativeSessionRoute(
       );
     return result;
   } catch (error) {
-    if (error instanceof NativeSessionMethodError)
-      throw new GatewayMethodError(error.code, error.message);
-    if (error instanceof GatewayMethodError) throw error;
-    const nodeCode = (error as NodeJS.ErrnoException).code;
-    if (
-      nodeCode &&
-      [
-        'INVALID_PARAMS',
-        'AUTH_FORBIDDEN',
-        'NATIVE_SESSION_ERROR',
-        'NOT_FOUND',
-        'NATIVE_SOURCE_UNAVAILABLE',
-        'RESOURCE_OBSERVATION_CHANGED',
-      ].includes(nodeCode)
-    )
-      throw new GatewayMethodError(nodeCode, (error as Error).message);
-    throw new GatewayMethodError('NATIVE_SESSION_ERROR', (error as Error).message);
+    throw nativeRouteError(error);
   }
+}
+
+const NATIVE_ROUTE_ERROR_CODES = [
+  'INVALID_PARAMS',
+  'AUTH_FORBIDDEN',
+  'NATIVE_SESSION_ERROR',
+  'NOT_FOUND',
+  'NATIVE_SOURCE_UNAVAILABLE',
+  'NATIVE_PROFILES_UNAVAILABLE',
+  'RESOURCE_OBSERVATION_CHANGED',
+];
+
+/** Keeps a native host or node error code clients act on; anything else is a session error. */
+export function nativeRouteError(error: unknown): GatewayMethodError {
+  if (error instanceof NativeSessionMethodError)
+    return new GatewayMethodError(error.code, error.message);
+  if (error instanceof GatewayMethodError) return error;
+  const nodeCode = (error as NodeJS.ErrnoException).code;
+  if (nodeCode && NATIVE_ROUTE_ERROR_CODES.includes(nodeCode))
+    return new GatewayMethodError(nodeCode, (error as Error).message);
+  return new GatewayMethodError('NATIVE_SESSION_ERROR', (error as Error).message);
 }
