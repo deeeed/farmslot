@@ -4,9 +4,12 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.31.0 - 2026-11-02
+
 - `app.performance_capture` measures native UI frames on the slot's Android device from `adb shell dumpsys gfxinfo <app> framestats`. `phase: "start"` and `phase: "end"` bound a named window; the end writes `performance/<id>-summary.json` with the frame summary, the lowest FPS over any 500 ms of continuous rendering, the latency of every `ui.press` and `ui.key_press` in the window, overall and per target (from the frame that handled the touch to the mount frame that answered it within 600 ms, or the first frame after the touch when the screen was already mounted), and, given a `budget`, a pass or fail verdict whose failures name the metric, the limit, the measured value, the target and, given a `baseline`, its value. `targets` are reported, never failed on. `<id>-frames.json` keeps the frames the latencies were read from. `phase: "report"` writes one report over every window and fails when a window broke its budget. A project enables it by declaring the action in its manifest with `"execution_capabilities": []`.
 - New `@farmslot/adapter-rn/performance-observer` export, moved from mm-harness: `createAndroidGfxinfoPerformanceBackend({ serial, packageId, adbPath })` (no MetaMask package default) and `createReactNativeTracePerformanceBackend(client, { kind, platform, markerPrefix })` for a CDP host such as Hermes on iOS. Android frame samples also mark the frames that handled input and their UI-thread time.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.0 - 2026-11-02
 
