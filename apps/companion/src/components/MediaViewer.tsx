@@ -208,7 +208,12 @@ export function MediaViewer({
             >
               {current?.title ?? 'Evidence'}
             </Text>
-            {current?.detail ? (
+            {/* A recording with the criteria overlay names its current criterion in the pill. */}
+            {current?.detail &&
+            !(
+              acceptance &&
+              (current.mediaType ?? classifyArtifact(current.title ?? current.uri)) === 'video'
+            ) ? (
               <Text
                 style={styles.detailText}
                 numberOfLines={2}
@@ -922,8 +927,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  // Opaque: the recording's own text must not read through the controls.
   navButton: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: '#2a2a33',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 999,

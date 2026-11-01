@@ -172,7 +172,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     justifyContent: 'center',
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: '#2a2a33',
   },
   pillText: { color: 'rgba(255,255,255,0.85)', fontSize: fonts.sizeSm, fontWeight: '600' },
   panel: {
@@ -180,7 +180,7 @@ const styles = StyleSheet.create({
     gap: 6,
     padding: 8,
     borderRadius: 12,
-    backgroundColor: 'rgba(18,18,26,0.92)',
+    backgroundColor: '#12121a',
   },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   step: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
@@ -188,6 +188,6 @@ const styles = StyleSheet.create({
   stepText: { color: colors.textPrimary, fontSize: 24 },
   current: { flex: 1 },
   entry: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 8, borderRadius: 8 },
-  entrySelected: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  entrySelected: { backgroundColor: '#2a2a33' },
   entryText: { color: colors.textMuted, fontSize: fonts.sizeSm },
 });
