@@ -6,7 +6,7 @@
 
 ## 0.39.20 - 2026-11-01
 
-- Needs `@farmslot/protocol` 0.74.10.
+- Publishes against `@farmslot/protocol` 0.74.10.
 - Task retention takes an optional `pinSelection` hook. Once the inputs are copied into the task pin, the host can rebind its recorded selection (`inputs/recipe-binding.json` and the receipt's `bindingIdentity`) to the retained copies. A rerun of task init verifies the recorded pin first, then requires the same pinned selection. `retainedPathFor` and `retainedSourceFor` map between a retained source and its copy.
 
 ## 0.39.19 - 2026-11-01
