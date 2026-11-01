@@ -195,8 +195,8 @@ export interface PostDispatchStepContext {
     trigger: 'dispatch' | 'human-gate',
     options?: Pick<PublishGateReviewPlanDependencies, 'automaticLaunch' | 'reviewSequenceContext'>,
   ) => Promise<PublishGateReviewPlanResult>;
-  executeReadyGate: (runId: string) => Promise<string>;
-  executeReviewGate: (runId: string) => Promise<void>;
+  executeReadyGate: (runId: string, options?: { generation?: number }) => Promise<string>;
+  executeReviewGate: (runId: string, stepGeneration?: number) => Promise<void>;
   getDiffStat: (run: Run) => Promise<DiffStat>;
   interactiveLightweightSkipOutputs: (step: string) => StepIO;
   isHumanGateEnabled: (
@@ -1205,7 +1205,7 @@ export async function executeHumanGateStep(
   if (noChangeGate) {
     await executeNoChangeGate(runId);
   } else if (current.flowType === 'review-pr') {
-    await executeReviewGate(runId);
+    await executeReviewGate(runId, generation);
   } else {
     if (publicationApprovalGate && !shouldResumePublicationGate(current)) {
       // Restart mid-review recovery: a gateway restart during a publish-gate
@@ -1480,7 +1480,7 @@ export async function executeHumanGateStep(
       // or Continue Fixing decision still follows its existing owner below.
       if (publicationApprovalGate && !shouldResumePublicationGate(getRun(runId)!))
         await rerunReviewIfReviewedInputsChanged(runId, context);
-      return executeReadyGate(runId);
+      return executeReadyGate(runId, { generation });
     };
     // A repair interrupted by a restart resumes under its single charge: fix recovery adopts an
     // in-flight or deferred delivery, and an undelivered one is delivered once.
