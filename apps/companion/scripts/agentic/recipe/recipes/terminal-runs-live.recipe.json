@@ -5,7 +5,7 @@
   "proofTargets": [
     {
       "id": "native-terminal-shared",
-      "claim": "The actual terminal uses canonical full-run and recipe observations; an external write refreshes facts without restarting its stream."
+      "claim": "The slot's Terminal tab is the shared terminal: it resolves the run's pane from the canonical full-run observation, and an external write refreshes facts without restarting its stream."
     },
     {
       "id": "native-terminal-command",
@@ -13,11 +13,39 @@
     },
     {
       "id": "native-terminal-cold",
-      "claim": "A cold offline terminal restores the exact saved run timestamp and age with commands disabled; reconnect never replays its key."
+      "claim": "A cold offline terminal restores the exact saved run timestamp; reconnect never replays its key."
     },
     {
       "id": "native-terminal-pinned",
-      "claim": "An unavailable explicit actor is refused by the gateway, never falls back to another target, and clears the actual previous pane buffer."
+      "claim": "An unavailable explicit actor is refused, never falls back to another target, and clears the actual previous pane buffer."
+    },
+    {
+      "id": "native-terminal-reinit",
+      "claim": "A slot link whose session is missing creates it through terminal.reinit and opens it."
+    },
+    {
+      "id": "native-terminal-typed-once",
+      "claim": "The input line types its line and the key bar's Enter runs it in the pane exactly once."
+    },
+    {
+      "id": "native-terminal-legacy-route",
+      "claim": "An old /terminal/<slot> link opens the same shared terminal on that slot."
+    },
+    {
+      "id": "native-terminal-draft",
+      "claim": "An unsent draft is kept per pane and comes back after a relaunch."
+    },
+    {
+      "id": "native-terminal-runner-send",
+      "claim": "Send from a slot-opened terminal goes through the runner's terminal.send once, and the line reaches the pane once."
+    },
+    {
+      "id": "native-terminal-saved-target",
+      "claim": "A CI-fix context saved without window fields opens its saved window, and Send types into that same pane."
+    },
+    {
+      "id": "native-terminal-native-review",
+      "claim": "A native review worktree opened by run id takes the conversation branch, not a worktree pane."
     }
   ],
   "workflow": {
@@ -32,8 +60,8 @@
       "prove": {
         "action": "command",
         "cmd": "node scripts/agentic/prove-offline-runs.mjs terminal-context",
-        "timeout_ms": 240000,
-        "intent": "Prove terminal observations, safe keys, cold restore and exact actor pins.",
+        "timeout_ms": 480000,
+        "intent": "Prove session, typing, links, drafts, Send, cold restore and pins.",
         "next": "shared"
       },
       "shared": {
@@ -41,7 +69,7 @@
         "source": "prove",
         "stream": "stdout",
         "match": "\"nativeTerminalShared\":true",
-        "intent": "Require canonical context and updates without stream restarts.",
+        "intent": "Require the canonical run and updates without stream restarts.",
         "proves": ["native-terminal-shared"],
         "next": "command"
       },
@@ -59,7 +87,7 @@
         "source": "prove",
         "stream": "stdout",
         "match": "\"nativeTerminalCold\":true",
-        "intent": "Require cold saved facts, disabled commands and no key replay.",
+        "intent": "Require cold saved facts and no key replay.",
         "proves": ["native-terminal-cold"],
         "next": "pin"
       },
@@ -70,6 +98,69 @@
         "match": "\"nativeTerminalPinRefused\":true",
         "intent": "Require real refusal of an unavailable exact actor pin.",
         "proves": ["native-terminal-pinned"],
+        "next": "reinit"
+      },
+      "reinit": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalReinit\":true",
+        "intent": "Require the missing session to be created through terminal.reinit.",
+        "proves": ["native-terminal-reinit"],
+        "next": "typed"
+      },
+      "typed": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalTypedOnce\":true",
+        "intent": "Require the input line to type its line once.",
+        "proves": ["native-terminal-typed-once"],
+        "next": "legacy"
+      },
+      "legacy": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalLegacyRoute\":true",
+        "intent": "Require the old /terminal/<slot> link to open the shared terminal.",
+        "proves": ["native-terminal-legacy-route"],
+        "next": "draft"
+      },
+      "draft": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalDraftRestored\":true",
+        "intent": "Require the per-pane draft back after a relaunch.",
+        "proves": ["native-terminal-draft"],
+        "next": "send"
+      },
+      "send": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalRunnerSend\":true",
+        "intent": "Require Send through the runner's terminal.send, once.",
+        "proves": ["native-terminal-runner-send"],
+        "next": "saved"
+      },
+      "saved": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalSavedTarget\":true",
+        "intent": "Require the saved target's pane to be shown and typed into.",
+        "proves": ["native-terminal-saved-target"],
+        "next": "native"
+      },
+      "native": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"nativeTerminalNativeReview\":true",
+        "intent": "Require a native review worktree to open its conversation.",
+        "proves": ["native-terminal-native-review"],
         "next": "done"
       },
       "done": {

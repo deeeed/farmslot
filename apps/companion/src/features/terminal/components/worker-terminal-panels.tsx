@@ -50,7 +50,13 @@ export function WorkerTmuxShortcutPanel({
           <Text style={styles.tmuxShortcutText}>Pick win</Text>
         </Pressable>
         {send('Windows', `${tmuxPrefix}w`)}
+        {send('Pane ↑', `${tmuxPrefix}\x1b[A`)}
+        {send('Pane ↓', `${tmuxPrefix}\x1b[B`)}
+        {send('Pane ←', `${tmuxPrefix}\x1b[D`)}
+        {send('Pane →', `${tmuxPrefix}\x1b[C`)}
         {send('Zoom', `${tmuxPrefix}z`)}
+        {send('Sync on', `${tmuxPrefix}:setw synchronize-panes on\r`, true)}
+        {send('Sync off', `${tmuxPrefix}:setw synchronize-panes off\r`)}
         {send('Prefix', tmuxPrefix)}
         {send('Kill pane', `${tmuxPrefix}x`, true)}
       </View>

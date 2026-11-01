@@ -113,6 +113,8 @@ function parseOptions(args: string[]): ParsedCliOptions {
     else if (arg.startsWith('--param='))
       options.paramAssignments?.push(arg.slice('--param='.length));
     else if (arg === '--record-video') options.recordVideoMode = 'full-run';
+    else if (arg.startsWith('--recording-reason='))
+      options.recordingReason = arg.slice('--recording-reason='.length);
     else if (arg.startsWith('--record-video=')) {
       options.recordVideoMode = arg.slice('--record-video='.length);
     } else if (arg === '--record-max-fps')
@@ -191,6 +193,6 @@ function printRunResult(result: Awaited<ReturnType<typeof runExpoRecipeDocument>
 
 function printUsage(): void {
   console.log(
-    `Farmslot React Native adapter\n\nUsage:\n  farmslot-adapter-rn init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-adapter-rn manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-adapter-rn doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn validate [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn run [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json] [--record-video[=full-run]] [--record-pid <pid>|--record-window-id <id>|--record-app-name <name> --record-window-name <title>]\n`,
+    `Farmslot React Native adapter\n\nUsage:\n  farmslot-adapter-rn init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-adapter-rn manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-adapter-rn doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn validate [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-adapter-rn run [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json] [--record-video[=full-run|off] [--recording-reason=<why>]] [--record-pid <pid>|--record-window-id <id>|--record-app-name <name> --record-window-name <title>]\n`,
   );
 }
