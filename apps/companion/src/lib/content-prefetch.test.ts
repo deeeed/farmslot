@@ -263,9 +263,10 @@ mock.module('@react-native-async-storage/async-storage', {
   },
 });
 // Gate media files stay out of this test: nothing is held, so every read goes to the gateway.
+const deletedPaths: string[] = [];
 mock.module('expo-file-system/legacy', {
   namedExports: {
-    documentDirectory: 'file:///docs/',
+    cacheDirectory: 'file:///cache/',
     EncodingType: { Base64: 'base64' },
     getInfoAsync: async () => ({ exists: false }),
     makeDirectoryAsync: async () => {},
@@ -273,15 +274,19 @@ mock.module('expo-file-system/legacy', {
     writeAsStringAsync: async () => {},
     downloadAsync: async () => ({ status: 404 }),
     moveAsync: async () => {},
-    deleteAsync: async () => {},
+    deleteAsync: async (uri: string) => {
+      deletedPaths.push(uri);
+    },
   },
 });
 const stores: ResourceStore[] = [];
+const storeDeletions: Array<(scopeId: string) => void> = [];
 mock.module('@farmslot/local-store/native', {
   namedExports: {
-    createNativeSqliteResourceStore: async () => {
+    createNativeSqliteResourceStore: async (options: { onDeleted?: (scopeId: string) => void }) => {
       const store = createMemoryResourceStore();
       stores.push(store);
+      if (options.onDeleted) storeDeletions.push(options.onDeleted);
       return store;
     },
   },
@@ -500,6 +505,27 @@ test("the diff base is the stack base, then the project's default branch, then m
   assert.equal(companionRunDiffBase(stacked, undefined), 'feature/parent');
   // While a farm owner's projects load, no base is chosen yet.
   assert.equal(companionRunDiffBase(activeRun, { status: 'loading' }), undefined);
+});
+
+test("a deleted offline store deletes its scope's held evidence folder", async () => {
+  const { initializeNativeResourceCache } = await import('./resource-cache');
+  const client = new FakeClient(auth(true, 'native'));
+  setState({ client, activeProfileId: 'profile-deleted' });
+  const stop = initializeNativeResourceCache();
+  try {
+    await flush();
+    const onDeleted = storeDeletions.at(-1);
+    assert.ok(onDeleted, 'the store was opened with a deletion hook');
+    const before = deletedPaths.length;
+    onDeleted('{"gatewayUrl":"https://gone.invalid/"}');
+    await flush();
+    const deleted = deletedPaths.slice(before);
+    assert.equal(deleted.length, 1);
+    assert.match(deleted[0], /^file:\/\/\/cache\/evidence-media\/[0-9a-f]{16}\/$/);
+  } finally {
+    stop();
+    await flush();
+  }
 });
 
 test('a gateway without capabilities.batchedContent gets no prefetch', async () => {

@@ -6,9 +6,7 @@ import { createNativeSqliteResourceStore } from '@farmslot/local-store/native';
 import {
   createResourceCacheTransport,
   type GatewayResourceCache,
-  RESOURCE_SCOPE_DELETION_REASONS,
   type ResourceConnectionInputs,
-  type ResourceConnectionReason,
   resourceStoreScopeId,
 } from '@farmslot/protocol/client-cache';
 
@@ -43,7 +41,8 @@ const owner = new ResourceCacheOwner({
       },
     };
   },
-  openStore: (metadata) => createNativeSqliteResourceStore({ scope: metadata.scope }),
+  openStore: (metadata) =>
+    createNativeSqliteResourceStore({ scope: metadata.scope, onDeleted: deleteScopeMedia }),
   onNotice(value) {
     notice = value;
     notify();
@@ -63,7 +62,6 @@ owner.subscribe(bindPrefetch);
  * API in this binary, that is how the app knows it is on Wi-Fi.
  */
 let media: { scope: string; holder: EvidenceMediaHolder } | undefined;
-let lastReason: ResourceConnectionReason | undefined;
 
 function scopeMedia(scopeId: string): EvidenceMediaHolder {
   return createEvidenceMediaHolder({
@@ -100,17 +98,21 @@ function bindMedia(): void {
   setHeldArtifactLookup(media?.holder);
 }
 
-/** A reason that deletes the scope's offline store deletes its held evidence too. */
-function deleteMedia(): void {
-  const current = media;
-  media = undefined;
-  setHeldArtifactLookup(undefined);
-  current?.holder.destroy().catch((error: unknown) => {
-    // Reported, not retried: the lookup is already gone, so nothing reads these files again.
-    console.warn(
-      `Held evidence could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  });
+/** A deleted offline store takes its scope's held evidence with it, however it was retired. */
+function deleteScopeMedia(scopeId: string): void {
+  const current = media?.scope === scopeId ? media.holder : undefined;
+  if (current) {
+    media = undefined;
+    setHeldArtifactLookup(undefined);
+  }
+  (current ? current.destroy() : nativeEvidenceMediaFiles(scopeId).clear()).catch(
+    (error: unknown) => {
+      // Reported, not retried: nothing looks these files up again once their store is gone.
+      console.warn(
+        `Held evidence could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  );
 }
 
 function connectionInputs(): ResourceConnectionInputs {
@@ -131,13 +133,6 @@ function connectionInputs(): ResourceConnectionInputs {
 
 function sync(): void {
   const state = useConnectionStore.getState();
-  const reason = state.client?.resourceConnectionReason;
-  // The store such a reason deletes is the one rendered before this update; act once per reason.
-  const deleting =
-    state.signedOut ||
-    (reason !== lastReason && reason !== undefined && RESOURCE_SCOPE_DELETION_REASONS.has(reason));
-  lastReason = reason;
-  if (deleting && media) deleteMedia();
   owner.update({
     client: state.client,
     signedOut: state.signedOut,

@@ -91,14 +91,12 @@ interface QueryEntry {
   readTimer?: ReturnType<typeof setTimeout>;
 }
 
-/** Connection reasons that delete a scope's offline store, and anything kept beside it. */
-export const RESOURCE_SCOPE_DELETION_REASONS: ReadonlySet<ResourceConnectionReason> =
-  new Set<ResourceConnectionReason>([
-    'sign-out',
-    'principal-change',
-    'credential-refused',
-    'session-ended',
-  ]);
+const deletionReasons = new Set<ResourceConnectionReason>([
+  'sign-out',
+  'principal-change',
+  'credential-refused',
+  'session-ended',
+]);
 const evictionCodes = new Set([
   'AUTH_FORBIDDEN',
   'AUTH_REQUIRED',
@@ -362,7 +360,7 @@ export function createGatewayResourceCache(
   ): void {
     if (disposed) return;
     const next = normalizeConnection(input);
-    const revoke = reason !== undefined && RESOURCE_SCOPE_DELETION_REASONS.has(reason);
+    const revoke = reason !== undefined && deletionReasons.has(reason);
     const previousScope = connection.connected
       ? connection.scope
       : (metadata?.scope ?? connection.scope);
@@ -1344,7 +1342,7 @@ export function createGatewayResourceCache(
       entries.clear();
       await barrier;
       try {
-        if (reason && RESOURCE_SCOPE_DELETION_REASONS.has(reason)) await store.deleteAll();
+        if (reason && deletionReasons.has(reason)) await store.deleteAll();
         await withdrawing;
       } finally {
         await store.close();

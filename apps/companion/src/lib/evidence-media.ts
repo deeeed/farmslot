@@ -11,6 +11,8 @@ const HASH_CHUNK_BYTES = 1024 * 1024;
 /** The file operations the holder needs; `directory` ends with '/'. */
 export interface EvidenceMediaFiles {
   directory: string;
+  /** Bytes on disk, or undefined when the file is gone (the OS may reclaim the cache). */
+  size(uri: string): Promise<number | undefined>;
   download(source: { uri: string; headers?: Record<string, string> }, to: string): Promise<number>;
   read(uri: string, position: number, length: number): Promise<Uint8Array>;
   move(from: string, to: string): Promise<void>;
@@ -33,6 +35,8 @@ export interface EvidenceMediaOptions {
 }
 
 export interface EvidenceMediaLookup {
+  /** Called once the index is read and whenever held files change, so readers render again. */
+  subscribe(listener: () => void): () => void;
   /** The held file for a run artifact of exactly this package (bundle digest). */
   byPath(runId: string, path: string, bundleDigest: string | undefined): string | undefined;
   byDigest(sha256: string): string | undefined;
@@ -73,17 +77,10 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
   /** The gates the last decision list still waits on; undefined until one is known. */
   let wanted: ReadonlySet<string> | undefined;
   const inflight = new Map<string, Promise<boolean>>();
-  const loaded = (async () => {
-    const text = await files.readText(indexUri);
-    if (!text) return;
-    try {
-      index = JSON.parse(text) as Index;
-    } catch (error) {
-      // Files an unreadable index no longer counts would sit outside the bound: start over.
-      log(`[evidence-media] index unreadable, clearing: ${String(error)}`);
-      await files.clear();
-    }
-  })();
+  const listeners = new Set<() => void>();
+  const changed = () => {
+    for (const listener of listeners) listener();
+  };
 
   // Capacity checks and commits run one at a time, so two downloads cannot both fit the bound.
   let queue: Promise<unknown> = Promise.resolve();
@@ -104,6 +101,37 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
       Object.values(run.paths).some((held) => held.sha256 === sha256),
     );
   const live = (runId: string) => !disposed && (!wanted || wanted.has(runId));
+
+  /** Whether a held file is still on disk; one the OS reclaimed is forgotten, so it can load again. */
+  async function present(sha256: string): Promise<boolean> {
+    const file = index.files[sha256];
+    if (!file) return false;
+    if ((await files.size(files.directory + file.name)) === file.bytes) return true;
+    delete index.files[sha256];
+    for (const run of Object.values(index.runs))
+      for (const [path, held] of Object.entries(run.paths))
+        if (held.sha256 === sha256) delete run.paths[path];
+    log(`[evidence-media] reclaimed ${sha256.slice(0, 12)}`);
+    return false;
+  }
+
+  // Read once the helpers below exist; every public call waits for it.
+  const loaded = (async () => {
+    const text = await files.readText(indexUri);
+    if (!text) return;
+    try {
+      index = JSON.parse(text) as Index;
+    } catch (error) {
+      // Files an unreadable index no longer counts would sit outside the bound: start over.
+      log(`[evidence-media] index unreadable, clearing: ${String(error)}`);
+      await files.clear();
+      return;
+    }
+    let reclaimed = false;
+    for (const sha256 of Object.keys(index.files))
+      reclaimed = !(await present(sha256)) || reclaimed;
+    if (reclaimed) await save();
+  })().finally(changed);
 
   async function dropUnreferenced(): Promise<void> {
     for (const [sha256, file] of Object.entries(index.files))
@@ -179,6 +207,7 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
       // Counted and owned in one step, so the next commit's room check sees this gate's file.
       attach(entry);
       await save();
+      changed();
       log(
         `[evidence-media] held ${entry.sha256.slice(0, 12)} ${entry.path} (${bytes} B, ${total()}/${limit} B)`,
       );
@@ -206,17 +235,24 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
       await loaded;
       if (!live(entry.runId)) return false;
       // A new package for this path replaces the old mapping first, so a refused or failed hold
-      // never leaves the previous package's file standing in for this one.
-      const previous = heldPath(entry.runId, entry.path);
-      if (
-        previous &&
-        (previous.sha256 !== entry.sha256 || previous.bundleDigest !== entry.bundleDigest)
-      ) {
-        delete index.runs[entry.runId].paths[entry.path];
-        await dropUnreferenced();
+      // never leaves the previous package's file standing in for this one. Like every change to
+      // ownership, it runs in the queue, so another gate's hold of the same digest is not undone.
+      const held = await serialized(async () => {
+        const previous = heldPath(entry.runId, entry.path);
+        if (
+          previous &&
+          (previous.sha256 !== entry.sha256 || previous.bundleDigest !== entry.bundleDigest)
+        ) {
+          delete index.runs[entry.runId].paths[entry.path];
+          await dropUnreferenced();
+          await save();
+        }
+        if (await present(entry.sha256)) return true;
+        // Not held (any more): a reclaimed entry was just forgotten, so record that.
         await save();
-      }
-      if (!index.files[entry.sha256]) {
+        return false;
+      });
+      if (!held) {
         if (!options.allowed()) return false;
         // A file that could not fit is not downloaded at all.
         if (entry.sizeBytes !== undefined && !fits(entry.sizeBytes, entry.gateAt)) return false;
@@ -232,6 +268,7 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
         if (!live(entry.runId) || !index.files[entry.sha256]) return false;
         attach(entry);
         await save();
+        changed();
         return true;
       });
     },
@@ -245,6 +282,7 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
         if (Object.keys(index.runs).length === before) return;
         await dropUnreferenced();
         await save();
+        changed();
       });
     },
     byPath(runId, path, bundleDigest) {
@@ -252,6 +290,12 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
       return held && held.bundleDigest === bundleDigest ? byDigest(held.sha256) : undefined;
     },
     byDigest,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     dispose() {
       disposed = true;
     },
@@ -262,6 +306,7 @@ export function createEvidenceMediaHolder(options: EvidenceMediaOptions): Eviden
         index = { files: {}, runs: {} };
         await files.clear();
         log('[evidence-media] cleared');
+        changed();
       });
     },
     totals: () => ({

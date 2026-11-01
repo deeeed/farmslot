@@ -166,6 +166,7 @@ test('an image held as a verified file shows from the device with no read, offli
   const reads = fakeFetch(t);
   const file = 'file:///cache/evidence-media/scope/a.png';
   artifactUrl.setHeldArtifactLookup({
+    subscribe: () => () => undefined,
     byPath: () => undefined,
     byDigest: (sha256) => (sha256 === IMAGE.sha256 ? file : undefined),
   });

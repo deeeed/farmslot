@@ -22,6 +22,7 @@ export function nativeEvidenceMediaFiles(scopeId: string): EvidenceMediaFiles {
   };
   return {
     directory,
+    size,
     async download(source, to) {
       await ensure();
       const result = await FileSystem.downloadAsync(source.uri, to, { headers: source.headers });

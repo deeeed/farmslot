@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `createNativeSqliteResourceStore` takes `onDeleted(scopeId)`, called when a scope's store is deleted (revoked or evicted past the store limit), so a client can delete files it keeps for that scope.
 - Schema 5 stores run-list rows beside their query entry (`resource_rows`): `getRows` reads the entry and its rows in one serial job, `mergeRows` writes the entry, deletes and upserts in one transaction, `putQuery` keeps the rows, and deleting the entry, store or scope removes them. Older schemas are rebuilt; drafts are unaffected.
 
 - Add the drafts store (`@farmslot/local-store/drafts`): one draft per scope, slot, run and path, IndexedDB and memory adapters, and a 30-day sweep once a slot or run can no longer be read.

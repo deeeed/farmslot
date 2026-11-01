@@ -8,7 +8,9 @@ import {
   artifactSource,
   artifactUrl,
   heldArtifactFile,
+  heldArtifactsRevision,
   setHeldArtifactLookup,
+  subscribeHeldArtifacts,
 } from './artifact-url';
 import { createEvidenceMediaHolder, type EvidenceMediaFiles } from './evidence-media';
 
@@ -21,9 +23,13 @@ const signal = new AbortController().signal;
 function memoryFiles(served: Map<string, Uint8Array>) {
   const disk = new Map<string, Uint8Array | string>();
   const downloads: string[] = [];
-  const control: { gate?: Promise<void> } = {};
+  const control: { gate?: Promise<void>; removal?: Promise<void> } = {};
   const files: EvidenceMediaFiles = {
     directory: DIRECTORY,
+    async size(uri) {
+      const value = disk.get(uri);
+      return value instanceof Uint8Array ? value.length : undefined;
+    },
     async download(source, to) {
       downloads.push(source.uri);
       const body = served.get(source.uri);
@@ -40,6 +46,7 @@ function memoryFiles(served: Map<string, Uint8Array>) {
       disk.delete(from);
     },
     async remove(uri) {
+      await control.removal;
       disk.delete(uri);
     },
     async readText(uri) {
@@ -217,9 +224,70 @@ test('the index survives a restart; an unreadable one is cleared rather than tru
   assert.deepEqual(first.media(), []);
 });
 
+test('a file the OS reclaimed is forgotten at start and downloads again', async () => {
+  const first = setup();
+  const body = bytes(17, 20);
+  const held = first.entry('a', 'run.mp4', body);
+  assert.equal(await first.holder.hold(held, signal), true);
+  first.disk.delete(`${DIRECTORY}${digest(body)}.mp4`);
+  const restarted = createEvidenceMediaHolder({
+    files: first.files,
+    source: (entry) => ({ uri: `https://gw/${entry.runId}/${entry.bundleDigest}/${entry.path}` }),
+    allowed: () => true,
+  });
+  await restarted.keep(new Set(['a']));
+  assert.equal(restarted.byPath('a', 'run.mp4', 'b1'), undefined);
+  assert.equal(await restarted.hold(held, signal), true);
+  assert.equal(first.downloads.length, 2);
+  assert.ok(restarted.byPath('a', 'run.mp4', 'b1'));
+});
+
+test("a package replacement in progress never deletes another gate's hold of the same file", async () => {
+  const { holder, entry, control, media } = setup();
+  const shared = bytes(18, 30);
+  assert.equal(
+    await holder.hold(entry('g1', 'run.mp4', shared, { bundleDigest: 'p1' }), signal),
+    true,
+  );
+  let release!: () => void;
+  control.removal = new Promise((resolve) => (release = resolve));
+  // g1 moves to a package whose media fails verification: its old file, no longer used, is
+  // removed, and that removal is paused while another gate asks for the same file.
+  const next = entry('g1', 'run.mp4', bytes(19, 30), {
+    bundleDigest: 'p2',
+    sha256: 'f'.repeat(64),
+  });
+  const replaced = holder.hold(next, signal);
+  await new Promise((resolve) => setImmediate(resolve));
+  const other = holder.hold(entry('g2', 'same.mp4', shared), signal);
+  release();
+  assert.deepEqual(await Promise.all([replaced, other]), [false, true]);
+  // The other gate's mapping points at a file that is really there.
+  assert.equal(holder.byPath('g2', 'same.mp4', 'b1'), `${DIRECTORY}${digest(shared)}.mp4`);
+  assert.deepEqual(media(), [`${DIRECTORY}${digest(shared)}.mp4`]);
+});
+
+test('readers hear when the held index is read and when held files change', async () => {
+  const { holder, entry } = setup();
+  let heard = 0;
+  setHeldArtifactLookup(holder);
+  const stop = subscribeHeldArtifacts(() => heard++);
+  try {
+    const start = heldArtifactsRevision();
+    await holder.keep(new Set(['a']));
+    assert.equal(await holder.hold(entry('a', 'run.mp4', bytes(20, 10)), signal), true);
+    assert.ok(heldArtifactsRevision() > start);
+    assert.ok(heard >= 2, 'the index read and the new file both signal');
+  } finally {
+    stop();
+    setHeldArtifactLookup(undefined);
+  }
+});
+
 test('artifact sources read held evidence of the same package silently; images by digest', () => {
   const held = 'file:///cache/evidence-media/scope/abc.mp4';
   setHeldArtifactLookup({
+    subscribe: () => () => undefined,
     byPath: (runId, path, bundleDigest) =>
       runId === 'run-1' && path === 'evidence/run 1.mp4' && bundleDigest === 'bundle'
         ? held

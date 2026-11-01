@@ -4,7 +4,13 @@ import type { ImageSourcePropType } from 'react-native';
 import type { GitDiffResult, Run } from '@farmslot/protocol';
 import { activeRunDiffQuery, type ResourceQuery } from '@farmslot/protocol/client-cache';
 
-import { type ArtifactHttpHeaders, artifactSource, heldArtifactFile } from '../lib/artifact-url';
+import {
+  type ArtifactHttpHeaders,
+  artifactSource,
+  heldArtifactFile,
+  heldArtifactsRevision,
+  subscribeHeldArtifacts,
+} from '../lib/artifact-url';
 import { companionRunDiffBase } from '../lib/content-prefetch';
 import {
   artifactImageKey,
@@ -153,6 +159,8 @@ export function useArtifactImageSource(
   const connected = useConnectedTransport() !== null;
   const keyId = artifactImageKey(artifact)?.id;
   // An image too large for a content row may be held as a verified file: show it, read nothing.
+  // The revision renders again once the held index is read (a cold offline start) or changes.
+  useSyncExternalStore(subscribeHeldArtifacts, heldArtifactsRevision, heldArtifactsRevision);
   const heldFile = keyId ? heldArtifactFile(keyId) : undefined;
   const identity = keyId ? `${keyId}\n${uri}` : '';
   const [resolved, setResolved] = useState<{

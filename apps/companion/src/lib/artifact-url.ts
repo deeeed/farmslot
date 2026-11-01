@@ -18,10 +18,32 @@ export const CURRENT_ARTIFACTS_RECIPE_RUN_PARAM = 'current-artifacts';
 export type ArtifactHttpHeaders = GatewayHttpAuthHeaders;
 
 let heldMedia: EvidenceMediaLookup | undefined;
+let unsubscribeHeld: (() => void) | undefined;
+let heldRevision = 0;
+const heldListeners = new Set<() => void>();
+const heldChanged = () => {
+  heldRevision++;
+  for (const listener of heldListeners) listener();
+};
 
 /** The resource cache registers where its scope's held gate evidence lives on the device. */
 export function setHeldArtifactLookup(lookup: EvidenceMediaLookup | undefined): void {
+  unsubscribeHeld?.();
   heldMedia = lookup;
+  unsubscribeHeld = lookup?.subscribe(heldChanged);
+  heldChanged();
+}
+
+/** For readers that render held files: a new revision means a held file appeared or went. */
+export function subscribeHeldArtifacts(listener: () => void): () => void {
+  heldListeners.add(listener);
+  return () => {
+    heldListeners.delete(listener);
+  };
+}
+
+export function heldArtifactsRevision(): number {
+  return heldRevision;
 }
 
 /** A held file by artifact digest, for readers that know the manifest's sha256. */
