@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Run progress ignores an agent context whose native session was released, or closed with no recovery pending: nothing runs there, so it can no longer make an idle worker read unproven. On 22b57685 a blocked reviewer with a closed and released session kept the publication gate at `run-progress-unconfirmed` while the worker sat idle at its prompt.
 - The all-nodes `tmux.workers.list` no longer fails when one pool node has no current worker observation (disconnected, not yet published, or unsupported): that node is listed on its own with `ok: false` and the reason, and every other node's panes still show. A machine the caller names is still refused.
 - A reviewer's task document states its round ("Review round N of M"), counted the same way as the publication review budget, so project review templates can relax blocking from round 3 as the review convergence rule requires. Before, only an operator-extended round said which attempt it was.
 - The farmslot-farm review template carries the round-3 review rule (from round 3, only blocker or major findings block; minors and nits are follow-ups), and the review goldens include it.
