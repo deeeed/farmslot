@@ -7,6 +7,7 @@ import {
   type DispatchPreviewResult,
   Events,
   isDispatchScoreStale,
+  isTerminalRunStatus,
   ReviewQaConfigurationError,
   type Run,
   type RunDecision,
@@ -726,6 +727,10 @@ export async function executeFindSlotStep(
   context: FindSlotStepContext,
 ): Promise<StepIO> {
   const automaticLoadPinned = isPinnedSlotSelection(run);
+  // A slot within a wider allowlist (the queue's own pick) is not the caller's pin: a lost claim
+  // there selects again within the allowlist instead of waiting for the winner's whole run.
+  const conflictPinned =
+    run.allowedSlots && run.allowedSlots.length > 1 ? false : automaticLoadPinned;
   const requestedSlotId = run.slotId;
   let hostLoadWaitReason: string | undefined;
   let slotClaimWaitReason: string | undefined;
@@ -736,11 +741,19 @@ export async function executeFindSlotStep(
     } catch (error) {
       const conflict = slotClaimConflict(error);
       if (!conflict || runSupersededSince(getRun(runId), generation)) throw error;
+      // An operator's pick in this attempt pins it like a requested slot.
+      const pinned = conflictPinned || operatorPickedSlot(getRun(runId)!) === conflict.slotId;
       // Another run claimed the slot first (two dispatches picked it together). Selection runs
-      // again instead of failing the run; a pinned run waits for its slot to be released.
-      slotClaimWaitReason = `${automaticLoadPinned ? 'Waiting for' : 'Lost'} slot ${conflict.slotId}: ${conflict.holder}`;
-      // The lost claim bound the slot to the run first; selection starts from the request again.
-      if (getRun(runId)?.slotId !== requestedSlotId) updateRun(runId, { slotId: requestedSlotId });
+      // again instead of failing the run; a pinned run waits until its slot can be claimed.
+      slotClaimWaitReason = `${pinned ? 'Waiting for' : 'Lost'} slot ${conflict.slotId}: ${conflict.holder}`;
+      // The lost attempt bound the slot and spent the preview's pressure admission first. A pin
+      // keeps both; a new selection starts from the request and is admitted afresh.
+      updateRun(
+        runId,
+        pinned
+          ? { slotId: requestedSlotId ?? conflict.slotId }
+          : { slotId: null, pressureAdmissionRef: undefined },
+      );
       updateRunStep(runId, 'find-slot', {
         inputs: {
           ...getRun(runId)?.steps.find((step) => step.name === 'find-slot')?.inputs,
@@ -748,9 +761,7 @@ export async function executeFindSlotStep(
         },
       });
       await awaitAsQueueTime(runId, 'find-slot', () =>
-        automaticLoadPinned
-          ? waitWhileSlotHeldByLiveRun(conflict.slotId, runId, generation)
-          : delay(1_000),
+        pinned ? waitUntilSlotClaimable(conflict.slotId, runId, generation) : delay(1_000),
       );
       if (runSupersededSince(getRun(runId), generation))
         throw runChangedError(runId, conflict.slotId);
@@ -779,19 +790,45 @@ export async function executeFindSlotStep(
   }
 }
 
-/** Poll the slot row (no selection work) until no live run other than this one holds it. */
-async function waitWhileSlotHeldByLiveRun(
-  slotId: string,
-  runId: string,
-  generation: number,
-  deps: { readRow?: typeof readSlotRow; sleep?: (ms: number) => Promise<unknown> } = {},
-): Promise<void> {
-  const { readRow = readSlotRow, sleep = delay } = deps;
+/** The slot an operator picked in the run's latest resolved slot decision, if any. */
+function operatorPickedSlot(run: Run): string | undefined {
+  const picked = [...run.decisions]
+    .reverse()
+    .find(
+      (decision) =>
+        (decision.type === 'engine_no_suitable_slot' ||
+          decision.type === 'engine_branch_affinity_nudge') &&
+        decision.resolvedAt,
+    )?.selectionData?.slotId;
+  return typeof picked === 'string' && picked ? picked : undefined;
+}
+
+/**
+ * Poll the slot row (no selection work) until the slot can be claimed. A live holder ends by
+ * itself, so that wait is unbounded; its teardown after it ends (a release, or a slot still busy
+ * under an ended run) is bounded like an explicit pick's. A cancelled holder is reclaimed by
+ * selection, and any other blocker is left for selection to report.
+ */
+async function waitUntilSlotClaimable(slotId: string, runId: string, generation: number) {
+  let teardownSince: number | undefined;
   for (;;) {
     if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
-    const row = await readRow(slotId);
-    if (!row || slotClaimBlocker(row, runId, getRun)?.kind !== 'live-owner') return;
-    await sleep(SLOT_CLAIM_CONFLICT_POLL_MS);
+    const row = await readSlotRow(slotId);
+    const blocker = row ? slotClaimBlocker(row, runId, getRun) : null;
+    const owner =
+      row && typeof row.current_run_id === 'string' ? getRun(row.current_run_id) : undefined;
+    const tearingDown =
+      blocker?.kind === 'releasing' ||
+      (row?.lifecycle !== 'ready' &&
+        owner !== undefined &&
+        isTerminalRunStatus(owner.status) &&
+        owner.status !== 'cancelled');
+    if (blocker?.kind !== 'live-owner') {
+      if (!tearingDown) return;
+      teardownSince ??= Date.now();
+      if (Date.now() - teardownSince >= EXPLICIT_SLOT_RELEASE_WAIT_MS) return;
+    }
+    await delay(SLOT_CLAIM_CONFLICT_POLL_MS);
   }
 }
 

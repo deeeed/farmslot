@@ -991,6 +991,7 @@ test('a claim another dispatch won selects again instead of failing the run', as
       /Lost slot macpro-mmt-1: slot is claimed by live run rival-dispatch \(writing-task\)/,
     );
     assert.equal(run.slotId, null, 'the lost claim no longer binds the run');
+    assert.equal(run.pressureAdmissionRef, undefined, 'the new pick is admitted afresh');
     // The branch-matching slot is gone, so selection falls back to a scored pick.
     expectedSlot = 'macpro-mmt-2';
     expectedTarget = undefined;
@@ -1001,7 +1002,7 @@ test('a claim another dispatch won selects again instead of failing the run', as
   assert.deepEqual(loadWaits, [1_000]);
 });
 
-test('a pinned run whose slot another dispatch won waits for it, then claims it', async () => {
+test('a pinned run whose slot another dispatch won waits through its teardown, then claims it', async () => {
   reset('fix-bug', 'TAT-4137');
   run.allowedSlots = ['macpro-mmt-1'];
   const holder = rival();
@@ -1013,16 +1014,21 @@ test('a pinned run whose slot another dispatch won waits for it, then claims it'
       /Waiting for slot macpro-mmt-1: slot is claimed by live run rival-dispatch/,
     );
     assert.ok(run.steps[0]!.queuedSince, 'the wait is queue time');
-    // The rival finishes and releases the slot on the second poll.
-    if (++polls < 2) return;
-    holder.status = 'done';
-    liveRows.set('macpro-mmt-1', { current_run_id: null, lifecycle: 'ready' });
-    Object.assign(slots[0]!, { lifecycle: 'ready', currentRunId: null });
+    assert.deepEqual(claims, []);
+    polls += 1;
+    // The winner ends with its slot still busy, then the slot releases, then it is ready.
+    if (polls === 1) holder.status = 'done';
+    if (polls === 2)
+      liveRows.set('macpro-mmt-1', { ...liveRows.get('macpro-mmt-1'), phase: 'releasing' });
+    if (polls === 3) {
+      liveRows.set('macpro-mmt-1', { current_run_id: null, lifecycle: 'ready', phase: null });
+      Object.assign(slots[0]!, { lifecycle: 'ready', currentRunId: null });
+    }
   };
   const result = await executeFindSlotStep(run.id, run, 0, context);
   assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-1');
   assert.deepEqual(claims, ['macpro-mmt-1']);
-  assert.deepEqual(loadWaits, [5_000, 5_000]);
+  assert.deepEqual(loadWaits, [5_000, 5_000, 5_000]);
   assert.equal(run.steps[0]!.queuedSince, undefined);
 });
 
@@ -1035,4 +1041,35 @@ test('a pinned run cancelled while it waits for its slot stops without claiming'
   };
   await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /changed while waiting/);
   assert.deepEqual(claims, []);
+});
+
+test('a lost operator pick waits for that slot like a pin', async () => {
+  reset('fix-bug', 'TAT-4137');
+  run.allowedSlots = ['macpro-mmt-1', 'macpro-mmt-2'];
+  run.decisions.push({
+    id: 'operator-pick',
+    type: 'engine_no_suitable_slot',
+    title: 'Pick a slot',
+    description: '',
+    actions: [{ id: 'pick', label: 'Pick', style: 'primary' }],
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+    resolvedAction: 'pick',
+    selectionData: { slotId: 'macpro-mmt-1' },
+  });
+  const holder = rival();
+  rivalClaim = { slot: 'macpro-mmt-1', rival: holder };
+  afterLoadWait = () => {
+    assert.match(
+      String(run.steps[0]!.inputs?.slotClaimWaitReason),
+      /Waiting for slot macpro-mmt-1/,
+    );
+    assert.equal(run.slotId, 'macpro-mmt-1', 'the pick stays the slot to claim');
+    holder.status = 'done';
+    liveRows.set('macpro-mmt-1', { current_run_id: null, lifecycle: 'ready', phase: null });
+    Object.assign(slots[0]!, { lifecycle: 'ready', currentRunId: null });
+  };
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, 'macpro-mmt-1');
+  assert.deepEqual(claims, ['macpro-mmt-1']);
 });
