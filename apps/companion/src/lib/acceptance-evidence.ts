@@ -9,6 +9,15 @@ import {
   type EvidenceReviewMediaType,
   type EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
+import {
+  Methods,
+  recordedEvidenceClosureIdentity,
+  type RunRecipeRunsForRunResult,
+  type RunRecordedEvidenceReview,
+} from '@farmslot/protocol';
+import { resourceQuery } from '@farmslot/protocol/client-cache';
+
+import type { EvidenceAcceptanceReview } from '../components/EvidenceAcOverlay';
 
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
 import type { AcceptanceLedgerRow, AcceptanceLedgerView } from './task-progress-view';
@@ -112,6 +121,8 @@ export function acceptanceEvidenceHref(
   path: string,
   recipeRunId?: string | null,
   decisionId?: string,
+  /** The execution read within that decision's snapshot, when one was chosen. */
+  decisionExecutionId?: string,
 ) {
   return {
     pathname: '/evidence/[runId]' as const,
@@ -121,6 +132,67 @@ export function acceptanceEvidenceHref(
       evidence: path,
       recipeRun: recipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
       ...(decisionId ? { evidenceDecision: decisionId } : {}),
+      ...(decisionId && decisionExecutionId ? { evidenceExecution: decisionExecutionId } : {}),
     },
   };
+}
+
+/** The execution a route names; none when it reads the default or the decision's. */
+export function explicitRecipeRunId(recipeRun: string | null | undefined): string | undefined {
+  return recipeRun && recipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM ? recipeRun : undefined;
+}
+
+/** The execution the evidence viewer reads: the route's own, or the one within its decision. */
+export function acceptanceViewerRecipeRunId(
+  recipeRun: string | undefined,
+  evidenceExecution: string,
+): string | undefined {
+  return explicitRecipeRunId(recipeRun) ?? (evidenceExecution || undefined);
+}
+
+/**
+ * The recorded-evidence read. Within a decision it reads that decision's snapshot; a named
+ * execution narrows either read.
+ */
+export function recordedEvidenceQuery(
+  runId: string,
+  decision: { id: string; evidenceSnapshotHash: string | undefined } | undefined,
+  recipeRunId: string | undefined,
+) {
+  return resourceQuery<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, {
+    runId,
+    includeRecordedEvidence: true,
+    ...(decision
+      ? { decisionId: decision.id, evidenceSnapshotHash: decision.evidenceSnapshotHash }
+      : {}),
+    ...(recipeRunId ? { recipeRunId } : {}),
+  });
+}
+
+/**
+ * The criteria a recording's overlay may act on. The viewer keeps the evidence it opened on;
+ * when the run has recorded newer evidence since, verdicts would judge files the screen does
+ * not show, so they wait for a reopen.
+ */
+export function recordingAcceptanceReview(
+  review: EvidenceAcceptanceReview | undefined,
+  openedEvidenceKey: string | null | undefined,
+): EvidenceAcceptanceReview | undefined {
+  if (!review || openedEvidenceKey === undefined || review.evidenceKey === openedEvidenceKey)
+    return review;
+  return { ...review, record: undefined, stale: true };
+}
+
+/**
+ * The identity of a verified recorded-evidence read: its execution and checked files.
+ * Null for a read with errors (a pruned or unverifiable package still lists files it has
+ * no digest for) or without a recorded execution: the reads the evidence model will not
+ * bind verdicts to either.
+ */
+export function recordedEvidenceKey(
+  review: Pick<RunRecordedEvidenceReview, 'input' | 'errors' | 'failureCode'> | undefined,
+): string | null {
+  if (!review?.input?.claims?.recipeRunId || review.errors.length > 0 || review.failureCode)
+    return null;
+  return recordedEvidenceClosureIdentity(review.input);
 }
