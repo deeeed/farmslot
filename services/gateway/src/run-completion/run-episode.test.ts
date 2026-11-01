@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -156,6 +157,126 @@ test('captureRunEpisode writes ended runs only', async () => {
     (await readdir(runEpisodeDir())).filter((name) => name.endsWith('.tmp')),
     [],
   );
+});
+
+const LIB_A = { name: 'perps', head: 'a'.repeat(40), sourceFingerprint: 'f1', dirtyDigest: null };
+const LIB_B = { name: 'bundled', head: null, sourceFingerprint: 'f2', dirtyDigest: 'd1' };
+const binding = (libraries: unknown) => ({
+  provider: { package: '@demo/provider', version: '1.2.3', module: '/abs/provider.js' },
+  identity: { provider: { head: null, sourceFingerprint: 'p1' }, libraries },
+});
+
+test('captureRunEpisode copies the pinned provider and library revisions from the task binding', async () => {
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'run-episode-binding-'));
+  const write = (file: string, value: unknown) =>
+    writeFile(path.join(taskDir, file), typeof value === 'string' ? value : JSON.stringify(value));
+  try {
+    await mkdir(path.join(taskDir, 'inputs'), { recursive: true });
+    await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+    const taskFile = path.join(taskDir, 'TASK.md');
+
+    // A task with no binding file (written before bindings existed) has no provenance.
+    assert.equal((await captureRunEpisode(run({ id: 'run-legacy', taskFile })))?.provenance, null);
+
+    await write('inputs/recipe-binding.json', binding([LIB_A, LIB_B]));
+    const bound = await captureRunEpisode(run({ id: 'run-bound', taskFile }));
+    assert.deepEqual(bound?.provenance, {
+      source: 'inputs/recipe-binding.json',
+      provider: { package: '@demo/provider', version: '1.2.3' },
+      libraries: [
+        { name: 'perps', revision: 'a'.repeat(40), fingerprint: 'f1', dirty: false },
+        { name: 'bundled', revision: null, fingerprint: 'f2', dirty: true },
+      ],
+      recordedAt: null,
+      mirrored: false,
+    });
+
+    // After a repin the receipt is refreshed and the binding is not: libraries come
+    // from the receipt and the stale provider is dropped.
+    const repinned = { ...LIB_A, head: 'b'.repeat(40) };
+    await write('artifacts/harness-provenance.json', {
+      bindingIdentity: { libraries: [repinned] },
+      recordedAt: NOW,
+    });
+    const output = { capturedAt: NOW, workerFinished: true } as Run['output'];
+    const completed = [{ name: 'complete', status: 'done' as const, startedAt: NOW }];
+    const afterRepin = await captureRunEpisode(
+      run({ id: 'run-repinned', taskFile, output, steps: completed }),
+    );
+    assert.deepEqual(afterRepin?.provenance, {
+      source: 'artifacts/harness-provenance.json',
+      provider: null,
+      libraries: [{ name: 'perps', revision: 'b'.repeat(40), fingerprint: 'f1', dirty: false }],
+      recordedAt: NOW,
+      mirrored: true,
+    });
+    // A refresh while monitoring, then a cancel: the completion step never captured,
+    // so the receipt may predate a later repin.
+    const refreshed = { capturedAt: NOW, workerFinished: false } as Run['output'];
+    const cancelled = await captureRunEpisode(
+      run({
+        id: 'run-cancelled',
+        status: 'cancelled',
+        taskFile,
+        output: refreshed,
+        steps: [{ name: 'monitor', status: 'running', startedAt: NOW }],
+      }),
+    );
+    assert.equal(cancelled?.provenance?.mirrored, false);
+    // Completion captured, then a review fix began and the run was cancelled during it.
+    const fixing = await captureRunEpisode(
+      run({
+        id: 'run-fix-after-complete',
+        status: 'cancelled',
+        taskFile,
+        output,
+        steps: completed,
+        agentContexts: [
+          {
+            id: 'ctx-fix',
+            role: 'review-fix',
+            label: 'Review fix',
+            status: 'working',
+            slotId: 'host-demo-1',
+            runId: 'run-fix-after-complete',
+            attemptStartedAt: '2026-11-01T13:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    assert.equal(fixing?.provenance?.mirrored, false);
+    await rm(path.join(taskDir, 'artifacts/harness-provenance.json'));
+
+    // An unbound task, a wrongly shaped binding and invalid JSON give null, never a throw.
+    for (const [id, value] of [
+      ['run-unbound', { identity: null }],
+      ['run-shape', { identity: { libraries: {} } }],
+      ['run-entries', binding([null, 3, { name: 7 }])],
+      ['run-bad-json', '{not json'],
+    ] as const) {
+      await write('inputs/recipe-binding.json', value);
+      const episode = await captureRunEpisode(run({ id, taskFile }));
+      assert.equal(
+        id === 'run-entries' ? episode?.provenance?.libraries.length : episode?.provenance,
+        id === 'run-entries' ? 0 : null,
+        id,
+      );
+      assert.equal((await readRunEpisode(id))?.runId, id);
+    }
+
+    // Once retention archives the task copy, a re-capture keeps the recorded value.
+    await write('inputs/recipe-binding.json', binding([LIB_A]));
+    const first = await captureRunEpisode(run({ id: 'run-archived', taskFile }));
+    await rm(taskDir, { recursive: true, force: true });
+    const again = await captureRunEpisode(
+      run({ id: 'run-archived', taskFile, updatedAt: '2026-11-02T00:00:00.000Z' }),
+    );
+    assert.deepEqual(again?.provenance, first?.provenance);
+
+    assert.equal((await captureRunEpisode(run({ id: 'run-no-task' })))?.provenance, null);
+  } finally {
+    await rm(taskDir, { recursive: true, force: true });
+  }
 });
 
 test('the retry pass visits runs updated since its watermark and keeps it at a failure', async () => {
