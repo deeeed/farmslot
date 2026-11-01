@@ -5,13 +5,12 @@ import {
 } from '@farmslot/agent-runtime/native';
 import type { NativeSessionCreateParams, NativeSessionEnsureParams } from '@farmslot/protocol';
 
-import { KNOWN_RUNNERS } from '../registry.js';
+import { assertNativeRunner, KNOWN_RUNNERS } from '../registry.js';
 
 export { NativeSessionManager, resolveNativeExecutable } from '@farmslot/agent-runtime/native';
 export function validateNativeRunner(runner: string, model?: string) {
-  const definition = KNOWN_RUNNERS[runner];
-  if (!definition?.nativeTransport) throw new Error(`Runner has no native transport: ${runner}`);
-  if (model && !definition.acceptsModel(model))
+  assertNativeRunner(runner);
+  if (model && !KNOWN_RUNNERS[runner].acceptsModel(model))
     throw new Error('Model is incompatible with this runner');
 }
 class GatewayNativeSessions extends NativeSessionClient {

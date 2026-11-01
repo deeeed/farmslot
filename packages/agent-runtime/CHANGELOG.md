@@ -4,6 +4,11 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.20 - 2026-11-01
+
+- Publishes against `@farmslot/protocol` 0.74.10.
+- Task retention takes an optional `pinSelection` hook. Once the inputs are copied into the task pin, the host can rebind its recorded selection (`inputs/recipe-binding.json` and the receipt's `bindingIdentity`) to the retained copies. A rerun of task init verifies the recorded pin first, then requires the same pinned selection. `retainedPathFor` and `retainedSourceFor` map between a retained source and its copy.
+
 ## 0.39.19 - 2026-11-01
 
 - The native host checkpoints a session's Git working tree before and after each turn, as commits under `refs/farmslot/native/<sessionId>/` built in the session's own index (the worktree, its index, `HEAD` and branches are untouched), and appends `turn.changes` after the turn; a queued message is journaled after the previous turn's changes. Delivery waits for the checkpoints at most 3 s in all. A session keeps its last 100 checkpoints, and its refs are deleted at close, also after a failure or host restart. The node service answers `native.session.turn.diff` for a file a `turn.changes` event lists while its checkpoints are retained. Read-only reviewer sessions take no checkpoints.

@@ -172,11 +172,9 @@ function resolvedConformanceIdentity(
           : inputSourceSnapshot(source.root, excludedRoots),
       ),
     })),
-    libraries: inputs.librarySources.map((source) => ({
-      name: libraryName(source),
-      path: path.resolve(source.root),
-      ...withDirtyDigest(inputSourceSnapshot(source.root, excludedRoots)),
-    })),
+    libraries: inputs.librarySources.map((source) =>
+      libraryIdentity(libraryName(source), path.resolve(source.root), source.root, excludedRoots),
+    ),
     invocations: inputs.invocations.map((invocation) => ({
       recipe: invocation.recipe,
       paramsDigest: digestRecipeDocument(invocation.params ?? {}),
@@ -369,6 +367,16 @@ function sameConformanceIdentity(
   right: RecipeConformanceIdentity,
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/** A library as a binding records it: its name, the path it names, and the bytes at `root`. */
+export function libraryIdentity(
+  name: string,
+  recordedPath: string,
+  root: string,
+  excludedRoots: string[] = [],
+): RecipeConformanceSource & { name: string; path: string } {
+  return { name, path: recordedPath, ...withDirtyDigest(inputSourceSnapshot(root, excludedRoots)) };
 }
 
 function withDirtyDigest(source: RecipeConformanceSource): RecipeConformanceSource {

@@ -4,8 +4,13 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Artifact markdown fences its blocks with the shared protocol `markdownFence`; output is unchanged.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.32.3 - 2026-11-01
+
+- Needs `@farmslot/protocol` 0.74.10 (`markdownFence`) and `@farmslot/agent-runtime` 0.39.20.
+- A task binds each recipe library outside its provider to the copy retained in the task pin, not the shared checkout it came from: `inputs/recipe-binding.json` records the copy's path and fingerprint. The recipe-cook check that fingerprints the recorded library keeps passing when the shared checkout moves mid-run (run 461b1390 blocked on it). A `--library name=<shared checkout>` override in a task still resolves to the copy, and a repin compares libraries by the checkout they were retained from.
+- Artifact markdown fences its blocks with the shared protocol `markdownFence`; output is unchanged.
 
 ## 0.32.2 - 2026-10-31
 
