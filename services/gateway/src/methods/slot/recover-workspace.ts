@@ -68,6 +68,10 @@ function identityOwnsRow(
 interface SlotRecoveryOptions {
   /** Automatic reuse/settlement keeps the runtime cold; manual RPCs keep their existing policy. */
   skipRecycle?: boolean;
+  /** A finished artifact-only run whose own branch commits the release parks before resetting. */
+  parkRunId?: string;
+  /** The exact head an ownerless return to idle may park. */
+  parkHeadSha?: string;
 }
 
 export async function recoverSlotWorkspace(
@@ -272,6 +276,9 @@ export async function recoverSlotWorkspace(
       const baseline =
         !authorized.currentRunId &&
         isSlotIdleBranch(workspace.branch, tracking, defaultBranch, linked);
+      // Parking happens only in the release below; an idle-branch reset would skip it.
+      if (baseline && options?.parkRunId)
+        throw new Error('A checkout on the idle branch holds no run branch commits to park');
       if (!baseline) {
         await verifyWork();
         const released = await slotRelease(
@@ -284,6 +291,9 @@ export async function recoverSlotWorkspace(
               verifyWork,
               discardLocalWork: params.mode === 'force',
               skipRecycle: options?.skipRecycle,
+              ...(options?.parkRunId
+                ? { parkRunId: options.parkRunId, parkHeadSha: options.parkHeadSha }
+                : {}),
             },
           },
         );

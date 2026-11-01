@@ -32,6 +32,7 @@ import {
   retainCapturedRunArtifacts,
   retainedRunArtifactManifest,
   retainedRunBundleRef,
+  retainedRunExcludedPaths,
 } from './retained-artifacts.js';
 
 // Completion writes these diagnostics after the worker output gate opens.
@@ -364,7 +365,18 @@ export async function verifyRunOutputReview(
   const artifacts = (await retainedRunArtifactManifest(run, ref)).filter((artifact) =>
     artifact.path.startsWith('artifacts/'),
   );
-  if (outputManifestDigest(artifacts) !== expected)
+  // The bundle never retains sensitive-named files (a `token` or `secret` in the name), so
+  // the retained bytes must match the rest of the reviewed capture.
+  const excluded = await retainedRunExcludedPaths(run, ref);
+  const retainable = excluded.size
+    ? outputManifestDigest(
+        run.output.artifactManifest.filter((artifact) => !excluded.has(artifact.path)),
+      )
+    : expected;
+  if (
+    (excluded.size && outputManifestDigest(run.output.artifactManifest) !== expected) ||
+    outputManifestDigest(artifacts) !== retainable
+  )
     throw new Error('Run output changed; refresh the report before reviewing');
   if (!artifacts.some((artifact) => artifact.path === reportPath))
     throw new Error('Reviewed report is not in the retained output');

@@ -37,6 +37,7 @@ import {
   normalizeCiActionId,
   normalizeFlowType,
   normalizeRunTags,
+  type ParkedRunCommits,
   parseNativeProfileReference,
   pipelineStepsForRun,
   primaryRoleForFlow,
@@ -1732,6 +1733,22 @@ export async function recordRunStorageArchive(id: string, manifest: string): Pro
         ? run
         : { ...run, links: [...(run.links ?? []), { label: 'Storage archive', url }] },
     // A descriptive link grants no lifecycle authority; staging checks ownership separately.
+    () => undefined,
+  );
+}
+
+/**
+ * A release parked an artifact-only run's own branch commits. Written durably on the live or
+ * archived run, every attempt, before the slot resets.
+ */
+export async function recordParkedRunCommits(id: string, record: ParkedRunCommits): Promise<void> {
+  await commitRetainedRunMutation(
+    id,
+    (run) =>
+      run.parkedCommits?.some((entry) => entry.ref === record.ref)
+        ? run
+        : { ...run, parkedCommits: [...(run.parkedCommits ?? []), record] },
+    // A parking receipt grants no lifecycle authority; the release claim checks ownership.
     () => undefined,
   );
 }

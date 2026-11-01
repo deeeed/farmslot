@@ -8,7 +8,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## 0.32.4 - 2026-11-02
 
-- Needs `@farmslot/recipe-runner` 0.46.3, `@farmslot/adapter-sdk` 0.26.0 and `@farmslot/agent-runtime` 0.39.22, so the CLI and the engine its project host creates both plan with it: a run refuses at plan time a visual or mixed claim that only shell commands and file or log checks prove, naming every refused claim, instead of recording it for the gate to reject.
+- Needs `@farmslot/recipe-runner` 0.46.3, `@farmslot/adapter-sdk` 0.26.0 and `@farmslot/agent-runtime` 0.39.23, so the CLI and the engine its project host creates both plan with it: a run refuses at plan time a visual or mixed claim that only shell commands and file or log checks prove, naming every refused claim, instead of recording it for the gate to reject.
 
 ## 0.32.3 - 2026-11-01
 
