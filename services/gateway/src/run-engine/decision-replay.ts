@@ -5,6 +5,7 @@ import {
   PUBLICATION_ADOPTION_ACTION,
   type Run,
   type RunDecision,
+  SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
 import { CLOSE_AS_SHIPPED_ACTION, PUBLISH_APPROVAL_ACTIONS } from './gate-policy.js';
@@ -61,6 +62,21 @@ export function hasHeldPublicationApproval(run: Pick<Run, 'decisions'>): boolean
 
 export function isHumanGateReviewRequestAction(actionId: string | undefined): boolean {
   return HUMAN_GATE_REVIEW_REQUEST_ACTIONS.has(actionId ?? '');
+}
+
+/**
+ * Human-gate actions a resume from the human-gate step applies when no engine waited for them:
+ * a replayed approval, a review request or Send back taken up at step entry, and Retry Gate,
+ * whose effect is the re-presented gate. Any other action (Continue Fixing never replays) would
+ * be acknowledged and then dropped.
+ */
+export function isResumeCarriedHumanGateAction(actionId: string): boolean {
+  return (
+    HUMAN_GATE_APPROVAL_ACTIONS.has(actionId) ||
+    isHumanGateReviewRequestAction(actionId) ||
+    actionId === SEND_BACK_TO_AGENT_ACTION ||
+    actionId === 'hold'
+  );
 }
 
 export function isReplayableResolvedHumanGateDecision(

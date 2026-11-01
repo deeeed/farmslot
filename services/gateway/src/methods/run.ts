@@ -122,7 +122,10 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import { buildCIWatchChainedRunParams } from '../run-engine/ci-watch-chain.js';
-import { isHumanGateReviewRequestAction } from '../run-engine/decision-replay.js';
+import {
+  isHumanGateReviewRequestAction,
+  isResumeCarriedHumanGateAction,
+} from '../run-engine/decision-replay.js';
 import {
   hasEngineDecisionWaiter,
   recordDecisionResolution,
@@ -1594,6 +1597,36 @@ export function assertDecisionStillUnresolved(runId: string, decisionId: string)
 }
 
 /**
+ * Why the resume that carries a gate action no engine waits for (after a gateway restart, the
+ * re-presented gate has none) would not apply it, or undefined. The one owner of these
+ * conditions: the resolve path refuses the action on a blocker before it commits, and the
+ * deferred resume in continueResolvedRunDecision stops on the same one.
+ */
+function unwaitedGateActionBlocker(
+  run: Run,
+  decision: RunDecision,
+  actionId: string,
+): string | undefined {
+  if (decision.type === 'engine_human_gate' && !isResumeCarriedHumanGateAction(actionId))
+    return `a resumed gate does not apply ${actionId}`;
+  // A review request the gate has not taken up yet also resumes a reconciling gate.
+  const reviewRequest =
+    run.status === 'reconciling' &&
+    isHumanGateReviewRequestAction(actionId) &&
+    typeof decision.context?.reviewRequestConsumedAt !== 'string';
+  if (!reviewRequest && !['blocked', 'human-gating'].includes(run.status))
+    return `the run is ${run.status}, not waiting at its gate`;
+  // Other unwaited gate decisions are superseded by the resume; anything else keeps it blocked.
+  const other = run.decisions.find(
+    (d) =>
+      d.id !== decision.id &&
+      !d.resolvedAt &&
+      !(isGateDecision(d) && !hasEngineDecisionWaiter(d.id)),
+  );
+  return other ? `the run also waits on its ${other.type} decision ${other.id}` : undefined;
+}
+
+/**
  * With more than one open gate decision, only the one an engine waits on takes a gate
  * action (the newest when no engine waits). An action on another would report ok and
  * then be dropped, so it is refused with the decision to act on instead.
@@ -1828,22 +1861,24 @@ export function continueResolvedRunDecision(
   setTimeout(() => {
     void (async () => {
       const afterResolve = getRun(params.runId);
-      const reconcilingReviewRequest =
-        afterResolve?.status === 'reconciling' &&
-        afterResolve.decisions.some(
-          (decision) =>
-            decision.id === params.decisionId &&
-            decision.type === 'engine_human_gate' &&
-            isHumanGateReviewRequestAction(decision.resolvedAction) &&
-            typeof decision.context?.reviewRequestConsumedAt !== 'string',
-        );
-      if (
-        !afterResolve ||
-        engineResumed ||
-        runSupersededSince(afterResolve, gateGeneration) ||
-        (!reconcilingReviewRequest && !['blocked', 'human-gating'].includes(afterResolve.status))
-      )
+      if (!afterResolve || engineResumed || runSupersededSince(afterResolve, gateGeneration))
         return;
+      const carriedGate = afterResolve.decisions.find(
+        (d) => d.id === params.decisionId && isGateDecision(d),
+      );
+      if (carriedGate) {
+        // A review request the gate already took up was applied; there is nothing to carry.
+        if (typeof carriedGate.context?.reviewRequestConsumedAt === 'string') return;
+        const blocker = unwaitedGateActionBlocker(afterResolve, carriedGate, params.actionId);
+        // The resolve path refused the action on this blocker; here it means the run changed
+        // after the action committed, which must not pass silently.
+        if (blocker) {
+          console.error(
+            `[run] run ${params.runId.slice(0, 8)} — ${params.actionId} on gate ${params.decisionId} was resolved with no engine waiting, but ${blocker}; nothing applies it`,
+          );
+          return;
+        }
+      } else if (!['blocked', 'human-gating'].includes(afterResolve.status)) return;
       // ADR-054 `free-slot`: this timer exists to resume a run whose engine loop
       // was lost. A gate-parked run is not that — a park can land while the
       // engine holds the resolved decision, and the gate blocker then leaves the
@@ -1880,7 +1915,7 @@ export function continueResolvedRunDecision(
           if (runSupersededSince(getRun(params.runId), gateGeneration)) return;
         }
         console.log(
-          `[run] run ${params.runId.slice(0, 8)} — all decisions resolved but still blocked, resuming engine`,
+          `[run] run ${params.runId.slice(0, 8)} — all decisions resolved but still blocked, resuming engine${carriedGate ? ` to apply ${params.actionId}` : ''}`,
         );
         const runningStep = afterResolve.steps.find((s) => s.status === 'running');
         if (
@@ -2359,6 +2394,28 @@ export async function resolveRunDecision(
     decision = getRun(params.runId)!.decisions.find(
       (candidate) => candidate.id === params.decisionId,
     )!;
+    // No await separates these checks from the resolution below for a gate decision.
+    if (isGateDecision(decision)) {
+      const current = getRun(params.runId)!;
+      // A waiting engine aborts on these instead of acting (createEngineDecision).
+      if (isTerminalRunStatus(current.status) || runSupersededSince(current, gateGeneration))
+        throw new GatewayMethodError(
+          'RUN_GATE_NOT_READY',
+          `${params.actionId} would not be applied: the run is ${current.status} or was replayed since this gate opened.`,
+        );
+      const blocker = hasEngineDecisionWaiter(decision.id)
+        ? undefined
+        : unwaitedGateActionBlocker(current, decision, params.actionId);
+      if (blocker)
+        throw new GatewayMethodError(
+          'RUN_GATE_NOT_READY',
+          `${params.actionId} would not be applied: no engine is waiting on this gate and ${blocker}.`,
+          {
+            userAction:
+              'Resolve the other open decision if one is named; otherwise replay the run from its human-gate step (Command Center step replay, or run.replayStep with human-gate) so an engine waits on the gate.',
+          },
+        );
+    }
     // No review-request await separates this fresh check from decision consumption.
     assertReviewBudgetAtConsumption?.();
     if (attestation) {
